@@ -1,0 +1,20 @@
+{
+  "enabled": false,
+  "pipeName": "PaperclipDirectTaskBroker",
+  "paperclip": {
+    "baseUrl": "http://127.0.0.1:3100"
+  },
+  "bridge": {
+    "port": 3105,
+    "nodeExecutable": "C:/Program Files/nodejs/node.exe"
+  },
+  "projectWorkspaceMappings": {
+    "example-project-id": {
+      "companyId": "example-company-id",
+      "goalId": "example-goal-id",
+      "workspacePath": "C:/path/to/project",
+      "projectFile": "Example.uproject"
+    }
+  },
+  "jobTimeoutMs": 300000
+}

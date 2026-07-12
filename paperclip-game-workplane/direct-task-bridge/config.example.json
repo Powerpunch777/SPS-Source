@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3105
+  },
+  "security": {
+    "bridgeSecret": "change-this-to-a-secure-token-in-production-must-be-32-chars-long"
+  },
+  "projectWorkspaceMappings": {
+    "example-project-id": "/path/to/example-workspace"
+  },
+  "jobTimeoutMs": 300000
+}

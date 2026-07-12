@@ -1,0 +1,22 @@
+{
+  "name": "paperclip-room-chat-plugin",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Long-lived Paperclip Agent Rooms backed by the Codex app-server protocol.",
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js"
+  },
+  "scripts": {
+    "build:ui": "esbuild src/ui/RoomWorkplane.jsx --bundle --format=esm --platform=browser --target=es2022 --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:@paperclipai/plugin-sdk/ui --outfile=dist/ui-v0.3.0/index.js",
+    "build": "npm run build:ui",
+    "test": "node tests/test-codex-app-server-client.mjs && node tests/test-task-room-tools.mjs && node tests/test-room-compact.mjs && node tests/test-room-durability.mjs && node tests/test-room-reasoning-summary.mjs && node tests/test-room-workspace-binding.mjs && node tests/test-room-attachments.mjs && node tests/test-room-job-ledger.mjs && node scripts/verify-plugin.mjs",
+    "check": "node --check dist/codex-app-server-client.js && node --check dist/worker.js && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "2026.707.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
