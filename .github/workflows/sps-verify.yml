@@ -60,6 +60,15 @@ jobs:
           cache: npm
           cache-dependency-path: sps-server/sps-room-chat/package-lock.json
 
+      - name: Install pinned pnpm for the SPS plugin SDK
+        run: npm install --global pnpm@9.15.4
+
+      - name: Build SPS plugin SDK for the Room workplane
+        working-directory: external/sps-core
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @paperclipai/plugin-sdk run build
+
       - name: Install SPS Room plugin dependencies
         working-directory: sps-server/sps-room-chat
         run: npm ci
