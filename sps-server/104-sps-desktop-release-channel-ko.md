@@ -41,6 +41,18 @@ The workflow is `.github/workflows/sps-desktop-release.yml`.
 The workflow fails before publishing if either signing secret is absent. This
 is intentional: test installers must not become an update source for friends.
 
+## Two-computer pilot installer
+
+Before a signing certificate is available, run **Build SPS Desktop Pilot**
+from the GitHub Actions **Run workflow** menu. It creates an unsigned Windows
+installer as a 14-day Actions artifact, after running the Desktop tests.
+
+This workflow never creates a GitHub Release, tag, or update manifest. Use it
+only to test a real invitation, Node approval, per-Agent grant, local project
+mapping, and a harmless Task on a second computer. Windows may warn because
+the pilot is unsigned; that is expected. Do not distribute the artifact as an
+SPS release or use it as an update source.
+
 ## Pilot preflight
 
 Before inviting a second computer, run the multi-node preflight from the SPS

@@ -1,0 +1,46 @@
+name: Build SPS Desktop Pilot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-pilot:
+    name: Package unsigned Windows pilot installer
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sps-server/desktop/package-lock.json
+
+      - name: Install Desktop dependencies
+        working-directory: sps-server/desktop
+        run: npm ci
+
+      - name: Verify Desktop and Node protocol tests
+        working-directory: sps-server/desktop
+        run: npm test -- --test-concurrency=1
+
+      - name: Build unsigned pilot installer without publishing
+        working-directory: sps-server/desktop
+        run: npm run package:win -- --publish never
+
+      - name: Upload pilot installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sps-desktop-pilot-${{ github.sha }}
+          path: |
+            sps-server/desktop/dist/SPS Desktop Setup *.exe
+            sps-server/desktop/dist/SPS Desktop Setup *.exe.blockmap
+            sps-server/desktop/dist/latest.yml
+          if-no-files-found: error
+          retention-days: 14
