@@ -17,6 +17,7 @@ import {
   registerSpsNode,
   resolveSpsNodeExecutable,
   resolveSpsNodeInvocation,
+  resolveSpsNodeWorkspace,
   scanLocalCapabilities,
   sendSpsNodeHeartbeat,
 } from "../src/index.mjs";
@@ -128,6 +129,28 @@ test("runs any supported npm CLI wrapper through node.exe without a command shel
     "chat",
     "qwen3",
   ]);
+});
+
+test("requires an explicit workspace mapping for every project-bound command", async () => {
+  await assert.rejects(
+    resolveSpsNodeWorkspace(
+      { projectId: "project-1" },
+      { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
+    ),
+    /No local workspace is configured for SPS project project-1/,
+  );
+});
+
+test("uses the Node owner's project mapping instead of the default workspace", async () => {
+  const projectWorkspace = process.cwd();
+  const resolved = await resolveSpsNodeWorkspace(
+    { projectId: "project-1" },
+    {
+      defaultWorkspacePath: "C:\\must-not-be-used",
+      projectWorkspaces: { "project-1": projectWorkspace },
+    },
+  );
+  assert.equal(resolved, projectWorkspace);
 });
 
 test("uses the Hub API for registration and signed heartbeats", async () => {

@@ -30,10 +30,19 @@ function allowedEnvironment(value) {
   return output;
 }
 
-async function resolveWorkspace(command, profile) {
-  const configured = command.projectId && profile.projectWorkspaces?.[command.projectId]
-    ? profile.projectWorkspaces[command.projectId]
+export async function resolveSpsNodeWorkspace(command, profile) {
+  const projectId = typeof command?.projectId === "string" && command.projectId.trim()
+    ? command.projectId
+    : null;
+  // A project-bound command must never fall back to this computer's default
+  // folder. Each project is explicitly mapped by the Node owner so a remote
+  // Agent cannot accidentally work in another repository.
+  const configured = projectId
+    ? profile.projectWorkspaces?.[projectId]
     : profile.defaultWorkspacePath;
+  if (projectId && (!configured || !configured.trim())) {
+    throw new Error(`No local workspace is configured for SPS project ${projectId}. Choose its folder in SPS Desktop before this Agent runs.`);
+  }
   if (!configured || !configured.trim()) {
     throw new Error("No local workspace is configured for this SPS project. Set a default workspace folder in SPS Desktop.");
   }
@@ -154,7 +163,7 @@ async function terminateProcessTree(child) {
 }
 
 export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity, accessToken, profile }) {
-  const workspace = await resolveWorkspace(command, profile);
+  const workspace = await resolveSpsNodeWorkspace(command, profile);
   // The Hub process may be bound to localhost on its own computer. A member
   // Node must use the Hub URL it connected to, never that host-local address.
   const environment = {
