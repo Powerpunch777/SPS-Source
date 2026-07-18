@@ -4,6 +4,15 @@ SPS Workplane은 여러 AI Agent가 한 프로젝트에서 역할을 나누어 �
 
 > 기본 주소: [http://127.0.0.1:3100](http://127.0.0.1:3100)
 
+## 공개 제품 사이트와 Hub
+
+- 제품 소개 사이트: `https://redongames.com`
+- 인증된 협업 Hub: `https://app.redongames.com`
+- 배포 구조와 DNS·Google OAuth 설정 순서: [Redon Games 도메인 구조](sps-server/107-redongames-domain-and-website-ko.md)
+
+공개 사이트와 Hub는 서로 분리한다. 사이트는 Cloudflare Pages의 정적 출력이고,
+Hub는 별도 Docker 호스트에서 Google 로그인, 초대, Room, Task, Node 권한을 처리한다.
+
 ## 가장 빠른 시작
 
 이미 이 PC에 SPS가 설정되어 있다면, PowerShell에서 아래 두 줄만 실행하세요.

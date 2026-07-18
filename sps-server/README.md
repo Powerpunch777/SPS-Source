@@ -10,6 +10,13 @@ conflict, document 75 wins.
 The current P0 implementation and deployment record is
 `76-room-workplane-p0-implementation-and-deployment-log-ko.md`.
 
+## Public Product Surface
+
+- Public product site source: `website/`
+- Intended public site: `https://redongames.com`
+- Intended authenticated Hub: `https://app.redongames.com`
+- Domain and deployment topology: `107-redongames-domain-and-website-ko.md`
+
 SPS을 게임 개발용 AI 제작 파이프라인의 control plane으로 쓰기 위한 설계/구현 기록이다.
 
 ## Current Baseline
