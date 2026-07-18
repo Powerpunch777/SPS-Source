@@ -103,6 +103,7 @@ function renderSetupReadiness(status) {
   $("#sign-out").disabled = !status.signedIn;
   $("#connect-node").disabled = !readiness.canConnectNode;
   $("#open-workspace").disabled = !readiness.canOpenWorkspace;
+  $("#choose-project-workspace").disabled = !readiness.canManageProjects;
   $("#refresh-projects").disabled = !readiness.canManageProjects;
   $("#project-workspace-project-id").disabled = !readiness.canManageProjects || !status.projects?.length;
 }
@@ -224,6 +225,12 @@ $("#project-workspace-form").addEventListener("submit", async (event) => {
   });
 });
 $("#project-workspace-project-id").addEventListener("change", refreshProjectFolderField);
+$("#choose-project-workspace").addEventListener("click", () => run(async () => {
+  const workspacePath = await window.spsDesktop.chooseProjectWorkspace();
+  if (!workspacePath) return;
+  $("#project-workspace-path").value = workspacePath;
+  showNotice("Project folder selected. Save it to map this SPS project on this computer.");
+}));
 $("#refresh-projects").addEventListener("click", () => run(async () => {
   await window.spsDesktop.refreshProjects();
   showNotice("Accessible SPS projects refreshed.");

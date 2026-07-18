@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -19,6 +19,7 @@ import { emptyState, loadState, saveState } from "./state.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
 import { isSpsHubApiUrl, requireSpsHubOrigin } from "./workspace-url.mjs";
+import { requireSpsWorkspaceDirectory } from "./workspace-directory.mjs";
 import {
   createSpsSetupWindowPreferences,
   createSpsWorkspaceWindowPreferences,
@@ -551,7 +552,7 @@ function registerIpc() {
   ipcMain.handle("desktop:save-project-workspace", async (_event, input) => {
     if (!state.profile) throw new Error("Save an SPS Hub profile before mapping a project workspace");
     const projectId = String(input.projectId ?? "").trim();
-    const workspacePath = String(input.workspacePath ?? "").trim();
+    const workspacePath = await requireSpsWorkspaceDirectory(input.workspacePath);
     if (!projectId) throw new Error("Project ID is required");
     const projectWorkspaces = { ...(state.profile.projectWorkspaces ?? {}) };
     if (workspacePath) projectWorkspaces[projectId] = workspacePath;
@@ -559,6 +560,13 @@ function registerIpc() {
     state.profile.projectWorkspaces = projectWorkspaces;
     await persistState();
     return publicStatus();
+  });
+  ipcMain.handle("desktop:choose-project-workspace", async () => {
+    const selection = await dialog.showOpenDialog(mainWindow ?? undefined, {
+      title: "Choose local SPS project folder",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    return selection.canceled ? null : selection.filePaths[0] ?? null;
   });
   ipcMain.handle("desktop:refresh-projects", async () => {
     await refreshProjects();
