@@ -223,11 +223,14 @@ $("#scan-capabilities").addEventListener("click", () => run(async () => {
   showNotice("Local runtimes scanned.");
 }));
 $("#connect-node").addEventListener("click", () => run(async () => {
+  const wasRegistered = Boolean(latestStatus?.nodeId);
   const result = await window.spsDesktop.connectNode();
   $("#capabilities").textContent = pretty(result.capabilities);
   showNotice(result.node.status === "pending"
     ? "Computer registered and key verified. Approve it in SPS Hub > Settings > Nodes."
-    : "Computer heartbeat completed.");
+    : wasRegistered
+      ? "Computer and local capabilities refreshed."
+      : "Computer registered and heartbeat completed.");
 }));
 $("#launch-at-login").addEventListener("change", (event) => run(async () => {
   await window.spsDesktop.setLaunchAtLogin({ enabled: event.target.checked });
