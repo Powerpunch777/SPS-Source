@@ -1,0 +1,82 @@
+{
+  "companyId": "181e1bf7-3390-4b8d-8507-b736a03e444b",
+  "agents": [
+    {
+      "id": "8a28c634-9cac-49a5-a914-5c30f9a4a99d",
+      "name": "Manager",
+      "profile": "task-owner",
+      "role": "manager",
+      "paperclipRole": "ceo",
+      "model": "gpt-5.6-sol"
+    },
+    {
+      "id": "fb2426b9-893d-4058-a1d4-20245ab4eb2c",
+      "name": "Designer",
+      "profile": "task-owner",
+      "role": "designer",
+      "paperclipRole": "designer",
+      "model": "gpt-5.6-sol"
+    },
+    {
+      "id": "dfdde6a7-ae30-43f8-8b65-593c7eecf171",
+      "name": "손영하-CTO",
+      "profile": "task-owner",
+      "role": "cto",
+      "paperclipRole": "cto",
+      "model": "gpt-5.6-sol"
+    },
+    {
+      "id": "7a56f45e-0f2f-4257-8fca-15138cc92cab",
+      "name": "박정훈-CTO 2",
+      "profile": "task-owner",
+      "role": "cto",
+      "paperclipRole": "cto",
+      "model": "gpt-5.6-sol"
+    },
+    {
+      "id": "bb309102-69c4-4566-9a4d-07e7882945d8",
+      "name": "Code Worker",
+      "profile": "worker",
+      "role": "code-worker",
+      "paperclipRole": "engineer",
+      "executionClass": "cli",
+      "model": "gpt-5.6-luna"
+    },
+    {
+      "id": "e31ac6a0-38f9-4257-826b-43c31d4694b2",
+      "name": "QA Worker",
+      "profile": "worker",
+      "role": "qa-worker",
+      "paperclipRole": "qa",
+      "executionClass": "cli",
+      "model": "gpt-5.6-luna"
+    },
+    {
+      "id": "df437a20-1e6f-450f-89d6-895ab6a59425",
+      "name": "Image Worker",
+      "profile": "worker",
+      "role": "image-worker",
+      "paperclipRole": "general",
+      "executionClass": "cli",
+      "model": "gpt-5.6-luna"
+    },
+    {
+      "id": "2fdde512-aa29-4115-8b83-3be713d71cf3",
+      "name": "Voice Worker",
+      "profile": "worker",
+      "role": "voice-worker",
+      "paperclipRole": "general",
+      "executionClass": "cli",
+      "model": "gpt-5.6-luna"
+    },
+    {
+      "id": "12378369-9f04-4ad7-a5d5-8774aa4238dd",
+      "name": "Document Worker",
+      "profile": "worker",
+      "role": "document-worker",
+      "paperclipRole": "general",
+      "executionClass": "cli",
+      "model": "gpt-5.6-luna"
+    }
+  ]
+}

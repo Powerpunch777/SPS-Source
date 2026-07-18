@@ -1,0 +1,11 @@
+{
+  "name": "paperclip-image-worker-asset-tool",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-selectable asset generation tool for a Paperclip Image Worker.",
+  "scripts": {
+    "test": "node tests/asset-tool.test.mjs",
+    "check": "node --check asset-worker-tool.mjs && node --check lib/asset-tool-core.mjs && npm test"
+  }
+}

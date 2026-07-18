@@ -1,0 +1,24 @@
+{
+  "provider": "pixel_lab",
+  "operation": "create_tileset",
+  "asset": {
+    "name": "forest-floor-transition",
+    "kind": "terrain_tileset",
+    "outputDir": "Assets/Art/Generated/PixelLab"
+  },
+  "input": {
+    "lowerDescription": "mossy forest soil with small leaves and compact dark-green pixel clusters",
+    "upperDescription": "worn royal stone floor with cool gray blocks and faint gold inlay",
+    "transitionDescription": "broken stone edges reclaimed by moss and roots",
+    "tileSize": {
+      "width": 16,
+      "height": 16
+    },
+    "mode": "standard",
+    "view": "high top-down",
+    "outline": "selective dark outline",
+    "shading": "medium shading",
+    "detail": "medium detail",
+    "seed": 1802
+  }
+}

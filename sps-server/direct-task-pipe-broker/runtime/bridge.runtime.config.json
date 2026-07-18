@@ -1,0 +1,14 @@
+{
+    "enabled":  true,
+    "server":  {
+                   "host":  "127.0.0.1",
+                   "port":  3105
+               },
+    "projectWorkspaceMappings":  {
+                                     "1a3fe2e8-f7a2-4fe6-9df7-eab58914b999":  "C:/Users/young/Documents/Unreal Projects/강해린"
+                                 },
+    "jobTimeoutMs":  300000,
+    "mockExecution":  false,
+    "mockDurationMs":  100,
+    "mockResultMode":  "success"
+}

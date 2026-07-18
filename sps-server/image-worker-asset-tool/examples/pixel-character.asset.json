@@ -1,0 +1,15 @@
+{
+  "provider": "pixel_lab",
+  "operation": "create_character_4_directions",
+  "asset": {
+    "name": "forest-ranger",
+    "kind": "pixel_character",
+    "outputDir": "Assets/Art/Generated"
+  },
+  "input": {
+    "description": "original top-down pixel-art forest ranger, short green cloak, simple bow, 32-bit-era style, clean dark outline, transparent background",
+    "imageSize": { "width": 64, "height": 64 },
+    "noBackground": true,
+    "seed": 42
+  }
+}

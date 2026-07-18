@@ -1,0 +1,29 @@
+{
+  "provider": "pixel_lab",
+  "operation": "generate_with_style_v2",
+  "asset": {
+    "name": "forest-royal-altar",
+    "kind": "environment_prop",
+    "outputDir": "Assets/Art/Generated/PixelLab"
+  },
+  "input": {
+    "description": "small overgrown royal altar for a top-down combat room, original fantasy design, clear walkable silhouette, no text",
+    "imageSize": {
+      "width": 64,
+      "height": 64
+    },
+    "styleImages": [
+      {
+        "path": "Art/References/approved-gameplay-style.png",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "usageDescription": "Match palette, outline weight, pixel density, shading, and camera angle"
+      }
+    ],
+    "styleDescription": "original polished 16-bit top-down action roguelike, compact shapes, restrained highlights, dark navy outlines",
+    "noBackground": true,
+    "seed": 1801
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "provider": "pixel_lab",
+  "operation": "animate_character",
+  "asset": {
+    "name": "hero-walk",
+    "kind": "character_animation",
+    "outputDir": "Assets/Art/Generated/PixelLab"
+  },
+  "input": {
+    "characterId": "REPLACE_WITH_APPROVED_CHARACTER_ID",
+    "animationName": "walk",
+    "actionDescription": "balanced top-down walking cycle with clear alternating steps, stable head and equipment, cloak settling between strides",
+    "mode": "v3",
+    "frameCount": 6,
+    "directions": [
+      "south",
+      "south-east",
+      "east",
+      "north-east",
+      "north",
+      "north-west",
+      "west",
+      "south-west"
+    ],
+    "enhancePrompt": false,
+    "seed": 1702
+  }
+}

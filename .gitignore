@@ -1,0 +1,23 @@
+# Runtime state and machine-local settings
+.sps/
+**/node_modules/
+**/.git/
+**/.env
+**/.env.*
+!**/.env.example
+**/config.local.json
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.pem
+**/*.key
+
+# Generated artifacts and local execution traces
+sps-core/server/ui-dist/
+sps-server/.direct-agy-runs/
+sps-server/.tmp/
+sps-server/logs/
+**/coverage/
+**/.turbo/
+**/playwright-report/
+**/test-results/
