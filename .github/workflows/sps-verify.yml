@@ -49,7 +49,7 @@ jobs:
         run: node sps-server/deploy/hub/test-public-hub-proxy-boundary.mjs
 
       - name: Test SPS Node ownership and signed command authority
-        run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/sps-nodes-routes.test.ts src/services/sps-node-execution.test.ts --pool=forks --isolate
+        run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/sps-nodes-routes.test.ts src/services/sps-node-execution.test.ts src/services/heartbeat-sps-node-policy.test.ts --pool=forks --isolate
 
       - name: Build the SPS browser UI
         run: pnpm --filter @paperclipai/ui run build

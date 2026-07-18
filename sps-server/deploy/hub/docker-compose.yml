@@ -38,6 +38,7 @@ services:
       SPS_AUTH_PUBLIC_BASE_URL: "${SPS_PUBLIC_URL:?Run Initialize-SPSHubDeployment.ps1 first}"
       SPS_AUTH_BASE_URL_MODE: explicit
       SPS_AUTH_GOOGLE_ONLY: "true"
+      SPS_REQUIRE_NODE_EXECUTION: "true"
       SPS_BUNDLED_PLUGIN_PATHS: /opt/sps-plugins/room-chat
       SPS_GOOGLE_CLIENT_ID: "${SPS_GOOGLE_CLIENT_ID:?Run Initialize-SPSHubDeployment.ps1 first}"
       SPS_GOOGLE_CLIENT_SECRET: "${SPS_GOOGLE_CLIENT_SECRET:?Run Initialize-SPSHubDeployment.ps1 first}"

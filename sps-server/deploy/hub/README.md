@@ -92,6 +92,11 @@ Codex, Claude Code, Gemini, or OpenCode. A public Hub coordinates work and
 stores team state; an approved SPS Desktop Node is the only place where a
 member's local CLI or local AI runtime may execute a command.
 
+Public Hub deployments also set `SPS_REQUIRE_NODE_EXECUTION=true`. A local
+CLI or local AI Agent without an approved primary Node fails clearly instead
+of falling back to the Hub. HTTP/API Agents are unaffected, so a team can
+still use centrally configured specialist APIs where its policy allows them.
+
 ## Update and backup
 
 Pull the SPS repository and its pinned Core revision, then rebuild:
