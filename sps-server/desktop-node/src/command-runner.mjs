@@ -1,9 +1,14 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { appendSpsNodeCommandEvent, completeSpsNodeCommand } from "./hub-client.mjs";
+import {
+  appendSpsNodeCommandEvent,
+  checkSpsNodeCommandLease,
+  completeSpsNodeCommand,
+} from "./hub-client.mjs";
 
 const OUTPUT_CHUNK_LIMIT = 48 * 1024;
+const COMMAND_LEASE_CHECK_INTERVAL_MS = 2_000;
 const FORBIDDEN_ENV_KEYS = new Set([
   "ANTHROPIC_API_KEY",
   "CODEX_HOME",
@@ -182,6 +187,9 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
   const startedAt = Date.now();
   let timeout = null;
   let child = null;
+  let leaseTimer = null;
+  let leaseCheckInFlight = false;
+  let leaseCancellationError = null;
   try {
     const invocation = await resolveSpsNodeInvocation(command.command, command.args);
     const result = await new Promise((resolve, reject) => {
@@ -203,8 +211,33 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
       child.stderr.on("data", (chunk) => enqueueOutput("stderr", chunk.toString("utf8")));
       child.once("error", (error) => settle(reject, error));
       child.once("close", (exitCode, signal) => {
+        if (leaseTimer) clearInterval(leaseTimer);
         settle(resolve, { exitCode, signal, timedOut });
       });
+      const checkLease = async () => {
+        if (leaseCheckInFlight || leaseCancellationError) return;
+        leaseCheckInFlight = true;
+        try {
+          const lease = await checkSpsNodeCommandLease({
+            hubUrl,
+            nodeId,
+            identity,
+            accessToken,
+            commandId: command.id,
+          });
+          if (!lease?.active) {
+            leaseCancellationError = lease?.error || "SPS Hub cancelled this local command.";
+            await terminateProcessTree(child);
+          }
+        } catch {
+          // A brief Hub outage must not kill a local run. The Hub will make the
+          // command inactive once it receives a later lease check after a revoke.
+        } finally {
+          leaseCheckInFlight = false;
+        }
+      };
+      leaseTimer = setInterval(() => { void checkLease(); }, COMMAND_LEASE_CHECK_INTERVAL_MS);
+      void checkLease();
       if (typeof command.stdin === "string" && command.stdin.length > 0) child.stdin.end(command.stdin);
       else child.stdin.end();
       if (timeoutMs > 0) {
@@ -217,6 +250,7 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
       }
     });
     if (timeout) clearTimeout(timeout);
+    if (leaseTimer) clearInterval(leaseTimer);
     await outputQueue;
     await completeSpsNodeCommand({
       hubUrl,
@@ -225,16 +259,17 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
       accessToken,
       commandId: command.id,
       completion: {
-        status: result.exitCode === 0 && !result.timedOut ? "succeeded" : "failed",
+        status: result.exitCode === 0 && !result.timedOut && !leaseCancellationError ? "succeeded" : "failed",
         exitCode: result.exitCode,
         signal: result.signal,
         timedOut: result.timedOut,
-        error: result.timedOut ? `Local command exceeded ${timeoutMs}ms.` : null,
+        error: leaseCancellationError ?? (result.timedOut ? `Local command exceeded ${timeoutMs}ms.` : null),
       },
     });
     return { ...result, workspace, elapsedMs: Date.now() - startedAt };
   } catch (error) {
     if (timeout) clearTimeout(timeout);
+    if (leaseTimer) clearInterval(leaseTimer);
     await outputQueue.catch(() => undefined);
     await completeSpsNodeCommand({
       hubUrl,

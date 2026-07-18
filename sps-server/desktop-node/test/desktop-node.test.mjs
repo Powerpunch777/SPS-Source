@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildHeartbeatMessage,
   buildSignedRequestMessage,
+  checkSpsNodeCommandLease,
   canonicalJson,
   claimSpsNodeCommand,
   createNodeIdentity,
@@ -180,6 +181,28 @@ test("claims Node commands through a signed Board-authenticated request", async 
   const body = JSON.parse(requests[0].options.body);
   assert.equal(typeof body.signature, "string");
   assert.equal(body.privateKeyPem, undefined);
+});
+
+test("checks the signed command lease before a long-running local command continues", async () => {
+  const identity = createNodeIdentity();
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    return new Response(JSON.stringify({ active: false, status: "failed", error: "access revoked" }), { status: 200 });
+  };
+  const lease = await checkSpsNodeCommandLease({
+    fetchImpl,
+    hubUrl: "https://sps.example.test",
+    nodeId: "node-1",
+    identity,
+    accessToken: "board-token",
+    commandId: "command-1",
+  });
+  assert.equal(lease.active, false);
+  assert.equal(requests[0].url, "https://sps.example.test/api/sps-nodes/node-1/commands/command-1/lease");
+  assert.equal(requests[0].options.headers.authorization, "Bearer board-token");
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(typeof body.signature, "string");
 });
 
 test("uses the existing Hub browser-approval challenge for Desktop sign-in", async () => {

@@ -187,6 +187,27 @@ export async function appendSpsNodeCommandEvent({
   });
 }
 
+export async function checkSpsNodeCommandLease({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  commandId,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/commands/${encodeURIComponent(commandId)}/lease`;
+  return signedNodeRequestJson({
+    fetchImpl,
+    hubUrl,
+    nodeId,
+    identity,
+    accessToken,
+    method: "POST",
+    path,
+    payload: {},
+  });
+}
+
 export async function completeSpsNodeCommand({
   fetchImpl = fetch,
   hubUrl,

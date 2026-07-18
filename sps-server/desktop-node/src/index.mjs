@@ -10,6 +10,7 @@ export {
   sendSpsNodeHeartbeat,
   claimSpsNodeCommand,
   appendSpsNodeCommandEvent,
+  checkSpsNodeCommandLease,
   completeSpsNodeCommand,
   startSpsDesktopAuth,
 } from "./hub-client.mjs";
