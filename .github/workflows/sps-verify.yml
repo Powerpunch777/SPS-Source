@@ -1,0 +1,73 @@
+name: Verify SPS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: SPS Core compatibility
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: external/sps-core
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: external/sps-core/pnpm-lock.yaml
+
+      - name: Install Core dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck SPS Core server
+        run: pnpm --filter @paperclipai/server run typecheck
+
+      - name: Test SPS-branded first-admin setup
+        run: pnpm --filter @paperclipai/ui exec vitest run src/App.test.tsx
+
+      - name: Test SPS hostname guidance
+        run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/private-hostname-guard.test.ts
+
+      - name: Build the SPS browser UI
+        run: pnpm --filter @paperclipai/ui run build
+
+  desktop:
+    name: SPS Desktop and Node
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            sps-server/desktop/package-lock.json
+
+      - name: Install SPS Desktop dependencies
+        working-directory: sps-server/desktop
+        run: npm ci
+
+      - name: Test SPS Desktop invite and update flow
+        working-directory: sps-server/desktop
+        run: npm test
+
+      - name: Test SPS node signing, command lease, and capability flow
+        working-directory: sps-server/desktop-node
+        run: npm test
