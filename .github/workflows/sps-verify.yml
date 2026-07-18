@@ -40,6 +40,10 @@ jobs:
       - name: Test SPS public Hub authentication configuration
         run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/private-hostname-guard.test.ts src/__tests__/sps-google-auth-config.test.ts
 
+      - name: Verify SPS public Hub execution boundary
+        working-directory: ${{ github.workspace }}
+        run: node sps-server/deploy/hub/test-public-hub-image-boundary.mjs
+
       - name: Test SPS Node ownership and signed command authority
         run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/sps-nodes-routes.test.ts src/services/sps-node-execution.test.ts --pool=forks --isolate
 

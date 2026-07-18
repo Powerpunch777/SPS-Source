@@ -87,6 +87,11 @@ active commands for that pairing. The Hub workspace opens in a separate
 sandboxed Desktop window and does not receive the privileged local Node setup
 bridge.
 
+The public Hub image deliberately does not install provider CLIs such as
+Codex, Claude Code, Gemini, or OpenCode. A public Hub coordinates work and
+stores team state; an approved SPS Desktop Node is the only place where a
+member's local CLI or local AI runtime may execute a command.
+
 ## Update and backup
 
 Pull the SPS repository and its pinned Core revision, then rebuild:
