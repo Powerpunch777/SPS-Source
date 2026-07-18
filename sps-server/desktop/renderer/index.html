@@ -22,14 +22,15 @@
           <label>Company ID <input id="company-id" placeholder="Sign in first to load your companies" /></label>
           <label>Your companies <select id="company-picker" disabled><option value="">Sign in with Google first</option></select></label>
           <label>Computer name <input id="display-name" required placeholder="My Windows PC" /></label>
-          <label>Default workspace folder <input id="default-workspace-path" placeholder="C:\\Projects\\my-project" /></label>
+          <label>Default folder for unscoped runs <input id="default-workspace-path" placeholder="C:\\Projects\\scratch" /></label>
+          <p class="muted">Project Tasks never fall back to this folder. Map every project you allow this computer to run below.</p>
           <button type="submit">Save profile</button>
         </form>
       </section>
 
       <section class="panel">
         <h2>Project folders</h2>
-        <p class="muted">Choose a project you can access, then map it to its local clone on this computer. Leave the folder blank to remove a mapping.</p>
+        <p class="muted">Choose a project you can access, then map it to its local clone on this computer. SPS blocks that project&apos;s Agent runs until this mapping exists. Leave the folder blank to remove a mapping.</p>
         <form id="project-workspace-form">
           <label>SPS project <select id="project-workspace-project-id" required disabled><option value="">Sign in and choose a company first</option></select></label>
           <label>Local folder <input id="project-workspace-path" placeholder="C:\\Projects\\my-project" /></label>
