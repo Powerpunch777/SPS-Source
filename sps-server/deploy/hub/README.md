@@ -80,6 +80,12 @@ not a public Hub and cannot be used by a friend outside that computer.
 Before step 4, SPS Desktop sends only signed heartbeats. It does not poll or
 execute Agent commands until the Hub returns the Node as `active`.
 
+A computer owner can choose **Disconnect this computer** in SPS Desktop at
+any time. That immediately revokes that Node, clears its Agent grants and
+primary bindings, cancels its queued or active commands, and discards its
+local Node identity. Connecting it again creates a new pending Node that an
+owner must approve.
+
 The Hub only sends signed command requests to an approved Node. Provider
 credentials, local CLI sessions, and local AI model files never leave the
 member computer. Removing an Agent grant or Node approval cancels queued and
@@ -115,7 +121,8 @@ needed to read the existing data and preserve Google sign-in sessions.
 ## Incident response
 
 To immediately stop execution on one computer, revoke its Node approval or
-remove the specific Agent grant from SPS. To stop all Hub services while
+remove the specific Agent grant from SPS. A computer owner can also disconnect
+their own Node from SPS Desktop. To stop all Hub services while
 retaining volumes:
 
 ```powershell

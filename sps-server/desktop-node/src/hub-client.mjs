@@ -188,6 +188,21 @@ export async function sendSpsNodeHeartbeat({
   );
 }
 
+export async function disconnectSpsNode({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  accessToken,
+}) {
+  return requestJson(
+    fetchImpl,
+    apiUrl(hubUrl, `/sps-nodes/${encodeURIComponent(nodeId)}/disconnect`),
+    "POST",
+    {},
+    accessToken,
+  );
+}
+
 export async function claimSpsNodeCommand({
   fetchImpl = fetch,
   hubUrl,

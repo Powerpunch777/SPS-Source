@@ -13,6 +13,8 @@ It provides:
 - Approved CLI and local-model commands with argument-array process spawning.
 - Node-owner project folder mappings: a command for a Project cannot fall back
   to the default folder or to another Project's repository.
+- Owner-initiated Node disconnection, which revokes that computer's Agent
+  authority and requires a fresh key and Owner approval before reconnecting.
 
 It deliberately does not provide:
 

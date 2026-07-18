@@ -19,6 +19,7 @@ export {
   appendSpsNodeCommandEvent,
   checkSpsNodeCommandLease,
   completeSpsNodeCommand,
+  disconnectSpsNode,
   startSpsDesktopAuth,
 } from "./hub-client.mjs";
 export {

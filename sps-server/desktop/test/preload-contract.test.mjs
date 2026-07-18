@@ -16,5 +16,6 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /contextBridge\.exposeInMainWorld\("spsDesktop"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:check-hub"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:connect-node"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:disconnect-node"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:choose-project-workspace"\)/);
 });

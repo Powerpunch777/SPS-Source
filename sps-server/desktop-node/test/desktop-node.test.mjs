@@ -6,6 +6,7 @@ import {
   buildHeartbeatMessage,
   buildSignedRequestMessage,
   checkSpsNodeCommandLease,
+  disconnectSpsNode,
   canonicalJson,
   claimSpsNodeCommand,
   createNodeIdentity,
@@ -340,6 +341,22 @@ test("preserves Hub denial status when a Node heartbeat is rejected", async () =
       && error.status === 403
       && error.message === "This SPS Node has been revoked",
   );
+});
+
+test("lets a computer remove its own Node with its protected SPS Desktop session", async () => {
+  const requests = [];
+  await disconnectSpsNode({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return new Response(JSON.stringify({ id: "node-1", status: "revoked" }), { status: 200 });
+    },
+    hubUrl: "https://sps.example.test",
+    nodeId: "node-1",
+    accessToken: "board-token",
+  });
+  assert.equal(requests[0].url, "https://sps.example.test/api/sps-nodes/node-1/disconnect");
+  assert.equal(requests[0].options.method, "POST");
+  assert.equal(requests[0].options.headers.authorization, "Bearer board-token");
 });
 
 test("claims Node commands through a signed Board-authenticated request", async () => {

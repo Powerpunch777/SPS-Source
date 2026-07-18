@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("spsDesktop", {
   pollAuth: () => ipcRenderer.invoke("desktop:poll-auth"),
   scanCapabilities: () => ipcRenderer.invoke("desktop:scan-capabilities"),
   connectNode: () => ipcRenderer.invoke("desktop:connect-node"),
+  disconnectNode: () => ipcRenderer.invoke("desktop:disconnect-node"),
   openWorkspace: () => ipcRenderer.invoke("desktop:open-workspace"),
   openSetup: () => ipcRenderer.invoke("desktop:open-setup"),
   signOut: () => ipcRenderer.invoke("desktop:sign-out"),

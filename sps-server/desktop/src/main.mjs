@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   createNodeIdentity,
   claimSpsNodeCommand,
+  disconnectSpsNode,
   executeSpsNodeCommand,
   listSpsCompanies,
   listSpsProjects,
@@ -396,6 +397,34 @@ async function connectNode() {
   return { node, verified, capabilities };
 }
 
+async function disconnectCurrentNode() {
+  const nodeId = state.nodeId;
+  const hubUrl = state.profile?.hubUrl;
+  const accessToken = currentBoardToken();
+  let remoteDisconnected = false;
+  let remoteError = null;
+
+  stopNodeScheduling();
+  if (nodeId && hubUrl && accessToken) {
+    try {
+      await disconnectSpsNode({ hubUrl, nodeId, accessToken });
+      remoteDisconnected = true;
+    } catch (error) {
+      remoteError = error instanceof Error ? error.message : "Could not disconnect this computer from the SPS Hub.";
+    }
+  } else if (nodeId) {
+    remoteError = "This computer could not contact the SPS Hub to disconnect. An owner must revoke it from SPS Hub > Settings > Nodes.";
+  }
+
+  state.identity = null;
+  state.nodeId = null;
+  state.nodeStatus = null;
+  resetNodeRuntimeStatus();
+  closeWorkspaceWindow();
+  await persistState();
+  return { nodeId, remoteDisconnected, remoteError };
+}
+
 async function sendNodeHeartbeat() {
   try {
     if (!state.nodeId || !state.profile || !state.identity) return null;
@@ -636,18 +665,19 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:scan-capabilities", () => scanLocalCapabilities());
   ipcMain.handle("desktop:connect-node", connectNode);
+  ipcMain.handle("desktop:disconnect-node", async () => {
+    const nodeDisconnect = await disconnectCurrentNode();
+    return { ...publicStatus(), nodeDisconnect };
+  });
   ipcMain.handle("desktop:sign-out", async () => {
+    const nodeDisconnect = await disconnectCurrentNode();
     pendingAuth = null;
     state.encryptedBoardApiToken = null;
-    state.nodeId = null;
-    state.nodeStatus = null;
     state.companies = [];
     state.projects = [];
-    stopNodeScheduling();
-    closeWorkspaceWindow();
     await persistState();
     await openSetup();
-    return publicStatus();
+    return { ...publicStatus(), nodeDisconnect };
   });
 }
 

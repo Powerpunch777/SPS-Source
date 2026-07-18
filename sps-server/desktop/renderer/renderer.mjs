@@ -102,6 +102,7 @@ function renderSetupReadiness(status) {
   $("#poll-auth").disabled = !readiness.canCheckAuth;
   $("#sign-out").disabled = !status.signedIn;
   $("#connect-node").disabled = !readiness.canConnectNode;
+  $("#disconnect-node").disabled = !status.nodeId;
   $("#open-workspace").disabled = !readiness.canOpenWorkspace;
   $("#choose-project-workspace").disabled = !readiness.canManageProjects;
   $("#refresh-projects").disabled = !readiness.canManageProjects;
@@ -250,8 +251,11 @@ $("#poll-auth").addEventListener("click", () => run(async () => {
     : "Approval is still waiting.");
 }));
 $("#sign-out").addEventListener("click", () => run(async () => {
-  await window.spsDesktop.signOut();
-  showNotice("Local SPS Desktop token removed.");
+  const result = await window.spsDesktop.signOut();
+  const outcome = result.nodeDisconnect;
+  showNotice(outcome?.remoteDisconnected
+    ? "Signed out and disconnected this computer from SPS."
+    : outcome?.remoteError ?? "Local SPS Desktop token removed.");
 }));
 $("#check-updates").addEventListener("click", () => run(async () => {
   await window.spsDesktop.checkUpdates();
@@ -279,6 +283,16 @@ $("#connect-node").addEventListener("click", () => run(async () => {
     : wasRegistered
       ? "Computer and local capabilities refreshed."
       : "Computer registered and heartbeat completed.");
+}));
+$("#disconnect-node").addEventListener("click", () => run(async () => {
+  if (!window.confirm("Disconnect this computer from SPS? Its Agent access and running work will be revoked immediately.")) return;
+  const result = await window.spsDesktop.disconnectNode();
+  const outcome = result.nodeDisconnect;
+  if (outcome?.remoteDisconnected) {
+    showNotice("This computer was disconnected. Reconnecting creates a new Node that needs Owner approval.");
+  } else {
+    showNotice(outcome?.remoteError ?? "This computer was disconnected locally. An Owner may need to revoke the old Node in SPS Hub.", true);
+  }
 }));
 $("#launch-at-login").addEventListener("change", (event) => run(async () => {
   await window.spsDesktop.setLaunchAtLogin({ enabled: event.target.checked });
