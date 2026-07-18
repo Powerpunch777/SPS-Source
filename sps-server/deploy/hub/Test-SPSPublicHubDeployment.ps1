@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$ConfigPath = (Join-Path $PSScriptRoot ".env"),
+  [ValidateSet("direct", "tunnel")]
+  [string]$Mode = "direct",
   [switch]$CheckPublicHealth
 )
 
@@ -29,6 +31,7 @@ function Read-SafeDotEnv {
 }
 
 $composePath = Join-Path $PSScriptRoot "docker-compose.yml"
+$tunnelComposePath = Join-Path $PSScriptRoot "docker-compose.tunnel.yml"
 $repositoryRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $corePackagePath = Join-Path $repositoryRoot "external\sps-core\server\package.json"
 if (Test-Path -LiteralPath $corePackagePath -PathType Leaf) {
@@ -48,6 +51,9 @@ if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
       "SPS_GOOGLE_CLIENT_ID",
       "SPS_GOOGLE_CLIENT_SECRET"
     )
+    if ($Mode -eq "tunnel") {
+      $required += "SPS_CLOUDFLARE_TUNNEL_TOKEN"
+    }
     $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace($environment[$_]) })
     $configurationDetail = if ($missing.Count -eq 0) {
       "Required keys are present; secret values were not printed."
@@ -78,7 +84,17 @@ try {
 
 if ($environment -and (Test-Path -LiteralPath $composePath -PathType Leaf)) {
   try {
-    & docker compose --env-file $ConfigPath -f $composePath config --quiet
+    $composeArguments = @("compose", "--env-file", $ConfigPath, "-f", $composePath)
+    if ($Mode -eq "tunnel") {
+      if (-not (Test-Path -LiteralPath $tunnelComposePath -PathType Leaf)) {
+        throw "Cloudflare Tunnel Compose override is missing."
+      }
+      $composeArguments += @("-f", $tunnelComposePath)
+    } else {
+      $composeArguments += @("--profile", "direct-exposure")
+    }
+    $composeArguments += @("config", "--quiet")
+    & docker @composeArguments
     if ($LASTEXITCODE -ne 0) { throw "Docker Compose rejected the deployment configuration." }
     Add-Check "Docker Compose configuration" $true "Compose resolved without printing secret values."
   } catch {

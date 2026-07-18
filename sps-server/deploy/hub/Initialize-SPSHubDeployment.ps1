@@ -6,6 +6,7 @@ param(
   [string]$GoogleClientId,
   [Parameter(Mandatory)]
   [string]$GoogleClientSecret,
+  [string]$CloudflareTunnelToken,
   [string]$OutputPath = (Join-Path $PSScriptRoot ".env"),
   [switch]$Force
 )
@@ -46,6 +47,9 @@ $normalizedGoogleClientSecret = $GoogleClientSecret.Trim()
 if ($normalizedGoogleClientId -notmatch "^[A-Za-z0-9._-]+$" -or $normalizedGoogleClientSecret -notmatch "^[A-Za-z0-9._-]+$") {
   throw "Google OAuth values must not contain whitespace, quotes, or Compose control characters."
 }
+if (-not [string]::IsNullOrWhiteSpace($CloudflareTunnelToken) -and $CloudflareTunnelToken.Trim() -match "[\s\"']") {
+  throw "Cloudflare Tunnel token must not contain whitespace or quotes."
+}
 
 $lines = @(
   "SPS_DOMAIN=$normalizedDomain",
@@ -55,6 +59,9 @@ $lines = @(
   "SPS_GOOGLE_CLIENT_ID=$normalizedGoogleClientId",
   "SPS_GOOGLE_CLIENT_SECRET=$normalizedGoogleClientSecret"
 )
+if (-not [string]::IsNullOrWhiteSpace($CloudflareTunnelToken)) {
+  $lines += "SPS_CLOUDFLARE_TUNNEL_TOKEN=$($CloudflareTunnelToken.Trim())"
+}
 
 $directory = Split-Path -Parent $OutputPath
 if ($directory) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }

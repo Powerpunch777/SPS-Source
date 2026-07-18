@@ -1,0 +1,18 @@
+# Cloudflare Tunnel deployment override for a home or private-network Hub.
+# Start it with docker-compose.yml and this file; do not enable the
+# direct-exposure profile at the same time.
+services:
+  cloudflared:
+    image: "${SPS_CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
+    restart: unless-stopped
+    depends_on:
+      sps-hub:
+        condition: service_healthy
+    environment:
+      # The container reads the token from its environment so it is not part
+      # of the process command line. Keep the source .env file private.
+      TUNNEL_TOKEN: "${SPS_CLOUDFLARE_TUNNEL_TOKEN:?Create a remotely-managed Cloudflare Tunnel and set its token in .env}"
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run

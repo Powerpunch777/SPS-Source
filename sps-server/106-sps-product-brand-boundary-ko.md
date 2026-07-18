@@ -63,7 +63,8 @@ SPS can be run locally now. A public Hub and shareable Windows installer require
 all of the following:
 
 1. Docker Engine running on the Hub computer.
-2. A public HTTPS domain and Google OAuth Web client values.
+2. A public HTTPS domain and Google OAuth Web client values. A Cloudflare
+   Tunnel can provide the Hub ingress without inbound port forwarding.
 3. A trusted Windows code-signing certificate and GitHub release signing
 secrets.
 4. A second physical computer used to accept an invite, register an SPS Desktop

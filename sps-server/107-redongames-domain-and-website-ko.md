@@ -10,7 +10,7 @@ SPS API origin. The authenticated collaboration service is isolated at
 | --- | --- | --- |
 | `https://redongames.com` | Public SPS product site, documentation entry point, GitHub and Desktop release links | GitHub Pages with Cloudflare DNS |
 | `https://www.redongames.com` | Optional alternate hostname; not configured yet | Future DNS-only CNAME to `Powerpunch777.github.io` |
-| `https://app.redongames.com` | Google-authenticated SPS Hub, invitations, Rooms, Tasks, Nodes and Agent grants | Docker Hub host with Caddy |
+| `https://app.redongames.com` | Google-authenticated SPS Hub, invitations, Rooms, Tasks, Nodes and Agent grants | Cloudflare Tunnel to the private Hub Docker network |
 
 This prevents the static public site from sharing cookies, runtime data,
 PostgreSQL access, or Docker lifecycle with the collaboration Hub.
@@ -53,13 +53,14 @@ node .\sps-server\website\scripts\check-site.mjs
    `Powerpunch777.github.io` only when the alternate hostname is needed.
 3. Choose a continuously available Hub computer or VPS. A friend-facing Hub
    cannot depend on a laptop that is usually asleep.
-4. Add the `app` DNS record to the Hub's public IP and initially leave it
-   DNS-only so Caddy can obtain its HTTPS certificate.
+4. Create a remotely-managed Cloudflare Tunnel and publish
+   `app.redongames.com` to `http://sps-hub:3100`. Cloudflare creates the
+   proxied tunnel DNS record; no public IP record or inbound port is needed.
 5. Create the Google OAuth web client using only
    `https://app.redongames.com/api/auth/callback/google` as its redirect URI.
 6. Create the ignored Hub `.env` with
-   `Initialize-SPSHubDeployment.ps1 -Domain app.redongames.com`, deploy Docker,
-   and pass the public health preflight.
+   `Initialize-SPSHubDeployment.ps1 -Domain app.redongames.com` and the Tunnel
+   connector token, deploy Docker, and pass the public health preflight.
 7. Run the real two-computer invitation, Node approval, Agent grant, and
    harmless command execution test.
 

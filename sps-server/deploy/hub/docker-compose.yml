@@ -54,6 +54,8 @@ services:
 
   caddy:
     image: caddy:2.10-alpine
+    profiles:
+      - direct-exposure
     restart: unless-stopped
     depends_on:
       sps-hub:

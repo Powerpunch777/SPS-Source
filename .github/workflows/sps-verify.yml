@@ -48,6 +48,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: node sps-server/deploy/hub/test-public-hub-proxy-boundary.mjs
 
+      - name: Verify SPS Cloudflare Tunnel Hub boundary
+        working-directory: ${{ github.workspace }}
+        run: node sps-server/deploy/hub/test-cloudflare-tunnel-hub-boundary.mjs
+
       - name: Test SPS Node ownership and signed command authority
         run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/sps-nodes-routes.test.ts src/services/sps-node-execution.test.ts src/services/heartbeat-sps-node-policy.test.ts --pool=forks --isolate
 
