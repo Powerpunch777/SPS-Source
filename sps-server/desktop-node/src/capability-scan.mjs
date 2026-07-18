@@ -1,7 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { resolveSpsNodeInvocation } from "./command-runner.mjs";
 
 const MAX_PUBLISHED_MODELS = 24;
 const MAX_PUBLISHED_MODEL_LENGTH = 160;
+const MAX_RUNTIME_OUTPUT_BYTES = 16 * 1024;
 const RUNTIMES = [
   { command: "claude", kind: "claude_cli", label: "Claude Code" },
   { command: "codex", kind: "codex_cli", label: "Codex CLI" },
@@ -25,23 +27,59 @@ const RUNTIMES = [
   },
 ];
 
-function defaultFindCommand(command) {
-  const result = spawnSync(process.platform === "win32" ? "where.exe" : "which", [command], {
-    encoding: "utf8",
-    timeout: 3_000,
-    windowsHide: true,
+async function defaultFindCommand(command) {
+  return await new Promise((resolve) => {
+    const lookup = spawn(process.platform === "win32" ? "where.exe" : "which", [command], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    lookup.once("error", () => resolve(false));
+    lookup.once("close", (code) => resolve(code === 0));
   });
-  return result.status === 0;
 }
 
-function defaultReadVersion(command) {
-  const result = spawnSync(command, ["--version"], {
-    encoding: "utf8",
-    timeout: 5_000,
-    windowsHide: true,
+async function readRuntimeOutput(command, args, { timeoutMs = 8_000 } = {}) {
+  let invocation;
+  try {
+    invocation = await resolveSpsNodeInvocation(command, args);
+  } catch {
+    return null;
+  }
+
+  return await new Promise((resolve) => {
+    const child = spawn(invocation.executable, invocation.args, {
+      windowsHide: true,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    let settled = false;
+    let timeout = null;
+    const append = (chunk) => {
+      if (output.length >= MAX_RUNTIME_OUTPUT_BYTES) return;
+      output += chunk.toString("utf8").slice(0, MAX_RUNTIME_OUTPUT_BYTES - output.length);
+    };
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      resolve(value);
+    };
+    timeout = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, timeoutMs);
+    child.stdout.on("data", append);
+    child.stderr.on("data", append);
+    child.once("error", () => finish(null));
+    child.once("close", (code) => finish(code === 0 ? output : null));
   });
-  if (result.status !== 0) return null;
-  const firstLine = `${result.stdout}\n${result.stderr}`
+}
+
+async function defaultReadVersion(command) {
+  const output = await readRuntimeOutput(command, ["--version"], { timeoutMs: 5_000 });
+  if (!output) return null;
+  const firstLine = output
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean);
@@ -102,37 +140,34 @@ export function parseLmStudioModels(output) {
   }
 }
 
-function defaultReadModels(command, args, parseModels) {
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    timeout: 8_000,
-    windowsHide: true,
-  });
-  if (result.status !== 0) return [];
-  return parseModels(result.stdout);
+async function defaultReadModels(command, args, parseModels) {
+  const output = await readRuntimeOutput(command, args);
+  return output ? parseModels(output) : [];
 }
 
-export function scanLocalCapabilities({
+export async function scanLocalCapabilities({
   findCommand = defaultFindCommand,
   readVersion = defaultReadVersion,
   readModels = defaultReadModels,
 } = {}) {
-  return RUNTIMES
-    .filter((runtime) => findCommand(runtime.command))
-    .map((runtime) => {
-      let models = [];
-      if (runtime.modelArgs && runtime.parseModels) {
-        try {
-          models = publishedModelNames(readModels(runtime.command, runtime.modelArgs, runtime.parseModels));
-        } catch {
-          models = [];
-        }
+  const capabilities = [];
+  for (const runtime of RUNTIMES) {
+    if (!await findCommand(runtime.command)) continue;
+    const version = await readVersion(runtime.command);
+    let models = [];
+    if (runtime.modelArgs && runtime.parseModels) {
+      try {
+        models = publishedModelNames(await readModels(runtime.command, runtime.modelArgs, runtime.parseModels));
+      } catch {
+        models = [];
       }
-      return {
-        kind: runtime.kind,
-        label: runtime.label,
-        version: readVersion(runtime.command),
-        ...(models.length > 0 ? { models } : {}),
-      };
+    }
+    capabilities.push({
+      kind: runtime.kind,
+      label: runtime.label,
+      version,
+      ...(models.length > 0 ? { models } : {}),
     });
+  }
+  return capabilities;
 }

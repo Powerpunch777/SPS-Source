@@ -125,8 +125,8 @@ test("signs canonical Desktop command requests without including private key mat
   assert.equal(JSON.stringify(request).includes("privateKeyPem"), false);
 });
 
-test("publishes only capability names and versions, not executable paths", () => {
-  const capabilities = scanLocalCapabilities({
+test("publishes only capability names and versions, not executable paths", async () => {
+  const capabilities = await scanLocalCapabilities({
     findCommand: (command) => ["claude", "codex", "gemini", "opencode", "pi", "ollama"].includes(command),
     readVersion: (command) => `${command} 1.2.3`,
     readModels: () => [],
@@ -142,8 +142,8 @@ test("publishes only capability names and versions, not executable paths", () =>
   assert.equal(JSON.stringify(capabilities).includes("C:\\\\"), false);
 });
 
-test("publishes bounded local model identifiers without local filesystem paths", () => {
-  const capabilities = scanLocalCapabilities({
+test("publishes bounded local model identifiers without local filesystem paths", async () => {
+  const capabilities = await scanLocalCapabilities({
     findCommand: (command) => ["ollama", "lms"].includes(command),
     readVersion: (command) => `${command} 1.2.3`,
     readModels: (command) => command === "ollama"

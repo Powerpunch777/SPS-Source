@@ -372,7 +372,7 @@ async function connectNode() {
   if (!accessToken) throw new Error("Sign in to SPS Desktop before registering this computer");
   const identity = await ensureIdentity();
   resetNodeRuntimeStatus();
-  const capabilities = scanLocalCapabilities();
+  const capabilities = await scanLocalCapabilities();
   const node = await registerSpsNode({
     hubUrl: state.profile.hubUrl,
     companyId: state.profile.companyId,
@@ -663,7 +663,7 @@ function registerIpc() {
     }
     return { ...publicStatus(), auth: result };
   });
-  ipcMain.handle("desktop:scan-capabilities", () => scanLocalCapabilities());
+  ipcMain.handle("desktop:scan-capabilities", async () => await scanLocalCapabilities());
   ipcMain.handle("desktop:connect-node", connectNode);
   ipcMain.handle("desktop:disconnect-node", async () => {
     const nodeDisconnect = await disconnectCurrentNode();

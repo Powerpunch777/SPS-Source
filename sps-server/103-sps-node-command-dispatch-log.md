@@ -96,6 +96,10 @@ same Hub workplane inside the Electron window.
   wrapper's verified local JavaScript entry point. This extends the earlier
   Codex `spawn EPERM` fix to compatible Agy, LM Studio, and future npm CLI
   runtimes without invoking a command shell.
+- The local runtime scan uses that same no-shell resolver for version and
+  local-model checks. A Windows npm wrapper therefore reports the actual CLI
+  version to the Hub without exposing its local path or falling back to a
+  command shell.
 
 The invite deep link is also retained when it launches a fresh Windows app
 process. Changing Hub or company clears the prior Node binding, and changing
