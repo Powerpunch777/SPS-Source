@@ -2,6 +2,7 @@
 param(
   [string]$HubUrl = $env:SPS_PUBLIC_URL,
   [string]$InstallerPath,
+  [switch]$AllowUnsignedPilot,
   [switch]$SkipHubRequest
 )
 
@@ -85,7 +86,13 @@ if ($resolvedInstallerPath -and (Test-Path -LiteralPath $resolvedInstallerPath -
   $installer = Get-Item -LiteralPath $resolvedInstallerPath
   Add-Check "SPS Desktop installer" ($installer.Length -gt 0) "$($installer.FullName) ($($installer.Length) bytes)"
   $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
-  Add-Check "Trusted Windows code signature" ($signature.Status -eq "Valid") "Current signature status: $($signature.Status)."
+  if ($signature.Status -eq "Valid") {
+    Add-Check "Trusted Windows code signature" $true "Current signature status: $($signature.Status)."
+  } elseif ($AllowUnsignedPilot) {
+    Add-Check "Unsigned Pilot installer" $true "Current signature status: $($signature.Status). Allowed only for the manually downloaded SPS Desktop Pilot artifact; it cannot be a release or update source."
+  } else {
+    Add-Check "Trusted Windows code signature" $false "Current signature status: $($signature.Status)."
+  }
 } else {
   $expectedInstaller = if ([string]::IsNullOrWhiteSpace($InstallerPath)) {
     "No SPS Desktop Setup *.exe file was found below sps-server\desktop\dist*."

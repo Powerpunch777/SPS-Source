@@ -53,6 +53,13 @@ mapping, and a harmless Task on a second computer. Windows may warn because
 the pilot is unsigned; that is expected. Do not distribute the artifact as an
 SPS release or use it as an update source.
 
+Use the Pilot artifact with the explicit preflight mode below. The mode does
+not relax signing for normal releases:
+
+```powershell
+.\sps-server\scripts\Test-SPS-MultiNodeRelease.ps1 -AllowUnsignedPilot
+```
+
 ## Pilot preflight
 
 Before inviting a second computer, run the multi-node preflight from the SPS
