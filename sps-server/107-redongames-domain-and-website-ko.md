@@ -26,6 +26,10 @@ is selected. It is sufficient to create the Pages website now.
 The static website lives in `sps-server/website`.
 
 - It uses the approved SPS bitmap logo from the Desktop product assets.
+- GitHub Pages publishes the current default branch to
+  `https://powerpunch777.github.io/SPS/` as a public verification preview.
+  This is not the production custom-domain host and does not apply the
+  Cloudflare `_headers` policy.
 - It describes the actual SPS Room, Task, Node and permission flow rather than
   pretending that a public Hub is already open.
 - It links to the intended Hub address without embedding credentials, invite

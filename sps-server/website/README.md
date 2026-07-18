@@ -42,8 +42,10 @@ Set-Location .\sps-server\website
 npx --yes wrangler@4 pages deploy . --project-name redon-games --branch main
 ```
 
-GitHub Pages also publishes this branch as a temporary public preview. It uses
-the same static output and is intentionally not the final custom-domain host.
+GitHub Pages also publishes this branch as a temporary public preview at
+`https://powerpunch777.github.io/SPS/`. It uses the same static output and is
+intentionally not the final custom-domain host. GitHub Pages does not apply the
+Cloudflare `_headers` file, so production stays on Cloudflare Pages.
 
 ## SPS Hub domain
 
