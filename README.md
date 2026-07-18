@@ -177,3 +177,4 @@ npm run check
 - [협업 배포 준비도](sps-server/93-collaboration-deployment-readiness-ko.md)
 - [프로젝트 접근 제어](sps-server/94-project-access-control-ko.md)
 - [SPS Desktop 멀티노드 구조](sps-server/98-sps-desktop-multinode-architecture-ko.md)
+- [SPS 제품명·호환 경계](sps-server/106-sps-product-brand-boundary-ko.md)
