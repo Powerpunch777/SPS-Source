@@ -24,4 +24,3 @@ for (const providerRuntime of [
 
 assert.match(productionStage, /ENTRYPOINT \["docker-entrypoint\.sh"\]/);
 assert.match(productionStage, /CMD \["node"/);
-
