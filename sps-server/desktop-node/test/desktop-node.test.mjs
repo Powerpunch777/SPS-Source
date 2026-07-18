@@ -123,12 +123,15 @@ test("signs canonical Desktop command requests without including private key mat
 
 test("publishes only capability names and versions, not executable paths", () => {
   const capabilities = scanLocalCapabilities({
-    findCommand: (command) => command === "codex" || command === "opencode" || command === "ollama",
+    findCommand: (command) => ["claude", "codex", "gemini", "opencode", "pi", "ollama"].includes(command),
     readVersion: (command) => `${command} 1.2.3`,
   });
   assert.deepEqual(capabilities, [
+    { kind: "claude_cli", label: "Claude Code", version: "claude 1.2.3" },
     { kind: "codex_cli", label: "Codex CLI", version: "codex 1.2.3" },
+    { kind: "gemini_cli", label: "Gemini CLI", version: "gemini 1.2.3" },
     { kind: "opencode_cli", label: "OpenCode CLI", version: "opencode 1.2.3" },
+    { kind: "pi_cli", label: "Pi CLI", version: "pi 1.2.3" },
     { kind: "ollama", label: "Ollama", version: "ollama 1.2.3" },
   ]);
   assert.equal(JSON.stringify(capabilities).includes("C:\\\\"), false);

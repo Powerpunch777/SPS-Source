@@ -5,7 +5,8 @@ This package is the local, non-UI core that SPS Desktop will run from its Electr
 It provides:
 
 - Ed25519 device identity generation and signed heartbeat payloads.
-- Public capability discovery for Codex CLI, Agy CLI, Ollama, and LM Studio.
+- Public capability discovery for Claude Code, Codex CLI, Agy CLI, Gemini CLI,
+  OpenCode CLI, Pi CLI, Ollama, and LM Studio.
 - Hub registration, owner-authenticated heartbeats, and signed command requests.
 - Approved CLI and local-model commands with argument-array process spawning.
 - Node-owner project folder mappings: a command for a Project cannot fall back
