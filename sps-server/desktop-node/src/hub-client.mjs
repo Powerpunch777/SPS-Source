@@ -1,6 +1,14 @@
 import { createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
 import { normalizeHubUrl } from "./protocol.mjs";
 
+export class SpsHubRequestError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = "SpsHubRequestError";
+    this.status = status;
+  }
+}
+
 function apiUrl(hubUrl, path) {
   return `${normalizeHubUrl(hubUrl)}/api${path}`;
 }
@@ -16,7 +24,10 @@ async function requestJson(fetchImpl, url, method, body, accessToken) {
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new Error(data?.error ?? `SPS Hub request failed with ${response.status}`);
+    throw new SpsHubRequestError(
+      response.status,
+      data?.error ?? `SPS Hub request failed with ${response.status}`,
+    );
   }
   return data;
 }

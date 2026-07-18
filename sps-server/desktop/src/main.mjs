@@ -11,6 +11,7 @@ import {
   registerSpsNode,
   scanLocalCapabilities,
   sendSpsNodeHeartbeat,
+  SpsHubRequestError,
   startSpsDesktopAuth,
 } from "@sps/desktop-node";
 import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri } from "./invite.mjs";
@@ -194,6 +195,12 @@ async function applyNodeStatus(value, { persist = true } = {}) {
   }
   if (persist && changed) await persistState();
   return status;
+}
+
+function nodeWasRevoked(error) {
+  return error instanceof SpsHubRequestError
+    && error.status === 403
+    && error.message === "This SPS Node has been revoked";
 }
 
 function workspaceHubUrl() {
@@ -400,7 +407,13 @@ async function sendNodeHeartbeat() {
     nodeRuntimeStatus.heartbeatError = null;
     await applyNodeStatus(node.status);
     return node;
-  } catch {
+  } catch (error) {
+    if (nodeWasRevoked(error)) {
+      await applyNodeStatus("revoked");
+      nodeRuntimeStatus.heartbeatError = "This computer's SPS Node approval was revoked by the Owner. Command execution has stopped.";
+      nodeRuntimeStatus.commandPollError = "Command execution is disabled until this computer is registered and approved again.";
+      return null;
+    }
     nodeRuntimeStatus.heartbeatError = "Could not contact the Hub. Check the SPS Hub address, network, and Desktop sign-in.";
     return null;
   }

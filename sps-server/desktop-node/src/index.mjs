@@ -8,6 +8,7 @@ export {
 export { createNodeIdentity, createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
 export {
   cancelSpsDesktopAuth,
+  SpsHubRequestError,
   listSpsCompanies,
   listSpsProjects,
   pollSpsDesktopAuth,
