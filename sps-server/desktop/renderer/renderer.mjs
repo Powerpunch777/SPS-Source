@@ -79,8 +79,8 @@ function renderStatus(status) {
     `Hub: ${profile?.hubUrl ?? "not configured"}`,
     `Google sign-in: ${status.signedIn ? "connected" : "not connected"}`,
     `Company: ${profile?.companyId ? (status.companies.find((company) => company.id === profile.companyId)?.name ?? profile.companyId) : "not selected"}`,
-    `This computer: ${status.nodeId ? "registered" : "not registered"}`,
-    `Command runner: ${status.commandRunner?.active ? "running" : "waiting for registration"}`,
+    `This computer: ${status.nodeId ? `registered (${status.nodeStatus === "active" ? "approved" : status.nodeStatus === "pending" ? "waiting for Owner approval" : status.nodeStatus === "revoked" ? "revoked" : "checking approval"})` : "not registered"}`,
+    `Command runner: ${status.commandRunner?.active ? "running" : status.nodeId ? "waiting for Node approval" : "waiting for registration"}`,
     `Launch at Windows sign-in: ${status.commandRunner?.launchAtLogin ? "enabled" : "disabled"}`,
   ];
   if (connection) {

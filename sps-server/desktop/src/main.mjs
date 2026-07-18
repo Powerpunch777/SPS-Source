@@ -15,6 +15,7 @@ import {
 } from "@sps/desktop-node";
 import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri } from "./invite.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
+import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
 import { isSpsHubApiUrl, requireSpsHubOrigin } from "./workspace-url.mjs";
 import {
@@ -171,11 +172,28 @@ async function refreshProjects() {
 
 function stopNodeScheduling() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
-  if (commandPollTimer) clearInterval(commandPollTimer);
   heartbeatTimer = null;
+  stopCommandPolling();
+  resetNodeRuntimeStatus();
+}
+
+function stopCommandPolling() {
+  if (commandPollTimer) clearInterval(commandPollTimer);
   commandPollTimer = null;
   commandPollInFlight = false;
-  resetNodeRuntimeStatus();
+}
+
+async function applyNodeStatus(value, { persist = true } = {}) {
+  const status = normalizeSpsNodeStatus(value);
+  const changed = state.nodeStatus !== status;
+  state.nodeStatus = status;
+  if (canRunSpsNodeCommands(status)) {
+    if (!commandPollTimer) scheduleCommandPolling();
+  } else {
+    stopCommandPolling();
+  }
+  if (persist && changed) await persistState();
+  return status;
 }
 
 function workspaceHubUrl() {
@@ -284,6 +302,7 @@ function createApplicationMenu() {
           pendingAuth = null;
           state.encryptedBoardApiToken = null;
           state.nodeId = null;
+          state.nodeStatus = null;
           state.companies = [];
           state.projects = [];
           stopNodeScheduling();
@@ -320,13 +339,14 @@ function publicStatus() {
     hasIdentity: Boolean(state.identity),
     signedIn: Boolean(state.encryptedBoardApiToken),
     nodeId: state.nodeId,
+    nodeStatus: normalizeSpsNodeStatus(state.nodeStatus),
     companies: Array.isArray(state.companies) ? state.companies : [],
     projects: Array.isArray(state.projects) ? state.projects : [],
     pendingAuth: pendingAuth
       ? { approvalUrl: pendingAuth.approvalUrl, expiresAt: pendingAuth.expiresAt }
       : null,
     commandRunner: {
-      active: Boolean(commandPollTimer),
+      active: Boolean(commandPollTimer) && canRunSpsNodeCommands(state.nodeStatus),
       workspaceConfigured: Boolean(state.profile?.defaultWorkspacePath),
       launchAtLogin: Boolean(loginItemSettings.openAtLogin),
     },
@@ -360,34 +380,40 @@ async function connectNode() {
     accessToken,
   });
   state.nodeId = node.id;
+  await applyNodeStatus(verified.status ?? node.status, { persist: false });
   nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
   await persistState();
-  scheduleHeartbeat();
-  scheduleCommandPolling();
+  scheduleHeartbeat({ immediate: false });
   return { node, verified, capabilities };
 }
 
-function scheduleHeartbeat() {
+async function sendNodeHeartbeat() {
+  try {
+    if (!state.nodeId || !state.profile || !state.identity) return null;
+    const node = await sendSpsNodeHeartbeat({
+      hubUrl: state.profile.hubUrl,
+      nodeId: state.nodeId,
+      identity: currentIdentity(),
+      accessToken: currentBoardToken() ?? undefined,
+    });
+    nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
+    nodeRuntimeStatus.heartbeatError = null;
+    await applyNodeStatus(node.status);
+    return node;
+  } catch {
+    nodeRuntimeStatus.heartbeatError = "Could not contact the Hub. Check the SPS Hub address, network, and Desktop sign-in.";
+    return null;
+  }
+}
+
+function scheduleHeartbeat({ immediate = true } = {}) {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(async () => {
-    try {
-      if (!state.nodeId || !state.profile || !state.identity) return;
-      await sendSpsNodeHeartbeat({
-        hubUrl: state.profile.hubUrl,
-        nodeId: state.nodeId,
-        identity: currentIdentity(),
-        accessToken: currentBoardToken() ?? undefined,
-      });
-      nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
-      nodeRuntimeStatus.heartbeatError = null;
-    } catch {
-      nodeRuntimeStatus.heartbeatError = "Could not contact the Hub. Check the SPS Hub address, network, and Desktop sign-in.";
-    }
-  }, 60_000);
+  heartbeatTimer = setInterval(() => { void sendNodeHeartbeat(); }, 60_000);
+  if (immediate) void sendNodeHeartbeat();
 }
 
 async function pollNodeCommands() {
-  if (commandPollInFlight || !state.nodeId || !state.profile || !state.identity) return;
+  if (commandPollInFlight || !canRunSpsNodeCommands(state.nodeStatus) || !state.nodeId || !state.profile || !state.identity) return;
   const accessToken = currentBoardToken();
   if (!accessToken) return;
   commandPollInFlight = true;
@@ -421,6 +447,7 @@ async function pollNodeCommands() {
 }
 
 function scheduleCommandPolling() {
+  if (!canRunSpsNodeCommands(state.nodeStatus)) return;
   if (commandPollTimer) clearInterval(commandPollTimer);
   commandPollTimer = setInterval(() => {
     void pollNodeCommands();
@@ -473,6 +500,7 @@ function registerIpc() {
     const companyChanged = Boolean(previousProfile && previousProfile.companyId !== companyId);
     if (connectionScopeChanged) {
       state.nodeId = null;
+      state.nodeStatus = null;
       stopNodeScheduling();
       closeWorkspaceWindow();
     }
@@ -585,6 +613,7 @@ function registerIpc() {
     pendingAuth = null;
     state.encryptedBoardApiToken = null;
     state.nodeId = null;
+    state.nodeStatus = null;
     state.companies = [];
     state.projects = [];
     stopNodeScheduling();
@@ -644,7 +673,6 @@ if (!app.requestSingleInstanceLock()) {
     const initialJoinArg = findSpsJoinUriArg(process.argv);
     if (initialJoinArg) sendJoinToRenderer(initialJoinArg);
     scheduleHeartbeat();
-    scheduleCommandPolling();
     await initializeUpdates();
   });
 }

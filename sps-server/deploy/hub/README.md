@@ -77,6 +77,9 @@ not a public Hub and cannot be used by a friend outside that computer.
 5. The Node owner maps each SPS project to the local project folder in SPS
    Desktop. Project-bound commands refuse to run until that mapping exists.
 
+Before step 4, SPS Desktop sends only signed heartbeats. It does not poll or
+execute Agent commands until the Hub returns the Node as `active`.
+
 The Hub only sends signed command requests to an approved Node. Provider
 credentials, local CLI sessions, and local AI model files never leave the
 member computer. Removing an Agent grant or Node approval cancels queued and

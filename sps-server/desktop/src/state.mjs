@@ -16,6 +16,7 @@ export function emptyState() {
     companies: [],
     projects: [],
     nodeId: null,
+    nodeStatus: null,
   };
 }
 
