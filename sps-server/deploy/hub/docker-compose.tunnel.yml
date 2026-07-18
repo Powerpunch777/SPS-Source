@@ -3,7 +3,7 @@
 # direct-exposure profile at the same time.
 services:
   cloudflared:
-    image: "${SPS_CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
+    image: "${SPS_CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.7.2}"
     restart: unless-stopped
     depends_on:
       sps-hub:

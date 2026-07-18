@@ -9,7 +9,7 @@ const tunnelCompose = await readFile(tunnelComposePath, "utf8");
 
 assert.match(directCompose, /profiles:\s*\n\s*- direct-exposure/);
 assert.match(tunnelCompose, /cloudflared:/);
-assert.match(tunnelCompose, /cloudflare\/cloudflared/);
+assert.match(tunnelCompose, /cloudflare\/cloudflared:2026\.7\.2/);
 assert.match(tunnelCompose, /TUNNEL_TOKEN:/);
 assert.match(tunnelCompose, /SPS_CLOUDFLARE_TUNNEL_TOKEN/);
 assert.match(tunnelCompose, /--no-autoupdate/);
