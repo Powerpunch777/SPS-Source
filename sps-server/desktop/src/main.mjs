@@ -645,7 +645,7 @@ async function createWindow({ show = true } = {}) {
     minHeight: 600,
     show,
     icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
-    webPreferences: createSpsSetupWindowPreferences(path.join(__dirname, "preload.mjs")),
+    webPreferences: createSpsSetupWindowPreferences(path.join(__dirname, "preload.cjs")),
   });
   mainWindow.webContents.on("did-start-loading", () => {
     rendererReadyForJoinLinks = false;

@@ -1,0 +1,37 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createSpsDesktopSetupReadiness } from "../renderer/setup-readiness.mjs";
+
+const profile = {
+  hubUrl: "https://hub.example.test",
+  displayName: "Friend PC",
+  companyId: "company-1",
+};
+
+test("shows the secure Desktop onboarding order before a profile exists", () => {
+  const readiness = createSpsDesktopSetupReadiness({ profile: null, signedIn: false });
+
+  assert.equal(readiness.steps[0].state, "current");
+  assert.equal(readiness.steps[1].state, "blocked");
+  assert.equal(readiness.canOpenInvite, false);
+  assert.equal(readiness.canStartAuth, false);
+  assert.equal(readiness.canConnectNode, false);
+});
+
+test("allows Node registration only after SPS sign-in and company selection", () => {
+  const readiness = createSpsDesktopSetupReadiness({ profile, signedIn: true, pendingAuth: null, nodeId: null, nodeStatus: null });
+
+  assert.equal(readiness.canConnectNode, true);
+  assert.equal(readiness.steps[3].state, "current");
+  assert.equal(readiness.ready, false);
+});
+
+test("keeps command readiness distinct from a registered but unapproved computer", () => {
+  const pending = createSpsDesktopSetupReadiness({ profile, signedIn: true, nodeId: "node-1", nodeStatus: "pending" });
+  const active = createSpsDesktopSetupReadiness({ profile, signedIn: true, nodeId: "node-1", nodeStatus: "active" });
+
+  assert.equal(pending.steps[3].state, "current");
+  assert.equal(pending.ready, false);
+  assert.equal(active.steps[3].state, "complete");
+  assert.equal(active.ready, true);
+});

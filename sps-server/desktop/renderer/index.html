@@ -15,6 +15,17 @@
         <p>Connect this computer to an SPS Hub without moving CLI credentials or local AI files off the device. Closing the window keeps an active Desktop Node running in the system tray.</p>
       </header>
 
+      <section class="setup-progress" aria-labelledby="setup-progress-title">
+        <div class="setup-progress-heading">
+          <div>
+            <div class="eyebrow">CONNECTION</div>
+            <h2 id="setup-progress-title">Set up this computer</h2>
+          </div>
+          <span id="setup-progress-state" class="setup-state">Not connected</span>
+        </div>
+        <ol id="setup-steps" class="setup-steps"></ol>
+      </section>
+
       <section class="panel">
         <h2>Hub profile</h2>
         <form id="profile-form">

@@ -1,3 +1,5 @@
+import { createSpsDesktopSetupReadiness } from "./setup-readiness.mjs";
+
 const $ = (selector) => document.querySelector(selector);
 const notice = $("#notice");
 
@@ -72,6 +74,39 @@ function renderUpdate(update) {
   $("#install-update").disabled = state !== "ready";
 }
 
+function renderSetupReadiness(status) {
+  const readiness = createSpsDesktopSetupReadiness(status);
+  const list = $("#setup-steps");
+  list.replaceChildren();
+  for (const step of readiness.steps) {
+    const item = document.createElement("li");
+    item.className = `setup-step ${step.state}`;
+    const marker = document.createElement("span");
+    marker.className = "setup-marker";
+    marker.textContent = step.state === "complete" ? "Done" : step.state === "current" ? "Next" : "Wait";
+    const content = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = step.title;
+    const detail = document.createElement("span");
+    detail.textContent = step.detail;
+    content.append(title, detail);
+    item.append(marker, content);
+    list.append(item);
+  }
+  const state = $("#setup-progress-state");
+  state.textContent = readiness.ready ? "Ready for authorized work" : "Connection setup required";
+  state.className = `setup-state ${readiness.ready ? "ready" : ""}`;
+
+  $("#open-invite").disabled = !readiness.canOpenInvite;
+  $("#start-auth").disabled = !readiness.canStartAuth;
+  $("#poll-auth").disabled = !readiness.canCheckAuth;
+  $("#sign-out").disabled = !status.signedIn;
+  $("#connect-node").disabled = !readiness.canConnectNode;
+  $("#open-workspace").disabled = !readiness.canOpenWorkspace;
+  $("#refresh-projects").disabled = !readiness.canManageProjects;
+  $("#project-workspace-project-id").disabled = !readiness.canManageProjects || !status.projects?.length;
+}
+
 function renderStatus(status) {
   const profile = status.profile;
   const connection = status.nodeConnection;
@@ -92,6 +127,7 @@ function renderStatus(status) {
   if (status.update) lines.push(`Desktop update: ${status.update.message}`);
   $("#status").textContent = lines.join("\n");
   renderUpdate(status.update);
+  renderSetupReadiness(status);
 }
 
 async function refreshStatus() {
@@ -108,6 +144,7 @@ async function refreshStatus() {
   updateCompanyPicker(status.companies, status.profile?.companyId ?? "");
   updateProjectPicker(status.projects, $("#project-workspace-project-id").value);
   refreshProjectFolderField();
+  renderSetupReadiness(status);
 }
 
 function applyJoinFields(join) {
