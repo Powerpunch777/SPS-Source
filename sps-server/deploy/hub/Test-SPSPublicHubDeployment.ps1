@@ -101,7 +101,7 @@ if ($CheckPublicHealth) {
   }
 }
 
-$checks | Format-Table -AutoSize
+$checks | Format-Table -AutoSize | Out-Host
 $failed = @($checks | Where-Object Status -eq "FAIL")
 if ($failed.Count -gt 0) {
   throw "SPS public Hub deployment preflight failed: $($failed.Count) required check(s) remain."
