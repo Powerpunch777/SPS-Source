@@ -1,0 +1,23 @@
+{
+  "provider": "pixel_lab",
+  "operation": "create_character_v3",
+  "asset": {
+    "name": "hero-v3",
+    "kind": "directional_character",
+    "outputDir": "Assets/Art/Generated/PixelLab"
+  },
+  "input": {
+    "description": "original young archer hero, readable blue cloak silhouette, leather armor, compact wooden bow, heroic fantasy, crisp intentional pixel clusters, no text",
+    "imageSize": {
+      "width": 64,
+      "height": 64
+    },
+    "view": "low top-down",
+    "templateId": "mannequin",
+    "outline": "single color dark navy outline",
+    "detail": "medium detail",
+    "enhancePrompt": true,
+    "noBackground": true,
+    "seed": 1701
+  }
+}

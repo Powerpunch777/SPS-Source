@@ -1,0 +1,16 @@
+{
+  "provider": "meshy",
+  "operation": "image_to_3d",
+  "asset": {
+    "name": "wooden-training-dummy",
+    "kind": "3d_prop",
+    "outputDir": "Assets/Art/Generated"
+  },
+  "input": {
+    "sourceImagePath": "Art/References/training-dummy.png",
+    "shouldTexture": true,
+    "shouldRemesh": true,
+    "targetPolycount": 5000,
+    "targetFormats": ["glb"]
+  }
+}

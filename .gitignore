@@ -1,0 +1,21 @@
+agent-swarm-codex-poc/.env.codex
+agent-swarm-codex-poc/encryption_key
+agent-swarm-codex-poc/*.log
+external/
+paperclip-game-workplane/memory-sidecar/config.local.json
+paperclip-game-workplane/memory-sidecar/data/
+paperclip-game-workplane/paperclip-memory-plugin/node_modules/
+
+# SPS Workplane local state and dependencies
+sps-server/.direct-agy-runs/
+sps-server/.tmp/
+sps-server/logs/
+sps-server/memory-sidecar/config.local.json
+sps-server/memory-sidecar/data/
+sps-server/memory-sidecar/logs/
+sps-server/**/node_modules/
+sps-server/desktop/dist/
+sps-server/desktop/dist-google-login/
+sps-server/direct-task-pipe-broker/config.local.json
+sps-server/direct-task-pipe-broker/runtime/
+sps-server/image-worker-asset-tool/node_modules/

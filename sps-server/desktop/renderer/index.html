@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>SPS Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">SONPARKSERVER</div>
+        <h1>SPS Desktop</h1>
+        <p>Connect this computer to an SPS Hub without moving CLI credentials or local AI files off the device.</p>
+      </header>
+
+      <section class="panel">
+        <h2>Hub profile</h2>
+        <form id="profile-form">
+          <label>Hub URL <input id="hub-url" required placeholder="http://192.168.0.10:3100" /></label>
+          <label>Company ID <input id="company-id" placeholder="Sign in first to load your companies" /></label>
+          <label>Your companies <select id="company-picker" disabled><option value="">Sign in with Google first</option></select></label>
+          <label>Computer name <input id="display-name" required placeholder="My Windows PC" /></label>
+          <label>Default workspace folder <input id="default-workspace-path" placeholder="C:\\Projects\\my-project" /></label>
+          <button type="submit">Save profile</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Join and sign in</h2>
+        <div class="action-row">
+          <input id="invite-code" placeholder="SPS-AB12-CD34" autocomplete="one-time-code" />
+          <button id="open-invite" type="button">Open invitation</button>
+        </div>
+        <p class="muted">The invitation and account sign-in open in your default browser. Return here after accepting the invitation.</p>
+        <div class="action-row">
+          <button id="start-auth" type="button">Continue with Google</button>
+          <button id="poll-auth" type="button" class="secondary">Check approval</button>
+          <button id="sign-out" type="button" class="secondary">Sign out</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Node connection</h2>
+        <div class="action-row">
+          <button id="scan-capabilities" type="button" class="secondary">Scan local runtimes</button>
+          <button id="connect-node" type="button">Register this computer</button>
+        </div>
+        <pre id="capabilities">No scan yet.</pre>
+      </section>
+
+      <section class="panel status-panel">
+        <h2>Status</h2>
+        <pre id="status">Loading...</pre>
+      </section>
+      <p id="notice" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="./renderer.mjs"></script>
+  </body>
+</html>

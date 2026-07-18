@@ -1,0 +1,36 @@
+{
+  "name": "@sps/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SPS Desktop Hub and Node onboarding shell",
+  "author": "SonParkServer",
+  "main": "src/main.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.mjs",
+    "package:win": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "@sps/desktop-node": "file:../desktop-node"
+  },
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "ai.sps.desktop",
+    "productName": "SPS Desktop",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "renderer/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "icon": "assets/sps-logo.png",
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
