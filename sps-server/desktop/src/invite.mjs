@@ -1,3 +1,5 @@
+import { requireSpsHubOrigin } from "./workspace-url.mjs";
+
 const SPS_INVITE_PREFIX = "sps_invite_";
 
 export function spsCodeToInviteToken(input) {
@@ -9,10 +11,7 @@ export function spsCodeToInviteToken(input) {
 export function buildInviteUrl(hubUrl, code) {
   const token = spsCodeToInviteToken(code);
   if (!token) throw new Error("Enter an SPS code in the form SPS-XXXX-XXXX");
-  const hub = new URL(hubUrl);
-  if (hub.protocol !== "http:" && hub.protocol !== "https:") {
-    throw new Error("SPS Hub URL must use HTTP or HTTPS");
-  }
+  const hub = new URL(requireSpsHubOrigin(hubUrl));
   hub.pathname = "/invite/" + encodeURIComponent(token);
   hub.search = "";
   hub.hash = "";
@@ -27,9 +26,7 @@ export function parseSpsJoinUri(value) {
     const code = uri.searchParams.get("code");
     if (!hub || !code || !spsCodeToInviteToken(code)) return null;
 
-    const hubUrl = new URL(hub);
-    if (hubUrl.protocol !== "http:" && hubUrl.protocol !== "https:") return null;
-    return { hub: hubUrl.origin, code: code.toUpperCase() };
+    return { hub: requireSpsHubOrigin(hub), code: code.toUpperCase() };
   } catch {
     return null;
   }

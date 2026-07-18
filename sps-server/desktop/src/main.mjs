@@ -16,11 +16,17 @@ import {
 import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri } from "./invite.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
-import { isSpsHubApiUrl, normalizeSpsHubOrigin } from "./workspace-url.mjs";
+import { isSpsHubApiUrl, requireSpsHubOrigin } from "./workspace-url.mjs";
+import {
+  createSpsSetupWindowPreferences,
+  createSpsWorkspaceWindowPreferences,
+  isAllowedSpsWorkspaceNavigation,
+} from "./window-security.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
 let mainWindow = null;
+let workspaceWindow = null;
 let state = emptyState();
 let pendingAuth = null;
 let heartbeatTimer = null;
@@ -174,7 +180,7 @@ function stopNodeScheduling() {
 
 function workspaceHubUrl() {
   if (!state.profile?.hubUrl) return null;
-  return normalizeSpsHubOrigin(state.profile.hubUrl);
+  return requireSpsHubOrigin(state.profile.hubUrl);
 }
 
 function isCurrentWorkspaceApiUrl(url) {
@@ -183,20 +189,60 @@ function isCurrentWorkspaceApiUrl(url) {
 
 async function openSetup() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  workspaceOrigin = null;
   rendererReadyForJoinLinks = false;
   await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
 
+function closeWorkspaceWindow() {
+  const current = workspaceWindow;
+  workspaceWindow = null;
+  workspaceOrigin = null;
+  if (current && !current.isDestroyed()) current.close();
+}
+
+function configureWorkspaceNavigation(window, hubOrigin) {
+  window.webContents.on("will-navigate", (event, url) => {
+    if (isAllowedSpsWorkspaceNavigation(url, hubOrigin)) return;
+    event.preventDefault();
+    void shell.openExternal(url);
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+}
+
 async function openWorkspace() {
-  if (!mainWindow || mainWindow.isDestroyed()) throw new Error("SPS Desktop window is unavailable");
   if (!state.profile) throw new Error("Save an SPS Hub profile first");
   if (!currentBoardToken()) throw new Error("Continue with Google before opening the SPS workspace");
   const hubOrigin = workspaceHubUrl();
-  if (!hubOrigin) throw new Error("SPS Hub URL must use HTTP or HTTPS");
+  if (!hubOrigin) throw new Error("Save an SPS Hub profile first");
+  if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
+    if (workspaceWindow.isMinimized()) workspaceWindow.restore();
+    workspaceWindow.show();
+    workspaceWindow.focus();
+    return;
+  }
+  closeWorkspaceWindow();
   workspaceOrigin = hubOrigin;
-  rendererReadyForJoinLinks = false;
-  await mainWindow.loadURL(`${hubOrigin}/`);
+  const currentWindow = new BrowserWindow({
+    width: 1280,
+    height: 840,
+    minWidth: 900,
+    minHeight: 640,
+    show: false,
+    icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
+    webPreferences: createSpsWorkspaceWindowPreferences(),
+  });
+  workspaceWindow = currentWindow;
+  configureWorkspaceNavigation(currentWindow, hubOrigin);
+  currentWindow.once("ready-to-show", () => currentWindow.show());
+  currentWindow.on("closed", () => {
+    if (workspaceWindow !== currentWindow) return;
+    workspaceWindow = null;
+    workspaceOrigin = null;
+  });
+  await currentWindow.loadURL(`${hubOrigin}/`);
 }
 
 async function showMainWindow() {
@@ -207,7 +253,6 @@ async function showMainWindow() {
 }
 
 async function showWorkspace() {
-  await showMainWindow();
   await openWorkspace();
 }
 
@@ -242,6 +287,7 @@ function createApplicationMenu() {
           state.companies = [];
           state.projects = [];
           stopNodeScheduling();
+          closeWorkspaceWindow();
           await persistState();
           await openSetup();
         }) },
@@ -414,14 +460,10 @@ function registerIpc() {
     return join;
   });
   ipcMain.handle("desktop:save-profile", async (_event, input) => {
-    const hub = new URL(input.hubUrl);
-    if (hub.protocol !== "http:" && hub.protocol !== "https:") {
-      throw new Error("SPS Hub URL must use HTTP or HTTPS");
-    }
     const companyId = String(input.companyId ?? "").trim();
     const displayName = String(input.displayName ?? "").trim();
     if (!displayName) throw new Error("Computer name is required");
-    const hubUrl = hub.toString().replace(/\/$/, "");
+    const hubUrl = requireSpsHubOrigin(input.hubUrl);
     const previousProfile = state.profile;
     const connectionScopeChanged = Boolean(
       previousProfile &&
@@ -432,6 +474,7 @@ function registerIpc() {
     if (connectionScopeChanged) {
       state.nodeId = null;
       stopNodeScheduling();
+      closeWorkspaceWindow();
     }
     if (hubChanged) {
       pendingAuth = null;
@@ -545,6 +588,7 @@ function registerIpc() {
     state.companies = [];
     state.projects = [];
     stopNodeScheduling();
+    closeWorkspaceWindow();
     await persistState();
     await openSetup();
     return publicStatus();
@@ -559,20 +603,13 @@ async function createWindow({ show = true } = {}) {
     minHeight: 600,
     show,
     icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
-    webPreferences: {
-      preload: path.join(__dirname, "preload.mjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
+    webPreferences: createSpsSetupWindowPreferences(path.join(__dirname, "preload.mjs")),
   });
   mainWindow.webContents.on("did-start-loading", () => {
     rendererReadyForJoinLinks = false;
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!workspaceOrigin) return;
-    const nextOrigin = normalizeSpsHubOrigin(url);
-    if (nextOrigin === workspaceOrigin) return;
+    if (url.startsWith("file:")) return;
     event.preventDefault();
     void shell.openExternal(url);
   });

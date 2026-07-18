@@ -70,7 +70,8 @@ not a public Hub and cannot be used by a friend outside that computer.
 2. The teammate installs SPS Desktop, opens the invite, and signs in with
    their own Google account.
 3. In SPS Desktop, the teammate chooses the public Hub URL and company, then
-   connects the Desktop Node.
+   connects the Desktop Node. SPS Desktop accepts `https://` for a remote Hub;
+   plain HTTP is reserved for `localhost` development only.
 4. In SPS, an owner approves that Node, grants individual Agents access to it,
    and optionally selects it as an Agent's primary Node.
 5. The Node owner maps each SPS project to the local project folder in SPS
@@ -79,7 +80,9 @@ not a public Hub and cannot be used by a friend outside that computer.
 The Hub only sends signed command requests to an approved Node. Provider
 credentials, local CLI sessions, and local AI model files never leave the
 member computer. Removing an Agent grant or Node approval cancels queued and
-active commands for that pairing.
+active commands for that pairing. The Hub workspace opens in a separate
+sandboxed Desktop window and does not receive the privileged local Node setup
+bridge.
 
 ## Update and backup
 
