@@ -25,6 +25,7 @@ import {
   SpsHubRequestError,
 } from "../src/index.mjs";
 import { createHash } from "node:crypto";
+import { parseLmStudioModels, parseOllamaModels } from "../src/capability-scan.mjs";
 
 async function startMockHub() {
   const events = [];
@@ -126,6 +127,7 @@ test("publishes only capability names and versions, not executable paths", () =>
   const capabilities = scanLocalCapabilities({
     findCommand: (command) => ["claude", "codex", "gemini", "opencode", "pi", "ollama"].includes(command),
     readVersion: (command) => `${command} 1.2.3`,
+    readModels: () => [],
   });
   assert.deepEqual(capabilities, [
     { kind: "claude_cli", label: "Claude Code", version: "claude 1.2.3" },
@@ -136,6 +138,36 @@ test("publishes only capability names and versions, not executable paths", () =>
     { kind: "ollama", label: "Ollama", version: "ollama 1.2.3" },
   ]);
   assert.equal(JSON.stringify(capabilities).includes("C:\\\\"), false);
+});
+
+test("publishes bounded local model identifiers without local filesystem paths", () => {
+  const capabilities = scanLocalCapabilities({
+    findCommand: (command) => ["ollama", "lms"].includes(command),
+    readVersion: (command) => `${command} 1.2.3`,
+    readModels: (command) => command === "ollama"
+      ? ["qwen2.5-coder:7b", "C:\\Users\\member\\model.gguf", "qwen2.5-coder:7b"]
+      : ["lmstudio-community/qwen3-4b", "/Users/member/model.gguf"],
+  });
+  assert.deepEqual(capabilities, [
+    { kind: "ollama", label: "Ollama", version: "ollama 1.2.3", models: ["qwen2.5-coder:7b"] },
+    { kind: "lm_studio", label: "LM Studio", version: "lms 1.2.3", models: ["lmstudio-community/qwen3-4b"] },
+  ]);
+  assert.equal(JSON.stringify(capabilities).includes("member"), false);
+});
+
+test("parses official Ollama and LM Studio model listings conservatively", () => {
+  assert.deepEqual(parseOllamaModels([
+    "NAME                         ID              SIZE      MODIFIED",
+    "qwen2.5-coder:7b            123456          4.7 GB    2 days ago",
+    "llama3.2:latest              654321          2.0 GB    1 day ago",
+  ].join("\n")), ["qwen2.5-coder:7b", "llama3.2:latest"]);
+  assert.deepEqual(parseLmStudioModels(JSON.stringify({
+    models: [
+      { modelKey: "lmstudio-community/qwen3-4b" },
+      { path: "C:\\Users\\member\\private-model.gguf" },
+      { name: "openai/gpt-oss-20b" },
+    ],
+  })), ["lmstudio-community/qwen3-4b", "openai/gpt-oss-20b"]);
 });
 
 test("prefers a Windows executable over an npm shell wrapper", async () => {
