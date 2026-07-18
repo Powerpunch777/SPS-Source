@@ -2,6 +2,7 @@
 param(
   [string]$HubUrl = $env:SPS_PUBLIC_URL,
   [string]$InstallerPath,
+  [string]$DeploymentConfigPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "deploy\hub\.env"),
   [switch]$AllowUnsignedPilot,
   [switch]$SkipHubRequest
 )
@@ -20,6 +21,30 @@ function Add-Check {
     Status = if ($Passed) { "PASS" } else { "FAIL" }
     Detail = $Detail
   })
+}
+
+function Add-Info {
+  param(
+    [string]$Name,
+    [string]$Detail
+  )
+  $checks.Add([pscustomobject]@{
+    Check = $Name
+    Status = "INFO"
+    Detail = $Detail
+  })
+}
+
+function Read-SafeDotEnv {
+  param([string]$Path)
+  $values = @{}
+  foreach ($line in Get-Content -LiteralPath $Path -Encoding utf8) {
+    if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith("#")) { continue }
+    $separator = $line.IndexOf("=")
+    if ($separator -lt 1) { throw "Deployment environment file contains an invalid line." }
+    $values[$line.Substring(0, $separator)] = $line.Substring($separator + 1)
+  }
+  return $values
 }
 
 function Is-PrivateOrLoopbackHost {
@@ -65,11 +90,28 @@ try {
   Add-Check "Public HTTPS Hub URL" $false $_.Exception.Message
 }
 
-$googleId = $env:SPS_GOOGLE_CLIENT_ID
-$googleSecret = $env:SPS_GOOGLE_CLIENT_SECRET
-Add-Check "Google OAuth client ID" (-not [string]::IsNullOrWhiteSpace($googleId)) "Set SPS_GOOGLE_CLIENT_ID on the Hub host."
-Add-Check "Google OAuth client secret" (-not [string]::IsNullOrWhiteSpace($googleSecret)) "Set SPS_GOOGLE_CLIENT_SECRET on the Hub host; never commit it."
-Add-Check "Google-only login mode" ($env:SPS_AUTH_GOOGLE_ONLY -eq "true") "Set SPS_AUTH_GOOGLE_ONLY=true after OAuth credentials are configured."
+$deploymentEnvironment = $null
+if (Test-Path -LiteralPath $DeploymentConfigPath -PathType Leaf) {
+  try {
+    $deploymentEnvironment = Read-SafeDotEnv -Path $DeploymentConfigPath
+  } catch {
+    Add-Check "Hub OAuth configuration" $false "Could not read the Hub deployment configuration without exposing secret values."
+  }
+}
+
+$configuredGoogleId = if ($deploymentEnvironment) { $deploymentEnvironment["SPS_GOOGLE_CLIENT_ID"] } else { $null }
+$configuredGoogleSecret = if ($deploymentEnvironment) { $deploymentEnvironment["SPS_GOOGLE_CLIENT_SECRET"] } else { $null }
+$googleId = if (-not [string]::IsNullOrWhiteSpace($env:SPS_GOOGLE_CLIENT_ID)) { $env:SPS_GOOGLE_CLIENT_ID } else { $configuredGoogleId }
+$googleSecret = if (-not [string]::IsNullOrWhiteSpace($env:SPS_GOOGLE_CLIENT_SECRET)) { $env:SPS_GOOGLE_CLIENT_SECRET } else { $configuredGoogleSecret }
+$googleOnly = if (-not [string]::IsNullOrWhiteSpace($env:SPS_AUTH_GOOGLE_ONLY)) { $env:SPS_AUTH_GOOGLE_ONLY } else { "true" }
+
+if ($deploymentEnvironment -or -not [string]::IsNullOrWhiteSpace($env:SPS_GOOGLE_CLIENT_ID) -or -not [string]::IsNullOrWhiteSpace($env:SPS_GOOGLE_CLIENT_SECRET)) {
+  Add-Check "Google OAuth client ID" (-not [string]::IsNullOrWhiteSpace($googleId)) "Configured on the Hub host; the value was not printed."
+  Add-Check "Google OAuth client secret" (-not [string]::IsNullOrWhiteSpace($googleSecret)) "Configured on the Hub host; the value was not printed."
+  Add-Check "Google-only login mode" ($googleOnly -eq "true") "SPS_AUTH_GOOGLE_ONLY must stay true for a shared Hub."
+} else {
+  Add-Info "Google OAuth Hub configuration" "Not checked on this computer. Run deploy\\hub\\Test-SPSPublicHubDeployment.ps1 on the Hub host before inviting a collaborator."
+}
 
 if ($hubUri -and -not $SkipHubRequest) {
   try {

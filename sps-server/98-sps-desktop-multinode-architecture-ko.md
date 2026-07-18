@@ -11,7 +11,10 @@ SPS는 브라우저에서 중앙 서버에 접속하는 제품이 아니라, 사
 1. **SPS Hub**: 회사를 생성하거나 기존 Hub에 접속하는 데스크톱 앱이다. UI, 초대, 권한, Rooms, Tasks, 장기기억과 중앙 데이터베이스를 제공한다.
 2. **SPS Node**: 같은 앱 안에서 동작하는 로컬 실행기다. PC에 설치된 Codex CLI, Agy, Ollama, LM Studio, 전문 API 도구를 탐지하고, 승인된 Agent의 작업만 해당 PC에서 실행한다.
 
-초기 릴리스는 Owner PC가 Hub를 실행하고, 모든 멤버 PC가 사설 네트워크로 접속하는 방식으로 시작한다. Hub는 항상 켜져 있어야 한다. 이후 Hub를 전용 PC나 VPS로 옮겨도 SPS Desktop의 사용 방식은 바뀌지 않는다.
+SPS Hub는 항상 켜져 있는 중앙 서비스이며, Owner PC·전용 PC·VPS 중 어디에 둘지
+설치자가 선택한다. 인터넷을 넘어 친구를 초대할 때는 공인 HTTPS 호스트와 Google
+로그인이 필요하다. 같은 네트워크 안에서만 시험할 때는 사설 네트워크를 사용할 수
+있지만, 외부 공동 작업용 Hub를 `local_trusted` 모드로 공개하지 않는다.
 
 ```mermaid
 flowchart LR
@@ -33,7 +36,11 @@ flowchart LR
 
 Agent마다 `view`, `chat`, `assign_task`, `review`, `configure`, `run_here` 권한을 독립적으로 둔다. Owner는 전체 권한을 가지며, Lead는 맡은 Agent에만 `assign_task` 권한을 갖는다. Worker는 Task 생성 권한을 기본적으로 갖지 않는다.
 
-Agent는 기본적으로 하나의 기본 실행 Node를 가진다. 같은 Agent를 여러 컴퓨터에서 동시에 실행하지 않는다. 서로 다른 CLI 계정, 작업 폴더, 장기 Room 세션이 충돌할 수 있기 때문이다. 필요하면 별도의 Agent를 추가하거나, 명시적으로 대기 Node를 지정한다.
+Agent에는 하나의 기본 실행 Node를 둘 수 있고, Owner는 필요하면 대기 Node를
+추가할 수 있다. 기본값은 한 Agent의 동시 실행을 피하는 것이다. 다만 서로 다른
+CLI 세션과 명시적으로 분리된 작업 폴더라면 Lead가 병렬 Task를 허용할 수 있다.
+로컬 AI Worker의 병렬 실행 정책은 해당 Node의 자원과 모델 설정에 맞춰 보수적으로
+정한다.
 
 ## 실행 흐름
 
@@ -48,7 +55,10 @@ Agent는 기본적으로 하나의 기본 실행 Node를 가진다. 같은 Agent
 
 ## 네트워크와 보안
 
-초기 배포는 **사설 네트워크 전용 + 로그인 필수**가 기본이다. Tailscale 같은 사설 네트워크를 이용하면 포트 공개 없이 친구 PC를 연결할 수 있다. 공개 인터넷 노출은 나중에 HTTPS, 도메인, 서버 운영 체계가 준비된 뒤에만 허용한다.
+공동 작업 Hub는 **로그인 필수**가 기본이다. Tailscale 같은 사설 네트워크를 쓰면
+포트 공개 없이도 운영할 수 있고, 인터넷 공개를 선택하면 HTTPS·도메인·Google
+OAuth·Docker 운영 체계를 함께 준비한다. 두 방식 모두 Node는 Hub로 아웃바운드
+연결만 만들며, Hub가 협업자의 PC에 직접 접속하지 않는다.
 
 필수 규칙:
 
@@ -91,6 +101,5 @@ Windows 우선 SPS Desktop은 Electron을 사용한다. 현재 SPS가 Node.js, R
 ## 구현 전 확정할 결정
 
 - 첫 공개 대상은 Windows만 지원한다.
-- 첫 배포는 Owner PC Hub와 친구 PC Node를 사설 네트워크로 연결한다.
-- Agent는 한 번에 한 Node에서만 실행한다. 여러 PC에서 실행하려면 별도 Agent 또는 명시적 대기 Node를 사용한다.
-
+- Hub는 사설 네트워크 또는 공인 HTTPS 배포 중 설치자가 선택한다. 인터넷 공동 작업에는 Google 로그인과 초대가 필수다.
+- Agent는 기본 Node를 갖고, 병렬 실행은 Lead가 분리된 작업 공간과 실행기 조건을 확인한 뒤 허용한다.

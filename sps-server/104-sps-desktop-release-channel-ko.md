@@ -62,8 +62,19 @@ not relax signing for normal releases:
 
 ## Pilot preflight
 
-Before inviting a second computer, run the multi-node preflight from the SPS
-repository root:
+Before inviting a second computer, validate the Hub deployment on the Hub
+computer first. This checks the Docker configuration and Google OAuth values
+without printing any secret.
+
+```powershell
+Set-Location ".\\sps-server\\deploy\\hub"
+.\\Test-SPSPublicHubDeployment.ps1 -CheckPublicHealth
+```
+
+Then run the multi-node preflight from the SPS repository root on either the
+Hub computer or the second computer. It validates the public Hub reachability
+and the installer. The second computer never needs a copy of the Google OAuth
+secret.
 
 ```powershell
 .\sps-server\scripts\Test-SPS-MultiNodeRelease.ps1
@@ -73,6 +84,11 @@ When `-InstallerPath` is omitted, the script finds the newest
 `SPS Desktop Setup *.exe` below `sps-server\desktop\dist*`. Pass
 `-InstallerPath` only to validate a specific installer. The preflight rejects
 an unsigned installer even when the local test build itself works.
+
+When run on the Hub computer, the script also reads only the required OAuth
+key names from `deploy\hub\.env`; it never prints their values. On a
+collaborator computer it reports that OAuth configuration as an informational
+Hub-host check instead of failing because the secret is correctly absent.
 
 ## Local release checks
 
