@@ -1,4 +1,5 @@
 import { createPublicKey, verify } from "node:crypto";
+import { createServer } from "node:http";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -9,6 +10,7 @@ import {
   claimSpsNodeCommand,
   createNodeIdentity,
   createSignedNodeRequest,
+  executeSpsNodeCommand,
   startSpsDesktopAuth,
   pollSpsDesktopAuth,
   createSignedHeartbeat,
@@ -22,6 +24,51 @@ import {
   sendSpsNodeHeartbeat,
 } from "../src/index.mjs";
 import { createHash } from "node:crypto";
+
+async function startMockHub() {
+  const events = [];
+  const completions = [];
+  const leases = [];
+  const server = createServer((request, response) => {
+    let rawBody = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => { rawBody += chunk; });
+    request.on("end", () => {
+      const body = rawBody ? JSON.parse(rawBody) : {};
+      if (request.url?.endsWith("/lease")) {
+        leases.push({ headers: request.headers, body });
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ active: true, status: "running" }));
+        return;
+      }
+      if (request.url?.endsWith("/events")) {
+        events.push({ headers: request.headers, body });
+        response.statusCode = 204;
+        response.end();
+        return;
+      }
+      if (request.url?.endsWith("/complete")) {
+        completions.push({ headers: request.headers, body });
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ id: "command-1", status: body.status }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  assert.ok(address && "port" in address);
+  return {
+    hubUrl: `http://127.0.0.1:${address.port}`,
+    events,
+    completions,
+    leases,
+    close: async () => await new Promise((resolve) => server.close(resolve)),
+  };
+}
 
 test("generates an Ed25519 identity and signs the shared heartbeat message", () => {
   const identity = createNodeIdentity();
@@ -151,6 +198,43 @@ test("uses the Node owner's project mapping instead of the default workspace", a
     },
   );
   assert.equal(resolved, projectWorkspace);
+});
+
+test("executes a local Node process and returns streamed output through the signed Hub protocol", async () => {
+  const hub = await startMockHub();
+  try {
+    const result = await executeSpsNodeCommand({
+      command: {
+        id: "command-1",
+        projectId: null,
+        command: process.execPath,
+        args: ["-e", "process.stdout.write('SPS node output\\n')"],
+        env: {},
+        stdin: null,
+        lastEventSeq: 0,
+      },
+      hubUrl: hub.hubUrl,
+      nodeId: "node-1",
+      identity: createNodeIdentity(),
+      accessToken: "board-token",
+      profile: {
+        defaultWorkspacePath: process.cwd(),
+        projectWorkspaces: {},
+      },
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.timedOut, false);
+    assert.equal(result.workspace, process.cwd());
+    assert.equal(hub.events.map((event) => event.body.body).join(""), "SPS node output\n");
+    assert.equal(hub.events.every((event) => event.headers.authorization === "Bearer board-token"), true);
+    assert.equal(hub.events.every((event) => typeof event.body.signature === "string"), true);
+    assert.equal(hub.leases.length >= 1, true);
+    assert.equal(hub.completions.length, 1);
+    assert.equal(hub.completions[0]?.body.status, "succeeded");
+  } finally {
+    await hub.close();
+  }
 });
 
 test("uses the Hub API for registration and signed heartbeats", async () => {

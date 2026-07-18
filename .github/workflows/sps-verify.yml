@@ -41,7 +41,7 @@ jobs:
         run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/private-hostname-guard.test.ts
 
       - name: Test SPS Node ownership and signed command authority
-        run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/sps-nodes-routes.test.ts --pool=forks --isolate
+        run: pnpm --filter @paperclipai/server exec vitest run src/__tests__/sps-nodes-routes.test.ts src/services/sps-node-execution.test.ts --pool=forks --isolate
 
       - name: Build the SPS browser UI
         run: pnpm --filter @paperclipai/ui run build
