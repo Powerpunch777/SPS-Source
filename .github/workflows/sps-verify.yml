@@ -16,19 +16,17 @@ jobs:
       run:
         working-directory: external/sps-core
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: external/sps-core/pnpm-lock.yaml
+          package-manager-cache: false
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@9.15.4
 
       - name: Install Core dependencies
         run: pnpm install --frozen-lockfile
@@ -49,11 +47,11 @@ jobs:
     name: SPS Desktop and Node
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
