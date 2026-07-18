@@ -18,34 +18,35 @@ node .\scripts\preview-site.mjs
 
 Open `http://127.0.0.1:4173`, then request `/_shutdown` to stop the preview.
 
-## Cloudflare Pages deployment
+## GitHub Pages delivery and Cloudflare DNS
 
-`redongames.com` already uses Cloudflare DNS. Publish this directory with
-Cloudflare Pages rather than mixing public marketing files with the SPS Hub
-container.
+`redongames.com` uses Cloudflare DNS, while this directory is delivered by the
+repository's GitHub Pages workflow. This keeps the public static site separate
+from the SPS Hub container without requiring Cloudflare-to-GitHub repository
+authorization.
 
-1. In Cloudflare, open **Workers & Pages** and create a **Pages** project from
-   `Powerpunch777/SPS`.
-2. Set the production branch to `main` after this branch is merged.
-3. Set the root directory to `sps-server/website`, leave the build command
-   empty, and use `.` as the build output directory.
-4. Add `redongames.com` as the custom domain. Cloudflare configures the apex
-   record through its own DNS zone.
-5. Add `www.redongames.com` as a redirect to `https://redongames.com` in
-   Cloudflare Redirect Rules.
+1. The `Publish SPS website preview` GitHub Actions workflow deploys
+   `sps-server/website` on every website change in the default branch.
+2. GitHub Pages has `redongames.com` configured as its custom domain before
+   any DNS record is added.
+3. In Cloudflare DNS, create four DNS-only apex `A` records for `@`:
+   `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, and
+   `185.199.111.153`.
+4. Wait for GitHub Pages to issue the HTTPS certificate, then enable HTTPS in
+   the GitHub Pages settings. DNS and certificate verification can take time.
+5. Add `www` as a DNS-only `CNAME` directly to
+   `Powerpunch777.github.io` when the alternate hostname is needed. Do not
+   point `www` at the apex domain.
 
-The same output can be deployed with Wrangler after a Cloudflare Pages project
-exists and a `CLOUDFLARE_API_TOKEN` is available outside this repository:
+The temporary GitHub Pages preview address is:
 
-```powershell
-Set-Location .\sps-server\website
-npx --yes wrangler@4 pages deploy . --project-name redon-games --branch main
+```text
+https://powerpunch777.github.io/SPS/
 ```
 
-GitHub Pages also publishes this branch as a temporary public preview at
-`https://powerpunch777.github.io/SPS/`. It uses the same static output and is
-intentionally not the final custom-domain host. GitHub Pages does not apply the
-Cloudflare `_headers` file, so production stays on Cloudflare Pages.
+GitHub Pages does not apply Cloudflare's `_headers` convention. That file and
+`wrangler.toml` are retained only for a future Cloudflare Pages migration; they
+are not part of the current production path.
 
 ## SPS Hub domain
 
