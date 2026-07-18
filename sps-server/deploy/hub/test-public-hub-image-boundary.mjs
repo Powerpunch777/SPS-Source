@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const dockerfilePath = fileURLToPath(new URL("./Dockerfile", import.meta.url));
+const composePath = fileURLToPath(new URL("./docker-compose.yml", import.meta.url));
 const dockerfile = await readFile(dockerfilePath, "utf8");
+const compose = await readFile(composePath, "utf8");
 const productionStart = dockerfile.indexOf("FROM base AS production");
 
 assert.notEqual(productionStart, -1, "SPS Hub Dockerfile must have a production stage");
@@ -24,3 +26,4 @@ for (const providerRuntime of [
 
 assert.match(productionStage, /ENTRYPOINT \["docker-entrypoint\.sh"\]/);
 assert.match(productionStage, /CMD \["node"/);
+assert.match(compose, /SPS_REQUIRE_NODE_EXECUTION: "true"/);
