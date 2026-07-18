@@ -41,6 +41,20 @@ The workflow is `.github/workflows/sps-desktop-release.yml`.
 The workflow fails before publishing if either signing secret is absent. This
 is intentional: test installers must not become an update source for friends.
 
+## Pilot preflight
+
+Before inviting a second computer, run the multi-node preflight from the SPS
+repository root:
+
+```powershell
+.\sps-server\scripts\Test-SPS-MultiNodeRelease.ps1
+```
+
+When `-InstallerPath` is omitted, the script finds the newest
+`SPS Desktop Setup *.exe` below `sps-server\desktop\dist*`. Pass
+`-InstallerPath` only to validate a specific installer. The preflight rejects
+an unsigned installer even when the local test build itself works.
+
 ## Local release checks
 
 The production command is:

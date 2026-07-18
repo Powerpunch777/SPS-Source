@@ -57,7 +57,7 @@ function Get-MemorySidecarHealthHeaders {
   return @{ "x-sidecar-token" = $token }
 }
 
-$paperclip = [ordered]@{
+$sps = [ordered]@{
   ok = $false
   error = $null
 }
@@ -79,7 +79,7 @@ try {
   } else {
     @($agentsResponse | Where-Object { $null -ne $_ })
   }
-  $paperclip.ok = $true
+  $sps.ok = $true
 
   foreach ($agentId in $RequiredAgentIds) {
     $agent = $allAgents | Where-Object { $_.id -eq $agentId } | Select-Object -First 1
@@ -124,7 +124,7 @@ try {
     Add-ReadinessLine -Target $warnings -Message "Company has $liveRunCount live run(s). Avoid starting another smoke test until they are understood."
   }
 } catch {
-  $paperclip.error = $_.Exception.Message
+  $sps.error = $_.Exception.Message
   Add-ReadinessLine -Target $blockers -Message "SPS API unavailable: $($_.Exception.Message)"
 }
 
@@ -150,7 +150,7 @@ $result = [pscustomobject]@{
   ready = ($blockers.Count -eq 0)
   checkedAt = (Get-Date).ToUniversalTime().ToString("o")
   companyId = $CompanyId
-  paperclip = [pscustomobject]$paperclip
+  sps = [pscustomobject]$sps
   memorySidecar = [pscustomobject]$sidecar
   liveRunCount = $liveRunCount
   agents = $agents

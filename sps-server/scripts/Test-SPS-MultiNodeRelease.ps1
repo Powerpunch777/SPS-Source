@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$HubUrl = $env:SPS_PUBLIC_URL,
-  [string]$InstallerPath = (Join-Path $PSScriptRoot "..\desktop\dist-sps-desktop-update-channel-v1\SPS Desktop Setup 0.1.0.exe"),
+  [string]$InstallerPath,
   [switch]$SkipHubRequest
 )
 
@@ -27,6 +27,30 @@ function Is-PrivateOrLoopbackHost {
   if ($HostName -in @("localhost", "::1", "127.0.0.1", "0.0.0.0")) { return $true }
   if ($HostName -match "^10\." -or $HostName -match "^192\.168\." -or $HostName -match "^172\.(1[6-9]|2[0-9]|3[0-1])\.") { return $true }
   return $false
+}
+
+function Resolve-SPSDesktopInstallerPath {
+  param([string]$RequestedPath)
+
+  if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
+    return $RequestedPath
+  }
+
+  $desktopDirectory = Join-Path (Split-Path -Parent $PSScriptRoot) "desktop"
+  if (-not (Test-Path -LiteralPath $desktopDirectory -PathType Container)) {
+    return $null
+  }
+
+  $candidates = @(
+    Get-ChildItem -LiteralPath $desktopDirectory -Directory -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -like "dist*" } |
+      ForEach-Object {
+        Get-ChildItem -LiteralPath $_.FullName -File -Filter "SPS Desktop Setup *.exe" -ErrorAction SilentlyContinue
+      } |
+      Sort-Object -Property LastWriteTimeUtc -Descending
+  )
+
+  return $candidates | Select-Object -First 1 -ExpandProperty FullName
 }
 
 $hubUri = $null
@@ -56,13 +80,19 @@ if ($hubUri -and -not $SkipHubRequest) {
   }
 }
 
-if (Test-Path -LiteralPath $InstallerPath -PathType Leaf) {
-  $installer = Get-Item -LiteralPath $InstallerPath
+$resolvedInstallerPath = Resolve-SPSDesktopInstallerPath -RequestedPath $InstallerPath
+if ($resolvedInstallerPath -and (Test-Path -LiteralPath $resolvedInstallerPath -PathType Leaf)) {
+  $installer = Get-Item -LiteralPath $resolvedInstallerPath
   Add-Check "SPS Desktop installer" ($installer.Length -gt 0) "$($installer.FullName) ($($installer.Length) bytes)"
   $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
   Add-Check "Trusted Windows code signature" ($signature.Status -eq "Valid") "Current signature status: $($signature.Status)."
 } else {
-  Add-Check "SPS Desktop installer" $false "Installer not found: $InstallerPath"
+  $expectedInstaller = if ([string]::IsNullOrWhiteSpace($InstallerPath)) {
+    "No SPS Desktop Setup *.exe file was found below sps-server\desktop\dist*."
+  } else {
+    "Installer not found: $InstallerPath"
+  }
+  Add-Check "SPS Desktop installer" $false $expectedInstaller
   Add-Check "Trusted Windows code signature" $false "No installer was available to verify."
 }
 
