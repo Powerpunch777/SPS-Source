@@ -19476,12 +19476,18 @@ async function reconcileTaskOwnerNotificationForJob(ctx, job) {
   });
   return true;
 }
+function isRetiredRoomJobError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "Room issue was not found." || message === "Closed Agent Rooms cannot receive chat messages." || message === "The Agent linked to this Room was not found.";
+}
 async function reconcileInterruptedRoomJobs(ctx) {
-  if (!ctx.entities?.list) return;
+  const summary = { scanned: 0, reconciled: 0, retired: 0, failed: 0 };
+  if (!ctx.entities?.list) return summary;
   const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
   for (const record of records) {
     const job = roomJobData(asRecord3(record.data));
     if (!job.id || !job.companyId || !job.roomIssueId) continue;
+    summary.scanned += 1;
     if (!ACTIVE_ROOM_JOB_STATUSES.has(job.status)) {
       await reconcileTaskOwnerNotificationForJob(ctx, job).catch((error) => {
         ctx.logger?.warn?.("Terminal Task owner report notification could not be reconciled.", {
@@ -19516,13 +19522,26 @@ async function reconcileInterruptedRoomJobs(ctx) {
       }
       await reconcileTaskOwnerNotificationForJob(ctx, reconciled);
       emitRoomEvent(ctx, job.companyId, issue.id, { type: reconciled.status, job: reconciled });
+      summary.reconciled += 1;
     } catch (error) {
+      if (isRetiredRoomJobError(error)) {
+        const retired = await updateRoomJob(ctx, job, {
+          status: "interrupted",
+          completedAt: now(),
+          error: "The Agent Room is no longer active. This interrupted Job was retired during reconciliation."
+        });
+        await reconcileTaskOwnerNotificationForJob(ctx, retired).catch(() => null);
+        summary.retired += 1;
+        continue;
+      }
+      summary.failed += 1;
       ctx.logger?.warn?.("Room Job could not be reconciled after worker restart.", {
         roomIssueId: job.roomIssueId,
         message: error instanceof Error ? error.message : String(error)
       });
     }
   }
+  return summary;
 }
 var plugin = definePlugin({
   async setup(ctx) {
@@ -19550,7 +19569,7 @@ var plugin = definePlugin({
     ctx.actions.register("workspace-profile-create-workspace", (params, actionCtx) => handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx));
     ctx.jobs.register("workplane-reconcile", async (job) => {
       const roomSummary = await reconcileAllProjectAgentRooms(ctx);
-      await reconcileInterruptedRoomJobs(ctx);
+      const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
       const quotaSummary = await reconcileProviderQuotaRetries(ctx);
       const roomQuotaSummary = await reconcileRoomProviderQuotaRetries(ctx);
@@ -19558,6 +19577,7 @@ var plugin = definePlugin({
         runId: job.runId,
         trigger: job.trigger,
         roomSummary,
+        interruptedRoomJobSummary,
         ownerSummary,
         quotaSummary,
         roomQuotaSummary
@@ -19763,6 +19783,7 @@ export {
   queueRoomDocumentWrite,
   readCollaborationReadiness,
   reconcileAllProjectAgentRooms,
+  reconcileInterruptedRoomJobs,
   reconcileProviderQuotaRetries,
   reconcileProviderQuotaTask,
   reconcileRoomProviderQuotaRetries,

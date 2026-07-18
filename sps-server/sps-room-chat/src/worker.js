@@ -8159,12 +8159,21 @@ async function reconcileTaskOwnerNotificationForJob(ctx, job) {
   return true;
 }
 
+function isRetiredRoomJobError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "Room issue was not found."
+    || message === "Closed Agent Rooms cannot receive chat messages."
+    || message === "The Agent linked to this Room was not found.";
+}
+
 async function reconcileInterruptedRoomJobs(ctx) {
-  if (!ctx.entities?.list) return;
+  const summary = { scanned: 0, reconciled: 0, retired: 0, failed: 0 };
+  if (!ctx.entities?.list) return summary;
   const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
   for (const record of records) {
     const job = roomJobData(asRecord(record.data));
     if (!job.id || !job.companyId || !job.roomIssueId) continue;
+    summary.scanned += 1;
     if (!ACTIVE_ROOM_JOB_STATUSES.has(job.status)) {
       await reconcileTaskOwnerNotificationForJob(ctx, job).catch((error) => {
         ctx.logger?.warn?.("Terminal Task owner report notification could not be reconciled.", {
@@ -8199,13 +8208,26 @@ async function reconcileInterruptedRoomJobs(ctx) {
       }
       await reconcileTaskOwnerNotificationForJob(ctx, reconciled);
       emitRoomEvent(ctx, job.companyId, issue.id, { type: reconciled.status, job: reconciled });
+      summary.reconciled += 1;
     } catch (error) {
+      if (isRetiredRoomJobError(error)) {
+        const retired = await updateRoomJob(ctx, job, {
+          status: "interrupted",
+          completedAt: now(),
+          error: "The Agent Room is no longer active. This interrupted Job was retired during reconciliation."
+        });
+        await reconcileTaskOwnerNotificationForJob(ctx, retired).catch(() => null);
+        summary.retired += 1;
+        continue;
+      }
+      summary.failed += 1;
       ctx.logger?.warn?.("Room Job could not be reconciled after worker restart.", {
         roomIssueId: job.roomIssueId,
         message: error instanceof Error ? error.message : String(error)
       });
     }
   }
+  return summary;
 }
 
 const plugin = definePlugin({
@@ -8234,7 +8256,7 @@ const plugin = definePlugin({
     ctx.actions.register("workspace-profile-create-workspace", (params, actionCtx) => handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx));
     ctx.jobs.register("workplane-reconcile", async (job) => {
       const roomSummary = await reconcileAllProjectAgentRooms(ctx);
-      await reconcileInterruptedRoomJobs(ctx);
+      const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
       const quotaSummary = await reconcileProviderQuotaRetries(ctx);
       const roomQuotaSummary = await reconcileRoomProviderQuotaRetries(ctx);
@@ -8242,6 +8264,7 @@ const plugin = definePlugin({
         runId: job.runId,
         trigger: job.trigger,
         roomSummary,
+        interruptedRoomJobSummary,
         ownerSummary,
         quotaSummary,
         roomQuotaSummary
@@ -8351,7 +8374,7 @@ function setActiveRoomJobForTest(issueId, promise) {
   else activeRoomMessageJobs.delete(issueId);
 }
 
-export { agentInstructions, agentInstructionsFingerprint, agentRoomAgentId, agentRoomRuntime, agentSessionContextMatches, appendCheckpoint, appendNativeCompactionOutsideInvocation, applyCodexAccountToAdapterConfig, applyNativeSessionActivityEvent, attachmentIdsParam, buildAgyRoomPrompt, buildRoomOperatingBrief, cancelResolvedTaskOwnerQuotaRetry, cancelResolvedTaskWorkerQuotaRetry, chooseDefaultWorkspace, chooseTaskWorkspace, cleanupRoomAttachmentCache, codexAccountLabel, codexClientKey, configuredEnvironment, configuredEnvironmentValue, defaultWorkspaceKindForAgent, enforceUtf8Text, ensureNativeRoomSession, excludeWorkspaceRoomAttachments, fetchRoomMemory, getCodexClient, getRuntimeConfig, handleCodexAccountSelect, handleCodexAccountsView, handleCodexServerRequest, handleOrganizationAgentPolicySave, handleOrganizationSettingsView, handleProjectTasksView, handleProjectWorkplaneView, handleRoomBootstrap, handleRoomCompact, handleRoomCompactJob, handleRoomSend, handleRoomSendJob, handleRoomTaskSummary, handleRoomView, handleRoomWorkspaceView, handleTaskOwnerFeedback, handleTaskOwnerFeedbackJob, handleTaskOwnerReportReconcile, handleTaskRoomView, handleTaskStatusUpdated, isAgentRoom, isCodexImageAttachment, isLongLivedRoom, isProviderQuotaError, isProviderQuotaRun, isRoomProviderQuotaRetryJob, isRoomUserComment, isWorkerOnlyRoomAgent, listIssueAttachmentsDirect, listIssueRunsDirect, listRoomJobs, loadAgentInstructions, loadRoomState, loadRoomWorkState, localCodexAccounts, mergeRoomAttachments, mergeRoomWorkState, mostRecentComments, nativeCompactionEventId, nativeSessionResultText, newRoomState, newRoomWorkState, nextProviderQuotaRetryAt, normalizeCodexHome, normalizeRoomWorkState, parseAgyFallbackEnvelope, parseState, prepareCodexRoomTurn, prepareNativeRoomTurn, proposeRoomMemory, providerQuotaRetryAtFromError, providerQuotaRetryState, provisionProjectAgentRooms, provisionAllProjectAgentRooms, queueProjectRoomProvision, queueRoomDocumentWrite, reconcileAllProjectAgentRooms, reconcileProviderQuotaRetries, reconcileProviderQuotaTask, reconcileRoomProviderQuotaRetries, reconcileTaskOwnerReportBoundaries, recordNativeCodexCompaction, repairUtf8Mojibake, resolveCodexHomeForAgent, resolveRoomAttachments, retryRoomDocumentWrite, roomAttachmentCommentBlock, roomAttachmentName, roomAttachmentWorkspaceRoot, roomHasActiveWork, roomRole, roomRuntimeDisabledResult, roomRuntimeWithRoomSafety, roomThreadIdForCodexRuntime, roomTools, roomTurnText, roomUserCommentBody, roomWorkplaneBoundary, runAgyRoomFallback, saveRoomState, saveRoomStateOutsideInvocation, saveRoomWorkState, scheduleRoomProviderQuotaRetry, searchRoomMemory, serializeState, setActiveRoomJobForTest, setActiveThreadContextForTest, setAgyClientFactoryForTest, setCodexClientForTest, stageRoomAttachments, startNativeAgentSessionTurn, startRoomTurn, syncAgentRoomTitles, taskOwnerReportPrompt, taskOwnerRoomResultVisibilityOutsideInvocation, taskStatusTransition, updateAgentAdapterConfigDirect, updateRoomWorkStateOutsideInvocation, validateRoomRetrySource, workspaceGitChanges, workspaceGitExcludePath, workspaceKindForProjectWorkspace, workspaceLocalPath };
+export { agentInstructions, agentInstructionsFingerprint, agentRoomAgentId, agentRoomRuntime, agentSessionContextMatches, appendCheckpoint, appendNativeCompactionOutsideInvocation, applyCodexAccountToAdapterConfig, applyNativeSessionActivityEvent, attachmentIdsParam, buildAgyRoomPrompt, buildRoomOperatingBrief, cancelResolvedTaskOwnerQuotaRetry, cancelResolvedTaskWorkerQuotaRetry, chooseDefaultWorkspace, chooseTaskWorkspace, cleanupRoomAttachmentCache, codexAccountLabel, codexClientKey, configuredEnvironment, configuredEnvironmentValue, defaultWorkspaceKindForAgent, enforceUtf8Text, ensureNativeRoomSession, excludeWorkspaceRoomAttachments, fetchRoomMemory, getCodexClient, getRuntimeConfig, handleCodexAccountSelect, handleCodexAccountsView, handleCodexServerRequest, handleOrganizationAgentPolicySave, handleOrganizationSettingsView, handleProjectTasksView, handleProjectWorkplaneView, handleRoomBootstrap, handleRoomCompact, handleRoomCompactJob, handleRoomSend, handleRoomSendJob, handleRoomTaskSummary, handleRoomView, handleRoomWorkspaceView, handleTaskOwnerFeedback, handleTaskOwnerFeedbackJob, handleTaskOwnerReportReconcile, handleTaskRoomView, handleTaskStatusUpdated, isAgentRoom, isCodexImageAttachment, isLongLivedRoom, isProviderQuotaError, isProviderQuotaRun, isRoomProviderQuotaRetryJob, isRoomUserComment, isWorkerOnlyRoomAgent, listIssueAttachmentsDirect, listIssueRunsDirect, listRoomJobs, loadAgentInstructions, loadRoomState, loadRoomWorkState, localCodexAccounts, mergeRoomAttachments, mergeRoomWorkState, mostRecentComments, nativeCompactionEventId, nativeSessionResultText, newRoomState, newRoomWorkState, nextProviderQuotaRetryAt, normalizeCodexHome, normalizeRoomWorkState, parseAgyFallbackEnvelope, parseState, prepareCodexRoomTurn, prepareNativeRoomTurn, proposeRoomMemory, providerQuotaRetryAtFromError, providerQuotaRetryState, provisionProjectAgentRooms, provisionAllProjectAgentRooms, queueProjectRoomProvision, queueRoomDocumentWrite, reconcileAllProjectAgentRooms, reconcileInterruptedRoomJobs, reconcileProviderQuotaRetries, reconcileProviderQuotaTask, reconcileRoomProviderQuotaRetries, reconcileTaskOwnerReportBoundaries, recordNativeCodexCompaction, repairUtf8Mojibake, resolveCodexHomeForAgent, resolveRoomAttachments, retryRoomDocumentWrite, roomAttachmentCommentBlock, roomAttachmentName, roomAttachmentWorkspaceRoot, roomHasActiveWork, roomRole, roomRuntimeDisabledResult, roomRuntimeWithRoomSafety, roomThreadIdForCodexRuntime, roomTools, roomTurnText, roomUserCommentBody, roomWorkplaneBoundary, runAgyRoomFallback, saveRoomState, saveRoomStateOutsideInvocation, saveRoomWorkState, scheduleRoomProviderQuotaRetry, searchRoomMemory, serializeState, setActiveRoomJobForTest, setActiveThreadContextForTest, setAgyClientFactoryForTest, setCodexClientForTest, stageRoomAttachments, startNativeAgentSessionTurn, startRoomTurn, syncAgentRoomTitles, taskOwnerReportPrompt, taskOwnerRoomResultVisibilityOutsideInvocation, taskStatusTransition, updateAgentAdapterConfigDirect, updateRoomWorkStateOutsideInvocation, validateRoomRetrySource, workspaceGitChanges, workspaceGitExcludePath, workspaceKindForProjectWorkspace, workspaceLocalPath };
 export { activeRoomProcessBlocksOwnerReport, isSubstantiveTaskBoundaryReport, reconcileTaskOwnerNotificationStateForJob, taskBoundaryReportKind };
 export { collaborationReadinessFromConfig, handleOrganizationCollaborationReadiness, handleOrganizationSettingsAccess, readCollaborationReadiness, requireAgentConfigurationAction };
 export { handleWorkspaceProfileAccess, handleWorkspaceProfileCreateWorkspace, handleWorkspaceProfileSave, loadProjectWorkspaceProfile, normalizeWorkspaceProfile, profileWorkspace, saveProjectWorkspaceProfile };
