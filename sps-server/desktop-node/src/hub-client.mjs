@@ -10,7 +10,32 @@ export class SpsHubRequestError extends Error {
 }
 
 function apiUrl(hubUrl, path) {
-  return `${normalizeHubUrl(hubUrl)}/api${path}`;
+  const hub = new URL(normalizeHubUrl(hubUrl));
+  return `${hub.origin}/api${path}`;
+}
+
+export async function probeSpsHub({
+  fetchImpl = fetch,
+  hubUrl,
+}) {
+  const response = await fetchImpl(apiUrl(hubUrl, "/health"), {
+    method: "GET",
+    headers: { accept: "application/json" },
+  });
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // A healthy Hub may be behind a proxy that returns an empty health body.
+  }
+  if (!response.ok) {
+    throw new SpsHubRequestError(
+      response.status,
+      data?.error ?? `SPS Hub health check failed with ${response.status}`,
+    );
+  }
+  return data;
 }
 
 async function requestJson(fetchImpl, url, method, body, accessToken) {

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("spsDesktop", {
   getStatus: () => ipcRenderer.invoke("desktop:status"),
+  checkHub: (input) => ipcRenderer.invoke("desktop:check-hub", input),
   checkUpdates: () => ipcRenderer.invoke("desktop:check-updates"),
   downloadUpdate: () => ipcRenderer.invoke("desktop:download-update"),
   installUpdate: () => ipcRenderer.invoke("desktop:install-update"),

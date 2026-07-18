@@ -35,7 +35,10 @@
           <label>Computer name <input id="display-name" required placeholder="My Windows PC" /></label>
           <label>Default folder for unscoped runs <input id="default-workspace-path" placeholder="C:\\Projects\\scratch" /></label>
           <p class="muted">Use HTTPS for any Hub outside this computer. HTTP is accepted only for local localhost testing. Project Tasks never fall back to this folder.</p>
-          <button type="submit">Save profile</button>
+          <div class="action-row profile-actions">
+            <button type="submit">Save profile</button>
+            <button id="check-hub" type="button" class="secondary">Check connection</button>
+          </div>
         </form>
       </section>
 

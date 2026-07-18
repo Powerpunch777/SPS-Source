@@ -20,6 +20,6 @@ It deliberately does not provide:
 - CLI login-token extraction, API-key export, or project-file upload.
 - Shell execution, Hub-supplied working directories, or a fallback from one
   Project folder to another.
-- A replacement for the upcoming Electron secure-storage and account/device-auth flow.
+- A replacement for SPS Desktop's Electron secure-storage and account/device-auth flow.
 
-Electron will supply OS-backed secure storage, the invitation/login UI, and a constrained IPC boundary. The Node core stays dependency-free so its cryptographic protocol can be tested independently.
+SPS Desktop supplies OS-backed secure storage, the invitation/login UI, and a constrained IPC boundary. Its connection check is read-only: it sends no login token, Node key, or local capability data. The Node core stays dependency-free so its cryptographic protocol can be tested independently.

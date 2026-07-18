@@ -12,6 +12,7 @@ export {
   listSpsCompanies,
   listSpsProjects,
   pollSpsDesktopAuth,
+  probeSpsHub,
   registerSpsNode,
   sendSpsNodeHeartbeat,
   claimSpsNodeCommand,

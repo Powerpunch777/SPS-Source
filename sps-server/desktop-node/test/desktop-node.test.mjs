@@ -13,6 +13,7 @@ import {
   executeSpsNodeCommand,
   startSpsDesktopAuth,
   pollSpsDesktopAuth,
+  probeSpsHub,
   createSignedHeartbeat,
   listSpsCompanies,
   listSpsProjects,
@@ -302,6 +303,25 @@ test("uses the Hub API for registration and signed heartbeats", async () => {
   assert.equal(requests[1].url, "https://sps.example.test/api/sps-nodes/node-1/heartbeat");
   assert.equal(JSON.parse(requests[0].options.body).privateKeyPem, undefined);
   assert.equal(JSON.parse(requests[1].options.body).signature.length > 0, true);
+});
+
+test("checks Hub health before any sign-in or Node registration", async () => {
+  const requests = [];
+  const health = await probeSpsHub({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return new Response(JSON.stringify({ ok: true, service: "sps" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+    hubUrl: "https://sps.example.test/stale-path",
+  });
+
+  assert.deepEqual(health, { ok: true, service: "sps" });
+  assert.equal(requests[0].url, "https://sps.example.test/api/health");
+  assert.equal(requests[0].options.method, "GET");
+  assert.equal(requests[0].options.headers.authorization, undefined);
 });
 
 test("preserves Hub denial status when a Node heartbeat is rejected", async () => {

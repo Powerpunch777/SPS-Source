@@ -37,6 +37,7 @@ button.secondary { background: #2b3b53; }
 button:hover { filter: brightness(1.08); }
 button:disabled { cursor: not-allowed; filter: none; opacity: .5; }
 .action-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.profile-actions { grid-column: 1 / -1; }
 .action-row input { flex: 1 1 220px; }
 .compact-row { margin-top: 12px; }
 .muted { margin-bottom: 16px; font-size: 13px; }

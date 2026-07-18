@@ -8,6 +8,7 @@ import {
   listSpsCompanies,
   listSpsProjects,
   pollSpsDesktopAuth,
+  probeSpsHub,
   registerSpsNode,
   scanLocalCapabilities,
   sendSpsNodeHeartbeat,
@@ -482,6 +483,11 @@ function sendJoinToRenderer(value) {
 
 function registerIpc() {
   ipcMain.handle("desktop:status", () => publicStatus());
+  ipcMain.handle("desktop:check-hub", async (_event, input) => {
+    const hubUrl = requireSpsHubOrigin(input?.hubUrl);
+    const health = await probeSpsHub({ hubUrl });
+    return { hubUrl, health };
+  });
   ipcMain.handle("desktop:check-updates", async () => {
     updateStatus = await requireUpdateService().check();
     return publicStatus();

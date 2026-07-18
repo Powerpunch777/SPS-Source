@@ -195,6 +195,10 @@ $("#profile-form").addEventListener("submit", async (event) => {
     showNotice("Hub profile saved.");
   });
 });
+$("#check-hub").addEventListener("click", () => run(async () => {
+  const result = await window.spsDesktop.checkHub({ hubUrl: $("#hub-url").value });
+  showNotice(`SPS Hub is reachable at ${result.hubUrl}.`);
+}));
 $("#company-picker").addEventListener("change", async (event) => {
   $("#company-id").value = event.target.value;
   if (!event.target.value) return;
