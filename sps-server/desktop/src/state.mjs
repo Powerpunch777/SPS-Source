@@ -14,6 +14,7 @@ export function emptyState() {
     identity: null,
     encryptedBoardApiToken: null,
     companies: [],
+    projects: [],
     nodeId: null,
   };
 }

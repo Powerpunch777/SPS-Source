@@ -1,9 +1,10 @@
 export { scanLocalCapabilities } from "./capability-scan.mjs";
-export { executeSpsNodeCommand } from "./command-runner.mjs";
+export { executeSpsNodeCommand, resolveSpsNodeExecutable, resolveSpsNodeInvocation } from "./command-runner.mjs";
 export { createNodeIdentity, createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
 export {
   cancelSpsDesktopAuth,
   listSpsCompanies,
+  listSpsProjects,
   pollSpsDesktopAuth,
   registerSpsNode,
   sendSpsNodeHeartbeat,

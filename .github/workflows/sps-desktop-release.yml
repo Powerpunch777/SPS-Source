@@ -1,0 +1,51 @@
+name: Release SPS Desktop
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-sign-and-publish:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      WIN_CSC_LINK: ${{ secrets.SPS_WINDOWS_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.SPS_WINDOWS_CSC_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sps-server/desktop/package-lock.json
+
+      - name: Verify release tag and signing credentials
+        shell: pwsh
+        working-directory: sps-server/desktop
+        run: |
+          $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
+          $expectedTag = "desktop-v$($manifest.version)"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Release tag must be $expectedTag, but was $env:GITHUB_REF_NAME."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) {
+            throw "SPS Windows signing secrets are required. Refusing to publish an unsigned Desktop release."
+          }
+
+      - name: Install Desktop dependencies
+        working-directory: sps-server/desktop
+        run: npm ci
+
+      - name: Run Desktop tests
+        working-directory: sps-server/desktop
+        run: npm test -- --test-concurrency=1
+
+      - name: Build, sign, and publish GitHub Release
+        working-directory: sps-server/desktop
+        run: npm run release:win

@@ -8763,7 +8763,7 @@ var updateCurrentUserProfileSchema = external_exports.object({
 
 // ../../external/sps-core/packages/shared/src/validators/sps-nodes.ts
 var spsNodeCapabilitySchema = external_exports.object({
-  kind: external_exports.enum(["codex_cli", "agy_cli", "ollama", "lm_studio", "specialist_api", "custom"]),
+  kind: external_exports.enum(["codex_cli", "agy_cli", "opencode_cli", "ollama", "lm_studio", "specialist_api", "custom"]),
   label: external_exports.string().trim().min(1).max(120),
   version: external_exports.string().trim().max(120).optional().nullable(),
   models: external_exports.array(external_exports.string().trim().min(1).max(160)).max(100).optional()

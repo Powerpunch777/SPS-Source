@@ -1,9 +1,9 @@
-const LEGACY_INVITE_PREFIX = "pcp_invite_";
+const SPS_INVITE_PREFIX = "sps_invite_";
 
 export function spsCodeToInviteToken(input) {
   const withoutPrefix = String(input ?? "").trim().replace(/^sps[\s_-]*/i, "");
   if (!/^[a-z0-9]{4}(?:[\s_-]?[a-z0-9]{4})$/i.test(withoutPrefix)) return null;
-  return LEGACY_INVITE_PREFIX + withoutPrefix.replace(/[\s_-]/g, "").toLowerCase();
+  return SPS_INVITE_PREFIX + withoutPrefix.replace(/[\s_-]/g, "").toLowerCase();
 }
 
 export function buildInviteUrl(hubUrl, code) {
@@ -20,10 +20,22 @@ export function buildInviteUrl(hubUrl, code) {
 }
 
 export function parseSpsJoinUri(value) {
-  const uri = new URL(value);
-  if (uri.protocol !== "sps:" || uri.hostname !== "join") return null;
-  const hub = uri.searchParams.get("hub");
-  const code = uri.searchParams.get("code");
-  if (!hub || !code || !spsCodeToInviteToken(code)) return null;
-  return { hub, code: code.toUpperCase() };
+  try {
+    const uri = new URL(value);
+    if (uri.protocol !== "sps:" || uri.hostname !== "join") return null;
+    const hub = uri.searchParams.get("hub");
+    const code = uri.searchParams.get("code");
+    if (!hub || !code || !spsCodeToInviteToken(code)) return null;
+
+    const hubUrl = new URL(hub);
+    if (hubUrl.protocol !== "http:" && hubUrl.protocol !== "https:") return null;
+    return { hub: hubUrl.origin, code: code.toUpperCase() };
+  } catch {
+    return null;
+  }
+}
+
+export function findSpsJoinUriArg(argv) {
+  if (!Array.isArray(argv)) return null;
+  return argv.find((value) => typeof value === "string" && parseSpsJoinUri(value)) ?? null;
 }

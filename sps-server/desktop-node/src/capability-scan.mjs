@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 const RUNTIMES = [
   { command: "codex", kind: "codex_cli", label: "Codex CLI" },
   { command: "agy", kind: "agy_cli", label: "Agy CLI" },
+  { command: "opencode", kind: "opencode_cli", label: "OpenCode CLI" },
   { command: "ollama", kind: "ollama", label: "Ollama" },
   { command: "lms", kind: "lm_studio", label: "LM Studio" },
 ];

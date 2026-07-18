@@ -12,7 +12,7 @@
       <header>
         <div class="eyebrow">SONPARKSERVER</div>
         <h1>SPS Desktop</h1>
-        <p>Connect this computer to an SPS Hub without moving CLI credentials or local AI files off the device.</p>
+        <p>Connect this computer to an SPS Hub without moving CLI credentials or local AI files off the device. Closing the window keeps an active Desktop Node running in the system tray.</p>
       </header>
 
       <section class="panel">
@@ -28,12 +28,23 @@
       </section>
 
       <section class="panel">
+        <h2>Project folders</h2>
+        <p class="muted">Choose a project you can access, then map it to its local clone on this computer. Leave the folder blank to remove a mapping.</p>
+        <form id="project-workspace-form">
+          <label>SPS project <select id="project-workspace-project-id" required disabled><option value="">Sign in and choose a company first</option></select></label>
+          <label>Local folder <input id="project-workspace-path" placeholder="C:\\Projects\\my-project" /></label>
+          <button type="submit">Save project folder</button>
+        </form>
+        <div class="action-row compact-row"><button id="refresh-projects" type="button" class="secondary">Refresh projects</button></div>
+      </section>
+
+      <section class="panel">
         <h2>Join and sign in</h2>
         <div class="action-row">
           <input id="invite-code" placeholder="SPS-AB12-CD34" autocomplete="one-time-code" />
           <button id="open-invite" type="button">Open invitation</button>
         </div>
-        <p class="muted">The invitation and account sign-in open in your default browser. Return here after accepting the invitation.</p>
+        <p class="muted">Open the invitation first, accept it with Google in your default browser, then return here to connect this computer.</p>
         <div class="action-row">
           <button id="start-auth" type="button">Continue with Google</button>
           <button id="poll-auth" type="button" class="secondary">Check approval</button>
@@ -42,11 +53,24 @@
       </section>
 
       <section class="panel">
+        <h2>Desktop updates</h2>
+        <p class="muted">Updates come only from the SPS GitHub release channel. Download and installation always require an explicit action on this computer.</p>
+        <div class="action-row">
+          <button id="check-updates" type="button" class="secondary">Check for updates</button>
+          <button id="download-update" type="button" disabled>Download update</button>
+          <button id="install-update" type="button" disabled>Restart and install</button>
+        </div>
+        <pre id="update-detail">Checking Desktop update service...</pre>
+      </section>
+
+      <section class="panel">
         <h2>Node connection</h2>
         <div class="action-row">
           <button id="scan-capabilities" type="button" class="secondary">Scan local runtimes</button>
           <button id="connect-node" type="button">Register this computer</button>
+          <button id="open-workspace" type="button" class="secondary">Open SPS workspace</button>
         </div>
+        <label class="toggle-row"><input id="launch-at-login" type="checkbox" />Start SPS Desktop when I sign in to Windows</label>
         <pre id="capabilities">No scan yet.</pre>
       </section>
 

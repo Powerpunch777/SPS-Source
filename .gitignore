@@ -16,6 +16,8 @@ sps-server/memory-sidecar/logs/
 sps-server/**/node_modules/
 sps-server/desktop/dist/
 sps-server/desktop/dist-google-login/
+sps-server/desktop/dist-*/
+sps-server/deploy/hub/.env
 sps-server/direct-task-pipe-broker/config.local.json
 sps-server/direct-task-pipe-broker/runtime/
 sps-server/image-worker-asset-tool/node_modules/

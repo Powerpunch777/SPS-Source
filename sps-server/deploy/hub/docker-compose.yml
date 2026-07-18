@@ -1,0 +1,74 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sps
+      POSTGRES_PASSWORD: "${SPS_POSTGRES_PASSWORD:?Run Initialize-SPSHubDeployment.ps1 first}"
+      POSTGRES_DB: sps
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sps -d sps"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    volumes:
+      - sps-postgres:/var/lib/postgresql/data
+
+  sps-hub:
+    build:
+      context: ../../..
+      dockerfile: sps-server/deploy/hub/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgres://sps:${SPS_POSTGRES_PASSWORD:?Run Initialize-SPSHubDeployment.ps1 first}@db:5432/sps"
+      HOST: "0.0.0.0"
+      PORT: "3100"
+      SERVE_UI: "true"
+      PAPERCLIP_HOME: /sps
+      PAPERCLIP_DEPLOYMENT_MODE: authenticated
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: public
+      PAPERCLIP_API_URL: "${SPS_PUBLIC_URL:?Run Initialize-SPSHubDeployment.ps1 first}"
+      SPS_BIND: custom
+      SPS_BIND_HOST: "0.0.0.0"
+      SPS_ALLOWED_HOSTNAMES: "${SPS_DOMAIN:?Run Initialize-SPSHubDeployment.ps1 first}"
+      SPS_PUBLIC_URL: "${SPS_PUBLIC_URL:?Run Initialize-SPSHubDeployment.ps1 first}"
+      SPS_AUTH_PUBLIC_BASE_URL: "${SPS_PUBLIC_URL:?Run Initialize-SPSHubDeployment.ps1 first}"
+      SPS_AUTH_BASE_URL_MODE: explicit
+      SPS_AUTH_GOOGLE_ONLY: "true"
+      SPS_BUNDLED_PLUGIN_PATHS: /opt/sps-plugins/room-chat
+      SPS_GOOGLE_CLIENT_ID: "${SPS_GOOGLE_CLIENT_ID:?Run Initialize-SPSHubDeployment.ps1 first}"
+      SPS_GOOGLE_CLIENT_SECRET: "${SPS_GOOGLE_CLIENT_SECRET:?Run Initialize-SPSHubDeployment.ps1 first}"
+      BETTER_AUTH_SECRET: "${SPS_BETTER_AUTH_SECRET:?Run Initialize-SPSHubDeployment.ps1 first}"
+      BETTER_AUTH_TRUSTED_ORIGINS: "${SPS_PUBLIC_URL:?Run Initialize-SPSHubDeployment.ps1 first}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3100/api/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - sps-hub-data:/sps
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      sps-hub:
+        condition: service_healthy
+    environment:
+      SPS_DOMAIN: "${SPS_DOMAIN:?Run Initialize-SPSHubDeployment.ps1 first}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - sps-caddy-data:/data
+      - sps-caddy-config:/config
+
+volumes:
+  sps-postgres:
+  sps-hub-data:
+  sps-caddy-data:
+  sps-caddy-config:

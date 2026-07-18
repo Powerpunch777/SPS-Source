@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -6,22 +6,92 @@ import {
   claimSpsNodeCommand,
   executeSpsNodeCommand,
   listSpsCompanies,
+  listSpsProjects,
   pollSpsDesktopAuth,
   registerSpsNode,
   scanLocalCapabilities,
   sendSpsNodeHeartbeat,
   startSpsDesktopAuth,
 } from "@sps/desktop-node";
-import { buildInviteUrl, parseSpsJoinUri } from "./invite.mjs";
+import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri } from "./invite.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
+import { createSpsUpdateService } from "./update-service.mjs";
+import { isSpsHubApiUrl, normalizeSpsHubOrigin } from "./workspace-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
 let mainWindow = null;
 let state = emptyState();
 let pendingAuth = null;
 let heartbeatTimer = null;
 let commandPollTimer = null;
 let commandPollInFlight = false;
+let pendingJoin = null;
+let rendererReadyForJoinLinks = false;
+let workspaceOrigin = null;
+let nodeRuntimeStatus = emptyNodeRuntimeStatus();
+let tray = null;
+let isQuitting = false;
+const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
+let updateService = null;
+let updateStatus = {
+  state: "initializing",
+  currentVersion: app.getVersion(),
+  availableVersion: null,
+  percent: null,
+  message: "Desktop update service is starting.",
+};
+
+function emptyNodeRuntimeStatus() {
+  return {
+    lastHeartbeatAt: null,
+    heartbeatError: null,
+    lastCommandPollAt: null,
+    commandPollError: null,
+  };
+}
+
+function resetNodeRuntimeStatus() {
+  nodeRuntimeStatus = emptyNodeRuntimeStatus();
+}
+
+async function initializeUpdates() {
+  if (!app.isPackaged) {
+    updateStatus = {
+      state: "disabled",
+      currentVersion: app.getVersion(),
+      availableVersion: null,
+      percent: null,
+      message: "Desktop updates are available only in an installed SPS release.",
+    };
+    return;
+  }
+  try {
+    const { autoUpdater } = await import("electron-updater");
+    updateService = createSpsUpdateService({
+      app,
+      updater: autoUpdater,
+      onStatus: (nextStatus) => { updateStatus = nextStatus; },
+    });
+    updateStatus = updateService.getStatus();
+    updateService.start();
+  } catch {
+    updateStatus = {
+      state: "unavailable",
+      currentVersion: app.getVersion(),
+      availableVersion: null,
+      percent: null,
+      message: "Desktop update service is unavailable. Your current installation remains unchanged.",
+    };
+  }
+}
+
+function requireUpdateService() {
+  if (!updateService) {
+    throw new Error("Desktop updates are unavailable in this SPS installation.");
+  }
+  return updateService;
+}
 
 function requireEncryption() {
   if (!safeStorage.isEncryptionAvailable()) {
@@ -68,20 +138,154 @@ function currentBoardToken() {
   return state.encryptedBoardApiToken ? decrypt(state.encryptedBoardApiToken) : null;
 }
 
+function normalizeProjectList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((project) => project && typeof project.id === "string" && typeof project.name === "string")
+    .map((project) => ({ id: project.id, name: project.name }));
+}
+
+async function refreshProjects() {
+  const companyId = state.profile?.companyId;
+  const accessToken = currentBoardToken();
+  if (!state.profile || !companyId || !accessToken) {
+    state.projects = [];
+    await persistState();
+    return state.projects;
+  }
+  const projects = await listSpsProjects({
+    hubUrl: state.profile.hubUrl,
+    companyId,
+    accessToken,
+  });
+  state.projects = normalizeProjectList(projects);
+  await persistState();
+  return state.projects;
+}
+
+function stopNodeScheduling() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (commandPollTimer) clearInterval(commandPollTimer);
+  heartbeatTimer = null;
+  commandPollTimer = null;
+  commandPollInFlight = false;
+  resetNodeRuntimeStatus();
+}
+
+function workspaceHubUrl() {
+  if (!state.profile?.hubUrl) return null;
+  return normalizeSpsHubOrigin(state.profile.hubUrl);
+}
+
+function isCurrentWorkspaceApiUrl(url) {
+  return Boolean(workspaceOrigin && isSpsHubApiUrl(url, workspaceOrigin));
+}
+
+async function openSetup() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  workspaceOrigin = null;
+  rendererReadyForJoinLinks = false;
+  await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+}
+
+async function openWorkspace() {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error("SPS Desktop window is unavailable");
+  if (!state.profile) throw new Error("Save an SPS Hub profile first");
+  if (!currentBoardToken()) throw new Error("Continue with Google before opening the SPS workspace");
+  const hubOrigin = workspaceHubUrl();
+  if (!hubOrigin) throw new Error("SPS Hub URL must use HTTP or HTTPS");
+  workspaceOrigin = hubOrigin;
+  rendererReadyForJoinLinks = false;
+  await mainWindow.loadURL(`${hubOrigin}/`);
+}
+
+async function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) await createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+async function showWorkspace() {
+  await showMainWindow();
+  await openWorkspace();
+}
+
+function configureWorkspaceRequestAuth() {
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const requestHeaders = { ...details.requestHeaders };
+    const accessToken = currentBoardToken();
+    if (accessToken && isCurrentWorkspaceApiUrl(details.url)) {
+      requestHeaders.Authorization = `Bearer ${accessToken}`;
+    }
+    callback({ requestHeaders });
+  });
+}
+
+function createApplicationMenu() {
+  const run = (action) => {
+    void action().catch(() => {
+      // The visible screen explains connection failures without exposing tokens.
+    });
+  };
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    {
+      label: "SPS Desktop",
+      submenu: [
+        { label: "Open SPS workspace", click: () => run(showWorkspace) },
+        { label: "Connection setup", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
+        { type: "separator" },
+        { label: "Sign out on this computer", click: () => run(async () => {
+          pendingAuth = null;
+          state.encryptedBoardApiToken = null;
+          state.nodeId = null;
+          state.companies = [];
+          state.projects = [];
+          stopNodeScheduling();
+          await persistState();
+          await openSetup();
+        }) },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+  ]));
+}
+
+function createTray() {
+  if (tray) return;
+  const icon = nativeImage.createFromPath(path.join(__dirname, "..", "assets", "sps-logo.png"));
+  tray = new Tray(icon);
+  tray.setToolTip("SPS Desktop Node");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
+    { label: "Open SPS workspace", click: () => { void showWorkspace(); } },
+    { label: "Connection setup", click: () => { void showMainWindow().then(openSetup); } },
+    { type: "separator" },
+    { label: "Quit SPS Desktop", click: () => { isQuitting = true; app.quit(); } },
+  ]));
+  tray.on("double-click", () => { void showMainWindow(); });
+}
+
 function publicStatus() {
+  const loginItemSettings = app.getLoginItemSettings();
   return {
     profile: state.profile,
     hasIdentity: Boolean(state.identity),
     signedIn: Boolean(state.encryptedBoardApiToken),
     nodeId: state.nodeId,
     companies: Array.isArray(state.companies) ? state.companies : [],
+    projects: Array.isArray(state.projects) ? state.projects : [],
     pendingAuth: pendingAuth
       ? { approvalUrl: pendingAuth.approvalUrl, expiresAt: pendingAuth.expiresAt }
       : null,
     commandRunner: {
       active: Boolean(commandPollTimer),
       workspaceConfigured: Boolean(state.profile?.defaultWorkspacePath),
+      launchAtLogin: Boolean(loginItemSettings.openAtLogin),
     },
+    nodeConnection: state.nodeId ? { ...nodeRuntimeStatus } : null,
+    update: { ...updateStatus },
   };
 }
 
@@ -91,6 +295,7 @@ async function connectNode() {
   const accessToken = currentBoardToken();
   if (!accessToken) throw new Error("Sign in to SPS Desktop before registering this computer");
   const identity = await ensureIdentity();
+  resetNodeRuntimeStatus();
   const capabilities = scanLocalCapabilities();
   const node = await registerSpsNode({
     hubUrl: state.profile.hubUrl,
@@ -109,6 +314,7 @@ async function connectNode() {
     accessToken,
   });
   state.nodeId = node.id;
+  nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
   await persistState();
   scheduleHeartbeat();
   scheduleCommandPolling();
@@ -126,8 +332,10 @@ function scheduleHeartbeat() {
         identity: currentIdentity(),
         accessToken: currentBoardToken() ?? undefined,
       });
+      nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
+      nodeRuntimeStatus.heartbeatError = null;
     } catch {
-      // A background retry never logs credentials or CLI details.
+      nodeRuntimeStatus.heartbeatError = "Could not contact the Hub. Check the SPS Hub address, network, and Desktop sign-in.";
     }
   }, 60_000);
 }
@@ -137,6 +345,7 @@ async function pollNodeCommands() {
   const accessToken = currentBoardToken();
   if (!accessToken) return;
   commandPollInFlight = true;
+  let claimedCommand = false;
   try {
     const command = await claimSpsNodeCommand({
       hubUrl: state.profile.hubUrl,
@@ -144,7 +353,10 @@ async function pollNodeCommands() {
       identity: currentIdentity(),
       accessToken,
     });
+    nodeRuntimeStatus.lastCommandPollAt = new Date().toISOString();
+    nodeRuntimeStatus.commandPollError = null;
     if (!command) return;
+    claimedCommand = true;
     await executeSpsNodeCommand({
       command,
       hubUrl: state.profile.hubUrl,
@@ -154,8 +366,9 @@ async function pollNodeCommands() {
       profile: state.profile,
     });
   } catch {
-    // The Hub receives the command failure when a command was claimed. Polling
-    // failures are intentionally quiet to avoid exposing runtime details.
+    nodeRuntimeStatus.commandPollError = claimedCommand
+      ? "The latest local command could not complete. Check its Task run for details."
+      : "Could not poll the Hub for commands. Check the SPS Hub address, network, and Desktop sign-in.";
   } finally {
     commandPollInFlight = false;
   }
@@ -171,11 +384,35 @@ function scheduleCommandPolling() {
 
 function sendJoinToRenderer(value) {
   const join = parseSpsJoinUri(value);
-  if (join && mainWindow) mainWindow.webContents.send("desktop:join-link", join);
+  if (!join) return false;
+  pendingJoin = join;
+  if (mainWindow && rendererReadyForJoinLinks && !mainWindow.isDestroyed()) {
+    pendingJoin = null;
+    mainWindow.webContents.send("desktop:join-link", join);
+  }
+  return true;
 }
 
 function registerIpc() {
   ipcMain.handle("desktop:status", () => publicStatus());
+  ipcMain.handle("desktop:check-updates", async () => {
+    updateStatus = await requireUpdateService().check();
+    return publicStatus();
+  });
+  ipcMain.handle("desktop:download-update", async () => {
+    updateStatus = await requireUpdateService().download();
+    return publicStatus();
+  });
+  ipcMain.handle("desktop:install-update", () => {
+    updateStatus = requireUpdateService().install();
+    return publicStatus();
+  });
+  ipcMain.handle("desktop:ready-for-join-link", () => {
+    rendererReadyForJoinLinks = true;
+    const join = pendingJoin;
+    pendingJoin = null;
+    return join;
+  });
   ipcMain.handle("desktop:save-profile", async (_event, input) => {
     const hub = new URL(input.hubUrl);
     if (hub.protocol !== "http:" && hub.protocol !== "https:") {
@@ -184,14 +421,39 @@ function registerIpc() {
     const companyId = String(input.companyId ?? "").trim();
     const displayName = String(input.displayName ?? "").trim();
     if (!displayName) throw new Error("Computer name is required");
+    const hubUrl = hub.toString().replace(/\/$/, "");
+    const previousProfile = state.profile;
+    const connectionScopeChanged = Boolean(
+      previousProfile &&
+      (previousProfile.hubUrl !== hubUrl || previousProfile.companyId !== companyId),
+    );
+    const hubChanged = Boolean(previousProfile && previousProfile.hubUrl !== hubUrl);
+    const companyChanged = Boolean(previousProfile && previousProfile.companyId !== companyId);
+    if (connectionScopeChanged) {
+      state.nodeId = null;
+      stopNodeScheduling();
+    }
+    if (hubChanged) {
+      pendingAuth = null;
+      state.encryptedBoardApiToken = null;
+      state.companies = [];
+    }
+    if (hubChanged || companyChanged) state.projects = [];
     state.profile = {
-      hubUrl: hub.toString().replace(/\/$/, ""),
+      hubUrl,
       companyId,
       displayName: displayName.slice(0, 120),
       defaultWorkspacePath: String(input.defaultWorkspacePath ?? "").trim(),
-      projectWorkspaces: state.profile?.projectWorkspaces ?? {},
+      projectWorkspaces: connectionScopeChanged ? {} : state.profile?.projectWorkspaces ?? {},
     };
     await persistState();
+    if (companyId && currentBoardToken()) {
+      try {
+        await refreshProjects();
+      } catch {
+        // The profile remains usable while a transient Hub error is retried from setup.
+      }
+    }
     return publicStatus();
   });
   ipcMain.handle("desktop:open-invite", async (_event, input) => {
@@ -199,6 +461,33 @@ function registerIpc() {
     const url = buildInviteUrl(state.profile.hubUrl, input.code);
     await shell.openExternal(url);
     return url;
+  });
+  ipcMain.handle("desktop:open-workspace", openWorkspace);
+  ipcMain.handle("desktop:open-setup", openSetup);
+  ipcMain.handle("desktop:save-project-workspace", async (_event, input) => {
+    if (!state.profile) throw new Error("Save an SPS Hub profile before mapping a project workspace");
+    const projectId = String(input.projectId ?? "").trim();
+    const workspacePath = String(input.workspacePath ?? "").trim();
+    if (!projectId) throw new Error("Project ID is required");
+    const projectWorkspaces = { ...(state.profile.projectWorkspaces ?? {}) };
+    if (workspacePath) projectWorkspaces[projectId] = workspacePath;
+    else delete projectWorkspaces[projectId];
+    state.profile.projectWorkspaces = projectWorkspaces;
+    await persistState();
+    return publicStatus();
+  });
+  ipcMain.handle("desktop:refresh-projects", async () => {
+    await refreshProjects();
+    return publicStatus();
+  });
+  ipcMain.handle("desktop:set-launch-at-login", (_event, input) => {
+    const enabled = Boolean(input?.enabled);
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      openAsHidden: enabled,
+      args: enabled ? [SPS_START_HIDDEN_ARGUMENT] : [],
+    });
+    return publicStatus();
   });
   ipcMain.handle("desktop:start-auth", async () => {
     if (!state.profile) throw new Error("Save an SPS Hub profile first");
@@ -234,6 +523,13 @@ function registerIpc() {
           state.profile.companyId = state.companies[0].id;
         }
         await persistState();
+        if (state.profile.companyId) {
+          try {
+            await refreshProjects();
+          } catch {
+            // A successful sign-in is retained even if the project list is briefly unavailable.
+          }
+        }
       } catch {
         // Google approval completed. The user can retry after a transient Hub failure.
       }
@@ -245,17 +541,23 @@ function registerIpc() {
   ipcMain.handle("desktop:sign-out", async () => {
     pendingAuth = null;
     state.encryptedBoardApiToken = null;
+    state.nodeId = null;
+    state.companies = [];
+    state.projects = [];
+    stopNodeScheduling();
     await persistState();
+    await openSetup();
     return publicStatus();
   });
 }
 
-async function createWindow() {
+async function createWindow({ show = true } = {}) {
   mainWindow = new BrowserWindow({
     width: 980,
     height: 760,
     minWidth: 760,
     minHeight: 600,
+    show,
     icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
@@ -264,6 +566,25 @@ async function createWindow() {
       sandbox: true,
     },
   });
+  mainWindow.webContents.on("did-start-loading", () => {
+    rendererReadyForJoinLinks = false;
+  });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!workspaceOrigin) return;
+    const nextOrigin = normalizeSpsHubOrigin(url);
+    if (nextOrigin === workspaceOrigin) return;
+    event.preventDefault();
+    void shell.openExternal(url);
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  mainWindow.on("close", (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow.hide();
+  });
   await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
 
@@ -271,20 +592,23 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
-    const joinArg = argv.find((value) => value.startsWith("sps://join"));
+    const joinArg = findSpsJoinUriArg(argv);
     if (joinArg) sendJoinToRenderer(joinArg);
-    if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    void showMainWindow();
   });
   app.whenReady().then(async () => {
     state = await loadState(app.getPath("userData"));
     registerIpc();
+    configureWorkspaceRequestAuth();
+    createApplicationMenu();
     app.setAsDefaultProtocolClient("sps");
-    await createWindow();
+    await createWindow({ show: !startedHidden });
+    createTray();
+    const initialJoinArg = findSpsJoinUriArg(process.argv);
+    if (initialJoinArg) sendJoinToRenderer(initialJoinArg);
     scheduleHeartbeat();
     scheduleCommandPolling();
+    await initializeUpdates();
   });
 }
 
@@ -293,9 +617,13 @@ app.on("open-url", (event, value) => {
   sendJoinToRenderer(value);
 });
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // Windows close hides to the tray so the assigned SPS Node keeps working.
+});
+app.on("activate", () => {
+  void showMainWindow();
 });
 app.on("before-quit", () => {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  if (commandPollTimer) clearInterval(commandPollTimer);
+  isQuitting = true;
+  stopNodeScheduling();
+  updateService?.stop();
 });

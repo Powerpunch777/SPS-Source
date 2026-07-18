@@ -62,6 +62,22 @@ export async function listSpsCompanies({
   return requestJson(fetchImpl, apiUrl(hubUrl, "/companies"), "GET", undefined, accessToken);
 }
 
+export async function listSpsProjects({
+  fetchImpl = fetch,
+  hubUrl,
+  companyId,
+  accessToken,
+}) {
+  if (!companyId) throw new Error("Choose an SPS company before loading projects");
+  return requestJson(
+    fetchImpl,
+    apiUrl(hubUrl, `/companies/${encodeURIComponent(companyId)}/projects`),
+    "GET",
+    undefined,
+    accessToken,
+  );
+}
+
 export async function pollSpsDesktopAuth({
   fetchImpl = fetch,
   hubUrl,

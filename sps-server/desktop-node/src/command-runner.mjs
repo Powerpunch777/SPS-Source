@@ -11,12 +11,16 @@ const FORBIDDEN_ENV_KEYS = new Set([
   "GOOGLE_API_KEY",
   "OPENAI_API_KEY",
 ]);
+const SAFE_RUNTIME_ENV_KEYS = new Set([
+  "ANTIGRAVITY_MODEL",
+  "OPENCODE_DISABLE_PROJECT_CONFIG",
+]);
 
 function allowedEnvironment(value) {
   const output = {};
   for (const [key, entry] of Object.entries(value ?? {})) {
     if (typeof entry !== "string" || FORBIDDEN_ENV_KEYS.has(key)) continue;
-    if (key.startsWith("PAPERCLIP_") || key === "FORCE_COLOR" || key === "TERM") output[key] = entry;
+    if (key.startsWith("PAPERCLIP_") || SAFE_RUNTIME_ENV_KEYS.has(key) || key === "FORCE_COLOR" || key === "TERM") output[key] = entry;
   }
   return output;
 }
@@ -43,9 +47,116 @@ function outputChunks(value) {
   return chunks;
 }
 
+async function findWindowsCommandCandidates(command) {
+  return await new Promise((resolve) => {
+    const lookup = spawn("where.exe", [command], {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let output = "";
+    lookup.stdout.on("data", (chunk) => {
+      output += chunk.toString("utf8");
+    });
+    lookup.once("error", () => resolve([]));
+    lookup.once("close", () => {
+      resolve(output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean));
+    });
+  });
+}
+
+export async function resolveSpsNodeExecutable(command, options = {}) {
+  if ((options.platform ?? process.platform) !== "win32") return command;
+  const extension = path.extname(command).toLowerCase();
+  if (extension && extension !== ".cmd" && extension !== ".bat" && extension !== ".ps1") return command;
+  const findCandidates = options.findWindowsCommand ?? findWindowsCommandCandidates;
+  const candidates = await findCandidates(command);
+  const executable = candidates.find((candidate) => /\.(exe|com)$/i.test(candidate));
+  if (executable) return executable;
+  if (extension === ".cmd" || extension === ".bat" || extension === ".ps1") {
+    throw new Error(`SPS Desktop requires an executable for remote Node runs, not a shell wrapper: ${command}`);
+  }
+  return command;
+}
+
+async function fileExists(filePath) {
+  return Boolean(await fs.stat(filePath).catch(() => null));
+}
+
+async function readTextFile(filePath) {
+  return await fs.readFile(filePath, "utf8");
+}
+
+async function resolveWindowsNpmNodeInvocation(command, rawArgs, options) {
+  const findCandidates = options.findWindowsCommand ?? findWindowsCommandCandidates;
+  const candidates = await findCandidates(command);
+  const commandName = path.win32.basename(command).replace(/\.(cmd|bat|ps1|exe|com)$/i, "").toLowerCase();
+  const npmWrapper = candidates.find(
+    (candidate) => path.win32.basename(candidate).toLowerCase() === `${commandName}.cmd`,
+  );
+  if (!npmWrapper) return null;
+
+  const readFile = options.readFile ?? readTextFile;
+  const wrapperSource = String(await readFile(npmWrapper));
+  // npm's Windows shim executes node against a script below its own
+  // node_modules directory. Extract only that fixed shape, never a shell line.
+  const match = wrapperSource.match(/"%dp0%\\(node_modules\\[^\"]+\.(?:c|m)?js)"/i);
+  if (!match) {
+    throw new Error(`SPS Desktop could not safely resolve the npm wrapper for remote Node runs: ${npmWrapper}`);
+  }
+  const scriptSuffix = match[1].replace(/\//g, "\\");
+  if (!/^node_modules\\/i.test(scriptSuffix) || scriptSuffix.split("\\").includes("..")) {
+    throw new Error(`SPS Desktop rejected an unsafe npm wrapper script path: ${npmWrapper}`);
+  }
+  const nodeScript = path.win32.resolve(path.win32.dirname(npmWrapper), scriptSuffix);
+  const exists = options.fileExists ?? fileExists;
+  if (!await exists(nodeScript)) {
+    throw new Error(`SPS Desktop could not find the npm CLI script referenced by ${npmWrapper}`);
+  }
+  const nodeCandidates = await findCandidates("node.exe");
+  const nodeExecutable = nodeCandidates.find((candidate) => /\.(exe|com)$/i.test(candidate));
+  if (!nodeExecutable) {
+    throw new Error(`SPS Desktop requires node.exe to run the npm CLI wrapper: ${npmWrapper}`);
+  }
+  return { executable: nodeExecutable, args: [nodeScript, ...rawArgs] };
+}
+
+export async function resolveSpsNodeInvocation(command, args, options = {}) {
+  const rawArgs = Array.isArray(args) ? args : [];
+  if ((options.platform ?? process.platform) === "win32") {
+    const npmInvocation = await resolveWindowsNpmNodeInvocation(command, rawArgs, options);
+    if (npmInvocation) return npmInvocation;
+  }
+  return {
+    executable: await resolveSpsNodeExecutable(command, options),
+    args: rawArgs,
+  };
+}
+
+async function terminateProcessTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === "win32") {
+    await new Promise((resolve) => {
+      const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      killer.once("error", () => resolve());
+      killer.once("close", () => resolve());
+    });
+    return;
+  }
+  child.kill("SIGTERM");
+}
+
 export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity, accessToken, profile }) {
   const workspace = await resolveWorkspace(command, profile);
-  const environment = { ...process.env, ...allowedEnvironment(command.env) };
+  // The Hub process may be bound to localhost on its own computer. A member
+  // Node must use the Hub URL it connected to, never that host-local address.
+  const environment = {
+    ...process.env,
+    ...allowedEnvironment(command.env),
+    PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
+  };
   let sequence = Number(command.lastEventSeq ?? 0);
   let outputQueue = Promise.resolve();
   const enqueueOutput = (stream, raw) => {
@@ -72,8 +183,16 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
   let timeout = null;
   let child = null;
   try {
+    const invocation = await resolveSpsNodeInvocation(command.command, command.args);
     const result = await new Promise((resolve, reject) => {
-      child = spawn(command.command, Array.isArray(command.args) ? command.args : [], {
+      let settled = false;
+      let timedOut = false;
+      const settle = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        callback(value);
+      };
+      child = spawn(invocation.executable, invocation.args, {
         cwd: workspace,
         env: environment,
         shell: false,
@@ -82,14 +201,18 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
       });
       child.stdout.on("data", (chunk) => enqueueOutput("stdout", chunk.toString("utf8")));
       child.stderr.on("data", (chunk) => enqueueOutput("stderr", chunk.toString("utf8")));
-      child.once("error", reject);
-      child.once("close", (exitCode, signal) => resolve({ exitCode, signal, timedOut: false }));
+      child.once("error", (error) => settle(reject, error));
+      child.once("close", (exitCode, signal) => {
+        settle(resolve, { exitCode, signal, timedOut });
+      });
       if (typeof command.stdin === "string" && command.stdin.length > 0) child.stdin.end(command.stdin);
       else child.stdin.end();
       if (timeoutMs > 0) {
         timeout = setTimeout(() => {
-          child.kill();
-          resolve({ exitCode: null, signal: null, timedOut: true });
+          timedOut = true;
+          // Wait for the process tree to close before reporting completion.
+          // Codex and other CLIs can spawn children that continue writing.
+          void terminateProcessTree(child).catch(() => child?.kill());
         }, timeoutMs);
       }
     });

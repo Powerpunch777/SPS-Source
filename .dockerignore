@@ -1,0 +1,8 @@
+**/.git
+**/node_modules
+**/dist
+**/.tmp
+**/.direct-agy-runs
+**/*.log
+sps-server/desktop/dist-*
+sps-server/logs

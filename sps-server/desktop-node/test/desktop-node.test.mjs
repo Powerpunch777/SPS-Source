@@ -3,15 +3,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildHeartbeatMessage,
+  buildSignedRequestMessage,
+  canonicalJson,
+  claimSpsNodeCommand,
   createNodeIdentity,
+  createSignedNodeRequest,
   startSpsDesktopAuth,
   pollSpsDesktopAuth,
   createSignedHeartbeat,
   listSpsCompanies,
+  listSpsProjects,
   registerSpsNode,
+  resolveSpsNodeExecutable,
+  resolveSpsNodeInvocation,
   scanLocalCapabilities,
   sendSpsNodeHeartbeat,
 } from "../src/index.mjs";
+import { createHash } from "node:crypto";
 
 test("generates an Ed25519 identity and signs the shared heartbeat message", () => {
   const identity = createNodeIdentity();
@@ -34,16 +42,91 @@ test("generates an Ed25519 identity and signs the shared heartbeat message", () 
   assert.equal(verified, true);
 });
 
+test("signs canonical Desktop command requests without including private key material", () => {
+  const identity = createNodeIdentity();
+  const payload = { body: "hello", sequence: 2, stream: "stdout" };
+  const request = createSignedNodeRequest({
+    identity,
+    nodeId: "00000000-0000-4000-8000-000000000002",
+    method: "POST",
+    path: "/sps-nodes/00000000-0000-4000-8000-000000000002/commands/a/events",
+    payload,
+    timestamp: "2026-07-18T00:00:00.000Z",
+    nonce: "C".repeat(32),
+  });
+  const bodySha256 = createHash("sha256").update(canonicalJson(payload), "utf8").digest("hex");
+  const verified = verify(
+    null,
+    Buffer.from(buildSignedRequestMessage({
+      nodeId: "00000000-0000-4000-8000-000000000002",
+      method: "POST",
+      path: "/sps-nodes/00000000-0000-4000-8000-000000000002/commands/a/events",
+      timestamp: request.timestamp,
+      nonce: request.nonce,
+      bodySha256,
+    }), "utf8"),
+    createPublicKey(identity.publicKeyPem),
+    Buffer.from(request.signature, "base64"),
+  );
+  assert.equal(verified, true);
+  assert.equal(JSON.stringify(request).includes("privateKeyPem"), false);
+});
+
 test("publishes only capability names and versions, not executable paths", () => {
   const capabilities = scanLocalCapabilities({
-    findCommand: (command) => command === "codex" || command === "ollama",
+    findCommand: (command) => command === "codex" || command === "opencode" || command === "ollama",
     readVersion: (command) => `${command} 1.2.3`,
   });
   assert.deepEqual(capabilities, [
     { kind: "codex_cli", label: "Codex CLI", version: "codex 1.2.3" },
+    { kind: "opencode_cli", label: "OpenCode CLI", version: "opencode 1.2.3" },
     { kind: "ollama", label: "Ollama", version: "ollama 1.2.3" },
   ]);
   assert.equal(JSON.stringify(capabilities).includes("C:\\\\"), false);
+});
+
+test("prefers a Windows executable over an npm shell wrapper", async () => {
+  const resolved = await resolveSpsNodeExecutable("codex", {
+    platform: "win32",
+    findWindowsCommand: async () => [
+      "C:\\Users\\member\\AppData\\Roaming\\npm\\codex.cmd",
+      "C:\\Program Files\\SPS\\codex.exe",
+    ],
+  });
+  assert.equal(resolved, "C:\\Program Files\\SPS\\codex.exe");
+});
+
+test("runs the Codex npm wrapper through node.exe without a command shell", async () => {
+  const invocation = await resolveSpsNodeInvocation("codex", ["--version"], {
+    platform: "win32",
+    findWindowsCommand: async (command) => command === "node.exe"
+      ? ["C:\\Program Files\\nodejs\\node.exe"]
+      : ["C:\\Users\\member\\AppData\\Roaming\\npm\\codex.cmd"],
+    readFile: async () => 'endLocal & "%_prog%" "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*',
+    fileExists: async (filePath) => filePath.endsWith("node_modules\\@openai\\codex\\bin\\codex.js"),
+  });
+  assert.equal(invocation.executable, "C:\\Program Files\\nodejs\\node.exe");
+  assert.deepEqual(invocation.args, [
+    "C:\\Users\\member\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js",
+    "--version",
+  ]);
+});
+
+test("runs any supported npm CLI wrapper through node.exe without a command shell", async () => {
+  const invocation = await resolveSpsNodeInvocation("lms", ["chat", "qwen3"], {
+    platform: "win32",
+    findWindowsCommand: async (command) => command === "node.exe"
+      ? ["C:\\Program Files\\nodejs\\node.exe"]
+      : ["C:\\Users\\member\\AppData\\Roaming\\npm\\lms.cmd"],
+    readFile: async () => 'endLocal & "%_prog%" "%dp0%\\node_modules\\@lmstudio\\cli\\bin\\lms.mjs" %*',
+    fileExists: async (filePath) => filePath.endsWith("node_modules\\@lmstudio\\cli\\bin\\lms.mjs"),
+  });
+  assert.equal(invocation.executable, "C:\\Program Files\\nodejs\\node.exe");
+  assert.deepEqual(invocation.args, [
+    "C:\\Users\\member\\AppData\\Roaming\\npm\\node_modules\\@lmstudio\\cli\\bin\\lms.mjs",
+    "chat",
+    "qwen3",
+  ]);
 });
 
 test("uses the Hub API for registration and signed heartbeats", async () => {
@@ -75,6 +158,28 @@ test("uses the Hub API for registration and signed heartbeats", async () => {
   assert.equal(requests[1].url, "https://sps.example.test/api/sps-nodes/node-1/heartbeat");
   assert.equal(JSON.parse(requests[0].options.body).privateKeyPem, undefined);
   assert.equal(JSON.parse(requests[1].options.body).signature.length > 0, true);
+});
+
+test("claims Node commands through a signed Board-authenticated request", async () => {
+  const identity = createNodeIdentity();
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    return new Response(null, { status: 204 });
+  };
+  const result = await claimSpsNodeCommand({
+    fetchImpl,
+    hubUrl: "https://sps.example.test",
+    nodeId: "node-1",
+    identity,
+    accessToken: "board-token",
+  });
+  assert.equal(result, null);
+  assert.equal(requests[0].url, "https://sps.example.test/api/sps-nodes/node-1/commands/claim-next");
+  assert.equal(requests[0].options.headers.authorization, "Bearer board-token");
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(typeof body.signature, "string");
+  assert.equal(body.privateKeyPem, undefined);
 });
 
 test("uses the existing Hub browser-approval challenge for Desktop sign-in", async () => {
@@ -136,4 +241,21 @@ test("can authenticate before choosing a company and then list allowed companies
   assert.equal(requests[1].url, "https://sps.example.test/api/companies");
   assert.equal(requests[1].options.headers.authorization, "Bearer board-token");
   assert.deepEqual(companies, [{ id: "company-1", name: "Acme Robotics" }]);
+});
+
+test("lists only projects available to the signed-in Desktop member", async () => {
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    return new Response(JSON.stringify([{ id: "project-1", name: "Mobile game" }]), { status: 200 });
+  };
+  const projects = await listSpsProjects({
+    fetchImpl,
+    hubUrl: "https://sps.example.test",
+    companyId: "company-1",
+    accessToken: "board-token",
+  });
+  assert.deepEqual(projects, [{ id: "project-1", name: "Mobile game" }]);
+  assert.equal(requests[0].url, "https://sps.example.test/api/companies/company-1/projects");
+  assert.equal(requests[0].options.headers.authorization, "Bearer board-token");
 });

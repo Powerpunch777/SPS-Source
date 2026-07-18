@@ -16,12 +16,15 @@ p { color: #aebdce; line-height: 1.5; }
 .panel { border: 1px solid #26354b; background: #151f30; border-radius: 8px; padding: 20px; margin: 16px 0; }
 form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 label { display: grid; gap: 7px; color: #c8d4e4; font-size: 13px; }
-input { width: 100%; border: 1px solid #3a4c66; border-radius: 5px; background: #0f1725; color: #f5f8fc; padding: 10px; font: inherit; }
+.toggle-row { display: flex; align-items: center; gap: 9px; margin: 16px 0 0; }
+.toggle-row input { width: auto; }
+input, select { width: 100%; border: 1px solid #3a4c66; border-radius: 5px; background: #0f1725; color: #f5f8fc; padding: 10px; font: inherit; }
 button { border: 0; border-radius: 5px; background: #207bd3; color: white; padding: 10px 14px; font: inherit; font-weight: 650; cursor: pointer; }
 button.secondary { background: #2b3b53; }
 button:hover { filter: brightness(1.08); }
 .action-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .action-row input { flex: 1 1 220px; }
+.compact-row { margin-top: 12px; }
 .muted { margin-bottom: 16px; font-size: 13px; }
 pre { overflow: auto; margin: 0; padding: 12px; border-radius: 5px; background: #0f1725; color: #b7c7d9; font-size: 12px; white-space: pre-wrap; }
 #notice { min-height: 24px; font-size: 14px; }
