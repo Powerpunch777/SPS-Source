@@ -25,7 +25,7 @@ SPS Desktop Node now executes an Agent command on the approved member computer.
 - Implemented through the same signed Node dispatch queue: `sps_agy_local` through Agy CLI, `sps_ollama_local` through Ollama CLI, and `sps_lm_studio_local` through LM Studio CLI. Their account state and local model files stay on the Node computer.
 - `opencode_local` can also use Ollama or LM Studio providers configured on that Node's OpenCode installation.
 
-Capability detection alone never grants execution authority. Every runtime still needs an approved Node, an Agent grant, and that Agent's primary Node binding.
+Capability detection alone never grants execution authority. Every runtime still needs an approved Node, an Agent grant, and that Agent's primary Node binding. The Node settings picker and Hub API both validate the Agent adapter against the Node's advertised runtime before a grant or primary binding is saved. This prevents an incompatible computer from being configured and only failing when a Task starts.
 
 ## Verification on 2026-07-18
 
