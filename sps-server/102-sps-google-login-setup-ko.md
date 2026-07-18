@@ -2,75 +2,109 @@
 
 ## Purpose
 
-SPS Desktop, the Hub browser, and invitation acceptance use the same Google account. Google identifies the person; it does not grant company access by itself. Company membership is still granted only by an SPS invitation and the Hub permission model.
+SPS Desktop, the authenticated Hub browser, and invitation acceptance use the
+same Google account. Google identifies the person; it does not grant company
+access by itself. Company membership is granted only by an SPS invitation and
+the Hub permission model.
 
-This setup is required before inviting someone on another computer. The current local-only server can remain in `local_trusted` mode while the owner prepares these settings.
+This setup is required before inviting someone from another computer. A local
+server can remain in `local_trusted` mode while the owner prepares the public
+Hub, but the friend-facing Hub must use the exact HTTPS URL below.
 
-## 1. Prepare a Hub URL
+## 1. Fix the Hub URL first
 
-Google OAuth needs one stable Hub URL. For a shared Hub, use HTTPS and a hostname that every invited computer can reach. Do not use a LAN IP address as the OAuth redirect target.
+For Redon Games, the public product site and the authenticated Hub have
+different origins:
 
-Example Hub URL:
+| Purpose | URL |
+| --- | --- |
+| Public SPS product website | `https://redongames.com` |
+| Google-authenticated SPS Hub | `https://app.redongames.com` |
+
+Google OAuth must use only the Hub origin. The exact callback URL is:
 
 ```text
-https://sps.example.com
+https://app.redongames.com/api/auth/callback/google
 ```
 
-The exact Google redirect URI is:
-
-```text
-https://sps.example.com/api/auth/callback/google
-```
-
-The scheme, hostname, port, and path must match exactly in SPS and Google Cloud Console.
+The scheme, hostname, port, and path must match exactly in SPS and Google Cloud
+Console. Do not register the marketing website, a LAN IP, or `localhost` for
+the public Hub client.
 
 ## 2. Create the Google OAuth client
 
 1. Open Google Cloud Console and create or select a project.
-2. Configure the OAuth consent screen. Add invited people as test users while the app is in testing.
+2. Configure the OAuth consent screen. Add invited people as test users while
+   the app is in testing.
 3. Create an OAuth Client ID for a **Web application**.
-4. Add the exact redirect URI from the previous section.
-5. Copy the Client ID and Client Secret. The secret is shown only once; store it outside the SPS repository.
+4. Add `https://app.redongames.com` as an authorized JavaScript origin.
+5. Add `https://app.redongames.com/api/auth/callback/google` as the authorized
+   redirect URI.
+6. Copy the Client ID and Client Secret. The secret is shown only once; keep it
+   outside the SPS repository and Room messages.
 
-For a one-computer local test, Google permits a localhost redirect, for example `http://localhost:3100/api/auth/callback/google`. That local URL is not suitable for a friend connecting from another computer.
+For a one-computer local test, Google permits a localhost redirect such as
+`http://localhost:3100/api/auth/callback/google`. That local URL is not
+suitable for a friend connecting from another computer.
 
-## 3. Configure the Hub machine
+## 3. Configure the Hub computer
 
-Set these machine-level environment variables on the computer that runs the SPS Hub. Keep the secret out of Git, screenshots, Room messages, and AGENTS.md.
+Do not distribute OAuth, database, or Cloudflare secrets among Windows user
+environment variables. Create the ignored deployment `.env` file on the Hub
+computer instead:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("SPS_GOOGLE_CLIENT_ID", "your-client-id", "User")
-[Environment]::SetEnvironmentVariable("SPS_GOOGLE_CLIENT_SECRET", "your-client-secret", "User")
-[Environment]::SetEnvironmentVariable("SPS_AUTH_SECRET", "replace-with-a-long-random-secret", "User")
-[Environment]::SetEnvironmentVariable("SPS_AUTH_GOOGLE_ONLY", "true", "User")
-[Environment]::SetEnvironmentVariable("SPS_DEPLOYMENT_MODE", "authenticated", "User")
-[Environment]::SetEnvironmentVariable("SPS_DEPLOYMENT_EXPOSURE", "private", "User")
-[Environment]::SetEnvironmentVariable("SPS_AUTH_BASE_URL_MODE", "explicit", "User")
-[Environment]::SetEnvironmentVariable("SPS_AUTH_PUBLIC_BASE_URL", "https://sps.example.com", "User")
-[Environment]::SetEnvironmentVariable("SPS_ALLOWED_HOSTNAMES", "sps.example.com", "User")
+Set-Location ".\sps-server\deploy\hub"
+.\Initialize-SPSHubDeployment.ps1 `
+  -Domain "app.redongames.com" `
+  -GoogleClientId "<Google OAuth client ID>" `
+  -GoogleClientSecret "<Google OAuth client secret>" `
+  -CloudflareTunnelToken "<Cloudflare Tunnel connector token>"
 ```
 
-Open a new PowerShell window after setting user environment variables, then restart SPS from that new window. `SPS_AUTH_GOOGLE_ONLY=true` intentionally prevents the Hub from starting when the Google Client ID or Client Secret is absent.
+The initializer generates the database password and Better Auth secret, sets
+Google-only login, and fixes the public URL to `https://app.redongames.com`.
+The `.env` file is Git-ignored and must not be put in screenshots, AGENTS.md,
+or an invitation. Then verify it without printing any secret:
+
+```powershell
+.\Test-SPSPublicHubDeployment.ps1 -Mode tunnel
+```
+
+For a direct Caddy/VPS deployment, omit `-CloudflareTunnelToken` and follow
+the direct mode in `deploy\hub\README.md`. The public Hub Docker compose file
+always keeps PostgreSQL and the Hub application on its private network.
 
 ## 4. User and Desktop flow
 
-1. Owner creates an SPS invitation.
+1. Owner creates an SPS invitation from the authenticated Hub.
 2. The invited person opens the code or `sps://join` link in SPS Desktop.
 3. SPS Desktop opens the invitation in the default browser.
 4. The person chooses **Continue with Google** and accepts the invitation.
-5. Back in SPS Desktop, they choose **Continue with Google** again to approve the device connection.
-6. SPS Desktop stores the Board API token using Windows secure storage, loads the companies available to that Google account, and registers the PC's public key.
-7. An owner approves the pending Node and grants only the allowed Agents to that Node.
+5. Back in SPS Desktop, they choose **Continue with Google** again to approve
+   the device connection.
+6. SPS Desktop stores the Board API token using Windows secure storage, loads
+   only the companies available to that Google account, and registers the PC's
+   public key.
+7. An Owner approves the pending Node and grants only the allowed Agents to
+   that Node.
 
-CLI credentials and local-model files never leave the invited computer. SPS only stores its Hub token and a locally generated Node keypair in Windows secure storage.
+CLI credentials and local-model files never leave the invited computer. SPS
+stores only its Hub token and locally generated Node keypair in Windows secure
+storage.
 
 ## 5. Validation checklist
 
-- Google browser callback returns to the SPS Hub instead of showing `redirect_uri_mismatch`.
-- An invited Google account cannot see a company before accepting its invitation.
-- SPS Desktop lists only the companies available to that account after device approval.
-- A Node stays `pending` until an SPS owner approves it.
-- A Node cannot execute an Agent until an owner grants that Node-Agent pair.
+- Google browser callback returns to the SPS Hub instead of showing
+  `redirect_uri_mismatch`.
+- An invited Google account cannot see a company before accepting its
+  invitation.
+- SPS Desktop lists only the companies available to that account after device
+  approval.
+- A Node stays `pending` until an SPS Owner approves it.
+- A Node cannot execute an Agent until an Owner grants that Node-Agent pair.
+- Revoking that Agent grant or disconnecting the Node prevents the next queued
+  command without exposing CLI credentials to the Hub.
 
 ## References
 
