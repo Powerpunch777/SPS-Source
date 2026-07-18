@@ -29,6 +29,13 @@ function Read-SafeDotEnv {
 }
 
 $composePath = Join-Path $PSScriptRoot "docker-compose.yml"
+$repositoryRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+$corePackagePath = Join-Path $repositoryRoot "external\sps-core\server\package.json"
+if (Test-Path -LiteralPath $corePackagePath -PathType Leaf) {
+  Add-Check "SPS Core source" $true "Pinned SPS Core submodule is available for the Docker build."
+} else {
+  Add-Check "SPS Core source" $false "SPS Core is missing. Run: git submodule update --init --recursive"
+}
 $environment = $null
 if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
   try {

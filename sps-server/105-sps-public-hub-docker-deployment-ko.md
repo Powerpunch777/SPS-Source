@@ -23,6 +23,16 @@ local SPS workplane instead of deploying only the bare core.
 3. In Google Cloud, create a Web OAuth client with this exact redirect URL:
    `https://hub.example.com/api/auth/callback/google`.
 4. Install Docker Engine and the Docker Compose plugin on the Hub computer.
+5. Clone SPS with its pinned Core source. A normal clone must initialize the
+   submodule before Docker builds the Hub image.
+
+```powershell
+git clone --recurse-submodules https://github.com/Powerpunch777/SPS.git
+cd SPS
+
+# Only needed when SPS was already cloned without --recurse-submodules.
+git submodule update --init --recursive
+```
 
 ## Create the local deployment secrets
 
@@ -30,7 +40,7 @@ Run this only on the Hub computer. It writes an ignored `.env` file with fresh
 database and Better Auth secrets.
 
 ```powershell
-Set-Location "C:\Users\young\Documents\AGENT 구축\sps-server\deploy\hub"
+Set-Location ".\sps-server\deploy\hub"
 .\Initialize-SPSHubDeployment.ps1 `
   -Domain "hub.example.com" `
   -GoogleClientId "<Google OAuth client ID>" `
@@ -46,7 +56,7 @@ ambiguous environment file.
 ## Start and verify
 
 ```powershell
-Set-Location "C:\Users\young\Documents\AGENT 구축\sps-server\deploy\hub"
+Set-Location ".\sps-server\deploy\hub"
 docker compose up --build -d
 docker compose ps
 curl https://hub.example.com/api/health

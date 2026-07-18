@@ -28,20 +28,28 @@ cd "C:\path\to\SPS"
 - Windows 10/11
 - PowerShell 5.1 이상
 - Node.js LTS
-- SPS Core 소스 또는 설치본
+- Git (SPS Core submodule 포함 복제용)
 
-이 저장소에는 Workplane 설정, 플러그인, 스크립트가 들어 있습니다. SPS Core 자체는 포함하지 않으므로 별도로 준비해야 합니다.
+이 저장소는 검증된 SPS Core 버전을 Git submodule로 함께 추적합니다. 따라서
+처음 복제할 때 submodule까지 함께 받으면 로컬 실행과 Docker 배포가 같은 Core
+버전을 사용합니다.
 
 ### 1. 저장소 받기
 
 ```powershell
-git clone https://github.com/Powerpunch777/SPS.git
+git clone --recurse-submodules https://github.com/Powerpunch777/SPS.git
 cd SPS
 ```
 
-### 2. SPS Core 배치하기
+이미 일반 `git clone`으로 받았다면, 한 번만 다음 명령을 실행합니다.
 
-SPS Core 폴더를 아래 위치에 둡니다.
+```powershell
+git submodule update --init --recursive
+```
+
+### 2. SPS Core 확인하기
+
+정상 복제되면 SPS Core가 아래 위치에 준비되어 있습니다.
 
 ```text
 SPS/
@@ -50,7 +58,7 @@ SPS/
    └─ sps-core/
 ```
 
-다른 위치에 Core를 둔 경우에는 시작할 때 경로를 직접 지정할 수 있습니다.
+개발 중 다른 SPS Core checkout을 시험하고 싶을 때만 시작 경로를 직접 지정합니다.
 
 ```powershell
 .\sps-server\scripts\Start-SPS.ps1 -CorePath "D:\tools\sps-core"
