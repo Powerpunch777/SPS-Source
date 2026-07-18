@@ -42,6 +42,9 @@ Set-Location .\sps-server\website
 npx --yes wrangler@4 pages deploy . --project-name redon-games --branch main
 ```
 
+GitHub Pages also publishes this branch as a temporary public preview. It uses
+the same static output and is intentionally not the final custom-domain host.
+
 ## SPS Hub domain
 
 Do not point the apex domain at the Hub. The Hub needs its own hostname:

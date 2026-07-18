@@ -1,0 +1,40 @@
+name: Publish SPS website preview
+
+on:
+  push:
+    branches:
+      - codex/paperclip-workplane
+    paths:
+      - sps-server/website/**
+      - .github/workflows/sps-website-pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: sps-website-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/configure-pages@v5
+
+      - name: Verify static SPS website
+        run: node sps-server/website/scripts/check-site.mjs
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: sps-server/website
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

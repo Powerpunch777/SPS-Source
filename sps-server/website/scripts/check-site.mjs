@@ -25,7 +25,7 @@ const checks = [
   ["SPS title", index.includes("<title>SPS | Redon Games</title>")],
   ["canonical public domain", index.includes('href="https://redongames.com"')],
   ["Hub endpoint", index.includes("https://app.redongames.com")],
-  ["brand image", index.includes("/assets/sps-logo.png")],
+  ["brand image", index.includes("./assets/sps-logo.png")],
   ["responsive viewport", index.includes('name="viewport"')],
   ["visible focus style", stylesheet.includes(":focus-visible")],
   ["mobile layout", stylesheet.includes("@media (max-width: 560px)")],
