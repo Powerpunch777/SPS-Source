@@ -1,5 +1,8 @@
 import { createPublicKey, verify } from "node:crypto";
 import { createServer } from "node:http";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -23,6 +26,7 @@ import {
   listSpsProjects,
   registerSpsNode,
   resolveSpsNodeExecutable,
+  resolveSpsNodeCodexHome,
   resolveSpsNodeInvocation,
   resolveSpsNodeWorkspace,
   scanLocalCapabilities,
@@ -241,9 +245,35 @@ test("uses the Node owner's project mapping instead of the default workspace", a
   assert.equal(resolved, projectWorkspace);
 });
 
+test("resolves only a signed-in local Codex profile selected by the Hub", async () => {
+  const homeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-node-codex-profile-"));
+  try {
+    await fs.mkdir(path.join(homeRoot, ".codex-plus-b"));
+    await fs.writeFile(path.join(homeRoot, ".codex-plus-b", "auth.json"), "{}", "utf8");
+    const command = { env: { PAPERCLIP_CODEX_ACCOUNT: ".codex-plus-b" } };
+    assert.equal(
+      await resolveSpsNodeCodexHome(command, { USERPROFILE: homeRoot }),
+      path.join(homeRoot, ".codex-plus-b"),
+    );
+    await assert.rejects(
+      resolveSpsNodeCodexHome({ env: { PAPERCLIP_CODEX_ACCOUNT: "../other" } }, { USERPROFILE: homeRoot }),
+      /invalid Codex profile name/,
+    );
+    await assert.rejects(
+      resolveSpsNodeCodexHome({ env: { PAPERCLIP_CODEX_ACCOUNT: ".codex" } }, { USERPROFILE: homeRoot }),
+      /not signed in/,
+    );
+  } finally {
+    await fs.rm(homeRoot, { recursive: true, force: true });
+  }
+});
+
 test("executes a local Node process and returns streamed output through the signed Hub protocol", async () => {
   const hub = await startMockHub();
+  const homeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-node-command-profile-"));
   try {
+    await fs.mkdir(path.join(homeRoot, ".codex"));
+    await fs.writeFile(path.join(homeRoot, ".codex", "auth.json"), "{}", "utf8");
     const result = await executeSpsNodeCommand({
       command: {
         id: "command-1",
@@ -267,6 +297,7 @@ test("executes a local Node process and returns streamed output through the sign
         executable: process.execPath,
         args: ["-e", "process.stdout.write('SPS node output\\n')"],
       }),
+      hostEnvironment: { USERPROFILE: homeRoot },
     });
 
     assert.equal(result.exitCode, 0);
@@ -279,6 +310,7 @@ test("executes a local Node process and returns streamed output through the sign
     assert.equal(hub.completions.length, 1);
     assert.equal(hub.completions[0]?.body.status, "succeeded");
   } finally {
+    await fs.rm(homeRoot, { recursive: true, force: true });
     await hub.close();
   }
 });
@@ -317,8 +349,8 @@ test("cancels a running local command when this Desktop Node disconnects", async
       command: {
         id: "command-cancel",
         projectId: null,
-        command: "codex",
-        runtimeKind: "codex_cli",
+        command: "agy",
+        runtimeKind: "agy_cli",
         args: [],
         env: {},
         stdin: null,
@@ -352,8 +384,8 @@ test("does not start a command that races with Desktop Node disconnection", asyn
       command: {
         id: "command-race",
         projectId: null,
-        command: "codex",
-        runtimeKind: "codex_cli",
+        command: "agy",
+        runtimeKind: "agy_cli",
         args: [],
         env: {},
         stdin: null,

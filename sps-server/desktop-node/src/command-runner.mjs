@@ -54,6 +54,7 @@ const SPS_NODE_RUNTIME_COMMANDS = {
   ollama: "ollama",
   lm_studio: "lms",
 };
+const CODEX_ACCOUNT_DIRECTORY = /^\.codex(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
 const activeCommands = new Map();
 let commandCancellationGeneration = 0;
 let lastCommandCancellationReason = "SPS Desktop stopped this local command.";
@@ -81,6 +82,31 @@ export function buildSpsNodeRuntimeEnvironment(commandEnvironment, hostEnvironme
     ...hostRuntimeEnvironment(hostEnvironment),
     ...allowedEnvironment(commandEnvironment),
   };
+}
+
+export async function resolveSpsNodeCodexHome(command, hostEnvironment = process.env) {
+  const configuredProfile = command?.env?.PAPERCLIP_CODEX_ACCOUNT;
+  const profileDirectory = typeof configuredProfile === "string" && configuredProfile.trim()
+    ? configuredProfile.trim()
+    : ".codex";
+  if (!CODEX_ACCOUNT_DIRECTORY.test(profileDirectory)) {
+    throw new Error("SPS Desktop rejected an invalid Codex profile name from the Hub.");
+  }
+
+  const homeRoot = hostEnvironment.USERPROFILE?.trim() || hostEnvironment.HOME?.trim();
+  if (!homeRoot) {
+    throw new Error("SPS Desktop could not locate this computer's user home for the selected Codex profile.");
+  }
+  const resolvedHomeRoot = path.resolve(homeRoot);
+  const codexHome = path.resolve(resolvedHomeRoot, profileDirectory);
+  if (path.dirname(codexHome) !== resolvedHomeRoot) {
+    throw new Error("SPS Desktop rejected an unsafe Codex profile location.");
+  }
+  const auth = await fs.stat(path.join(codexHome, "auth.json")).catch(() => null);
+  if (!auth?.isFile()) {
+    throw new Error(`Selected Codex profile is not signed in on this SPS Desktop Node: ${profileDirectory}.`);
+  }
+  return codexHome;
 }
 
 export function assertSpsNodeCommandRuntime(command) {
@@ -250,6 +276,7 @@ export async function executeSpsNodeCommand({
   profile,
   resolveInvocation = resolveSpsNodeInvocation,
   checkCommandLease = checkSpsNodeCommandLease,
+  hostEnvironment = process.env,
 }) {
   assertSpsNodeCommandRuntime(command);
   const cancellationGeneration = commandCancellationGeneration;
@@ -257,9 +284,13 @@ export async function executeSpsNodeCommand({
   // The Hub process may be bound to localhost on its own computer. A member
   // Node must use the Hub URL it connected to, never that host-local address.
   const environment = {
-    ...buildSpsNodeRuntimeEnvironment(command.env),
+    ...buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
     PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
   };
+  if (command.runtimeKind === "codex_cli") {
+    environment.CODEX_HOME = await resolveSpsNodeCodexHome(command, hostEnvironment);
+    delete environment.PAPERCLIP_CODEX_ACCOUNT;
+  }
   let sequence = Number(command.lastEventSeq ?? 0);
   let outputQueue = Promise.resolve();
   const enqueueOutput = (stream, raw) => {

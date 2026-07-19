@@ -6,6 +6,7 @@ export {
   executeSpsNodeCommand,
   resolveSpsNodeExecutable,
   resolveSpsNodeInvocation,
+  resolveSpsNodeCodexHome,
   resolveSpsNodeWorkspace,
 } from "./command-runner.mjs";
 export { createNodeIdentity, createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
