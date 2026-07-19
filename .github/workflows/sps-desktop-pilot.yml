@@ -26,8 +26,12 @@ jobs:
         working-directory: sps-server/desktop
         run: npm ci
 
-      - name: Verify Desktop and Node protocol tests
+      - name: Verify Desktop tests
         working-directory: sps-server/desktop
+        run: npm test -- --test-concurrency=1
+
+      - name: Verify Desktop Node protocol tests
+        working-directory: sps-server/desktop-node
         run: npm test -- --test-concurrency=1
 
       - name: Build unsigned pilot installer without publishing
