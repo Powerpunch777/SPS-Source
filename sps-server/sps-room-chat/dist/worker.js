@@ -11375,7 +11375,7 @@ function startWorkerRpcHost(options) {
 var manifest_default = {
   id: "local.room-chat",
   apiVersion: 1,
-  version: "0.3.58",
+  version: "0.3.59",
   displayName: "SPS Rooms",
   description: "Long-lived project Agent Rooms backed by SPS Agent Sessions.",
   author: "local",
@@ -11416,7 +11416,7 @@ var manifest_default = {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.58"
+    ui: "./dist/ui-v0.3.59"
   },
   ui: {
     slots: [
@@ -13738,23 +13738,18 @@ async function listCompaniesDirect(apiUrl) {
   const result = await paperclipJsonDirect(apiUrl, "/api/companies", { operation: "Company list" });
   return directArrayPayload(result, ["companies", "items", "data"]);
 }
-async function listTaskOwnerBoundaryIssuesDirect(apiUrl, companyId) {
+async function listTaskOwnerBoundaryIssues(ctx, companyId) {
   const issues = [];
   for (const status of TASK_OWNER_REPORT_STATUSES) {
     let offset = 0;
     while (true) {
-      const query = new URLSearchParams({
+      const batch = await ctx.issues.list({
+        companyId,
         status,
-        limit: "500",
-        offset: String(offset),
-        includePluginOperations: "true"
+        includePluginOperations: true,
+        limit: 500,
+        offset
       });
-      const result = await paperclipJsonDirect(
-        apiUrl,
-        `/api/companies/${encodeURIComponent(companyId)}/issues?${query.toString()}`,
-        { operation: "Task owner boundary list" }
-      );
-      const batch = directArrayPayload(result, ["issues", "items", "data"]);
       issues.push(...batch);
       if (batch.length < 500) break;
       offset += batch.length;
@@ -19363,12 +19358,11 @@ async function reconcileTaskOwnerReportBoundaries(ctx, options = {}) {
   const operation = (async () => {
     const runId = textParam(options, "runId") || `task-owner-boundary-reconcile:${Date.now()}`;
     const summary = { runId, companies: 0, scanned: 0, scheduled: 0, healthy: 0, skipped: 0, failed: 0 };
-    const runtime = await getRuntimeConfig(ctx);
-    const companies = await listCompaniesDirect(runtime.spsApiUrl);
+    const companies = await ctx.companies.list({ limit: 200 });
     summary.companies = companies.length;
     for (const company of companies) {
       const seenTaskIds = /* @__PURE__ */ new Set();
-      const tasks = await listTaskOwnerBoundaryIssuesDirect(runtime.spsApiUrl, company.id);
+      const tasks = await listTaskOwnerBoundaryIssues(ctx, company.id);
       for (const task of tasks) {
         if (!task?.parentId || seenTaskIds.has(task.id)) continue;
         seenTaskIds.add(task.id);
@@ -19582,16 +19576,13 @@ var plugin = definePlugin({
       const roomSummary = await reconcileAllProjectAgentRooms(ctx);
       const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
-      const quotaSummary = await reconcileProviderQuotaRetries(ctx);
-      const roomQuotaSummary = await reconcileRoomProviderQuotaRetries(ctx);
       ctx.logger?.info?.("Workplane reconciliation completed.", {
         runId: job.runId,
         trigger: job.trigger,
         roomSummary,
         interruptedRoomJobSummary,
         ownerSummary,
-        quotaSummary,
-        roomQuotaSummary
+        quotaRetryPolicy: "manual_only"
       });
     });
     ctx.events.on("project.created", async (event) => {

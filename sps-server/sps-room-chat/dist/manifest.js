@@ -1,7 +1,7 @@
 export default {
   id: "local.room-chat",
   apiVersion: 1,
-  version: "0.3.58",
+  version: "0.3.59",
   displayName: "SPS Rooms",
   description: "Long-lived project Agent Rooms backed by SPS Agent Sessions.",
   author: "local",
@@ -42,7 +42,7 @@ export default {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.58"
+    ui: "./dist/ui-v0.3.59"
   },
   ui: {
     slots: [

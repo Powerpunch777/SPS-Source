@@ -177,8 +177,14 @@ globalThis.fetch = async (url, init = {}) => {
 
 const ctx = {
   config: { get: async () => ({ enableCodexRooms: true, enableAgyRooms: true, paperclipApiUrl: "http://127.0.0.1:3100" }) },
+  companies: {
+    list: async () => [{ id: companyId, name: "Owner Report Test Company" }]
+  },
   issues: {
     get: async (issueId) => issues.get(issueId) ?? null,
+    list: async ({ companyId: requestedCompanyId, status, offset = 0, limit = 500 }) => [...issues.values()]
+      .filter((issue) => issue.companyId === requestedCompanyId && (!status || issue.status === status))
+      .slice(offset, offset + limit),
     update: async (issueId, patch) => {
       Object.assign(issues.get(issueId), patch);
       return issues.get(issueId);
