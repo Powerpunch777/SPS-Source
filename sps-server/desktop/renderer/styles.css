@@ -8,6 +8,14 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 0; }
 main { width: min(780px, calc(100vw - 48px)); margin: 0 auto; padding: 42px 0 56px; }
+.desktop-shell { display: flex; flex-direction: column; }
+.desktop-shell > header { order: 0; }
+#auth-panel { order: 1; }
+.local-host-control { order: 2; }
+.setup-progress { order: 3; }
+#workspace-panel { order: 4; }
+#remote-profile-panel { order: 5; }
+.desktop-shell > .advanced-settings:not(#remote-profile-panel) { order: 6; }
 header { max-width: 620px; margin-bottom: 24px; }
 .eyebrow { color: #4da3ff; font-size: 12px; font-weight: 700; letter-spacing: 1.2px; }
 h1 { margin: 6px 0 10px; font-size: 34px; }
@@ -63,6 +71,8 @@ code { color: #8ec5ff; font-family: Consolas, "Courier New", monospace; font-siz
 .advanced-settings > summary { cursor: pointer; padding: 15px 18px; color: #d5e2ef; font-size: 14px; font-weight: 650; }
 .advanced-settings[open] > summary { border-bottom: 1px solid #26354b; }
 .advanced-content { padding: 4px 18px 18px; }
+.manual-team-connection { margin-top: 18px; }
+.manual-team-connection .panel-heading { margin: 16px 0 18px; }
 .subpanel { padding: 18px 0; border-bottom: 1px solid #26354b; }
 .subpanel:last-child { border-bottom: 0; padding-bottom: 0; }
 .subpanel h2 { margin-bottom: 10px; }

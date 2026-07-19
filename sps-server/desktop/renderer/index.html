@@ -34,13 +34,14 @@
         <ol id="setup-steps" class="setup-steps"></ol>
       </section>
 
-      <section id="remote-profile-panel" class="panel primary-panel">
+      <details id="remote-profile-panel" class="advanced-settings manual-team-connection">
+        <summary>Manual team connection</summary>
+        <div class="advanced-content">
           <div class="panel-heading">
           <div>
-            <div class="step-label">1</div>
-            <h2>Team connection</h2>
+            <h2>Team address and computer name</h2>
           </div>
-          <p>Google sets this computer's name after sign-in. You can change it later.</p>
+          <p>Normally an invitation fills the team address and Google sets this computer's name. Use this only for a manual connection or a custom computer name.</p>
         </div>
         <form id="profile-form">
           <input id="hub-url" type="hidden" value="" />
@@ -49,23 +50,24 @@
           <label id="company-field" class="company-field">Team <select id="company-picker" disabled><option value="">Sign in with Google first</option></select></label>
           <input id="default-workspace-path" type="hidden" />
           <div class="action-row profile-actions">
-            <button type="submit">Save and continue</button>
+            <button type="submit">Save manual connection</button>
           </div>
         </form>
-        <p id="server-route" class="server-route"><strong>Where this connects:</strong> Use the local Owner Host above, or open a team invitation. The invitation supplies the team's private address automatically.</p>
-      </section>
+        <p id="server-route" class="server-route"><strong>Where this connects:</strong> An SPS invitation supplies the private Owner Host address automatically. This computer keeps its own CLI accounts and local AI.</p>
+        </div>
+      </details>
 
       <section id="auth-panel" class="panel primary-panel">
         <div class="panel-heading">
           <div>
-            <div class="step-label">2</div>
-            <h2>Sign in or join a team</h2>
+            <div class="step-label">1</div>
+            <h2>Sign in with Google</h2>
           </div>
-          <p>Open the Desktop link from an invitation. A short code is for a team address this computer already knows.</p>
+          <p>Open the SPS Desktop link from a team invitation. It supplies the private Owner Host address, then Google confirms who is using this computer.</p>
         </div>
         <div class="action-row">
-          <input id="invite-code" placeholder="SPS-AB12-CD34-EF56-GH78" autocomplete="one-time-code" />
-          <button id="open-invite" type="button" class="quiet-button">Open invitation</button>
+          <input id="invite-code" placeholder="Invitation code (only after an address is saved)" autocomplete="one-time-code" />
+          <button id="open-invite" type="button" class="quiet-button">Open team invitation</button>
         </div>
         <div class="action-row">
           <button id="start-auth" type="button">Continue with Google</button>
@@ -77,7 +79,7 @@
       <section id="workspace-panel" class="panel primary-panel">
         <div class="panel-heading">
           <div>
-            <div class="step-label">3</div>
+            <div class="step-label">2</div>
             <h2>Open your SPS workspace</h2>
           </div>
           <p>Projects, Rooms, Tasks, and existing Agents open inside SPS Desktop.</p>
