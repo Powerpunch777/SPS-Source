@@ -35,3 +35,16 @@ test("keeps command readiness distinct from a registered but unapproved computer
   assert.equal(active.steps[3].state, "complete");
   assert.equal(active.ready, true);
 });
+
+test("opens an existing local SPS Host without forcing a Google Desktop session", () => {
+  const local = createSpsDesktopSetupReadiness({
+    profile: { hubUrl: "http://127.0.0.1:3100", displayName: "Host PC", companyId: "" },
+    signedIn: false,
+  });
+
+  assert.equal(local.localHost, true);
+  assert.equal(local.ready, true);
+  assert.equal(local.canOpenWorkspace, true);
+  assert.equal(local.canStartAuth, false);
+  assert.equal(local.canConnectNode, false);
+});

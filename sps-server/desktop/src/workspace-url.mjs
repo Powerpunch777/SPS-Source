@@ -13,6 +13,15 @@ function isLoopbackHostname(hostname) {
   return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1" || normalized === "[::1]";
 }
 
+export function isSpsLoopbackHubOrigin(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && isLoopbackHostname(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function requireSpsHubOrigin(value) {
   let url;
   try {

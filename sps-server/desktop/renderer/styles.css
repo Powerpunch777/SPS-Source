@@ -55,6 +55,8 @@ button:disabled { cursor: not-allowed; filter: none; opacity: .5; }
 .server-route { margin: 18px 0 0; padding: 12px 14px; border-left: 3px solid #397fc2; border-radius: 4px; background: #101b2b; color: #afc1d5; font-size: 13px; }
 .server-route strong { color: #deebf7; }
 code { color: #8ec5ff; font-family: Consolas, "Courier New", monospace; font-size: .92em; }
+.local-host-control { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 14px; border: 1px solid #34536f; border-radius: 6px; background: #122033; }
+.local-host-control p { margin: 4px 0 0; font-size: 13px; }
 .details-output { display: none; margin-top: 14px; max-height: 180px; }
 .details-output.has-content { display: block; }
 .advanced-settings { border: 1px solid #26354b; border-radius: 8px; background: #121c2c; margin: 18px 0; }
@@ -74,4 +76,5 @@ pre { overflow: auto; margin: 0; padding: 12px; border-radius: 5px; background: 
   .setup-steps { grid-template-columns: 1fr; }
   .setup-progress-heading { align-items: start; flex-direction: column; }
   .panel-heading { flex-direction: column; gap: 8px; }
+  .local-host-control { align-items: flex-start; flex-direction: column; }
 }

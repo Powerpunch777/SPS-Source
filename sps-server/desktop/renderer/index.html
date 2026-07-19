@@ -42,12 +42,23 @@
           <input id="default-workspace-path" type="hidden" />
           <div class="action-row profile-actions">
             <button type="submit">Save and continue</button>
+            <button id="use-local-hub" type="button" class="quiet-button">Use the SPS server on this computer</button>
           </div>
         </form>
-        <p class="server-route"><strong>Where this connects:</strong> <code>app.redongames.com</code> is the secure address for your SPS server. <code>localhost:3100</code> only works on the computer that is running that server.</p>
+        <p id="server-route" class="server-route"><strong>Where this connects:</strong> <code>app.redongames.com</code> is the secure address for your SPS server. <code>localhost:3100</code> only works on the computer that is running that server.</p>
+        <div id="local-host-control" class="local-host-control" hidden>
+          <div>
+            <strong>Local SPS Host</strong>
+            <p id="local-host-detail">Checking the server on this computer...</p>
+          </div>
+          <div class="action-row">
+            <button id="refresh-local-host" type="button" class="quiet-button">Refresh status</button>
+            <button id="start-local-host" type="button" class="quiet-button">Start local Host</button>
+          </div>
+        </div>
       </section>
 
-      <section class="panel primary-panel">
+      <section id="auth-panel" class="panel primary-panel">
         <div class="panel-heading">
           <div>
             <div class="step-label">2</div>
@@ -66,7 +77,7 @@
         </div>
       </section>
 
-      <section class="panel primary-panel">
+      <section id="workspace-panel" class="panel primary-panel">
         <div class="panel-heading">
           <div>
             <div class="step-label">3</div>

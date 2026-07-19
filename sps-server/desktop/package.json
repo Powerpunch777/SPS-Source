@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.7",
   "description": "SPS Desktop Hub and Node onboarding shell",
   "author": "SonParkServer",
   "main": "src/main.mjs",
@@ -9,8 +9,9 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.mjs",
-    "package:win": "electron-builder --win nsis",
-    "release:win": "electron-builder --win nsis --config.forceCodeSigning=true --publish always"
+    "prepare:host-runtime": "node scripts/prepare-local-host-runtime.mjs",
+    "package:win": "npm run prepare:host-runtime && electron-builder --win nsis",
+    "release:win": "npm run prepare:host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish always"
   },
   "dependencies": {
     "@sps/desktop-node": "file:../desktop-node",
@@ -31,6 +32,15 @@
       "package.json"
     ],
     "icon": "assets/sps-logo.png",
+    "extraResources": [
+      {
+        "from": ".host-runtime",
+        "to": "sps-host-runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "publish": [
       {
         "provider": "github",
