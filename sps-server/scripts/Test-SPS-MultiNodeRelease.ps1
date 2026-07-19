@@ -79,6 +79,22 @@ function Resolve-SPSDesktopInstallerPath {
   return $candidates | Select-Object -First 1 -ExpandProperty FullName
 }
 
+$deploymentEnvironment = $null
+if (Test-Path -LiteralPath $DeploymentConfigPath -PathType Leaf) {
+  try {
+    $deploymentEnvironment = Read-SafeDotEnv -Path $DeploymentConfigPath
+  } catch {
+    Add-Check "Hub OAuth configuration" $false "Could not read the Hub deployment configuration without exposing secret values."
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($HubUrl) -and $deploymentEnvironment) {
+  $HubUrl = @(
+    $deploymentEnvironment["SPS_PUBLIC_URL"],
+    $deploymentEnvironment["PAPERCLIP_PUBLIC_URL"]
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+}
+
 $hubUri = $null
 try {
   if ([string]::IsNullOrWhiteSpace($HubUrl)) { throw "SPS_PUBLIC_URL is not set." }
@@ -88,15 +104,6 @@ try {
   Add-Check "Public Hub host" (-not (Is-PrivateOrLoopbackHost $hubUri.Host)) "Localhost and private LAN addresses cannot be used for a remote friend invitation."
 } catch {
   Add-Check "Public HTTPS Hub URL" $false $_.Exception.Message
-}
-
-$deploymentEnvironment = $null
-if (Test-Path -LiteralPath $DeploymentConfigPath -PathType Leaf) {
-  try {
-    $deploymentEnvironment = Read-SafeDotEnv -Path $DeploymentConfigPath
-  } catch {
-    Add-Check "Hub OAuth configuration" $false "Could not read the Hub deployment configuration without exposing secret values."
-  }
 }
 
 $configuredGoogleId = if ($deploymentEnvironment) { $deploymentEnvironment["SPS_GOOGLE_CLIENT_ID"] } else { $null }
