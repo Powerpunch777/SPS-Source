@@ -1,201 +1,126 @@
-# SPS Desktop 계정·인앱 초대·멀티컴퓨터 출시 계획
+# SPS Desktop 계정·초대·Member Node 출시 계획
+
+> 상태: 현재 기준 설계. Owner Host와 메모리의 권위 있는 기준은
+> `111-sps-owner-host-and-memory-platform-architecture-ko.md`다.
 
 ## 1. 제품 결정
 
-SPS는 모든 사용자가 일반 브라우저로 접속하는 서비스가 아니라, Windows용 **SPS Desktop** 앱으로 출시한다. 하나의 설치 프로그램이 다음 두 역할을 제공한다.
+SPS Desktop은 Windows용 앱 하나로 출시한다.
 
-- **Desktop workspace 모드**: HTTPS Hub의 회사·데이터베이스·Rooms·Tasks·권한·백업 상태를 앱 창에서 사용한다.
-- **Member Node 모드**: 자신의 PC를 Hub에 등록하고, 그 PC의 CLI·로컬 AI를 안전하게 실행한다.
+- 메인 PC에서는 SPS Core와 SPS Default Memory를 포함한 **Owner Host**를 내부에서 시작하고
+  암호화된 Owner Vault를 관리한다.
+- 팀원 PC에서는 같은 앱이 **Member Node**가 되어 자기 컴퓨터의 Codex CLI, Agy, Ollama,
+  LM Studio, 전문 API 도구를 실행한다.
+- Workspace, Rooms, Tasks, 초대, 권한 설정은 브라우저가 아닌 Desktop 앱 창에서 사용한다.
+  Google 승인만 기본 브라우저를 잠깐 연다.
 
-기본 Hub는 `https://app.redongames.com`이다. 초대된 사용자는 같은 SPS Desktop 앱을 설치해 Hub에 가입한다. 별도 self-host Hub는 HTTPS로 운영하되, Desktop 설치 파일은 로컬 Hub를 시작하지 않는다.
+개인과 소규모 팀의 기본 Host는 Owner PC다. `redongames.com`은 회사 웹사이트이며, 공용
+`app.redongames.com` 또는 외부 Docker Host는 후속 배포 선택지다.
 
-## 2. 핵심 사용자 흐름
+## 2. 첫 실행
 
-### 2.1 회사 생성과 Owner 계정
+### Owner
 
-1. 사용자가 SPS Desktop을 처음 실행한다.
-2. `회사 만들기` 또는 `회사 참여`를 선택한다.
-3. 기본 브라우저에서 **Google 로그인**을 완료한다. SPS는 Google 계정으로 사용자를 식별하며 자체 비밀번호를 만들거나 저장하지 않는다.
-4. 회사를 만들면 로그인한 사용자를 Owner로 만들고, 중앙 Hub의 백업 상태를 확인한다.
-5. Hub 세션과 Node 개인키는 Windows Credential Manager/DPAPI에 저장한다.
+1. Owner가 SPS Desktop을 실행하고 `Use Owner Host`를 선택한다.
+2. 앱이 Owner Vault, Core, SPS Default Memory를 준비하고 Workspace를 연다.
+3. 한 대만 쓰면 Local/offline으로 사용한다.
+4. 팀원을 연결할 때만 Private team access(Tailscale) 또는 Public HTTPS를 선택한다.
+5. Private team access는 시스템 Tailscale과 Google OAuth redirect URI가 준비된 경우에만
+   활성화한다. Core는 loopback에만 바인딩된다.
 
-Google 로그인은 사용자 확인만 담당한다. Codex CLI 로그인, API 키, 로컬 모델 자격증명은 Google 계정이나 Hub로 전송하지 않고 각 Node PC에만 보관한다.
+### Member
 
-### 2.2 인앱 초대코드 생성
+1. Owner가 회사 설정에서 한 번 쓰는 사람 초대를 생성한다.
+2. Member는 SPS Desktop을 설치하고 `SPS-XXXX-XXXX-XXXX-XXXX` 코드를 붙여넣거나
+   `sps://join` 딥링크를 연다.
+3. 앱이 Host 주소와 초대 코드를 채우고, 연결 가능 여부와 초대 상태를 표시한다.
+4. Member가 Google 로그인을 마치고 초대를 수락한다.
+5. Member는 Workspace만 열거나, `Scan local capabilities`와 `Connect this computer`로
+   Node 등록까지 계속한다.
+6. Owner가 Node를 승인하고 필요한 Agent만 grant한다.
 
-Owner 또는 권한 있는 멤버가 `회사 설정 > 초대`에서 다음을 정한다.
+초대 코드는 계정, Node 승인, Agent 실행 권한, CLI/API 키를 대신하지 않는다. 각각은
+별도의 확인과 권한 부여 단계다.
 
-- 초기 회사 역할: `Viewer`, `Operator`, `Admin`, `Owner`
+## 3. 초대 코드 UX
+
+초대 생성 화면은 다음을 제공한다.
+
+- 초기 회사 역할: Viewer, Operator, Admin, Owner
 - 만료 시간: 15분, 1시간, 24시간, 7일
 - 사용 횟수: 기본 1회
+- 짧은 코드, 브라우저 초대 URL, 데스크톱 딥링크, QR
+- 취소, 만료, 이미 사용됨, 잘못된 코드의 명확한 상태와 감사 로그
 
-프로젝트별 접근, 사람 x Agent 권한, Node x Agent 실행 권한은 초대 수락 뒤 회사 설정에서 별도로 부여한다. 초대 링크 하나가 로컬 CLI나 특정 작업 폴더 권한을 직접 부여하지는 않는다.
+코드는 서버에 해시로만 저장한다. Desktop은 공백, 대소문자, 하이픈이 섞인 입력을 정규화하고,
+HTTPS Team Host 외의 주소나 오래된 경로 조각을 거부한다.
 
-앱은 다음 세 가지 형태를 동시에 제공한다.
+## 4. Node 연결 UX
 
-1. **짧은 코드**: `SPS-7K3M-9Q2D-X8FA`처럼 사람이 읽고 입력할 수 있는 형식
-2. **데스크톱 딥링크**: `sps://join/...`을 복사해 설치된 SPS Desktop을 바로 연다
-3. **QR 코드**: 일회용 브라우저 초대 링크를 담아 다른 기기에서 초대를 연다. SPS Desktop이 설치된 PC에서는 딥링크 또는 짧은 코드를 사용한다.
+Member Node 설정 화면은 순서를 숨기지 않는다.
 
-코드는 서버에 평문으로 저장하지 않고 해시만 보관한다. 만료·사용·취소·권한 변경 이벤트를 모두 감사 로그로 남긴다. 초대코드만으로는 회사에 들어갈 수 없으며 반드시 Google 로그인을 완료해야 한다.
+1. Host 연결 확인
+2. Google 로그인
+3. 회사 선택
+4. 로컬 capability 스캔
+5. Node 등록 및 Owner 승인 대기
+6. Agent별 실행 권한 부여
+7. 프로젝트별 작업 폴더 연결
 
-### 2.3 초대 수락과 Node 등록
+Node가 pending이면 앱은 “Owner 승인 대기”, revoked이면 “다시 등록 필요”, active이면
+“허용된 Agent 실행 가능”으로 표시한다. CLI 로그인 만료, Host 연결 오류, 작업 폴더 누락,
+로컬 모델 중지, Node 오프라인은 실행 전에 구체적으로 알린다.
 
-1. 친구가 SPS Desktop에서 `회사 참여`를 선택한다.
-2. 데스크톱 딥링크를 열거나 Hub 주소와 초대코드를 입력한다. QR은 제공되는 버전에서 같은 초대 정보를 여는 편의 수단이다.
-3. 앱이 Hub 연결과 초대 상태를 확인한다.
-4. Google 계정으로 로그인한다.
-5. 초대 내용을 보여 준다: 회사 이름, 부여 역할, 만료 시각과 수락 결과. 세부 Agent·Node 권한은 수락 뒤 별도 설정에서 확인·부여한다.
-6. 사용자가 수락하면 회사 멤버십과 이 PC의 SPS Node 등록을 별도로 완료한다.
-7. 처음 한 번만 CLI·로컬 모델 연결 화면을 연다. 건너뛰어도 회사의 Rooms와 Tasks는 사용할 수 있다.
+Host에는 실행기 종류와 버전, 동의한 capability, Node 상태만 공개한다. 실행 파일의 절대
+경로, Codex/Agy 로그인, API 키, 로컬 모델 파일과 프로젝트 파일은 Member PC에 남는다.
 
-## 3. 편의를 위해 함께 넣을 기능
-
-### 가입과 연결
-
-- 최근 Hub 목록과 자동 재연결
-- Hub 주소 테스트, 지연 시간, 서버 버전, 네트워크 상태 표시
-- 사설 네트워크 연결 상태와 필요한 설치 안내
-- 초대코드 붙여넣기 시 공백·대소문자·하이픈 자동 정규화
-- 수락 전 권한 미리보기와 만료 카운트다운
-- 잘못된 코드, 이미 사용된 코드, 취소된 코드에 대한 명확한 복구 안내
-
-### 계정과 기기
-
-- 내 계정의 로그인 세션, 등록 기기, 마지막 활동, 로그아웃/기기 해제 화면
-- 새 PC Node 등록 시 Owner 승인 옵션
-- 기기 이름 변경, 사용 중인 SPS 버전, OS, 온라인 상태
-- 계정 탈퇴와 회사 나가기의 구분
-- Owner가 멤버를 일시 중지하거나 즉시 내보낼 수 있는 기능
-
-### CLI와 로컬 AI
-
-- Codex CLI, Agy, Ollama, LM Studio, 사용자 지정 실행기를 자동 탐지
-- 연결 가능한 계정/모델/권한/작업 폴더를 한 화면에서 점검
-- Agent별 기본 실행 Node 선택과 대기 Node 선택
-- Node별 동시 실행 수, GPU/메모리 상태, 디스크 여유 공간 표시
-- 작업 실행 전 권한 요청과, 작업 중인 CLI 창·로그·취소 버튼
-- 로컬 모델은 Worker 역할에 기본 추천하고 Lead 역할에는 명시적인 Owner 허용이 있어야 배정 가능
-
-### 권한 관리
-
-Agent 접근 권한과 실행 권한을 분리한다.
+## 5. 권한 모델
 
 | 권한 | 의미 |
 | --- | --- |
-| `view` | Agent, 상태, 허용된 보고를 볼 수 있음 |
-| `chat` | Agent Room에서 대화 가능 |
-| `assign_task` | Lead로서 Worker에게 Task를 배정 가능 |
-| `review` | Task 완료/차단 보고를 검토 가능 |
-| `configure` | AGENTS.md, 모델, 도구, Agent 설정을 변경 가능 |
-| `run_here` | 해당 PC Node에서 Agent 실행을 허용 |
+| `view` | Agent와 허용된 상태/보고를 본다 |
+| `chat` | Agent Room에서 대화한다 |
+| `assign_task` | Lead로서 Worker에게 Task를 만든다 |
+| `review` | 완료/차단 보고를 검토한다 |
+| `configure` | AGENTS.md, 모델, 도구, Agent 설정을 바꾼다 |
+| `run_here` | 특정 Node에서 해당 Agent 실행을 허용한다 |
 
-권한 매트릭스는 `사람 x Agent`와 `Node x Agent` 두 표로 제공한다. 권한은 회사 역할 프리셋에서 시작하되, Agent별 예외를 설정할 수 있다. Agent에 접근할 수 있다고 해서 그 Agent의 CLI 자격증명이나 로컬 파일에 자동 접근할 수는 없다.
+사람 x Agent 권한과 Node x Agent 실행 grant는 분리한다. Worker는 기본적으로 Task 생성 권한이
+없고, Lead만 Task를 만든다. Agent의 기본 Node는 하나지만, Owner가 추가 허용 Node를 둘 수
+있다. CLI 작업은 충돌하지 않는 작업 폴더와 세션이면 병렬 실행할 수 있고, 로컬 AI는 Node의
+자원 정책에 맞게 보수적으로 제한한다.
 
-### 일상 운영
+## 6. 완료/차단 보고
 
-- 초대, 권한, Node 연결, Agent 실행, 파일 접근, Task 취소의 감사 로그
-- 초대 만료·Node 오프라인·CLI 로그인 만료·로컬 모델 중지 알림
-- Member가 오프라인일 때 Task를 `waiting_for_node`으로 표시하고 Owner Room에 보고
-- 영구 작업 로그와 오류 진단 묶음 내보내기
-- 자동 백업 상태, 복원 연습, Hub 이전 도우미
-- 앱 업데이트 전 백업과 롤백 가능한 업데이트 기록
+Member Node가 실행한 Worker는 Task의 원본 기록에 결과, 근거, 산출물과 차단 사유를 남긴다.
+Core는 Task를 만든 Lead Room으로 완료/차단 보고를 전송하고 Lead를 깨운다. 실행 실패나
+메모리 Provider 장애가 원본 Task/Room 기록을 막아서는 안 된다.
 
-## 4. 보안 원칙
+## 7. 출시 기준
 
-1. **코드와 로그인 분리**: 초대코드는 가입 의사를 확인하는 등록권이며 계정을 대신하지 않는다.
-2. **자격증명 로컬 보관**: Codex 로그인, API 키, 로컬 모델 경로는 Node PC 밖으로 보내지 않는다.
-3. **아웃바운드 Node 연결**: Hub가 친구 PC에 포트를 열거나 임의 셸 명령을 내리지 않는다. Node가 Hub에 인증된 연결을 만들고, 승인된 요청만 가져간다.
-4. **짧은 실행 권한**: Task 실행 요청은 Node·Agent·Task·작업 폴더 범위가 묶인 짧은 수명의 서명 토큰을 사용한다.
-5. **즉시 폐기**: 멤버, 기기, 초대를 취소하면 세션과 Node 실행 토큰을 즉시 무효화한다.
-6. **안전한 기본값**: 처음에는 외부 공개가 아니라 로그인 필수 사설 네트워크 연결만 허용한다.
+### 필수
 
-## 5. 기술 경계
+- Windows 설치 프로그램, 코드 서명, 업데이트 확인
+- Owner Host가 앱 내부에서 시작되고 Vault/기본 메모리가 재시작 뒤에도 보존됨
+- Google 로그인과 일회용 초대 코드/딥링크로 Member가 회사에 참여함
+- Owner가 Node 승인, Agent grant, 기본 Node 변경, revoke를 UI에서 수행함
+- 친구 PC의 Codex CLI 또는 지원 로컬 AI가 승인된 Task만 실행함
+- 결과가 원래 Lead Room에 보고됨
 
-### SPS Core에 남길 것
+### 출시 전 실제 E2E
 
-- 사용자 인증, 회사 멤버십, 기존 초대 토큰 기반, Task/Room/Project 데이터
-- 기본 Agent 권한과 감사 이벤트
-- 데이터베이스 백업과 인증된 서버 모드
+1. 메인 PC에서 새 테스트 회사와 Lead/Worker Agent를 만든다.
+2. 두 번째 Windows PC에 서명된 SPS Desktop을 설치한다.
+3. 초대 코드와 Google 로그인으로 Member를 참여시킨다.
+4. Member PC의 capability를 등록하고 Owner가 Node를 승인한다.
+5. Owner가 한 Worker에만 Node grant를 부여한 뒤 Task를 실행한다.
+6. Member PC의 CLI 출력, Task 결과, Lead Room 보고를 확인한다.
+7. grant를 해제해 신규 실행이 거절되는지 확인한다.
+8. Owner Host와 Member 앱을 재시작해 상태와 기억 보존을 확인한다.
 
-### SPS 확장에 만들 것
+## 8. 범위 밖
 
-- 인앱 초대코드 UX와 데스크톱 딥링크·QR
-- 사용자별 Agent 제어 권한
-- Node 등록·기기 키·상태·폐기
-- Agent와 실행 Node 바인딩
-- Node 작업 전달·취소·결과·진단 프로토콜
-- 권한 매트릭스와 Node 관리 화면
-
-### SPS Desktop에 만들 것
-
-- Electron 앱 셸, Google 로그인/초대/Hub 연결 화면
-- 로컬 보안 저장소, 딥링크, QR 표시
-- SPS Node 실행기와 CLI·로컬 AI 어댑터
-- 설치·자동 업데이트·복구·진단 수집
-
-SPS 확장은 가능한 한 플러그인과 별도 Desktop 패키지로 유지한다. Core의 일반 Task·권한·인증 API를 사용하므로 이후 Core 업데이트를 흡수할 수 있다.
-
-## 6. 단계별 구현 계획
-
-### 단계 A: Google 계정과 인앱 초대
-
-- SPS Desktop 앱 셸과 Hub 연결 프로필
-- Google 로그인 화면
-- 초대코드 생성·복사·데스크톱 딥링크·QR·수동 입력·수락 UI
-- 초대 만료/취소/1회 사용/감사 로그
-- 인증된 사설 Hub 설정과 멀티사용자 E2E 테스트
-
-**완료 기준**: 친구 PC에서 SPS Desktop과 Google 로그인만으로 회사에 가입하고, 코드로 회사를 선택하며, 취소된 코드로는 재가입할 수 없다.
-
-### 단계 B: Node 등록과 상태
-
-- Node 기기 키 등록·승인·폐기
-- Node 상태, 버전, 실행기 탐지, 연결 진단
-- Owner가 허용한 Agent만 해당 Node에서 실행하도록 강제
-
-**완료 기준**: 두 PC가 연결된 상태에서 Owner가 한 PC의 Node 접근을 취소하면 신규 실행이 즉시 거절된다.
-
-### 단계 C: 원격 CLI와 로컬 AI 실행
-
-- Codex CLI 실행 어댑터부터 연결
-- Task의 실행 Node 고정, 작업 폴더 범위 검사, 로그 스트리밍, 취소
-- Ollama 또는 LM Studio Worker 어댑터 한 종류 연결
-
-**완료 기준**: Lead가 Task를 만들면 친구 PC의 CLI가 실행되고, 결과가 원래 Lead Room에 정확히 보고된다.
-
-### 단계 D: 권한 매트릭스와 운영성
-
-- 사람 x Agent / Node x Agent 권한 편집기
-- 프로젝트 범위, Agent 설정 변경 권한, 감사 로그
-- 오프라인 Node 큐, 알림, 복구 UX
-
-**완료 기준**: 접근 권한이 없는 멤버는 UI, API, Node 실행 어느 경로로도 해당 Agent를 조작할 수 없다.
-
-### 단계 E: 출시 품질
-
-- Windows 설치 프로그램, 코드 서명, 자동 업데이트
-- Hub 이전·백업 복구·오류 보고
-- UI 접근성, 로딩/오프라인/권한 거부 상태, 보안 검토
-
-**완료 기준**: 새 Windows PC에서 설치, 초대 수락, Node 연결, 첫 Task 실행까지 문서 없이 완료할 수 있다.
-
-## 7. 이번 계획의 범위 밖
-
-- 공개 인터넷에 무인증 Hub를 노출하는 기능
-- 한 Agent를 여러 PC에서 동시에 실행하는 기능
-- 다른 사람의 CLI 로그인 정보나 API 키를 Hub로 업로드하는 기능
-- 원격 데스크톱 제어 또는 임의 셸 실행 기능
+- 다른 사람의 CLI 로그인 정보나 API 키를 Host로 업로드하는 기능
+- Host가 Member PC에 직접 접속하거나 임의 셸 명령을 실행하는 기능
+- 공개 인터넷에 무인증 Host를 노출하는 기능
 - macOS/Linux 정식 지원
-
-## 8. 구현 시작 기준
-
-단계 A의 기본안은 다음으로 고정한다.
-
-- Windows 우선
-- Hub는 HTTPS 중앙 서비스에서 운영
-- Google 로그인 필수, 인앱 1회용 초대코드와 데스크톱 딥링크 제공
-- 사설 네트워크 전용
-- 계정 복구 이메일은 후속 단계
-
-이 기본안으로 시작하면, 다음 실제 구현 단위는 `SPS Desktop 앱 셸`과 `인앱 초대코드`다.

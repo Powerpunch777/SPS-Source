@@ -1,101 +1,112 @@
-# SPS Desktop 멀티컴퓨터 운영 구조
+# SPS Desktop 다중 컴퓨터 운영 구조
+
+> 상태: `111-sps-owner-host-and-memory-platform-architecture-ko.md`를 따르는 제품 구조
 
 ## 목표
 
-SPS는 사용자의 PC에 설치되는 데스크톱 앱으로 제공한다. 협업 데이터는 HTTPS 중앙 Hub에 보관하고, 각 사람의 PC는 자신이 보유한 CLI와 로컬 AI를 안전하게 실행한다.
+SPS v1은 개인과 소규모 팀을 위한 Windows 데스크톱 제품이다. 메인 PC의 **SPS Desktop**은
+SPS Owner Host와 암호화된 Owner Vault를 내부에서 관리하고, 팀원의 SPS Desktop은 자기
+컴퓨터의 CLI와 로컬 AI를 실행하는 **Member Node**로 참여한다.
 
-## 권장 제품 구성
-
-하나의 Windows 설치 프로그램은 두 역할을 제공한다.
-
-1. **SPS Desktop workspace**: 중앙 Hub의 UI, 초대, 권한, Rooms, Tasks, 장기기억을 앱 창에서 연다. Google OAuth만 기본 브라우저를 잠깐 사용한다.
-2. **SPS Node**: 같은 앱 안에서 동작하는 로컬 실행기다. PC에 설치된 Codex CLI, Agy, Ollama, LM Studio, 전문 API 도구를 탐지하고, 승인된 Agent의 작업만 해당 PC에서 실행한다.
-
-SPS Hub는 항상 켜져 있는 HTTPS 중앙 서비스다. 기본 Hub는 `https://app.redongames.com`이며, 설치자는 필요하면 별도의 HTTPS SPS Hub를 운영할 수 있다. Desktop 설치 파일은 로컬 데이터베이스나 `localhost:3100` 서버를 기동하지 않는다.
+`redongames.com`은 회사 웹사이트다. `app.redongames.com`은 미래의 공용 게이트웨이나
+외부 Host 주소로 사용할 수 있지만, 개인/소규모 팀의 기본 데이터 Host는 아니다.
+사용자가 따로 `localhost:3100` 서버를 실행하거나 브라우저에서 관리할 필요가 없다.
 
 ```mermaid
 flowchart LR
-  A[SPS Hub: HTTPS] -->|authenticated link| B[Owner SPS Desktop]
-  A -->|authenticated link| C[Friend SPS Desktop: Node]
-  B --> D[Rooms, Tasks, Memory, permissions]
-  C --> E[Codex CLI / Ollama / specialist API]
+  owner["Owner PC: SPS Desktop"] --> host["SPS Owner Host\nCore + Owner Vault"]
+  host --> memory["SPS Default Memory\nfirst-party provider"]
+  host --> workspace["Desktop Workspace\nRooms / Tasks / Agents / Files"]
+  member["Friend PC: SPS Desktop"] --> node["Member Node\nlocal key + outbound connection"]
+  node --> runtimes["Codex CLI / Agy / Ollama / LM Studio / specialist tools"]
+  host -->|"scoped signed request"| node
+  node -->|"result, artifacts, execution report"| host
 ```
 
-## 권한 모델
+## 제품 구성
 
-한 Agent에는 다음 두 축의 권한을 분리한다.
+하나의 SPS Desktop 설치 프로그램은 컴퓨터별로 다음 중 하나 또는 둘 다를 수행한다.
 
-| 축 | 의미 | 예시 |
+| 역할 | 책임 | 보관하는 데이터 |
 | --- | --- | --- |
-| 사람 접근 권한 | 누가 해당 Agent를 보고, 대화하고, Task를 만들고, 설정을 바꿀 수 있는가 | 친구는 Image Worker와 대화 가능, CTO 설정 변경 불가 |
-| 실행 노드 권한 | 어느 컴퓨터가 해당 Agent를 실제로 실행할 수 있는가 | Image Worker는 친구 PC의 Ollama와 PixelLab만 사용 |
+| Owner Host | 회사, 프로젝트, Rooms, Tasks, 권한, 감사 기록, 첨부파일, 기본 메모리, 백업을 권위 있게 보관 | 암호화된 Owner Vault |
+| Member Node | 해당 PC에서 발견한 실행기와 사용자가 허용한 작업 폴더로 Agent 작업을 실행 | CLI 로그인, API 키, 로컬 모델, 작업 폴더 |
+| Desktop Workspace | Owner Host 또는 초대받은 Team Host의 UI를 앱 창에서 표시 | 인증 세션과 최소 연결 설정 |
 
-Agent마다 `view`, `chat`, `assign_task`, `review`, `configure`, `run_here` 권한을 독립적으로 둔다. Owner는 전체 권한을 가지며, Lead는 맡은 Agent에만 `assign_task` 권한을 갖는다. Worker는 Task 생성 권한을 기본적으로 갖지 않는다.
+Node는 Agent가 아니라 **실행 가능한 컴퓨터**다. Agent는 역할과 AGENTS.md를 가진 논리적
+직원이며, Node는 그 Agent가 실제로 실행될 수 있는 장소다.
 
-Agent에는 하나의 기본 실행 Node를 둘 수 있고, Owner는 필요하면 대기 Node를
-추가할 수 있다. 기본값은 한 Agent의 동시 실행을 피하는 것이다. 다만 서로 다른
-CLI 세션과 명시적으로 분리된 작업 폴더라면 Lead가 병렬 Task를 허용할 수 있다.
-로컬 AI Worker의 병렬 실행 정책은 해당 Node의 자원과 모델 설정에 맞춰 보수적으로
-정한다.
+## 연결 모드
 
-## 실행 흐름
+| 모드 | 대상 | 연결 방식 | 원격 초대/Node |
+| --- | --- | --- | --- |
+| Local / offline | 한 대의 PC | Desktop 내부 Owner Host | 불가 |
+| Private team | 친구와 소규모 팀 | 시스템 Tailscale의 HTTPS Serve | 가능 |
+| Public HTTPS | 인터넷 협업 | Cloudflare Tunnel 등 인증된 HTTPS 게이트웨이 | 가능 |
+| External Host | 기업/대규모 팀 | 같은 SPS Host 엔진을 서버 또는 Docker에 배포 | 후속 모드 |
 
-1. Owner가 친구를 이메일 또는 일회용 초대 링크로 회사에 초대한다.
-2. 친구는 SPS Desktop에서 로그인하고 초대를 수락한다.
-3. 앱은 그 PC를 SPS Node로 등록한다. 등록 과정에서 기기 이름, OS, 사용 가능한 실행기만 서버에 공개한다.
-4. 친구는 해당 PC의 Codex CLI 또는 로컬 AI를 연결한다. 로그인 토큰, API 키, 모델 파일 경로는 PC의 OS 보안 저장소에만 보관한다.
-5. Owner가 Agent마다 사람 접근 권한과 실행 Node를 배정한다.
-6. Lead가 Worker에게 Task를 배정하면 Hub가 권한과 충돌을 확인한 뒤, 지정 Node에 서명된 실행 요청을 보낸다.
-7. Node가 로컬 CLI 또는 로컬 모델을 실행하고, 결과·작업 상태·필요한 산출물만 Hub에 보낸다.
-8. Task 종료 보고는 Task를 만든 Lead Room으로 전달된다.
+Tailscale은 SPS에 내장하지 않는다. SPS Desktop은 이미 로그인된 시스템 Tailscale을 감지하고
+`tailscale serve`로 loopback Owner Host만 사설 HTTPS 주소에 연결한다. 어느 모드에서도
+Host는 Member PC에 포트를 열거나 원격 셸로 접속하지 않는다. Node가 Host로 아웃바운드
+연결을 만들고, 허용된 요청만 가져간다.
 
-## 네트워크와 보안
+## 초대와 계정 흐름
 
-공동 작업 Hub는 **로그인 필수**가 기본이다. Tailscale 같은 사설 네트워크를 쓰면
-포트 공개 없이도 운영할 수 있고, 인터넷 공개를 선택하면 HTTPS·도메인·Google
-OAuth·Docker 운영 체계를 함께 준비한다. 두 방식 모두 Node는 Hub로 아웃바운드
-연결만 만들며, Hub가 협업자의 PC에 직접 접속하지 않는다.
+1. Owner는 Workspace의 회사 설정에서 역할, 만료, 사용 횟수를 정해 사람 초대를 만든다.
+2. SPS는 짧은 코드, 브라우저 초대 링크, `sps://join` 딥링크를 제공한다. QR은 같은 초대 링크를
+   전달하는 보조 수단이다.
+3. Member는 SPS Desktop에서 코드를 입력하거나 딥링크를 연다. 딥링크에는 Team Host 주소와
+   초대 코드가 함께 들어가므로 수동 주소 입력이 필요 없다.
+4. 브라우저에서 Google 로그인을 완료하고 초대를 수락한다. 초대 코드는 가입 의사를 확인하는
+   일회성 수단일 뿐, 계정이나 CLI 자격증명을 대신하지 않는다.
+5. Desktop은 보호된 세션으로 회사와 프로젝트 목록을 읽고, 사용자가 원하면 그 PC를 Member
+   Node로 등록한다.
+6. Owner 또는 Admin이 Node를 승인한 뒤, Agent별 실행 권한과 기본 실행 Node를 설정한다.
 
-필수 규칙:
+## 권한과 실행
 
-- 현재의 `local_trusted` 서버를 그대로 외부에 열지 않는다. 멀티사용자는 `authenticated` 모드가 전제다.
-- Node는 Hub에 아웃바운드 연결만 만든다. Hub가 친구 PC의 포트를 직접 열거나 임의 명령을 실행하지 않는다.
-- Node 등록과 실행 요청은 기기별 키와 짧은 수명의 서명 토큰을 사용한다.
-- Agent별 Node 배정과 권한이 바뀌거나 초대가 취소되면 즉시 연결 토큰과 실행 권한을 폐기한다.
-- 첨부파일과 산출물은 Task/Project 권한을 다시 검사한 뒤에만 내려받는다.
-- 각 Node는 허용된 작업 폴더와 도구 목록을 선언한다. 임의 경로, 임의 셸, 다른 사람의 CLI 자격증명에는 접근하지 않는다.
+권한은 세 축으로 나뉜다.
 
-## 기존 SPS 기반의 활용 범위
+| 축 | 질문 | 예시 |
+| --- | --- | --- |
+| 사람 -> Agent | 누가 보고, 대화하고, 설정하고, Task를 만들거나 검토할 수 있는가 | Lead만 Task 생성 가능 |
+| Agent -> Node | 어떤 Agent가 어느 PC에서 실행될 수 있는가 | Image Worker는 친구 PC의 로컬 모델 사용 |
+| Task -> 실행 범위 | 어떤 작업 폴더, 실행기, 첨부파일, 결과 업로드가 허용되는가 | 특정 프로젝트 폴더의 Codex 실행 |
 
-현재 SPS Core에는 로그인 기반 배포 모드, 회사 초대, 회사 멤버십, Agent 권한, 프로젝트/Agent 개인 목록이 이미 있다. 이를 사용자 계정과 회사 초대의 기반으로 사용한다.
+Worker는 Task를 새로 만들거나 재할당하지 않는다. Lead Agent만 Worker에게 Task를 배정한다.
+Node 실행 권한은 Agent별로 별도 부여하며, 사람에게 Agent 대화 권한이 있다고 해서 그
+사람의 PC 또는 CLI 자격증명을 사용할 수 있는 것은 아니다.
 
-하지만 현재의 프로젝트/Agent 멤버십은 개인 UI 목록에 가까우며, “어느 PC가 어떤 Agent를 실행하는가”나 “사용자별 Agent 제어 권한”을 완성하는 모델은 아니다. SPS 전용으로 다음을 추가한다.
+각 Agent에는 기본 실행 Node와 추가 허용 Node를 둘 수 있다. 명시적으로 분리된 CLI 세션과
+작업 폴더는 병렬 실행할 수 있으며, 로컬 AI Worker의 병렬성은 Node 자원 정책에 따라 제한한다.
 
-- `nodes`: PC 등록, 공개 키, 상태, 도구/모델 능력, 소유자
-- `agent_node_bindings`: Agent의 기본 실행 Node와 대기 Node
-- `user_agent_permissions`: 사용자별 Agent 제어 권한
-- `node_execution_grants`: Node별 실행 가능 Agent와 작업 폴더 범위
-- `node_runs`: Hub가 보낸 실행 요청, 실행 로그, 취소와 결과 수신 상태
+## 실행 루프
 
-이것들은 Core의 일반 권한·Task·Room API 위에 얹는 SPS 플러그인/확장 계층으로 둔다. 따라서 Core 업데이트를 계속 받을 수 있다.
+1. 사용자 또는 Lead가 Room에서 목표를 정한다.
+2. Lead가 Task를 만들고 Worker를 할당한다.
+3. Host가 사람 권한, Agent-Node grant, 기본 Node, 작업 폴더, 실행기 종류를 검증한다.
+4. 선택된 Node가 서명된 요청을 claim하고 자기 PC의 CLI 또는 로컬 모델을 실행한다.
+5. Node는 로그, 결과, 필요한 산출물 메타데이터, 완료/차단 보고만 Host로 전송한다.
+6. Core는 Task를 만든 Lead Room에 보고하고 Lead를 깨운다.
+7. Lead 또는 사용자가 결과를 검토해 후속 Task, 수정, 완료를 판단한다.
 
-## 데스크톱 앱 선택
+Node가 오프라인이거나 권한이 취소되면 새 실행은 즉시 거절되며, 실행 중인 작업은 안전하게
+취소 또는 실패 상태로 전환된다.
 
-Windows 우선 SPS Desktop은 Electron을 사용한다. 현재 SPS가 Node.js, React UI, CLI 실행기와 로컬 플러그인을 사용하므로, Electron의 메인 프로세스가 SPS Node를 별도 프로세스로 관리하는 구성이 가장 자연스럽다. Hub는 HTTPS로 접속하며, Desktop은 중앙 데이터베이스를 로컬에 포함하지 않는다.
+## 보안 경계
 
-렌더러 UI에는 파일 시스템·셸 권한을 주지 않는다. 앱 메인 프로세스가 제한된 IPC만 제공하고, 실제 CLI/로컬 AI 실행은 별도 Node 프로세스에서 수행한다. 자동 업데이트는 설치 프로그램과 코드 서명을 갖춘 뒤 활성화한다.
+- CLI 로그인, API 키, 모델 파일, 실행 파일 경로와 로컬 프로젝트 파일은 Node 밖으로 보내지 않는다.
+- Host에는 공개 capability, 버전, 동의한 작업 폴더의 식별 정보, 상태, 결과만 저장한다.
+- Node 등록과 실행 요청은 기기별 Ed25519 키, nonce, 시간 제한, Agent-Node grant로 검증한다.
+- Node 승인 취소, Agent grant 해제, 기본 Node 변경은 대기/실행 중 요청에도 다시 검사된다.
+- Owner Vault의 기본 메모리는 Core 계약을 통해 범위와 권한을 확인한다. Provider 장애는 Room과
+  Task의 원본 기록을 막지 않는다.
 
-## 구현 순서
+## 검증 기준
 
-1. **SPS Hub 멀티사용자 기반**: 로그인 모드, 초대, 역할, 사설 네트워크 연결.
-2. **SPS Node 프로토콜**: PC 등록, 기기 인증, 상태 화면, Node 폐기.
-3. **원격 실행**: 한 개의 Codex CLI Agent를 친구 PC Node에서 실행하고 Room/Task 보고까지 연결.
-4. **권한 UI**: 사용자 x Agent x Node 권한 매트릭스와 감사 기록.
-5. **로컬 AI**: Ollama/LM Studio 탐지와 Worker 전용 실행 정책.
-6. **SPS Desktop 패키징**: 설치, 업데이트, 진단 로그, 복구 화면.
-
-## 구현 전 확정할 결정
-
-- 첫 공개 대상은 Windows만 지원한다.
-- Hub는 사설 네트워크 또는 공인 HTTPS 배포 중 설치자가 선택한다. 인터넷 공동 작업에는 Google 로그인과 초대가 필수다.
-- Agent는 기본 Node를 갖고, 병렬 실행은 Lead가 분리된 작업 공간과 실행기 조건을 확인한 뒤 허용한다.
+1. 새 Windows PC에서 SPS Desktop 설치, 초대 코드/딥링크, Google 로그인으로 회사에 참여한다.
+2. Owner가 Node를 승인하고, Node가 공개 capability만 등록한다.
+3. Owner가 Agent별로 해당 Node를 허용하면 친구 PC의 CLI가 친구의 로컬 계정으로 실행된다.
+4. grant 또는 Node 승인을 취소하면 신규 실행과 진행 중 lease가 즉시 거절된다.
+5. 완료/차단 보고가 Task를 만든 Lead Room으로 전달된다.
+6. Owner Host 재시작과 PC 재부팅 뒤에도 Vault, Room 기억, Node 설정이 보존된다.
