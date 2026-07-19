@@ -193,7 +193,7 @@ function renderStatus(status) {
   const profile = status.profile;
   const connection = status.nodeConnection;
   const lines = [
-    `Hub: ${profile?.hubUrl ?? "not configured"}`,
+    `Team address: ${profile?.hubUrl ?? "not configured"}`,
     `Google sign-in: ${status.signedIn ? "connected" : "not connected"}`,
     `Company: ${profile?.companyId ? (status.companies.find((company) => company.id === profile.companyId)?.name ?? profile.companyId) : "not selected"}`,
     `This computer: ${status.nodeId ? `registered (${status.nodeStatus === "active" ? "approved" : status.nodeStatus === "pending" ? "waiting for Owner approval" : status.nodeStatus === "revoked" ? "revoked" : "checking approval"})` : "not registered"}`,
@@ -206,7 +206,7 @@ function renderStatus(status) {
   }
   if (status.teamAccess?.enabled) lines.push(`Private team Host: active (${status.teamAccess.url})`);
   if (connection) {
-    lines.push(`Last Hub heartbeat: ${formatStatusTime(connection.lastHeartbeatAt)}`);
+    lines.push(`Last team Host heartbeat: ${formatStatusTime(connection.lastHeartbeatAt)}`);
     lines.push(`Last command poll: ${formatStatusTime(connection.lastCommandPollAt)}`);
     if (connection.heartbeatError) lines.push(`Connection notice: ${connection.heartbeatError}`);
     if (connection.commandPollError) lines.push(`Command notice: ${connection.commandPollError}`);
