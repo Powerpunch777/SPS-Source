@@ -153,10 +153,10 @@ Set-Location .\sps-server\deploy\hub
 
 - Google 전용 공개 Hub의 인증 경계와 bootstrap
 - Owner의 Operator 초대, 협업자 가입, Viewer 권한 제한
-- 초대된 협업자의 SPS Desktop 인증과 Node 등록
-- Owner/Admin의 Node 승인과 Agent별 grant
+- 서로 다른 두 초대 협업자의 SPS Desktop 인증과 각자 Node 등록
+- Owner/Admin의 Node 승인, Agent별 grant, Agent마다 다른 기본 Node 선택
 - Hub가 명령을 생성하고 Desktop Node가 서명된 요청으로 claim
-- Node 출력 스트리밍과 완료 결과가 Hub에 다시 기록되는지
+- 각 Agent의 명령이 자신에게 grant된 Node에서만 출력 스트리밍·완료 처리되는지
 
 명령 전송 통합 검증은 고정된 `node` 출력만 사용하므로 Codex/agy 제공자 비용을 발생시키지 않는다.
 실제 협업을 시작하기 전에는 친구의 두 번째 컴퓨터에서 한 번 로그인·Node 연결·권한 부여·작은
