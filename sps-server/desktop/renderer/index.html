@@ -27,7 +27,7 @@
       </section>
 
       <section class="panel primary-panel">
-        <div class="panel-heading">
+          <div class="panel-heading">
           <div>
             <div class="step-label">1</div>
             <h2>Team connection</h2>
@@ -42,9 +42,9 @@
           <input id="default-workspace-path" type="hidden" />
           <div class="action-row profile-actions">
             <button type="submit">Save and continue</button>
-            <button id="check-hub" type="button" class="quiet-button">Check connection</button>
           </div>
         </form>
+        <p class="server-route"><strong>Where this connects:</strong> <code>app.redongames.com</code> is the secure address for your SPS server. <code>localhost:3100</code> only works on the computer that is running that server.</p>
       </section>
 
       <section class="panel primary-panel">
@@ -70,17 +70,15 @@
         <div class="panel-heading">
           <div>
             <div class="step-label">3</div>
-            <h2>Make this computer available</h2>
+            <h2>Open your SPS workspace</h2>
           </div>
-          <p>SPS finds local tools here. An Owner approves which Agents may use this computer.</p>
+          <p>Projects, Rooms, Tasks, and existing Agents open inside SPS Desktop.</p>
         </div>
         <div class="action-row">
-          <button id="connect-node" type="button">Connect this computer</button>
-          <button id="scan-capabilities" type="button" class="quiet-button">View local tools</button>
-          <button id="open-workspace" type="button" class="quiet-button">Open SPS workspace</button>
+          <button id="open-workspace" type="button">Open SPS workspace</button>
+          <button id="connect-node" type="button" class="quiet-button">Enable this computer for Agent work</button>
         </div>
-        <p class="connection-note">A newly connected computer waits for Owner approval before it can run work.</p>
-        <pre id="capabilities" class="details-output">Local tools have not been scanned yet.</pre>
+        <p class="connection-note">The workspace stays in SPS Desktop. Only Google approval briefly opens your default browser. Enabling this computer for Agent work is optional and needs Owner approval.</p>
       </section>
 
       <details class="advanced-settings">
@@ -88,7 +86,7 @@
         <div class="advanced-content">
           <section class="subpanel">
             <h2>SPS server</h2>
-            <p class="muted">Most people should leave this as the SPS server. Change it only when your team runs its own Hub.</p>
+            <p class="muted">Most people should leave this as the SPS server. Change it only when your team runs its own Hub or you are testing on the same computer as a local server. Do not use localhost to reach a server on another computer.</p>
             <div class="action-row">
               <input id="hub-url-advanced" placeholder="https://app.redongames.com" />
               <button id="check-hub" type="button" class="quiet-button">Check connection</button>
@@ -111,8 +109,10 @@
             <h2>Computer controls</h2>
             <label class="toggle-row"><input id="launch-at-login" type="checkbox" />Start SPS Desktop when I sign in to Windows</label>
             <div class="action-row compact-row">
+              <button id="scan-capabilities" type="button" class="quiet-button">View local tools</button>
               <button id="disconnect-node" type="button" class="danger-button">Disconnect this computer</button>
             </div>
+            <pre id="capabilities" class="details-output">Local tools have not been scanned yet.</pre>
           </section>
           <section class="subpanel">
             <h2>Desktop updates</h2>

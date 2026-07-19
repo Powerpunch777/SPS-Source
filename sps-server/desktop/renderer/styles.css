@@ -52,6 +52,9 @@ button:disabled { cursor: not-allowed; filter: none; opacity: .5; }
 .step-label { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #216db7; color: white; font-size: 12px; font-weight: 700; }
 .company-field[hidden] { display: none; }
 .connection-note { margin: 14px 0 0; font-size: 13px; }
+.server-route { margin: 18px 0 0; padding: 12px 14px; border-left: 3px solid #397fc2; border-radius: 4px; background: #101b2b; color: #afc1d5; font-size: 13px; }
+.server-route strong { color: #deebf7; }
+code { color: #8ec5ff; font-family: Consolas, "Courier New", monospace; font-size: .92em; }
 .details-output { display: none; margin-top: 14px; max-height: 180px; }
 .details-output.has-content { display: block; }
 .advanced-settings { border: 1px solid #26354b; border-radius: 8px; background: #121c2c; margin: 18px 0; }
