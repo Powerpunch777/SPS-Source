@@ -13,6 +13,7 @@
 5. Codex CLI를 사용하는 테스트 Agent에만 Node 실행 권한을 부여하고 Primary Node로 바인딩했다.
 6. Hub가 Agent 명령을 Node로 전달했고, Node의 실제 Codex CLI가 실행하여 `SPS_NODE_E2E_PASS`를 반환했다.
 7. stdout, stderr, 종료 코드, 완료 시간이 Hub의 Node command 기록으로 되돌아왔다.
+8. 한글이 포함된 실제 작업 폴더를 SPS Desktop 프로필에 저장한 뒤, 같은 Node가 `SPS_UNICODE_WORKSPACE_PASS` 명령을 성공적으로 실행했다.
 
 ## 이번에 보완한 Desktop 동작
 
@@ -24,7 +25,7 @@
 
 - 두 번째 Windows 컴퓨터에 최신 SPS Desktop을 설치하고 Google 인증, 초대 수락, Node 등록, Owner 승인, Agent grant를 실제 사용자 흐름으로 반복한다.
 - 두 번째 컴퓨터의 Codex CLI와 설치되어 있는 로컬 AI(Ollama 또는 LM Studio)를 capability scan으로 확인한다.
-- 한글이 포함된 실제 프로젝트 폴더를 Desktop 폴더 선택 UI로 매핑한 뒤 Node 명령을 실행한다. 자동화 셸의 문자 인코딩과 실제 Desktop UI 입력을 혼동하지 않기 위한 별도 검증이다.
+- 프로젝트별 폴더 선택 UI에서 한글 경로를 매핑하는 클릭 흐름은 두 번째 컴퓨터 파일 선택기에서도 한 번 확인한다. Desktop 프로필과 Node 실행기 자체의 한글 경로 처리는 이미 통과했다.
 
 ## 현재 외부 조건
 
