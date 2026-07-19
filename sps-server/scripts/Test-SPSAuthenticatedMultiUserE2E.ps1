@@ -93,6 +93,10 @@ try {
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_BIND" "lan"
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_DEPLOYMENT_MODE" "authenticated"
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_DEPLOYMENT_EXPOSURE" "private"
+  # The public SPS Hub is Google-only. This isolated authorization test uses
+  # local test accounts so it can verify role boundaries without a real Google
+  # identity or a browser session outside the test process.
+  Set-TemporaryEnvironmentValue $savedEnvironment "SPS_AUTH_GOOGLE_ONLY" "false"
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_AGENT_JWT_SECRET" $secret
   Set-TemporaryEnvironmentValue $savedEnvironment "BETTER_AUTH_SECRET" $secret
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_ALLOWED_HOSTNAMES" "127.0.0.1,localhost"
