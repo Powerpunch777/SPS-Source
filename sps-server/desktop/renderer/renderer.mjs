@@ -15,6 +15,10 @@ function pretty(value) {
 
 let latestStatus = null;
 
+function isOwnerHostProfile(status) {
+  return status?.profile?.connectionKind === "owner-host";
+}
+
 function updateCompanyPicker(companies, selectedId) {
   const picker = $("#company-picker");
   picker.replaceChildren();
@@ -95,7 +99,9 @@ function renderSetupReadiness(status) {
     list.append(item);
   }
   const state = $("#setup-progress-state");
-  state.textContent = readiness.ready ? "Ready for authorized work" : "Connection setup required";
+  state.textContent = readiness.ready
+    ? (isOwnerHostProfile(status) ? "Owner Host ready" : "Ready for authorized work")
+    : "Connection setup required";
   state.className = `setup-state ${readiness.ready ? "ready" : ""}`;
 
   $("#open-invite").disabled = !readiness.canOpenInvite;
@@ -110,6 +116,20 @@ function renderSetupReadiness(status) {
   $("#project-workspace-project-id").disabled = !readiness.canManageProjects || !status.projects?.length;
 }
 
+function renderOwnerHost(status) {
+  const ownerHost = status.ownerHost ?? {};
+  const ready = ["running", "running-existing"].includes(ownerHost.state);
+  const usingOwnerHost = isOwnerHostProfile(status);
+  const detail = ready
+    ? (usingOwnerHost
+      ? `This Desktop is using its internal Owner Host at ${ownerHost.url}.`
+      : `Ready at ${ownerHost.url}. Choose it to keep company data on this computer.`)
+    : ownerHost.lastError ?? "Starting the encrypted local SPS Host...";
+  $("#owner-host-detail").textContent = detail;
+  $("#use-owner-host").disabled = !ready || usingOwnerHost;
+  $("#use-owner-host").textContent = usingOwnerHost ? "Using Owner Host" : ready ? "Use Owner Host" : "Starting Owner Host";
+}
+
 function renderStatus(status) {
   const profile = status.profile;
   const connection = status.nodeConnection;
@@ -121,6 +141,10 @@ function renderStatus(status) {
     `Command runner: ${status.commandRunner?.active ? "running" : status.nodeId ? "waiting for Node approval" : "waiting for registration"}`,
     `Launch at Windows sign-in: ${status.commandRunner?.launchAtLogin ? "enabled" : "disabled"}`,
   ];
+  if (status.ownerHost) {
+    lines.push(`Owner Host: ${status.ownerHost.state ?? "initializing"}${status.ownerHost.url ? ` (${status.ownerHost.url})` : ""}`);
+    if (status.ownerHost.lastError) lines.push(`Owner Host notice: ${status.ownerHost.lastError}`);
+  }
   if (connection) {
     lines.push(`Last Hub heartbeat: ${formatStatusTime(connection.lastHeartbeatAt)}`);
     lines.push(`Last command poll: ${formatStatusTime(connection.lastCommandPollAt)}`);
@@ -129,8 +153,14 @@ function renderStatus(status) {
   }
   if (status.update) lines.push(`Desktop update: ${status.update.message}`);
   $("#status").textContent = lines.join("\n");
-  $("#company-field").hidden = !status.signedIn;
-  $("#server-route").textContent = "This SPS Desktop connects to your shared SPS Hub. Projects, Rooms, Tasks, and company data remain on that Hub while this computer runs only its approved local Agent work.";
+  const ownerHost = isOwnerHostProfile(status);
+  $("#company-field").hidden = ownerHost || !status.signedIn;
+  $("#remote-profile-panel").hidden = ownerHost;
+  $("#auth-panel").hidden = ownerHost;
+  $("#server-route").textContent = ownerHost
+    ? "This SPS Desktop runs the SPS Owner Host internally. Company data, Rooms, Tasks, files, and memory stay in this computer's Owner Vault."
+    : "This SPS Desktop connects to a shared HTTPS SPS Hub. This computer runs only its approved local Agent work.";
+  renderOwnerHost(status);
   renderUpdate(status.update);
   renderSetupReadiness(status);
 }
@@ -202,6 +232,14 @@ $("#profile-form").addEventListener("submit", async (event) => {
     showNotice("Hub profile saved.");
   });
 });
+$("#use-owner-host").addEventListener("click", () => run(async () => {
+  if (latestStatus?.profile && !isOwnerHostProfile(latestStatus)) {
+    const confirmed = window.confirm("Switch this Desktop to its local Owner Host? Any current remote Node registration on this computer will be disconnected.");
+    if (!confirmed) return;
+  }
+  await window.spsDesktop.useOwnerHost();
+  showNotice("This computer is now using its internal SPS Owner Host.");
+}));
 $("#check-hub").addEventListener("click", () => run(async () => {
   const advancedHubUrl = $("#hub-url-advanced").value.trim();
   if (!advancedHubUrl) throw new Error("SPS Hub address is required");

@@ -1,16 +1,18 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.1.8",
-  "description": "SPS Desktop collaboration and Node onboarding shell",
+  "version": "0.2.0",
+  "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
   "type": "module",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.mjs",
-    "package:win": "electron-builder --win nsis",
-    "release:win": "electron-builder --win nsis --config.forceCodeSigning=true --publish always"
+    "prepare:owner-host-runtime": "node scripts/prepare-owner-host-runtime.mjs",
+    "smoke:owner-host-runtime": "node scripts/smoke-packaged-owner-host-runtime.mjs",
+    "package:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis",
+    "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish always"
   },
   "dependencies": {
     "@sps/desktop-node": "file:../desktop-node",
@@ -29,6 +31,15 @@
       "renderer/**/*",
       "assets/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".owner-host-runtime",
+        "to": "sps-owner-host-runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "icon": "assets/sps-logo.png",
     "publish": [

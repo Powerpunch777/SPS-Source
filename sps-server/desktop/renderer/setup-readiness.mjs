@@ -11,6 +11,43 @@ function isApproved(status) {
 }
 
 export function createSpsDesktopSetupReadiness(status) {
+  const ownerHostReady = ["running", "running-existing"].includes(status?.ownerHost?.state);
+  if (status?.profile?.connectionKind === "owner-host") {
+    const steps = [
+      {
+        id: "owner-host",
+        title: "Start Owner Host",
+        detail: ownerHostReady
+          ? "This computer is running the SPS Host and its encrypted Owner Vault."
+          : status?.ownerHost?.lastError ?? "SPS Owner Host is starting on this computer.",
+        state: ownerHostReady ? "complete" : "current",
+      },
+      {
+        id: "workspace",
+        title: "Open workspace",
+        detail: ownerHostReady
+          ? "Projects, Rooms, Tasks, and local Agents are ready in SPS Desktop."
+          : "The workspace opens after the Owner Host is ready.",
+        state: ownerHostReady ? "current" : "blocked",
+      },
+      {
+        id: "team-access",
+        title: "Add team access later",
+        detail: "Private or public team access, invitations, and Member Nodes are configured after the local workspace is ready.",
+        state: "blocked",
+      },
+    ];
+    return {
+      steps,
+      ready: ownerHostReady,
+      canOpenInvite: false,
+      canStartAuth: false,
+      canCheckAuth: false,
+      canConnectNode: false,
+      canOpenWorkspace: ownerHostReady,
+      canManageProjects: false,
+    };
+  }
   const profileReady = hasProfile(status);
   const signedIn = Boolean(status?.signedIn);
   const companyReady = hasCompany(status);

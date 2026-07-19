@@ -24,6 +24,23 @@ export function requireSpsHubOrigin(value) {
   return url.origin;
 }
 
+export function requireSpsOwnerHostOrigin(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("SPS Owner Host URL is invalid.");
+  }
+  const isLoopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1" || url.hostname === "[::1]";
+  if (url.protocol !== "http:" || !isLoopback) {
+    throw new Error("SPS Owner Host must use a loopback HTTP URL.");
+  }
+  if (url.username || url.password) {
+    throw new Error("SPS Owner Host URL must not include a username or password.");
+  }
+  return url.origin;
+}
+
 export function isSpsHubApiUrl(value, hubOrigin) {
   const origin = normalizeSpsHubOrigin(hubOrigin);
   if (!origin) return false;

@@ -1,5 +1,13 @@
 # SPS Game Production Work Plane
 
+> ## Current Canonical Architecture
+>
+> This document retains the original work-plane analysis. The current SPS platform
+> architecture is defined in [111-sps-owner-host-and-memory-platform-architecture-ko.md](111-sps-owner-host-and-memory-platform-architecture-ko.md).
+> In particular, the earlier "plugin or sidecar first" memory decision is superseded:
+> SPS Core owns the durable memory contract and lifecycle, while SPS Default Memory
+> is a bundled first-party provider. Alternative providers remain replaceable.
+
 ## Decision
 
 Use SPS as the base control plane.

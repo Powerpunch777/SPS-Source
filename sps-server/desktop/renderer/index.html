@@ -12,8 +12,16 @@
       <header>
         <div class="eyebrow">SONPARKSERVER</div>
         <h1>SPS Desktop</h1>
-        <p>Connect this computer to your SPS team. Your CLI accounts and local AI stay on this computer.</p>
+        <p>Run SPS on this computer or join a team. Your CLI accounts and local AI stay on this computer.</p>
       </header>
+
+      <section class="local-host-control" aria-labelledby="owner-host-title">
+        <div>
+          <strong id="owner-host-title">Use this computer as the SPS Owner Host</strong>
+          <p id="owner-host-detail">Starting the encrypted local SPS Host...</p>
+        </div>
+        <button id="use-owner-host" type="button">Use Owner Host</button>
+      </section>
 
       <section class="setup-progress" aria-labelledby="setup-progress-title">
         <div class="setup-progress-heading">
@@ -26,7 +34,7 @@
         <ol id="setup-steps" class="setup-steps"></ol>
       </section>
 
-      <section class="panel primary-panel">
+      <section id="remote-profile-panel" class="panel primary-panel">
           <div class="panel-heading">
           <div>
             <div class="step-label">1</div>
@@ -44,7 +52,7 @@
             <button type="submit">Save and continue</button>
           </div>
         </form>
-        <p id="server-route" class="server-route"><strong>Where this connects:</strong> <code>app.redongames.com</code> is your shared SPS Hub. This Desktop app does not start a separate local server.</p>
+        <p id="server-route" class="server-route"><strong>Where this connects:</strong> Choose the local Owner Host above, or join a shared HTTPS SPS Hub.</p>
       </section>
 
       <section id="auth-panel" class="panel primary-panel">

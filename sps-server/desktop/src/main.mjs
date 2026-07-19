@@ -1,4 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -21,7 +23,14 @@ import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri } from "./invite.mjs
 import { emptyState, loadState, saveState } from "./state.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
-import { isSpsHubApiUrl, requireSpsHubOrigin } from "./workspace-url.mjs";
+import { createSpsOwnerHostManager, materializeSpsOwnerHostRuntime, resolveSpsOwnerHostRuntime } from "./owner-host.mjs";
+import { ensureSpsOwnerHostConfig, spsOwnerHostUrl } from "./owner-host-config.mjs";
+import {
+  createSpsDefaultMemoryManager,
+  ensureSpsDefaultMemoryConfig,
+  spsDefaultMemoryUrl,
+} from "./default-memory-host.mjs";
+import { isSpsHubApiUrl, requireSpsHubOrigin, requireSpsOwnerHostOrigin } from "./workspace-url.mjs";
 import { requireSpsWorkspaceDirectory } from "./workspace-directory.mjs";
 import {
   createSpsSetupWindowPreferences,
@@ -52,6 +61,22 @@ let updateStatus = {
   availableVersion: null,
   percent: null,
   message: "Desktop update service is starting.",
+};
+let ownerHostManager = null;
+let defaultMemoryManager = null;
+let defaultMemoryStatus = {
+  state: "initializing",
+  url: null,
+  startedAt: null,
+  lastError: null,
+  vaultPath: null,
+};
+let ownerHostStatus = {
+  state: "initializing",
+  url: null,
+  startedAt: null,
+  lastError: null,
+  vaultPath: null,
 };
 
 function emptyNodeRuntimeStatus() {
@@ -150,6 +175,144 @@ function currentBoardToken() {
   return state.encryptedBoardApiToken ? decrypt(state.encryptedBoardApiToken) : null;
 }
 
+function isOwnerHostProfile(profile = state.profile) {
+  return profile?.connectionKind === "owner-host";
+}
+
+function ownerHostIsReady() {
+  return ownerHostStatus.state === "running" || ownerHostStatus.state === "running-existing";
+}
+
+async function ensureOwnerHostManager() {
+  const vaultRoot = path.join(app.getPath("userData"), "owner-vault");
+  const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
+  const defaultMemory = await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot });
+  const url = spsOwnerHostUrl(ownerHost.config);
+  if (ownerHostManager && defaultMemoryManager && ownerHostStatus.url === url) {
+    return { ...ownerHost, defaultMemory, url };
+  }
+
+  const sourceRuntimeRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "sps-owner-host-runtime")
+    : path.join(__dirname, "..", ".owner-host-runtime");
+  const targetRuntimeRoot = path.join(app.getPath("userData"), "owner-host-runtime", app.getVersion());
+  const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
+  const developmentMemorySidecarEntry = path.resolve(__dirname, "..", "..", "memory-sidecar", "memory-sidecar.mjs");
+  const developmentMemoryPluginPath = path.resolve(__dirname, "..", "..", "sps-default-memory");
+  defaultMemoryManager = createSpsDefaultMemoryManager({
+    url: spsDefaultMemoryUrl(defaultMemory.config),
+    token: defaultMemory.config.security.token,
+    configPath: defaultMemory.layout.configPath,
+    nodeCommand: process.execPath,
+    resolveEntry: async () => {
+      const materializedRuntime = await materializeSpsOwnerHostRuntime({
+        sourceRuntimeRoot,
+        targetRuntimeRoot,
+      });
+      const packagedEntry = materializedRuntime
+        ? path.join(materializedRuntime, "memory-sidecar", "memory-sidecar.mjs")
+        : null;
+      return packagedEntry && existsSync(packagedEntry) ? packagedEntry : developmentMemorySidecarEntry;
+    },
+  });
+  ownerHostManager = createSpsOwnerHostManager({
+    url,
+    resolveRuntime: async () => {
+      const materializedRuntime = await materializeSpsOwnerHostRuntime({
+        sourceRuntimeRoot,
+        targetRuntimeRoot,
+      });
+      const packagedMemoryPluginPath = materializedRuntime
+        ? path.join(materializedRuntime, "sps-default-memory")
+        : null;
+      const memoryPluginPath = packagedMemoryPluginPath && existsSync(path.join(packagedMemoryPluginPath, "package.json"))
+        ? packagedMemoryPluginPath
+        : developmentMemoryPluginPath;
+      return resolveSpsOwnerHostRuntime({
+        packagedRuntimeRoots: materializedRuntime ? [materializedRuntime] : [],
+        coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
+        packagedNodeCommand: process.execPath,
+        configPath: ownerHost.layout.configPath,
+        environment: {
+          PAPERCLIP_HOME: ownerHost.layout.root,
+          PAPERCLIP_DB_BACKUP_DIR: ownerHost.layout.backupDir,
+          PAPERCLIP_STORAGE_LOCAL_DIR: ownerHost.layout.storageDir,
+          PAPERCLIP_SECRETS_MASTER_KEY_FILE: ownerHost.layout.secretsPath,
+          PAPERCLIP_PROJECTS_ROOT: ownerHost.layout.projectsDir,
+          SPS_BUNDLED_PLUGIN_PATHS: memoryPluginPath,
+          SPS_MEMORY_SIDECAR_URL: spsDefaultMemoryUrl(defaultMemory.config),
+          SPS_MEMORY_SIDECAR_TOKEN: defaultMemory.config.security.token,
+        },
+      });
+    },
+  });
+  return { ...ownerHost, defaultMemory, url };
+}
+
+async function activateOwnerHostProfile() {
+  if (!ownerHostIsReady() || !ownerHostStatus.url) {
+    throw new Error(ownerHostStatus.lastError || "SPS Owner Host is still starting.");
+  }
+  state.encryptedBoardApiToken = null;
+  state.companies = [];
+  state.projects = [];
+  state.profile = {
+    hubUrl: requireSpsOwnerHostOrigin(ownerHostStatus.url),
+    connectionKind: "owner-host",
+    companyId: "",
+    displayName: `${os.hostname()} Owner Host`,
+    defaultWorkspacePath: "",
+    projectWorkspaces: {},
+  };
+  await persistState();
+  return publicStatus();
+}
+
+async function startOwnerHost({ activate = false } = {}) {
+  const ownerHost = await ensureOwnerHostManager();
+  ownerHostStatus = {
+    state: "starting",
+    url: ownerHost.url,
+    startedAt: ownerHostStatus.startedAt,
+    lastError: null,
+    vaultPath: ownerHost.layout.root,
+  };
+  defaultMemoryStatus = {
+    state: "starting",
+    url: spsDefaultMemoryUrl(ownerHost.defaultMemory.config),
+    startedAt: defaultMemoryStatus.startedAt,
+    lastError: null,
+    vaultPath: ownerHost.defaultMemory.layout.root,
+  };
+  const memoryStatus = await defaultMemoryManager.start();
+  defaultMemoryStatus = {
+    ...memoryStatus,
+    vaultPath: ownerHost.defaultMemory.layout.root,
+  };
+  if (memoryStatus.state !== "running" && memoryStatus.state !== "running-existing") {
+    throw new Error(memoryStatus.lastError || "SPS Default Memory is still starting.");
+  }
+  const status = await ownerHostManager.start();
+  ownerHostStatus = {
+    ...status,
+    vaultPath: ownerHost.layout.root,
+  };
+  if (activate && ownerHostIsReady()) await activateOwnerHostProfile();
+  return ownerHostStatus;
+}
+
+async function bootstrapOwnerHost() {
+  try {
+    await startOwnerHost({ activate: !state.profile });
+  } catch (error) {
+    ownerHostStatus = {
+      ...ownerHostStatus,
+      state: "stopped",
+      lastError: error instanceof Error ? error.message : "SPS Owner Host could not start.",
+    };
+  }
+}
+
 function normalizeProjectList(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -158,6 +321,11 @@ function normalizeProjectList(value) {
 }
 
 async function refreshProjects() {
+  if (isOwnerHostProfile()) {
+    state.projects = [];
+    await persistState();
+    return state.projects;
+  }
   const companyId = state.profile?.companyId;
   const accessToken = currentBoardToken();
   if (!state.profile || !companyId || !accessToken) {
@@ -209,7 +377,9 @@ function nodeWasRevoked(error) {
 
 function workspaceHubUrl() {
   if (!state.profile?.hubUrl) return null;
-  return requireSpsHubOrigin(state.profile.hubUrl);
+  return isOwnerHostProfile()
+    ? requireSpsOwnerHostOrigin(state.profile.hubUrl)
+    : requireSpsHubOrigin(state.profile.hubUrl);
 }
 
 function isCurrentWorkspaceApiUrl(url) {
@@ -243,7 +413,9 @@ function configureWorkspaceNavigation(window, hubOrigin) {
 
 async function openWorkspace() {
   if (!state.profile) throw new Error("Save an SPS Hub profile first");
-  if (!currentBoardToken()) throw new Error("Continue with Google before opening the SPS workspace");
+  if (!isOwnerHostProfile() && !currentBoardToken()) {
+    throw new Error("Continue with Google before opening the SPS workspace");
+  }
   const hubOrigin = workspaceHubUrl();
   if (!hubOrigin) throw new Error("Save an SPS Hub profile first");
   if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
@@ -359,11 +531,15 @@ function publicStatus() {
       launchAtLogin: Boolean(loginItemSettings.openAtLogin),
     },
     nodeConnection: state.nodeId ? { ...nodeRuntimeStatus } : null,
+    ownerHost: { ...ownerHostStatus, defaultMemory: { ...defaultMemoryStatus } },
     update: { ...updateStatus },
   };
 }
 
 async function connectNode() {
+  if (isOwnerHostProfile()) {
+    throw new Error("Owner Host mode is ready for local work. Enable remote Node grants after authenticated network setup is configured.");
+  }
   if (!state.profile) throw new Error("Save an SPS Hub profile first");
   if (!state.profile.companyId) throw new Error("Choose an SPS company before registering this computer");
   const accessToken = currentBoardToken();
@@ -523,6 +699,12 @@ function registerIpc() {
     const health = await probeSpsHub({ hubUrl });
     return { hubUrl, health };
   });
+  ipcMain.handle("desktop:use-owner-host", async () => {
+    const wasRemoteProfile = Boolean(state.profile && !isOwnerHostProfile());
+    if (wasRemoteProfile) await disconnectCurrentNode();
+    await startOwnerHost({ activate: true });
+    return publicStatus();
+  });
   ipcMain.handle("desktop:check-updates", async () => {
     updateStatus = await requireUpdateService().check();
     return publicStatus();
@@ -564,6 +746,7 @@ function registerIpc() {
     if (hubChanged || companyChanged) state.projects = [];
     state.profile = {
       hubUrl,
+      connectionKind: "remote",
       companyId,
       displayName: displayName.slice(0, 120),
       defaultWorkspacePath: String(input.defaultWorkspacePath ?? "").trim(),
@@ -581,6 +764,7 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:open-invite", async (_event, input) => {
     if (!state.profile) throw new Error("Save an SPS Hub profile first");
+    if (isOwnerHostProfile()) throw new Error("Create invitations after the Owner Host is configured for private or public team access.");
     const url = buildInviteUrl(state.profile.hubUrl, input.code);
     await shell.openExternal(url);
     return url;
@@ -621,6 +805,7 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:start-auth", async () => {
     if (!state.profile) throw new Error("Save an SPS Hub profile first");
+    if (isOwnerHostProfile()) throw new Error("Google sign-in is used for remote team access, not local Owner Host mode.");
     pendingAuth = await startSpsDesktopAuth({
       hubUrl: state.profile.hubUrl,
       companyId: state.profile.companyId,
@@ -730,6 +915,7 @@ if (!app.requestSingleInstanceLock()) {
     app.setAsDefaultProtocolClient("sps");
     await createWindow({ show: !startedHidden });
     createTray();
+    void bootstrapOwnerHost();
     const initialJoinArg = findSpsJoinUriArg(process.argv);
     if (initialJoinArg) sendJoinToRenderer(initialJoinArg);
     scheduleHeartbeat();
@@ -752,4 +938,6 @@ app.on("before-quit", () => {
   stopNodeScheduling();
   void cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped.");
   updateService?.stop();
+  void defaultMemoryManager?.stop({ force: true });
+  void ownerHostManager?.stop({ force: true });
 });

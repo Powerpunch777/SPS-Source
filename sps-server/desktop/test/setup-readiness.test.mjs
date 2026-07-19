@@ -47,3 +47,16 @@ test("requires protected Desktop sign-in before the shared workspace opens", () 
   assert.equal(unsigned.canStartAuth, true);
   assert.equal(unsigned.canConnectNode, false);
 });
+
+test("opens the local workspace as soon as the internal Owner Host is healthy", () => {
+  const readiness = createSpsDesktopSetupReadiness({
+    profile: { hubUrl: "http://127.0.0.1:31310", displayName: "Owner Host", connectionKind: "owner-host" },
+    ownerHost: { state: "running", url: "http://127.0.0.1:31310" },
+    signedIn: false,
+  });
+
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.canOpenWorkspace, true);
+  assert.equal(readiness.canStartAuth, false);
+  assert.equal(readiness.canConnectNode, false);
+});
