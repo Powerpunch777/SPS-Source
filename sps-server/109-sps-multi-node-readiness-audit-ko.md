@@ -28,7 +28,7 @@ SPS Hub와 Desktop Node의 제품 흐름은 파일럿 가능한 상태다. 초�
 | Node 폐기 | 완료 | revoke된 Node의 이전 승인 재사용이 403으로 거절되는 것을 E2E가 확인한다. |
 | 로컬 비밀 보호 | 완료 | CLI 로그인 정보, `CODEX_HOME`, API 키, 로컬 모델, 프로젝트 절대 경로는 Node 밖으로 전송하지 않는다. Hub에는 실행기 종류·capability·프로젝트 ID·허용된 상대 작업 정보만 전달한다. |
 | Codex 계정 프로필 | 완료 | Agent 설정의 `codexAccount`는 `.codex`, `.codex-*` 이름만 Hub에 전달한다. Desktop Node는 자기 컴퓨터 사용자 폴더 아래의 해당 프로필과 `auth.json`을 확인한 뒤에만 `CODEX_HOME`을 설정한다. |
-| 로컬 AI와 다른 CLI | 완료 | capability scan과 실행 경로는 Codex CLI, Agy CLI, Ollama, LM Studio를 다룬다. 실제 사용하려는 실행기는 각 Node에 설치·로그인되어 있어야 한다. |
+| 로컬 AI와 다른 CLI | 완료 | capability scan과 실행 경로는 Codex CLI, Agy CLI, Ollama, LM Studio를 다룬다. Chromium E2E는 한 Node의 CLI runtime과 다른 Node의 Ollama `qwen2.5-coder:7b` 로컬 AI runtime을 각각 실행한다. 실제 사용하려는 실행기는 각 Node에 설치·로그인되어 있어야 한다. |
 | 프로젝트 폴더 분리 | 완료 | Hub의 프로젝트 ID를 Node가 자기 로컬 Git 작업 폴더로 매핑한다. 등록되지 않은 임의 절대 경로 실행은 거절한다. |
 | Windows 설치 파일 | 파일럿 가능 | `SPS Desktop Setup 0.1.2.exe`를 만들고 Desktop/Node 테스트와 공개 Hub 사전 점검을 통과했다. 현재 설치 파일은 서명되지 않았다. |
 
@@ -46,7 +46,7 @@ SPS Hub와 Desktop Node의 제품 흐름은 파일럿 가능한 상태다. 초�
 2. `SPS-...` 코드 생성 및 초대 멤버의 코드 입력 가입
 3. 권한이 낮은 멤버의 Owner 전용 설정 차단
 4. Owner가 Nodes 화면에서 두 초대 멤버의 독립 Node 승인·Agent grant·기본 Node 바인딩
-5. 두 Node의 명령 실행과 결과 회수
+5. CLI Node와 Ollama 로컬 AI Node의 각각의 명령 실행과 결과 회수
 6. 첫 Node revoke 뒤 이전 승인 재사용 차단
 
 공개 Hub와 설치 파일은 다음 파일럿 점검으로 확인한다.
