@@ -3,7 +3,6 @@ import { createSpsDesktopSetupReadiness } from "./setup-readiness.mjs";
 const $ = (selector) => document.querySelector(selector);
 const notice = $("#notice");
 const DEFAULT_SPS_HUB_URL = "https://app.redongames.com";
-const LOCAL_SPS_HUB_URL = "http://127.0.0.1:3100";
 
 function showNotice(message, error = false) {
   notice.textContent = message;
@@ -15,7 +14,6 @@ function pretty(value) {
 }
 
 let latestStatus = null;
-let latestLocalHostStatus = null;
 
 function updateCompanyPicker(companies, selectedId) {
   const picker = $("#company-picker");
@@ -66,15 +64,6 @@ function formatStatusTime(value) {
   return Number.isNaN(date.getTime()) ? "waiting" : date.toLocaleString();
 }
 
-function usesLocalSpsHost(status) {
-  try {
-    const url = new URL(status?.profile?.hubUrl ?? "");
-    return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname.toLowerCase());
-  } catch {
-    return false;
-  }
-}
-
 function renderUpdate(update) {
   const current = update?.currentVersion ?? "unknown";
   const available = update?.availableVersion ? ` ${update.availableVersion}` : "";
@@ -109,9 +98,6 @@ function renderSetupReadiness(status) {
   state.textContent = readiness.ready ? "Ready for authorized work" : "Connection setup required";
   state.className = `setup-state ${readiness.ready ? "ready" : ""}`;
 
-  $("#auth-panel").hidden = readiness.localHost;
-  $("#use-local-hub").hidden = readiness.localHost;
-
   $("#open-invite").disabled = !readiness.canOpenInvite;
   $("#start-auth").disabled = !readiness.canStartAuth;
   $("#poll-auth").disabled = !readiness.canCheckAuth;
@@ -144,44 +130,15 @@ function renderStatus(status) {
   if (status.update) lines.push(`Desktop update: ${status.update.message}`);
   $("#status").textContent = lines.join("\n");
   $("#company-field").hidden = !status.signedIn;
-  const localHost = usesLocalSpsHost(status);
-  $("#server-route").textContent = localHost
-    ? "This SPS Desktop is using the local SPS Host already running on this computer. Existing projects and Agent history stay in that local instance."
-    : "This SPS Desktop connects to your shared SPS server through app.redongames.com. localhost:3100 only works on the computer running that local server.";
+  $("#server-route").textContent = "This SPS Desktop connects to your shared SPS Hub. Projects, Rooms, Tasks, and company data remain on that Hub while this computer runs only its approved local Agent work.";
   renderUpdate(status.update);
   renderSetupReadiness(status);
-}
-
-function renderLocalHostStatus(status, hostStatus) {
-  const isLocalHost = usesLocalSpsHost(status);
-  $("#local-host-control").hidden = !isLocalHost;
-  if (!isLocalHost) return;
-
-  const detail = $("#local-host-detail");
-  const startButton = $("#start-local-host");
-  if (!hostStatus) {
-    detail.textContent = "Could not read the local Host status yet.";
-    startButton.disabled = true;
-    return;
-  }
-  if (hostStatus.state === "adopted-external") {
-    detail.textContent = "Running already. SPS Desktop is using the existing local server without taking it over.";
-  } else if (hostStatus.state === "running") {
-    detail.textContent = "Running under SPS Desktop control.";
-  } else if (hostStatus.state === "starting") {
-    detail.textContent = "Starting the local SPS Host...";
-  } else {
-    detail.textContent = hostStatus.lastError || "Stopped. Start the local Host to open your existing SPS instance.";
-  }
-  startButton.disabled = hostStatus.state !== "stopped";
 }
 
 async function refreshStatus() {
   const status = await window.spsDesktop.getStatus();
   latestStatus = status;
   renderStatus(status);
-  latestLocalHostStatus = await window.spsDesktop.getLocalHostStatus().catch(() => null);
-  renderLocalHostStatus(status, latestLocalHostStatus);
   if (status.profile) {
     $("#hub-url").value = status.profile.hubUrl ?? "";
     $("#company-id").value = status.profile.companyId ?? "";
@@ -245,30 +202,6 @@ $("#profile-form").addEventListener("submit", async (event) => {
     showNotice("Hub profile saved.");
   });
 });
-$("#use-local-hub").addEventListener("click", () => run(async () => {
-  const displayName = $("#display-name").value.trim();
-  if (!displayName) throw new Error("Name this computer before using its local SPS server.");
-  await window.spsDesktop.checkHub({ hubUrl: LOCAL_SPS_HUB_URL });
-  await window.spsDesktop.saveProfile({
-    hubUrl: LOCAL_SPS_HUB_URL,
-    companyId: "",
-    displayName,
-    defaultWorkspacePath: "",
-  });
-  showNotice("This computer's local SPS Host is ready. Open the SPS workspace to use your existing projects.");
-}));
-$("#refresh-local-host").addEventListener("click", () => run(async () => {
-  latestLocalHostStatus = await window.spsDesktop.getLocalHostStatus();
-  renderLocalHostStatus(latestStatus, latestLocalHostStatus);
-  showNotice("Local SPS Host status refreshed.");
-}));
-$("#start-local-host").addEventListener("click", () => run(async () => {
-  latestLocalHostStatus = await window.spsDesktop.startLocalHost();
-  renderLocalHostStatus(latestStatus, latestLocalHostStatus);
-  showNotice(latestLocalHostStatus.state === "running"
-    ? "Local SPS Host started."
-    : latestLocalHostStatus.lastError || "Local SPS Host start was requested.");
-}));
 $("#check-hub").addEventListener("click", () => run(async () => {
   const advancedHubUrl = $("#hub-url-advanced").value.trim();
   if (!advancedHubUrl) throw new Error("SPS Hub address is required");

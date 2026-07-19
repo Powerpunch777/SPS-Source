@@ -42,20 +42,9 @@
           <input id="default-workspace-path" type="hidden" />
           <div class="action-row profile-actions">
             <button type="submit">Save and continue</button>
-            <button id="use-local-hub" type="button" class="quiet-button">Use the SPS server on this computer</button>
           </div>
         </form>
-        <p id="server-route" class="server-route"><strong>Where this connects:</strong> <code>app.redongames.com</code> is the secure address for your SPS server. <code>localhost:3100</code> only works on the computer that is running that server.</p>
-        <div id="local-host-control" class="local-host-control" hidden>
-          <div>
-            <strong>Local SPS Host</strong>
-            <p id="local-host-detail">Checking the server on this computer...</p>
-          </div>
-          <div class="action-row">
-            <button id="refresh-local-host" type="button" class="quiet-button">Refresh status</button>
-            <button id="start-local-host" type="button" class="quiet-button">Start local Host</button>
-          </div>
-        </div>
+        <p id="server-route" class="server-route"><strong>Where this connects:</strong> <code>app.redongames.com</code> is your shared SPS Hub. This Desktop app does not start a separate local server.</p>
       </section>
 
       <section id="auth-panel" class="panel primary-panel">
@@ -97,7 +86,7 @@
         <div class="advanced-content">
           <section class="subpanel">
             <h2>SPS server</h2>
-            <p class="muted">Most people should leave this as the SPS server. Change it only when your team runs its own Hub or you are testing on the same computer as a local server. Do not use localhost to reach a server on another computer.</p>
+            <p class="muted">Most people should leave this as the SPS server. Change it only when your team operates another HTTPS SPS Hub.</p>
             <div class="action-row">
               <input id="hub-url-advanced" placeholder="https://app.redongames.com" />
               <button id="check-hub" type="button" class="quiet-button">Check connection</button>

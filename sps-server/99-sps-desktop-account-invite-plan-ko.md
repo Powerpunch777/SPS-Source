@@ -2,12 +2,12 @@
 
 ## 1. 제품 결정
 
-SPS는 모든 사용자가 브라우저로 접속하는 서비스가 아니라, Windows용 **SPS Desktop** 앱으로 출시한다. 하나의 설치 프로그램이 다음 두 역할을 제공한다.
+SPS는 모든 사용자가 일반 브라우저로 접속하는 서비스가 아니라, Windows용 **SPS Desktop** 앱으로 출시한다. 하나의 설치 프로그램이 다음 두 역할을 제공한다.
 
-- **Hub 모드**: 회사를 생성하고, 데이터베이스·Rooms·Tasks·권한·백업을 운영한다.
-- **Member Node 모드**: 다른 사람의 Hub에 가입하고, 그 PC의 CLI·로컬 AI를 안전하게 실행한다.
+- **Desktop workspace 모드**: HTTPS Hub의 회사·데이터베이스·Rooms·Tasks·권한·백업 상태를 앱 창에서 사용한다.
+- **Member Node 모드**: 자신의 PC를 Hub에 등록하고, 그 PC의 CLI·로컬 AI를 안전하게 실행한다.
 
-첫 출시에서는 Hub를 Owner PC에 두고, 초대된 사용자는 같은 SPS Desktop 앱을 설치해 Hub에 가입한다. Hub가 꺼져 있으면 중앙 Room과 Task는 사용할 수 없다는 점을 앱이 명확히 표시한다.
+기본 Hub는 `https://app.redongames.com`이다. 초대된 사용자는 같은 SPS Desktop 앱을 설치해 Hub에 가입한다. 별도 self-host Hub는 HTTPS로 운영하되, Desktop 설치 파일은 로컬 Hub를 시작하지 않는다.
 
 ## 2. 핵심 사용자 흐름
 
@@ -16,7 +16,7 @@ SPS는 모든 사용자가 브라우저로 접속하는 서비스가 아니라, 
 1. 사용자가 SPS Desktop을 처음 실행한다.
 2. `회사 만들기` 또는 `회사 참여`를 선택한다.
 3. 기본 브라우저에서 **Google 로그인**을 완료한다. SPS는 Google 계정으로 사용자를 식별하며 자체 비밀번호를 만들거나 저장하지 않는다.
-4. 회사를 만들면 로그인한 사용자를 Owner로 만들고, 로컬 Hub와 기본 백업을 설정한다.
+4. 회사를 만들면 로그인한 사용자를 Owner로 만들고, 중앙 Hub의 백업 상태를 확인한다.
 5. Hub 세션과 Node 개인키는 Windows Credential Manager/DPAPI에 저장한다.
 
 Google 로그인은 사용자 확인만 담당한다. Codex CLI 로그인, API 키, 로컬 모델 자격증명은 Google 계정이나 Hub로 전송하지 않고 각 Node PC에만 보관한다.
@@ -193,7 +193,7 @@ SPS 확장은 가능한 한 플러그인과 별도 Desktop 패키지로 유지�
 단계 A의 기본안은 다음으로 고정한다.
 
 - Windows 우선
-- Hub는 Owner PC에서 시작
+- Hub는 HTTPS 중앙 서비스에서 운영
 - Google 로그인 필수, 인앱 1회용 초대코드와 데스크톱 딥링크 제공
 - 사설 네트워크 전용
 - 계정 복구 이메일은 후속 단계

@@ -15,8 +15,8 @@ test("builds the browser invite URL without preserving unsafe path fragments", (
   );
 });
 
-test("does not build an invite link for an insecure public Hub", () => {
-  assert.throws(() => buildInviteUrl("http://hub.example.test", "SPS-AB12-CD34-EF56-GH78"), /must use HTTPS outside this computer/);
+test("does not build an invite link for an insecure Hub", () => {
+  assert.throws(() => buildInviteUrl("http://hub.example.test", "SPS-AB12-CD34-EF56-GH78"), /must use HTTPS/);
   assert.equal(parseSpsJoinUri("sps://join?hub=http%3A%2F%2Fhub.example.test&code=SPS-AB12-CD34-EF56-GH78"), null);
 });
 

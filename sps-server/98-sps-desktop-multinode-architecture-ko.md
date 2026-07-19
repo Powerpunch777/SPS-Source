@@ -2,27 +2,23 @@
 
 ## 목표
 
-SPS는 브라우저에서 중앙 서버에 접속하는 제품이 아니라, 사용자의 PC에 설치되는 데스크톱 앱으로 제공한다. 한 SPS 회사에는 여러 사람이 초대될 수 있고, 각 사람의 PC는 자신이 보유한 CLI와 로컬 AI를 안전하게 실행할 수 있다.
+SPS는 사용자의 PC에 설치되는 데스크톱 앱으로 제공한다. 협업 데이터는 HTTPS 중앙 Hub에 보관하고, 각 사람의 PC는 자신이 보유한 CLI와 로컬 AI를 안전하게 실행한다.
 
 ## 권장 제품 구성
 
-하나의 Windows 설치 프로그램으로 두 역할을 제공한다.
+하나의 Windows 설치 프로그램은 두 역할을 제공한다.
 
-1. **SPS Hub**: 회사를 생성하거나 기존 Hub에 접속하는 데스크톱 앱이다. UI, 초대, 권한, Rooms, Tasks, 장기기억과 중앙 데이터베이스를 제공한다.
+1. **SPS Desktop workspace**: 중앙 Hub의 UI, 초대, 권한, Rooms, Tasks, 장기기억을 앱 창에서 연다. Google OAuth만 기본 브라우저를 잠깐 사용한다.
 2. **SPS Node**: 같은 앱 안에서 동작하는 로컬 실행기다. PC에 설치된 Codex CLI, Agy, Ollama, LM Studio, 전문 API 도구를 탐지하고, 승인된 Agent의 작업만 해당 PC에서 실행한다.
 
-SPS Hub는 항상 켜져 있는 중앙 서비스이며, Owner PC·전용 PC·VPS 중 어디에 둘지
-설치자가 선택한다. 인터넷을 넘어 친구를 초대할 때는 공인 HTTPS 호스트와 Google
-로그인이 필요하다. 같은 네트워크 안에서만 시험할 때는 사설 네트워크를 사용할 수
-있지만, 외부 공동 작업용 Hub를 `local_trusted` 모드로 공개하지 않는다.
+SPS Hub는 항상 켜져 있는 HTTPS 중앙 서비스다. 기본 Hub는 `https://app.redongames.com`이며, 설치자는 필요하면 별도의 HTTPS SPS Hub를 운영할 수 있다. Desktop 설치 파일은 로컬 데이터베이스나 `localhost:3100` 서버를 기동하지 않는다.
 
 ```mermaid
 flowchart LR
-  A[Owner SPS Desktop: Hub] -->|authenticated private link| B[Friend SPS Desktop: Node]
-  A -->|authenticated private link| C[Second SPS Desktop: Node]
-  B --> D[Codex CLI / local AI]
+  A[SPS Hub: HTTPS] -->|authenticated link| B[Owner SPS Desktop]
+  A -->|authenticated link| C[Friend SPS Desktop: Node]
+  B --> D[Rooms, Tasks, Memory, permissions]
   C --> E[Codex CLI / Ollama / specialist API]
-  A --> F[Rooms, Tasks, Memory, permissions]
 ```
 
 ## 권한 모델
@@ -85,7 +81,7 @@ OAuth·Docker 운영 체계를 함께 준비한다. 두 방식 모두 Node는 Hu
 
 ## 데스크톱 앱 선택
 
-Windows 우선 SPS Desktop은 Electron을 사용한다. 현재 SPS가 Node.js, React UI, CLI 실행기와 로컬 플러그인을 사용하므로, Electron의 메인 프로세스가 SPS Node를 별도 프로세스로 관리하는 구성이 가장 자연스럽다.
+Windows 우선 SPS Desktop은 Electron을 사용한다. 현재 SPS가 Node.js, React UI, CLI 실행기와 로컬 플러그인을 사용하므로, Electron의 메인 프로세스가 SPS Node를 별도 프로세스로 관리하는 구성이 가장 자연스럽다. Hub는 HTTPS로 접속하며, Desktop은 중앙 데이터베이스를 로컬에 포함하지 않는다.
 
 렌더러 UI에는 파일 시스템·셸 권한을 주지 않는다. 앱 메인 프로세스가 제한된 IPC만 제공하고, 실제 CLI/로컬 AI 실행은 별도 Node 프로세스에서 수행한다. 자동 업데이트는 설치 프로그램과 코드 서명을 갖춘 뒤 활성화한다.
 

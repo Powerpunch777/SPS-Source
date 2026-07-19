@@ -30,7 +30,7 @@ SPS Hub와 Desktop Node의 제품 흐름은 파일럿 가능한 상태다. 초�
 | Codex 계정 프로필 | 완료 | Agent 설정의 `codexAccount`는 `.codex`, `.codex-*` 이름만 Hub에 전달한다. Desktop Node는 자기 컴퓨터 사용자 폴더 아래의 해당 프로필과 `auth.json`을 확인한 뒤에만 `CODEX_HOME`을 설정한다. |
 | 로컬 AI와 다른 CLI | 완료 | capability scan과 실행 경로는 Codex CLI, Agy CLI, Ollama, LM Studio를 다룬다. Chromium E2E는 한 Node의 CLI runtime과 다른 Node의 Ollama `qwen2.5-coder:7b` 로컬 AI runtime을 각각 실행한다. 실제 사용하려는 실행기는 각 Node에 설치·로그인되어 있어야 한다. |
 | 프로젝트 폴더 분리 | 완료 | Hub의 프로젝트 ID를 Node가 자기 로컬 Git 작업 폴더로 매핑한다. 등록되지 않은 임의 절대 경로 실행은 거절한다. |
-| Windows 설치 파일 | 파일럿 가능 | `SPS Desktop Setup 0.1.2.exe`를 만들고 Desktop/Node 테스트와 공개 Hub 사전 점검을 통과했다. 현재 설치 파일은 서명되지 않았다. |
+| Windows 설치 파일 | 파일럿 가능 | `SPS Desktop Setup 0.1.8.exe`는 HTTPS Hub 연결과 로컬 Node 실행기만 포함한다. Desktop/Node 테스트와 공개 Hub 사전 점검을 통과했으며, 현재 설치 파일은 서명되지 않았다. |
 
 ## 자동 검증 명령
 
@@ -54,7 +54,7 @@ SPS Hub와 Desktop Node의 제품 흐름은 파일럿 가능한 상태다. 초�
 ```powershell
 .\sps-server\scripts\Test-SPS-MultiNodeRelease.ps1 `
   -HubUrl https://app.redongames.com `
-  -InstallerPath ".\sps-server\desktop\dist\SPS Desktop Setup 0.1.2.exe" `
+  -InstallerPath ".\sps-server\desktop\dist\SPS Desktop Setup 0.1.8.exe" `
   -AllowUnsignedPilot
 ```
 

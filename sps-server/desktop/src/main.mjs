@@ -21,9 +21,8 @@ import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri } from "./invite.mjs
 import { emptyState, loadState, saveState } from "./state.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
-import { isSpsHubApiUrl, isSpsLoopbackHubOrigin, requireSpsHubOrigin } from "./workspace-url.mjs";
+import { isSpsHubApiUrl, requireSpsHubOrigin } from "./workspace-url.mjs";
 import { requireSpsWorkspaceDirectory } from "./workspace-directory.mjs";
-import { createSpsLocalHostManager, materializeSpsHostRuntime, resolveSpsHostRuntime } from "./local-host.mjs";
 import {
   createSpsSetupWindowPreferences,
   createSpsWorkspaceWindowPreferences,
@@ -47,24 +46,6 @@ let tray = null;
 let isQuitting = false;
 const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
 let updateService = null;
-const localHostManager = createSpsLocalHostManager({
-  resolveRuntime: async () => {
-    const packagedRuntime = process.env.SPS_HOST_RUNTIME_ROOT || await materializeSpsHostRuntime({
-      sourceRuntimeRoot: path.join(process.resourcesPath, "sps-host-runtime"),
-      targetRuntimeRoot: path.join(app.getPath("userData"), "host-runtime", app.getVersion()),
-    });
-    return await resolveSpsHostRuntime({
-      packagedRuntimeRoots: [packagedRuntime],
-      coreRoots: [
-        process.env.SPS_HOST_CORE_ROOT,
-        path.resolve(__dirname, "..", "..", "..", "external", "sps-core"),
-      ],
-      nodeCommand: process.env.SPS_HOST_NODE_PATH || "node",
-      packagedNodeCommand: process.env.SPS_HOST_RUNTIME_NODE_PATH || process.execPath,
-      configPath: path.join(app.getPath("home"), ".sps", "instances", "default", "config.json"),
-    });
-  },
-});
 let updateStatus = {
   state: "initializing",
   currentVersion: app.getVersion(),
@@ -262,8 +243,7 @@ function configureWorkspaceNavigation(window, hubOrigin) {
 
 async function openWorkspace() {
   if (!state.profile) throw new Error("Save an SPS Hub profile first");
-  const isLocalHost = isSpsLoopbackHubOrigin(state.profile.hubUrl);
-  if (!isLocalHost && !currentBoardToken()) throw new Error("Continue with Google before opening the SPS workspace");
+  if (!currentBoardToken()) throw new Error("Continue with Google before opening the SPS workspace");
   const hubOrigin = workspaceHubUrl();
   if (!hubOrigin) throw new Error("Save an SPS Hub profile first");
   if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
@@ -538,8 +518,6 @@ function sendJoinToRenderer(value) {
 
 function registerIpc() {
   ipcMain.handle("desktop:status", () => publicStatus());
-  ipcMain.handle("desktop:local-host-status", () => localHostManager.inspect());
-  ipcMain.handle("desktop:start-local-host", () => localHostManager.start());
   ipcMain.handle("desktop:check-hub", async (_event, input) => {
     const hubUrl = requireSpsHubOrigin(input?.hubUrl);
     const health = await probeSpsHub({ hubUrl });

@@ -10,50 +10,12 @@ function isApproved(status) {
   return status?.nodeStatus === "active";
 }
 
-function usesLocalSpsHost(status) {
-  try {
-    const url = new URL(status?.profile?.hubUrl ?? "");
-    return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname.toLowerCase());
-  } catch {
-    return false;
-  }
-}
-
 export function createSpsDesktopSetupReadiness(status) {
   const profileReady = hasProfile(status);
   const signedIn = Boolean(status?.signedIn);
   const companyReady = hasCompany(status);
   const nodePending = Boolean(status?.nodeId) && status?.nodeStatus === "pending";
   const nodeApproved = isApproved(status);
-  const localHost = usesLocalSpsHost(status);
-
-  if (localHost) {
-    return {
-      steps: [
-        {
-          id: "profile",
-          title: "Use local SPS Host",
-          detail: "This computer is using its existing local SPS instance and data.",
-          state: "complete",
-        },
-        {
-          id: "workspace",
-          title: "Open SPS workspace",
-          detail: "Projects, Rooms, Tasks, and Agents open in SPS Desktop without browser sign-in.",
-          state: "current",
-        },
-      ],
-      ready: true,
-      localHost: true,
-      canOpenInvite: false,
-      canStartAuth: false,
-      canCheckAuth: false,
-      canConnectNode: false,
-      canOpenWorkspace: profileReady,
-      canManageProjects: false,
-    };
-  }
-
   const steps = [
     {
       id: "profile",
@@ -88,7 +50,6 @@ export function createSpsDesktopSetupReadiness(status) {
   return {
     steps,
     ready: nodeApproved,
-    localHost: false,
     canOpenInvite: profileReady,
     canStartAuth: profileReady && !signedIn,
     canCheckAuth: Boolean(status?.pendingAuth),
