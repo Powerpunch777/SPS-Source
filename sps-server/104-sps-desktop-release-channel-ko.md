@@ -108,7 +108,7 @@ its password, `GH_TOKEN`, or Google OAuth credentials.
 
 ## Current state
 
-The local `0.1.0` installer remains an unsigned test build. It can be used for
-local setup and Node testing, but it must not be published as an SPS Desktop
-update. The release pipeline becomes usable after a valid Windows signing
-certificate is configured.
+The local `0.1.2` installer remains an unsigned Pilot build. It can be used
+for a deliberate two-computer setup and Node test with `-AllowUnsignedPilot`,
+but it must not be published as an SPS Desktop update. The release pipeline
+becomes usable after a valid Windows signing certificate is configured.

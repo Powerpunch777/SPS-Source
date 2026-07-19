@@ -15,7 +15,7 @@ Hub는 [https://app.redongames.com](https://app.redongames.com)이며, CLI 로�
 1. Owner/Admin이 **Company settings > Invites**에서 `Operator` 초대를 만든다.
 2. 생성 화면에 표시된 `SPS-...` 초대 코드를 협업자에게 전달한다.
 3. 협업자는 SPS Desktop을 설치하고 Hub URL `https://app.redongames.com`를 입력한다.
-4. 협업자는 초대 코드를 열고 자신의 Google 계정으로 로그인해 초대를 수락한다.
+4. 협업자는 SPS Hub의 [초대 참여 화면](https://app.redongames.com/join)에서 초대 코드를 입력하고 자신의 Google 계정으로 로그인해 초대를 수락한다.
 5. SPS Desktop에서 회사 선택과 Desktop 연결 승인을 마친다. 이 단계가 끝나면 해당 컴퓨터는 아직 `pending` Node다.
 6. 협업자는 프로젝트마다 자신의 로컬 Git 폴더를 연결한다. 프로젝트 ID가 없는 명령은 기본 작업 폴더를 쓰지만, 프로젝트 Task는 반드시 이 명시적 매핑을 사용한다.
 7. Owner/Admin은 **Company settings > Nodes**에서 새 Node를 `active`로 승인한다.
@@ -50,4 +50,4 @@ Hub는 [https://app.redongames.com](https://app.redongames.com)이며, CLI 로�
 
 ## 현재 자동 검증 범위
 
-GitHub CI와 로컬 통합 테스트는 Chromium 브라우저에서 Owner와 두 초대 사용자를 만들고, 각 사용자의 독립 SPS Node를 승인·grant·바인딩한 뒤, 각 Node의 서명된 명령 실행과 출력 수집까지 확인한다. 실제 두 번째 물리 컴퓨터에서는 위 파일럿을 한 번 실행하면 네트워크·Google 로그인·설치 환경까지 포함해 같은 흐름을 확인할 수 있다.
+GitHub CI와 로컬 통합 테스트는 Chromium 브라우저에서 Owner가 `SPS-...` 초대 코드를 만들고, 초대 사용자가 그 코드를 입력해 가입하는 흐름을 확인한다. 이어서 두 초대 사용자의 독립 SPS Node를 동시에 승인·grant·바인딩하고, 각 Node의 서명된 명령 실행과 출력 수집을 확인한 뒤 한 Node를 revoke해 이전 승인으로 되살아나지 않는지도 검증한다. 실제 두 번째 물리 컴퓨터에서는 위 파일럿을 한 번 실행하면 네트워크·Google 로그인·설치 환경까지 포함해 같은 흐름을 확인할 수 있다.
