@@ -8,96 +8,119 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main>
+    <main class="desktop-shell">
       <header>
         <div class="eyebrow">SONPARKSERVER</div>
         <h1>SPS Desktop</h1>
-        <p>Connect this computer to an SPS Hub without moving CLI credentials or local AI files off the device. Closing the window keeps an active Desktop Node running in the system tray.</p>
+        <p>Connect this computer to your SPS team. Your CLI accounts and local AI stay on this computer.</p>
       </header>
 
       <section class="setup-progress" aria-labelledby="setup-progress-title">
         <div class="setup-progress-heading">
           <div>
-            <div class="eyebrow">CONNECTION</div>
-            <h2 id="setup-progress-title">Set up this computer</h2>
+            <div class="eyebrow">QUICK SETUP</div>
+            <h2 id="setup-progress-title">Connect this computer</h2>
           </div>
           <span id="setup-progress-state" class="setup-state">Not connected</span>
         </div>
         <ol id="setup-steps" class="setup-steps"></ol>
       </section>
 
-      <section class="panel">
-        <h2>Hub profile</h2>
+      <section class="panel primary-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="step-label">1</div>
+            <h2>Team connection</h2>
+          </div>
+          <p>Enter the Hub address and name this computer once.</p>
+        </div>
         <form id="profile-form">
-          <label>Hub URL <input id="hub-url" required placeholder="https://hub.example.com" /></label>
-          <label>Company ID <input id="company-id" placeholder="Sign in first to load your companies" /></label>
-          <label>Your companies <select id="company-picker" disabled><option value="">Sign in with Google first</option></select></label>
-          <label>Computer name <input id="display-name" required placeholder="My Windows PC" /></label>
-          <label>Default folder for unscoped runs <input id="default-workspace-path" placeholder="C:\\Projects\\scratch" /></label>
-          <p class="muted">Use HTTPS for any Hub outside this computer. HTTP is accepted only for local localhost testing. Project Tasks never fall back to this folder.</p>
+          <label>Hub address <input id="hub-url" required placeholder="https://app.redongames.com" /></label>
+          <input id="company-id" type="hidden" />
+          <label>Computer name <input id="display-name" required placeholder="e.g. Jimin's laptop" /></label>
+          <label id="company-field" class="company-field">Team <select id="company-picker" disabled><option value="">Sign in with Google first</option></select></label>
+          <input id="default-workspace-path" type="hidden" />
           <div class="action-row profile-actions">
-            <button type="submit">Save profile</button>
-            <button id="check-hub" type="button" class="secondary">Check connection</button>
+            <button type="submit">Save and continue</button>
+            <button id="check-hub" type="button" class="quiet-button">Check connection</button>
           </div>
         </form>
       </section>
 
-      <section class="panel">
-        <h2>Project folders</h2>
-        <p class="muted">Choose a project you can access, then map it to its local clone on this computer. SPS blocks that project&apos;s Agent runs until this mapping exists. Leave the folder blank to remove a mapping.</p>
-        <form id="project-workspace-form">
-          <label>SPS project <select id="project-workspace-project-id" required disabled><option value="">Sign in and choose a company first</option></select></label>
-          <label>Local folder <input id="project-workspace-path" placeholder="C:\\Projects\\my-project" /></label>
-          <button type="submit">Save project folder</button>
-        </form>
-        <div class="action-row compact-row">
-          <button id="choose-project-workspace" type="button" class="secondary">Choose folder</button>
-          <button id="refresh-projects" type="button" class="secondary">Refresh projects</button>
+      <section class="panel primary-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="step-label">2</div>
+            <h2>Sign in or join a team</h2>
+          </div>
+          <p>Use an invitation only when someone invited you to their SPS team.</p>
         </div>
-      </section>
-
-      <section class="panel">
-        <h2>Join and sign in</h2>
         <div class="action-row">
           <input id="invite-code" placeholder="SPS-AB12-CD34-EF56-GH78" autocomplete="one-time-code" />
-          <button id="open-invite" type="button">Open invitation</button>
+          <button id="open-invite" type="button" class="quiet-button">Use invitation</button>
         </div>
-          <p class="muted">Open the invitation first, accept it with Google in your default browser, then return here to connect this computer. A newly registered Node stays on heartbeat only until an Owner approves it.</p>
         <div class="action-row">
           <button id="start-auth" type="button">Continue with Google</button>
-          <button id="poll-auth" type="button" class="secondary">Check approval</button>
-          <button id="sign-out" type="button" class="secondary">Sign out</button>
+          <button id="poll-auth" type="button" class="quiet-button">I finished in browser</button>
+          <button id="sign-out" type="button" class="quiet-button">Sign out</button>
         </div>
       </section>
 
-      <section class="panel">
-        <h2>Desktop updates</h2>
-        <p class="muted">Updates come only from the SPS GitHub release channel. Download and installation always require an explicit action on this computer.</p>
+      <section class="panel primary-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="step-label">3</div>
+            <h2>Make this computer available</h2>
+          </div>
+          <p>SPS finds local tools here. An Owner approves which Agents may use this computer.</p>
+        </div>
         <div class="action-row">
-          <button id="check-updates" type="button" class="secondary">Check for updates</button>
-          <button id="download-update" type="button" disabled>Download update</button>
-          <button id="install-update" type="button" disabled>Restart and install</button>
+          <button id="connect-node" type="button">Connect this computer</button>
+          <button id="scan-capabilities" type="button" class="quiet-button">View local tools</button>
+          <button id="open-workspace" type="button" class="quiet-button">Open SPS workspace</button>
         </div>
-        <pre id="update-detail">Checking Desktop update service...</pre>
+        <p class="connection-note">A newly connected computer waits for Owner approval before it can run work.</p>
+        <pre id="capabilities" class="details-output">Local tools have not been scanned yet.</pre>
       </section>
 
-      <section class="panel">
-        <h2>Node connection</h2>
-        <div class="action-row">
-          <button id="scan-capabilities" type="button" class="secondary">Scan local runtimes</button>
-          <button id="connect-node" type="button">Register or refresh this computer</button>
-          <button id="disconnect-node" type="button" class="secondary">Disconnect this computer</button>
-          <button id="open-workspace" type="button" class="secondary">Open SPS workspace</button>
+      <details class="advanced-settings">
+        <summary>Advanced settings and diagnostics</summary>
+        <div class="advanced-content">
+          <section class="subpanel">
+            <h2>Project folders</h2>
+            <p class="muted">Map an SPS project to its local clone only when that project will run on this computer.</p>
+            <form id="project-workspace-form">
+              <label>SPS project <select id="project-workspace-project-id" required disabled><option value="">Sign in and choose a team first</option></select></label>
+              <label>Local folder <input id="project-workspace-path" placeholder="C:\\Projects\\my-project" /></label>
+              <button type="submit">Save project folder</button>
+            </form>
+            <div class="action-row compact-row">
+              <button id="choose-project-workspace" type="button" class="quiet-button">Choose folder</button>
+              <button id="refresh-projects" type="button" class="quiet-button">Refresh projects</button>
+            </div>
+          </section>
+          <section class="subpanel">
+            <h2>Computer controls</h2>
+            <label class="toggle-row"><input id="launch-at-login" type="checkbox" />Start SPS Desktop when I sign in to Windows</label>
+            <div class="action-row compact-row">
+              <button id="disconnect-node" type="button" class="danger-button">Disconnect this computer</button>
+            </div>
+          </section>
+          <section class="subpanel">
+            <h2>Desktop updates</h2>
+            <div class="action-row compact-row">
+              <button id="check-updates" type="button" class="quiet-button">Check for updates</button>
+              <button id="download-update" type="button" disabled>Download update</button>
+              <button id="install-update" type="button" disabled>Restart and install</button>
+            </div>
+            <pre id="update-detail">Checking Desktop update service...</pre>
+          </section>
+          <section class="subpanel status-panel">
+            <h2>Connection status</h2>
+            <pre id="status">Loading...</pre>
+          </section>
         </div>
-        <p class="muted">After installing or changing a local CLI, Ollama model, or LM Studio model, register or refresh this computer to publish its updated capability list to the Hub. Disconnecting revokes this computer&apos;s Agent access and cancels its active work; connecting again needs Owner approval.</p>
-        <label class="toggle-row"><input id="launch-at-login" type="checkbox" />Start SPS Desktop when I sign in to Windows</label>
-        <pre id="capabilities">No scan yet.</pre>
-      </section>
-
-      <section class="panel status-panel">
-        <h2>Status</h2>
-        <pre id="status">Loading...</pre>
-      </section>
+      </details>
       <p id="notice" role="status" aria-live="polite"></p>
     </main>
     <script type="module" src="./renderer.mjs"></script>

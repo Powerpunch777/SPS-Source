@@ -128,6 +128,7 @@ function renderStatus(status) {
   }
   if (status.update) lines.push(`Desktop update: ${status.update.message}`);
   $("#status").textContent = lines.join("\n");
+  $("#company-field").hidden = !status.signedIn;
   renderUpdate(status.update);
   renderSetupReadiness(status);
 }
@@ -271,13 +272,17 @@ $("#install-update").addEventListener("click", () => run(async () => {
 }));
 $("#scan-capabilities").addEventListener("click", () => run(async () => {
   const capabilities = await window.spsDesktop.scanCapabilities();
-  $("#capabilities").textContent = pretty(capabilities);
+  const output = $("#capabilities");
+  output.textContent = pretty(capabilities);
+  output.classList.add("has-content");
   showNotice("Local runtimes scanned.");
 }));
 $("#connect-node").addEventListener("click", () => run(async () => {
   const wasRegistered = Boolean(latestStatus?.nodeId);
   const result = await window.spsDesktop.connectNode();
-  $("#capabilities").textContent = pretty(result.capabilities);
+  const output = $("#capabilities");
+  output.textContent = pretty(result.capabilities);
+  output.classList.add("has-content");
   showNotice(result.node.status === "pending"
     ? "Computer registered and key verified. Approve it in SPS Hub > Settings > Nodes."
     : wasRegistered
