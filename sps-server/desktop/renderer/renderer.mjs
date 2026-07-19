@@ -334,7 +334,7 @@ $("#team-access-form").addEventListener("submit", async (event) => {
       googleClientId: $("#team-google-client-id").value,
       googleClientSecret: $("#team-google-client-secret").value,
     });
-    $("#invite-code").value = result.invitation.token;
+    $("#invite-code").value = result.invitation.code ?? result.invitation.token;
     $("#team-google-client-secret").value = "";
     showNotice("Private team Host is running. The one-time Owner invitation opened in your browser. Finish Google sign-in, then return and continue with Google.");
   });

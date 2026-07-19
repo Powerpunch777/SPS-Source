@@ -12,8 +12,24 @@ export function spsCodeToInviteToken(input) {
   return SPS_INVITE_PREFIX + suffix.toLowerCase();
 }
 
-export function buildInviteUrl(hubUrl, code) {
-  const token = spsCodeToInviteToken(code);
+export function normalizeSpsInviteToken(input) {
+  const value = String(input ?? "").trim().toLowerCase();
+  if (value.startsWith(SPS_INVITE_PREFIX)) {
+    const suffix = value.slice(SPS_INVITE_PREFIX.length);
+    return SPS_CODE_SUFFIX_PATTERN.test(suffix) ? `${SPS_INVITE_PREFIX}${suffix}` : null;
+  }
+  return spsCodeToInviteToken(value);
+}
+
+export function spsInviteTokenToCode(input) {
+  const token = normalizeSpsInviteToken(input);
+  if (!token) return null;
+  const suffix = token.slice(SPS_INVITE_PREFIX.length).toUpperCase();
+  return `SPS-${suffix.match(/.{1,4}/g).join("-")}`;
+}
+
+export function buildInviteUrl(hubUrl, invite) {
+  const token = normalizeSpsInviteToken(invite);
   if (!token) throw new Error("Enter an SPS code in the form SPS-XXXX-XXXX-XXXX-XXXX");
   const hub = new URL(requireSpsHubOrigin(hubUrl));
   hub.pathname = "/invite/" + encodeURIComponent(token);
@@ -27,10 +43,11 @@ export function parseSpsJoinUri(value) {
     const uri = new URL(value);
     if (uri.protocol !== "sps:" || uri.hostname !== "join") return null;
     const hub = uri.searchParams.get("hub");
-    const code = uri.searchParams.get("code");
-    if (!hub || !code || !spsCodeToInviteToken(code)) return null;
+    const invite = uri.searchParams.get("code");
+    const code = spsInviteTokenToCode(invite);
+    if (!hub || !code) return null;
 
-    return { hub: requireSpsHubOrigin(hub), code: code.toUpperCase() };
+    return { hub: requireSpsHubOrigin(hub), code };
   } catch {
     return null;
   }

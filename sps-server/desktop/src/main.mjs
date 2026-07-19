@@ -20,7 +20,7 @@ import {
   SpsHubRequestError,
   startSpsDesktopAuth,
 } from "@sps/desktop-node";
-import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri } from "./invite.mjs";
+import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri, spsInviteTokenToCode } from "./invite.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
@@ -522,7 +522,12 @@ async function enablePrivateTeamAccess(input) {
   await shell.openExternal(inviteUrl);
   return {
     teamAccess: { ...nextTeamAccess },
-    invitation: { token: invitation.token, url: inviteUrl, expiresAt: invitation.expiresAt ?? null },
+    invitation: {
+      token: invitation.token,
+      code: spsInviteTokenToCode(invitation.token),
+      url: inviteUrl,
+      expiresAt: invitation.expiresAt ?? null,
+    },
     googleRedirectUrl: `${nextTeamAccess.url}/api/auth/callback/google`,
   };
 }

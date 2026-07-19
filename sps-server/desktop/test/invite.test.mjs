@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri, spsCodeToInviteToken } from "../src/invite.mjs";
+import {
+  buildInviteUrl,
+  findSpsJoinUriArg,
+  normalizeSpsInviteToken,
+  parseSpsJoinUri,
+  spsCodeToInviteToken,
+  spsInviteTokenToCode,
+} from "../src/invite.mjs";
 
 test("converts a human SPS code to the Hub invite token", () => {
   assert.equal(spsCodeToInviteToken("sps-ab12-cd34"), "sps_invite_ab12cd34");
@@ -13,6 +20,12 @@ test("builds the browser invite URL without preserving unsafe path fragments", (
     buildInviteUrl("https://hub.example.test/anything?old=1", "SPS-AB12-CD34-EF56-GH78"),
     "https://hub.example.test/invite/sps_invite_ab12cd34ef56gh78",
   );
+  assert.equal(
+    buildInviteUrl("https://hub.example.test", "sps_invite_ab12cd34ef56gh78"),
+    "https://hub.example.test/invite/sps_invite_ab12cd34ef56gh78",
+  );
+  assert.equal(normalizeSpsInviteToken("sps_invite_ab12cd34ef56gh78"), "sps_invite_ab12cd34ef56gh78");
+  assert.equal(spsInviteTokenToCode("sps_invite_ab12cd34ef56gh78"), "SPS-AB12-CD34-EF56-GH78");
 });
 
 test("does not build an invite link for an insecure Hub", () => {
