@@ -65,7 +65,9 @@ still available for unattended CI or a dedicated secret manager. Do not use
 them in an interactive shared shell.
 
 The preflight verifies the Core source, private configuration, Docker Engine,
-and Compose contract without printing secret values:
+and Compose contract without printing secret values. With `-CheckPublicHealth`,
+it also verifies that the public Hub can start Google OAuth without exposing
+the authorization URL or credentials:
 
 ```powershell
 # Cloudflare Tunnel mode

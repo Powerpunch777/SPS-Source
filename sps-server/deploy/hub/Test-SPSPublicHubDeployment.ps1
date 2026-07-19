@@ -106,14 +106,36 @@ if ($environment -and (Test-Path -LiteralPath $composePath -PathType Leaf)) {
 
 if ($CheckPublicHealth) {
   if ($environment -and $environment["SPS_PUBLIC_URL"]) {
+    $publicOrigin = $environment["SPS_PUBLIC_URL"].TrimEnd("/")
     try {
-      $health = Invoke-RestMethod -Uri "$($environment['SPS_PUBLIC_URL'])/api/health" -TimeoutSec 15
+      $health = Invoke-RestMethod -Uri "$publicOrigin/api/health" -TimeoutSec 15
       Add-Check "Public SPS Hub health" ($health.status -eq "ok") "Public Hub health endpoint returned a response."
     } catch {
       Add-Check "Public SPS Hub health" $false "The public Hub health endpoint could not be reached."
     }
+
+    try {
+      $oauthPayload = @{
+        provider = "google"
+        disableRedirect = $true
+        callbackURL = "$publicOrigin/"
+        errorCallbackURL = "$publicOrigin/"
+      } | ConvertTo-Json -Compress
+      $oauthResponse = Invoke-RestMethod `
+        -Method Post `
+        -Uri "$publicOrigin/api/auth/sign-in/social" `
+        -ContentType "application/json" `
+        -Body $oauthPayload `
+        -TimeoutSec 15
+      $oauthUrl = if ($oauthResponse -and $oauthResponse.url) { [Uri]$oauthResponse.url } else { $null }
+      $isGoogleAuthorizationUrl = $oauthUrl -and $oauthUrl.Scheme -eq "https" -and $oauthUrl.Host -eq "accounts.google.com"
+      Add-Check "Google OAuth start" $isGoogleAuthorizationUrl "SPS generated a Google authorization URL without exposing credentials."
+    } catch {
+      Add-Check "Google OAuth start" $false "SPS could not start Google sign-in from the public Hub."
+    }
   } else {
     Add-Check "Public SPS Hub health" $false "No public Hub URL is configured."
+    Add-Check "Google OAuth start" $false "No public Hub URL is configured."
   }
 }
 
