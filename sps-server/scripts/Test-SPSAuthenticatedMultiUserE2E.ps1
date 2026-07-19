@@ -50,10 +50,12 @@ function Get-AvailableTcpPort {
 }
 
 $resolvedCorePath = (Resolve-Path -LiteralPath $CorePath).Path
+$workspaceRoot = Split-Path -Parent (Split-Path -Parent $resolvedCorePath)
+$desktopNodeModulePath = Join-Path $workspaceRoot "sps-server\desktop-node\src\index.mjs"
 $tsxCliPath = Join-Path $resolvedCorePath "cli\node_modules\tsx\dist\cli.mjs"
 $cliIndexPath = Join-Path $resolvedCorePath "cli\src\index.ts"
 $playwrightPath = Join-Path $resolvedCorePath "node_modules\.bin\playwright.cmd"
-foreach ($required in @($tsxCliPath, $cliIndexPath, $playwrightPath)) {
+foreach ($required in @($tsxCliPath, $cliIndexPath, $playwrightPath, $desktopNodeModulePath)) {
   if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required authenticated E2E runtime file was not found: $required" }
 }
 if ([string]::IsNullOrWhiteSpace($ChromiumExecutablePath)) {
@@ -89,6 +91,7 @@ try {
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_E2E_BASE_URL" $baseUrl
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_E2E_PORT" ([string]$Port)
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_E2E_CHROMIUM_EXECUTABLE" $ChromiumExecutablePath
+  Set-TemporaryEnvironmentValue $savedEnvironment "SPS_DESKTOP_NODE_MODULE" $desktopNodeModulePath
   Set-TemporaryEnvironmentValue $savedEnvironment "PORT" ([string]$Port)
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_BIND" "lan"
   Set-TemporaryEnvironmentValue $savedEnvironment "PAPERCLIP_DEPLOYMENT_MODE" "authenticated"
@@ -171,7 +174,8 @@ try {
       "owner account creation",
       "operator invite and join",
       "viewer permission downgrade",
-      "viewer invite API rejection"
+      "viewer invite API rejection",
+      "invited member Desktop Node authorization, approval, grant, command output, and completion"
     )
   }
 } finally {
