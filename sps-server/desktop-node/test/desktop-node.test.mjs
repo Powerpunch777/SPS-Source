@@ -5,6 +5,9 @@ import assert from "node:assert/strict";
 import {
   buildHeartbeatMessage,
   buildSignedRequestMessage,
+  assertSpsNodeCommandRuntime,
+  buildSpsNodeRuntimeEnvironment,
+  cancelSpsNodeCommands,
   checkSpsNodeCommandLease,
   disconnectSpsNode,
   canonicalJson,
@@ -245,7 +248,8 @@ test("executes a local Node process and returns streamed output through the sign
       command: {
         id: "command-1",
         projectId: null,
-        command: process.execPath,
+        command: "codex",
+        runtimeKind: "codex_cli",
         args: ["-e", "process.stdout.write('SPS node output\\n')"],
         env: {},
         stdin: null,
@@ -259,6 +263,10 @@ test("executes a local Node process and returns streamed output through the sign
         defaultWorkspacePath: process.cwd(),
         projectWorkspaces: {},
       },
+      resolveInvocation: async () => ({
+        executable: process.execPath,
+        args: ["-e", "process.stdout.write('SPS node output\\n')"],
+      }),
     });
 
     assert.equal(result.exitCode, 0);
@@ -270,6 +278,105 @@ test("executes a local Node process and returns streamed output through the sign
     assert.equal(hub.leases.length >= 1, true);
     assert.equal(hub.completions.length, 1);
     assert.equal(hub.completions[0]?.body.status, "succeeded");
+  } finally {
+    await hub.close();
+  }
+});
+
+test("rejects remote command paths and mismatched runtime commands", () => {
+  assert.throws(
+    () => assertSpsNodeCommandRuntime({ runtimeKind: "codex_cli", command: "powershell.exe" }),
+    /approved only for codex/,
+  );
+  assert.throws(
+    () => assertSpsNodeCommandRuntime({ runtimeKind: "codex_cli", command: "C:\\Windows\\System32\\cmd.exe" }),
+    /remote command path/,
+  );
+  assert.doesNotThrow(
+    () => assertSpsNodeCommandRuntime({ runtimeKind: "codex_cli", command: "codex.cmd" }),
+  );
+});
+
+test("passes only runtime-safe environment variables to a local CLI", () => {
+  const environment = buildSpsNodeRuntimeEnvironment(
+    { PAPERCLIP_API_KEY: "agent-token", OPENAI_API_KEY: "override", TERM: "xterm" },
+    { Path: "C:\\bin", USERPROFILE: "C:\\Users\\friend", OPENAI_API_KEY: "host-secret", CODEX_HOME: "C:\\private", CUSTOM_SECRET: "hidden" },
+  );
+  assert.equal(environment.Path, "C:\\bin");
+  assert.equal(environment.USERPROFILE, "C:\\Users\\friend");
+  assert.equal(environment.PAPERCLIP_API_KEY, "agent-token");
+  assert.equal(environment.OPENAI_API_KEY, undefined);
+  assert.equal(environment.CODEX_HOME, undefined);
+  assert.equal(environment.CUSTOM_SECRET, undefined);
+});
+
+test("cancels a running local command when this Desktop Node disconnects", async () => {
+  const hub = await startMockHub();
+  try {
+    const execution = executeSpsNodeCommand({
+      command: {
+        id: "command-cancel",
+        projectId: null,
+        command: "codex",
+        runtimeKind: "codex_cli",
+        args: [],
+        env: {},
+        stdin: null,
+        lastEventSeq: 0,
+      },
+      hubUrl: hub.hubUrl,
+      nodeId: "node-1",
+      identity: createNodeIdentity(),
+      accessToken: "board-token",
+      profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
+      resolveInvocation: async () => ({
+        executable: process.execPath,
+        args: ["-e", "setTimeout(() => process.exit(0), 30000)"],
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(await cancelSpsNodeCommands("Desktop disconnected"), 1);
+    const result = await execution;
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(hub.completions[0]?.body.status, "failed");
+    assert.equal(hub.completions[0]?.body.error, "Desktop disconnected");
+  } finally {
+    await hub.close();
+  }
+});
+
+test("does not start a command that races with Desktop Node disconnection", async () => {
+  const hub = await startMockHub();
+  try {
+    const execution = executeSpsNodeCommand({
+      command: {
+        id: "command-race",
+        projectId: null,
+        command: "codex",
+        runtimeKind: "codex_cli",
+        args: [],
+        env: {},
+        stdin: null,
+        lastEventSeq: 0,
+      },
+      hubUrl: hub.hubUrl,
+      nodeId: "node-1",
+      identity: createNodeIdentity(),
+      accessToken: "board-token",
+      profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
+      resolveInvocation: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return {
+          executable: process.execPath,
+          args: ["-e", "setTimeout(() => process.exit(0), 30000)"],
+        };
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(await cancelSpsNodeCommands("Desktop disconnected before launch"), 0);
+    const result = await execution;
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(hub.completions[0]?.body.error, "Desktop disconnected before launch");
   } finally {
     await hub.close();
   }

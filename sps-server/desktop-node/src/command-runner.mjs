@@ -9,6 +9,7 @@ import {
 
 const OUTPUT_CHUNK_LIMIT = 48 * 1024;
 const COMMAND_LEASE_CHECK_INTERVAL_MS = 2_000;
+const COMMAND_LEASE_MAX_UNAVAILABLE_MS = 60_000;
 const FORBIDDEN_ENV_KEYS = new Set([
   "ANTHROPIC_API_KEY",
   "CODEX_HOME",
@@ -20,6 +21,42 @@ const SAFE_RUNTIME_ENV_KEYS = new Set([
   "ANTIGRAVITY_MODEL",
   "OPENCODE_DISABLE_PROJECT_CONFIG",
 ]);
+const HOST_RUNTIME_ENV_KEYS = new Set([
+  "APPDATA",
+  "COLORTERM",
+  "COMSPEC",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LOCALAPPDATA",
+  "NO_COLOR",
+  "PATH",
+  "PATHEXT",
+  "SYSTEMDRIVE",
+  "SYSTEMROOT",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "USERPROFILE",
+  "WINDIR",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+]);
+const SPS_NODE_RUNTIME_COMMANDS = {
+  claude_cli: "claude",
+  codex_cli: "codex",
+  agy_cli: "agy",
+  gemini_cli: "gemini",
+  opencode_cli: "opencode",
+  pi_cli: "pi",
+  ollama: "ollama",
+  lm_studio: "lms",
+};
+const activeCommands = new Map();
+let commandCancellationGeneration = 0;
+let lastCommandCancellationReason = "SPS Desktop stopped this local command.";
 
 function allowedEnvironment(value) {
   const output = {};
@@ -28,6 +65,37 @@ function allowedEnvironment(value) {
     if (key.startsWith("PAPERCLIP_") || SAFE_RUNTIME_ENV_KEYS.has(key) || key === "FORCE_COLOR" || key === "TERM") output[key] = entry;
   }
   return output;
+}
+
+function hostRuntimeEnvironment(value = process.env) {
+  const output = {};
+  for (const [key, entry] of Object.entries(value ?? {})) {
+    if (typeof entry !== "string" || !HOST_RUNTIME_ENV_KEYS.has(key.toUpperCase())) continue;
+    output[key] = entry;
+  }
+  return output;
+}
+
+export function buildSpsNodeRuntimeEnvironment(commandEnvironment, hostEnvironment = process.env) {
+  return {
+    ...hostRuntimeEnvironment(hostEnvironment),
+    ...allowedEnvironment(commandEnvironment),
+  };
+}
+
+export function assertSpsNodeCommandRuntime(command) {
+  const expected = SPS_NODE_RUNTIME_COMMANDS[command?.runtimeKind];
+  if (!expected) {
+    throw new Error("SPS Hub did not provide an approved runtime for this local command.");
+  }
+  const rawCommand = typeof command?.command === "string" ? command.command.trim() : "";
+  if (!rawCommand || rawCommand.includes("/") || rawCommand.includes("\\")) {
+    throw new Error("SPS Desktop rejected a remote command path. Only approved local CLI names can run.");
+  }
+  const normalized = rawCommand.replace(/\.(cmd|bat|ps1|exe|com)$/i, "").toLowerCase();
+  if (normalized !== expected) {
+    throw new Error(`SPS Desktop rejected ${rawCommand}; this Agent is approved only for ${expected}.`);
+  }
 }
 
 export async function resolveSpsNodeWorkspace(command, profile) {
@@ -162,13 +230,34 @@ async function terminateProcessTree(child) {
   child.kill("SIGTERM");
 }
 
-export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity, accessToken, profile }) {
+export async function cancelSpsNodeCommands(reason = "SPS Desktop stopped this local command.") {
+  commandCancellationGeneration += 1;
+  lastCommandCancellationReason = reason;
+  const active = [...activeCommands.values()];
+  await Promise.all(active.map(async (run) => {
+    run.cancellationError ??= reason;
+    await terminateProcessTree(run.child);
+  }));
+  return active.length;
+}
+
+export async function executeSpsNodeCommand({
+  command,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  profile,
+  resolveInvocation = resolveSpsNodeInvocation,
+  checkCommandLease = checkSpsNodeCommandLease,
+}) {
+  assertSpsNodeCommandRuntime(command);
+  const cancellationGeneration = commandCancellationGeneration;
   const workspace = await resolveSpsNodeWorkspace(command, profile);
   // The Hub process may be bound to localhost on its own computer. A member
   // Node must use the Hub URL it connected to, never that host-local address.
   const environment = {
-    ...process.env,
-    ...allowedEnvironment(command.env),
+    ...buildSpsNodeRuntimeEnvironment(command.env),
     PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
   };
   let sequence = Number(command.lastEventSeq ?? 0);
@@ -199,8 +288,10 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
   let leaseTimer = null;
   let leaseCheckInFlight = false;
   let leaseCancellationError = null;
+  let lastLeaseConfirmedAt = Date.now();
+  const activeRun = { child: null, cancellationError: null };
   try {
-    const invocation = await resolveSpsNodeInvocation(command.command, command.args);
+    const invocation = await resolveInvocation(command.command, command.args);
     const result = await new Promise((resolve, reject) => {
       let settled = false;
       let timedOut = false;
@@ -216,6 +307,12 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
       });
+      activeRun.child = child;
+      activeCommands.set(command.id, activeRun);
+      if (cancellationGeneration !== commandCancellationGeneration) {
+        activeRun.cancellationError = lastCommandCancellationReason;
+        void terminateProcessTree(child).catch(() => child?.kill());
+      }
       child.stdout.on("data", (chunk) => enqueueOutput("stdout", chunk.toString("utf8")));
       child.stderr.on("data", (chunk) => enqueueOutput("stderr", chunk.toString("utf8")));
       child.once("error", (error) => settle(reject, error));
@@ -224,10 +321,10 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
         settle(resolve, { exitCode, signal, timedOut });
       });
       const checkLease = async () => {
-        if (leaseCheckInFlight || leaseCancellationError) return;
+        if (leaseCheckInFlight || leaseCancellationError || activeRun.cancellationError) return;
         leaseCheckInFlight = true;
         try {
-          const lease = await checkSpsNodeCommandLease({
+          const lease = await checkCommandLease({
             hubUrl,
             nodeId,
             identity,
@@ -237,15 +334,23 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
           if (!lease?.active) {
             leaseCancellationError = lease?.error || "SPS Hub cancelled this local command.";
             await terminateProcessTree(child);
+          } else {
+            lastLeaseConfirmedAt = Date.now();
           }
         } catch {
-          // A brief Hub outage must not kill a local run. The Hub will make the
-          // command inactive once it receives a later lease check after a revoke.
+          if (Date.now() - lastLeaseConfirmedAt >= COMMAND_LEASE_MAX_UNAVAILABLE_MS) {
+            leaseCancellationError = "SPS Desktop lost contact with the Hub for 60 seconds and stopped this local command.";
+            await terminateProcessTree(child);
+          }
         } finally {
           leaseCheckInFlight = false;
         }
       };
       leaseTimer = setInterval(() => { void checkLease(); }, COMMAND_LEASE_CHECK_INTERVAL_MS);
+      if (activeRun.cancellationError) {
+        leaseCancellationError = activeRun.cancellationError;
+        void terminateProcessTree(child).catch(() => child?.kill());
+      }
       void checkLease();
       if (typeof command.stdin === "string" && command.stdin.length > 0) child.stdin.end(command.stdin);
       else child.stdin.end();
@@ -260,6 +365,7 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
     });
     if (timeout) clearTimeout(timeout);
     if (leaseTimer) clearInterval(leaseTimer);
+    leaseCancellationError ??= activeRun.cancellationError;
     await outputQueue;
     await completeSpsNodeCommand({
       hubUrl,
@@ -295,5 +401,7 @@ export async function executeSpsNodeCommand({ command, hubUrl, nodeId, identity,
       },
     }).catch(() => undefined);
     throw error;
+  } finally {
+    activeCommands.delete(command.id);
   }
 }

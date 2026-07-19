@@ -1,5 +1,8 @@
 export { scanLocalCapabilities } from "./capability-scan.mjs";
 export {
+  assertSpsNodeCommandRuntime,
+  buildSpsNodeRuntimeEnvironment,
+  cancelSpsNodeCommands,
   executeSpsNodeCommand,
   resolveSpsNodeExecutable,
   resolveSpsNodeInvocation,

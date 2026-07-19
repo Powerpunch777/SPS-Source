@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, se
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  cancelSpsNodeCommands,
   createNodeIdentity,
   claimSpsNodeCommand,
   disconnectSpsNode,
@@ -309,14 +310,11 @@ function createApplicationMenu() {
         { label: "Connection setup", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
         { type: "separator" },
         { label: "Sign out on this computer", click: () => run(async () => {
+          await disconnectCurrentNode();
           pendingAuth = null;
           state.encryptedBoardApiToken = null;
-          state.nodeId = null;
-          state.nodeStatus = null;
           state.companies = [];
           state.projects = [];
-          stopNodeScheduling();
-          closeWorkspaceWindow();
           await persistState();
           await openSetup();
         }) },
@@ -405,6 +403,7 @@ async function disconnectCurrentNode() {
   let remoteError = null;
 
   stopNodeScheduling();
+  await cancelSpsNodeCommands("This SPS Desktop Node was disconnected, so its local command stopped.");
   if (nodeId && hubUrl && accessToken) {
     try {
       await disconnectSpsNode({ hubUrl, nodeId, accessToken });
@@ -440,9 +439,16 @@ async function sendNodeHeartbeat() {
     return node;
   } catch (error) {
     if (nodeWasRevoked(error)) {
-      await applyNodeStatus("revoked");
+      // Revocation retires this computer's old signing key. A later
+      // connection creates a fresh pending Node for owner approval.
+      stopNodeScheduling();
+      await cancelSpsNodeCommands("An Owner revoked this SPS Desktop Node, so its local command stopped.");
+      state.identity = null;
+      state.nodeId = null;
+      state.nodeStatus = "revoked";
       nodeRuntimeStatus.heartbeatError = "This computer's SPS Node approval was revoked by the Owner. Command execution has stopped.";
-      nodeRuntimeStatus.commandPollError = "Command execution is disabled until this computer is registered and approved again.";
+      nodeRuntimeStatus.commandPollError = "Reconnect this computer to create a new Node key, then ask an Owner to approve it.";
+      await persistState();
       return null;
     }
     nodeRuntimeStatus.heartbeatError = "Could not contact the Hub. Check the SPS Hub address, network, and Desktop sign-in.";
@@ -548,10 +554,7 @@ function registerIpc() {
     const hubChanged = Boolean(previousProfile && previousProfile.hubUrl !== hubUrl);
     const companyChanged = Boolean(previousProfile && previousProfile.companyId !== companyId);
     if (connectionScopeChanged) {
-      state.nodeId = null;
-      state.nodeStatus = null;
-      stopNodeScheduling();
-      closeWorkspaceWindow();
+      await disconnectCurrentNode();
     }
     if (hubChanged) {
       pendingAuth = null;
@@ -747,5 +750,6 @@ app.on("activate", () => {
 app.on("before-quit", () => {
   isQuitting = true;
   stopNodeScheduling();
+  void cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped.");
   updateService?.stop();
 });
