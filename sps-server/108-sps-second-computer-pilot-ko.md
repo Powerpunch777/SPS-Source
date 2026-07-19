@@ -50,4 +50,4 @@ Hub는 [https://app.redongames.com](https://app.redongames.com)이며, CLI 로�
 
 ## 현재 자동 검증 범위
 
-GitHub CI와 로컬 통합 테스트는 Chromium 브라우저에서 Owner가 `SPS-...` 초대 코드를 만들고, 초대 사용자가 그 코드를 입력해 가입하는 흐름을 확인한다. 이어서 두 초대 사용자의 독립 SPS Node를 동시에 승인·grant·바인딩하고, 각 Node의 서명된 명령 실행과 출력 수집을 확인한 뒤 한 Node를 revoke해 이전 승인으로 되살아나지 않는지도 검증한다. 실제 두 번째 물리 컴퓨터에서는 위 파일럿을 한 번 실행하면 네트워크·Google 로그인·설치 환경까지 포함해 같은 흐름을 확인할 수 있다.
+GitHub CI와 로컬 통합 테스트는 Chromium 브라우저에서 Owner가 `SPS-...` 초대 코드를 만들고, 초대 사용자가 그 코드를 입력해 가입하는 흐름을 확인한다. 이어서 Owner가 실제 **Nodes** 화면에서 두 초대 사용자의 독립 SPS Node를 승인하고 각 Agent에 grant를 부여한다. 두 Node가 동시에 자신의 Agent 명령을 실행하고 출력을 회수한 뒤 한 Node를 revoke해 이전 승인으로 되살아나지 않는지도 검증한다. 실제 두 번째 물리 컴퓨터에서는 위 파일럿을 한 번 실행하면 네트워크·Google 로그인·설치 환경까지 포함해 같은 흐름을 확인할 수 있다.

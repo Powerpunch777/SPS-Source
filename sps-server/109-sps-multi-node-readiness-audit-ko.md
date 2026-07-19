@@ -22,7 +22,8 @@ SPS Hub와 Desktop Node의 제품 흐름은 파일럿 가능한 상태다. 초�
 | Google 로그인 시작 | 완료 | 공개 배포 점검이 Google OAuth 필수 설정과 로그인 시작 URL을 확인한다. 실제 Google 계정으로 끝까지 로그인하는 일은 파일럿에서 확인한다. |
 | 인앱 초대 코드 | 완료 | Owner/Admin이 `SPS-XXXX-...` 코드를 만들고, `/join`에서 코드 입력 후 로그인하는 Chromium E2E가 통과했다. |
 | 사람별 접근 | 완료 | 초대 수락은 회사 멤버십만 만든다. Node 승인, Agent grant, 기본 Node 지정은 별도이며 Owner/Admin만 변경할 수 있다. |
-| 다중 컴퓨터 Node | 완료 | 자동 E2E에서 두 독립 멤버와 두 Node를 동시에 활성화해 각 Node가 자기 Agent 명령을 처리하는 것을 확인했다. |
+| 다중 컴퓨터 Node | 완료 | 자동 E2E에서 두 독립 멤버와 두 Node를 동시에 활성화해 각 Node가 자기 Agent 명령을 처리하는 것을 확인했다. Owner는 실제 Nodes 화면에서 두 Node를 승인한다. |
+| 컴퓨터별·Agent별 권한 설정 | 완료 | Owner가 Nodes 화면에서 각 Agent에 맞는 실행기를 가진 Node에만 grant를 부여하고, 최초 grant가 primary Node를 만드는 흐름을 Chromium E2E가 확인한다. |
 | 명령 전달과 결과 | 완료 | Hub가 서명된 명령을 Node에 전달하고 stdout/stderr/종료 결과를 같은 Task 실행으로 회수하는 E2E가 통과했다. |
 | Node 폐기 | 완료 | revoke된 Node의 이전 승인 재사용이 403으로 거절되는 것을 E2E가 확인한다. |
 | 로컬 비밀 보호 | 완료 | CLI 로그인 정보, `CODEX_HOME`, API 키, 로컬 모델, 프로젝트 절대 경로는 Node 밖으로 전송하지 않는다. Hub에는 실행기 종류·capability·프로젝트 ID·허용된 상대 작업 정보만 전달한다. |
@@ -44,7 +45,7 @@ SPS Hub와 Desktop Node의 제품 흐름은 파일럿 가능한 상태다. 초�
 1. Owner 계정 생성과 회사 부트스트랩
 2. `SPS-...` 코드 생성 및 초대 멤버의 코드 입력 가입
 3. 권한이 낮은 멤버의 Owner 전용 설정 차단
-4. 두 초대 멤버의 독립 Node 승인·Agent grant·기본 Node 바인딩
+4. Owner가 Nodes 화면에서 두 초대 멤버의 독립 Node 승인·Agent grant·기본 Node 바인딩
 5. 두 Node의 명령 실행과 결과 회수
 6. 첫 Node revoke 뒤 이전 승인 재사용 차단
 
