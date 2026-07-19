@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SPS Desktop Hub and Node onboarding shell",
   "author": "SonParkServer",
   "main": "src/main.mjs",
