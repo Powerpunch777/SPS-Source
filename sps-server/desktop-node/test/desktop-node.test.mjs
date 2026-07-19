@@ -18,6 +18,7 @@ import {
   createNodeIdentity,
   createSignedNodeRequest,
   executeSpsNodeCommand,
+  getSpsDesktopAccount,
   startSpsDesktopAuth,
   pollSpsDesktopAuth,
   probeSpsHub,
@@ -100,6 +101,30 @@ test("generates an Ed25519 identity and signs the shared heartbeat message", () 
     Buffer.from(heartbeat.signature, "base64"),
   );
   assert.equal(verified, true);
+});
+
+test("loads the signed-in Google account through the protected Desktop endpoint", async () => {
+  const requests = [];
+  const account = await getSpsDesktopAccount({
+    hubUrl: "https://owner.example.test",
+    accessToken: "desktop-token",
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          user: { id: "user-1", name: "Jimin Park", email: "jimin@example.test" },
+        }),
+      };
+    },
+  });
+
+  assert.deepEqual(account, { id: "user-1", name: "Jimin Park", email: "jimin@example.test" });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://owner.example.test/api/cli-auth/me");
+  assert.equal(requests[0].options.method, "GET");
+  assert.equal(requests[0].options.headers.authorization, "Bearer desktop-token");
 });
 
 test("signs canonical Desktop command requests without including private key material", () => {

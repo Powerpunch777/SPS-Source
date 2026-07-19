@@ -18,6 +18,16 @@ test("shows the secure Desktop onboarding order before a profile exists", () => 
   assert.equal(readiness.canConnectNode, false);
 });
 
+test("allows Google sign-in before a computer name is chosen", () => {
+  const readiness = createSpsDesktopSetupReadiness({
+    profile: { hubUrl: "https://hub.example.test", displayName: "", companyId: "" },
+    signedIn: false,
+  });
+
+  assert.equal(readiness.steps[0].state, "complete");
+  assert.equal(readiness.canStartAuth, true);
+});
+
 test("allows Node registration only after SPS sign-in and company selection", () => {
   const readiness = createSpsDesktopSetupReadiness({ profile, signedIn: true, pendingAuth: null, nodeId: null, nodeStatus: null });
 

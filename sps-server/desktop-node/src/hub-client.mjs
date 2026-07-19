@@ -98,6 +98,15 @@ export async function listSpsCompanies({
   return requestJson(fetchImpl, apiUrl(hubUrl, "/companies"), "GET", undefined, accessToken);
 }
 
+export async function getSpsDesktopAccount({
+  fetchImpl = fetch,
+  hubUrl,
+  accessToken,
+}) {
+  const result = await requestJson(fetchImpl, apiUrl(hubUrl, "/cli-auth/me"), "GET", undefined, accessToken);
+  return result?.user ?? null;
+}
+
 export async function listSpsProjects({
   fetchImpl = fetch,
   hubUrl,

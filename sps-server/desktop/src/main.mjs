@@ -10,6 +10,7 @@ import {
   claimSpsNodeCommand,
   disconnectSpsNode,
   executeSpsNodeCommand,
+  getSpsDesktopAccount,
   listSpsCompanies,
   listSpsProjects,
   pollSpsDesktopAuth,
@@ -21,6 +22,7 @@ import {
   startSpsDesktopAuth,
 } from "@sps/desktop-node";
 import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri, spsInviteTokenToCode } from "./invite.mjs";
+import { resolveSpsNodeDisplayName } from "./node-display-name.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
@@ -857,6 +859,14 @@ async function connectNode() {
   if (!state.profile.companyId) throw new Error("Choose an SPS company before registering this computer");
   const accessToken = currentBoardToken();
   if (!accessToken) throw new Error("Sign in to SPS Desktop before registering this computer");
+  const displayName = resolveSpsNodeDisplayName({
+    configuredName: state.profile.displayName,
+    hostname: os.hostname(),
+  });
+  if (state.profile.displayName !== displayName) {
+    state.profile.displayName = displayName;
+    await persistState();
+  }
   const identity = await ensureIdentity();
   resetNodeRuntimeStatus();
   const capabilities = await scanLocalCapabilities();
@@ -864,7 +874,7 @@ async function connectNode() {
     hubUrl: state.profile.hubUrl,
     companyId: state.profile.companyId,
     identity,
-    displayName: state.profile.displayName,
+    displayName,
     platform: process.platform,
     appVersion: app.getVersion(),
     capabilities,
@@ -1060,7 +1070,6 @@ function registerIpc() {
   ipcMain.handle("desktop:save-profile", async (_event, input) => {
     const companyId = String(input.companyId ?? "").trim();
     const displayName = String(input.displayName ?? "").trim();
-    if (!displayName) throw new Error("Computer name is required");
     const hubUrl = requireSpsHubOrigin(input.hubUrl);
     const previousProfile = state.profile;
     const connectionScopeChanged = Boolean(
@@ -1159,6 +1168,24 @@ function registerIpc() {
       state.encryptedBoardApiToken = encrypt(pendingAuth.boardApiToken);
       pendingAuth = null;
       await persistState();
+      try {
+        const account = await getSpsDesktopAccount({
+          hubUrl: state.profile.hubUrl,
+          accessToken: currentBoardToken(),
+        });
+        const displayName = resolveSpsNodeDisplayName({
+          configuredName: state.profile.displayName,
+          accountName: account?.name,
+          hostname: os.hostname(),
+        });
+        if (state.profile.displayName !== displayName) {
+          state.profile.displayName = displayName;
+          await persistState();
+        }
+      } catch {
+        // Google approval remains valid if the optional account profile request
+        // is temporarily unavailable. Registration still receives a safe local fallback.
+      }
       try {
         const companies = await listSpsCompanies({
           hubUrl: state.profile.hubUrl,

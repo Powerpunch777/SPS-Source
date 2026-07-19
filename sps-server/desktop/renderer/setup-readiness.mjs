@@ -1,5 +1,5 @@
 function hasProfile(status) {
-  return Boolean(status?.profile?.hubUrl && status?.profile?.displayName);
+  return Boolean(status?.profile?.hubUrl);
 }
 
 function hasCompany(status) {
@@ -57,7 +57,7 @@ export function createSpsDesktopSetupReadiness(status) {
     {
       id: "profile",
       title: "Save team connection",
-      detail: profileReady ? "Team address and computer name are saved." : "Open an invitation or enter the team address and a name for this computer.",
+      detail: profileReady ? "Team address is saved. Google names this computer after sign-in." : "Open an invitation or enter the team address for this computer.",
       state: profileReady ? "complete" : "current",
     },
     {

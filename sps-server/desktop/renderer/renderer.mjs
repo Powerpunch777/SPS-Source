@@ -254,15 +254,10 @@ function applyJoinFields(join) {
 
 async function handleJoinLink(join) {
   applyJoinFields(join);
-  const displayName = $("#display-name").value.trim();
-  if (!displayName) {
-    showNotice("Invitation received. Name this computer, save the team connection, then open the invitation.");
-    return;
-  }
   await window.spsDesktop.saveProfile({
     hubUrl: join.hub,
     companyId: "",
-    displayName,
+    displayName: $("#display-name").value,
     defaultWorkspacePath: $("#default-workspace-path").value,
   });
   await window.spsDesktop.openInvite({ code: join.code });

@@ -12,6 +12,7 @@ export {
 export { createNodeIdentity, createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
 export {
   cancelSpsDesktopAuth,
+  getSpsDesktopAccount,
   SpsHubRequestError,
   listSpsCompanies,
   listSpsProjects,
