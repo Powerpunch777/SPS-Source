@@ -31,6 +31,7 @@ services:
       PAPERCLIP_DEPLOYMENT_MODE: authenticated
       PAPERCLIP_DEPLOYMENT_EXPOSURE: public
       PAPERCLIP_API_URL: "${SPS_PUBLIC_URL:?Run Initialize-SPSHubDeployment.ps1 first}"
+      PAPERCLIP_PUBLIC_URL: "${SPS_PUBLIC_URL:?Run Initialize-SPSHubDeployment.ps1 first}"
       SPS_BIND: custom
       SPS_BIND_HOST: "0.0.0.0"
       SPS_ALLOWED_HOSTNAMES: "${SPS_DOMAIN:?Run Initialize-SPSHubDeployment.ps1 first}"

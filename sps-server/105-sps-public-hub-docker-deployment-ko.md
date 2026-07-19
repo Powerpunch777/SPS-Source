@@ -50,8 +50,8 @@ Set-Location ".\sps-server\deploy\hub"
   -PromptForGoogleClientSecret
 ```
 
-Tunnel 모드에서는 같은 명령에 `-PromptForCloudflareTunnelToken`을 추가한다.
-두 프롬프트 방식은 비밀값을 PowerShell 기록에 남기지 않는다.
+Tunnel mode also adds `-PromptForCloudflareTunnelToken` to the same command.
+The interactive prompts avoid writing secret values to PowerShell history.
 Do not share or commit the created file. Rotating it with `-Force` invalidates
 running authentication sessions and changes the database password.
 
@@ -83,6 +83,20 @@ curl https://app.example.com/api/health
 The health response must report `status: ok`. Then set
 `https://app.example.com` as the Hub URL in SPS Desktop, sign in with Google,
 create an invite, and use SPS Desktop on the second computer to accept it.
+
+## First administrator
+
+Public authenticated Hubs intentionally do not let the first visitor become an
+administrator. On the Hub computer, create a one-time operator invite after
+the containers are healthy:
+
+```powershell
+.\sps-server\scripts\New-SPSBootstrapInvite.ps1 -DockerHub
+```
+
+Open the printed link in a browser, sign in with Google, and accept the
+bootstrap invite. The URL is an administrator credential: use it once and do
+not send it to collaborators.
 
 Before and after startup, use the read-only deployment preflight. It never
 prints the secrets in `.env`.

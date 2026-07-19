@@ -36,7 +36,11 @@ COPY --chown=node:node --from=build /workspace/sps-server/sps-room-chat/dist /op
 RUN mkdir -p /sps /opt/sps-plugins/room-chat \
   && chown -R node:node /sps /opt/sps-plugins
 COPY external/sps-core/scripts/docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY sps-server/deploy/hub/sps-hub-entrypoint.sh /usr/local/bin/
+# The host repository is also developed on Windows. Normalize the shell
+# entrypoint in the Linux image so a CRLF checkout cannot break /bin/sh.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh /usr/local/bin/sps-hub-entrypoint.sh \
+  && chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/sps-hub-entrypoint.sh
 
 ENV NODE_ENV=production \
   HOME=/sps \
@@ -49,5 +53,5 @@ ENV NODE_ENV=production \
   PAPERCLIP_DEPLOYMENT_EXPOSURE=private
 
 EXPOSE 3100
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["sps-hub-entrypoint.sh"]
 CMD ["node", "--import", "./server/node_modules/tsx/dist/loader.mjs", "server/dist/index.js"]
