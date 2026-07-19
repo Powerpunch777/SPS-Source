@@ -68,6 +68,10 @@ let tray = null;
 let isQuitting = false;
 const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
 let updateService = null;
+// Status is rendered often by the setup screen. Do not synchronously ask
+// Windows for login-item settings on that hot IPC path: some Windows builds
+// can stall the call while their startup registration is being refreshed.
+let launchAtLoginEnabled = false;
 let updateStatus = {
   state: "initializing",
   currentVersion: app.getVersion(),
@@ -104,6 +108,31 @@ function emptyNodeRuntimeStatus() {
 
 function resetNodeRuntimeStatus() {
   nodeRuntimeStatus = emptyNodeRuntimeStatus();
+}
+
+function refreshLaunchAtLoginStatus() {
+  try {
+    launchAtLoginEnabled = Boolean(app.getLoginItemSettings().openAtLogin);
+  } catch {
+    // The cached value remains usable when Windows startup registration is unavailable.
+  }
+}
+
+function safeNodeCommandFailure(error) {
+  const message = error instanceof Error ? error.message.trim() : "";
+  const safePrefixes = [
+    "No local workspace is configured",
+    "No local workspace",
+    "Configured workspace is not a directory",
+    "Selected Codex profile is not signed in",
+    "SPS Desktop rejected",
+    "SPS Desktop could not",
+    "SPS Hub did not provide",
+  ];
+  if (message && safePrefixes.some((prefix) => message.startsWith(prefix))) {
+    return `The latest local command could not complete: ${message.slice(0, 420)}`;
+  }
+  return "The latest local command could not complete. Check its Task run for details.";
 }
 
 async function initializeUpdates() {
@@ -752,25 +781,50 @@ function createTray() {
 }
 
 function publicStatus() {
-  const loginItemSettings = app.getLoginItemSettings();
   return {
-    profile: state.profile,
+    profile: state.profile
+      ? {
+        hubUrl: state.profile.hubUrl,
+        connectionKind: state.profile.connectionKind,
+        companyId: state.profile.companyId,
+        displayName: state.profile.displayName,
+        defaultWorkspacePath: state.profile.defaultWorkspacePath,
+        projectWorkspaces: { ...(state.profile.projectWorkspaces ?? {}) },
+      }
+      : null,
     hasIdentity: Boolean(state.identity),
     signedIn: Boolean(state.encryptedBoardApiToken),
     nodeId: state.nodeId,
     nodeStatus: normalizeSpsNodeStatus(state.nodeStatus),
-    companies: Array.isArray(state.companies) ? state.companies : [],
-    projects: Array.isArray(state.projects) ? state.projects : [],
+    companies: Array.isArray(state.companies)
+      ? state.companies.map((company) => ({ id: company.id, name: company.name }))
+      : [],
+    projects: Array.isArray(state.projects)
+      ? state.projects.map((project) => ({ id: project.id, name: project.name }))
+      : [],
     pendingAuth: pendingAuth
       ? { approvalUrl: pendingAuth.approvalUrl, expiresAt: pendingAuth.expiresAt }
       : null,
     commandRunner: {
       active: Boolean(commandPollTimer) && canRunSpsNodeCommands(state.nodeStatus),
       workspaceConfigured: Boolean(state.profile?.defaultWorkspacePath),
-      launchAtLogin: Boolean(loginItemSettings.openAtLogin),
+      launchAtLogin: launchAtLoginEnabled,
     },
     nodeConnection: state.nodeId ? { ...nodeRuntimeStatus } : null,
-    ownerHost: { ...ownerHostStatus, defaultMemory: { ...defaultMemoryStatus } },
+    ownerHost: {
+      state: ownerHostStatus.state,
+      url: ownerHostStatus.url,
+      startedAt: ownerHostStatus.startedAt,
+      lastError: ownerHostStatus.lastError,
+      vaultPath: ownerHostStatus.vaultPath,
+      defaultMemory: {
+        state: defaultMemoryStatus.state,
+        url: defaultMemoryStatus.url,
+        startedAt: defaultMemoryStatus.startedAt,
+        lastError: defaultMemoryStatus.lastError,
+        vaultPath: defaultMemoryStatus.vaultPath,
+      },
+    },
     teamAccess: state.teamAccess
       ? {
         enabled: Boolean(state.teamAccess.enabled),
@@ -782,8 +836,16 @@ function publicStatus() {
         phase: state.teamAccess.phase === "preparing" ? "preparing" : "active",
       }
       : null,
-    ownerHostCompanies: isOwnerHostProfile() ? [...ownerHostCompanies] : [],
-    update: { ...updateStatus },
+    ownerHostCompanies: isOwnerHostProfile()
+      ? ownerHostCompanies.map((company) => ({ id: company.id, name: company.name }))
+      : [],
+    update: {
+      state: updateStatus.state,
+      currentVersion: updateStatus.currentVersion,
+      availableVersion: updateStatus.availableVersion,
+      percent: updateStatus.percent,
+      message: updateStatus.message,
+    },
   };
 }
 
@@ -914,9 +976,9 @@ async function pollNodeCommands() {
       accessToken,
       profile: state.profile,
     });
-  } catch {
+  } catch (error) {
     nodeRuntimeStatus.commandPollError = claimedCommand
-      ? "The latest local command could not complete. Check its Task run for details."
+      ? safeNodeCommandFailure(error)
       : "Could not poll the SPS team Host for commands. Check the team address, network, and Desktop sign-in.";
   } finally {
     commandPollInFlight = false;
@@ -1073,6 +1135,7 @@ function registerIpc() {
       openAsHidden: enabled,
       args: enabled ? [SPS_START_HIDDEN_ARGUMENT] : [],
     });
+    launchAtLoginEnabled = enabled;
     return publicStatus();
   });
   ipcMain.handle("desktop:start-auth", async () => {
@@ -1187,6 +1250,9 @@ if (!app.requestSingleInstanceLock()) {
     app.setAsDefaultProtocolClient("sps");
     await createWindow({ show: !startedHidden });
     createTray();
+    // Read Windows startup registration once after the first window is ready.
+    // It must not run on the frequent status IPC path.
+    setTimeout(refreshLaunchAtLoginStatus, 0);
     void bootstrapOwnerHost();
     const initialJoinArg = findSpsJoinUriArg(process.argv);
     if (initialJoinArg) sendJoinToRenderer(initialJoinArg);
