@@ -18,4 +18,7 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:connect-node"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:disconnect-node"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:choose-project-workspace"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-team-access"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:enable-private-team-access"/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:disable-private-team-access"\)/);
 });

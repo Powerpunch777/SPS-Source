@@ -100,6 +100,23 @@
               <button id="check-hub" type="button" class="quiet-button">Check connection</button>
             </div>
           </section>
+          <section id="team-access-panel" class="subpanel" hidden>
+            <h2>Private team access</h2>
+            <p class="muted">Keep company data on this Owner Host while invited teammates connect over your Tailscale network. Their CLI logins and local models never leave their computers.</p>
+            <div class="action-row compact-row">
+              <button id="inspect-team-access" type="button" class="quiet-button">Detect Tailscale</button>
+            </div>
+            <form id="team-access-form" class="team-access-form">
+              <label>Company <select id="team-access-company" required><option value="">Detect Tailscale and load local companies</option></select></label>
+              <label>Google OAuth client ID <input id="team-google-client-id" autocomplete="off" placeholder="...apps.googleusercontent.com" required /></label>
+              <label>Google OAuth client secret <input id="team-google-client-secret" type="password" autocomplete="new-password" placeholder="Stored only in Windows secure storage" required /></label>
+              <div class="action-row profile-actions">
+                <button id="enable-private-team-access" type="submit">Enable private team Host</button>
+                <button id="disable-private-team-access" type="button" class="danger-button">Return to local-only</button>
+              </div>
+            </form>
+            <pre id="team-access-detail" class="details-output">Tailscale has not been checked.</pre>
+          </section>
           <section class="subpanel">
             <h2>Project folders</h2>
             <p class="muted">Map an SPS project to its local clone only when that project will run on this computer.</p>

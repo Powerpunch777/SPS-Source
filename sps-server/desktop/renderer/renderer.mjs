@@ -37,6 +37,24 @@ function updateCompanyPicker(companies, selectedId) {
   picker.disabled = entries.length === 0;
 }
 
+function updateTeamCompanyPicker(companies, selectedId) {
+  const picker = $("#team-access-company");
+  picker.replaceChildren();
+  const entries = Array.isArray(companies) ? companies : [];
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = entries.length ? "Choose a local company" : "Detect Tailscale and load local companies";
+  picker.append(placeholder);
+  for (const company of entries) {
+    const option = document.createElement("option");
+    option.value = company.id;
+    option.textContent = company.name;
+    option.selected = company.id === selectedId;
+    picker.append(option);
+  }
+  picker.disabled = entries.length === 0;
+}
+
 function updateProjectPicker(projects, selectedId) {
   const picker = $("#project-workspace-project-id");
   const previousSelection = selectedId || picker.value;
@@ -120,14 +138,55 @@ function renderOwnerHost(status) {
   const ownerHost = status.ownerHost ?? {};
   const ready = ["running", "running-existing"].includes(ownerHost.state);
   const usingOwnerHost = isOwnerHostProfile(status);
-  const detail = ready
-    ? (usingOwnerHost
+  const privateTeamHost = Boolean(status.teamAccess?.enabled);
+  const detail = privateTeamHost
+    ? `This Desktop is hosting a private SPS team at ${status.teamAccess.url}. Sign in with Google to use it.`
+    : ready
+      ? (usingOwnerHost
       ? `This Desktop is using its internal Owner Host at ${ownerHost.url}.`
       : `Ready at ${ownerHost.url}. Choose it to keep company data on this computer.`)
     : ownerHost.lastError ?? "Starting the encrypted local SPS Host...";
   $("#owner-host-detail").textContent = detail;
-  $("#use-owner-host").disabled = !ready || usingOwnerHost;
-  $("#use-owner-host").textContent = usingOwnerHost ? "Using Owner Host" : ready ? "Use Owner Host" : "Starting Owner Host";
+  $("#use-owner-host").disabled = !ready || usingOwnerHost || privateTeamHost;
+  $("#use-owner-host").textContent = privateTeamHost
+    ? "Private team Host active"
+    : usingOwnerHost ? "Using Owner Host" : ready ? "Use Owner Host" : "Starting Owner Host";
+}
+
+function renderTeamAccess(status) {
+  const ownerHost = isOwnerHostProfile(status);
+  const teamAccess = status.teamAccess;
+  const panel = $("#team-access-panel");
+  panel.hidden = !ownerHost && !teamAccess?.enabled;
+  if (panel.hidden) return;
+
+  const detail = $("#team-access-detail");
+  const enableButton = $("#enable-private-team-access");
+  const inspectButton = $("#inspect-team-access");
+  const disableButton = $("#disable-private-team-access");
+  const form = $("#team-access-form");
+  if (teamAccess?.enabled) {
+    const recovering = teamAccess.phase === "preparing";
+    detail.textContent = [
+      recovering ? "Private team Host transition was interrupted before completion." : "Private team Host is active.",
+      `Address: ${teamAccess.url}`,
+      `Company: ${status.companies?.find((company) => company.id === teamAccess.companyId)?.name ?? teamAccess.companyId}`,
+      "Returning to local-only removes only the HTTPS route SPS created. If that route was changed outside SPS, SPS stops and asks you to review it in Tailscale instead of deleting it blindly.",
+      ...(recovering ? ["Choose Return to local-only, verify Tailscale Serve is clear, then enable private team access again."] : []),
+    ].join("\n");
+    detail.classList.add("has-content");
+    form.hidden = true;
+    inspectButton.disabled = true;
+    enableButton.disabled = true;
+    disableButton.disabled = false;
+    return;
+  }
+  form.hidden = !ownerHost;
+  inspectButton.disabled = !ownerHost;
+  enableButton.disabled = !ownerHost;
+  disableButton.disabled = true;
+  detail.classList.remove("has-content");
+  updateTeamCompanyPicker(status.ownerHostCompanies, $("#team-access-company").value);
 }
 
 function renderStatus(status) {
@@ -145,6 +204,7 @@ function renderStatus(status) {
     lines.push(`Owner Host: ${status.ownerHost.state ?? "initializing"}${status.ownerHost.url ? ` (${status.ownerHost.url})` : ""}`);
     if (status.ownerHost.lastError) lines.push(`Owner Host notice: ${status.ownerHost.lastError}`);
   }
+  if (status.teamAccess?.enabled) lines.push(`Private team Host: active (${status.teamAccess.url})`);
   if (connection) {
     lines.push(`Last Hub heartbeat: ${formatStatusTime(connection.lastHeartbeatAt)}`);
     lines.push(`Last command poll: ${formatStatusTime(connection.lastCommandPollAt)}`);
@@ -161,6 +221,7 @@ function renderStatus(status) {
     ? "This SPS Desktop runs the SPS Owner Host internally. Company data, Rooms, Tasks, files, and memory stay in this computer's Owner Vault."
     : "This SPS Desktop connects to a shared HTTPS SPS Hub. This computer runs only its approved local Agent work.";
   renderOwnerHost(status);
+  renderTeamAccess(status);
   renderUpdate(status.update);
   renderSetupReadiness(status);
 }
@@ -246,6 +307,42 @@ $("#check-hub").addEventListener("click", () => run(async () => {
   $("#hub-url").value = advancedHubUrl;
   const result = await window.spsDesktop.checkHub({ hubUrl: advancedHubUrl });
   showNotice(`SPS Hub is reachable at ${result.hubUrl}.`);
+}));
+$("#inspect-team-access").addEventListener("click", () => run(async () => {
+  const setup = await window.spsDesktop.inspectTeamAccess();
+  updateTeamCompanyPicker(setup.companies, "");
+  const detail = $("#team-access-detail");
+  detail.textContent = [
+    `Tailscale device: ${setup.tailnet.deviceName}`,
+    `Private team address: ${setup.tailnet.url}`,
+    `Tailscale HTTPS: ${setup.tailnet.httpsAvailable ? "ready" : "not enabled"}`,
+    `Google redirect URI: ${setup.googleRedirectUrl}`,
+    ...(setup.tailnet.httpsAvailable
+      ? ["Add this redirect URI to the Google OAuth client before enabling the private team Host."]
+      : ["Enable HTTPS certificates for this tailnet in Tailscale Admin first. SPS will keep private team access disabled until it is ready."]),
+  ].join("\n");
+  detail.classList.add("has-content");
+  showNotice(setup.tailnet.httpsAvailable
+    ? "Tailscale is ready. Add the shown Google redirect URI, then choose a company and enable the private team Host."
+    : "Tailscale is connected, but its HTTPS certificate feature must be enabled before a private SPS team Host can be created.");
+}));
+$("#team-access-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await run(async () => {
+    const result = await window.spsDesktop.enablePrivateTeamAccess({
+      companyId: $("#team-access-company").value,
+      googleClientId: $("#team-google-client-id").value,
+      googleClientSecret: $("#team-google-client-secret").value,
+    });
+    $("#invite-code").value = result.invitation.token;
+    $("#team-google-client-secret").value = "";
+    showNotice("Private team Host is running. The one-time Owner invitation opened in your browser. Finish Google sign-in, then return and continue with Google.");
+  });
+});
+$("#disable-private-team-access").addEventListener("click", () => run(async () => {
+  if (!window.confirm("Return this SPS Owner Host to local-only mode? Existing team members and Nodes will no longer be able to connect.")) return;
+  await window.spsDesktop.disablePrivateTeamAccess();
+  showNotice("This SPS Owner Host is local-only again. The HTTPS route created by SPS was removed after ownership verification.");
 }));
 $("#hub-url-advanced").addEventListener("input", (event) => {
   $("#hub-url").value = event.target.value.trim();

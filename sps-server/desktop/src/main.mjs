@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +25,13 @@ import { emptyState, loadState, saveState } from "./state.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
 import { createSpsOwnerHostManager, materializeSpsOwnerHostRuntime, resolveSpsOwnerHostRuntime } from "./owner-host.mjs";
-import { ensureSpsOwnerHostConfig, spsOwnerHostUrl } from "./owner-host-config.mjs";
+import {
+  configureSpsOwnerHostLocalOnly,
+  configureSpsOwnerHostPrivateTeamAccess,
+  ensureSpsOwnerHostConfig,
+  spsOwnerHostUrl,
+  updateSpsOwnerHostConfig,
+} from "./owner-host-config.mjs";
 import {
   createSpsDefaultMemoryManager,
   ensureSpsDefaultMemoryConfig,
@@ -32,6 +39,12 @@ import {
 } from "./default-memory-host.mjs";
 import { isSpsHubApiUrl, requireSpsHubOrigin, requireSpsOwnerHostOrigin } from "./workspace-url.mjs";
 import { requireSpsWorkspaceDirectory } from "./workspace-directory.mjs";
+import {
+  disableSpsTailscaleServe,
+  enableSpsTailscaleServe,
+  inspectSpsTailscale,
+  spsTailnetPublicUrl,
+} from "./team-access.mjs";
 import {
   createSpsSetupWindowPreferences,
   createSpsWorkspaceWindowPreferences,
@@ -78,6 +91,7 @@ let ownerHostStatus = {
   lastError: null,
   vaultPath: null,
 };
+let ownerHostCompanies = [];
 
 function emptyNodeRuntimeStatus() {
   return {
@@ -175,6 +189,50 @@ function currentBoardToken() {
   return state.encryptedBoardApiToken ? decrypt(state.encryptedBoardApiToken) : null;
 }
 
+function currentTeamCredentials() {
+  if (!state.encryptedTeamCredentials) return null;
+  try {
+    const parsed = JSON.parse(decrypt(state.encryptedTeamCredentials));
+    if (
+      typeof parsed?.authSecret !== "string"
+      || typeof parsed?.googleClientId !== "string"
+      || typeof parsed?.googleClientSecret !== "string"
+    ) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function ownerVaultRoot() {
+  return path.join(app.getPath("userData"), "owner-vault");
+}
+
+function ownerHostTeamEnvironment() {
+  if (!state.teamAccess?.enabled) return {};
+  const credentials = currentTeamCredentials();
+  if (!credentials) {
+    throw new Error("Private team access credentials are unavailable in Windows secure storage.");
+  }
+  return {
+    SPS_AUTH_SECRET: credentials.authSecret,
+    // The Core's signed Agent-run protocol has a separate secret input from
+    // browser authentication. Keep both in the same encrypted Owner Vault
+    // record so a private-team switch cannot leave Task execution unsigned.
+    PAPERCLIP_AGENT_JWT_SECRET: credentials.authSecret,
+    SPS_GOOGLE_CLIENT_ID: credentials.googleClientId,
+    SPS_GOOGLE_CLIENT_SECRET: credentials.googleClientSecret,
+    SPS_AUTH_GOOGLE_ONLY: "true",
+    // The request reaches Core from the local Tailscale Serve proxy. Core may
+    // therefore trust only loopback forwarding headers, never arbitrary LAN.
+    TRUST_PROXY: "loopback",
+  };
+}
+
+function isTeamAccessEnabled() {
+  return Boolean(state.teamAccess?.enabled && currentTeamCredentials());
+}
+
 function isOwnerHostProfile(profile = state.profile) {
   return profile?.connectionKind === "owner-host";
 }
@@ -184,7 +242,7 @@ function ownerHostIsReady() {
 }
 
 async function ensureOwnerHostManager() {
-  const vaultRoot = path.join(app.getPath("userData"), "owner-vault");
+  const vaultRoot = ownerVaultRoot();
   const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
   const defaultMemory = await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot });
   const url = spsOwnerHostUrl(ownerHost.config);
@@ -242,6 +300,7 @@ async function ensureOwnerHostManager() {
           SPS_BUNDLED_PLUGIN_PATHS: memoryPluginPath,
           SPS_MEMORY_SIDECAR_URL: spsDefaultMemoryUrl(defaultMemory.config),
           SPS_MEMORY_SIDECAR_TOKEN: defaultMemory.config.security.token,
+          ...ownerHostTeamEnvironment(),
         },
       });
     },
@@ -304,6 +363,9 @@ async function startOwnerHost({ activate = false } = {}) {
 async function bootstrapOwnerHost() {
   try {
     await startOwnerHost({ activate: !state.profile });
+    if (isOwnerHostProfile()) {
+      await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+    }
   } catch (error) {
     ownerHostStatus = {
       ...ownerHostStatus,
@@ -311,6 +373,178 @@ async function bootstrapOwnerHost() {
       lastError: error instanceof Error ? error.message : "SPS Owner Host could not start.",
     };
   }
+}
+
+async function ownerHostApi(pathname, { method = "GET", body } = {}) {
+  if (!ownerHostIsReady() || !ownerHostStatus.url) {
+    throw new Error(ownerHostStatus.lastError || "SPS Owner Host is not ready.");
+  }
+  const response = await fetch(`${requireSpsOwnerHostOrigin(ownerHostStatus.url)}/api${pathname}`, {
+    method,
+    headers: body === undefined ? { accept: "application/json" } : {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // The status and a safe generic error below are enough for Desktop setup.
+  }
+  if (!response.ok) {
+    throw new Error(data?.error || `SPS Owner Host request failed with ${response.status}.`);
+  }
+  return data;
+}
+
+function normalizeCompanyList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((company) => company && typeof company.id === "string" && typeof company.name === "string")
+    .map((company) => ({ id: company.id, name: company.name }));
+}
+
+async function refreshOwnerHostCompanies() {
+  if (!isOwnerHostProfile()) return [];
+  ownerHostCompanies = normalizeCompanyList(await ownerHostApi("/companies"));
+  return ownerHostCompanies;
+}
+
+async function restartOwnerHostForConfiguration() {
+  closeWorkspaceWindow();
+  if (ownerHostManager) await ownerHostManager.stop({ force: true });
+  ownerHostManager = null;
+  defaultMemoryManager = null;
+  await startOwnerHost({ activate: false });
+}
+
+async function enablePrivateTeamAccess(input) {
+  if (!isOwnerHostProfile()) {
+    throw new Error("Switch this SPS Desktop to its Owner Host before enabling private team access.");
+  }
+  if (!ownerHostIsReady()) throw new Error("Wait for the SPS Owner Host to finish starting.");
+
+  const googleClientId = String(input?.googleClientId ?? "").trim();
+  const googleClientSecret = String(input?.googleClientSecret ?? "").trim();
+  if (!googleClientId || !googleClientSecret) {
+    throw new Error("Google OAuth client ID and client secret are required for private team access.");
+  }
+  const companyId = String(input?.companyId ?? "").trim();
+  if (!companyId) throw new Error("Choose the company whose Owner invitation will initialize this private team Host.");
+
+  const companies = await refreshOwnerHostCompanies();
+  if (!companies.some((company) => company.id === companyId)) {
+    throw new Error("Choose a company owned by this local SPS Owner Host.");
+  }
+  const tailnet = await inspectSpsTailscale();
+  if (!tailnet.httpsAvailable) {
+    throw new Error(
+      "Tailscale HTTPS certificates are not enabled for this tailnet. Enable HTTPS in the Tailscale admin console, then detect Tailscale again before enabling private team access.",
+    );
+  }
+  const localConfig = await ensureSpsOwnerHostConfig({ vaultRoot: ownerVaultRoot() });
+  const previousConfig = localConfig.config;
+  const invitation = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/invites`, {
+    method: "POST",
+    body: {
+      allowedJoinTypes: "human",
+      humanRole: "owner",
+      expiresInMinutes: 60,
+      agentMessage: "Initial Owner access for this SPS private team Host.",
+    },
+  });
+  if (typeof invitation?.token !== "string") {
+    throw new Error("SPS Owner Host did not return an Owner invitation.");
+  }
+
+  const credentials = {
+    authSecret: randomBytes(48).toString("base64url"),
+    googleClientId,
+    googleClientSecret,
+  };
+  const nextTeamAccess = {
+    enabled: true,
+    phase: "preparing",
+    mode: "private-tailnet",
+    hostname: tailnet.hostname,
+    url: spsTailnetPublicUrl(tailnet.hostname),
+    companyId,
+    configuredAt: new Date().toISOString(),
+  };
+
+  state.teamAccess = nextTeamAccess;
+  state.encryptedTeamCredentials = encrypt(JSON.stringify(credentials));
+  // Persist credentials before the Core changes mode. If Windows restarts in
+  // the middle of the hand-off, the Owner Host can still start securely and
+  // the owner can explicitly return to local-only mode instead of losing the
+  // credentials required to recover it.
+  await persistState();
+  try {
+    await updateSpsOwnerHostConfig({
+      vaultRoot: ownerVaultRoot(),
+      update: (config) => configureSpsOwnerHostPrivateTeamAccess(config, { hostname: tailnet.hostname }),
+    });
+    await restartOwnerHostForConfiguration();
+    const tailscale = await enableSpsTailscaleServe({ ownerHostUrl: ownerHostStatus.url });
+    if (!tailscale.serve || !tailscale.tailnet) {
+      throw new Error("Tailscale Serve did not confirm the SPS private team route.");
+    }
+  } catch (error) {
+    state.teamAccess = null;
+    state.encryptedTeamCredentials = null;
+    await updateSpsOwnerHostConfig({ vaultRoot: ownerVaultRoot(), update: () => previousConfig }).catch(() => undefined);
+    await restartOwnerHostForConfiguration().catch(() => undefined);
+    await persistState().catch(() => undefined);
+    throw error;
+  }
+
+  stopNodeScheduling();
+  state.identity = null;
+  state.nodeId = null;
+  state.nodeStatus = null;
+  state.encryptedBoardApiToken = null;
+  state.companies = [];
+  state.projects = [];
+  state.profile = {
+    hubUrl: nextTeamAccess.url,
+    connectionKind: "remote",
+    companyId,
+    displayName: `${os.hostname()} Owner Host`,
+    defaultWorkspacePath: "",
+    projectWorkspaces: {},
+  };
+  state.teamAccess = { ...nextTeamAccess, phase: "active" };
+  await persistState();
+  const inviteUrl = buildInviteUrl(nextTeamAccess.url, invitation.token);
+  await shell.openExternal(inviteUrl);
+  return {
+    teamAccess: { ...nextTeamAccess },
+    invitation: { token: invitation.token, url: inviteUrl, expiresAt: invitation.expiresAt ?? null },
+    googleRedirectUrl: `${nextTeamAccess.url}/api/auth/callback/google`,
+  };
+}
+
+async function disablePrivateTeamAccess() {
+  if (!state.teamAccess?.enabled) return publicStatus();
+  const activeTeamAccess = { ...state.teamAccess };
+  const config = await ensureSpsOwnerHostConfig({ vaultRoot: ownerVaultRoot() });
+  await disableSpsTailscaleServe({
+    hostname: activeTeamAccess.hostname,
+    ownerHostUrl: spsOwnerHostUrl(config.config),
+  });
+  state.teamAccess = null;
+  state.encryptedTeamCredentials = null;
+  await updateSpsOwnerHostConfig({
+    vaultRoot: ownerVaultRoot(),
+    update: (config) => configureSpsOwnerHostLocalOnly(config),
+  });
+  await restartOwnerHostForConfiguration();
+  await activateOwnerHostProfile();
+  await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+  return publicStatus();
 }
 
 function normalizeProjectList(value) {
@@ -532,6 +766,18 @@ function publicStatus() {
     },
     nodeConnection: state.nodeId ? { ...nodeRuntimeStatus } : null,
     ownerHost: { ...ownerHostStatus, defaultMemory: { ...defaultMemoryStatus } },
+    teamAccess: state.teamAccess
+      ? {
+        enabled: Boolean(state.teamAccess.enabled),
+        mode: state.teamAccess.mode,
+        hostname: state.teamAccess.hostname,
+        url: state.teamAccess.url,
+        companyId: state.teamAccess.companyId,
+        configuredAt: state.teamAccess.configuredAt,
+        phase: state.teamAccess.phase === "preparing" ? "preparing" : "active",
+      }
+      : null,
+    ownerHostCompanies: isOwnerHostProfile() ? [...ownerHostCompanies] : [],
     update: { ...updateStatus },
   };
 }
@@ -700,11 +946,32 @@ function registerIpc() {
     return { hubUrl, health };
   });
   ipcMain.handle("desktop:use-owner-host", async () => {
+    if (isTeamAccessEnabled()) {
+      throw new Error("This Owner Host is already a private team Host. Finish Google sign-in for its private SPS address, or return it to local-only mode first.");
+    }
     const wasRemoteProfile = Boolean(state.profile && !isOwnerHostProfile());
     if (wasRemoteProfile) await disconnectCurrentNode();
     await startOwnerHost({ activate: true });
+    await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
     return publicStatus();
   });
+  ipcMain.handle("desktop:refresh-owner-host-companies", async () => {
+    await refreshOwnerHostCompanies();
+    return publicStatus();
+  });
+  ipcMain.handle("desktop:inspect-team-access", async () => {
+    if (!isOwnerHostProfile()) throw new Error("Private team access is configured from the SPS Owner Host.");
+    const tailnet = await inspectSpsTailscale();
+    await refreshOwnerHostCompanies();
+    return {
+      tailnet,
+      companies: [...ownerHostCompanies],
+      googleRedirectUrl: `${tailnet.url}/api/auth/callback/google`,
+      teamAccess: state.teamAccess ? { ...state.teamAccess } : null,
+    };
+  });
+  ipcMain.handle("desktop:enable-private-team-access", async (_event, input) => await enablePrivateTeamAccess(input));
+  ipcMain.handle("desktop:disable-private-team-access", disablePrivateTeamAccess);
   ipcMain.handle("desktop:check-updates", async () => {
     updateStatus = await requireUpdateService().check();
     return publicStatus();

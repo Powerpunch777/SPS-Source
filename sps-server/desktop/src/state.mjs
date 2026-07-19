@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 
 function statePath(userDataPath) {
   return path.join(userDataPath, "sps-desktop-state.json");
@@ -17,6 +17,8 @@ export function emptyState() {
     projects: [],
     nodeId: null,
     nodeStatus: null,
+    teamAccess: null,
+    encryptedTeamCredentials: null,
   };
 }
 
@@ -24,8 +26,10 @@ export async function loadState(userDataPath) {
   try {
     const raw = await fs.readFile(statePath(userDataPath), "utf8");
     const parsed = JSON.parse(raw);
-    if (parsed?.version !== STATE_VERSION) return emptyState();
-    return { ...emptyState(), ...parsed };
+    if (parsed?.version !== 1 && parsed?.version !== STATE_VERSION) return emptyState();
+    // Version 1 contains only the original remote Node profile. Its values
+    // remain valid; v2 merely adds opt-in private Owner Host team access.
+    return { ...emptyState(), ...parsed, version: STATE_VERSION };
   } catch (error) {
     if (error?.code === "ENOENT") return emptyState();
     throw error;

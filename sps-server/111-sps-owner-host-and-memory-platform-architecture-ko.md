@@ -162,6 +162,30 @@ Provider 요청 및 반환 근거를 감사 기록에 남긴다. 실제 API 이�
 모든 원격 Node는 Host에 대한 outbound 연결만 만든다. Host가 임의 포트를 통해 Member PC에
 들어가거나 임의 명령을 실행하는 연결은 허용하지 않는다.
 
+### SPS Desktop의 Private Tailnet 전환
+
+SPS Desktop은 Tailscale을 제품 안에 포함하거나 Tailscale 계정을 대신 관리하지 않는다.
+대신 사용자가 이미 연결해 둔 시스템 Tailscale에서 MagicDNS 이름을 읽고, `tailscale serve`로
+**loopback Owner Host만** 사설 HTTPS 주소에 연결한다. Core는 계속 `127.0.0.1`에만
+바인딩되므로 LAN 포트 개방으로 협업을 시작하지 않는다.
+
+전환 절차는 다음처럼 고정한다.
+
+1. Owner가 Desktop의 Private team access에서 Tailscale을 감지하고 MagicDNS 및 HTTPS certificate 준비 상태를 확인한다.
+2. Desktop이 표시한 `https://<host>.ts.net/api/auth/callback/google`을 Owner의 Google OAuth
+   클라이언트 redirect URI로 등록한다.
+3. Owner가 회사를 하나 선택하고 전환한다. 전환 직전에는 그 회사의 짧은 수명 Owner 초대가
+   하나 생성된다.
+4. Desktop은 Owner Vault의 Core 설정을 `authenticated/private`와 명시적인 Tailnet HTTPS
+   주소로 바꾸고, Windows secure storage에만 인증 비밀과 Google OAuth client secret을 보관한다.
+5. Owner는 방금 만든 초대를 Google로 수락한 뒤 Desktop sign-in을 완료한다. 이후에만
+   사람 초대와 Member Node 승인을 시작한다.
+
+전환 전에는 SPS가 기존 `tailscale serve` 규칙이 비어 있는지 확인한다. 전환 해제 시에도 SPS가
+만든 `HTTPS :443` 루트 프록시가 그대로 남아 있을 때만 그 규칙만 제거한다. 규칙이 사용자가 수정한
+상태라면 SPS는 추측해서 지우지 않고 해제를 중단해 사용자가 Tailscale에서 정리하도록 안내한다.
+따라서 다른 Serve 구성을 덮어쓰거나, 해제 뒤에 의도치 않은 외부 경로를 남기지 않는다.
+
 ## 7. 백업, 이동, 복구
 
 Owner Host는 다음을 사용자에게 제공해야 한다.

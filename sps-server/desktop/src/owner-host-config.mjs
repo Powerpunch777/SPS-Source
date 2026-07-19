@@ -109,6 +109,84 @@ export function createSpsOwnerHostConfig({ vaultRoot, serverPort, databasePort, 
   };
 }
 
+function nextConfigMetadata(config, now) {
+  return {
+    ...(config.$meta ?? {}),
+    version: 1,
+    updatedAt: now.toISOString(),
+    source: "configure",
+  };
+}
+
+export function configureSpsOwnerHostPrivateTeamAccess(config, { hostname, now = new Date() } = {}) {
+  const normalizedHostname = String(hostname ?? "").trim().toLowerCase().replace(/\.+$/, "");
+  if (!/^[a-z0-9][a-z0-9.-]*\.ts\.net$/.test(normalizedHostname)) {
+    throw new Error("Private SPS team access requires a valid Tailscale MagicDNS hostname.");
+  }
+  const server = config?.server;
+  if (!server?.port) throw new Error("SPS Owner Host config has no server port.");
+  return {
+    ...config,
+    $meta: nextConfigMetadata(config, now),
+    server: {
+      ...server,
+      deploymentMode: "authenticated",
+      exposure: "private",
+      // Tailscale Serve owns the external TLS endpoint. The Core process
+      // remains loopback-only so it is never reachable directly from LAN.
+      bind: "loopback",
+      host: "127.0.0.1",
+      customBindHost: undefined,
+      allowedHostnames: [normalizedHostname],
+    },
+    auth: {
+      ...(config.auth ?? {}),
+      baseUrlMode: "explicit",
+      publicBaseUrl: `https://${normalizedHostname}`,
+      // Google authentication may create a user record, but company access is
+      // still granted only by the one-time invitation created before switch.
+      disableSignUp: false,
+    },
+  };
+}
+
+export function configureSpsOwnerHostLocalOnly(config, { now = new Date() } = {}) {
+  const server = config?.server;
+  if (!server?.port) throw new Error("SPS Owner Host config has no server port.");
+  return {
+    ...config,
+    $meta: nextConfigMetadata(config, now),
+    server: {
+      ...server,
+      deploymentMode: "local_trusted",
+      exposure: "private",
+      bind: "loopback",
+      host: "127.0.0.1",
+      customBindHost: undefined,
+      allowedHostnames: [],
+    },
+    auth: {
+      ...(config.auth ?? {}),
+      baseUrlMode: "auto",
+      publicBaseUrl: undefined,
+      disableSignUp: false,
+    },
+  };
+}
+
+export async function updateSpsOwnerHostConfig({ vaultRoot, update, fsApi = { mkdir, readFile, rename, writeFile } } = {}) {
+  if (typeof update !== "function") throw new Error("SPS Owner Host config update function is required.");
+  const layout = ownerHostVaultLayout(vaultRoot);
+  const raw = await fsApi.readFile(layout.configPath, "utf8");
+  const previous = parseExistingConfig(raw, layout.configPath);
+  const next = update(previous);
+  if (!next || typeof next !== "object") throw new Error("SPS Owner Host config update returned no config.");
+  const temporaryPath = `${layout.configPath}.${process.pid}.${Date.now()}.tmp`;
+  await fsApi.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  await fsApi.rename(temporaryPath, layout.configPath);
+  return { config: next, layout };
+}
+
 export function spsOwnerHostUrl(config) {
   const port = Number(config?.server?.port);
   if (!isUsablePort(port)) throw new Error("SPS Owner Host config has no valid server.port.");

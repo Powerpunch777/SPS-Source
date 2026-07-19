@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createSpsOwnerHostConfig, findSpsOwnerHostPorts, ownerHostVaultLayout, spsOwnerHostUrl } from "../src/owner-host-config.mjs";
+import {
+  configureSpsOwnerHostLocalOnly,
+  configureSpsOwnerHostPrivateTeamAccess,
+  createSpsOwnerHostConfig,
+  findSpsOwnerHostPorts,
+  ownerHostVaultLayout,
+  spsOwnerHostUrl,
+} from "../src/owner-host-config.mjs";
 
 test("creates a self-contained Owner Vault config", () => {
   const config = createSpsOwnerHostConfig({
@@ -38,4 +45,27 @@ test("keeps all Owner Host data inside its vault layout", () => {
   for (const value of Object.values(layout)) {
     assert.match(value, /^C:\\SPS Vault/);
   }
+});
+
+test("switches the Owner Host to authenticated private Tailnet access without opening its Core port", () => {
+  const base = createSpsOwnerHostConfig({
+    vaultRoot: "C:/SPS Vault",
+    serverPort: 31_310,
+    databasePort: 54_339,
+  });
+  const team = configureSpsOwnerHostPrivateTeamAccess(base, {
+    hostname: "main-computer.tail1725c2.ts.net.",
+    now: new Date("2026-07-19T01:00:00.000Z"),
+  });
+  assert.equal(team.server.deploymentMode, "authenticated");
+  assert.equal(team.server.exposure, "private");
+  assert.equal(team.server.bind, "loopback");
+  assert.equal(team.server.host, "127.0.0.1");
+  assert.deepEqual(team.server.allowedHostnames, ["main-computer.tail1725c2.ts.net"]);
+  assert.deepEqual(team.auth, {
+    baseUrlMode: "explicit",
+    publicBaseUrl: "https://main-computer.tail1725c2.ts.net",
+    disableSignUp: false,
+  });
+  assert.equal(configureSpsOwnerHostLocalOnly(team).server.deploymentMode, "local_trusted");
 });
