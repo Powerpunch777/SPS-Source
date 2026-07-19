@@ -32,10 +32,10 @@
             <div class="step-label">1</div>
             <h2>Team connection</h2>
           </div>
-          <p>Enter the Hub address and name this computer once.</p>
+          <p>Name this computer. SPS connects to your team automatically.</p>
         </div>
         <form id="profile-form">
-          <label>Hub address <input id="hub-url" required placeholder="https://app.redongames.com" /></label>
+          <input id="hub-url" type="hidden" value="https://app.redongames.com" />
           <input id="company-id" type="hidden" />
           <label>Computer name <input id="display-name" required placeholder="e.g. Jimin's laptop" /></label>
           <label id="company-field" class="company-field">Team <select id="company-picker" disabled><option value="">Sign in with Google first</option></select></label>
@@ -86,6 +86,14 @@
       <details class="advanced-settings">
         <summary>Advanced settings and diagnostics</summary>
         <div class="advanced-content">
+          <section class="subpanel">
+            <h2>SPS server</h2>
+            <p class="muted">Most people should leave this as the SPS server. Change it only when your team runs its own Hub.</p>
+            <div class="action-row">
+              <input id="hub-url-advanced" placeholder="https://app.redongames.com" />
+              <button id="check-hub" type="button" class="quiet-button">Check connection</button>
+            </div>
+          </section>
           <section class="subpanel">
             <h2>Project folders</h2>
             <p class="muted">Map an SPS project to its local clone only when that project will run on this computer.</p>

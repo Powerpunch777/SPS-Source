@@ -2,6 +2,7 @@ import { createSpsDesktopSetupReadiness } from "./setup-readiness.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const notice = $("#notice");
+const DEFAULT_SPS_HUB_URL = "https://app.redongames.com";
 
 function showNotice(message, error = false) {
   notice.textContent = message;
@@ -143,6 +144,8 @@ async function refreshStatus() {
     $("#display-name").value = status.profile.displayName ?? "";
     $("#default-workspace-path").value = status.profile.defaultWorkspacePath ?? "";
   }
+  if (!status.profile) $("#hub-url").value = DEFAULT_SPS_HUB_URL;
+  $("#hub-url-advanced").value = $("#hub-url").value || DEFAULT_SPS_HUB_URL;
   $("#launch-at-login").checked = Boolean(status.commandRunner?.launchAtLogin);
   updateCompanyPicker(status.companies, status.profile?.companyId ?? "");
   updateProjectPicker(status.projects, $("#project-workspace-project-id").value);
@@ -152,6 +155,7 @@ async function refreshStatus() {
 
 function applyJoinFields(join) {
   $("#hub-url").value = join.hub;
+  $("#hub-url-advanced").value = join.hub;
   $("#invite-code").value = join.code;
   $("#company-id").value = "";
 }
@@ -198,9 +202,15 @@ $("#profile-form").addEventListener("submit", async (event) => {
   });
 });
 $("#check-hub").addEventListener("click", () => run(async () => {
-  const result = await window.spsDesktop.checkHub({ hubUrl: $("#hub-url").value });
+  const advancedHubUrl = $("#hub-url-advanced").value.trim();
+  if (!advancedHubUrl) throw new Error("SPS Hub address is required");
+  $("#hub-url").value = advancedHubUrl;
+  const result = await window.spsDesktop.checkHub({ hubUrl: advancedHubUrl });
   showNotice(`SPS Hub is reachable at ${result.hubUrl}.`);
 }));
+$("#hub-url-advanced").addEventListener("input", (event) => {
+  $("#hub-url").value = event.target.value.trim();
+});
 $("#company-picker").addEventListener("change", async (event) => {
   $("#company-id").value = event.target.value;
   if (!event.target.value) return;
