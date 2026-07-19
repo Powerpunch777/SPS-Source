@@ -58,9 +58,13 @@ Set-Location ".\sps-server\deploy\hub"
 .\Initialize-SPSHubDeployment.ps1 `
   -Domain "app.redongames.com" `
   -GoogleClientId "<Google OAuth client ID>" `
-  -GoogleClientSecret "<Google OAuth client secret>" `
-  -CloudflareTunnelToken "<Cloudflare Tunnel connector token>"
+  -PromptForGoogleClientSecret `
+  -PromptForCloudflareTunnelToken
 ```
+
+두 비밀값은 화면의 복사 버튼으로 복사한 뒤 PowerShell 프롬프트에 붙여넣는다.
+이 방식은 명령 기록에 비밀값을 남기지 않는다. 자동화나 전용 Secret Manager를
+사용하는 경우에만 `-GoogleClientSecret`, `-CloudflareTunnelToken` 인자를 쓴다.
 
 The initializer generates the database password and Better Auth secret, sets
 Google-only login, and fixes the public URL to `https://app.redongames.com`.

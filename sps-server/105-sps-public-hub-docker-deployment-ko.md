@@ -47,10 +47,11 @@ Set-Location ".\sps-server\deploy\hub"
 .\Initialize-SPSHubDeployment.ps1 `
   -Domain "app.example.com" `
   -GoogleClientId "<Google OAuth client ID>" `
-  -GoogleClientSecret "<Google OAuth client secret>"
+  -PromptForGoogleClientSecret
 ```
 
-For Tunnel mode, supply `-CloudflareTunnelToken` when creating the same `.env`.
+Tunnel 모드에서는 같은 명령에 `-PromptForCloudflareTunnelToken`을 추가한다.
+두 프롬프트 방식은 비밀값을 PowerShell 기록에 남기지 않는다.
 Do not share or commit the created file. Rotating it with `-Force` invalidates
 running authentication sessions and changes the database password.
 

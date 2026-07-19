@@ -4,9 +4,10 @@ param(
   [string]$Domain,
   [Parameter(Mandatory)]
   [string]$GoogleClientId,
-  [Parameter(Mandatory)]
   [string]$GoogleClientSecret,
   [string]$CloudflareTunnelToken,
+  [switch]$PromptForGoogleClientSecret,
+  [switch]$PromptForCloudflareTunnelToken,
   [string]$OutputPath = (Join-Path $PSScriptRoot ".env"),
   [switch]$Force
 )
@@ -25,6 +26,18 @@ function New-UrlSafeSecret {
   return [Convert]::ToBase64String($bytes).TrimEnd("=").Replace("+", "-").Replace("/", "_")
 }
 
+function ConvertFrom-SPSSecretPrompt {
+  param([Parameter(Mandatory)][string]$Prompt)
+
+  $secureValue = Read-Host -Prompt $Prompt -AsSecureString
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureValue)
+  try {
+    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+  }
+}
+
 $normalizedDomain = $Domain.Trim().TrimEnd(".").ToLowerInvariant()
 $domainLabels = @($normalizedDomain.Split("."))
 $hasInvalidLabel = $domainLabels.Count -lt 2 -or @($domainLabels | Where-Object {
@@ -39,6 +52,19 @@ if ($normalizedDomain -in @("localhost", "127.0.0.1", "0.0.0.0")) {
 if ((Test-Path -LiteralPath $OutputPath) -and -not $Force) {
   throw "Refusing to overwrite $OutputPath. Pass -Force only when intentionally rotating all local deployment secrets."
 }
+
+if ($PromptForGoogleClientSecret -and -not [string]::IsNullOrWhiteSpace($GoogleClientSecret)) {
+  throw "Pass either -GoogleClientSecret or -PromptForGoogleClientSecret, not both."
+}
+if ($PromptForCloudflareTunnelToken -and -not [string]::IsNullOrWhiteSpace($CloudflareTunnelToken)) {
+  throw "Pass either -CloudflareTunnelToken or -PromptForCloudflareTunnelToken, not both."
+}
+if ($PromptForGoogleClientSecret) {
+  $GoogleClientSecret = ConvertFrom-SPSSecretPrompt "Paste the Google OAuth client secret"
+}
+if ($PromptForCloudflareTunnelToken) {
+  $CloudflareTunnelToken = ConvertFrom-SPSSecretPrompt "Paste the Cloudflare Tunnel connector token"
+}
 if ([string]::IsNullOrWhiteSpace($GoogleClientId) -or [string]::IsNullOrWhiteSpace($GoogleClientSecret)) {
   throw "Google OAuth client ID and client secret are required."
 }
@@ -47,7 +73,7 @@ $normalizedGoogleClientSecret = $GoogleClientSecret.Trim()
 if ($normalizedGoogleClientId -notmatch "^[A-Za-z0-9._-]+$" -or $normalizedGoogleClientSecret -notmatch "^[A-Za-z0-9._-]+$") {
   throw "Google OAuth values must not contain whitespace, quotes, or Compose control characters."
 }
-if (-not [string]::IsNullOrWhiteSpace($CloudflareTunnelToken) -and $CloudflareTunnelToken.Trim() -match "[\s\"']") {
+if (-not [string]::IsNullOrWhiteSpace($CloudflareTunnelToken) -and $CloudflareTunnelToken.Trim() -match '[\s"'']') {
   throw "Cloudflare Tunnel token must not contain whitespace or quotes."
 }
 

@@ -59,8 +59,8 @@ Set-Location ".\sps-server\deploy\hub"
 .\Initialize-SPSHubDeployment.ps1 `
   -Domain "app.redongames.com" `
   -GoogleClientId "<Google OAuth client ID>" `
-  -GoogleClientSecret "<Google OAuth client secret>" `
-  -CloudflareTunnelToken "<Cloudflare Tunnel connector token>"
+  -PromptForGoogleClientSecret `
+  -PromptForCloudflareTunnelToken
 ```
 
 Run the preflight. It checks for the required keys but never prints their

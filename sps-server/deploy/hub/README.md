@@ -39,13 +39,14 @@ git submodule update --init --recursive
 
 Run the initializer from this directory. It creates an ignored `.env` file
 with generated database and authentication secrets. Never commit or share this
-file.
+file. The prompt switches are the recommended route because neither secret is
+placed in shell history.
 
 ```powershell
 .\Initialize-SPSHubDeployment.ps1 `
   -Domain app.example.com `
   -GoogleClientId "your-google-client-id" `
-  -GoogleClientSecret "your-google-client-secret"
+  -PromptForGoogleClientSecret
 ```
 
 For Cloudflare Tunnel mode, create a **remotely-managed** tunnel in the
@@ -55,9 +56,13 @@ Cloudflare dashboard and include its connector token while creating `.env`:
 .\Initialize-SPSHubDeployment.ps1 `
   -Domain app.example.com `
   -GoogleClientId "your-google-client-id" `
-  -GoogleClientSecret "your-google-client-secret" `
-  -CloudflareTunnelToken "your-cloudflare-tunnel-token"
+  -PromptForGoogleClientSecret `
+  -PromptForCloudflareTunnelToken
 ```
+
+The original `-GoogleClientSecret` and `-CloudflareTunnelToken` parameters are
+still available for unattended CI or a dedicated secret manager. Do not use
+them in an interactive shared shell.
 
 The preflight verifies the Core source, private configuration, Docker Engine,
 and Compose contract without printing secret values:
