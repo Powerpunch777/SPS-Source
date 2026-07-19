@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { isSpsHubApiUrl, normalizeSpsHubOrigin, requireSpsHubOrigin, requireSpsOwnerHostOrigin } from "../src/workspace-url.mjs";
 
-test("normalizes only HTTP(S) SPS Hub origins", () => {
+test("normalizes only HTTP(S) SPS team origins", () => {
   assert.equal(normalizeSpsHubOrigin("https://hub.example.test/path?old=1"), "https://hub.example.test");
   assert.equal(normalizeSpsHubOrigin("http://hub.example.test:3100"), "http://hub.example.test:3100");
   assert.equal(normalizeSpsHubOrigin("file:///not-a-hub"), null);
@@ -26,6 +26,6 @@ test("requires HTTPS for every SPS Desktop Hub profile", () => {
 test("allows HTTP only for the internal loopback Owner Host", () => {
   assert.equal(requireSpsOwnerHostOrigin("http://127.0.0.1:31310/path"), "http://127.0.0.1:31310");
   assert.equal(requireSpsOwnerHostOrigin("http://localhost:31310"), "http://localhost:31310");
-  assert.throws(() => requireSpsOwnerHostOrigin("https://app.redongames.com"), /loopback HTTP/);
+  assert.throws(() => requireSpsOwnerHostOrigin("https://marketing.example.com"), /loopback HTTP/);
   assert.throws(() => requireSpsOwnerHostOrigin("http://192.168.0.10:31310"), /loopback HTTP/);
 });

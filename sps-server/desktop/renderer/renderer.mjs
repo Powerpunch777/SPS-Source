@@ -2,7 +2,7 @@ import { createSpsDesktopSetupReadiness } from "./setup-readiness.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const notice = $("#notice");
-const DEFAULT_SPS_HUB_URL = "https://app.redongames.com";
+const DEFAULT_SPS_HUB_URL = "";
 
 function showNotice(message, error = false) {
   notice.textContent = message;
@@ -219,7 +219,7 @@ function renderStatus(status) {
   $("#auth-panel").hidden = ownerHost;
   $("#server-route").textContent = ownerHost
     ? "This SPS Desktop runs the SPS Owner Host internally. Company data, Rooms, Tasks, files, and memory stay in this computer's Owner Vault."
-    : "This SPS Desktop connects to a shared HTTPS SPS Hub. This computer runs only its approved local Agent work.";
+    : "This SPS Desktop joins a shared private SPS team address. This computer runs only its approved local Agent work.";
   renderOwnerHost(status);
   renderTeamAccess(status);
   renderUpdate(status.update);
@@ -256,7 +256,7 @@ async function handleJoinLink(join) {
   applyJoinFields(join);
   const displayName = $("#display-name").value.trim();
   if (!displayName) {
-    showNotice("Invitation received. Name this computer, save the Hub profile, then open the invitation.");
+    showNotice("Invitation received. Name this computer, save the team connection, then open the invitation.");
     return;
   }
   await window.spsDesktop.saveProfile({
@@ -303,10 +303,10 @@ $("#use-owner-host").addEventListener("click", () => run(async () => {
 }));
 $("#check-hub").addEventListener("click", () => run(async () => {
   const advancedHubUrl = $("#hub-url-advanced").value.trim();
-  if (!advancedHubUrl) throw new Error("SPS Hub address is required");
+  if (!advancedHubUrl) throw new Error("Enter the private SPS team address from an invitation.");
   $("#hub-url").value = advancedHubUrl;
   const result = await window.spsDesktop.checkHub({ hubUrl: advancedHubUrl });
-  showNotice(`SPS Hub is reachable at ${result.hubUrl}.`);
+  showNotice(`SPS team address is reachable at ${result.hubUrl}.`);
 }));
 $("#inspect-team-access").addEventListener("click", () => run(async () => {
   const setup = await window.spsDesktop.inspectTeamAccess();
@@ -430,7 +430,7 @@ $("#connect-node").addEventListener("click", () => run(async () => {
   output.textContent = pretty(result.capabilities);
   output.classList.add("has-content");
   showNotice(result.node.status === "pending"
-    ? "Computer registered and key verified. Approve it in SPS Hub > Settings > Nodes."
+    ? "Computer registered and key verified. Approve it in Company settings > Nodes."
     : wasRegistered
       ? "Computer and local capabilities refreshed."
       : "Computer registered and heartbeat completed.");
@@ -442,7 +442,7 @@ $("#disconnect-node").addEventListener("click", () => run(async () => {
   if (outcome?.remoteDisconnected) {
     showNotice("This computer was disconnected. Reconnecting creates a new Node that needs Owner approval.");
   } else {
-    showNotice(outcome?.remoteError ?? "This computer was disconnected locally. An Owner may need to revoke the old Node in SPS Hub.", true);
+    showNotice(outcome?.remoteError ?? "This computer was disconnected locally. An Owner may need to revoke the old Node in Company settings > Nodes.", true);
   }
 }));
 $("#launch-at-login").addEventListener("change", (event) => run(async () => {

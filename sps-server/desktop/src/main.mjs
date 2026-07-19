@@ -651,12 +651,12 @@ function configureWorkspaceNavigation(window, hubOrigin) {
 }
 
 async function openWorkspace() {
-  if (!state.profile) throw new Error("Save an SPS Hub profile first");
+  if (!state.profile) throw new Error("Save an SPS team connection first");
   if (!isOwnerHostProfile() && !currentBoardToken()) {
     throw new Error("Continue with Google before opening the SPS workspace");
   }
   const hubOrigin = workspaceHubUrl();
-  if (!hubOrigin) throw new Error("Save an SPS Hub profile first");
+  if (!hubOrigin) throw new Error("Save an SPS team connection first");
   if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
     if (workspaceWindow.isMinimized()) workspaceWindow.restore();
     workspaceWindow.show();
@@ -791,7 +791,7 @@ async function connectNode() {
   if (isOwnerHostProfile()) {
     throw new Error("Owner Host mode is ready for local work. Enable remote Node grants after authenticated network setup is configured.");
   }
-  if (!state.profile) throw new Error("Save an SPS Hub profile first");
+  if (!state.profile) throw new Error("Save an SPS team connection first");
   if (!state.profile.companyId) throw new Error("Choose an SPS company before registering this computer");
   const accessToken = currentBoardToken();
   if (!accessToken) throw new Error("Sign in to SPS Desktop before registering this computer");
@@ -836,10 +836,10 @@ async function disconnectCurrentNode() {
       await disconnectSpsNode({ hubUrl, nodeId, accessToken });
       remoteDisconnected = true;
     } catch (error) {
-      remoteError = error instanceof Error ? error.message : "Could not disconnect this computer from the SPS Hub.";
+      remoteError = error instanceof Error ? error.message : "Could not disconnect this computer from the SPS team Host.";
     }
   } else if (nodeId) {
-    remoteError = "This computer could not contact the SPS Hub to disconnect. An owner must revoke it from SPS Hub > Settings > Nodes.";
+    remoteError = "This computer could not contact the SPS team Host to disconnect. An owner must revoke it from Company settings > Nodes.";
   }
 
   state.identity = null;
@@ -878,7 +878,7 @@ async function sendNodeHeartbeat() {
       await persistState();
       return null;
     }
-    nodeRuntimeStatus.heartbeatError = "Could not contact the Hub. Check the SPS Hub address, network, and Desktop sign-in.";
+    nodeRuntimeStatus.heartbeatError = "Could not contact the SPS team Host. Check the team address, network, and Desktop sign-in.";
     return null;
   }
 }
@@ -917,7 +917,7 @@ async function pollNodeCommands() {
   } catch {
     nodeRuntimeStatus.commandPollError = claimedCommand
       ? "The latest local command could not complete. Check its Task run for details."
-      : "Could not poll the Hub for commands. Check the SPS Hub address, network, and Desktop sign-in.";
+      : "Could not poll the SPS team Host for commands. Check the team address, network, and Desktop sign-in.";
   } finally {
     commandPollInFlight = false;
   }
@@ -1035,7 +1035,7 @@ function registerIpc() {
     return publicStatus();
   });
   ipcMain.handle("desktop:open-invite", async (_event, input) => {
-    if (!state.profile) throw new Error("Save an SPS Hub profile first");
+    if (!state.profile) throw new Error("Save an SPS team connection first");
     if (isOwnerHostProfile()) throw new Error("Create invitations after the Owner Host is configured for private or public team access.");
     const url = buildInviteUrl(state.profile.hubUrl, input.code);
     await shell.openExternal(url);
@@ -1044,7 +1044,7 @@ function registerIpc() {
   ipcMain.handle("desktop:open-workspace", openWorkspace);
   ipcMain.handle("desktop:open-setup", openSetup);
   ipcMain.handle("desktop:save-project-workspace", async (_event, input) => {
-    if (!state.profile) throw new Error("Save an SPS Hub profile before mapping a project workspace");
+    if (!state.profile) throw new Error("Save an SPS team connection before mapping a project workspace");
     const projectId = String(input.projectId ?? "").trim();
     const workspacePath = await requireSpsWorkspaceDirectory(input.workspacePath);
     if (!projectId) throw new Error("Project ID is required");
@@ -1076,7 +1076,7 @@ function registerIpc() {
     return publicStatus();
   });
   ipcMain.handle("desktop:start-auth", async () => {
-    if (!state.profile) throw new Error("Save an SPS Hub profile first");
+    if (!state.profile) throw new Error("Save an SPS team connection first");
     if (isOwnerHostProfile()) throw new Error("Google sign-in is used for remote team access, not local Owner Host mode.");
     pendingAuth = await startSpsDesktopAuth({
       hubUrl: state.profile.hubUrl,

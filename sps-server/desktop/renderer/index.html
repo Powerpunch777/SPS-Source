@@ -43,7 +43,7 @@
           <p>Name this computer. SPS connects to your team automatically.</p>
         </div>
         <form id="profile-form">
-          <input id="hub-url" type="hidden" value="https://app.redongames.com" />
+          <input id="hub-url" type="hidden" value="" />
           <input id="company-id" type="hidden" />
           <label>Computer name <input id="display-name" required placeholder="e.g. Jimin's laptop" /></label>
           <label id="company-field" class="company-field">Team <select id="company-picker" disabled><option value="">Sign in with Google first</option></select></label>
@@ -52,7 +52,7 @@
             <button type="submit">Save and continue</button>
           </div>
         </form>
-        <p id="server-route" class="server-route"><strong>Where this connects:</strong> Choose the local Owner Host above, or join a shared HTTPS SPS Hub.</p>
+        <p id="server-route" class="server-route"><strong>Where this connects:</strong> Use the local Owner Host above, or open a team invitation. The invitation supplies the team's private address automatically.</p>
       </section>
 
       <section id="auth-panel" class="panel primary-panel">
@@ -93,10 +93,10 @@
         <summary>Advanced settings and diagnostics</summary>
         <div class="advanced-content">
           <section class="subpanel">
-            <h2>SPS server</h2>
-            <p class="muted">Most people should leave this as the SPS server. Change it only when your team operates another HTTPS SPS Hub.</p>
+            <h2>Team address</h2>
+            <p class="muted">Normally an invitation fills this in. Enter an HTTPS address only when connecting to a team manually.</p>
             <div class="action-row">
-              <input id="hub-url-advanced" placeholder="https://app.redongames.com" />
+              <input id="hub-url-advanced" placeholder="https://owner-pc.example.ts.net" />
               <button id="check-hub" type="button" class="quiet-button">Check connection</button>
             </div>
           </section>

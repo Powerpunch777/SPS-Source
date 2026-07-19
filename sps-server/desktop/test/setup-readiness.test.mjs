@@ -38,7 +38,7 @@ test("keeps command readiness distinct from a registered but unapproved computer
 
 test("requires protected Desktop sign-in before the shared workspace opens", () => {
   const unsigned = createSpsDesktopSetupReadiness({
-    profile: { hubUrl: "https://app.redongames.com", displayName: "Member PC", companyId: "" },
+    profile: { hubUrl: "https://owner-pc.example.ts.net", displayName: "Member PC", companyId: "" },
     signedIn: false,
   });
 

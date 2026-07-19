@@ -13,13 +13,13 @@ export function requireSpsHubOrigin(value) {
   try {
     url = new URL(value);
   } catch {
-    throw new Error("Enter a valid SPS Hub URL.");
+    throw new Error("Enter a valid SPS team address.");
   }
   if (url.protocol !== "https:") {
-    throw new Error("SPS Hub URL must use HTTPS.");
+    throw new Error("The SPS team address must use HTTPS.");
   }
   if (url.username || url.password) {
-    throw new Error("SPS Hub URL must not include a username or password.");
+    throw new Error("The SPS team address must not include a username or password.");
   }
   return url.origin;
 }

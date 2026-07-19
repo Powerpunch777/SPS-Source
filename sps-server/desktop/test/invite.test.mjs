@@ -9,7 +9,7 @@ import {
   spsInviteTokenToCode,
 } from "../src/invite.mjs";
 
-test("converts a human SPS code to the Hub invite token", () => {
+test("converts a human SPS code to the team invitation token", () => {
   assert.equal(spsCodeToInviteToken("sps-ab12-cd34"), "sps_invite_ab12cd34");
   assert.equal(spsCodeToInviteToken("sps-ab12-cd34-ef56-gh78"), "sps_invite_ab12cd34ef56gh78");
   assert.equal(spsCodeToInviteToken("not a code"), null);

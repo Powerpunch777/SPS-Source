@@ -56,8 +56,8 @@ export function createSpsDesktopSetupReadiness(status) {
   const steps = [
     {
       id: "profile",
-      title: "Save Hub profile",
-      detail: profileReady ? "Hub address and computer name are saved." : "Enter the Hub address and a name for this computer.",
+      title: "Save team connection",
+      detail: profileReady ? "Team address and computer name are saved." : "Open an invitation or enter the team address and a name for this computer.",
       state: profileReady ? "complete" : "current",
     },
     {
@@ -78,7 +78,7 @@ export function createSpsDesktopSetupReadiness(status) {
       detail: nodeApproved
         ? "Owner approval is active. This computer can run only authorized Agent commands."
         : nodePending
-          ? "The computer key is verified. It is waiting for an Owner to approve it in SPS Hub."
+          ? "The computer key is verified. It is waiting for an Owner to approve it in Company settings > Nodes."
           : "Register the local runtimes, then an Owner grants this computer access to Agents.",
       state: nodeApproved ? "complete" : nodePending ? "current" : companyReady ? "current" : "blocked",
     },

@@ -6,7 +6,7 @@ import {
   isAllowedSpsWorkspaceNavigation,
 } from "../src/window-security.mjs";
 
-test("keeps the Desktop preload bridge out of remote SPS Hub windows", () => {
+test("keeps the Desktop preload bridge out of remote SPS team windows", () => {
   const setup = createSpsSetupWindowPreferences("C:/SPS/preload.mjs");
   const workspace = createSpsWorkspaceWindowPreferences();
   assert.equal(setup.preload, "C:/SPS/preload.mjs");
