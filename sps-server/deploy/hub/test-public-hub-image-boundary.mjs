@@ -11,6 +11,16 @@ const runtimeEntrypoint = await readFile(runtimeEntrypointPath, "utf8");
 const productionStart = dockerfile.indexOf("FROM base AS production");
 
 assert.notEqual(productionStart, -1, "SPS Hub Dockerfile must have a production stage");
+assert.match(
+  dockerfile,
+  /pnpm --filter @paperclipai\/server prepare:ui-dist/,
+  "SPS Hub must copy the freshly built UI into server/ui-dist before packaging the production image.",
+);
+assert.match(
+  dockerfile,
+  /test -f server\/ui-dist\/index\.html/,
+  "SPS Hub image build must verify the server-served UI bundle exists.",
+);
 
 const productionStage = dockerfile.slice(productionStart);
 for (const providerRuntime of [

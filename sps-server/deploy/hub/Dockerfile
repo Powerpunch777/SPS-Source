@@ -21,8 +21,10 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @paperclipai/ui build \
+  && pnpm --filter @paperclipai/server prepare:ui-dist \
   && pnpm --filter @paperclipai/plugin-sdk build \
   && pnpm --filter @paperclipai/server build \
+  && test -f server/ui-dist/index.html \
   && test -f server/dist/index.js
 
 WORKDIR /workspace/sps-server/sps-room-chat
