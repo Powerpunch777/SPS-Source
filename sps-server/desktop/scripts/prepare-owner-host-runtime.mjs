@@ -29,6 +29,12 @@ function run(command, args, cwd) {
 }
 
 async function resolvePnpmInvocation() {
+  const configuredPnpmCli = process.env.SPS_PNPM_CLI?.trim();
+  if (configuredPnpmCli) {
+    const cliPath = path.resolve(configuredPnpmCli);
+    await requireFile(cliPath, "SPS_PNPM_CLI does not point to a pnpm CLI file.");
+    return { command: process.execPath, prefixArgs: [cliPath] };
+  }
   if (process.platform !== "win32") return { command: "pnpm", prefixArgs: [] };
   const pathEntries = String(process.env.PATH || "").split(path.delimiter).filter(Boolean);
   for (const directory of pathEntries) {
