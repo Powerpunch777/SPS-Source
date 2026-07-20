@@ -120,7 +120,7 @@ export async function resolveSpsNodeCodexHome(command, hostEnvironment = process
   }
   const auth = await fs.stat(path.join(codexHome, "auth.json")).catch(() => null);
   if (!auth?.isFile()) {
-    if (!profileWasExplicitlySelected) {
+    if (!profileWasExplicitlySelected || profileDirectory === ".codex") {
       const signedInProfiles = await listSignedInCodexProfiles(resolvedHomeRoot);
       if (signedInProfiles.length === 1) {
         return path.join(resolvedHomeRoot, signedInProfiles[0]);

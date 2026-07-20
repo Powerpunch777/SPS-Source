@@ -296,7 +296,7 @@ test("resolves only a signed-in local Codex profile selected by the Hub", async 
     );
     await assert.rejects(
       resolveSpsNodeCodexHome({ env: { PAPERCLIP_CODEX_ACCOUNT: ".codex" } }, { USERPROFILE: homeRoot }),
-      /not signed in/,
+      /multiple signed-in Codex profiles/,
     );
   } finally {
     await fs.rm(homeRoot, { recursive: true, force: true });
