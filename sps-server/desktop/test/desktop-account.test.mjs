@@ -10,6 +10,7 @@ import {
 } from "../src/desktop-account.mjs";
 
 const clientId = "1234567890-spsdesktopabcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com";
+const clientSecret = "sps-desktop-client-secret";
 
 test("creates a high-entropy PKCE verifier and S256 challenge", () => {
   const pkce = createGooglePkce((size) => Buffer.alloc(size, 7));
@@ -64,6 +65,7 @@ test("returns from the loopback callback only after PKCE token exchange and ID t
   const randomBytes = (size) => Buffer.alloc(size, 9);
   const pending = await startSpsDesktopGoogleSignIn({
     clientId,
+    clientSecret,
     randomBytes,
     now: () => 1_700_000_000_000,
     openExternal: async (url) => { openedUrl = url; },
@@ -91,4 +93,23 @@ test("returns from the loopback callback only after PKCE token exchange and ID t
   const account = await pending.result;
   assert.equal(account.subject, "google-subject");
   assert.equal(account.name, "SPS Member");
+});
+
+test("keeps a safe Google token exchange failure reason for Desktop retry", async () => {
+  let openedUrl = null;
+  const pending = await startSpsDesktopGoogleSignIn({
+    clientId,
+    clientSecret,
+    openExternal: async (url) => { openedUrl = url; },
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: "invalid_client",
+      error_description: "OAuth client is not available yet.",
+    }), { status: 401 }),
+  });
+  const authorization = new URL(openedUrl);
+  const callback = authorization.searchParams.get("redirect_uri");
+  const response = await fetch(`${callback}?code=google-code&state=${authorization.searchParams.get("state")}`);
+
+  assert.equal(response.status, 200);
+  await assert.rejects(pending.result, /OAuth client is not available yet\./);
 });

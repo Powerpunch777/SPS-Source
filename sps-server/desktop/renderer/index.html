@@ -28,15 +28,20 @@
           <span class="google-mark" aria-hidden="true">G</span>
           <span id="google-action-label">Google로 계속</span>
         </button>
+        <button id="cancel-google-account" class="text-action pending-cancel" type="button" hidden>로그인 취소</button>
         <p id="account-configuration-note" class="subtle-note" hidden></p>
         <button id="show-google-configuration" class="text-action" type="button" hidden>Google 로그인 설정</button>
         <form id="google-configuration-form" class="configuration-form" hidden>
           <label for="google-client-id">Google OAuth Desktop client ID</label>
           <div class="input-row">
             <input id="google-client-id" autocomplete="off" placeholder="...apps.googleusercontent.com" />
+          </div>
+          <label for="google-client-secret">Google OAuth Desktop client secret</label>
+          <div class="input-row">
+            <input id="google-client-secret" type="password" autocomplete="off" placeholder="GOCSPX-..." />
             <button type="submit" class="secondary-action">저장</button>
           </div>
-          <p>이 값은 공개 client ID이며, Desktop 앱 유형의 OAuth 클라이언트를 사용합니다.</p>
+          <p>이 값은 이 컴퓨터의 SPS 암호화 보관함에만 저장되며, 다른 기기나 SPS Server로 전송되지 않습니다.</p>
         </form>
       </section>
 

@@ -14,12 +14,13 @@ test("adds private team access fields without discarding a v1 Desktop profile", 
       nodeId: "node-1",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 3);
+    assert.equal(state.version, 4);
     assert.equal(state.profile.hubUrl, "https://app.example.test");
     assert.equal(state.nodeId, "node-1");
     assert.equal(state.teamAccess, null);
     assert.equal(state.encryptedTeamCredentials, null);
     assert.equal(state.encryptedDesktopAccount, null);
+    assert.equal(state.encryptedDesktopGoogleClientSecret, null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -32,6 +33,7 @@ test("persists an opt-in team access record without plaintext credentials", asyn
       ...emptyState(),
       teamAccess: { enabled: true, hostname: "main.tailnet.ts.net" },
       encryptedTeamCredentials: "secure-storage-value",
+      encryptedDesktopGoogleClientSecret: "encrypted-desktop-oauth-secret",
     };
     await saveState(root, state);
     const raw = await fs.readFile(path.join(root, "sps-desktop-state.json"), "utf8");

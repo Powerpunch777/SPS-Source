@@ -38,9 +38,13 @@ function renderAccount(status) {
   show($("#account-screen"), !signedIn);
   $("#start-google-account").disabled = pending || !configured;
   $("#google-action-label").textContent = pending ? "Google 로그인 확인 중..." : "Google로 계속";
+  show($("#cancel-google-account"), pending);
+  if (!$("#google-client-id").value && desktopAccount.clientId) {
+    $("#google-client-id").value = desktopAccount.clientId;
+  }
   const note = $("#account-configuration-note");
   if (!configured) {
-    note.textContent = "이 개발 설치에는 Google Desktop 로그인 client ID가 아직 설정되지 않았습니다.";
+    note.textContent = "이 설치에는 Google Desktop 로그인 client ID와 client secret 설정이 아직 필요합니다.";
   } else if (desktopAccount.error) {
     note.textContent = desktopAccount.error;
   } else {
@@ -129,6 +133,11 @@ $("#start-google-account").addEventListener("click", () => run(async () => {
   setNotice("브라우저에서 Google 로그인을 완료하면 SPS Desktop이 자동으로 이어집니다.");
 }));
 
+$("#cancel-google-account").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.signOutGoogleAccount();
+  setNotice("Google 로그인 요청을 취소했습니다. 다시 시도할 수 있습니다.");
+}));
+
 $("#show-google-configuration").addEventListener("click", () => {
   const form = $("#google-configuration-form");
   form.hidden = !form.hidden;
@@ -137,9 +146,13 @@ $("#show-google-configuration").addEventListener("click", () => {
 
 $("#google-configuration-form").addEventListener("submit", (event) => run(async () => {
   event.preventDefault();
-  await window.spsDesktop.configureGoogleAccount({ clientId: $("#google-client-id").value });
+  await window.spsDesktop.configureGoogleAccount({
+    clientId: $("#google-client-id").value,
+    clientSecret: $("#google-client-secret").value,
+  });
   $("#google-configuration-form").hidden = true;
   $("#google-client-id").value = "";
+  $("#google-client-secret").value = "";
   setNotice("Google Desktop 로그인 설정을 저장했습니다.");
 }));
 

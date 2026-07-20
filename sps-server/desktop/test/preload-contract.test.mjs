@@ -29,3 +29,16 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:list-member-invites"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:revoke-member-invite"/);
 });
+
+test("notifies the renderer when Google Desktop sign-in state changes", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(
+    main,
+    /async function configureDesktopGoogleClient\(input\) \{[\s\S]*?await persistState\(\);\s*sendDesktopAccountStatus\(\);[\s\S]*?return publicStatus\(\);/,
+  );
+  assert.match(
+    main,
+    /async function signOutDesktopAccount\(\) \{[\s\S]*?await persistState\(\);\s*sendDesktopAccountStatus\(\);[\s\S]*?return publicStatus\(\);/,
+  );
+});

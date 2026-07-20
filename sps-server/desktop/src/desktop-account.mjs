@@ -89,12 +89,13 @@ export function validateSpsDesktopGoogleClaims(claims, { clientId, nonce, now = 
   };
 }
 
-async function exchangeGoogleCode({ fetchImpl, clientId, redirectUri, verifier, code }) {
+async function exchangeGoogleCode({ fetchImpl, clientId, clientSecret, redirectUri, verifier, code }) {
   const response = await fetchImpl(GOOGLE_TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: clientId,
+      client_secret: requiredText(clientSecret, "Google Desktop client secret is not configured."),
       code,
       code_verifier: verifier,
       grant_type: "authorization_code",
@@ -103,7 +104,10 @@ async function exchangeGoogleCode({ fetchImpl, clientId, redirectUri, verifier, 
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !value(payload?.id_token)) {
-    throw new Error("Google could not complete SPS Desktop sign-in.");
+    const reason = value(payload?.error_description) || value(payload?.error);
+    throw new Error(reason
+      ? `Google could not complete SPS Desktop sign-in: ${reason}`
+      : "Google could not complete SPS Desktop sign-in.");
   }
   return payload.id_token;
 }
@@ -133,6 +137,7 @@ async function verifyGoogleIdToken({ fetchImpl, idToken, clientId, nonce, now })
 
 export async function startSpsDesktopGoogleSignIn({
   clientId,
+  clientSecret,
   openExternal,
   fetchImpl = fetch,
   randomBytes = nodeRandomBytes,
@@ -143,6 +148,7 @@ export async function startSpsDesktopGoogleSignIn({
   if (!isSpsDesktopGoogleClientId(clientId)) {
     throw new Error("Google login is not configured for this SPS Desktop build.");
   }
+  requiredText(clientSecret, "Google Desktop client secret is not configured.");
   const state = randomBytes(32).toString("base64url");
   const nonce = randomBytes(32).toString("base64url");
   const { verifier, challenge } = createGooglePkce(randomBytes);
@@ -185,7 +191,7 @@ export async function startSpsDesktopGoogleSignIn({
     const redirectUri = `http://127.0.0.1:${address.port}/oauth2/callback`;
     void (async () => {
       try {
-        const idToken = await exchangeGoogleCode({ fetchImpl, clientId, redirectUri, verifier, code });
+        const idToken = await exchangeGoogleCode({ fetchImpl, clientId, clientSecret, redirectUri, verifier, code });
         const account = await verifyGoogleIdToken({ fetchImpl, idToken, clientId, nonce, now: now() });
         if (settled) return;
         settled = true;

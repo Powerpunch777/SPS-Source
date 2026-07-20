@@ -257,6 +257,25 @@ function configuredDesktopGoogleClientId() {
   return null;
 }
 
+function configuredDesktopGoogleClientSecret() {
+  if (state.encryptedDesktopGoogleClientSecret) {
+    try {
+      const fromState = String(decrypt(state.encryptedDesktopGoogleClientSecret) ?? "").trim();
+      if (fromState) return fromState;
+    } catch {
+      // A migrated profile can be configured again without losing its server.
+    }
+  }
+  const fromEnvironment = String(process.env.SPS_DESKTOP_GOOGLE_CLIENT_SECRET ?? "").trim();
+  return fromEnvironment || null;
+}
+
+function configuredDesktopGoogleCredentials() {
+  const clientId = configuredDesktopGoogleClientId();
+  const clientSecret = configuredDesktopGoogleClientSecret();
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
 function sendDesktopAccountStatus() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("desktop:desktop-account-changed", publicStatus());
@@ -264,23 +283,27 @@ function sendDesktopAccountStatus() {
 
 async function startDesktopAccountSignIn() {
   if (pendingDesktopAccount) return publicStatus();
-  const clientId = configuredDesktopGoogleClientId();
-  if (!clientId) {
-    throw new Error("Google login is not configured for this SPS Desktop build. Add the Desktop OAuth client ID first.");
+  const credentials = configuredDesktopGoogleCredentials();
+  if (!credentials) {
+    throw new Error("Google login is not configured for this SPS Desktop build. Add the Desktop OAuth client ID and client secret first.");
   }
   desktopAccountError = null;
-  pendingDesktopAccount = await startSpsDesktopGoogleSignIn({
-    clientId,
+  const signIn = await startSpsDesktopGoogleSignIn({
+    ...credentials,
     openExternal: (url) => shell.openExternal(url),
   });
-  void pendingDesktopAccount.result.then(async (account) => {
+  pendingDesktopAccount = signIn;
+  sendDesktopAccountStatus();
+  void signIn.result.then(async (account) => {
     state.encryptedDesktopAccount = encrypt(JSON.stringify(account));
-    desktopAccountError = null;
+    if (pendingDesktopAccount === signIn) desktopAccountError = null;
     await persistState();
   }).catch((error) => {
-    desktopAccountError = error instanceof Error ? error.message : "Google sign-in could not finish.";
+    if (pendingDesktopAccount === signIn) {
+      desktopAccountError = error instanceof Error ? error.message : "Google sign-in could not finish.";
+    }
   }).finally(() => {
-    pendingDesktopAccount = null;
+    if (pendingDesktopAccount === signIn) pendingDesktopAccount = null;
     sendDesktopAccountStatus();
   });
   return publicStatus();
@@ -288,21 +311,27 @@ async function startDesktopAccountSignIn() {
 
 async function configureDesktopGoogleClient(input) {
   const clientId = String(input?.clientId ?? "").trim();
+  const clientSecret = String(input?.clientSecret ?? "").trim();
   if (!isSpsDesktopGoogleClientId(clientId)) {
     throw new Error("Enter a valid Google OAuth Desktop client ID.");
   }
+  if (!clientSecret) throw new Error("Enter the Google OAuth Desktop client secret.");
   state.desktopGoogleClientId = clientId;
+  state.encryptedDesktopGoogleClientSecret = encrypt(clientSecret);
   desktopAccountError = null;
   await persistState();
+  sendDesktopAccountStatus();
   return publicStatus();
 }
 
 async function signOutDesktopAccount() {
-  pendingDesktopAccount?.cancel();
+  const signIn = pendingDesktopAccount;
   pendingDesktopAccount = null;
+  signIn?.cancel();
   desktopAccountError = null;
   state.encryptedDesktopAccount = null;
   await persistState();
+  sendDesktopAccountStatus();
   return publicStatus();
 }
 
@@ -1035,7 +1064,8 @@ function publicStatus() {
   const desktopAccount = currentDesktopAccount();
   return {
     desktopAccount: {
-      configured: Boolean(configuredDesktopGoogleClientId()),
+      configured: Boolean(configuredDesktopGoogleCredentials()),
+      clientId: configuredDesktopGoogleClientId(),
       signedIn: Boolean(desktopAccount),
       pending: Boolean(pendingDesktopAccount),
       error: desktopAccountError,
