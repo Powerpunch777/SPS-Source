@@ -1,170 +1,97 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
     <title>SPS Desktop</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="desktop-shell">
-      <header>
-        <div class="eyebrow">SONPARKSERVER</div>
-        <h1>SPS Desktop</h1>
-        <p>Run SPS on this computer or join a team. Your CLI accounts and local AI stay on this computer.</p>
+    <main class="onboarding-shell">
+      <header class="brand-bar">
+        <div class="brand-lockup">
+          <img src="../assets/sps-logo.png" alt="SPS" />
+          <span>SPS</span>
+        </div>
+        <button id="open-workspace-header" class="header-action" type="button" hidden>Workspace 열기</button>
       </header>
 
-      <section class="local-host-control" aria-labelledby="owner-host-title">
-        <div>
-          <strong id="owner-host-title">Use this computer as the SPS Owner Host</strong>
-          <p id="owner-host-detail">Starting the encrypted local SPS Host...</p>
+      <section id="account-screen" class="screen account-screen" aria-labelledby="account-title">
+        <div class="screen-mark"><img src="../assets/sps-logo.png" alt="" /></div>
+        <div class="screen-copy">
+          <p class="eyebrow">SONPARKSERVER</p>
+          <h1 id="account-title">SPS에 로그인</h1>
+          <p>Google 계정으로 이 Desktop을 확인합니다. 프로젝트와 작업 데이터는 이 컴퓨터 밖으로 전송되지 않습니다.</p>
         </div>
-        <button id="use-owner-host" type="button">Use Owner Host</button>
-      </section>
-
-      <section class="setup-progress" aria-labelledby="setup-progress-title">
-        <div class="setup-progress-heading">
-          <div>
-            <div class="eyebrow">QUICK SETUP</div>
-            <h2 id="setup-progress-title">Connect this computer</h2>
+        <button id="start-google-account" class="primary-action google-action" type="button">
+          <span class="google-mark" aria-hidden="true">G</span>
+          <span id="google-action-label">Google로 계속</span>
+        </button>
+        <p id="account-configuration-note" class="subtle-note" hidden></p>
+        <button id="show-google-configuration" class="text-action" type="button" hidden>Google 로그인 설정</button>
+        <form id="google-configuration-form" class="configuration-form" hidden>
+          <label for="google-client-id">Google OAuth Desktop client ID</label>
+          <div class="input-row">
+            <input id="google-client-id" autocomplete="off" placeholder="...apps.googleusercontent.com" />
+            <button type="submit" class="secondary-action">저장</button>
           </div>
-          <span id="setup-progress-state" class="setup-state">Not connected</span>
-        </div>
-        <ol id="setup-steps" class="setup-steps"></ol>
-      </section>
-
-      <details id="remote-profile-panel" class="advanced-settings manual-team-connection">
-        <summary>Manual team connection</summary>
-        <div class="advanced-content">
-          <div class="panel-heading">
-          <div>
-            <h2>Team address and computer name</h2>
-          </div>
-          <p>Normally an invitation fills the team address and Google sets this computer's name. Use this only for a manual connection or a custom computer name.</p>
-        </div>
-        <form id="profile-form">
-          <input id="hub-url" type="hidden" value="" />
-          <input id="company-id" type="hidden" />
-          <label>Computer name (optional) <input id="display-name" placeholder="Uses your Google name after sign-in" /></label>
-          <label id="company-field" class="company-field">Team <select id="company-picker" disabled><option value="">Sign in with Google first</option></select></label>
-          <input id="default-workspace-path" type="hidden" />
-          <div class="action-row profile-actions">
-            <button type="submit">Save manual connection</button>
-          </div>
+          <p>이 값은 공개 client ID이며, Desktop 앱 유형의 OAuth 클라이언트를 사용합니다.</p>
         </form>
-        <p id="server-route" class="server-route"><strong>Where this connects:</strong> An SPS invitation supplies the private Owner Host address automatically. This computer keeps its own CLI accounts and local AI.</p>
-        </div>
-      </details>
-
-      <section id="auth-panel" class="panel primary-panel">
-        <div class="panel-heading">
-          <div>
-            <div class="step-label">1</div>
-            <h2>Sign in with Google</h2>
-          </div>
-          <p>Paste the SPS invitation code from your Owner. It sets the private team address, then Google confirms who is using this computer.</p>
-        </div>
-        <div class="action-row">
-          <input id="invite-code" placeholder="SPS2-... invitation code" autocomplete="one-time-code" />
-          <button id="open-invite" type="button" class="quiet-button">Open team invitation</button>
-        </div>
-        <div class="action-row">
-          <button id="start-auth" type="button">Continue with Google</button>
-          <button id="poll-auth" type="button" class="quiet-button">I finished in browser</button>
-          <button id="sign-out" type="button" class="quiet-button">Sign out</button>
-        </div>
       </section>
 
-      <section id="workspace-panel" class="panel primary-panel">
-        <div class="panel-heading">
+      <section id="server-choice-screen" class="screen server-choice-screen" aria-labelledby="server-choice-title" hidden>
+        <div class="account-summary">
+          <img id="account-picture" alt="" hidden />
           <div>
-            <div class="step-label">2</div>
-            <h2>Open your SPS workspace</h2>
+            <strong id="account-name"></strong>
+            <span id="account-email"></span>
           </div>
-          <p>Projects, Rooms, Tasks, and existing Agents open inside SPS Desktop.</p>
+          <button id="sign-out-google-account" class="text-action" type="button">계정 변경</button>
         </div>
-        <div class="action-row">
-          <button id="open-workspace" type="button">Open SPS workspace</button>
-          <button id="connect-node" type="button" class="quiet-button">Enable this computer for Agent work</button>
+        <div class="screen-copy">
+          <p class="eyebrow">SPS DESKTOP</p>
+          <h1 id="server-choice-title">어디에서 시작할까요?</h1>
+          <p>서버는 회사, 프로젝트, Rooms, Tasks, 장기기억과 Node 권한을 관리합니다.</p>
         </div>
-        <p class="connection-note">The workspace stays in SPS Desktop. Only Google approval briefly opens your default browser. Enabling this computer for Agent work is optional and needs Owner approval.</p>
+        <div class="choice-grid">
+          <button id="create-owner-server" class="choice-card" type="button">
+            <span class="choice-icon" aria-hidden="true">+</span>
+            <strong>이 컴퓨터에 서버 만들기</strong>
+            <span>개인 작업 또는 소규모 팀의 기준 서버를 만듭니다.</span>
+          </button>
+          <button id="show-join-server" class="choice-card" type="button">
+            <span class="choice-icon" aria-hidden="true">&#8594;</span>
+            <strong>기존 서버에 참여하기</strong>
+            <span>초대 코드로 팀 서버와 이 컴퓨터의 Node를 연결합니다.</span>
+          </button>
+        </div>
+        <form id="join-server-form" class="join-form" hidden>
+          <label for="invite-code">초대 코드</label>
+          <div class="input-row">
+            <input id="invite-code" autocomplete="one-time-code" placeholder="SPS2-..." />
+            <button type="submit" class="primary-action">참여 계속</button>
+          </div>
+          <p>초대 수락과 서버 접근 확인은 브라우저에서 이어집니다.</p>
+        </form>
       </section>
 
-      <details class="advanced-settings">
-        <summary>Advanced settings and diagnostics</summary>
-        <div class="advanced-content">
-          <section class="subpanel">
-            <h2>Team address</h2>
-            <p class="muted">Normally an invitation fills this in. Enter an HTTPS address only when connecting to a team manually.</p>
-            <div class="action-row">
-              <input id="hub-url-advanced" placeholder="https://owner-pc.example.ts.net" />
-              <button id="check-hub" type="button" class="quiet-button">Check connection</button>
-            </div>
-          </section>
-          <section id="team-access-panel" class="subpanel" hidden>
-            <h2>Private team access</h2>
-            <p class="muted">Keep company data on this Owner Host while invited teammates connect over your Tailscale network. Their CLI logins and local models never leave their computers.</p>
-            <div class="action-row compact-row">
-              <button id="inspect-team-access" type="button" class="quiet-button">Detect Tailscale</button>
-            </div>
-            <form id="team-access-form" class="team-access-form">
-              <label>Company <select id="team-access-company" required><option value="">Detect Tailscale and load local companies</option></select></label>
-              <label>Google OAuth client ID <input id="team-google-client-id" autocomplete="off" placeholder="...apps.googleusercontent.com" required /></label>
-              <label>Google OAuth client secret <input id="team-google-client-secret" type="password" autocomplete="new-password" placeholder="Stored only in Windows secure storage" required /></label>
-              <div class="action-row profile-actions">
-                <button id="enable-private-team-access" type="submit">Enable private team Host</button>
-                <button id="disable-private-team-access" type="button" class="danger-button">Return to local-only</button>
-              </div>
-            </form>
-            <pre id="team-access-detail" class="details-output">Tailscale has not been checked.</pre>
-            <div id="member-invite-panel" class="member-invite" hidden>
-              <h3>Invite a teammate</h3>
-              <p class="muted">Creates a one-time Operator invitation that expires in 24 hours. Share it privately; it is not an Owner invitation.</p>
-              <div class="action-row">
-                <input id="member-invite-code" readonly placeholder="Create a teammate invitation" />
-                <button id="create-member-invite" type="button" class="quiet-button">Create invitation</button>
-                <button id="copy-member-invite" type="button" class="quiet-button">Copy</button>
-                <button id="revoke-member-invite" type="button" class="danger-button" disabled>Revoke</button>
-              </div>
-            </div>
-          </section>
-          <section class="subpanel">
-            <h2>Project folders</h2>
-            <p class="muted">Map an SPS project to its local clone only when that project will run on this computer.</p>
-            <form id="project-workspace-form">
-              <label>SPS project <select id="project-workspace-project-id" required disabled><option value="">Sign in and choose a team first</option></select></label>
-              <label>Local folder <input id="project-workspace-path" placeholder="C:\\Projects\\my-project" /></label>
-              <button type="submit">Save project folder</button>
-            </form>
-            <div class="action-row compact-row">
-              <button id="choose-project-workspace" type="button" class="quiet-button">Choose folder</button>
-              <button id="refresh-projects" type="button" class="quiet-button">Refresh projects</button>
-            </div>
-          </section>
-          <section class="subpanel">
-            <h2>Computer controls</h2>
-            <label class="toggle-row"><input id="launch-at-login" type="checkbox" />Start SPS Desktop when I sign in to Windows</label>
-            <div class="action-row compact-row">
-              <button id="scan-capabilities" type="button" class="quiet-button">View local tools</button>
-              <button id="disconnect-node" type="button" class="danger-button">Disconnect this computer</button>
-            </div>
-            <pre id="capabilities" class="details-output">Local tools have not been scanned yet.</pre>
-          </section>
-            <section class="subpanel">
-              <h2>Desktop updates</h2>
-              <div class="action-row compact-row">
-                <button id="install-update" type="button" disabled>Restart to apply update</button>
-              </div>
-            <pre id="update-detail">Checking Desktop update service...</pre>
-          </section>
-          <section class="subpanel status-panel">
-            <h2>Connection status</h2>
-            <pre id="status">Loading...</pre>
-          </section>
+      <section id="workspace-screen" class="screen workspace-screen" aria-labelledby="workspace-title" hidden>
+        <div class="screen-mark"><img src="../assets/sps-logo.png" alt="" /></div>
+        <div class="screen-copy">
+          <p class="eyebrow" id="workspace-eyebrow">SPS SERVER</p>
+          <h1 id="workspace-title">SPS Workspace 준비됨</h1>
+          <p id="workspace-detail">서버의 프로젝트, Rooms, Tasks와 Agents를 엽니다.</p>
         </div>
-      </details>
-      <p id="notice" role="status" aria-live="polite"></p>
+        <div class="workspace-actions">
+          <button id="open-workspace" class="primary-action" type="button">Workspace 열기</button>
+          <button id="complete-server-access" class="secondary-action" type="button" hidden>서버 접근 계속</button>
+          <button id="check-server-access" class="secondary-action" type="button" hidden>브라우저에서 완료했어요</button>
+        </div>
+        <p class="subtle-note">서버 상태, 멤버 초대, Node 승인과 Agent 권한은 Workspace의 서버 설정에서 관리합니다.</p>
+      </section>
+
+      <p id="notice" class="notice" role="status" aria-live="polite"></p>
     </main>
     <script type="module" src="./renderer.mjs"></script>
   </body>

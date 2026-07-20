@@ -14,11 +14,12 @@ test("adds private team access fields without discarding a v1 Desktop profile", 
       nodeId: "node-1",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 2);
+    assert.equal(state.version, 3);
     assert.equal(state.profile.hubUrl, "https://app.example.test");
     assert.equal(state.nodeId, "node-1");
     assert.equal(state.teamAccess, null);
     assert.equal(state.encryptedTeamCredentials, null);
+    assert.equal(state.encryptedDesktopAccount, null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

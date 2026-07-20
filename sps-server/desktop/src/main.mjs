@@ -58,6 +58,7 @@ import {
   createSpsWorkspaceWindowPreferences,
   isAllowedSpsWorkspaceNavigation,
 } from "./window-security.mjs";
+import { isSpsDesktopGoogleClientId, startSpsDesktopGoogleSignIn } from "./desktop-account.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
@@ -65,6 +66,8 @@ let mainWindow = null;
 let workspaceWindow = null;
 let state = emptyState();
 let pendingAuth = null;
+let pendingDesktopAccount = null;
+let desktopAccountError = null;
 let heartbeatTimer = null;
 let commandPollTimer = null;
 let commandPollInFlight = false;
@@ -227,6 +230,80 @@ async function ensureIdentity() {
 
 function currentBoardToken() {
   return state.encryptedBoardApiToken ? decrypt(state.encryptedBoardApiToken) : null;
+}
+
+function currentDesktopAccount() {
+  if (!state.encryptedDesktopAccount) return null;
+  try {
+    const parsed = JSON.parse(decrypt(state.encryptedDesktopAccount));
+    if (typeof parsed?.subject !== "string" || typeof parsed?.name !== "string") return null;
+    return {
+      subject: parsed.subject,
+      name: parsed.name,
+      email: typeof parsed.email === "string" ? parsed.email : null,
+      picture: typeof parsed.picture === "string" ? parsed.picture : null,
+      verifiedAt: typeof parsed.verifiedAt === "string" ? parsed.verifiedAt : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function configuredDesktopGoogleClientId() {
+  const fromState = String(state.desktopGoogleClientId ?? "").trim();
+  const fromEnvironment = String(process.env.SPS_DESKTOP_GOOGLE_CLIENT_ID ?? "").trim();
+  if (isSpsDesktopGoogleClientId(fromState)) return fromState;
+  if (isSpsDesktopGoogleClientId(fromEnvironment)) return fromEnvironment;
+  return null;
+}
+
+function sendDesktopAccountStatus() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("desktop:desktop-account-changed", publicStatus());
+}
+
+async function startDesktopAccountSignIn() {
+  if (pendingDesktopAccount) return publicStatus();
+  const clientId = configuredDesktopGoogleClientId();
+  if (!clientId) {
+    throw new Error("Google login is not configured for this SPS Desktop build. Add the Desktop OAuth client ID first.");
+  }
+  desktopAccountError = null;
+  pendingDesktopAccount = await startSpsDesktopGoogleSignIn({
+    clientId,
+    openExternal: (url) => shell.openExternal(url),
+  });
+  void pendingDesktopAccount.result.then(async (account) => {
+    state.encryptedDesktopAccount = encrypt(JSON.stringify(account));
+    desktopAccountError = null;
+    await persistState();
+  }).catch((error) => {
+    desktopAccountError = error instanceof Error ? error.message : "Google sign-in could not finish.";
+  }).finally(() => {
+    pendingDesktopAccount = null;
+    sendDesktopAccountStatus();
+  });
+  return publicStatus();
+}
+
+async function configureDesktopGoogleClient(input) {
+  const clientId = String(input?.clientId ?? "").trim();
+  if (!isSpsDesktopGoogleClientId(clientId)) {
+    throw new Error("Enter a valid Google OAuth Desktop client ID.");
+  }
+  state.desktopGoogleClientId = clientId;
+  desktopAccountError = null;
+  await persistState();
+  return publicStatus();
+}
+
+async function signOutDesktopAccount() {
+  pendingDesktopAccount?.cancel();
+  pendingDesktopAccount = null;
+  desktopAccountError = null;
+  state.encryptedDesktopAccount = null;
+  await persistState();
+  return publicStatus();
 }
 
 function currentTeamCredentials() {
@@ -393,7 +470,7 @@ async function activateOwnerHostProfile() {
     hubUrl: requireSpsOwnerHostOrigin(ownerHostStatus.url),
     connectionKind: "owner-host",
     companyId: "",
-    displayName: `${os.hostname()} Owner Host`,
+    displayName: currentDesktopAccount()?.name ?? `${os.hostname()} Owner Host`,
     defaultWorkspacePath: "",
     projectWorkspaces: {},
   };
@@ -435,11 +512,22 @@ async function startOwnerHost({ activate = false } = {}) {
 }
 
 async function bootstrapOwnerHost() {
+  if (!isOwnerHostProfile()) {
+    ownerHostStatus = {
+      ...ownerHostStatus,
+      state: "not-created",
+      lastError: null,
+    };
+    defaultMemoryStatus = {
+      ...defaultMemoryStatus,
+      state: "not-created",
+      lastError: null,
+    };
+    return;
+  }
   try {
-    await startOwnerHost({ activate: !state.profile });
-    if (isOwnerHostProfile()) {
-      await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
-    }
+    await startOwnerHost({ activate: false });
+    await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
   } catch (error) {
     ownerHostStatus = {
       ...ownerHostStatus,
@@ -944,7 +1032,18 @@ function createTray() {
 }
 
 function publicStatus() {
+  const desktopAccount = currentDesktopAccount();
   return {
+    desktopAccount: {
+      configured: Boolean(configuredDesktopGoogleClientId()),
+      signedIn: Boolean(desktopAccount),
+      pending: Boolean(pendingDesktopAccount),
+      error: desktopAccountError,
+      name: desktopAccount?.name ?? null,
+      email: desktopAccount?.email ?? null,
+      picture: desktopAccount?.picture ?? null,
+      verifiedAt: desktopAccount?.verifiedAt ?? null,
+    },
     profile: state.profile
       ? {
         hubUrl: state.profile.hubUrl,
@@ -1180,6 +1279,22 @@ function registerIpc() {
   ipcMain.handle("desktop:status", async () => {
     await refreshOwnerRuntimeStatus();
     return publicStatus();
+  });
+  ipcMain.handle("desktop:configure-google-account", async (_event, input) => await configureDesktopGoogleClient(input));
+  ipcMain.handle("desktop:start-google-account", async () => await startDesktopAccountSignIn());
+  ipcMain.handle("desktop:sign-out-google-account", async () => await signOutDesktopAccount());
+  ipcMain.handle("desktop:create-owner-server", async () => {
+    if (!currentDesktopAccount()) throw new Error("Sign in with Google before creating an SPS Server.");
+    if (state.profile && !isOwnerHostProfile()) {
+      throw new Error("This computer is already joined to another SPS Server. Disconnect it before creating a new local Server.");
+    }
+    await startOwnerHost({ activate: true });
+    await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+    return publicStatus();
+  });
+  ipcMain.handle("desktop:join-server", async (_event, input) => {
+    if (!currentDesktopAccount()) throw new Error("Sign in with Google before joining an SPS Server.");
+    return await acceptInviteCode(input);
   });
   ipcMain.handle("desktop:check-hub", async (_event, input) => {
     const hubUrl = requireSpsHubOrigin(input?.hubUrl);

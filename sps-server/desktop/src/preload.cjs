@@ -2,6 +2,11 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("spsDesktop", {
   getStatus: () => ipcRenderer.invoke("desktop:status"),
+  configureGoogleAccount: (input) => ipcRenderer.invoke("desktop:configure-google-account", input),
+  startGoogleAccount: () => ipcRenderer.invoke("desktop:start-google-account"),
+  signOutGoogleAccount: () => ipcRenderer.invoke("desktop:sign-out-google-account"),
+  createOwnerServer: () => ipcRenderer.invoke("desktop:create-owner-server"),
+  joinServer: (input) => ipcRenderer.invoke("desktop:join-server", input),
   checkHub: (input) => ipcRenderer.invoke("desktop:check-hub", input),
   useOwnerHost: () => ipcRenderer.invoke("desktop:use-owner-host"),
   refreshOwnerHostCompanies: () => ipcRenderer.invoke("desktop:refresh-owner-host-companies"),
@@ -35,5 +40,10 @@ contextBridge.exposeInMainWorld("spsDesktop", {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("desktop:join-link", handler);
     return () => ipcRenderer.removeListener("desktop:join-link", handler);
+  },
+  onDesktopAccountChanged: (listener) => {
+    const handler = (_event, payload) => listener(payload);
+    ipcRenderer.on("desktop:desktop-account-changed", handler);
+    return () => ipcRenderer.removeListener("desktop:desktop-account-changed", handler);
   },
 });

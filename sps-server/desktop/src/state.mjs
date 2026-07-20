@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 
 function statePath(userDataPath) {
   return path.join(userDataPath, "sps-desktop-state.json");
@@ -10,6 +10,8 @@ function statePath(userDataPath) {
 export function emptyState() {
   return {
     version: STATE_VERSION,
+    encryptedDesktopAccount: null,
+    desktopGoogleClientId: null,
     profile: null,
     identity: null,
     encryptedBoardApiToken: null,
@@ -26,9 +28,9 @@ export async function loadState(userDataPath) {
   try {
     const raw = await fs.readFile(statePath(userDataPath), "utf8");
     const parsed = JSON.parse(raw);
-    if (parsed?.version !== 1 && parsed?.version !== STATE_VERSION) return emptyState();
-    // Version 1 contains only the original remote Node profile. Its values
-    // remain valid; v2 merely adds opt-in private Owner Host team access.
+    if (parsed?.version !== 1 && parsed?.version !== 2 && parsed?.version !== STATE_VERSION) return emptyState();
+    // Earlier state versions contain a valid profile and Node identity. v3 adds
+    // an encrypted Desktop account without changing their server connection.
     return { ...emptyState(), ...parsed, version: STATE_VERSION };
   } catch (error) {
     if (error?.code === "ENOENT") return emptyState();
