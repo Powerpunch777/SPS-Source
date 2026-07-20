@@ -1,4 +1,4 @@
-import { copyFile, cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -14,7 +14,7 @@ if (!electronBinary || electronBinary === path.resolve(".")) {
 }
 
 const temporaryRoot = path.join(os.tmpdir(), `sps-owner-host-smoke-${process.pid}-${Date.now()}`);
-const executionRuntimeRoot = path.join(temporaryRoot, "runtime");
+const executionRuntimeRoot = runtimeRoot;
 const configPath = path.join(temporaryRoot, "config.json");
 const memoryConfigPath = path.join(temporaryRoot, "memory", "config.json");
 const port = 31_207;
@@ -155,14 +155,6 @@ async function stopChildTree(child) {
 }
 
 await mkdir(temporaryRoot, { recursive: true });
-// Packaged resources keep dependencies in sps-vendor so an updater never edits
-// a running Node module tree. This mirrors the Desktop Owner Host materializer.
-await cp(path.join(runtimeRoot, "dist"), path.join(executionRuntimeRoot, "dist"), { recursive: true, dereference: false });
-await cp(path.join(runtimeRoot, "sps-vendor"), path.join(executionRuntimeRoot, "node_modules"), { recursive: true, dereference: false });
-await copyFile(path.join(runtimeRoot, "package.json"), path.join(executionRuntimeRoot, "package.json"));
-await cp(path.join(runtimeRoot, "sps-default-memory"), path.join(executionRuntimeRoot, "sps-default-memory"), { recursive: true, dereference: false });
-await cp(path.join(runtimeRoot, "sps-room-chat"), path.join(executionRuntimeRoot, "sps-room-chat"), { recursive: true, dereference: false });
-await cp(path.join(runtimeRoot, "memory-sidecar"), path.join(executionRuntimeRoot, "memory-sidecar"), { recursive: true, dereference: false });
 await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 await mkdir(path.dirname(memoryConfigPath), { recursive: true });
 await writeFile(memoryConfigPath, `${JSON.stringify(memoryConfig, null, 2)}\n`, "utf8");

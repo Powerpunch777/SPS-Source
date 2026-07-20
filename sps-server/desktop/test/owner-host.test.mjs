@@ -125,3 +125,62 @@ test("materializes the embedded runtime into the Owner data directory once", asy
     await fs.rm(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+test("runs a packaged node_modules runtime in place without copying dependencies", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-runtime-direct-"));
+  const source = path.join(temporaryRoot, "source");
+  const target = path.join(temporaryRoot, "target");
+  try {
+    await fs.mkdir(path.join(source, "dist"), { recursive: true });
+    await fs.mkdir(path.join(source, "node_modules", "tsx", "dist"), { recursive: true });
+    await fs.writeFile(path.join(source, "dist", "index.js"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "node_modules", "tsx", "dist", "loader.mjs"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "sps-owner-host-runtime.json"), "{\"format\":3}\n", "utf8");
+    await fs.writeFile(path.join(source, "package.json"), "{\"name\":\"sps-owner-host-runtime\"}\n", "utf8");
+
+    assert.equal(await materializeSpsOwnerHostRuntime({ sourceRuntimeRoot: source, targetRuntimeRoot: target }), source);
+    await assert.rejects(fs.access(target));
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("retries a stale Windows staging runtime directory before materializing", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-runtime-retry-"));
+  const source = path.join(temporaryRoot, "source");
+  const target = path.join(temporaryRoot, "target");
+  const staging = `${target}.staging`;
+  let staleRemovalAttempts = 0;
+  const flakyFs = {
+    ...fs,
+    rm: async (entry, options) => {
+      if (path.resolve(entry) === path.resolve(staging) && staleRemovalAttempts++ === 0) {
+        const error = new Error("directory is temporarily busy");
+        error.code = "ENOTEMPTY";
+        throw error;
+      }
+      return await fs.rm(entry, options);
+    },
+  };
+  try {
+    await fs.mkdir(path.join(source, "dist"), { recursive: true });
+    await fs.mkdir(path.join(source, "sps-vendor", "tsx", "dist"), { recursive: true });
+    await fs.writeFile(path.join(source, "dist", "index.js"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "sps-vendor", "tsx", "dist", "loader.mjs"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "sps-owner-host-runtime.json"), "{\"format\":1}\n", "utf8");
+    await fs.writeFile(path.join(source, "package.json"), "{\"name\":\"sps-owner-host-runtime\"}\n", "utf8");
+    await fs.mkdir(staging, { recursive: true });
+
+    await materializeSpsOwnerHostRuntime({
+      sourceRuntimeRoot: source,
+      targetRuntimeRoot: target,
+      fsApi: flakyFs,
+      delay: async () => {},
+    });
+
+    assert.ok(staleRemovalAttempts >= 2);
+    assert.equal(await fs.readFile(path.join(target, "dist", "index.js"), "utf8"), "export {};\n");
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+});

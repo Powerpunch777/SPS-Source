@@ -7,6 +7,16 @@ function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
 }
 
+function hostDiagnostics(value) {
+  const text = String(value || "")
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/(token|secret|password|authorization)\s*([:=])\s*\S+/gi, "$1$2[redacted]")
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, "postgres://[redacted]")
+    .trim();
+  if (!text) return "";
+  return text.split(/\r?\n/).filter(Boolean).slice(-12).join("\n").slice(-2_000);
+}
+
 function waitForChildExit(child, timeoutMs) {
   if (!child || child.exitCode != null) return Promise.resolve();
   return new Promise((resolve) => {
@@ -50,6 +60,38 @@ async function fileExists(entry, fsApi) {
   }
 }
 
+async function removeDirectoryWithRetry(target, { fsApi, delay, attempts = 20 } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await fsApi.rm(target, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      const retryable = ["EACCES", "EBUSY", "ENOTEMPTY", "EPERM"].includes(error?.code);
+      if (!retryable || attempt === attempts - 1) throw error;
+      await delay(Math.min(1_000, 100 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+function removeDirectoryInBackground(target, options) {
+  void removeDirectoryWithRetry(target, options).catch(() => undefined);
+}
+
+async function moveDirectoryAside(target, { fsApi, delay } = {}) {
+  const stale = `${target}.stale-${process.pid}-${Date.now()}`;
+  try {
+    await fsApi.rename(target, stale);
+    return stale;
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    await removeDirectoryWithRetry(target, { fsApi, delay });
+    return null;
+  }
+}
+
 async function findTsxLoader(coreRoot, fsApi) {
   const pnpmRoot = path.join(coreRoot, "node_modules", ".pnpm");
   let entries;
@@ -67,20 +109,32 @@ async function findTsxLoader(coreRoot, fsApi) {
   return { loader, preflight };
 }
 
-export async function materializeSpsOwnerHostRuntime({ sourceRuntimeRoot, targetRuntimeRoot, fsApi = fs } = {}) {
+export async function materializeSpsOwnerHostRuntime({
+  sourceRuntimeRoot,
+  targetRuntimeRoot,
+  fsApi = fs,
+  delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
   if (!sourceRuntimeRoot || !targetRuntimeRoot) return null;
   const sourceManifest = path.join(sourceRuntimeRoot, "sps-owner-host-runtime.json");
   const sourceEntry = path.join(sourceRuntimeRoot, "dist", "index.js");
+  const sourceModules = path.join(sourceRuntimeRoot, "node_modules");
   const sourceVendor = path.join(sourceRuntimeRoot, "sps-vendor");
   const sourcePackage = path.join(sourceRuntimeRoot, "package.json");
   if (
     !(await fileExists(sourceManifest, fsApi))
     || !(await fileExists(sourceEntry, fsApi))
-    || !(await fileExists(sourceVendor, fsApi))
     || !(await fileExists(sourcePackage, fsApi))
   ) {
     return null;
   }
+
+  // The packaged runtime is read-only and all mutable state lives in the
+  // Owner Vault. Running it in place avoids copying a full dependency tree.
+  if (await fileExists(path.join(sourceModules, "tsx", "dist", "loader.mjs"), fsApi)) {
+    return sourceRuntimeRoot;
+  }
+  if (!(await fileExists(sourceVendor, fsApi))) return null;
 
   const targetEntry = path.join(targetRuntimeRoot, "dist", "index.js");
   const targetTsx = path.join(targetRuntimeRoot, "node_modules", "tsx", "dist", "loader.mjs");
@@ -100,8 +154,12 @@ export async function materializeSpsOwnerHostRuntime({ sourceRuntimeRoot, target
     && targetHasSupport.every(Boolean)
   ) return targetRuntimeRoot;
 
-  const stagingRoot = `${targetRuntimeRoot}.staging`;
-  await fsApi.rm(stagingRoot, { recursive: true, force: true });
+  const staleStagingRoot = `${targetRuntimeRoot}.staging`;
+  const stagingRoot = `${targetRuntimeRoot}.staging-${process.pid}-${Date.now()}`;
+  // A previous Desktop can leave a large partial runtime behind. It must not
+  // delay the next launch, so clean it up independently while using a fresh stage.
+  removeDirectoryInBackground(staleStagingRoot, { fsApi, delay });
+  await removeDirectoryWithRetry(stagingRoot, { fsApi, delay });
   await fsApi.mkdir(stagingRoot, { recursive: true });
   await fsApi.cp(path.join(sourceRuntimeRoot, "dist"), path.join(stagingRoot, "dist"), { recursive: true, dereference: false });
   await fsApi.cp(sourceVendor, path.join(stagingRoot, "node_modules"), { recursive: true, dereference: false });
@@ -113,8 +171,9 @@ export async function materializeSpsOwnerHostRuntime({ sourceRuntimeRoot, target
     const targetDirectory = path.join(stagingRoot, path.dirname(relative));
     await fsApi.cp(sourceDirectory, targetDirectory, { recursive: true, dereference: false });
   }
-  await fsApi.rm(targetRuntimeRoot, { recursive: true, force: true });
+  const staleTargetRoot = await moveDirectoryAside(targetRuntimeRoot, { fsApi, delay });
   await fsApi.rename(stagingRoot, targetRuntimeRoot);
+  if (staleTargetRoot) removeDirectoryInBackground(staleTargetRoot, { fsApi, delay });
   return targetRuntimeRoot;
 }
 
@@ -184,6 +243,7 @@ export function createSpsOwnerHostManager({
   let ownedChild = null;
   let lastError = null;
   let startedAt = null;
+  let childOutput = "";
 
   async function inspect() {
     const health = await healthAt(url, fetchImpl);
@@ -218,7 +278,7 @@ export function createSpsOwnerHostManager({
     try {
       const child = spawn(runtime.command, runtime.args, {
         cwd: runtime.cwd,
-        stdio: "ignore",
+        stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
         env: {
           ...process.env,
@@ -229,9 +289,18 @@ export function createSpsOwnerHostManager({
       ownedChild = child;
       startedAt = new Date().toISOString();
       lastError = null;
+      childOutput = "";
+      const captureOutput = (chunk) => {
+        childOutput = `${childOutput}${String(chunk)}`.slice(-8_000);
+      };
+      child.stdout?.on("data", captureOutput);
+      child.stderr?.on("data", captureOutput);
       child.once("error", (error) => { lastError = asMessage(error); });
       child.once("exit", (code) => {
-        if (code && code !== 0) lastError = `SPS Owner Host exited with code ${code}.`;
+        if (code && code !== 0) {
+          const details = hostDiagnostics(childOutput);
+          lastError = `SPS Owner Host exited with code ${code}.${details ? ` ${details}` : ""}`;
+        }
         ownedChild = null;
         startedAt = null;
       });

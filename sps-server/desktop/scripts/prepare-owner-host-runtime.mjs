@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -148,14 +148,13 @@ await normalizeWorkspacePackageExports(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "dist/index.js", "run", "--help"], runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
 await copyBundledSpsPluginRuntime(runtimeRoot);
-await rename(path.join(runtimeRoot, "node_modules"), path.join(runtimeRoot, "sps-vendor"));
 await writeFile(
   path.join(runtimeRoot, "sps-owner-host-runtime.json"),
   `${JSON.stringify({
-    format: 2,
+    format: 3,
     entry: "dist/index.js",
     loader: "tsx",
-    vendorDirectory: "sps-vendor",
+    vendorDirectory: "node_modules",
     bundledDefaultMemory: true,
     version: process.env.npm_package_version || "development",
     createdAt: new Date().toISOString(),
