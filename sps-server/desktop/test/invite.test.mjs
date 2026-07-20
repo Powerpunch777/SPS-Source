@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildInviteUrl,
+  createSpsRoutedInviteCode,
   findSpsJoinUriArg,
   normalizeSpsInviteToken,
   parseSpsJoinUri,
+  parseSpsRoutedInviteCode,
   spsCodeToInviteToken,
   spsInviteTokenToCode,
 } from "../src/invite.mjs";
@@ -31,6 +33,19 @@ test("builds the browser invite URL without preserving unsafe path fragments", (
 test("does not build an invite link for an insecure Hub", () => {
   assert.throws(() => buildInviteUrl("http://hub.example.test", "SPS-AB12-CD34-EF56-GH78"), /must use HTTPS/);
   assert.equal(parseSpsJoinUri("sps://join?hub=http%3A%2F%2Fhub.example.test&code=SPS-AB12-CD34-EF56-GH78"), null);
+});
+
+test("routes a member invitation to a fresh Desktop without exposing an Owner invite", () => {
+  const routed = createSpsRoutedInviteCode("https://owner-pc.example.ts.net/old-path", "SPS-AB12-CD34-EF56-GH78");
+  assert.match(routed, /^SPS2-[A-Za-z0-9_-]+$/);
+  assert.deepEqual(parseSpsRoutedInviteCode(routed), {
+    hub: "https://owner-pc.example.ts.net",
+    code: "SPS-AB12-CD34-EF56-GH78",
+  });
+  assert.equal(parseSpsRoutedInviteCode("SPS2-not-valid-base64"), null);
+  assert.equal(parseSpsRoutedInviteCode(`SPS2-${"a".repeat(1024)}`), null);
+  const unsafePayload = Buffer.from(JSON.stringify({ v: 1, hub: "http://owner-pc.example.ts.net", code: "SPS-AB12-CD34" })).toString("base64url");
+  assert.equal(parseSpsRoutedInviteCode(`SPS2-${unsafePayload}`), null);
 });
 
 test("accepts only a valid SPS desktop join link", () => {

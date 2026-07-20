@@ -87,7 +87,9 @@ export function createSpsDesktopSetupReadiness(status) {
   return {
     steps,
     ready: nodeApproved,
-    canOpenInvite: profileReady,
+    // A full SPS2 invitation embeds the trusted team address, so a fresh
+    // Desktop can redeem it before any manual team profile exists.
+    canOpenInvite: true,
     canStartAuth: profileReady && !signedIn,
     canCheckAuth: Boolean(status?.pendingAuth),
     canConnectNode: profileReady && signedIn && companyReady,

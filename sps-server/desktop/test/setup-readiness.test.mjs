@@ -13,7 +13,7 @@ test("shows the secure Desktop onboarding order before a profile exists", () => 
 
   assert.equal(readiness.steps[0].state, "current");
   assert.equal(readiness.steps[1].state, "blocked");
-  assert.equal(readiness.canOpenInvite, false);
+  assert.equal(readiness.canOpenInvite, true);
   assert.equal(readiness.canStartAuth, false);
   assert.equal(readiness.canConnectNode, false);
 });

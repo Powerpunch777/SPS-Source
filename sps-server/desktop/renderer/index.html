@@ -63,10 +63,10 @@
             <div class="step-label">1</div>
             <h2>Sign in with Google</h2>
           </div>
-          <p>Open the SPS Desktop link from a team invitation. It supplies the private Owner Host address, then Google confirms who is using this computer.</p>
+          <p>Paste the SPS invitation code from your Owner. It sets the private team address, then Google confirms who is using this computer.</p>
         </div>
         <div class="action-row">
-          <input id="invite-code" placeholder="Invitation code (only after an address is saved)" autocomplete="one-time-code" />
+          <input id="invite-code" placeholder="SPS2-... invitation code" autocomplete="one-time-code" />
           <button id="open-invite" type="button" class="quiet-button">Open team invitation</button>
         </div>
         <div class="action-row">
@@ -118,6 +118,15 @@
               </div>
             </form>
             <pre id="team-access-detail" class="details-output">Tailscale has not been checked.</pre>
+            <div id="member-invite-panel" class="member-invite" hidden>
+              <h3>Invite a teammate</h3>
+              <p class="muted">Creates a one-time Operator invitation that expires in 24 hours. Share it privately; it is not an Owner invitation.</p>
+              <div class="action-row">
+                <input id="member-invite-code" readonly placeholder="Create a teammate invitation" />
+                <button id="create-member-invite" type="button" class="quiet-button">Create invitation</button>
+                <button id="copy-member-invite" type="button" class="quiet-button">Copy</button>
+              </div>
+            </div>
           </section>
           <section class="subpanel">
             <h2>Project folders</h2>

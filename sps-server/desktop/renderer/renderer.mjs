@@ -165,6 +165,8 @@ function renderTeamAccess(status) {
   const inspectButton = $("#inspect-team-access");
   const disableButton = $("#disable-private-team-access");
   const form = $("#team-access-form");
+  const memberInvitePanel = $("#member-invite-panel");
+  const createMemberInviteButton = $("#create-member-invite");
   if (teamAccess?.enabled) {
     const recovering = teamAccess.phase === "preparing";
     detail.textContent = [
@@ -176,12 +178,15 @@ function renderTeamAccess(status) {
     ].join("\n");
     detail.classList.add("has-content");
     form.hidden = true;
+    memberInvitePanel.hidden = recovering;
+    createMemberInviteButton.disabled = recovering;
     inspectButton.disabled = true;
     enableButton.disabled = true;
     disableButton.disabled = false;
     return;
   }
   form.hidden = !ownerHost;
+  memberInvitePanel.hidden = true;
   inspectButton.disabled = !ownerHost;
   enableButton.disabled = !ownerHost;
   disableButton.disabled = true;
@@ -329,7 +334,7 @@ $("#team-access-form").addEventListener("submit", async (event) => {
       googleClientId: $("#team-google-client-id").value,
       googleClientSecret: $("#team-google-client-secret").value,
     });
-    $("#invite-code").value = result.invitation.code ?? result.invitation.token;
+    $("#invite-code").value = "";
     $("#team-google-client-secret").value = "";
     showNotice("Private team Host is running. The one-time Owner invitation opened in your browser. Finish Google sign-in, then return and continue with Google.");
   });
@@ -357,8 +362,21 @@ $("#company-picker").addEventListener("change", async (event) => {
 });
 
 $("#open-invite").addEventListener("click", () => run(async () => {
-  await window.spsDesktop.openInvite({ code: $("#invite-code").value });
-  showNotice("Invitation opened in your default browser.");
+  await window.spsDesktop.acceptInviteCode({ code: $("#invite-code").value });
+  showNotice("Invitation opened in your default browser. Complete Google sign-in, then return here.");
+}));
+
+$("#create-member-invite").addEventListener("click", () => run(async () => {
+  const invitation = await window.spsDesktop.createMemberInvite();
+  $("#member-invite-code").value = invitation.code;
+  showNotice("Member invitation created. It expires in 24 hours and should be shared privately.");
+}));
+
+$("#copy-member-invite").addEventListener("click", () => run(async () => {
+  const code = $("#member-invite-code").value;
+  if (!code) throw new Error("Create a member invitation first.");
+  await window.spsDesktop.copyText({ text: code });
+  showNotice("Member invitation copied.");
 }));
 
 $("#project-workspace-form").addEventListener("submit", async (event) => {

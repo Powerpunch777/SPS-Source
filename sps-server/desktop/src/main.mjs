@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import os from "node:os";
@@ -21,7 +21,13 @@ import {
   SpsHubRequestError,
   startSpsDesktopAuth,
 } from "@sps/desktop-node";
-import { buildInviteUrl, findSpsJoinUriArg, parseSpsJoinUri, spsInviteTokenToCode } from "./invite.mjs";
+import {
+  buildInviteUrl,
+  createSpsRoutedInviteCode,
+  findSpsJoinUriArg,
+  parseSpsJoinUri,
+  parseSpsRoutedInviteCode,
+} from "./invite.mjs";
 import { resolveSpsNodeDisplayName } from "./node-display-name.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
@@ -553,14 +559,94 @@ async function enablePrivateTeamAccess(input) {
   await shell.openExternal(inviteUrl);
   return {
     teamAccess: { ...nextTeamAccess },
-    invitation: {
-      token: invitation.token,
-      code: spsInviteTokenToCode(invitation.token),
-      url: inviteUrl,
-      expiresAt: invitation.expiresAt ?? null,
-    },
+    initialOwnerInvite: { expiresAt: invitation.expiresAt ?? null },
     googleRedirectUrl: `${nextTeamAccess.url}/api/auth/callback/google`,
   };
+}
+
+async function createMemberInvite() {
+  if (!isTeamAccessEnabled() || !state.teamAccess?.companyId || !state.teamAccess.url) {
+    throw new Error("Enable private team access before creating a member invitation.");
+  }
+  const invitation = await ownerHostApi(`/companies/${encodeURIComponent(state.teamAccess.companyId)}/invites`, {
+    method: "POST",
+    body: {
+      allowedJoinTypes: "human",
+      humanRole: "operator",
+      expiresInMinutes: 24 * 60,
+      agentMessage: "SPS Desktop member invitation.",
+    },
+  });
+  if (typeof invitation?.token !== "string") {
+    throw new Error("SPS Owner Host did not return a member invitation.");
+  }
+  return {
+    code: createSpsRoutedInviteCode(state.teamAccess.url, invitation.token),
+    expiresAt: invitation.expiresAt ?? null,
+  };
+}
+
+async function saveRemoteProfile(input) {
+  const companyId = String(input?.companyId ?? "").trim();
+  const displayName = String(input?.displayName ?? "").trim();
+  const hubUrl = requireSpsHubOrigin(input?.hubUrl);
+  const previousProfile = state.profile;
+  const connectionScopeChanged = Boolean(
+    previousProfile &&
+    (previousProfile.hubUrl !== hubUrl || previousProfile.companyId !== companyId),
+  );
+  const hubChanged = Boolean(previousProfile && previousProfile.hubUrl !== hubUrl);
+  const companyChanged = Boolean(previousProfile && previousProfile.companyId !== companyId);
+  if (connectionScopeChanged) {
+    await disconnectCurrentNode();
+  }
+  if (hubChanged) {
+    pendingAuth = null;
+    state.encryptedBoardApiToken = null;
+    state.companies = [];
+  }
+  if (hubChanged || companyChanged) state.projects = [];
+  state.profile = {
+    hubUrl,
+    connectionKind: "remote",
+    companyId,
+    displayName: displayName.slice(0, 120),
+    defaultWorkspacePath: String(input?.defaultWorkspacePath ?? "").trim(),
+    projectWorkspaces: connectionScopeChanged ? {} : state.profile?.projectWorkspaces ?? {},
+  };
+  await persistState();
+  if (companyId && currentBoardToken()) {
+    try {
+      await refreshProjects();
+    } catch {
+      // The profile remains usable while a transient Hub error is retried from setup.
+    }
+  }
+  return publicStatus();
+}
+
+async function acceptInviteCode(input) {
+  if (isOwnerHostProfile()) {
+    throw new Error("This SPS Owner Host creates member invitations; it does not join another team.");
+  }
+  const pasted = String(input?.code ?? "").trim();
+  const routed = parseSpsRoutedInviteCode(pasted);
+  if (routed) {
+    await saveRemoteProfile({
+      hubUrl: routed.hub,
+      companyId: "",
+      displayName: state.profile?.displayName ?? "",
+      defaultWorkspacePath: state.profile?.defaultWorkspacePath ?? "",
+    });
+    await shell.openExternal(buildInviteUrl(routed.hub, routed.code));
+    return routed;
+  }
+  if (!state.profile?.hubUrl) {
+    throw new Error("Paste the full SPS2 invitation code from the Owner. Short SPS codes work only after this computer already knows the team address.");
+  }
+  const url = buildInviteUrl(state.profile.hubUrl, pasted);
+  await shell.openExternal(url);
+  return { hub: state.profile.hubUrl };
 }
 
 async function disablePrivateTeamAccess() {
@@ -1067,50 +1153,21 @@ function registerIpc() {
     pendingJoin = null;
     return join;
   });
-  ipcMain.handle("desktop:save-profile", async (_event, input) => {
-    const companyId = String(input.companyId ?? "").trim();
-    const displayName = String(input.displayName ?? "").trim();
-    const hubUrl = requireSpsHubOrigin(input.hubUrl);
-    const previousProfile = state.profile;
-    const connectionScopeChanged = Boolean(
-      previousProfile &&
-      (previousProfile.hubUrl !== hubUrl || previousProfile.companyId !== companyId),
-    );
-    const hubChanged = Boolean(previousProfile && previousProfile.hubUrl !== hubUrl);
-    const companyChanged = Boolean(previousProfile && previousProfile.companyId !== companyId);
-    if (connectionScopeChanged) {
-      await disconnectCurrentNode();
-    }
-    if (hubChanged) {
-      pendingAuth = null;
-      state.encryptedBoardApiToken = null;
-      state.companies = [];
-    }
-    if (hubChanged || companyChanged) state.projects = [];
-    state.profile = {
-      hubUrl,
-      connectionKind: "remote",
-      companyId,
-      displayName: displayName.slice(0, 120),
-      defaultWorkspacePath: String(input.defaultWorkspacePath ?? "").trim(),
-      projectWorkspaces: connectionScopeChanged ? {} : state.profile?.projectWorkspaces ?? {},
-    };
-    await persistState();
-    if (companyId && currentBoardToken()) {
-      try {
-        await refreshProjects();
-      } catch {
-        // The profile remains usable while a transient Hub error is retried from setup.
-      }
-    }
-    return publicStatus();
-  });
+  ipcMain.handle("desktop:save-profile", async (_event, input) => await saveRemoteProfile(input));
   ipcMain.handle("desktop:open-invite", async (_event, input) => {
     if (!state.profile) throw new Error("Save an SPS team connection first");
     if (isOwnerHostProfile()) throw new Error("Create invitations after the Owner Host is configured for private or public team access.");
     const url = buildInviteUrl(state.profile.hubUrl, input.code);
     await shell.openExternal(url);
     return url;
+  });
+  ipcMain.handle("desktop:accept-invite-code", async (_event, input) => await acceptInviteCode(input));
+  ipcMain.handle("desktop:create-member-invite", async () => await createMemberInvite());
+  ipcMain.handle("desktop:copy-text", async (_event, input) => {
+    const text = String(input?.text ?? "");
+    if (!text || text.length > 2048) throw new Error("Nothing safe to copy.");
+    clipboard.writeText(text);
+    return true;
   });
   ipcMain.handle("desktop:open-workspace", openWorkspace);
   ipcMain.handle("desktop:open-setup", openSetup);

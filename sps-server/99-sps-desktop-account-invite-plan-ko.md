@@ -30,10 +30,12 @@ SPS Desktop은 Windows용 앱 하나로 출시한다.
 
 ### Member
 
-1. Owner가 회사 설정에서 한 번 쓰는 사람 초대를 생성한다.
-2. Member는 SPS Desktop을 설치하고 `SPS-XXXX-XXXX-XXXX-XXXX` 코드를 붙여넣거나
-   `sps://join` 딥링크를 연다.
-3. 앱이 Host 주소와 초대 코드를 채우고, 연결 가능 여부와 초대 상태를 표시한다.
+1. Owner가 SPS Desktop의 Private team access에서 한 번 쓰는 Operator 사람 초대를 생성한다.
+   초기 Owner 설정에 쓰인 Owner 초대는 절대로 공유하지 않는다.
+2. Member는 SPS Desktop을 설치하고 `SPS2-...` 초대 코드를 붙여넣거나
+   `sps://join` 딥링크를 연다. `SPS2` 코드는 Team Host 주소와 일회용 초대를 함께
+   담으므로 새 컴퓨터도 수동 주소 입력 없이 시작할 수 있다.
+3. 앱이 Host 주소를 저장하고 브라우저 초대를 열어, 연결 가능 여부와 초대 상태를 표시한다.
 4. Member가 Google 로그인을 마치고 초대를 수락한다.
 5. Member는 Workspace만 열거나, `Scan local capabilities`와 `Connect this computer`로
    Node 등록까지 계속한다.
@@ -41,6 +43,9 @@ SPS Desktop은 Windows용 앱 하나로 출시한다.
 
 초대 코드는 계정, Node 승인, Agent 실행 권한, CLI/API 키를 대신하지 않는다. 각각은
 별도의 확인과 권한 부여 단계다.
+
+`SPS-XXXX-...` 짧은 코드는 이미 Team Host 주소가 저장된 Desktop에서만 사용하는
+호환 입력이다. 새 Member에게는 자기완결형 `SPS2-...` 코드만 전달한다.
 
 ## 3. 초대 코드 UX
 
