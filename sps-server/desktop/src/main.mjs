@@ -1290,6 +1290,7 @@ function registerIpc() {
       challengeId: pendingAuth.id,
       challengeToken: pendingAuth.token,
     });
+    let companyAccess = "pending";
     if (result.status === "approved") {
       state.encryptedBoardApiToken = encrypt(pendingAuth.boardApiToken);
       pendingAuth = null;
@@ -1325,6 +1326,11 @@ function registerIpc() {
         if (!state.profile.companyId && state.companies.length === 1) {
           state.profile.companyId = state.companies[0].id;
         }
+        companyAccess = state.companies.length === 0
+          ? "none"
+          : state.profile.companyId
+            ? "selected"
+            : "choose";
         await persistState();
         if (state.profile.companyId) {
           try {
@@ -1335,9 +1341,10 @@ function registerIpc() {
         }
       } catch {
         // Google approval completed. The user can retry after a transient Hub failure.
+        companyAccess = "unavailable";
       }
     }
-    return { ...publicStatus(), auth: result };
+    return { ...publicStatus(), auth: { ...result, companyAccess } };
   });
   ipcMain.handle("desktop:scan-capabilities", async () => await scanLocalCapabilities());
   ipcMain.handle("desktop:connect-node", connectNode);

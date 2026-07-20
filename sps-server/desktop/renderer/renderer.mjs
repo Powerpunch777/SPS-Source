@@ -422,9 +422,21 @@ $("#start-auth").addEventListener("click", () => run(async () => {
 }));
 $("#poll-auth").addEventListener("click", () => run(async () => {
   const result = await window.spsDesktop.pollAuth();
-  showNotice(result.auth?.status === "approved"
-    ? "Google sign-in is complete. Select a company if you have more than one."
-    : "Approval is still waiting.");
+  if (result.auth?.status !== "approved") {
+    showNotice("Approval is still waiting.");
+    return;
+  }
+  if (result.auth.companyAccess === "none") {
+    showNotice("Google sign-in completed, but this account has no SPS team access. Sign out, then continue with the Google account that accepted the invitation.", true);
+    return;
+  }
+  if (result.auth.companyAccess === "selected") {
+    showNotice("Google sign-in is complete. Your SPS team was selected; register this computer next.");
+    return;
+  }
+  showNotice(result.auth.companyAccess === "unavailable"
+    ? "Google sign-in is complete, but SPS could not load your teams yet. Check the connection and try again."
+    : "Google sign-in is complete. Select a company if you have more than one.");
 }));
 $("#sign-out").addEventListener("click", () => run(async () => {
   const result = await window.spsDesktop.signOut();
