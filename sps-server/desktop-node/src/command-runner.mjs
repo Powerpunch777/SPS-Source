@@ -87,11 +87,24 @@ export function buildSpsNodeRuntimeEnvironment(commandEnvironment, hostEnvironme
   };
 }
 
+async function listSignedInCodexProfiles(homeRoot) {
+  const entries = await fs.readdir(homeRoot, { withFileTypes: true }).catch(() => []);
+  const candidates = entries
+    .filter((entry) => entry.isDirectory() && CODEX_ACCOUNT_DIRECTORY.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+  const profiles = [];
+  for (const directoryName of candidates) {
+    const auth = await fs.stat(path.join(homeRoot, directoryName, "auth.json")).catch(() => null);
+    if (auth?.isFile()) profiles.push(directoryName);
+  }
+  return profiles;
+}
+
 export async function resolveSpsNodeCodexHome(command, hostEnvironment = process.env) {
   const configuredProfile = command?.env?.PAPERCLIP_CODEX_ACCOUNT;
-  const profileDirectory = typeof configuredProfile === "string" && configuredProfile.trim()
-    ? configuredProfile.trim()
-    : ".codex";
+  const profileWasExplicitlySelected = typeof configuredProfile === "string" && configuredProfile.trim();
+  const profileDirectory = profileWasExplicitlySelected ? configuredProfile.trim() : ".codex";
   if (!CODEX_ACCOUNT_DIRECTORY.test(profileDirectory)) {
     throw new Error("SPS Desktop rejected an invalid Codex profile name from the Hub.");
   }
@@ -107,6 +120,15 @@ export async function resolveSpsNodeCodexHome(command, hostEnvironment = process
   }
   const auth = await fs.stat(path.join(codexHome, "auth.json")).catch(() => null);
   if (!auth?.isFile()) {
+    if (!profileWasExplicitlySelected) {
+      const signedInProfiles = await listSignedInCodexProfiles(resolvedHomeRoot);
+      if (signedInProfiles.length === 1) {
+        return path.join(resolvedHomeRoot, signedInProfiles[0]);
+      }
+      if (signedInProfiles.length > 1) {
+        throw new Error(`SPS Desktop found multiple signed-in Codex profiles. Configure this Agent with one of: ${signedInProfiles.join(", ")}.`);
+      }
+    }
     throw new Error(`Selected Codex profile is not signed in on this SPS Desktop Node: ${profileDirectory}.`);
   }
   return codexHome;
