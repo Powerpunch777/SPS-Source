@@ -93,8 +93,6 @@ function renderUpdate(update) {
   const percent = Number.isFinite(update?.percent) ? ` ${update.percent}%` : "";
   $("#update-detail").textContent = `SPS Desktop ${current}\n${update?.message ?? "Desktop update service is starting."}${available}${percent}`;
   const state = update?.state;
-  $("#check-updates").disabled = ["disabled", "unavailable", "checking", "downloading"].includes(state);
-  $("#download-update").disabled = state !== "available";
   $("#install-update").disabled = state !== "ready";
 }
 
@@ -445,17 +443,9 @@ $("#sign-out").addEventListener("click", () => run(async () => {
     ? "Signed out and disconnected this computer from SPS."
     : outcome?.remoteError ?? "Local SPS Desktop token removed.");
 }));
-$("#check-updates").addEventListener("click", () => run(async () => {
-  await window.spsDesktop.checkUpdates();
-  showNotice("SPS Desktop update check completed.");
-}));
-$("#download-update").addEventListener("click", () => run(async () => {
-  await window.spsDesktop.downloadUpdate();
-  showNotice("SPS Desktop update download completed. Restart when it is ready.");
-}));
 $("#install-update").addEventListener("click", () => run(async () => {
   await window.spsDesktop.installUpdate();
-  showNotice("SPS Desktop is restarting to install the update.");
+  showNotice("SPS Desktop is restarting to apply the downloaded update.");
 }));
 $("#scan-capabilities").addEventListener("click", () => run(async () => {
   const capabilities = await window.spsDesktop.scanCapabilities();

@@ -40,8 +40,8 @@ export function createSpsUpdateService({
   };
 
   if (enabled) {
-    updater.autoDownload = false;
-    updater.autoInstallOnAppQuit = false;
+    updater.autoDownload = true;
+    updater.autoInstallOnAppQuit = true;
     updater.on("checking-for-update", () => publish({
       state: "checking",
       availableVersion: null,
@@ -49,10 +49,10 @@ export function createSpsUpdateService({
       message: "Checking for an SPS Desktop update...",
     }));
     updater.on("update-available", (info) => publish({
-      state: "available",
+      state: "downloading",
       availableVersion: versionOf(info),
-      percent: null,
-      message: "An SPS Desktop update is ready to download.",
+      percent: 0,
+      message: "Downloading the latest SPS Desktop update...",
     }));
     updater.on("update-not-available", () => publish({
       state: "current",
@@ -69,7 +69,7 @@ export function createSpsUpdateService({
       state: "ready",
       availableVersion: versionOf(info) ?? status.availableVersion,
       percent: 100,
-      message: "The update is ready. Restart SPS Desktop to install it.",
+      message: "The update is ready and will install when SPS Desktop restarts.",
     }));
     updater.on("error", () => publish({
       state: "error",
