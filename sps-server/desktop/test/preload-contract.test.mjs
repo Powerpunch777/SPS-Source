@@ -23,4 +23,6 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:disable-private-team-access"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:accept-invite-code"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:create-member-invite"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:list-member-invites"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:revoke-member-invite"/);
 });

@@ -278,6 +278,32 @@ function ownerHostIsReady() {
   return ownerHostStatus.state === "running" || ownerHostStatus.state === "running-existing";
 }
 
+async function refreshOwnerRuntimeStatus() {
+  if (defaultMemoryManager) {
+    const memory = await defaultMemoryManager.inspect();
+    defaultMemoryStatus = {
+      ...memory,
+      vaultPath: defaultMemoryStatus.vaultPath ?? path.join(ownerVaultRoot(), "memory"),
+    };
+  }
+  if (ownerHostManager) {
+    const ownerHost = await ownerHostManager.inspect();
+    ownerHostStatus = {
+      ...ownerHost,
+      vaultPath: ownerHostStatus.vaultPath ?? ownerVaultRoot(),
+    };
+  }
+  return ownerHostStatus;
+}
+
+async function requireReadyOwnerHost() {
+  if (!ownerHostIsReady()) await refreshOwnerRuntimeStatus();
+  if (!ownerHostIsReady() || !ownerHostStatus.url) {
+    throw new Error(ownerHostStatus.lastError || "SPS Owner Host is not ready.");
+  }
+  return ownerHostStatus;
+}
+
 async function ensureOwnerHostManager() {
   const vaultRoot = ownerVaultRoot();
   const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
@@ -413,15 +439,17 @@ async function bootstrapOwnerHost() {
 }
 
 async function ownerHostApi(pathname, { method = "GET", body } = {}) {
-  if (!ownerHostIsReady() || !ownerHostStatus.url) {
-    throw new Error(ownerHostStatus.lastError || "SPS Owner Host is not ready.");
-  }
+  await requireReadyOwnerHost();
+  const accessToken = currentBoardToken();
+  const headers = body === undefined
+    ? { accept: "application/json" }
+    : { accept: "application/json", "content-type": "application/json" };
+  // Private team Hosts require the same protected Board session as their
+  // remote address. Local-only bootstrap still works without this header.
+  if (accessToken) headers.authorization = `Bearer ${accessToken}`;
   const response = await fetch(`${requireSpsOwnerHostOrigin(ownerHostStatus.url)}/api${pathname}`, {
     method,
-    headers: body === undefined ? { accept: "application/json" } : {
-      accept: "application/json",
-      "content-type": "application/json",
-    },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
@@ -462,7 +490,7 @@ async function enablePrivateTeamAccess(input) {
   if (!isOwnerHostProfile()) {
     throw new Error("Switch this SPS Desktop to its Owner Host before enabling private team access.");
   }
-  if (!ownerHostIsReady()) throw new Error("Wait for the SPS Owner Host to finish starting.");
+  await requireReadyOwnerHost();
 
   const googleClientId = String(input?.googleClientId ?? "").trim();
   const googleClientSecret = String(input?.googleClientSecret ?? "").trim();
@@ -581,9 +609,45 @@ async function createMemberInvite() {
     throw new Error("SPS Owner Host did not return a member invitation.");
   }
   return {
+    id: invitation.id,
     code: createSpsRoutedInviteCode(state.teamAccess.url, invitation.token),
     expiresAt: invitation.expiresAt ?? null,
   };
+}
+
+async function listMemberInvites() {
+  if (!isTeamAccessEnabled() || !state.teamAccess?.companyId) {
+    throw new Error("Enable private team access before managing member invitations.");
+  }
+  const response = await ownerHostApi(
+    `/companies/${encodeURIComponent(state.teamAccess.companyId)}/invites?state=active&limit=50`,
+  );
+  const invites = Array.isArray(response?.invites) ? response.invites : [];
+  return invites
+    .filter((invite) => (
+      invite
+      && invite.inviteMessage === "SPS Desktop member invitation."
+      && invite.allowedJoinTypes === "human"
+      && invite.humanRole === "operator"
+      && typeof invite.id === "string"
+    ))
+    .map((invite) => ({
+      id: invite.id,
+      state: invite.state,
+      createdAt: invite.createdAt ?? null,
+      expiresAt: invite.expiresAt ?? null,
+    }));
+}
+
+async function revokeMemberInvite(input) {
+  const inviteId = String(input?.inviteId ?? "").trim();
+  if (!/^[a-z0-9-]{16,}$/i.test(inviteId)) throw new Error("Choose a valid SPS Desktop member invitation.");
+  const activeInvites = await listMemberInvites();
+  if (!activeInvites.some((invite) => invite.id === inviteId)) {
+    throw new Error("That member invitation is no longer active or was not created by SPS Desktop.");
+  }
+  const revoked = await ownerHostApi(`/invites/${encodeURIComponent(inviteId)}/revoke`, { method: "POST", body: {} });
+  return { id: inviteId, state: revoked?.revokedAt ? "revoked" : "unknown" };
 }
 
 async function saveRemoteProfile(input) {
@@ -1102,7 +1166,10 @@ function sendJoinToRenderer(value) {
 }
 
 function registerIpc() {
-  ipcMain.handle("desktop:status", () => publicStatus());
+  ipcMain.handle("desktop:status", async () => {
+    await refreshOwnerRuntimeStatus();
+    return publicStatus();
+  });
   ipcMain.handle("desktop:check-hub", async (_event, input) => {
     const hubUrl = requireSpsHubOrigin(input?.hubUrl);
     const health = await probeSpsHub({ hubUrl });
@@ -1163,6 +1230,8 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:accept-invite-code", async (_event, input) => await acceptInviteCode(input));
   ipcMain.handle("desktop:create-member-invite", async () => await createMemberInvite());
+  ipcMain.handle("desktop:list-member-invites", async () => await listMemberInvites());
+  ipcMain.handle("desktop:revoke-member-invite", async (_event, input) => await revokeMemberInvite(input));
   ipcMain.handle("desktop:copy-text", async (_event, input) => {
     const text = String(input?.text ?? "");
     if (!text || text.length > 2048) throw new Error("Nothing safe to copy.");

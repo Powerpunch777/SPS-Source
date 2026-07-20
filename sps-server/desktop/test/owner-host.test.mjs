@@ -27,6 +27,30 @@ test("starts an internal Owner Host when its runtime is available", async () => 
   assert.equal((await manager.stop()).state, "stopped");
 });
 
+test("recovers an owned Host that becomes healthy after a bounded startup wait", async () => {
+  let healthy = false;
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.kill = () => { child.exitCode = 0; child.emit("exit", 0); };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310",
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"], cwd: "C:/sps" }),
+    spawn: () => child,
+    delay: async () => {},
+    startupAttempts: 1,
+  });
+
+  const timedOut = await manager.start();
+  assert.equal(timedOut.state, "starting");
+  assert.match(timedOut.lastError, /did not become ready/);
+
+  healthy = true;
+  const recovered = await manager.inspect();
+  assert.equal(recovered.state, "running");
+  assert.equal(recovered.lastError, null);
+});
+
 test("forces only its own Host process tree when graceful shutdown does not finish", async () => {
   const child = new EventEmitter();
   child.exitCode = null;

@@ -47,6 +47,9 @@ SPS Desktop은 Windows용 앱 하나로 출시한다.
 `SPS-XXXX-...` 짧은 코드는 이미 Team Host 주소가 저장된 Desktop에서만 사용하는
 호환 입력이다. 새 Member에게는 자기완결형 `SPS2-...` 코드만 전달한다.
 
+Owner는 SPS Desktop에서 자신이 방금 만든 활성 Member 초대를 revoke할 수 있다. 코드가
+잘못 전달되었거나 더 이상 필요 없으면 만료를 기다리지 않고 바로 취소한다.
+
 ## 3. 초대 코드 UX
 
 초대 생성 화면은 다음을 제공한다.

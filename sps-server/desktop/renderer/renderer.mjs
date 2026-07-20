@@ -3,6 +3,7 @@ import { createSpsDesktopSetupReadiness } from "./setup-readiness.mjs";
 const $ = (selector) => document.querySelector(selector);
 const notice = $("#notice");
 const DEFAULT_SPS_HUB_URL = "";
+let latestMemberInviteId = null;
 
 function showNotice(message, error = false) {
   notice.textContent = message;
@@ -167,6 +168,7 @@ function renderTeamAccess(status) {
   const form = $("#team-access-form");
   const memberInvitePanel = $("#member-invite-panel");
   const createMemberInviteButton = $("#create-member-invite");
+  const revokeMemberInviteButton = $("#revoke-member-invite");
   if (teamAccess?.enabled) {
     const recovering = teamAccess.phase === "preparing";
     detail.textContent = [
@@ -180,6 +182,7 @@ function renderTeamAccess(status) {
     form.hidden = true;
     memberInvitePanel.hidden = recovering;
     createMemberInviteButton.disabled = recovering;
+    revokeMemberInviteButton.disabled = recovering || !latestMemberInviteId;
     inspectButton.disabled = true;
     enableButton.disabled = true;
     disableButton.disabled = false;
@@ -187,6 +190,8 @@ function renderTeamAccess(status) {
   }
   form.hidden = !ownerHost;
   memberInvitePanel.hidden = true;
+  latestMemberInviteId = null;
+  revokeMemberInviteButton.disabled = true;
   inspectButton.disabled = !ownerHost;
   enableButton.disabled = !ownerHost;
   disableButton.disabled = true;
@@ -369,6 +374,8 @@ $("#open-invite").addEventListener("click", () => run(async () => {
 $("#create-member-invite").addEventListener("click", () => run(async () => {
   const invitation = await window.spsDesktop.createMemberInvite();
   $("#member-invite-code").value = invitation.code;
+  latestMemberInviteId = invitation.id;
+  $("#revoke-member-invite").disabled = false;
   showNotice("Member invitation created. It expires in 24 hours and should be shared privately.");
 }));
 
@@ -377,6 +384,15 @@ $("#copy-member-invite").addEventListener("click", () => run(async () => {
   if (!code) throw new Error("Create a member invitation first.");
   await window.spsDesktop.copyText({ text: code });
   showNotice("Member invitation copied.");
+}));
+
+$("#revoke-member-invite").addEventListener("click", () => run(async () => {
+  if (!latestMemberInviteId) throw new Error("Create a member invitation first.");
+  await window.spsDesktop.revokeMemberInvite({ inviteId: latestMemberInviteId });
+  latestMemberInviteId = null;
+  $("#member-invite-code").value = "";
+  $("#revoke-member-invite").disabled = true;
+  showNotice("Member invitation revoked.");
 }));
 
 $("#project-workspace-form").addEventListener("submit", async (event) => {

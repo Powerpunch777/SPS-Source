@@ -187,6 +187,10 @@ export function createSpsOwnerHostManager({
   async function inspect() {
     const health = await healthAt(url, fetchImpl);
     if (health) {
+      // A slow first boot can outlive the bounded start loop. Once the Host
+      // answers again, make the manager recover instead of preserving a stale
+      // timeout that blocks Owner actions such as member invitations.
+      lastError = null;
       return {
         state: ownedChild ? "running" : "running-existing",
         url,

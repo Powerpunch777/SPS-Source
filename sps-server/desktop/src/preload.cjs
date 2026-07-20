@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld("spsDesktop", {
   openInvite: (input) => ipcRenderer.invoke("desktop:open-invite", input),
   acceptInviteCode: (input) => ipcRenderer.invoke("desktop:accept-invite-code", input),
   createMemberInvite: () => ipcRenderer.invoke("desktop:create-member-invite"),
+  listMemberInvites: () => ipcRenderer.invoke("desktop:list-member-invites"),
+  revokeMemberInvite: (input) => ipcRenderer.invoke("desktop:revoke-member-invite", input),
   copyText: (input) => ipcRenderer.invoke("desktop:copy-text", input),
   startAuth: () => ipcRenderer.invoke("desktop:start-auth"),
   pollAuth: () => ipcRenderer.invoke("desktop:poll-auth"),

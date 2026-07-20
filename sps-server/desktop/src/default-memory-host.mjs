@@ -158,7 +158,10 @@ export function createSpsDefaultMemoryManager({
 
   async function inspect() {
     const health = await healthAt(url, token, fetchImpl);
-    if (health) return { state: ownedChild ? "running" : "running-existing", url, health, startedAt, lastError };
+    if (health) {
+      lastError = null;
+      return { state: ownedChild ? "running" : "running-existing", url, health, startedAt, lastError };
+    }
     if (ownedChild && ownedChild.exitCode == null) return { state: "starting", url, health: null, startedAt, lastError };
     return { state: "stopped", url, health: null, startedAt: null, lastError };
   }
