@@ -4569,6 +4569,8 @@ var PLUGIN_CAPABILITIES = [
   "external.objects.read",
   "external.objects.write",
   "external.objects.refresh",
+  // Memory Providers
+  "memory.providers.register",
   // Plugin State
   "plugin.state.read",
   "plugin.state.write",
@@ -4592,6 +4594,24 @@ var PLUGIN_CAPABILITIES = [
   "ui.dashboardWidget.register",
   "ui.commentAnnotation.register",
   "ui.action.register"
+];
+var PLUGIN_MEMORY_SCOPES = [
+  "company",
+  "project",
+  "agent",
+  "room",
+  "task",
+  "artifact",
+  "user"
+];
+var PLUGIN_MEMORY_LIFECYCLE_EVENTS = [
+  "project.created",
+  "room.checkpoint",
+  "room.compacted",
+  "task.completed",
+  "task.blocked",
+  "task.reopened",
+  "artifact.published"
 ];
 var PLUGIN_DATABASE_CORE_READ_TABLES = [
   "companies",
@@ -9267,6 +9287,36 @@ var pluginObjectReferenceProviderDeclarationSchema = external_exports.object({
     });
   }
 });
+var pluginMemoryProviderDeclarationSchema = external_exports.object({
+  providerKey: external_exports.string().min(1).max(100).regex(
+    /^[a-z0-9][a-z0-9._-]*$/,
+    "Memory provider key must start with a lowercase alphanumeric and contain only lowercase letters, digits, dots, hyphens, or underscores"
+  ),
+  displayName: external_exports.string().min(1).max(100),
+  scopes: external_exports.array(external_exports.enum(PLUGIN_MEMORY_SCOPES)).min(1),
+  lifecycleEvents: external_exports.array(external_exports.enum(PLUGIN_MEMORY_LIFECYCLE_EVENTS)).optional(),
+  recallToolName: external_exports.string().min(1).max(100).optional(),
+  proposeToolName: external_exports.string().min(1).max(100).optional(),
+  defaultForNewCompanies: external_exports.boolean().optional()
+}).superRefine((value, ctx) => {
+  const duplicateScopes = value.scopes.filter((scope, index) => value.scopes.indexOf(scope) !== index);
+  if (duplicateScopes.length > 0) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: `Duplicate memory scopes: ${[...new Set(duplicateScopes)].join(", ")}`,
+      path: ["scopes"]
+    });
+  }
+  const lifecycleEvents = value.lifecycleEvents ?? [];
+  const duplicateEvents = lifecycleEvents.filter((event, index) => lifecycleEvents.indexOf(event) !== index);
+  if (duplicateEvents.length > 0) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: `Duplicate memory lifecycle events: ${[...new Set(duplicateEvents)].join(", ")}`,
+      path: ["lifecycleEvents"]
+    });
+  }
+});
 var pluginManifestV1Schema = external_exports.object({
   id: external_exports.string().min(1).regex(
     /^[a-z0-9][a-z0-9._-]*$/,
@@ -9307,6 +9357,7 @@ var pluginManifestV1Schema = external_exports.object({
   skills: external_exports.array(pluginManagedSkillDeclarationSchema).optional(),
   localFolders: external_exports.array(pluginLocalFolderDeclarationSchema).optional(),
   objectReferences: external_exports.array(pluginObjectReferenceProviderDeclarationSchema).optional(),
+  memoryProvider: pluginMemoryProviderDeclarationSchema.optional(),
   launchers: external_exports.array(pluginLauncherDeclarationSchema).optional(),
   ui: external_exports.object({
     slots: external_exports.array(pluginUiSlotDeclarationSchema).min(1).optional(),
@@ -9440,6 +9491,33 @@ var pluginManifestV1Schema = external_exports.object({
           });
         }
       }
+    }
+  }
+  if (manifest.memoryProvider) {
+    if (!manifest.capabilities.includes("memory.providers.register")) {
+      ctx.addIssue({
+        code: external_exports.ZodIssueCode.custom,
+        message: "Capability 'memory.providers.register' is required when memoryProvider is declared",
+        path: ["capabilities"]
+      });
+    }
+    const declaredToolNames = new Set((manifest.tools ?? []).map((tool) => tool.name));
+    for (const field of ["recallToolName", "proposeToolName"]) {
+      const toolName = manifest.memoryProvider[field];
+      if (toolName && !declaredToolNames.has(toolName)) {
+        ctx.addIssue({
+          code: external_exports.ZodIssueCode.custom,
+          message: `memoryProvider.${field} must reference a declared tool`,
+          path: ["memoryProvider", field]
+        });
+      }
+    }
+    if ((manifest.memoryProvider.recallToolName || manifest.memoryProvider.proposeToolName) && !manifest.capabilities.includes("agent.tools.register")) {
+      ctx.addIssue({
+        code: external_exports.ZodIssueCode.custom,
+        message: "Capability 'agent.tools.register' is required when memoryProvider declares agent tools",
+        path: ["capabilities"]
+      });
     }
   }
   if (manifest.database) {
@@ -14808,8 +14886,8 @@ function markNativeRoomContextHydrated(state, sessionId, prepared) {
 async function getRuntimeConfig(ctx) {
   const config = asRecord3(await ctx.config.get());
   return {
-    enabled: config.enableCodexRooms === true,
-    enableCodexRooms: config.enableCodexRooms === true,
+    enabled: config.enableCodexRooms !== false,
+    enableCodexRooms: config.enableCodexRooms !== false,
     enableAgyRooms: config.enableAgyRooms !== false,
     command: textParam(config, "codexCommand", "codex"),
     model: textParam(config, "codexModel", "") || null,
@@ -14823,8 +14901,12 @@ async function getRuntimeConfig(ctx) {
     agyFallbackPrintTimeout: textParam(config, "agyFallbackPrintTimeout", "2h"),
     agyFallbackTimeoutMs: Math.max(0, Number(config.agyFallbackTimeoutSec) || 0) * 1e3,
     enableTaskAssignment: config.enableTaskAssignment === true,
-    // Prefer the SPS setting while accepting the legacy key from an existing installation.
-    spsApiUrl: loopbackSPSApiUrl(textParam(config, "spsApiUrl", textParam(config, "paperclipApiUrl", "http://127.0.0.1:3100")))
+    // The packaged Owner Host chooses an available loopback port on first run.
+    // Its process value must win over the manifest's old 3100 default; otherwise
+    // Room UI can load while durable writes go to a different SPS server.
+    spsApiUrl: loopbackSPSApiUrl(
+      process.env.SPS_ROOM_API_URL || textParam(config, "spsApiUrl", textParam(config, "paperclipApiUrl", "http://127.0.0.1:3100"))
+    )
   };
 }
 function isLoopbackHost2(host) {

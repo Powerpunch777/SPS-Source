@@ -90,17 +90,26 @@ async function normalizeWorkspacePackageExports(runtimeRoot) {
   }
 }
 
-async function copyBundledSpsMemoryRuntime(runtimeRoot) {
-  const providerSource = path.join(spsServerRoot, "sps-default-memory");
-  const providerTarget = path.join(runtimeRoot, "sps-default-memory");
+const SPS_BUNDLED_OWNER_HOST_PLUGINS = [
+  "sps-default-memory",
+  "sps-room-chat",
+];
+
+async function copyBundledSpsPluginRuntime(runtimeRoot) {
+  for (const pluginName of SPS_BUNDLED_OWNER_HOST_PLUGINS) {
+    const pluginSource = path.join(spsServerRoot, pluginName);
+    const pluginTarget = path.join(runtimeRoot, pluginName);
+    await requireFile(path.join(pluginSource, "package.json"), `Bundled SPS plugin is missing its package manifest: ${pluginName}.`);
+    await requireFile(path.join(pluginSource, "dist", "manifest.js"), `Bundled SPS plugin is not built: ${pluginName}.`);
+    await cp(pluginSource, pluginTarget, {
+      recursive: true,
+      filter: (entry) => !["node_modules", "package-lock.json", "scripts", "src", "tests"].includes(path.basename(entry)),
+    });
+  }
+
   const sidecarSource = path.join(spsServerRoot, "memory-sidecar", "memory-sidecar.mjs");
   const sidecarTarget = path.join(runtimeRoot, "memory-sidecar", "memory-sidecar.mjs");
-  await requireFile(path.join(providerSource, "package.json"), "SPS Default Memory provider package is missing.");
   await requireFile(sidecarSource, "SPS Default Memory sidecar source is missing.");
-  await cp(providerSource, providerTarget, {
-    recursive: true,
-    filter: (entry) => !["node_modules", "package-lock.json"].includes(path.basename(entry)),
-  });
   await mkdir(path.dirname(sidecarTarget), { recursive: true });
   await cp(sidecarSource, sidecarTarget);
 }
@@ -138,7 +147,7 @@ await run(
 await normalizeWorkspacePackageExports(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "dist/index.js", "run", "--help"], runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
-await copyBundledSpsMemoryRuntime(runtimeRoot);
+await copyBundledSpsPluginRuntime(runtimeRoot);
 await rename(path.join(runtimeRoot, "node_modules"), path.join(runtimeRoot, "sps-vendor"));
 await writeFile(
   path.join(runtimeRoot, "sps-owner-host-runtime.json"),

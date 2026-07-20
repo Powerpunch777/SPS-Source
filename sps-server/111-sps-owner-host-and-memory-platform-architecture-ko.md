@@ -50,11 +50,35 @@ flowchart LR
 | **SPS Core** | 회사·프로젝트·Room·Task·Agent·권한·감사 기록, 메모리 표준 계약, 이벤트 생명주기, 범위 검증, 암호화·백업 연동 | 특정 LLM, 벡터 DB, Obsidian 또는 검색 전략을 강제하지 않음 |
 | **SPS Default Memory** | 기본 요약, 체크포인트, 근거 연결, 범위별 검색, 후보·확정·폐기 처리 | Core DB를 직접 우회 수정하거나 외부 Provider를 막지 않음 |
 | **Optional Memory Provider** | Git/Obsidian, 로컬 벡터 DB, 외부 벡터 DB, 최소 기억 등 선택된 전략 구현 | Core 권한을 우회하거나 허가되지 않은 파일·비밀을 전송하지 않음 |
-| **SPS Desktop Owner Host** | 엔진 패키징·시작·중지·업데이트·복구, Owner Vault 위치와 상태, 네트워크 연결 선택 | 친구의 CLI 로그인·API 키·로컬 모델 파일 보관 |
+| **SPS Owner Host** | 서버 설정, 서버 상태, 회사·멤버·초대, Node 등록·승인, Agent-Node 실행 권한, Vault·백업 정책의 권위 있는 원본 | 친구의 CLI 로그인·API 키·로컬 모델 파일 보관 |
+| **SPS Desktop** | Owner Host 엔진 패키징·시작·중지·업데이트·복구, 로컬 Vault 경로 선택, 이 PC의 CLI·로컬 AI 실행기 제공 | 서버 설정을 별도 데스크톱 상태로 중복 보관하거나 다른 PC의 자격증명을 수집 |
 | **SPS Member Node** | 자기 PC의 실행기 탐색, 명시적으로 승인된 Agent 작업 실행, 로컬 자격증명 보호 | Host 데이터를 권위 있게 변경하거나 다른 PC에 임의로 접속 |
 
 `Node`는 실행 가능한 **컴퓨터**이며 Agent가 아니다. Agent는 SPS의 역할과 운영 규칙을
 가진 논리적 직원이고, Node는 그 Agent가 실제로 실행될 수 있는 PC다.
+
+### 첫 실행과 화면 경계
+
+SPS Desktop의 기본 화면은 별도의 운영 콘솔이 아니라 SPS Workspace여야 한다. Workspace는
+Owner Host와 외부 Host에서 같은 SPS UI를 사용하므로, Room·Task·Project·Agent와 함께
+서버 설정, 서버 상태, 멤버 초대, Node 승인 화면도 같은 제품 안에서 연다.
+
+처음 설치한 경우에만 Desktop이 짧은 온보딩을 보인다.
+
+1. 사용자는 SPS 계정으로 Google 로그인을 완료한다.
+2. 다음 화면에서 **이 컴퓨터에 서버 만들기** 또는 **기존 서버에 참여하기**를 선택한다.
+3. 서버 만들기는 Owner Host와 Owner Vault를 준비하고 Workspace를 연다.
+4. 서버 참여는 초대 코드로 Host 주소와 회사 범위를 받은 뒤, 해당 컴퓨터를 Member Node로
+   등록한다.
+
+Google 계정 확인은 사람의 식별이고, 회사·프로젝트·Agent 권한은 항상 선택한 SPS 서버가
+판정한다. 이 첫 로그인에는 공개 데스크톱 OAuth 클라이언트의 PKCE 흐름이 필요하다. 서버별
+Google OAuth Web Client는 사설 Team Host의 브라우저 로그인과 초대 수락에만 사용하며,
+Desktop 공통 로그인과 혼용하지 않는다.
+
+온보딩 이후 Desktop에는 업데이트, 복구, 로컬 실행기 권한처럼 이 PC에서만 가능한 기능만
+남긴다. 서버 상태나 Node 권한을 바꾸는 버튼은 Workspace의 서버 설정 화면에서 시작하고,
+실제 로컬 동작이 필요할 때만 승인된 Desktop/Node에 범위 제한 요청을 전달한다.
 
 ## 3. 작업과 권한의 기본 루프
 

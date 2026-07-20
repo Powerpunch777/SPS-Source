@@ -3026,8 +3026,8 @@ function markNativeRoomContextHydrated(state, sessionId, prepared) {
 async function getRuntimeConfig(ctx) {
   const config = asRecord(await ctx.config.get());
   return {
-    enabled: config.enableCodexRooms === true,
-    enableCodexRooms: config.enableCodexRooms === true,
+    enabled: config.enableCodexRooms !== false,
+    enableCodexRooms: config.enableCodexRooms !== false,
     enableAgyRooms: config.enableAgyRooms !== false,
     command: textParam(config, "codexCommand", "codex"),
     model: textParam(config, "codexModel", "") || null,
@@ -3041,8 +3041,13 @@ async function getRuntimeConfig(ctx) {
     agyFallbackPrintTimeout: textParam(config, "agyFallbackPrintTimeout", "2h"),
     agyFallbackTimeoutMs: Math.max(0, Number(config.agyFallbackTimeoutSec) || 0) * 1000,
     enableTaskAssignment: config.enableTaskAssignment === true,
-    // Prefer the SPS setting while accepting the legacy key from an existing installation.
-    spsApiUrl: loopbackSPSApiUrl(textParam(config, "spsApiUrl", textParam(config, "paperclipApiUrl", "http://127.0.0.1:3100")))
+    // The packaged Owner Host chooses an available loopback port on first run.
+    // Its process value must win over the manifest's old 3100 default; otherwise
+    // Room UI can load while durable writes go to a different SPS server.
+    spsApiUrl: loopbackSPSApiUrl(
+      process.env.SPS_ROOM_API_URL
+      || textParam(config, "spsApiUrl", textParam(config, "paperclipApiUrl", "http://127.0.0.1:3100"))
+    )
   };
 }
 

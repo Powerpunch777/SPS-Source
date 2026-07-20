@@ -99,6 +99,19 @@ async function assertDefaultMemoryPlugin() {
   return memory;
 }
 
+async function assertRoomsPlugin() {
+  const response = await fetch(`http://127.0.0.1:${port}/api/plugins`, { signal: AbortSignal.timeout(5_000) });
+  if (!response.ok) throw new Error(`Could not inspect bundled plugins (${response.status}).`);
+  const plugins = await response.json();
+  const rooms = Array.isArray(plugins)
+    ? plugins.find((plugin) => plugin?.manifestJson?.id === "local.room-chat")
+    : null;
+  if (!rooms || rooms.status !== "ready") {
+    throw new Error("SPS Rooms was not installed and ready in the packaged Owner Host.");
+  }
+  return rooms;
+}
+
 async function removeWithRetry(target, attempts = 30) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -148,6 +161,7 @@ await cp(path.join(runtimeRoot, "dist"), path.join(executionRuntimeRoot, "dist")
 await cp(path.join(runtimeRoot, "sps-vendor"), path.join(executionRuntimeRoot, "node_modules"), { recursive: true, dereference: false });
 await copyFile(path.join(runtimeRoot, "package.json"), path.join(executionRuntimeRoot, "package.json"));
 await cp(path.join(runtimeRoot, "sps-default-memory"), path.join(executionRuntimeRoot, "sps-default-memory"), { recursive: true, dereference: false });
+await cp(path.join(runtimeRoot, "sps-room-chat"), path.join(executionRuntimeRoot, "sps-room-chat"), { recursive: true, dereference: false });
 await cp(path.join(runtimeRoot, "memory-sidecar"), path.join(executionRuntimeRoot, "memory-sidecar"), { recursive: true, dereference: false });
 await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 await mkdir(path.dirname(memoryConfigPath), { recursive: true });
@@ -184,7 +198,11 @@ const child = spawn(
       PAPERCLIP_STORAGE_LOCAL_DIR: path.join(temporaryRoot, "storage"),
       PAPERCLIP_SECRETS_MASTER_KEY_FILE: path.join(temporaryRoot, "secrets", "master.key"),
       PAPERCLIP_PROJECTS_ROOT: path.join(temporaryRoot, "projects"),
-      SPS_BUNDLED_PLUGIN_PATHS: path.join(executionRuntimeRoot, "sps-default-memory"),
+      SPS_BUNDLED_PLUGIN_PATHS: [
+        path.join(executionRuntimeRoot, "sps-default-memory"),
+        path.join(executionRuntimeRoot, "sps-room-chat"),
+      ].join(path.delimiter),
+      SPS_ROOM_API_URL: `http://127.0.0.1:${port}`,
       SPS_MEMORY_SIDECAR_URL: `http://127.0.0.1:${memoryPort}`,
       SPS_MEMORY_SIDECAR_TOKEN: memoryToken,
     },
@@ -202,8 +220,9 @@ try {
   await waitForMemoryHealth();
   const health = await waitForHealth();
   await assertDefaultMemoryPlugin();
+  await assertRoomsPlugin();
   passed = true;
-  console.log(`Packaged SPS Owner Host and SPS Default Memory smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
+  console.log(`Packaged SPS Owner Host, SPS Default Memory, and SPS Rooms smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
 } finally {
   await stopChildTree(child);
   await stopChildTree(memoryChild);

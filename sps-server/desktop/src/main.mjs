@@ -323,6 +323,7 @@ async function ensureOwnerHostManager() {
   const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
   const developmentMemorySidecarEntry = path.resolve(__dirname, "..", "..", "memory-sidecar", "memory-sidecar.mjs");
   const developmentMemoryPluginPath = path.resolve(__dirname, "..", "..", "sps-default-memory");
+  const developmentRoomPluginPath = path.resolve(__dirname, "..", "..", "sps-room-chat");
   defaultMemoryManager = createSpsDefaultMemoryManager({
     url: spsDefaultMemoryUrl(defaultMemory.config),
     token: defaultMemory.config.security.token,
@@ -349,9 +350,15 @@ async function ensureOwnerHostManager() {
       const packagedMemoryPluginPath = materializedRuntime
         ? path.join(materializedRuntime, "sps-default-memory")
         : null;
+      const packagedRoomPluginPath = materializedRuntime
+        ? path.join(materializedRuntime, "sps-room-chat")
+        : null;
       const memoryPluginPath = packagedMemoryPluginPath && existsSync(path.join(packagedMemoryPluginPath, "package.json"))
         ? packagedMemoryPluginPath
         : developmentMemoryPluginPath;
+      const roomPluginPath = packagedRoomPluginPath && existsSync(path.join(packagedRoomPluginPath, "package.json"))
+        ? packagedRoomPluginPath
+        : developmentRoomPluginPath;
       return resolveSpsOwnerHostRuntime({
         packagedRuntimeRoots: materializedRuntime ? [materializedRuntime] : [],
         coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
@@ -363,7 +370,8 @@ async function ensureOwnerHostManager() {
           PAPERCLIP_STORAGE_LOCAL_DIR: ownerHost.layout.storageDir,
           PAPERCLIP_SECRETS_MASTER_KEY_FILE: ownerHost.layout.secretsPath,
           PAPERCLIP_PROJECTS_ROOT: ownerHost.layout.projectsDir,
-          SPS_BUNDLED_PLUGIN_PATHS: memoryPluginPath,
+          SPS_BUNDLED_PLUGIN_PATHS: [memoryPluginPath, roomPluginPath].join(path.delimiter),
+          SPS_ROOM_API_URL: url,
           SPS_MEMORY_SIDECAR_URL: spsDefaultMemoryUrl(defaultMemory.config),
           SPS_MEMORY_SIDECAR_TOKEN: defaultMemory.config.security.token,
           ...ownerHostTeamEnvironment(),
