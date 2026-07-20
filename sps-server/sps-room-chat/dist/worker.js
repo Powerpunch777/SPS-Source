@@ -4738,6 +4738,7 @@ var PLUGIN_STATE_SCOPE_KINDS = [
   "project_workspace",
   "agent",
   "issue",
+  "thread",
   "goal",
   "run"
 ];
@@ -4745,6 +4746,113 @@ var PLUGIN_STATE_SCOPE_KINDS = [
 // ../../external/sps-core/packages/shared/src/adapter-type.ts
 var agentAdapterTypeSchema = external_exports.string().trim().min(1).default("process").describe(`Known built-in adapters: ${AGENT_ADAPTER_TYPES.join(", ")}. External adapters may register additional non-empty string types at runtime.`);
 var optionalAgentAdapterTypeSchema = external_exports.string().trim().min(1).optional();
+
+// ../../external/sps-core/packages/shared/src/agent-platform-contract.ts
+var AGENT_PLATFORM_CONTRACT_VERSION = "1.0";
+var agentPlatformScopeSchema = external_exports.object({
+  organizationId: external_exports.string().min(1),
+  projectId: external_exports.string().min(1).nullable().optional(),
+  workItemId: external_exports.string().min(1).nullable().optional(),
+  threadId: external_exports.string().min(1).nullable().optional(),
+  agentId: external_exports.string().min(1).nullable().optional(),
+  artifactId: external_exports.string().min(1).nullable().optional()
+});
+var agentPlatformThreadStatusSchema = external_exports.enum(["active", "closed", "archived"]);
+var agentPlatformRunStatusSchema = external_exports.enum([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "timed_out"
+]);
+var agentPlatformBackendKindSchema = external_exports.enum([
+  "adapter",
+  "node",
+  "sandbox",
+  "remote_service"
+]);
+var agentPlatformWorkItemStatusSchema = external_exports.enum([
+  "open",
+  "active",
+  "blocked",
+  "in_review",
+  "completed",
+  "cancelled"
+]);
+var agentPlatformStoreKindSchema = external_exports.enum([
+  "memory",
+  "state",
+  "artifact",
+  "external"
+]);
+var agentPlatformStoreHealthSchema = external_exports.enum(["unknown", "ready", "degraded", "unavailable"]);
+var agentPlatformExtensionKindSchema = external_exports.enum([
+  "workplane",
+  "store_provider",
+  "backend_provider",
+  "surface"
+]);
+var agentPlatformThreadSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  scope: agentPlatformScopeSchema,
+  agentId: external_exports.string().min(1),
+  status: agentPlatformThreadStatusSchema,
+  backendId: external_exports.string().min(1).nullable(),
+  lastRunId: external_exports.string().min(1).nullable(),
+  lastError: external_exports.string().nullable(),
+  createdAt: external_exports.string().datetime(),
+  updatedAt: external_exports.string().datetime()
+});
+var agentPlatformRunSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  scope: agentPlatformScopeSchema,
+  threadId: external_exports.string().min(1).nullable(),
+  agentId: external_exports.string().min(1),
+  backendId: external_exports.string().min(1).nullable(),
+  status: agentPlatformRunStatusSchema,
+  startedAt: external_exports.string().datetime().nullable(),
+  finishedAt: external_exports.string().datetime().nullable(),
+  error: external_exports.string().nullable(),
+  createdAt: external_exports.string().datetime()
+});
+var agentPlatformBackendSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  organizationId: external_exports.string().min(1),
+  kind: agentPlatformBackendKindSchema,
+  displayName: external_exports.string().min(1),
+  status: external_exports.enum(["configured", "ready", "offline", "degraded", "disabled"]),
+  capabilities: external_exports.array(external_exports.string().min(1))
+});
+var agentPlatformWorkItemSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  scope: agentPlatformScopeSchema,
+  title: external_exports.string().min(1),
+  status: agentPlatformWorkItemStatusSchema,
+  assigneeAgentId: external_exports.string().min(1).nullable(),
+  createdAt: external_exports.string().datetime(),
+  updatedAt: external_exports.string().datetime()
+});
+var agentPlatformStoreSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  organizationId: external_exports.string().min(1),
+  kind: agentPlatformStoreKindSchema,
+  displayName: external_exports.string().min(1),
+  health: agentPlatformStoreHealthSchema,
+  capabilities: external_exports.array(external_exports.string().min(1)),
+  supportedScopes: external_exports.array(external_exports.enum(["organization", "project", "agent", "thread", "work_item", "artifact", "user"]))
+});
+var agentPlatformExtensionSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  contractVersion: external_exports.string().min(1),
+  kind: agentPlatformExtensionKindSchema,
+  displayName: external_exports.string().min(1)
+});
+function isAgentPlatformContractCompatible(version) {
+  const major = version.trim().split(".", 1)[0];
+  return major === AGENT_PLATFORM_CONTRACT_VERSION.split(".", 1)[0];
+}
 
 // ../../external/sps-core/packages/shared/src/frontmatter.ts
 var SKILL_FRONTMATTER_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -9317,6 +9425,32 @@ var pluginMemoryProviderDeclarationSchema = external_exports.object({
     });
   }
 });
+var pluginAgentPlatformDeclarationSchema = external_exports.object({
+  contractVersion: external_exports.string().min(1).regex(
+    /^\d+\.\d+(?:\.\d+)?$/,
+    "Agent Platform contractVersion must use a numeric version such as 1.0"
+  ),
+  kind: agentPlatformExtensionKindSchema,
+  profileKey: external_exports.string().min(1).max(100).regex(
+    /^[a-z0-9][a-z0-9._-]*$/,
+    "Agent Platform profileKey must start with a lowercase alphanumeric and contain only lowercase letters, digits, dots, hyphens, or underscores"
+  ).optional()
+}).superRefine((value, ctx) => {
+  if (!isAgentPlatformContractCompatible(value.contractVersion)) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: `Agent Platform contractVersion '${value.contractVersion}' is not compatible with this Core`,
+      path: ["contractVersion"]
+    });
+  }
+  if (value.kind === "workplane" && !value.profileKey) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "Agent Platform workplane extensions require a profileKey",
+      path: ["profileKey"]
+    });
+  }
+});
 var pluginManifestV1Schema = external_exports.object({
   id: external_exports.string().min(1).regex(
     /^[a-z0-9][a-z0-9._-]*$/,
@@ -9358,6 +9492,7 @@ var pluginManifestV1Schema = external_exports.object({
   localFolders: external_exports.array(pluginLocalFolderDeclarationSchema).optional(),
   objectReferences: external_exports.array(pluginObjectReferenceProviderDeclarationSchema).optional(),
   memoryProvider: pluginMemoryProviderDeclarationSchema.optional(),
+  agentPlatform: pluginAgentPlatformDeclarationSchema.optional(),
   launchers: external_exports.array(pluginLauncherDeclarationSchema).optional(),
   ui: external_exports.object({
     slots: external_exports.array(pluginUiSlotDeclarationSchema).min(1).optional(),
@@ -11453,7 +11588,7 @@ function startWorkerRpcHost(options) {
 var manifest_default = {
   id: "local.room-chat",
   apiVersion: 1,
-  version: "0.3.59",
+  version: "0.3.60",
   displayName: "SPS Rooms",
   description: "Long-lived project Agent Rooms backed by SPS Agent Sessions.",
   author: "local",
@@ -11484,6 +11619,11 @@ var manifest_default = {
     "plugin.state.write",
     "instance.settings.register"
   ],
+  agentPlatform: {
+    contractVersion: "1.0",
+    kind: "workplane",
+    profileKey: "sps-lead-worker"
+  },
   jobs: [
     {
       jobKey: "workplane-reconcile",
@@ -11494,7 +11634,7 @@ var manifest_default = {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.59"
+    ui: "./dist/ui-v0.3.60"
   },
   ui: {
     slots: [

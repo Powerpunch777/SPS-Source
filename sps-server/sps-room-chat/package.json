@@ -1,6 +1,6 @@
 {
   "name": "sps-room-chat",
-  "version": "0.3.59",
+  "version": "0.3.60",
   "private": true,
   "type": "module",
   "description": "Long-lived SPS Agent Rooms backed by the Codex app-server protocol.",

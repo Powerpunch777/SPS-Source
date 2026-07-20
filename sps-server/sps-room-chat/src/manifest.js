@@ -1,7 +1,7 @@
 export default {
   id: "local.room-chat",
   apiVersion: 1,
-  version: "0.3.59",
+  version: "0.3.60",
   displayName: "SPS Rooms",
   description: "Long-lived project Agent Rooms backed by SPS Agent Sessions.",
   author: "local",
@@ -32,6 +32,11 @@ export default {
     "plugin.state.write",
     "instance.settings.register"
   ],
+  agentPlatform: {
+    contractVersion: "1.0",
+    kind: "workplane",
+    profileKey: "sps-lead-worker"
+  },
   jobs: [
     {
       jobKey: "workplane-reconcile",
@@ -42,7 +47,7 @@ export default {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.59"
+    ui: "./dist/ui-v0.3.60"
   },
   ui: {
     slots: [

@@ -46,6 +46,10 @@ export default {
   author: "SPS",
   categories: ["automation"],
   capabilities: ["agent.tools.register", "memory.providers.register"],
+  agentPlatform: {
+    contractVersion: "1.0",
+    kind: "store_provider"
+  },
   entrypoints: { worker: "./dist/worker.js" },
   tools: [memoryRecallTool, memoryProposeTool],
   memoryProvider: {
