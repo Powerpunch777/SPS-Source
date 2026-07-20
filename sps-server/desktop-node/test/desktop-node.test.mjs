@@ -284,6 +284,12 @@ test("resolves only a signed-in local Codex profile selected by the Hub", async 
       await resolveSpsNodeCodexHome({ env: {} }, { USERPROFILE: homeRoot }),
       path.join(homeRoot, ".codex-plus-b"),
     );
+    await fs.mkdir(path.join(homeRoot, ".codex-plus-c"));
+    await fs.writeFile(path.join(homeRoot, ".codex-plus-c", "auth.json"), "{}", "utf8");
+    await assert.rejects(
+      resolveSpsNodeCodexHome({ env: {} }, { USERPROFILE: homeRoot }),
+      /multiple signed-in Codex profiles/,
+    );
     await assert.rejects(
       resolveSpsNodeCodexHome({ env: { PAPERCLIP_CODEX_ACCOUNT: "../other" } }, { USERPROFILE: homeRoot }),
       /invalid Codex profile name/,
