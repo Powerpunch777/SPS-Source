@@ -155,7 +155,10 @@ async function initializeUpdates() {
     return;
   }
   try {
-    const { autoUpdater } = await import("electron-updater");
+    const updaterModule = await import("electron-updater");
+    // electron-updater is CommonJS. Dynamic ESM import exposes it under default.
+    const autoUpdater = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater;
+    if (!autoUpdater) throw new Error("electron-updater did not expose autoUpdater");
     updateService = createSpsUpdateService({
       app,
       updater: autoUpdater,
