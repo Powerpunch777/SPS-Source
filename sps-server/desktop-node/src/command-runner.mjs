@@ -10,6 +10,9 @@ import {
 const OUTPUT_CHUNK_LIMIT = 48 * 1024;
 const COMMAND_LEASE_CHECK_INTERVAL_MS = 2_000;
 const COMMAND_LEASE_MAX_UNAVAILABLE_MS = 60_000;
+const WINDOWS_COMMAND_LOOKUP_TIMEOUT_MS = 8_000;
+const COMMAND_PREFLIGHT_TIMEOUT_MS = 30_000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1_000;
 const FORBIDDEN_ENV_KEYS = new Set([
   "ANTHROPIC_API_KEY",
   "CODEX_HOME",
@@ -162,14 +165,49 @@ async function findWindowsCommandCandidates(command) {
       stdio: ["ignore", "pipe", "ignore"],
     });
     let output = "";
+    let settled = false;
+    const finish = (candidates) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(candidates);
+    };
+    const timeout = setTimeout(() => {
+      // A broken PATH or an interrupted Windows shell lookup must not leave an
+      // SPS Node command claimed forever before its process has even started.
+      lookup.kill();
+      finish([]);
+    }, WINDOWS_COMMAND_LOOKUP_TIMEOUT_MS);
     lookup.stdout.on("data", (chunk) => {
       output += chunk.toString("utf8");
     });
-    lookup.once("error", () => resolve([]));
+    lookup.once("error", () => finish([]));
     lookup.once("close", () => {
-      resolve(output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean));
+      finish(output.split(/\r?\n/).map((item) => item.trim()).filter(Boolean));
     });
   });
+}
+
+async function withCommandPreflightTimeout(action) {
+  let timeout = null;
+  try {
+    return await Promise.race([
+      action(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error("SPS Desktop timed out while preparing this local command. Check the configured workspace and local CLI installation."));
+        }, COMMAND_PREFLIGHT_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function throwIfCommandCancelled(activeRun, cancellationGeneration) {
+  if (cancellationGeneration !== commandCancellationGeneration || activeRun.cancellationError) {
+    throw new Error(activeRun.cancellationError ?? lastCommandCancellationReason);
+  }
 }
 
 export async function resolveSpsNodeExecutable(command, options = {}) {
@@ -280,17 +318,6 @@ export async function executeSpsNodeCommand({
 }) {
   assertSpsNodeCommandRuntime(command);
   const cancellationGeneration = commandCancellationGeneration;
-  const workspace = await resolveSpsNodeWorkspace(command, profile);
-  // The Hub process may be bound to localhost on its own computer. A member
-  // Node must use the Hub URL it connected to, never that host-local address.
-  const environment = {
-    ...buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
-    PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
-  };
-  if (command.runtimeKind === "codex_cli") {
-    environment.CODEX_HOME = await resolveSpsNodeCodexHome(command, hostEnvironment);
-    delete environment.PAPERCLIP_CODEX_ACCOUNT;
-  }
   let sequence = Number(command.lastEventSeq ?? 0);
   let outputQueue = Promise.resolve();
   const enqueueOutput = (stream, raw) => {
@@ -312,7 +339,7 @@ export async function executeSpsNodeCommand({
 
   const timeoutMs = typeof command.timeoutMs === "number" && command.timeoutMs > 0
     ? command.timeoutMs
-    : 0;
+    : DEFAULT_COMMAND_TIMEOUT_MS;
   const startedAt = Date.now();
   let timeout = null;
   let child = null;
@@ -321,8 +348,27 @@ export async function executeSpsNodeCommand({
   let leaseCancellationError = null;
   let lastLeaseConfirmedAt = Date.now();
   const activeRun = { child: null, cancellationError: null };
+  activeCommands.set(command.id, activeRun);
   try {
-    const invocation = await resolveInvocation(command.command, command.args);
+    const prepared = await withCommandPreflightTimeout(async () => {
+      throwIfCommandCancelled(activeRun, cancellationGeneration);
+      const workspace = await resolveSpsNodeWorkspace(command, profile);
+      throwIfCommandCancelled(activeRun, cancellationGeneration);
+      // The Hub process may be bound to localhost on its own computer. A member
+      // Node must use the Hub URL it connected to, never that host-local address.
+      const environment = {
+        ...buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
+        PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
+      };
+      if (command.runtimeKind === "codex_cli") {
+        environment.CODEX_HOME = await resolveSpsNodeCodexHome(command, hostEnvironment);
+        delete environment.PAPERCLIP_CODEX_ACCOUNT;
+      }
+      const invocation = await resolveInvocation(command.command, command.args);
+      throwIfCommandCancelled(activeRun, cancellationGeneration);
+      return { environment, invocation, workspace };
+    });
+    const { environment, invocation, workspace } = prepared;
     const result = await new Promise((resolve, reject) => {
       let settled = false;
       let timedOut = false;
@@ -339,7 +385,6 @@ export async function executeSpsNodeCommand({
         stdio: ["pipe", "pipe", "pipe"],
       });
       activeRun.child = child;
-      activeCommands.set(command.id, activeRun);
       if (cancellationGeneration !== commandCancellationGeneration) {
         activeRun.cancellationError = lastCommandCancellationReason;
         void terminateProcessTree(child).catch(() => child?.kill());

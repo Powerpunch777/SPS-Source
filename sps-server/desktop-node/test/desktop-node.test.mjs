@@ -430,9 +430,8 @@ test("does not start a command that races with Desktop Node disconnection", asyn
       },
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(await cancelSpsNodeCommands("Desktop disconnected before launch"), 0);
-    const result = await execution;
-    assert.notEqual(result.exitCode, 0);
+    assert.equal(await cancelSpsNodeCommands("Desktop disconnected before launch"), 1);
+    await assert.rejects(execution, /Desktop disconnected before launch/);
     assert.equal(hub.completions[0]?.body.error, "Desktop disconnected before launch");
   } finally {
     await hub.close();
