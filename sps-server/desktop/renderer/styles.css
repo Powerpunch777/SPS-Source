@@ -53,6 +53,7 @@ input:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(161, 161, 170, .
 .account-summary .text-action { margin-left: auto; }
 .server-choice-screen .screen-copy { text-align: left; }
 .server-choice-screen .screen-copy p:last-child { margin-left: 0; }
+.server-data-note { margin: -6px 0 18px; padding: 11px 12px; border: 1px solid #303035; border-radius: 8px; background: #151517; color: #b6b6bf; font-size: 12px; line-height: 1.55; }
 .choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .choice-card { display: grid; gap: 12px; min-height: 196px; border: 1px solid #333338; border-radius: 10px; background: #171719; color: #f4f4f5; padding: 18px; text-align: left; transition: border-color .15s ease, background .15s ease; }
 .choice-card:hover { border-color: #777780; background: #1b1b1e; }

@@ -31,11 +31,7 @@ function setPending(pending) {
 }
 
 function syncOwnerHostRecovery(status) {
-  const needsRecovery = Boolean(
-    account(status).signedIn
-    && isOwnerHost(status)
-    && !ownerHostReady(status),
-  );
+  const needsRecovery = Boolean(account(status).signedIn && isOwnerHost(status) && !ownerHostReady(status));
   if (!needsRecovery) {
     if (ownerHostRecoveryTimer) clearInterval(ownerHostRecoveryTimer);
     ownerHostRecoveryTimer = null;
@@ -61,7 +57,7 @@ function renderAccount(status) {
   }
   const note = $("#account-configuration-note");
   if (!configured) {
-    note.textContent = "처음에는 Google Desktop 로그인 client ID와 client secret 설정이 필요합니다.";
+    note.textContent = "처음 한 번은 Google Desktop 로그인 client ID와 client secret 설정이 필요합니다.";
   } else if (desktopAccount.error) {
     note.textContent = desktopAccount.error;
   } else {
@@ -85,6 +81,7 @@ function renderServerChoice(status) {
     picture.removeAttribute("src");
     picture.hidden = true;
   }
+  $("#server-data-note").textContent = "이 컴퓨터에 서버를 만들면 회사 데이터는 Owner Vault에 저장됩니다. 나중에 팀 접속을 켜면 초대된 Google 계정별로 회사와 Agent 권한을 적용합니다.";
 }
 
 function renderWorkspace(status) {
@@ -96,17 +93,17 @@ function renderWorkspace(status) {
   if (!visible) return;
   const complete = $("#complete-server-access");
   const check = $("#check-server-access");
-  $("#workspace-eyebrow").textContent = local ? "YOUR SPS SERVER" : "SPS SERVER";
+  $("#workspace-eyebrow").textContent = local ? "THIS COMPUTER'S SPS SERVER" : "SPS SERVER";
   if (local && !ready) {
     $("#workspace-title").textContent = "SPS Server를 시작하는 중";
-    $("#workspace-detail").textContent = status?.ownerHost?.lastError ?? "Owner Vault와 기본 서비스가 준비되면 Workspace를 열 수 있습니다.";
+    $("#workspace-detail").textContent = status?.ownerHost?.lastError ?? "Owner Vault와 기본 서비스가 준비되면 Workspace를 자동으로 엽니다.";
     show(complete, false);
     show(check, false);
     return;
   }
   if (!local && !status.signedIn) {
     $("#workspace-title").textContent = "서버 접근을 확인하세요";
-    $("#workspace-detail").textContent = "브라우저에서 초대를 허용한 같은 Google 계정으로 이 SPS Server 접근을 확인합니다.";
+    $("#workspace-detail").textContent = "브라우저에서 초대를 수락한 같은 Google 계정으로 이 SPS Server 접근을 확인합니다.";
     show(complete, true);
     show(check, Boolean(status.pendingAuth));
   }
@@ -124,8 +121,6 @@ function render(status) {
 async function refreshStatus() {
   const status = await window.spsDesktop.getStatus();
   render(status);
-  // A slow first boot can outlive the initial setup request. Keep the
-  // onboarding window honest, then hand off as soon as the Owner Host is live.
   if (account(status).signedIn && isOwnerHost(status) && ownerHostReady(status)) {
     await window.spsDesktop.openWorkspace();
   }
@@ -189,7 +184,7 @@ $("#show-join-server").addEventListener("click", () => {
 $("#join-server-form").addEventListener("submit", (event) => run(async () => {
   event.preventDefault();
   await window.spsDesktop.joinServer({ code: $("#invite-code").value });
-  setNotice("브라우저에서 초대를 허용한 뒤 이 창에서 서버 접근을 계속하세요.");
+  setNotice("브라우저에서 초대를 수락한 뒤 이 창에서 서버 접근을 계속하세요.");
 }));
 
 $("#complete-server-access").addEventListener("click", () => run(async () => {
@@ -199,7 +194,7 @@ $("#complete-server-access").addEventListener("click", () => run(async () => {
 
 $("#check-server-access").addEventListener("click", () => run(async () => {
   const result = await window.spsDesktop.pollAuth();
-  if (result.auth?.status !== "approved") throw new Error("서버 접근 승인이 아직 완료되지 않았습니다.");
+  if (result.auth?.status !== "approved") throw new Error("서버 접근 확인이 아직 완료되지 않았습니다.");
   setNotice("SPS Server 접근을 확인했습니다.");
 }));
 

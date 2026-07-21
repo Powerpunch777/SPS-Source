@@ -21,7 +21,7 @@
         <div class="screen-copy">
           <p class="eyebrow">SONPARKSERVER</p>
           <h1 id="account-title">SPS에 로그인</h1>
-          <p>Google 계정으로 이 Desktop 사용자를 확인합니다. 프로젝트와 작업 데이터는 이 컴퓨터 밖으로 전송되지 않습니다.</p>
+          <p>Google 계정은 SPS에서 나를 식별합니다. 회사·프로젝트·Room·기억 데이터는 이 계정이 아니라 SPS Server에 저장됩니다.</p>
         </div>
         <button id="start-google-account" class="primary-action google-action" type="button">
           <span class="google-mark" aria-hidden="true">G</span>
@@ -40,7 +40,7 @@
             <input id="google-client-secret" type="password" autocomplete="off" placeholder="GOCSPX-..." />
             <button type="submit" class="secondary-action">저장</button>
           </div>
-          <p>이 값은 이 컴퓨터의 SPS 보안 저장소에만 보관되며 다른 기기나 SPS Server로 전송되지 않습니다.</p>
+          <p>이 값은 이 컴퓨터의 SPS 보안 저장소에만 보관되며, 다른 SPS Server로 전송되지 않습니다.</p>
         </form>
       </section>
 
@@ -55,19 +55,20 @@
         </div>
         <div class="screen-copy">
           <p class="eyebrow">SPS DESKTOP</p>
-          <h1 id="server-choice-title">어디서 시작할까요?</h1>
-          <p>서버는 회사, 프로젝트, Rooms, Tasks, 장기기억과 Node 권한을 관리합니다.</p>
+          <h1 id="server-choice-title">어디에서 시작할까요?</h1>
+          <p>SPS Server가 회사, 프로젝트, Rooms, Tasks, 장기기억과 컴퓨터 권한을 소유합니다. Google 계정은 그 서버에 접근할 사람을 구분합니다.</p>
         </div>
+        <p id="server-data-note" class="server-data-note"></p>
         <div class="choice-grid">
           <button id="create-owner-server" class="choice-card" type="button">
             <span class="choice-icon" aria-hidden="true">+</span>
             <strong>이 컴퓨터에 서버 만들기</strong>
-            <span>개인 작업 또는 소규모 팀의 기준 서버를 만듭니다.</span>
+            <span>개인 또는 소규모 팀의 SPS Server를 만듭니다. 처음에는 이 컴퓨터 안에서 오프라인으로 동작합니다.</span>
           </button>
           <button id="show-join-server" class="choice-card" type="button">
             <span class="choice-icon" aria-hidden="true">&#8594;</span>
             <strong>기존 서버에 참여하기</strong>
-            <span>초대 코드로 이 컴퓨터의 Node를 기존 SPS Server에 연결합니다.</span>
+            <span>초대 코드를 사용해 기존 SPS Server에 연결합니다. 회사와 Agent 권한은 초대받은 계정의 멤버십을 따릅니다.</span>
           </button>
         </div>
         <form id="join-server-form" class="join-form" hidden>

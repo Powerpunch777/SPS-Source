@@ -66,6 +66,7 @@ import {
   isAllowedSpsWorkspaceNavigation,
 } from "./window-security.mjs";
 import { isSpsDesktopGoogleClientId, startSpsDesktopGoogleSignIn } from "./desktop-account.mjs";
+import { resolveSpsServerAccess } from "./server-access-model.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
@@ -1346,6 +1347,10 @@ function publicStatus() {
         phase: state.teamAccess.phase === "preparing" ? "preparing" : "active",
       }
       : null,
+    serverAccess: resolveSpsServerAccess({
+      profile: state.profile,
+      teamAccess: state.teamAccess,
+    }),
     ownerHostCompanies: isOwnerHostProfile()
       ? ownerHostCompanies.map((company) => ({ id: company.id, name: company.name }))
       : [],
