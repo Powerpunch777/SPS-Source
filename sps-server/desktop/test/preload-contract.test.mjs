@@ -4,10 +4,12 @@ import { readFile } from "node:fs/promises";
 
 const preloadPath = new URL("../src/preload.cjs", import.meta.url);
 const mainPath = new URL("../src/main.mjs", import.meta.url);
+const workspacePreloadPath = new URL("../src/workspace-preload.cjs", import.meta.url);
 
 test("uses a sandbox-compatible CommonJS preload bridge", async () => {
-  const [preload, main] = await Promise.all([
+  const [preload, workspacePreload, main] = await Promise.all([
     readFile(preloadPath, "utf8"),
+    readFile(workspacePreloadPath, "utf8"),
     readFile(mainPath, "utf8"),
   ]);
 
@@ -30,6 +32,11 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:revoke-member-invite"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:export-owner-vault-transfer"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-owner-vault-transfer"/);
+  assert.match(workspacePreload, /contextBridge\.exposeInMainWorld\("spsDesktopWorkspace"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-account"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
+  assert.match(main, /ipcMain\.handle\("desktop:workspace-account"/);
+  assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
 });
 
 test("notifies the renderer when Google Desktop sign-in state changes", async () => {

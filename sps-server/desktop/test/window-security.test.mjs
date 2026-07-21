@@ -18,6 +18,15 @@ test("keeps the Desktop preload bridge out of remote SPS team windows", () => {
   });
 });
 
+test("allows only the local Owner Host Workspace to receive its narrow Desktop bridge", () => {
+  const workspace = createSpsWorkspaceWindowPreferences("C:/SPS/workspace-preload.cjs");
+
+  assert.equal(workspace.preload, "C:/SPS/workspace-preload.cjs");
+  assert.equal(workspace.contextIsolation, true);
+  assert.equal(workspace.nodeIntegration, false);
+  assert.equal(workspace.sandbox, true);
+});
+
 test("keeps remote workspace navigation on the configured Hub", () => {
   const hub = "https://hub.example.test";
   assert.equal(isAllowedSpsWorkspaceNavigation("https://hub.example.test/CMP/dashboard", hub), true);

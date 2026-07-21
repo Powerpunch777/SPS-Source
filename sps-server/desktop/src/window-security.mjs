@@ -9,9 +9,11 @@ export function createSpsSetupWindowPreferences(preload) {
   };
 }
 
-export function createSpsWorkspaceWindowPreferences() {
-  // The remote Hub must never receive the privileged Desktop IPC bridge.
+export function createSpsWorkspaceWindowPreferences(preload) {
+  // Remote Hubs never receive a Desktop bridge. The local Owner Host may use
+  // a deliberately narrow bridge for account display and Desktop sign-out.
   return {
+    ...(preload ? { preload } : {}),
     contextIsolation: true,
     nodeIntegration: false,
     sandbox: true,

@@ -1153,7 +1153,9 @@ async function openWorkspace() {
     minHeight: 640,
     show: false,
     icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
-    webPreferences: createSpsWorkspaceWindowPreferences(),
+    webPreferences: createSpsWorkspaceWindowPreferences(
+      isOwnerHostProfile() ? path.join(__dirname, "workspace-preload.cjs") : undefined,
+    ),
   });
   workspaceWindow = currentWindow;
   configureWorkspaceNavigation(currentWindow, hubOrigin);
@@ -1518,6 +1520,36 @@ function registerIpc() {
   ipcMain.handle("desktop:status", async () => {
     await refreshOwnerRuntimeStatus();
     return publicStatus();
+  });
+  ipcMain.handle("desktop:workspace-account", async (event) => {
+    if (
+      !isOwnerHostProfile()
+      || !workspaceWindow
+      || workspaceWindow.isDestroyed()
+      || event.sender.id !== workspaceWindow.webContents.id
+    ) {
+      throw new Error("SPS Desktop account details are available only in the local Owner Host Workspace.");
+    }
+    const account = currentDesktopAccount();
+    return account
+      ? {
+        signedIn: true,
+        name: account.name ?? null,
+        email: account.email ?? null,
+        picture: account.picture ?? null,
+      }
+      : { signedIn: false, name: null, email: null, picture: null };
+  });
+  ipcMain.handle("desktop:workspace-sign-out", async (event) => {
+    if (
+      !isOwnerHostProfile()
+      || !workspaceWindow
+      || workspaceWindow.isDestroyed()
+      || event.sender.id !== workspaceWindow.webContents.id
+    ) {
+      throw new Error("SPS Desktop sign-out is available only in the local Owner Host Workspace.");
+    }
+    return await signOutDesktopAccount();
   });
   ipcMain.handle("desktop:configure-google-account", async (_event, input) => await configureDesktopGoogleClient(input));
   ipcMain.handle("desktop:start-google-account", async () => await startDesktopAccountSignIn());
