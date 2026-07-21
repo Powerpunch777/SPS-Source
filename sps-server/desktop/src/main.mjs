@@ -119,6 +119,7 @@ let ownerHostCompanies = [];
 let pluginRuntimeStatus = {
   state: "checking",
   command: null,
+  npmCli: null,
   version: null,
   message: "Checking SPS plugin runtime.",
 };
@@ -582,6 +583,12 @@ async function ensureOwnerHostManager() {
           SPS_MEMORY_SIDECAR_URL: spsDefaultMemoryUrl(defaultMemory.config),
           SPS_MEMORY_SIDECAR_TOKEN: defaultMemory.config.security.token,
           SPS_DESKTOP_PLUGIN_RUNTIME: pluginRuntimeStatus.state,
+          ...(pluginRuntimeStatus.command && pluginRuntimeStatus.npmCli
+            ? {
+              SPS_PLUGIN_NODE_COMMAND: pluginRuntimeStatus.command,
+              SPS_PLUGIN_NPM_CLI: pluginRuntimeStatus.npmCli,
+            }
+            : {}),
           ...ownerHostTeamEnvironment(),
         },
       });
