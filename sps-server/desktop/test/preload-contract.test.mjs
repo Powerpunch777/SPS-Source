@@ -39,6 +39,13 @@ test("notifies the renderer when Google Desktop sign-in state changes", async ()
   );
   assert.match(
     main,
-    /async function signOutDesktopAccount\(\) \{[\s\S]*?await persistState\(\);\s*sendDesktopAccountStatus\(\);[\s\S]*?return publicStatus\(\);/,
+    /async function signOutDesktopAccount\(\) \{[\s\S]*?await disconnectCurrentNode\(\);[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?await persistState\(\{ rememberActiveConnection: false \}\);[\s\S]*?sendDesktopAccountStatus\(\);[\s\S]*?return \{ \.\.\.publicStatus\(\), nodeDisconnect \};/,
   );
+});
+
+test("shuts down the Owner Host gracefully before quitting Desktop", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(main, /async function stopDesktopRuntimeGracefully\(\) \{[\s\S]*?ownerHostManager\?\.stop\(\{ force: false \}\)/);
+  assert.match(main, /app\.on\("before-quit", \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?shutdownComplete = true;[\s\S]*?app\.quit\(\);/);
 });

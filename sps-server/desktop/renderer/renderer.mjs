@@ -71,20 +71,18 @@ function renderServerChoice(status) {
 }
 
 function renderWorkspace(status) {
-  const visible = Boolean(status?.profile) && account(status).signedIn === true;
-  show($("#workspace-screen"), visible);
-  show($("#open-workspace-header"), visible);
-  if (!visible) return;
+  const hasProfile = Boolean(status?.profile) && account(status).signedIn === true;
   const local = isOwnerHost(status);
   const ready = local ? ownerHostReady(status) : Boolean(status.signedIn);
-  const workspaceButton = $("#open-workspace");
+  const visible = hasProfile && !ready;
+  show($("#workspace-screen"), visible);
+  if (!visible) return;
   const complete = $("#complete-server-access");
   const check = $("#check-server-access");
   $("#workspace-eyebrow").textContent = local ? "YOUR SPS SERVER" : "SPS SERVER";
   if (local && !ready) {
     $("#workspace-title").textContent = "SPS Server를 시작하는 중";
     $("#workspace-detail").textContent = status?.ownerHost?.lastError ?? "Owner Vault와 기본 서비스가 준비되면 Workspace를 열 수 있습니다.";
-    workspaceButton.disabled = true;
     show(complete, false);
     show(check, false);
     return;
@@ -92,16 +90,10 @@ function renderWorkspace(status) {
   if (!local && !status.signedIn) {
     $("#workspace-title").textContent = "서버 접근을 확인하세요";
     $("#workspace-detail").textContent = "브라우저에서 초대를 수락한 같은 Google 계정으로 이 SPS Server 접근을 확인합니다.";
-    workspaceButton.disabled = true;
     show(complete, true);
     show(check, Boolean(status.pendingAuth));
     return;
   }
-  $("#workspace-title").textContent = local ? "SPS Server 준비됨" : "SPS Workspace 준비됨";
-  $("#workspace-detail").textContent = "프로젝트, Rooms, Tasks, Agents와 서버 설정을 엽니다.";
-  workspaceButton.disabled = false;
-  show(complete, false);
-  show(check, false);
 }
 
 function render(status) {
@@ -178,14 +170,6 @@ $("#join-server-form").addEventListener("submit", (event) => run(async () => {
   setNotice("브라우저에서 초대를 수락한 뒤, 이 창에서 서버 접근을 계속하세요.");
 }));
 
-async function openWorkspace() {
-  await run(async () => {
-    await window.spsDesktop.openWorkspace();
-  });
-}
-
-$("#open-workspace").addEventListener("click", openWorkspace);
-$("#open-workspace-header").addEventListener("click", openWorkspace);
 $("#complete-server-access").addEventListener("click", () => run(async () => {
   await window.spsDesktop.startAuth();
   setNotice("브라우저에서 서버 접근을 완료한 뒤 이 창으로 돌아오세요.");

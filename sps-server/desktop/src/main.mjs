@@ -30,6 +30,11 @@ import {
 } from "./invite.mjs";
 import { resolveSpsNodeDisplayName } from "./node-display-name.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
+import {
+  getSpsAccountConnection,
+  normalizeSpsAccountConnection,
+  setSpsAccountConnection,
+} from "./account-connections.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
 import { createSpsOwnerHostManager, materializeSpsOwnerHostRuntime, resolveSpsOwnerHostRuntime } from "./owner-host.mjs";
@@ -77,6 +82,8 @@ let workspaceOrigin = null;
 let nodeRuntimeStatus = emptyNodeRuntimeStatus();
 let tray = null;
 let isQuitting = false;
+let shutdownPromise = null;
+let shutdownComplete = false;
 const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
 let updateService = null;
 // Status is rendered often by the setup screen. Do not synchronously ask
@@ -203,7 +210,8 @@ function decrypt(value) {
   return safeStorage.decryptString(Buffer.from(value, "base64"));
 }
 
-async function persistState() {
+async function persistState({ rememberActiveConnection = true } = {}) {
+  if (rememberActiveConnection) rememberCurrentAccountConnection();
   await saveState(app.getPath("userData"), state);
 }
 
@@ -249,6 +257,74 @@ function currentDesktopAccount() {
   }
 }
 
+function currentDesktopAccountSubject() {
+  return currentDesktopAccount()?.subject ?? null;
+}
+
+function rememberCurrentAccountConnection() {
+  const subject = currentDesktopAccountSubject();
+  if (!subject || !state.profile) return;
+  state.accountConnections = setSpsAccountConnection(state.accountConnections, subject, state.profile);
+}
+
+function clearActiveConnectionState() {
+  stopNodeScheduling();
+  state.profile = null;
+  state.identity = null;
+  state.nodeId = null;
+  state.nodeStatus = null;
+  state.encryptedBoardApiToken = null;
+  state.companies = [];
+  state.projects = [];
+  pendingAuth = null;
+  resetNodeRuntimeStatus();
+  closeWorkspaceWindow();
+}
+
+function profilesMatch(left, right) {
+  return JSON.stringify(normalizeSpsAccountConnection(left)) === JSON.stringify(normalizeSpsAccountConnection(right));
+}
+
+// v1-v4 had one machine-wide `profile`. On first v5 launch, claim that
+// legacy record for the already signed-in Google account only. Later account
+// switches never inherit another account's routing or local-workspace record.
+function restoreCurrentAccountConnection() {
+  const account = currentDesktopAccount();
+  if (!account) {
+    clearActiveConnectionState();
+    return false;
+  }
+  if (Object.keys(state.accountConnections).length === 0 && state.profile) {
+    state.accountConnections = setSpsAccountConnection(state.accountConnections, account.subject, state.profile);
+    if (isOwnerHostProfile(state.profile) && !state.ownerHostOwnerSubject) {
+      state.ownerHostOwnerSubject = account.subject;
+    }
+  }
+  let savedProfile = getSpsAccountConnection(state.accountConnections, account.subject);
+  if (
+    savedProfile
+    && isOwnerHostProfile(savedProfile)
+    && state.ownerHostOwnerSubject
+    && state.ownerHostOwnerSubject !== account.subject
+  ) {
+    savedProfile = null;
+  }
+  if (!savedProfile) {
+    clearActiveConnectionState();
+    return false;
+  }
+  if (!profilesMatch(state.profile, savedProfile)) {
+    clearActiveConnectionState();
+    state.profile = savedProfile;
+  }
+  return true;
+}
+
+function currentAccountOwnsOwnerHost() {
+  const subject = currentDesktopAccountSubject();
+  return Boolean(subject && state.ownerHostOwnerSubject === subject);
+}
+
 function configuredDesktopGoogleClientId() {
   const fromState = String(state.desktopGoogleClientId ?? "").trim();
   const fromEnvironment = String(process.env.SPS_DESKTOP_GOOGLE_CLIENT_ID ?? "").trim();
@@ -277,6 +353,8 @@ function configuredDesktopGoogleCredentials() {
 }
 
 function sendDesktopAccountStatus() {
+  createApplicationMenu();
+  refreshTrayMenu();
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("desktop:desktop-account-changed", publicStatus());
 }
@@ -297,7 +375,9 @@ async function startDesktopAccountSignIn() {
   void signIn.result.then(async (account) => {
     state.encryptedDesktopAccount = encrypt(JSON.stringify(account));
     if (pendingDesktopAccount === signIn) desktopAccountError = null;
+    restoreCurrentAccountConnection();
     await persistState();
+    await maybeOpenWorkspaceForCurrentAccount();
   }).catch((error) => {
     if (pendingDesktopAccount === signIn) {
       desktopAccountError = error instanceof Error ? error.message : "Google sign-in could not finish.";
@@ -329,10 +409,19 @@ async function signOutDesktopAccount() {
   pendingDesktopAccount = null;
   signIn?.cancel();
   desktopAccountError = null;
+  const account = currentDesktopAccount();
+  let nodeDisconnect = null;
+  if (account && state.profile) {
+    nodeDisconnect = await disconnectCurrentNode();
+    rememberCurrentAccountConnection();
+  }
+  clearActiveConnectionState();
   state.encryptedDesktopAccount = null;
-  await persistState();
+  await persistState({ rememberActiveConnection: false });
+  await showMainWindow();
+  await openSetup();
   sendDesktopAccountStatus();
-  return publicStatus();
+  return { ...publicStatus(), nodeDisconnect };
 }
 
 function currentTeamCredentials() {
@@ -489,6 +578,11 @@ async function ensureOwnerHostManager() {
 }
 
 async function activateOwnerHostProfile() {
+  const account = currentDesktopAccount();
+  if (!account) throw new Error("Sign in with Google before activating this SPS Owner Host.");
+  if (state.ownerHostOwnerSubject && state.ownerHostOwnerSubject !== account.subject) {
+    throw new Error("This computer already hosts an SPS Server for a different Google account. Sign in with that Owner account to manage it.");
+  }
   if (!ownerHostIsReady() || !ownerHostStatus.url) {
     throw new Error(ownerHostStatus.lastError || "SPS Owner Host is still starting.");
   }
@@ -503,6 +597,7 @@ async function activateOwnerHostProfile() {
     defaultWorkspacePath: "",
     projectWorkspaces: {},
   };
+  state.ownerHostOwnerSubject = account.subject;
   await persistState();
   return publicStatus();
 }
@@ -541,7 +636,7 @@ async function startOwnerHost({ activate = false } = {}) {
 }
 
 async function bootstrapOwnerHost() {
-  if (!isOwnerHostProfile()) {
+  if (!state.ownerHostOwnerSubject) {
     ownerHostStatus = {
       ...ownerHostStatus,
       state: "not-created",
@@ -552,17 +647,23 @@ async function bootstrapOwnerHost() {
       state: "not-created",
       lastError: null,
     };
+    sendDesktopAccountStatus();
     return;
   }
   try {
     await startOwnerHost({ activate: false });
     await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+    await maybeOpenWorkspaceForCurrentAccount();
   } catch (error) {
     ownerHostStatus = {
       ...ownerHostStatus,
       state: "stopped",
       lastError: error instanceof Error ? error.message : "SPS Owner Host could not start.",
     };
+  } finally {
+    // The local setup window may already have rendered the temporary
+    // "starting" state before the Owner Host became healthy.
+    sendDesktopAccountStatus();
   }
 }
 
@@ -960,7 +1061,11 @@ function configureWorkspaceNavigation(window, hubOrigin) {
 }
 
 async function openWorkspace() {
+  if (!currentDesktopAccount()) throw new Error("Sign in with Google before opening SPS Workspace.");
   if (!state.profile) throw new Error("Save an SPS team connection first");
+  if (isOwnerHostProfile() && !currentAccountOwnsOwnerHost()) {
+    throw new Error("Sign in with the Google account that owns this SPS Server before opening its local Workspace.");
+  }
   if (!isOwnerHostProfile() && !currentBoardToken()) {
     throw new Error("Continue with Google before opening the SPS workspace");
   }
@@ -970,6 +1075,7 @@ async function openWorkspace() {
     if (workspaceWindow.isMinimized()) workspaceWindow.restore();
     workspaceWindow.show();
     workspaceWindow.focus();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
     return;
   }
   closeWorkspaceWindow();
@@ -985,13 +1091,27 @@ async function openWorkspace() {
   });
   workspaceWindow = currentWindow;
   configureWorkspaceNavigation(currentWindow, hubOrigin);
-  currentWindow.once("ready-to-show", () => currentWindow.show());
+  currentWindow.once("ready-to-show", () => {
+    currentWindow.show();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+  });
   currentWindow.on("closed", () => {
     if (workspaceWindow !== currentWindow) return;
     workspaceWindow = null;
     workspaceOrigin = null;
   });
   await currentWindow.loadURL(`${hubOrigin}/`);
+}
+
+async function maybeOpenWorkspaceForCurrentAccount() {
+  if (!currentDesktopAccount() || !state.profile) return false;
+  if (isOwnerHostProfile()) {
+    if (!currentAccountOwnsOwnerHost() || !ownerHostIsReady()) return false;
+  } else if (!currentBoardToken()) {
+    return false;
+  }
+  await openWorkspace();
+  return true;
 }
 
 async function showMainWindow() {
@@ -1022,22 +1142,24 @@ function createApplicationMenu() {
       // The visible screen explains connection failures without exposing tokens.
     });
   };
+  const account = currentDesktopAccount();
+  const accountLabel = account
+    ? `${account.name}${account.email ? ` (${account.email})` : ""}`
+    : "Google 계정에 로그인";
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: "SPS Desktop",
       submenu: [
-        { label: "Open SPS workspace", click: () => run(showWorkspace) },
-        { label: "Connection setup", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
+        { label: accountLabel, enabled: false },
         { type: "separator" },
-        { label: "Sign out on this computer", click: () => run(async () => {
-          await disconnectCurrentNode();
-          pendingAuth = null;
-          state.encryptedBoardApiToken = null;
-          state.companies = [];
-          state.projects = [];
-          await persistState();
-          await openSetup();
-        }) },
+        { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
+        { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
+        { type: "separator" },
+        {
+          label: "이 컴퓨터에서 로그아웃",
+          enabled: Boolean(account),
+          click: () => run(signOutDesktopAccount),
+        },
         { type: "separator" },
         { role: "quit" },
       ],
@@ -1045,18 +1167,32 @@ function createApplicationMenu() {
   ]));
 }
 
-function createTray() {
-  if (tray) return;
-  const icon = nativeImage.createFromPath(path.join(__dirname, "..", "assets", "sps-logo.png"));
-  tray = new Tray(icon);
-  tray.setToolTip("SPS Desktop Node");
+function refreshTrayMenu() {
+  if (!tray) return;
+  const account = currentDesktopAccount();
+  const accountLabel = account?.email ?? account?.name ?? "Google 계정에 로그인";
   tray.setContextMenu(Menu.buildFromTemplate([
+    { label: accountLabel, enabled: false },
+    { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
-    { label: "Open SPS workspace", click: () => { void showWorkspace(); } },
-    { label: "Connection setup", click: () => { void showMainWindow().then(openSetup); } },
+    { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
+    { label: "서버 연결 및 계정", click: () => { void showMainWindow().then(openSetup); } },
+    { type: "separator" },
+    { label: "이 컴퓨터에서 로그아웃", enabled: Boolean(account), click: () => { void signOutDesktopAccount(); } },
     { type: "separator" },
     { label: "Quit SPS Desktop", click: () => { isQuitting = true; app.quit(); } },
   ]));
+}
+
+function createTray() {
+  if (tray) {
+    refreshTrayMenu();
+    return;
+  }
+  const icon = nativeImage.createFromPath(path.join(__dirname, "..", "assets", "sps-logo.png"));
+  tray = new Tray(icon);
+  tray.setToolTip("SPS Desktop Node");
+  refreshTrayMenu();
   tray.on("double-click", () => { void showMainWindow(); });
 }
 
@@ -1314,7 +1450,11 @@ function registerIpc() {
   ipcMain.handle("desktop:start-google-account", async () => await startDesktopAccountSignIn());
   ipcMain.handle("desktop:sign-out-google-account", async () => await signOutDesktopAccount());
   ipcMain.handle("desktop:create-owner-server", async () => {
-    if (!currentDesktopAccount()) throw new Error("Sign in with Google before creating an SPS Server.");
+    const account = currentDesktopAccount();
+    if (!account) throw new Error("Sign in with Google before creating an SPS Server.");
+    if (state.ownerHostOwnerSubject && state.ownerHostOwnerSubject !== account.subject) {
+      throw new Error("This computer already hosts an SPS Server for a different Google account. Sign in with that Owner account, or join its team with an invitation instead.");
+    }
     if (state.profile && !isOwnerHostProfile()) {
       throw new Error("This computer is already joined to another SPS Server. Disconnect it before creating a new local Server.");
     }
@@ -1332,6 +1472,9 @@ function registerIpc() {
     return { hubUrl, health };
   });
   ipcMain.handle("desktop:use-owner-host", async () => {
+    if (!currentAccountOwnsOwnerHost() && state.ownerHostOwnerSubject) {
+      throw new Error("This SPS Owner Host belongs to a different Google account. Join it with an invitation instead.");
+    }
     if (isTeamAccessEnabled()) {
       throw new Error("This Owner Host is already a private team Host. Finish Google sign-in for its private SPS address, or return it to local-only mode first.");
     }
@@ -1499,6 +1642,7 @@ function registerIpc() {
         // Google approval completed. The user can retry after a transient Hub failure.
         companyAccess = "unavailable";
       }
+      await maybeOpenWorkspaceForCurrentAccount();
     }
     return { ...publicStatus(), auth: { ...result, companyAccess } };
   });
@@ -1508,16 +1652,7 @@ function registerIpc() {
     const nodeDisconnect = await disconnectCurrentNode();
     return { ...publicStatus(), nodeDisconnect };
   });
-  ipcMain.handle("desktop:sign-out", async () => {
-    const nodeDisconnect = await disconnectCurrentNode();
-    pendingAuth = null;
-    state.encryptedBoardApiToken = null;
-    state.companies = [];
-    state.projects = [];
-    await persistState();
-    await openSetup();
-    return { ...publicStatus(), nodeDisconnect };
-  });
+  ipcMain.handle("desktop:sign-out", async () => await signOutDesktopAccount());
 }
 
 async function createWindow({ show = true } = {}) {
@@ -1560,6 +1695,8 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(async () => {
     state = await loadState(app.getPath("userData"));
+    restoreCurrentAccountConnection();
+    await persistState();
     registerIpc();
     configureWorkspaceRequestAuth();
     createApplicationMenu();
@@ -1587,11 +1724,30 @@ app.on("window-all-closed", () => {
 app.on("activate", () => {
   void showMainWindow();
 });
-app.on("before-quit", () => {
+async function stopDesktopRuntimeGracefully() {
   isQuitting = true;
   stopNodeScheduling();
-  void cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped.");
+  await cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped.");
   updateService?.stop();
-  void defaultMemoryManager?.stop({ force: true });
-  void ownerHostManager?.stop({ force: true });
+  // A forced process-tree kill interrupts embedded PostgreSQL and turns every
+  // normal Desktop exit into database crash recovery on the next start. Each
+  // manager already escalates after its bounded graceful wait when necessary.
+  await Promise.allSettled([
+    defaultMemoryManager?.stop({ force: false }),
+    ownerHostManager?.stop({ force: false }),
+  ]);
+}
+
+app.on("before-quit", (event) => {
+  if (shutdownComplete) return;
+  event.preventDefault();
+  isQuitting = true;
+  if (!shutdownPromise) {
+    shutdownPromise = stopDesktopRuntimeGracefully()
+      .catch(() => undefined)
+      .finally(() => {
+        shutdownComplete = true;
+        app.quit();
+      });
+  }
 });
