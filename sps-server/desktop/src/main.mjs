@@ -67,6 +67,7 @@ import {
 } from "./window-security.mjs";
 import { isSpsDesktopGoogleClientId, startSpsDesktopGoogleSignIn } from "./desktop-account.mjs";
 import { resolveSpsServerAccess } from "./server-access-model.mjs";
+import { areSpsBundledExtensionsEnabled, disabledSpsExtensionStatus } from "./bundled-extensions.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
@@ -102,13 +103,7 @@ let updateStatus = {
 };
 let ownerHostManager = null;
 let defaultMemoryManager = null;
-let defaultMemoryStatus = {
-  state: "initializing",
-  url: null,
-  startedAt: null,
-  lastError: null,
-  vaultPath: null,
-};
+let defaultMemoryStatus = disabledSpsExtensionStatus();
 let ownerHostStatus = {
   state: "initializing",
   url: null,
@@ -518,10 +513,13 @@ async function requireReadyOwnerHost() {
 async function ensureOwnerHostManager() {
   const vaultRoot = ownerVaultRoot();
   const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
-  const defaultMemory = await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot });
+  const bundledExtensionsEnabled = areSpsBundledExtensionsEnabled();
+  const defaultMemory = bundledExtensionsEnabled
+    ? await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot })
+    : null;
   pluginRuntimeStatus = await inspectSpsPluginRuntime();
   const url = spsOwnerHostUrl(ownerHost.config);
-  if (ownerHostManager && defaultMemoryManager && ownerHostStatus.url === url) {
+  if (ownerHostManager && ownerHostStatus.url === url && (!bundledExtensionsEnabled || defaultMemoryManager)) {
     return { ...ownerHost, defaultMemory, url };
   }
 
@@ -533,22 +531,24 @@ async function ensureOwnerHostManager() {
   const developmentMemorySidecarEntry = path.resolve(__dirname, "..", "..", "memory-sidecar", "memory-sidecar.mjs");
   const developmentMemoryPluginPath = path.resolve(__dirname, "..", "..", "sps-default-memory");
   const developmentRoomPluginPath = path.resolve(__dirname, "..", "..", "sps-room-chat");
-  defaultMemoryManager = createSpsDefaultMemoryManager({
-    url: spsDefaultMemoryUrl(defaultMemory.config),
-    token: defaultMemory.config.security.token,
-    configPath: defaultMemory.layout.configPath,
-    nodeCommand: process.execPath,
-    resolveEntry: async () => {
-      const materializedRuntime = await materializeSpsOwnerHostRuntime({
-        sourceRuntimeRoot,
-        targetRuntimeRoot,
-      });
-      const packagedEntry = materializedRuntime
-        ? path.join(materializedRuntime, "memory-sidecar", "memory-sidecar.mjs")
-        : null;
-      return packagedEntry && existsSync(packagedEntry) ? packagedEntry : developmentMemorySidecarEntry;
-    },
-  });
+  defaultMemoryManager = defaultMemory
+    ? createSpsDefaultMemoryManager({
+      url: spsDefaultMemoryUrl(defaultMemory.config),
+      token: defaultMemory.config.security.token,
+      configPath: defaultMemory.layout.configPath,
+      nodeCommand: process.execPath,
+      resolveEntry: async () => {
+        const materializedRuntime = await materializeSpsOwnerHostRuntime({
+          sourceRuntimeRoot,
+          targetRuntimeRoot,
+        });
+        const packagedEntry = materializedRuntime
+          ? path.join(materializedRuntime, "memory-sidecar", "memory-sidecar.mjs")
+          : null;
+        return packagedEntry && existsSync(packagedEntry) ? packagedEntry : developmentMemorySidecarEntry;
+      },
+    })
+    : null;
   ownerHostManager = createSpsOwnerHostManager({
     url,
     resolveRuntime: async () => {
@@ -556,20 +556,20 @@ async function ensureOwnerHostManager() {
         sourceRuntimeRoot,
         targetRuntimeRoot,
       });
-      const packagedMemoryPluginPath = materializedRuntime
-        ? path.join(materializedRuntime, "sps-default-memory")
-        : null;
-      const packagedRoomPluginPath = materializedRuntime
-        ? path.join(materializedRuntime, "sps-room-chat")
-        : null;
+      const packagedMemoryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-default-memory") : null;
+      const packagedRoomPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-room-chat") : null;
       const memoryPluginPath = packagedMemoryPluginPath && existsSync(path.join(packagedMemoryPluginPath, "package.json"))
         ? packagedMemoryPluginPath
         : developmentMemoryPluginPath;
       const roomPluginPath = packagedRoomPluginPath && existsSync(path.join(packagedRoomPluginPath, "package.json"))
         ? packagedRoomPluginPath
         : developmentRoomPluginPath;
+      const bundledPluginPaths = bundledExtensionsEnabled ? [memoryPluginPath, roomPluginPath] : [];
       return resolveSpsOwnerHostRuntime({
-        packagedRuntimeRoots: materializedRuntime ? [materializedRuntime] : [],
+        // Development must execute the checked-out Core directly. The local
+        // packaged runtime is intentionally a release artifact and otherwise
+        // masks source changes during Desktop verification.
+        packagedRuntimeRoots: app.isPackaged && materializedRuntime ? [materializedRuntime] : [],
         coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
         packagedNodeCommand: process.execPath,
         configPath: ownerHost.layout.configPath,
@@ -579,10 +579,16 @@ async function ensureOwnerHostManager() {
           PAPERCLIP_STORAGE_LOCAL_DIR: ownerHost.layout.storageDir,
           PAPERCLIP_SECRETS_MASTER_KEY_FILE: ownerHost.layout.secretsPath,
           PAPERCLIP_PROJECTS_ROOT: ownerHost.layout.projectsDir,
-          SPS_BUNDLED_PLUGIN_PATHS: [memoryPluginPath, roomPluginPath].join(path.delimiter),
-          SPS_ROOM_API_URL: url,
-          SPS_MEMORY_SIDECAR_URL: spsDefaultMemoryUrl(defaultMemory.config),
-          SPS_MEMORY_SIDECAR_TOKEN: defaultMemory.config.security.token,
+          SPS_BASIC_MODE: "true",
+          SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
+          PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
+          ...(defaultMemory
+            ? {
+              SPS_ROOM_API_URL: url,
+              SPS_MEMORY_SIDECAR_URL: spsDefaultMemoryUrl(defaultMemory.config),
+              SPS_MEMORY_SIDECAR_TOKEN: defaultMemory.config.security.token,
+            }
+            : {}),
           SPS_DESKTOP_PLUGIN_RUNTIME: pluginRuntimeStatus.state,
           ...(pluginRuntimeStatus.command && pluginRuntimeStatus.npmCli
             ? {
@@ -632,20 +638,24 @@ async function startOwnerHost({ activate = false } = {}) {
     lastError: null,
     vaultPath: ownerHost.layout.root,
   };
-  defaultMemoryStatus = {
-    state: "starting",
-    url: spsDefaultMemoryUrl(ownerHost.defaultMemory.config),
-    startedAt: defaultMemoryStatus.startedAt,
-    lastError: null,
-    vaultPath: ownerHost.defaultMemory.layout.root,
-  };
-  const memoryStatus = await defaultMemoryManager.start();
-  defaultMemoryStatus = {
-    ...memoryStatus,
-    vaultPath: ownerHost.defaultMemory.layout.root,
-  };
-  if (memoryStatus.state !== "running" && memoryStatus.state !== "running-existing") {
-    throw new Error(memoryStatus.lastError || "SPS Default Memory is still starting.");
+  if (ownerHost.defaultMemory && defaultMemoryManager) {
+    defaultMemoryStatus = {
+      state: "starting",
+      url: spsDefaultMemoryUrl(ownerHost.defaultMemory.config),
+      startedAt: defaultMemoryStatus.startedAt,
+      lastError: null,
+      vaultPath: ownerHost.defaultMemory.layout.root,
+    };
+    const memoryStatus = await defaultMemoryManager.start();
+    defaultMemoryStatus = {
+      ...memoryStatus,
+      vaultPath: ownerHost.defaultMemory.layout.root,
+    };
+    if (memoryStatus.state !== "running" && memoryStatus.state !== "running-existing") {
+      throw new Error(memoryStatus.lastError || "SPS Default Memory is still starting.");
+    }
+  } else {
+    defaultMemoryStatus = disabledSpsExtensionStatus();
   }
   const status = await ownerHostManager.start();
   ownerHostStatus = {
@@ -663,11 +673,7 @@ async function bootstrapOwnerHost() {
       state: "not-created",
       lastError: null,
     };
-    defaultMemoryStatus = {
-      ...defaultMemoryStatus,
-      state: "not-created",
-      lastError: null,
-    };
+    defaultMemoryStatus = disabledSpsExtensionStatus();
     sendDesktopAccountStatus();
     return;
   }
