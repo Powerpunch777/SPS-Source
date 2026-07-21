@@ -28,6 +28,8 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:create-member-invite"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:list-member-invites"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:revoke-member-invite"/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:export-owner-vault-transfer"/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-owner-vault-transfer"/);
 });
 
 test("notifies the renderer when Google Desktop sign-in state changes", async () => {

@@ -52,6 +52,8 @@ import {
 } from "./default-memory-host.mjs";
 import { isSpsHubApiUrl, requireSpsHubOrigin, requireSpsOwnerHostOrigin } from "./workspace-url.mjs";
 import { requireSpsWorkspaceDirectory } from "./workspace-directory.mjs";
+import { exportSpsOwnerVaultTransfer, inspectSpsOwnerVaultTransfer } from "./owner-vault-transfer.mjs";
+import { inspectSpsPluginRuntime } from "./plugin-runtime.mjs";
 import {
   disableSpsTailscaleServe,
   enableSpsTailscaleServe,
@@ -114,6 +116,12 @@ let ownerHostStatus = {
   vaultPath: null,
 };
 let ownerHostCompanies = [];
+let pluginRuntimeStatus = {
+  state: "checking",
+  command: null,
+  version: null,
+  message: "Checking SPS plugin runtime.",
+};
 
 function emptyNodeRuntimeStatus() {
   return {
@@ -477,6 +485,9 @@ function ownerHostIsReady() {
 }
 
 async function refreshOwnerRuntimeStatus() {
+  if (pluginRuntimeStatus.state === "checking") {
+    pluginRuntimeStatus = await inspectSpsPluginRuntime();
+  }
   if (defaultMemoryManager) {
     const memory = await defaultMemoryManager.inspect();
     defaultMemoryStatus = {
@@ -506,6 +517,7 @@ async function ensureOwnerHostManager() {
   const vaultRoot = ownerVaultRoot();
   const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
   const defaultMemory = await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot });
+  pluginRuntimeStatus = await inspectSpsPluginRuntime();
   const url = spsOwnerHostUrl(ownerHost.config);
   if (ownerHostManager && defaultMemoryManager && ownerHostStatus.url === url) {
     return { ...ownerHost, defaultMemory, url };
@@ -569,6 +581,7 @@ async function ensureOwnerHostManager() {
           SPS_ROOM_API_URL: url,
           SPS_MEMORY_SIDECAR_URL: spsDefaultMemoryUrl(defaultMemory.config),
           SPS_MEMORY_SIDECAR_TOKEN: defaultMemory.config.security.token,
+          SPS_DESKTOP_PLUGIN_RUNTIME: pluginRuntimeStatus.state,
           ...ownerHostTeamEnvironment(),
         },
       });
@@ -692,6 +705,59 @@ async function ownerHostApi(pathname, { method = "GET", body } = {}) {
     throw new Error(data?.error || `SPS Owner Host request failed with ${response.status}.`);
   }
   return data;
+}
+
+async function exportOwnerVaultTransfer() {
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
+    throw new Error("Only the signed-in SPS Owner can export this Owner Vault.");
+  }
+  const selection = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    title: "Choose a folder for SPS Server export",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return null;
+  const backup = await ownerHostApi("/instance/database-backups", { method: "POST", body: {} });
+  const exported = await exportSpsOwnerVaultTransfer({
+    vaultRoot: ownerVaultRoot(),
+    backupFile: backup?.backupFile,
+    destinationRoot: selection.filePaths[0],
+  });
+  await dialog.showMessageBox(mainWindow ?? undefined, {
+    type: "info",
+    title: "SPS Server export complete",
+    message: "SPS created a portable server transfer bundle.",
+    detail: `${exported.bundleRoot}\n\nThe bundle excludes account credentials and encryption keys.`,
+  });
+  return exported;
+}
+
+async function inspectOwnerVaultTransfer() {
+  const selection = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    title: "Choose an SPS Server transfer folder",
+    properties: ["openDirectory"],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return null;
+  const transfer = await inspectSpsOwnerVaultTransfer({ bundleRoot: selection.filePaths[0] });
+  await dialog.showMessageBox(mainWindow ?? undefined, {
+    type: "info",
+    title: "SPS transfer bundle is ready",
+    message: "The transfer bundle is structurally valid.",
+    detail: `${transfer.manifest.createdAt}\n\nImport will be enabled when the destination Owner Vault is created.`,
+  });
+  return transfer;
+}
+
+async function showPluginRuntimeStatus() {
+  pluginRuntimeStatus = await inspectSpsPluginRuntime();
+  await dialog.showMessageBox(mainWindow ?? undefined, {
+    type: pluginRuntimeStatus.state === "ready" ? "info" : "warning",
+    title: "SPS plugin runtime",
+    message: pluginRuntimeStatus.state === "ready" ? "Plugin installation is ready." : "SPS is in local-folder plugin mode.",
+    detail: pluginRuntimeStatus.version
+      ? `npm ${pluginRuntimeStatus.version}\n\n${pluginRuntimeStatus.message}`
+      : pluginRuntimeStatus.message,
+  });
+  return pluginRuntimeStatus;
 }
 
 function normalizeCompanyList(value) {
@@ -1153,6 +1219,9 @@ function createApplicationMenu() {
         { label: accountLabel, enabled: false },
         { type: "separator" },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
+        { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(exportOwnerVaultTransfer) },
+        { label: "Check SPS transfer bundle...", click: () => run(inspectOwnerVaultTransfer) },
+        { label: "Check plugin runtime...", click: () => run(showPluginRuntimeStatus) },
         { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
         { type: "separator" },
         {
@@ -1176,6 +1245,9 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
+    { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void exportOwnerVaultTransfer(); } },
+    { label: "Check SPS transfer bundle...", click: () => { void inspectOwnerVaultTransfer(); } },
+    { label: "Check plugin runtime...", click: () => { void showPluginRuntimeStatus(); } },
     { label: "서버 연결 및 계정", click: () => { void showMainWindow().then(openSetup); } },
     { type: "separator" },
     { label: "이 컴퓨터에서 로그아웃", enabled: Boolean(account), click: () => { void signOutDesktopAccount(); } },
@@ -1252,6 +1324,7 @@ function publicStatus() {
         lastError: defaultMemoryStatus.lastError,
         vaultPath: defaultMemoryStatus.vaultPath,
       },
+      pluginRuntime: { ...pluginRuntimeStatus },
     },
     teamAccess: state.teamAccess
       ? {
@@ -1537,6 +1610,8 @@ function registerIpc() {
     clipboard.writeText(text);
     return true;
   });
+  ipcMain.handle("desktop:export-owner-vault-transfer", exportOwnerVaultTransfer);
+  ipcMain.handle("desktop:inspect-owner-vault-transfer", inspectOwnerVaultTransfer);
   ipcMain.handle("desktop:open-workspace", openWorkspace);
   ipcMain.handle("desktop:open-setup", openSetup);
   ipcMain.handle("desktop:save-project-workspace", async (_event, input) => {

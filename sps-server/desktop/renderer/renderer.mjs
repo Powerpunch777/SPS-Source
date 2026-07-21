@@ -1,6 +1,8 @@
 const $ = (selector) => document.querySelector(selector);
 
 let latestStatus = null;
+let ownerHostRecoveryTimer = null;
+const OWNER_HOST_RECOVERY_INTERVAL_MS = 2_000;
 
 function account(status) {
   return status?.desktopAccount ?? {};
@@ -28,13 +30,28 @@ function setPending(pending) {
   document.body.classList.toggle("pending", pending);
 }
 
+function syncOwnerHostRecovery(status) {
+  const needsRecovery = Boolean(
+    account(status).signedIn
+    && isOwnerHost(status)
+    && !ownerHostReady(status),
+  );
+  if (!needsRecovery) {
+    if (ownerHostRecoveryTimer) clearInterval(ownerHostRecoveryTimer);
+    ownerHostRecoveryTimer = null;
+    return;
+  }
+  if (ownerHostRecoveryTimer) return;
+  ownerHostRecoveryTimer = setInterval(() => {
+    void refreshStatus().catch(() => {});
+  }, OWNER_HOST_RECOVERY_INTERVAL_MS);
+}
+
 function renderAccount(status) {
   const desktopAccount = account(status);
   const signedIn = desktopAccount.signedIn === true;
   const configured = desktopAccount.configured === true;
   const pending = desktopAccount.pending === true;
-  // A legacy Desktop profile can exist before the SPS Desktop account was
-  // introduced. Keep its server connection, but never skip identity setup.
   show($("#account-screen"), !signedIn);
   $("#start-google-account").disabled = pending || !configured;
   $("#google-action-label").textContent = pending ? "Google 로그인 확인 중..." : "Google로 계속";
@@ -44,7 +61,7 @@ function renderAccount(status) {
   }
   const note = $("#account-configuration-note");
   if (!configured) {
-    note.textContent = "이 설치에는 Google Desktop 로그인 client ID와 client secret 설정이 아직 필요합니다.";
+    note.textContent = "처음에는 Google Desktop 로그인 client ID와 client secret 설정이 필요합니다.";
   } else if (desktopAccount.error) {
     note.textContent = desktopAccount.error;
   } else {
@@ -89,10 +106,9 @@ function renderWorkspace(status) {
   }
   if (!local && !status.signedIn) {
     $("#workspace-title").textContent = "서버 접근을 확인하세요";
-    $("#workspace-detail").textContent = "브라우저에서 초대를 수락한 같은 Google 계정으로 이 SPS Server 접근을 확인합니다.";
+    $("#workspace-detail").textContent = "브라우저에서 초대를 허용한 같은 Google 계정으로 이 SPS Server 접근을 확인합니다.";
     show(complete, true);
     show(check, Boolean(status.pendingAuth));
-    return;
   }
 }
 
@@ -101,12 +117,18 @@ function render(status) {
   renderAccount(status);
   renderServerChoice(status);
   renderWorkspace(status);
-  const pending = Boolean(account(status).pending);
-  setPending(pending);
+  setPending(Boolean(account(status).pending));
+  syncOwnerHostRecovery(status);
 }
 
 async function refreshStatus() {
-  render(await window.spsDesktop.getStatus());
+  const status = await window.spsDesktop.getStatus();
+  render(status);
+  // A slow first boot can outlive the initial setup request. Keep the
+  // onboarding window honest, then hand off as soon as the Owner Host is live.
+  if (account(status).signedIn && isOwnerHost(status) && ownerHostReady(status)) {
+    await window.spsDesktop.openWorkspace();
+  }
 }
 
 async function run(action) {
@@ -122,7 +144,7 @@ async function run(action) {
 
 $("#start-google-account").addEventListener("click", () => run(async () => {
   await window.spsDesktop.startGoogleAccount();
-  setNotice("브라우저에서 Google 로그인을 완료하면 SPS Desktop이 자동으로 이어집니다.");
+  setNotice("브라우저에서 Google 로그인을 완료하면 SPS Desktop으로 자동으로 이어집니다.");
 }));
 
 $("#cancel-google-account").addEventListener("click", () => run(async () => {
@@ -167,25 +189,26 @@ $("#show-join-server").addEventListener("click", () => {
 $("#join-server-form").addEventListener("submit", (event) => run(async () => {
   event.preventDefault();
   await window.spsDesktop.joinServer({ code: $("#invite-code").value });
-  setNotice("브라우저에서 초대를 수락한 뒤, 이 창에서 서버 접근을 계속하세요.");
+  setNotice("브라우저에서 초대를 허용한 뒤 이 창에서 서버 접근을 계속하세요.");
 }));
 
 $("#complete-server-access").addEventListener("click", () => run(async () => {
   await window.spsDesktop.startAuth();
   setNotice("브라우저에서 서버 접근을 완료한 뒤 이 창으로 돌아오세요.");
 }));
+
 $("#check-server-access").addEventListener("click", () => run(async () => {
   const result = await window.spsDesktop.pollAuth();
   if (result.auth?.status !== "approved") throw new Error("서버 접근 승인이 아직 완료되지 않았습니다.");
-  setNotice("SPS Server 접근이 확인되었습니다.");
+  setNotice("SPS Server 접근을 확인했습니다.");
 }));
 
 window.spsDesktop.onDesktopAccountChanged((status) => {
   render(status);
-  if (account(status).signedIn) setNotice("Google 계정이 확인되었습니다.");
+  if (account(status).signedIn) setNotice("Google 계정을 확인했습니다.");
 });
 
-window.spsDesktop.readyForJoinLink().then(async (join) => {
+window.spsDesktop.readyForJoinLink().then((join) => {
   if (!join) return;
   $("#invite-code").value = join.code;
   $("#join-server-form").hidden = false;
