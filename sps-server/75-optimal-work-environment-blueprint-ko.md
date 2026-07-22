@@ -1,7 +1,7 @@
 # SPS 최적 작업환경 최종 설계
 
 > **문서 상태: Workplane 구현 청사진**
-> Room·Task·Workspace·Agent Session의 상세 작업환경 계약은 이 문서에 유지합니다. 다만 SPS의 현재 제품 정의, 플러그인 표준화, 기본 제공 `Plugin Studio`·`Development Core`·게임·앱·웹 팀 플러그인, 첫 출시 범위는 `114-sps-product-and-plugin-platform-contract-ko.md`가 우선합니다. 구현 우선순위는 `115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md`가 우선합니다. 코어 라이선스와 유료 Marketplace 정책은 아직 결정하지 않습니다.
+> Room·Task·Workspace·Agent Session의 상세 작업환경 계약은 이 문서에 유지합니다. 여기서 말하는 Agent Room과 Task Room의 화면·운영 규칙은 범용 Core 타입이 아니라 Team/Workplane 플러그인이 Core의 Task와 Agent Session 위에 구성하는 경험이다. 다만 SPS의 현재 제품 정의, Core/플러그인 경계, Plugin Kit 이전의 Extension Profile 표준화, 기본 제공 `Plugin Studio`·`Development Core`·게임·앱·웹 팀 플러그인, 첫 출시 범위는 `114-sps-product-and-plugin-platform-contract-ko.md`가 우선합니다. 구현 우선순위는 `115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md`가 우선합니다. 코어 라이선스와 유료 Marketplace 정책은 아직 결정하지 않습니다.
 
 > 구현 상태(2026-07-14): 이 설계의 주요 루프는 로컬 코어 계약과 Room
 > 플러그인으로 구현되었다. 현재 경계와 검증 결과는

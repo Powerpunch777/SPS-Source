@@ -7,6 +7,7 @@
 | 질문 | 기준 문서 |
 | --- | --- |
 | SPS가 어떤 제품인가? | `114-sps-product-and-plugin-platform-contract-ko.md` |
+| Core와 플러그인의 경계, Plugin Kit 이전 표준화는? | `114-sps-product-and-plugin-platform-contract-ko.md`의 `SPS Extension Profile` |
 | 무엇을 어떤 순서로 구현하는가? | `115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md` |
 | 문서가 충돌하면 무엇을 따르는가? | `116-sps-documentation-audit-and-migration-ko.md` |
 | Room·Task·Workspace의 상세 UX와 기술 구조는? | `75-optimal-work-environment-blueprint-ko.md` |
@@ -21,7 +22,7 @@
 첫 출시 목표:
 
 - SPS Core Product
-- SPS Plugin Kit
+- SPS Extension Profile + Plugin Kit
 - Plugin Studio
 - Development Core
 - Indie Game Team

@@ -1,6 +1,6 @@
 # SPS Server
 
-SPS Server는 사람과 역할별 AI Agent가 같은 프로젝트에서 안전하게 협업하도록 Hub, Room, Task, Memory, Desktop Node와 플러그인 실행 경계를 제공하는 서버·클라이언트 구성 모음이다.
+SPS Server는 사람과 역할별 AI Agent가 같은 프로젝트에서 안전하게 협업하도록 Hub, Project·Task·Agent Session·Desktop Node와 플러그인 실행 경계를 제공하는 서버·클라이언트 구성 모음이다. Room, 역할 조직, Memory 전략은 Core에 고정하지 않고 선택 가능한 플러그인으로 구성한다.
 
 이 디렉터리에는 현재 제품 코드뿐 아니라 초기 게임 제작 Work Plane부터 최근 Hosted Hub·Desktop Node까지의 구현 기록이 함께 보존되어 있다. **번호가 붙은 모든 문서가 현재 기준인 것은 아니다.**
 
@@ -17,11 +17,13 @@ SPS Server는 사람과 역할별 AI Agent가 같은 프로젝트에서 안전�
 
 SPS의 첫 제품은 다음 세 층으로 구성한다.
 
-1. **Core Product**: Hub, Agent Room, Task Room, Workspace, Desktop Node, 실행 기록, 권한과 Memory
-2. **Plugin Kit**: 표준 manifest, SDK, Test Kit, CLI, lifecycle, 권한과 패키징
+1. **Core Product**: Hub, Project·Task·Agent·Agent Session, Workspace, Desktop Node, 실행 기록, 권한과 확장 Runtime
+2. **SPS Extension Profile + Plugin Kit**: 기존 Core SDK 위의 데이터·권한·lifecycle 표준화, SDK, Test Kit, CLI와 패키징
 3. **공식 플러그인**: Plugin Studio, Development Core, Indie Game Team, App Product Team, Web Product Team
 
 유료 Marketplace, 판매자 정산과 코어 라이선스 최종 결정은 첫 출시 이후로 미룬다.
+
+기본 SPS는 Core만으로 시작하며 공식 Team, Room, Memory 플러그인을 자동 활성화하지 않는다. 사용자는 필요한 작업 방식을 선택해 설치·활성화한다.
 
 ## 소스 지도
 
@@ -48,11 +50,11 @@ sps-server/
 
 ## 현재 안정 계약
 
-- SPS는 프로젝트, Task Room, 댓글, 문서, Work Product와 실행 상태의 기준 시스템이다.
-- Agent Room은 장기 역할 대화 공간이다.
-- Task Room은 하나의 유한하고 검증 가능한 작업 공간이다.
+- SPS는 프로젝트, Task, 댓글, 문서, Work Product와 실행 상태의 기준 시스템이다.
+- Agent Session은 지속 가능한 Agent 대화·실행의 범용 Core 단위다.
+- Agent Room과 Task Room은 Team/Workplane 플러그인이 Agent Session과 Task를 조합해 제공하는 사용자 경험이다.
 - Desktop Node는 Hub가 승인한 프로젝트·Agent·명령 경계 안에서만 로컬 실행한다.
-- Memory는 승인된 기억을 검색하고 후보를 제안하며, 권한 없이 Task를 생성·배정·완료하지 않는다.
+- Memory Provider는 승인된 기억을 검색하고 후보를 제안하며, 권한 없이 Task를 생성·배정·완료하지 않는다.
 - 플러그인 플랫폼의 기본값은 최소 권한이어야 한다.
 
 ## 개발 시작

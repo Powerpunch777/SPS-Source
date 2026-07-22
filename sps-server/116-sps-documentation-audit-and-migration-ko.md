@@ -25,6 +25,7 @@
 `114-sps-product-and-plugin-platform-contract-ko.md`
 
 - 로컬 중심 멀티에이전트 제작 플랫폼
+- SPS Extension Profile
 - Plugin Kit
 - Plugin Studio
 - Development Core
@@ -45,6 +46,7 @@
 `75-optimal-work-environment-blueprint-ko.md`
 
 - Room, Task, Workspace, Session과 UI 상세
+- Agent Room·Task Room은 Core 고정 타입이 아니라 Team/Workplane 플러그인이 구성하는 경험
 - 제품 전체 범위를 결정하는 문서가 아니라 Workplane 구현 청사진
 
 ### Core 경계
@@ -52,7 +54,7 @@
 `113-sps-generic-agent-platform-core-contract-ko.md`
 
 - SPS Core가 보장해야 하는 범용 Agent 플랫폼 계약
-- 특정 공식 팀 플러그인의 제품 기능과 분리
+- Project·Task·Agent·Agent Session·권한·Node·이벤트를 제공하고, 특정 공식 팀 플러그인의 제품 기능과 분리
 
 ### 운영 사실
 
@@ -178,13 +180,14 @@ sps-server/docs/
 | --- | --- |
 | SPS | 문맥 없이 SonParkServer와 SPS를 번갈아 사용 |
 | Core Product | 모든 기능을 Core라고 부르기 |
+| SPS Extension Profile | 기존 Core SDK 위에서 통일하는 객체·권한·lifecycle·golden path 표준 |
 | Plugin Kit | SDK, generator, testkit, CLI 전체 |
 | Plugin Studio | 플러그인을 만드는 공식 플러그인 |
 | Development Core | 게임·앱·웹 팀 플러그인의 공통 개발 계층 |
-| Agent Room | 장기 역할 대화 공간 |
-| Task Room | 유한한 실제 작업 공간 |
+| Agent Room | Team/Workplane 플러그인이 Agent Session 위에 구성하는 장기 역할 대화 공간 |
+| Task Room | Team/Workplane 플러그인이 Core Task 위에 구성하는 유한한 실제 작업 공간 |
 | Desktop Node | 승인된 로컬 실행 노드 |
-| official bundled plugin | 현재 기본 제공하는 공식 플러그인 |
+| official bundled plugin | 배포본에 포함될 수 있으나 기본 SPS에서 자동 활성화하지 않는 공식 플러그인 |
 | planned | 아직 구현되지 않은 확정 범위 |
 | verified | 자동 또는 실제 E2E 증거가 있는 상태 |
 

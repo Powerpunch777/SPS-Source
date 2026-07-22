@@ -1,6 +1,9 @@
 # SPS Generic Agent Platform Core Contract
 
-Updated: 2026-07-20
+Updated: 2026-07-22
+
+> **문서 상태: Core compatibility contract**
+> 이 문서는 범용 Core가 보장하는 중립 용어와 경계를 정의한다. SPS 제품 범위와 Extension Profile은 `114-sps-product-and-plugin-platform-contract-ko.md`, 표준화와 저작 도구의 구현 순서는 `115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md`가 우선한다.
 
 ## Decision
 
@@ -39,6 +42,10 @@ The first Core implementation is deliberately a **compatibility layer**. It
 does not migrate or delete existing records. Existing `Issue`,
 `agent_task_sessions`, and `heartbeat_runs` remain authoritative while the
 new contract provides one stable vocabulary for new extensions.
+
+SPS Extension Profile은 이 중립 용어를 현재 Core plugin SDK의 manifest,
+capability, worker, UI slot, job API에 연결하는 제품 수준의 호환 표준이다.
+Profile은 두 번째 runtime이나 두 번째 Core 객체 모델을 만들지 않는다.
 
 ## Invariants
 

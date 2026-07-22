@@ -34,20 +34,38 @@ SPS는 단순한 다중 채팅 UI나 AI 코드 생성기만을 목표로 하지 
 첫 출시에서 Core Product가 제공해야 하는 최소 범위:
 
 - Hub 로그인, 초대, 멤버십과 프로젝트 경계
-- Agent Room과 Task Room
-- 역할별 Agent와 보고 관계
+- Project, Task, 댓글, 문서와 Work Product의 범용 기록
+- Agent와 durable Agent Session
 - 프로젝트별 Workspace 연결
 - 승인된 Desktop Node와 로컬 실행기 연결
 - Task별 실행 상태, 취소, 오류, 결과 기록
 - 첨부 파일, 문서, Work Product와 변경 파일 확인
-- 프로젝트·Agent·Task 범위의 Memory 검색과 후보 제안
+- 플러그인 Provider의 범위·권한·상태 선언과 발견
 - 플러그인 설치, 활성화, 비활성화, 설정과 권한 표시
 - 서버 재시작 후 진행 작업 복구
 - 중복 실행과 중복 완료 방지
 
-### 2.2 SPS Plugin Kit
+Core는 `Agent Room`, 특정 역할 조직도, Task 운영 의식, Memory 저장·검색 전략을 고정 타입으로 만들지 않는다. Core는 그것들을 구성할 수 있는 Task, Agent Session, 권한, 실행 기록, 이벤트와 확장 Runtime을 제공한다.
 
-Plugin Kit은 사용자가 SPS 내부 구현을 직접 이해하지 않고도 플러그인을 만들 수 있게 하는 개발자 제품이다.
+### 2.2 SPS Extension Profile: Plugin Kit 이전의 표준화
+
+SPS는 새 Plugin Kit나 별도 Plugin Runtime을 먼저 만들지 않는다. 이미 있는 Core plugin SDK·manifest·capability·worker·UI slot·job·Agent Session API를 기준으로, SPS에서 플러그인을 만들 때 반드시 따르는 **SPS Extension Profile**을 먼저 고정한다.
+
+Profile이 고정할 항목:
+
+- Core 공통 객체: `company`, `project`, `task`, `agent`, `agent session`, `workspace`, `node`, `artifact`
+- Core 소유 범위와 플러그인 소유 범위
+- 표준 권한 이름과 resource scope, actor context 검사 방식
+- Tool, UI, Automation, Integration, Team, Memory Provider의 기여 방식
+- lifecycle, cancellation, timeout, idempotency, 상태·로그·job namespace 규칙
+- Team 플러그인이 Agent Room·Task Room을 표현하는 방식
+- Memory Provider가 Task를 자동 생성·배정·완료할 수 없다는 기본 경계
+
+완료 판정은 기존 `sps-room-chat`과 `sps-memory`를 한 번에 재작성하는 것이 아니다. 두 플러그인의 필요한 기능을 Profile로 표현할 수 있고, 새 Tool/UI/Automation 플러그인이 같은 규칙으로 만들어지는 것을 확인하는 것이다.
+
+### 2.3 SPS Plugin Kit
+
+Plugin Kit은 사용자가 SPS 내부 구현을 직접 이해하지 않고도 플러그인을 만들 수 있게 하는 개발자 제품이다. Extension Profile이 고정된 뒤에만 만든다. Kit의 역할은 새 규칙을 만드는 것이 아니라, 표준 Profile을 템플릿·검사·테스트·패키징으로 쉽게 사용하게 만드는 것이다.
 
 구성 요소의 목표 이름:
 
@@ -72,7 +90,7 @@ SPS Plugin CLI
 - 설치 전 권한 검토
 - 호환 SPS 버전 선언
 
-### 2.3 공식 기본 제공 플러그인
+### 2.4 공식 기본 제공 플러그인
 
 첫 출시에는 다음 공식 플러그인을 제공한다.
 
@@ -85,6 +103,10 @@ SPS Plugin CLI
 게임·앱·웹 팀 플러그인은 사용자에게는 독립적으로 보이지만, 공통 개발 기능은 `Development Core`를 사용한다.
 
 ## 3. 플러그인 표준 계약
+
+이 계약은 Core의 기존 plugin SDK를 대체하는 별도 runtime 명세가 아니다. SPS Extension Profile은 Core의 실제 manifest와 capability를 기준으로 호환 표를 만들고, 새 기능이 필요할 때만 Core 계약을 명시적으로 확장한다.
+
+중립 Core 용어의 기준은 `113-sps-generic-agent-platform-core-contract-ko.md`다. Profile은 그 용어를 실제 SDK와 제품 UX에 연결한다.
 
 ### 3.1 플러그인 종류
 
@@ -100,6 +122,8 @@ SPS Plugin CLI
 
 ### 3.2 패키지 구조
 
+아래 구조는 P1의 Core 호환 표준화와 P2의 Plugin Kit가 검증된 뒤 제공할 배포 목표다. 현재 Core manifest가 호환 기준이며, P1은 기존 manifest를 이 구조와 매핑한다. 한 플러그인에 서로 다른 두 manifest를 요구하지 않는다.
+
 권장 결과물:
 
 ```text
@@ -114,6 +138,8 @@ example-plugin.spsplugin
 `.spsplugin`은 배포용 컨테이너 형식이다. 초기 버전에서는 ZIP 기반이어도 되지만 확장자, manifest 위치, 경로 안전성, 서명 슬롯을 고정한다.
 
 ### 3.3 Manifest 최소 필드
+
+다음 필드는 SPS Plugin Kit가 제공할 사용자용 manifest 형태다. P1에서 현재 Core의 실제 필드와 capability로의 손실 없는 매핑을 먼저 검증한다.
 
 ```json
 {
@@ -164,6 +190,8 @@ onUninstall
 ### 3.5 권한 모델
 
 권한은 기능 이름만이 아니라 범위를 함께 선언한다.
+
+아래 이름은 SPS Extension Profile의 사용자용 권한 분류다. P1 호환 표가 현재 Core capability와 정확한 대응 관계를 고정하기 전에는 독립적인 권한 체계를 구현하지 않는다.
 
 예시:
 
@@ -231,6 +259,7 @@ Plugin Studio는 “플러그인을 만드는 플러그인”이다.
 ```text
 기능 설명
 → 플러그인 유형 추천
+→ SPS Extension Profile 적합성 확인
 → 필요한 권한 초안
 → 프로젝트 골격 생성
 → 코드·manifest·테스트 생성
@@ -260,6 +289,8 @@ Plugin Studio는 “플러그인을 만드는 플러그인”이다.
 - `.spsplugin` 패키징
 
 여러 언어 SDK, 원격 빌드 서비스, Marketplace 직접 게시 기능은 이후 범위다.
+
+Profile이 고정되기 전에는 Plugin Studio를 구현하지 않는다. Studio가 임의의 manifest나 비표준 권한 이름을 생성하면 이후 모든 플러그인의 호환 비용이 커진다.
 
 ## 5. Development Core 계약
 

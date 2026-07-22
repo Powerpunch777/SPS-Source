@@ -17,6 +17,7 @@
 ```text
 sps-server/
 ├─ plugin-platform/
+│  ├─ profile/                # Core 호환 표준, 권한·lifecycle·golden path
 │  ├─ sdk/                    # @sps/plugin-sdk
 │  ├─ testkit/                # @sps/plugin-testkit
 │  ├─ cli/                    # sps plugin ...
@@ -34,7 +35,7 @@ sps-server/
    └─ plugin-security/
 ```
 
-현재 `sps-room-chat`, `sps-memory`와 기존 Core plugin runtime을 즉시 이동하지 않는다. 먼저 공통 계약을 추출하고, 새 패키지가 기존 플러그인도 표현할 수 있음을 검증한 뒤 단계적으로 전환한다.
+현재 `sps-room-chat`, `sps-memory`와 기존 Core plugin runtime을 즉시 이동하거나 교체하지 않는다. 먼저 기존 Core SDK 위의 SPS Extension Profile을 추출하고, 새 표준이 기존 플러그인과 새 플러그인을 모두 표현할 수 있음을 검증한 뒤 단계적으로 전환한다.
 
 ## 3. 단계별 구현
 
@@ -53,18 +54,20 @@ sps-server/
 - 기존 게임 중심 문서가 전체 제품의 단일 기준처럼 보이지 않는다.
 - 라이선스와 유료 Marketplace가 미결정 사항으로 명시된다.
 
-## P1. Plugin Runtime 표준화
+## P1. SPS Extension Profile 표준화 (Plugin Kit 이전)
+
+이 단계의 목적은 새 runtime을 만드는 것이 아니라, 이미 존재하는 Core plugin SDK와 SPS 제품 규칙 사이의 호환 표준을 고정하는 것이다. P1이 끝나기 전에는 `@sps/plugin-sdk`, 새 CLI, Plugin Studio를 만들지 않는다.
 
 ### 작업
 
-1. `sps-plugin.schema.json` 작성
-2. `definePlugin`, `defineTool`, `defineUiExtension`, `defineAutomation` API 작성
-3. host context와 plugin context 타입 분리
-4. permission evaluator 중앙화
-5. lifecycle registry 구현
-6. 플러그인별 state/log/job namespace 제공
-7. 설치·활성화·중지·삭제 실패 rollback 계약
-8. runtime cancellation과 timeout 연결
+1. 현재 Core manifest, capability, worker, UI slot, job, Agent Session API의 호환 표 작성
+2. Core 공통 객체와 플러그인 소유 객체의 경계 고정
+3. `Tool`, `UI`, `Automation`, `Integration`, `Team`, `Memory Provider` golden path 정의
+4. host context와 plugin context 타입 경계, 권한·resource scope·actor context 규칙 고정
+5. lifecycle, cancellation, timeout, idempotency, state/log/job namespace 규칙 고정
+6. 설치·활성화·중지·삭제 실패 rollback과 migration의 최소 계약 정의
+7. `sps-room-chat`, `sps-memory` 및 최소 Tool/UI/Automation 예제로 Profile 적합성 확인
+8. Profile로 표현할 수 없는 요구만 Core 계약 확장 후보로 기록
 
 ### 권한 우선순위
 
@@ -93,8 +96,12 @@ secrets.use:<binding>
 - 설정 누락이 `workspace.write`, 임의 네트워크, 무승인 실행으로 승격되지 않는다.
 - 플러그인 중지 후 listener, timer, job, child process가 남지 않는다.
 - 동일 lifecycle 이벤트 재실행이 중복 side effect를 만들지 않는다.
+- 문서화된 golden path 하나씩이 기존 Core SDK만으로 구현·검증된다.
+- Core에 `Room`이나 특정 팀 역할을 새 고정 타입으로 추가하지 않아도 Team 플러그인이 필요한 경험을 구성할 수 있다.
 
-## P2. Plugin CLI와 Test Kit
+## P2. Plugin Kit 저작 도구와 Test Kit
+
+P1의 Extension Profile이 승인·검증된 뒤, 그 표준을 쉽게 쓰게 하는 도구를 만든다. Plugin Kit은 Profile을 다시 정의하지 않는다.
 
 ### CLI 목표
 
@@ -351,6 +358,7 @@ jobId
 ### sps-memory
 
 - 첫 reference plugin으로 사용한다.
+- Memory Provider golden path와 Profile conformance fixture로 사용한다.
 - `memory-search`, `memory-propose`를 표준 `defineTool`로 표현한다.
 - loopback 네트워크 권한과 candidate-only 경계를 manifest로 검증한다.
 - Memory의 durable ownership은 별도 Core 계약을 따른다.
@@ -358,6 +366,7 @@ jobId
 ### sps-room-chat
 
 - 한 번에 재작성하지 않는다.
+- Team/Workplane golden path와 Profile conformance fixture로 사용한다.
 - Room UI, Task operation, runtime adapter, recovery job을 모듈로 나눈다.
 - Plugin SDK로 표현 가능한 경계부터 이동한다.
 - 현재 거대한 Worker 파일의 책임 분해는 Plugin Kit과 병행한다.
@@ -382,10 +391,10 @@ jobId
 
 ## 8. 다음 작업 순서
 
-1. manifest와 권한 이름 초안 작성
-2. 현재 `sps-memory`를 새 SDK로 표현하는 spike
+1. Core 호환 표와 SPS Extension Profile golden path 작성
+2. 현재 `sps-memory`, `sps-room-chat` 및 최소 Tool/UI/Automation 예제의 conformance spike
 3. lifecycle·permission·restart contract test 작성
-4. CLI `validate`와 `package` 구현
+4. Plugin Kit의 CLI `validate`와 `package` 구현
 5. Plugin Studio의 Tool Plugin 생성 E2E
 6. Development Core의 범용 저장소 E2E
 7. 공식 팀 플러그인을 한 개씩 추가
