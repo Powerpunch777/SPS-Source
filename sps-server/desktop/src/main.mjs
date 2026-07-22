@@ -581,6 +581,13 @@ async function ensureOwnerHostManager() {
           PAPERCLIP_SECRETS_MASTER_KEY_FILE: ownerHost.layout.secretsPath,
           PAPERCLIP_PROJECTS_ROOT: ownerHost.layout.projectsDir,
           SPS_BASIC_MODE: "true",
+          SPS_WORKPLANE_MODE: "true",
+          SPS_WORKPLANE_ROOM_ORIGIN_PREFIXES: [
+            "plugin:local.room-chat:operation:agent-room",
+            "plugin:local.room-chat:agent-room-provisioning",
+            "plugin:local.room-chat:project-room-provisioning",
+          ].join(","),
+          SPS_WORKPLANE_DEFAULT_PROJECT_TAB: "plugin:local.room-chat:project-workplane",
           SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
           PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
           ...(defaultMemory

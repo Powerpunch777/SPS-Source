@@ -31,7 +31,13 @@ if ($EnableAgentInstructionSync -and $SkipAgentInstructionSync) {
 # Vite middleware automatically for a source checkout, which can stall the API
 # process during long-running browser sessions.
 $env:PAPERCLIP_UI_DEV_MIDDLEWARE = "false"
-$env:PAPERCLIP_WORKPLANE_MODE = "true"
+$env:SPS_WORKPLANE_MODE = "true"
+$env:SPS_WORKPLANE_ROOM_ORIGIN_PREFIXES = @(
+  "plugin:local.room-chat:operation:agent-room",
+  "plugin:local.room-chat:agent-room-provisioning",
+  "plugin:local.room-chat:project-room-provisioning"
+) -join ","
+$env:SPS_WORKPLANE_DEFAULT_PROJECT_TAB = "plugin:local.room-chat:project-workplane"
 
 if ($EnableAgentInstructionSync -and -not $SkipAgentInstructionSync) {
   $instructionSync = Join-Path $PSScriptRoot "Sync-SPSCompanyInstructions.ps1"
