@@ -73,6 +73,25 @@ Plugin Kit보다 먼저, 모든 팀과 Adapter가 공통으로 사용할 수 있
 - Node 소유자의 실제 CLI 로그인 정보가 Hub DB·Activity Log·명령 행에 남지 않는다.
 - Node 관리 화면에서 연결 상태와 안전한 Runner 상태를 구분해 볼 수 있다.
 
+## P0.75 MCP 상호운용성 기준
+
+SPS가 단순히 MCP 서버 하나를 실행하는 데서 끝나지 않고, 외부 Agent와 외부 도구를 모두 안전하게 연결하는 기준을 고정한다.
+
+### 작업
+
+1. SPS 정보를 외부 Agent에 제공하는 `@sps/mcp-server`를 표준 명칭·`SPS_*` 환경 변수·`sps*` 도구 이름으로 제공한다.
+2. 이전 `PAPERCLIP_*` 환경 변수와 `paperclip*` 도구 이름은 설치 전환 기간에만 호환 모드로 유지한다.
+3. 외부 MCP는 `connector` 플러그인이 `agent.tools.register`, `http.outbound`, `secrets.read-ref` 등 기존 권한을 조합해 제공하도록 한다.
+4. 원격 MCP는 허용된 HTTPS endpoint와 Secret Reference만 사용한다. 로컬 `stdio` MCP는 승인된 Desktop Node가 준비된 뒤 별도 Node Bridge 경로로 지원한다.
+5. MCP 도구별 허용 Agent·Project·Node·읽기/쓰기/실행 범위와 호출 결과를 감사 가능하게 남긴다.
+
+### 완료 기준
+
+- 외부 Agent는 SPS MCP Server를 통해 기존 API 권한을 넘지 않는 도구만 사용한다.
+- 외부 MCP Connector는 Hub 비밀 값이나 임의 로컬 명령을 요구하지 않는다.
+- Node 소유자의 MCP 설정·토큰·쿠키·절대 경로는 Hub에 저장되지 않는다.
+- MCP 호출 실패, 인증 필요, 한도 제한은 Agent 실행과 구분되어 사용자에게 보고할 수 있다.
+
 ## P1. SPS Extension Profile 표준화 (Plugin Kit 이전)
 
 이 단계의 목적은 새 runtime을 만드는 것이 아니라, 이미 존재하는 Core plugin SDK와 SPS 제품 규칙 사이의 호환 표준을 고정하는 것이다. P1이 끝나기 전에는 `@sps/plugin-sdk`, 새 CLI, Plugin Studio를 만들지 않는다.

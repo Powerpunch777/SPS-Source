@@ -48,6 +48,8 @@ SPS는 단순한 다중 채팅 UI나 AI 코드 생성기만을 목표로 하지 
 
 Core는 `Agent Room`, 특정 역할 조직도, Task 운영 의식, Memory 저장·검색 전략을 고정 타입으로 만들지 않는다. Core는 그것들을 구성할 수 있는 Task, Agent Session, 권한, 실행 기록, 이벤트와 확장 Runtime을 제공한다.
 
+MCP는 별도 작업 모델이 아니라 Tool·Integration 확장의 상호운용 규약이다. SPS는 외부 Agent가 SPS의 권한 있는 도구를 사용하는 **SPS MCP Server**와, SPS Agent가 외부 MCP 도구를 사용하는 **MCP Connector Plugin**을 구분한다. 후자는 Hub에서 외부 `stdio` 프로세스를 임의 실행하지 않으며, 로컬 MCP는 승인된 Desktop Node 경로에서만 다룬다.
+
 ### 2.1.1 Core 운영 편의 계약
 
 Node와 실행기의 운영 정보는 특정 AI 공급자나 팀 플러그인에 묶이지 않는 Core 계약이다.

@@ -20,7 +20,7 @@ SPS의 첫 제품은 **여러 AI Agent를 실제 소규모 팀처럼 구성하�
 | 층 | 첫 출시 범위 |
 | --- | --- |
 | **SPS Core Product** | Hub, Project·Task·Agent·Agent Session, 프로젝트별 Workspace, Desktop Node, Runner Profile·Availability Snapshot·Agent Runner 권한, 실행 기록, 승인·권한, 확장 Runtime |
-| **SPS Extension Profile + Plugin Kit** | Core 호환 데이터·권한·lifecycle 표준화 후 제공하는 manifest, 개발 CLI, 테스트 도구, 로컬 설치·비활성화·업데이트 계약 |
+| **SPS Extension Profile + Plugin Kit** | Core 호환 데이터·권한·lifecycle 표준화 후 제공하는 manifest, MCP·Integration 계약, 개발 CLI, 테스트 도구, 로컬 설치·비활성화·업데이트 계약 |
 | **Bundled Team Plugins** | Plugin Studio, Development Core, Indie Game Team, App Product Team, Web Product Team |
 
 ### 기본 제공 플러그인
@@ -42,6 +42,7 @@ SPS의 첫 제품은 **여러 AI Agent를 실제 소규모 팀처럼 구성하�
 - [제품 및 플러그인 플랫폼 계약](sps-server/114-sps-product-and-plugin-platform-contract-ko.md)
 - [Plugin Kit 및 공식 팀 플러그인 구현 계획](sps-server/115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md)
 - [문서 체계 감사와 기준 문서 지도](sps-server/116-sps-documentation-audit-and-migration-ko.md)
+- [MCP 상호운용성 계약](sps-server/117-sps-mcp-interoperability-contract-ko.md)
 
 ## SPS가 해결하는 일
 
