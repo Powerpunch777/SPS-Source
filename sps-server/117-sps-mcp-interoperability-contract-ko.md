@@ -100,3 +100,13 @@ MCP 오류는 Agent 실패와 구분해 기록한다.
 5. GitHub, Obsidian, 게임 제작 도구 같은 공식 Connector
 
 이 순서는 원격 서비스와 로컬 컴퓨터의 신뢰 경계를 섞지 않기 위한 것이다.
+
+## 8. 현재 제공되는 HTTPS Connector
+
+`@sps/plugin-mcp-connector`는 이 계약의 첫 기본 구현이다. 운영자는 Streamable HTTP MCP endpoint, 선택적 Bearer Secret Reference, 정확한 remote Tool allowlist를 설정한다. Connector는 연결 시 remote Tool 목록을 읽고 allowlist와 일치한 Tool만 `sps.mcp-connector:mcp_<tool>` 이름으로 동적 등록한다.
+
+- HTTPS endpoint만 허용한다. `http://localhost` 계열은 개발용으로만 허용한다.
+- `*` 와 같은 wildcard allowlist는 허용하지 않는다.
+- secret 값은 연결할 때만 resolve하며 설정, 로그, Task, Memory에 저장하지 않는다.
+- Tool discovery 또는 연결에 실패하면 기존 dynamic Tool을 즉시 비워, 오래된 연결 정보가 Agent에게 남지 않게 한다.
+- 현재 Connector의 allowlist는 Plugin instance 단위다. Agent·Project별 추가 범위 UI와 호출 감사 화면은 다음 단계에서 Core의 같은 Tool 계약 위에 추가한다.

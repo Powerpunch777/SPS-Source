@@ -85,6 +85,8 @@ SPS가 단순히 MCP 서버 하나를 실행하는 데서 끝나지 않고, 외�
 4. 원격 MCP는 허용된 HTTPS endpoint와 Secret Reference만 사용한다. 로컬 `stdio` MCP는 승인된 Desktop Node가 준비된 뒤 별도 Node Bridge 경로로 지원한다.
 5. MCP 도구별 허용 Agent·Project·Node·읽기/쓰기/실행 범위와 호출 결과를 감사 가능하게 남긴다.
 
+현재 기본 구현에는 `@sps/plugin-mcp-connector`가 포함된다. 이 Connector는 HTTPS Streamable HTTP transport, Secret Reference, exact Tool allowlist, 동적 Tool lifecycle 정리까지 제공한다. 로컬 `stdio` MCP와 Agent·Project별 범위 UI는 Node Bridge 단계에서 추가한다.
+
 ### 완료 기준
 
 - 외부 Agent는 SPS MCP Server를 통해 기존 API 권한을 넘지 않는 도구만 사용한다.
