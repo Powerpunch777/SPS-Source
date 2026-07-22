@@ -48,7 +48,7 @@ function taskTypesForProfile(profile) {
 
 const STYLES = `
   .rw-shell { color: var(--foreground, #172033); font: 14px/1.45 system-ui, sans-serif; }
-  .rw-layout { display: grid; grid-template-columns: 238px minmax(0, 1fr) 310px; height: min(760px, calc(100dvh - 150px)); min-height: 540px; overflow: hidden; border: 1px solid var(--border, #d8dee9); background: var(--background, #fff); }
+  .rw-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr) 280px; height: min(760px, calc(100dvh - 150px)); min-height: 540px; overflow: hidden; border: 1px solid var(--border, #d8dee9); background: var(--background, #fff); }
   .rw-rooms, .rw-context { min-width: 0; min-height: 0; background: var(--muted, #f7f8fa); overscroll-behavior: contain; }
   .rw-rooms { border-right: 1px solid var(--border, #d8dee9); overflow: auto; }
   .rw-context { border-left: 1px solid var(--border, #d8dee9); display: flex; flex-direction: column; overflow: hidden; }
@@ -61,6 +61,7 @@ const STYLES = `
   .rw-room:hover, .rw-room.active { background: var(--accent, #eaf2ff); }
   .rw-room strong, .rw-room span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rw-room span { color: var(--muted-foreground, #667085); font-size: 12px; margin-top: 2px; }
+  .rw-room small { display: block; overflow: hidden; color: #9a6700; font-size: 11px; font-weight: 600; margin-top: 3px; text-overflow: ellipsis; white-space: nowrap; }
   .rw-thread { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px clamp(16px, 3vw, 36px); }
   .rw-message { max-width: 860px; margin: 0 auto 18px; }
   .rw-message-label { color: var(--muted-foreground, #667085); font-size: 12px; font-weight: 650; margin-bottom: 5px; display: flex; align-items: center; gap: 7px; }
@@ -78,12 +79,14 @@ const STYLES = `
   .rw-step { margin-top: 8px; font-size: 12px; color: #40516b; }
   .rw-step summary { padding: 0; display: block; color: inherit; cursor: pointer; }
   .rw-step pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 5px 0 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #40516b; }
-  .rw-composer { border-top: 1px solid var(--border, #d8dee9); padding: 12px clamp(16px, 3vw, 28px); background: var(--background, #fff); }
+  .rw-composer { border-top: 1px solid var(--border, #d8dee9); padding: 12px clamp(14px, 2vw, 24px); background: var(--background, #fff); }
   .rw-workspace-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding: 9px 10px; border: 1px solid #e2c46b; border-radius: 6px; background: #fffbeb; color: #634b00; font-size: 12px; }
   .rw-workspace-notice strong, .rw-workspace-notice span { display: block; }
   .rw-workspace-notice span { margin-top: 2px; }
   .rw-retry-draft { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 9px; padding: 7px 9px; border-left: 3px solid #2563eb; background: #f4f8ff; color: #40516b; font-size: 12px; }
-  .rw-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 8px; }
+  .rw-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
+  .rw-composer-status { margin-right: auto; color: var(--muted-foreground, #667085); font-size: 11px; white-space: nowrap; }
+  .rw-composer-buttons { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
   .rw-composer-tools { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
   .rw-button { appearance: none; border: 1px solid var(--border, #cfd7e3); background: var(--background, #fff); color: inherit; border-radius: 5px; padding: 7px 10px; cursor: pointer; font: inherit; }
   .rw-button.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
@@ -132,6 +135,9 @@ const STYLES = `
   .rw-focus-label { display: block; margin-bottom: 2px; color: var(--muted-foreground, #667085); font-size: 11px; }
   .rw-focus-sources { margin: 3px 0 0; padding-left: 16px; color: var(--muted-foreground, #667085); font-size: 11px; }
   .rw-empty, .rw-error { padding: 24px; color: var(--muted-foreground, #667085); }
+  .rw-room-empty { display: grid; align-content: center; min-height: 180px; max-width: 520px; margin: 0 auto; text-align: center; }
+  .rw-room-empty strong { color: var(--foreground, #172033); font-size: 15px; }
+  .rw-room-empty p { margin: 6px 0 0; }
   .rw-error { color: #b42318; }
   .rw-project { padding: 18px; }
   .rw-project h1 { font-size: 20px; margin: 0 0 3px; }
@@ -227,7 +233,7 @@ const STYLES = `
   @container (max-width: 920px) { .org-agent { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "meta actions" "policy policy" "status status"; } .org-agent-policy { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @container (max-width: 560px) { .org-agent { grid-template-columns: 1fr; grid-template-areas: "meta" "policy" "actions" "status"; } .org-agent-policy, .org-agent-advanced-content { grid-template-columns: 1fr; } .org-agent-actions { justify-content: flex-start; } }
   @media (max-width: 720px) { .wp-workspace, .wp-agent, .wp-task-route, .wp-new-workspace, .wp-new-task-type { grid-template-columns: 1fr; } }
-  @media (max-width: 1020px) { .rw-layout { grid-template-columns: 210px minmax(0, 1fr); } .rw-context { display: none; } }
+  @media (max-width: 1020px) { .rw-layout { grid-template-columns: 210px minmax(0, 1fr); } .rw-context { display: none; } .rw-actions { align-items: flex-end; flex-wrap: wrap; } .rw-composer-status { white-space: normal; } }
   @media (max-width: 720px) { .rw-layout { display: block; height: auto; min-height: 0; overflow: visible; } .rw-rooms { border-right: 0; border-bottom: 1px solid var(--border, #d8dee9); max-height: 210px; } .rw-main { min-height: 620px; } }
 `;
 
@@ -344,11 +350,16 @@ function roomHref(navigation, projectId, roomId) {
   return navigation.resolveHref(`/agent-rooms?${params.toString()}`);
 }
 
-function roomRoleSummary(room, { withState = false } = {}) {
+function roomRoleSummary(room) {
   const title = String(room?.title || "").trim().toLocaleLowerCase();
   const role = String(room?.agent?.role || "").trim();
-  const label = !role || title === role.toLocaleLowerCase() ? "Agent Room" : `${role} Room`;
-  return withState ? `${label} - ${room?.agent?.status || "unknown"}` : label;
+  return !role || title === role.toLocaleLowerCase() ? "Team Room" : `${role} Team Room`;
+}
+
+function roomAgentAttention(room) {
+  const status = String(room?.agent?.status || "").trim().toLocaleLowerCase();
+  if (!status || status === "ready") return "";
+  return status === "error" ? "Agent needs attention" : `Agent ${status}`;
 }
 
 function fileNodes(workspaces) {
@@ -597,7 +608,7 @@ function RoomConversation({ context, roomId, workplane }) {
     {workplane ? <RoomList navigation={navigation} workplane={workplane} projectId={currentProjectId} roomId={roomId} /> : <div className="rw-rooms" />}
     <main className="rw-main">
       <header className="rw-header">
-        <div><h1 className="rw-title">{roomName}</h1><p className="rw-subtitle">Agent Room</p></div>
+        <div><h1 className="rw-title">{roomName}</h1><p className="rw-subtitle">Team Room</p></div>
         <StatusBadge label={working ? "Working" : data?.runtime?.enabled ? "Ready" : "Runtime disabled"} status={working ? "warning" : data?.runtime?.enabled ? "ok" : "pending"} />
       </header>
       <section className="rw-thread" ref={threadRef} onScroll={trackThreadScroll}>
@@ -616,7 +627,7 @@ function RoomConversation({ context, roomId, workplane }) {
             </article>
             {showActivity ? <RoomActivity activity={activity} /> : null}
           </div>;
-        }) : <div className="rw-empty">Start the long-lived conversation with this Agent.</div>}
+        }) : <div className="rw-empty rw-room-empty"><strong>Start the ongoing conversation</strong><p>This Team Room keeps the Agent's context, decisions, and checkpoints across work.</p></div>}
         {activity && !activity.sourceCommentId ? <RoomActivity activity={activity} /> : null}
       </section>
       <footer className="rw-composer">
@@ -630,7 +641,7 @@ function RoomConversation({ context, roomId, workplane }) {
           <button type="button" className="rw-button" onClick={() => attachmentInputRef.current?.click()} disabled={submitting || working || !workspaceReady || !data?.runtime?.enabled}>Attach files</button>
           <span className="rw-muted">Files are stored in this Room, not the project repository.</span>
         </div>
-        <div className="rw-actions"><span className="rw-muted">History saved automatically</span><button type="button" className="rw-button" onClick={compact} disabled={submitting || working || !workspaceReady || !data?.runtime?.enabled}>Compact &amp; checkpoint</button><button type="button" className="rw-button primary" onClick={send} disabled={submitting || working || !workspaceReady || (!message.trim() && !queuedAttachments.length && !retrySource?.attachmentIds?.length) || !data?.runtime?.enabled}>{retrySource ? "Retry" : "Send"}</button></div>
+        <div className="rw-actions"><span className="rw-composer-status">History saved automatically</span><div className="rw-composer-buttons"><button type="button" className="rw-button" onClick={compact} disabled={submitting || working || !workspaceReady || !data?.runtime?.enabled}>Compact &amp; checkpoint</button><button type="button" className="rw-button primary" onClick={send} disabled={submitting || working || !workspaceReady || (!message.trim() && !queuedAttachments.length && !retrySource?.attachmentIds?.length) || !data?.runtime?.enabled}>{retrySource ? "Retry" : "Send"}</button></div></div>
       </footer>
     </main>
     <RoomContext data={data} navigation={navigation} />
@@ -639,7 +650,7 @@ function RoomConversation({ context, roomId, workplane }) {
 }
 
 function RoomList({ navigation, workplane, projectId, roomId }) {
-  return <aside className="rw-rooms"><div className="rw-room-list"><div className="rw-muted">{workplane.project?.name || "Project"}</div>{(workplane.rooms || []).map((room) => <a className={`rw-room ${room.id === roomId ? "active" : ""}`} key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><span>{roomRoleSummary(room, { withState: true })}</span></a>)}</div></aside>;
+  return <aside className="rw-rooms"><div className="rw-room-list"><div className="rw-muted">{workplane.project?.name || "Project"}</div>{(workplane.rooms || []).map((room) => { const attention = roomAgentAttention(room); return <a className={`rw-room ${room.id === roomId ? "active" : ""}`} key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><span>{roomRoleSummary(room)}</span>{attention ? <small>{attention}</small> : null}</a>; })}</div></aside>;
 }
 
 function WorkspaceProfile({ context, workplane, onRefresh }) {
@@ -773,7 +784,7 @@ function WorkspaceProfile({ context, workplane, onRefresh }) {
       <label>Repository URL (optional)<input value={newWorkspace.repoUrl} onChange={(event) => setNewWorkspace((current) => ({ ...current, repoUrl: event.target.value }))} placeholder="https://github.com/org/repo" disabled={!canConfigure || creating || saving} /></label>
       <button type="button" className="rw-button" onClick={addWorkspace} disabled={!canConfigure || creating || saving}>{creating ? "Adding..." : "Add Workspace"}</button>
     </div>
-    {workspaces.length ? <details className="wp-routing"><summary>Advanced routing</summary><p className="rw-muted">Set persistent Room locations per Agent and explicit Workspaces per Task type. A Lead can still choose a different Workspace for an individual Task.</p><div className="wp-agent-map"><h3>Agent Room defaults</h3>{agents.map((agent) => <div className="wp-agent" key={agent.id}><div><strong>{agent.name}</strong><span>{agent.role || "Agent"}</span></div><label>Room Workspace<select aria-label={`${agent.name} Room Workspace`} value={draft?.agentWorkspaceIds?.[agent.id] || ""} onChange={(event) => updateAgentWorkspace(agent.id, event.target.value)} disabled={!canConfigure || saving || creating}><option value="">Use Room default</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label></div>)}</div><div className="wp-agent-map"><h3>Task workspace defaults</h3><p className="rw-muted">These keys are Project-specific. Leads can use any configured key when creating a finite Task.</p>{(draft?.taskTypes || []).map((taskType) => <div className="wp-task-route" key={taskType.id}><div><strong>{taskType.label}</strong><span>{taskType.id}</span></div><label>Workspace<select aria-label={`${taskType.id} Task Workspace`} value={draft?.taskWorkspaceIds?.[taskType.id] || ""} onChange={(event) => updateTaskWorkspace(taskType.id, event.target.value)} disabled={!canConfigure || saving || creating}><option value="">Choose by task type</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label><button type="button" className="rw-button" onClick={() => removeTaskType(taskType.id)} disabled={!canConfigure || saving || creating}>Remove</button></div>)}<div className="wp-new-task-type"><label>Task type key<input value={newTaskType.id} onChange={(event) => setNewTaskType((current) => ({ ...current, id: event.target.value }))} placeholder="e.g. research" disabled={!canConfigure || saving || creating} /></label><label>Label (optional)<input value={newTaskType.label} onChange={(event) => setNewTaskType((current) => ({ ...current, label: event.target.value }))} placeholder="e.g. Research and discovery" disabled={!canConfigure || saving || creating} /></label><button type="button" className="rw-button" onClick={addTaskType} disabled={!canConfigure || saving || creating}>Add Task type</button></div></div></details> : null}
+    {workspaces.length ? <details className="wp-routing"><summary>Advanced routing</summary><p className="rw-muted">Set persistent Room locations per Agent and explicit Workspaces per Task type. A Lead can still choose a different Workspace for an individual Task.</p><div className="wp-agent-map"><h3>Team Room defaults</h3>{agents.map((agent) => <div className="wp-agent" key={agent.id}><div><strong>{agent.name}</strong><span>{agent.role || "Agent"}</span></div><label>Room Workspace<select aria-label={`${agent.name} Room Workspace`} value={draft?.agentWorkspaceIds?.[agent.id] || ""} onChange={(event) => updateAgentWorkspace(agent.id, event.target.value)} disabled={!canConfigure || saving || creating}><option value="">Use Room default</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label></div>)}</div><div className="wp-agent-map"><h3>Task workspace defaults</h3><p className="rw-muted">These keys are Project-specific. Leads can use any configured key when creating a finite Task.</p>{(draft?.taskTypes || []).map((taskType) => <div className="wp-task-route" key={taskType.id}><div><strong>{taskType.label}</strong><span>{taskType.id}</span></div><label>Workspace<select aria-label={`${taskType.id} Task Workspace`} value={draft?.taskWorkspaceIds?.[taskType.id] || ""} onChange={(event) => updateTaskWorkspace(taskType.id, event.target.value)} disabled={!canConfigure || saving || creating}><option value="">Choose by task type</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label><button type="button" className="rw-button" onClick={() => removeTaskType(taskType.id)} disabled={!canConfigure || saving || creating}>Remove</button></div>)}<div className="wp-new-task-type"><label>Task type key<input value={newTaskType.id} onChange={(event) => setNewTaskType((current) => ({ ...current, id: event.target.value }))} placeholder="e.g. research" disabled={!canConfigure || saving || creating} /></label><label>Label (optional)<input value={newTaskType.label} onChange={(event) => setNewTaskType((current) => ({ ...current, label: event.target.value }))} placeholder="e.g. Research and discovery" disabled={!canConfigure || saving || creating} /></label><button type="button" className="rw-button" onClick={addTaskType} disabled={!canConfigure || saving || creating}>Add Task type</button></div></div></details> : null}
     <div className="wp-profile-actions"><button type="button" className="rw-button primary" onClick={save} disabled={!canConfigure || !draft || saving || creating}>{saving ? "Saving..." : "Save Workspace Profile"}</button></div>
     </div>
   </details></section>;
@@ -782,7 +793,7 @@ function WorkspaceProfile({ context, workplane, onRefresh }) {
 function ProjectWorkplaneHome({ context, projectId, workplane, onRefresh, navigation }) {
   return <div className="rw-project">
     <h1>{workplane?.project?.name || "Project"}</h1>
-    <p className="rw-muted">Choose an Agent Room. Finite work remains in Tasks.</p>
+    <p className="rw-muted">Choose a Team Room for ongoing collaboration. Bounded work remains in Tasks.</p>
     <div className="rw-project-grid">
       {(workplane?.rooms || []).map((room) => <a className="rw-project-card" key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}>
         <strong>{room.title}</strong><p>{roomRoleSummary(room)}</p>
@@ -799,7 +810,7 @@ function ProjectRooms({ context, projectId, roomId }) {
   if (loading) return <div className="rw-empty">Loading Rooms...</div>;
   if (error) return <div className="rw-error">{error.message}</div>;
   if (!roomId) return <ProjectWorkplaneHome context={context} projectId={projectId} workplane={data} onRefresh={refresh} navigation={navigation} />;
-  return <div className="rw-project"><h1>{data?.project?.name || "Project"}</h1><p className="rw-muted">Choose an Agent Room. Finite work remains in Tasks.</p><div className="rw-project-grid">{(data?.rooms || []).map((room) => <a className="rw-project-card" key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><p>{roomRoleSummary(room)}</p></a>)}</div></div>;
+  return <div className="rw-project"><h1>{data?.project?.name || "Project"}</h1><p className="rw-muted">Choose a Team Room for ongoing collaboration. Bounded work remains in Tasks.</p><div className="rw-project-grid">{(data?.rooms || []).map((room) => <a className="rw-project-card" key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><p>{roomRoleSummary(room)}</p></a>)}</div></div>;
 }
 
 export function AgentRoomsPage({ context }) {
@@ -807,7 +818,7 @@ export function AgentRoomsPage({ context }) {
   const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const projectId = query.get("project") || context.projectId;
   const roomId = query.get("room");
-  if (!projectId && !roomId) return <><Style /><div className="rw-empty">Choose a Project to open its Agent Rooms.</div></>;
+  if (!projectId && !roomId) return <><Style /><div className="rw-empty">Choose a Project to open its Team Rooms.</div></>;
   return <div className="rw-shell"><Style /><ProjectRooms context={context} projectId={projectId} roomId={roomId} /></div>;
 }
 
@@ -828,12 +839,12 @@ export function ProjectTasksPage({ context }) {
   const roomsHref = projectId ? navigation.resolveHref(`/agent-rooms?project=${encodeURIComponent(projectId)}`) : "";
   const tasks = data?.tasks || [];
   return <div className="rw-task-board"><Style />
-    <header className="rw-task-board-header"><div><h1>{projectId ? `${projectName} Tasks` : "Project Tasks"}</h1><p className="rw-muted">Finite work created from an Agent Room. Task conversations stay in native SPS Task chat.</p></div>{roomsHref ? <a className="rw-button" {...navigation.linkProps(roomsHref)}>Open Agent Rooms</a> : null}</header>
+    <header className="rw-task-board-header"><div><h1>{projectId ? `${projectName} Tasks` : "Project Tasks"}</h1><p className="rw-muted">Bounded work created from a Team Room. Task conversations stay in native SPS Task chat.</p></div>{roomsHref ? <a className="rw-button" {...navigation.linkProps(roomsHref)}>Open Team Rooms</a> : null}</header>
     {!projectId ? <div className="rw-empty">Open Tasks from a Project to keep the Project, its Rooms, and finite work together.</div>
       : loading ? <div className="rw-empty">Loading Tasks...</div>
         : error ? <div className="rw-error">{error.message}</div>
           : tasks.length ? tasks.map((task) => <a className="rw-task-row" key={task.id} {...navigation.linkProps(taskHref(navigation, task))}><strong>{task.title}</strong><span>{task.identifier} · {task.status} · {task.parentRoom?.title || "No owner Room"}</span></a>)
-            : <div className="rw-empty rw-task-empty"><strong>No finite Tasks yet.</strong><p>A configured Lead can create and assign a Task from its Agent Room when work is ready.</p></div>}
+            : <div className="rw-empty rw-task-empty"><strong>No finite Tasks yet.</strong><p>A configured Lead can create and assign a Task from its Team Room when work is ready.</p></div>}
   </div>;
 }
 
@@ -866,7 +877,7 @@ export function CodexAccountsPage({ context }) {
   return <div className="rw-shell"><Style /><main className="ca-page">
     <h1>Codex Accounts</h1>
     <p className="rw-muted">Choose the ChatGPT/Codex CLI profile used by each Codex Agent.</p>
-    <div className="ca-note">Changing an account updates that Agent's `CODEX_HOME` for both Agent Rooms and normal SPS Tasks. Existing Room history and checkpoints remain in SPS; only the underlying Codex CLI session changes on the next message.</div>
+    <div className="ca-note">Changing an account updates that Agent's `CODEX_HOME` for both Team Rooms and normal SPS Tasks. Existing Room history and checkpoints remain in SPS; only the underlying Codex CLI session changes on the next message.</div>
     {canConfigureAgents === false ? <div className="ca-note">Only company Owners and Admins can change Agent CLI accounts.</div> : null}
     {actionError ? <div className="rw-error">{actionError}</div> : null}
     {notice ? <div className="ca-note">{notice}</div> : null}
@@ -1103,5 +1114,5 @@ export function CodexAccountsSidebar() {
 
 export function ProjectWorkplaneLink({ context }) {
   const navigation = useHostNavigation();
-  return <a className="rw-room" {...navigation.linkProps(`/agent-rooms?project=${encodeURIComponent(context.entityId)}`)}>Agent Rooms</a>;
+  return <a className="rw-room" {...navigation.linkProps(`/agent-rooms?project=${encodeURIComponent(context.entityId)}`)}>Team Rooms</a>;
 }

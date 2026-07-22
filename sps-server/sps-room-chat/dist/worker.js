@@ -11839,14 +11839,33 @@ function startWorkerRpcHost(options) {
   };
 }
 
+// src/team-workplane-profile.js
+var SPS_TEAM_WORKPLANE_PROFILE = Object.freeze({
+  productId: "sps.team-workplane",
+  legacyPluginId: "local.room-chat",
+  contractVersion: "1.0",
+  kind: "workplane",
+  profileKey: "sps-lead-worker",
+  displayName: "SPS Team Workplane",
+  description: "Long-lived Team Rooms, bounded Task Rooms, and lead-to-worker delivery for SPS projects.",
+  author: "SPS",
+  compatibility: Object.freeze({
+    preservesExistingRooms: true,
+    preservesExistingTasks: true,
+    preservesExistingOriginKinds: true
+  })
+});
+
 // src/manifest.js
 var manifest_default = {
-  id: "local.room-chat",
+  // Do not rename this persisted plugin identity without an atomic state migration.
+  // Existing Rooms, Task Rooms, origins, and plugin state use this exact ID.
+  id: SPS_TEAM_WORKPLANE_PROFILE.legacyPluginId,
   apiVersion: 1,
-  version: "0.3.61",
-  displayName: "SPS Rooms",
-  description: "Long-lived project Agent Rooms backed by SPS Agent Sessions.",
-  author: "local",
+  version: "0.3.65",
+  displayName: SPS_TEAM_WORKPLANE_PROFILE.displayName,
+  description: SPS_TEAM_WORKPLANE_PROFILE.description,
+  author: SPS_TEAM_WORKPLANE_PROFILE.author,
   categories: ["automation"],
   capabilities: [
     "ui.page.register",
@@ -11876,9 +11895,9 @@ var manifest_default = {
     "instance.settings.register"
   ],
   agentPlatform: {
-    contractVersion: "1.0",
-    kind: "workplane",
-    profileKey: "sps-lead-worker"
+    contractVersion: SPS_TEAM_WORKPLANE_PROFILE.contractVersion,
+    kind: SPS_TEAM_WORKPLANE_PROFILE.kind,
+    profileKey: SPS_TEAM_WORKPLANE_PROFILE.profileKey
   },
   jobs: [
     {
@@ -11890,7 +11909,7 @@ var manifest_default = {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.61"
+    ui: "./dist/ui-v0.3.65"
   },
   ui: {
     slots: [
@@ -11898,7 +11917,7 @@ var manifest_default = {
         type: "page",
         id: "agent-rooms",
         routePath: "agent-rooms",
-        displayName: "Agent Rooms",
+        displayName: "Team Rooms",
         exportName: "AgentRoomsPage",
         order: 9
       },
@@ -11914,7 +11933,7 @@ var manifest_default = {
         type: "projectSidebarItem",
         id: "project-workplane-link",
         entityTypes: ["project"],
-        displayName: "Rooms",
+        displayName: "Team Rooms",
         exportName: "ProjectWorkplaneLink",
         order: 10
       },
@@ -11930,7 +11949,7 @@ var manifest_default = {
         type: "detailTab",
         id: "project-workplane",
         entityTypes: ["project"],
-        displayName: "Workplane",
+        displayName: "Team Workplane",
         exportName: "ProjectWorkplaneTab",
         order: 89
       },
@@ -11954,7 +11973,7 @@ var manifest_default = {
         type: "detailTab",
         id: "room-chat",
         entityTypes: ["issue"],
-        displayName: "Room Chat",
+        displayName: "Task Room",
         exportName: "RoomChatTab",
         order: 90
       }

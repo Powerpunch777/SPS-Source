@@ -69,6 +69,7 @@ import {
 import { isSpsDesktopGoogleClientId, startSpsDesktopGoogleSignIn } from "./desktop-account.mjs";
 import { resolveSpsServerAccess } from "./server-access-model.mjs";
 import { areSpsBundledExtensionsEnabled, disabledSpsExtensionStatus } from "./bundled-extensions.mjs";
+import { synchronizeSpsTeamWorkplaneConfig } from "./bundled-workplane-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
@@ -112,6 +113,7 @@ let ownerHostStatus = {
   lastError: null,
   vaultPath: null,
 };
+let lastTeamWorkplaneBindingUrl = null;
 let ownerHostCompanies = [];
 let pluginRuntimeStatus = {
   state: "checking",
@@ -482,6 +484,21 @@ function ownerHostIsReady() {
   return ownerHostStatus.state === "running" || ownerHostStatus.state === "running-existing";
 }
 
+async function synchronizeReadyTeamWorkplane() {
+  const ownerHostUrl = ownerHostStatus.url;
+  if (!ownerHostIsReady() || !ownerHostUrl || lastTeamWorkplaneBindingUrl === ownerHostUrl) return;
+  try {
+    await synchronizeSpsTeamWorkplaneConfig({ ownerHostUrl });
+    lastTeamWorkplaneBindingUrl = ownerHostUrl;
+  } catch (error) {
+    // The Owner Host is usable before every optional extension finishes its
+    // own bootstrap. Keep the Desktop available and try again on the next
+    // status refresh instead of turning a transient plugin failure into a
+    // failed server startup.
+    console.warn("SPS Team Workplane could not bind to the Owner Host yet.", error);
+  }
+}
+
 async function refreshOwnerRuntimeStatus() {
   if (pluginRuntimeStatus.state === "checking") {
     pluginRuntimeStatus = await inspectSpsPluginRuntime();
@@ -499,6 +516,7 @@ async function refreshOwnerRuntimeStatus() {
       ...ownerHost,
       vaultPath: ownerHostStatus.vaultPath ?? ownerVaultRoot(),
     };
+    await synchronizeReadyTeamWorkplane();
   }
   return ownerHostStatus;
 }
@@ -580,6 +598,10 @@ async function ensureOwnerHostManager() {
           PAPERCLIP_STORAGE_LOCAL_DIR: ownerHost.layout.storageDir,
           PAPERCLIP_SECRETS_MASTER_KEY_FILE: ownerHost.layout.secretsPath,
           PAPERCLIP_PROJECTS_ROOT: ownerHost.layout.projectsDir,
+          // The Core CLI enables Vite middleware when it sees a source-tree
+          // entrypoint. Desktop must always render the bundled static UI so
+          // opening SPS never depends on a separate development web server.
+          PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
           SPS_BASIC_MODE: "true",
           SPS_WORKPLANE_MODE: "true",
           SPS_WORKPLANE_ROOM_ORIGIN_PREFIXES: [
@@ -609,6 +631,7 @@ async function ensureOwnerHostManager() {
       });
     },
   });
+  lastTeamWorkplaneBindingUrl = null;
   return { ...ownerHost, defaultMemory, url };
 }
 
@@ -670,6 +693,10 @@ async function startOwnerHost({ activate = false } = {}) {
     ...status,
     vaultPath: ownerHost.layout.root,
   };
+  // A previously installed SPS Team Workplane may still be active after an
+  // app update or after bundled extensions were toggled. Bind it whenever the
+  // Owner Host becomes healthy; absent plugins are a harmless no-op.
+  await synchronizeReadyTeamWorkplane();
   if (activate && ownerHostIsReady()) await activateOwnerHostProfile();
   return ownerHostStatus;
 }

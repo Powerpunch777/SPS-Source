@@ -1,10 +1,14 @@
+import { SPS_TEAM_WORKPLANE_PROFILE } from "./team-workplane-profile.js";
+
 export default {
-  id: "local.room-chat",
+  // Do not rename this persisted plugin identity without an atomic state migration.
+  // Existing Rooms, Task Rooms, origins, and plugin state use this exact ID.
+  id: SPS_TEAM_WORKPLANE_PROFILE.legacyPluginId,
   apiVersion: 1,
-  version: "0.3.61",
-  displayName: "SPS Rooms",
-  description: "Long-lived project Agent Rooms backed by SPS Agent Sessions.",
-  author: "local",
+  version: "0.3.65",
+  displayName: SPS_TEAM_WORKPLANE_PROFILE.displayName,
+  description: SPS_TEAM_WORKPLANE_PROFILE.description,
+  author: SPS_TEAM_WORKPLANE_PROFILE.author,
   categories: ["automation"],
   capabilities: [
     "ui.page.register",
@@ -34,9 +38,9 @@ export default {
     "instance.settings.register"
   ],
   agentPlatform: {
-    contractVersion: "1.0",
-    kind: "workplane",
-    profileKey: "sps-lead-worker"
+    contractVersion: SPS_TEAM_WORKPLANE_PROFILE.contractVersion,
+    kind: SPS_TEAM_WORKPLANE_PROFILE.kind,
+    profileKey: SPS_TEAM_WORKPLANE_PROFILE.profileKey
   },
   jobs: [
     {
@@ -48,7 +52,7 @@ export default {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.61"
+    ui: "./dist/ui-v0.3.65"
   },
   ui: {
     slots: [
@@ -56,7 +60,7 @@ export default {
         type: "page",
         id: "agent-rooms",
         routePath: "agent-rooms",
-        displayName: "Agent Rooms",
+        displayName: "Team Rooms",
         exportName: "AgentRoomsPage",
         order: 9
       },
@@ -72,7 +76,7 @@ export default {
         type: "projectSidebarItem",
         id: "project-workplane-link",
         entityTypes: ["project"],
-        displayName: "Rooms",
+        displayName: "Team Rooms",
         exportName: "ProjectWorkplaneLink",
         order: 10
       },
@@ -88,7 +92,7 @@ export default {
         type: "detailTab",
         id: "project-workplane",
         entityTypes: ["project"],
-        displayName: "Workplane",
+        displayName: "Team Workplane",
         exportName: "ProjectWorkplaneTab",
         order: 89
       },
@@ -112,7 +116,7 @@ export default {
         type: "detailTab",
         id: "room-chat",
         entityTypes: ["issue"],
-        displayName: "Room Chat",
+        displayName: "Task Room",
         exportName: "RoomChatTab",
         order: 90
       }

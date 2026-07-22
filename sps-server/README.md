@@ -12,6 +12,7 @@ SPS Server는 사람과 역할별 AI Agent가 같은 프로젝트에서 안전�
 - [문서 체계 감사와 마이그레이션](116-sps-documentation-audit-and-migration-ko.md)
 - [Workplane 상세 청사진](75-optimal-work-environment-blueprint-ko.md)
 - [범용 Agent 플랫폼 Core 계약](113-sps-generic-agent-platform-core-contract-ko.md)
+- [SPS Team Workplane Plugin v1](119-sps-team-workplane-plugin-v1-ko.md)
 
 ## 현재 제품 방향
 
@@ -32,7 +33,7 @@ sps-server/
 ├─ deploy/hub/                # Hosted Hub Docker 배포
 ├─ desktop/                   # Electron Desktop UI와 패키징
 ├─ desktop-node/              # 승인된 로컬 실행 Node
-├─ sps-room-chat/             # Agent Room·Task Room 협업 플러그인
+├─ sps-room-chat/             # SPS Team Workplane 호환 패키지 (Team Room·Task Room)
 ├─ sps-memory/                # Memory UI·도구 플러그인
 ├─ sps-default-memory/        # 기본 Memory provider
 ├─ memory-sidecar/            # 기존 로컬 Memory 보조 서비스
