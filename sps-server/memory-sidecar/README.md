@@ -1,6 +1,6 @@
 # SPS Memory Sidecar MVP
 
-This is a local memory sidecar for the SPS game-production work plane.
+This is the local-first journal and candidate store used by SPS Default Memory.
 
 It is intentionally not a controller.
 
@@ -78,7 +78,7 @@ agent task.
 GET  /health
 GET  /memory/items?scope=company,project,agent&includeWarnings=true
 GET  /memory/search?q=task%20room&scope=project&limit=10
-GET  /memory/candidates?limit=50&offset=0
+GET  /memory/candidates?limit=50&offset=0&projectId=...&taskId=...&roomId=...
 POST /memory/candidates
 ```
 
@@ -93,9 +93,13 @@ Candidate example:
     "kind": "issue_comment",
     "id": "CMP-3"
   },
-  "tags": ["task-room", "paperclip"]
+  "tags": ["task-room", "sps"]
 }
 ```
+
+`issueId` remains accepted for compatibility. New callers may use `taskId` and
+`roomId`; the sidecar stores both task aliases so existing task-room views keep
+working.
 
 ## Configuration
 
@@ -109,8 +113,6 @@ Use `config.example.json` as the portable template.
 Set `security.token` or the `MEMORY_SIDECAR_TOKEN` environment variable to require `X-Sidecar-Token` on requests.
 
 ## Structure Fit
-
-This sidecar follows `../04-structure-fit-checklist.md`:
 
 - SPS remains the control plane.
 - Memory search is assistive recall only.

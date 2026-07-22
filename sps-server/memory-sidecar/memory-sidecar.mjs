@@ -315,7 +315,7 @@ function validateCandidate(input) {
   if (!String(input.content ?? "").trim()) {
     return "Candidate content is required.";
   }
-  const allowedScopes = new Set(["company", "project", "agent", "task", "artifact", "user"]);
+  const allowedScopes = new Set(["company", "project", "agent", "room", "task", "artifact", "user"]);
   if (input.scope && !allowedScopes.has(input.scope)) {
     return `Invalid scope '${input.scope}'.`;
   }
@@ -342,9 +342,14 @@ function buildCandidate(input) {
     idempotencyKey,
     source: input.source ?? null,
     agentId: input.agentId ?? null,
-    issueId: input.issueId ?? null,
+    roomId: input.roomId ?? null,
+    taskId: input.taskId ?? input.issueId ?? null,
+    // Keep the legacy issueId mirror so older room and UI integrations remain readable.
+    issueId: input.issueId ?? input.taskId ?? null,
     companyId: input.companyId ?? null,
     projectId: input.projectId ?? null,
+    artifactId: input.artifactId ?? null,
+    userId: input.userId ?? null,
     tags: Array.isArray(input.tags) ? input.tags.map(String) : []
   };
 }
@@ -436,16 +441,22 @@ async function handleRequest(req, res, config) {
     const limit = clampLimit(url.searchParams.get("limit"), 50);
     const offset = clampOffset(url.searchParams.get("offset"));
     const companyIdFilter = url.searchParams.get("companyId");
-    const issueIdFilter = url.searchParams.get("issueId");
+    const issueIdFilter = url.searchParams.get("issueId") ?? url.searchParams.get("taskId");
     const projectIdFilter = url.searchParams.get("projectId");
     const agentIdFilter = url.searchParams.get("agentId");
+    const roomIdFilter = url.searchParams.get("roomId");
+    const artifactIdFilter = url.searchParams.get("artifactId");
+    const userIdFilter = url.searchParams.get("userId");
 
     const { candidates, warnings } = await readCandidates(config);
     const filtered = candidates.filter((cand) => {
       if (companyIdFilter !== null && cand.companyId !== companyIdFilter) return false;
-      if (issueIdFilter !== null && cand.issueId !== issueIdFilter) return false;
+      if (issueIdFilter !== null && cand.issueId !== issueIdFilter && cand.taskId !== issueIdFilter) return false;
       if (projectIdFilter !== null && cand.projectId !== projectIdFilter) return false;
       if (agentIdFilter !== null && cand.agentId !== agentIdFilter) return false;
+      if (roomIdFilter !== null && cand.roomId !== roomIdFilter) return false;
+      if (artifactIdFilter !== null && cand.artifactId !== artifactIdFilter) return false;
+      if (userIdFilter !== null && cand.userId !== userIdFilter) return false;
       return true;
     });
 

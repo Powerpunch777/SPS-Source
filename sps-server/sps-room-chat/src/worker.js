@@ -13,6 +13,7 @@ import path from "node:path";
 const ROOM_STATE_KEY = "ROOM_STATE";
 const ROOM_WORK_STATE_KEY = "ROOM_WORK_STATE";
 const ROOM_CHECKPOINTS_KEY = "ROOM_CHECKPOINTS";
+const ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY = "room-memory-lifecycle-reconcile-v1";
 const ROOM_NATIVE_COMPACTIONS_KEY = "ROOM_NATIVE_COMPACTIONS";
 const TASK_ROOM_STATE_KEY = "TASK_ROOM_STATE";
 // Historical role Rooms are detected and retired only; no new Room uses them.
@@ -787,6 +788,51 @@ async function reconcileAllProjectAgentRooms(ctx) {
     summaries.push({ companyId: company.id });
   }
   return { companyCount: summaries.length, companies: summaries };
+}
+
+async function reconcileRoomMemoryLifecycle(ctx) {
+  const summary = { companies: 0, rooms: 0, checkpointsPublished: 0, compactionsPublished: 0, failed: 0 };
+  if (!ctx.memory?.publishLifecycle) return summary;
+  const companies = await ctx.companies.list({ limit: 200 });
+  for (const company of companies) {
+    if (!company?.id) continue;
+    summary.companies += 1;
+    const projects = await ctx.projects.list({ companyId: company.id, limit: 200 });
+    for (const project of projects) {
+      const issues = await ctx.issues.list({ companyId: company.id, projectId: project.id, limit: 500 });
+      for (const room of issues) {
+        if (!isAgentRoom(room)) continue;
+        summary.rooms += 1;
+        try {
+          const document = await ctx.issues.documents.get(room.id, ROOM_CHECKPOINTS_KEY, company.id);
+          const checkpoints = parseState(document?.body);
+          const latest = Array.isArray(checkpoints) ? checkpoints.at(-1) : null;
+          const version = Number(latest?.version);
+          if (!Number.isInteger(version) || version < 1) continue;
+          const marker = await ctx.state.get("issue", room.id, ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY);
+          const deliveredVersion = Number(asRecord(marker)?.checkpointVersion ?? 0);
+          if (deliveredVersion >= version) continue;
+          await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.checkpoint", latest);
+          summary.checkpointsPublished += 1;
+          if (typeof latest.compactedAt === "string" && latest.compactedAt) {
+            await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.compacted", latest);
+            summary.compactionsPublished += 1;
+          }
+          await ctx.state.set("issue", room.id, ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY, {
+            checkpointVersion: version,
+            reconciledAt: now()
+          });
+        } catch (error) {
+          summary.failed += 1;
+          ctx.logger?.warn?.("Room memory lifecycle reconciliation failed.", {
+            issueId: room.id,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
+  }
+  return summary;
 }
 
 async function syncAgentRoomTitles(ctx, companyId, agentId) {
@@ -2442,6 +2488,28 @@ async function appendCheckpoint(ctx, companyId, issueId, checkpoint) {
     format: "markdown",
     changeSummary: "Append Room compact checkpoint"
   });
+  await publishRoomMemoryLifecycle(ctx, companyId, issueId, "room.checkpoint", checkpoint);
+}
+
+async function publishRoomMemoryLifecycle(ctx, companyId, issueId, eventType, checkpoint) {
+  if (!ctx.memory?.publishLifecycle) return;
+  try {
+    await ctx.memory.publishLifecycle({
+      eventType,
+      companyId,
+      entityType: "room",
+      entityId: issueId,
+      roomId: issueId,
+      idempotencyKey: `room:${issueId}:${eventType}:${checkpoint.version}`
+    });
+  } catch (error) {
+    // A memory provider must not make a durable Room checkpoint unavailable.
+    ctx.logger?.warn?.("Room memory lifecycle publication failed.", {
+      issueId,
+      eventType,
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 function roomStreamChannel(issueId) {
@@ -5403,7 +5471,10 @@ async function handleRoomCompact(ctx, params, actionCtx) {
         if (threadId) manualCodexCompactionThreads.delete(threadId);
       }
     }
-    if (compacted.compacted === true) state.checkpoint.compactedAt = now();
+    if (compacted.compacted === true) {
+      state.checkpoint.compactedAt = now();
+      await publishRoomMemoryLifecycle(ctx, companyId, issue.id, "room.compacted", state.checkpoint);
+    }
     state.runtime.updatedAt = now();
     await saveRoomState(ctx, companyId, issue.id, state, "Record native Codex compact completion");
     return { ok: true, checkpoint: state.checkpoint, compacted: compacted.compacted };
@@ -5654,7 +5725,10 @@ async function runDurableRoomCompact(ctx, { companyId, runtime, job: initialJob 
           if (threadId) manualCodexCompactionThreads.delete(threadId);
         }
       }
-      if (compacted.compacted === true) state.checkpoint.compactedAt = now();
+      if (compacted.compacted === true) {
+        state.checkpoint.compactedAt = now();
+        await publishRoomMemoryLifecycle(ctx, companyId, issue.id, "room.compacted", state.checkpoint);
+      }
       state.runtime.updatedAt = now();
       state.runtime.lastError = null;
       state.pendingTurn = null;
@@ -6021,7 +6095,7 @@ async function completeRoomCompactOutsideInvocation({ apiUrl, issueId, state, co
         if (threadId) manualCodexCompactionThreads.delete(threadId);
       }
     }
-    state.checkpoint.compactedAt = now();
+    if (compacted.compacted === true) state.checkpoint.compactedAt = now();
     state.runtime.updatedAt = now();
     state.pendingTurn = null;
     finishRoomActivity(state, "completed");
@@ -8255,12 +8329,14 @@ const plugin = definePlugin({
     ctx.actions.register("workspace-profile-create-workspace", (params, actionCtx) => handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx));
     ctx.jobs.register("workplane-reconcile", async (job) => {
       const roomSummary = await reconcileAllProjectAgentRooms(ctx);
+      const roomMemorySummary = await reconcileRoomMemoryLifecycle(ctx);
       const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
       ctx.logger?.info?.("Workplane reconciliation completed.", {
         runId: job.runId,
         trigger: job.trigger,
         roomSummary,
+        roomMemorySummary,
         interruptedRoomJobSummary,
         ownerSummary,
         quotaRetryPolicy: "manual_only"
@@ -8374,5 +8450,6 @@ export { agentInstructions, agentInstructionsFingerprint, agentRoomAgentId, agen
 export { activeRoomProcessBlocksOwnerReport, isSubstantiveTaskBoundaryReport, reconcileTaskOwnerNotificationStateForJob, taskBoundaryReportKind };
 export { collaborationReadinessFromConfig, handleOrganizationCollaborationReadiness, handleOrganizationSettingsAccess, readCollaborationReadiness, requireAgentConfigurationAction };
 export { handleWorkspaceProfileAccess, handleWorkspaceProfileCreateWorkspace, handleWorkspaceProfileSave, loadProjectWorkspaceProfile, normalizeWorkspaceProfile, profileWorkspace, saveProjectWorkspaceProfile };
+export { reconcileRoomMemoryLifecycle };
 export default plugin;
 if (!ROOM_CHAT_TEST_MODE) runWorker(plugin, import.meta.url);

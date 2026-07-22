@@ -193,13 +193,16 @@ async function runTests() {
     // ----------------------------------------------------
     console.log("\n--- Creating memory candidates ---");
     const candA = {
-      scope: "project",
+      scope: "room",
       type: "learning",
       content: "Candidate memory for project A",
       companyId: "comp-123",
       projectId: "proj-456",
       agentId: "agent-789",
-      issueId: "issue-111"
+      roomId: "room-111",
+      taskId: "task-111",
+      artifactId: "artifact-111",
+      userId: "user-111"
     };
 
     const candB = {
@@ -258,7 +261,32 @@ async function runTests() {
     console.log(`agentId=agent-789: found ${data.candidates.length} candidates (expected 1)`);
     if (data.candidates.length !== 1 || data.candidates[0].agentId !== "agent-789") success = false;
 
-    // Filter by issueId
+    // Filter by the native SPS room and task namespaces.
+    res = await fetch(`${BASE_URL}/memory/candidates?roomId=room-111`);
+    data = await res.json();
+    console.log(`roomId=room-111: found ${data.candidates.length} candidates (expected 1)`);
+    if (data.candidates.length !== 1 || data.candidates[0].roomId !== "room-111") success = false;
+
+    res = await fetch(`${BASE_URL}/memory/candidates?taskId=task-111`);
+    data = await res.json();
+    console.log(`taskId=task-111: found ${data.candidates.length} candidates (expected 1)`);
+    if (
+      data.candidates.length !== 1 ||
+      data.candidates[0].taskId !== "task-111" ||
+      data.candidates[0].issueId !== "task-111"
+    ) success = false;
+
+    res = await fetch(`${BASE_URL}/memory/candidates?artifactId=artifact-111`);
+    data = await res.json();
+    console.log(`artifactId=artifact-111: found ${data.candidates.length} candidates (expected 1)`);
+    if (data.candidates.length !== 1 || data.candidates[0].artifactId !== "artifact-111") success = false;
+
+    res = await fetch(`${BASE_URL}/memory/candidates?userId=user-111`);
+    data = await res.json();
+    console.log(`userId=user-111: found ${data.candidates.length} candidates (expected 1)`);
+    if (data.candidates.length !== 1 || data.candidates[0].userId !== "user-111") success = false;
+
+    // Legacy issueId remains readable for older Room and Task integrations.
     res = await fetch(`${BASE_URL}/memory/candidates?issueId=issue-222`);
     data = await res.json();
     console.log(`issueId=issue-222: found ${data.candidates.length} candidates (expected 1)`);

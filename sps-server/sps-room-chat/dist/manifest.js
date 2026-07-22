@@ -1,7 +1,7 @@
 export default {
   id: "local.room-chat",
   apiVersion: 1,
-  version: "0.3.60",
+  version: "0.3.61",
   displayName: "SPS Rooms",
   description: "Long-lived project Agent Rooms backed by SPS Agent Sessions.",
   author: "local",
@@ -27,6 +27,7 @@ export default {
     "project.workspaces.read",
     "project.workspaces.write",
     "events.subscribe",
+    "memory.lifecycle.publish",
     "jobs.schedule",
     "plugin.state.read",
     "plugin.state.write",
@@ -47,7 +48,7 @@ export default {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.60"
+    ui: "./dist/ui-v0.3.61"
   },
   ui: {
     slots: [

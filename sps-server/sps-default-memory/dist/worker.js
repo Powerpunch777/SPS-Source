@@ -3,6 +3,15 @@ import manifest from "./manifest.js";
 
 const DEFAULT_SIDECAR_URL = "http://127.0.0.1:3188";
 const MEMORY_SCOPES = new Set(["company", "project", "agent", "room", "task", "artifact", "user"]);
+const MEMORY_LIFECYCLE_EVENTS = new Set([
+  "project.created",
+  "room.checkpoint",
+  "room.compacted",
+  "task.completed",
+  "task.blocked",
+  "task.reopened",
+  "artifact.published",
+]);
 const MAX_LIMIT = 10;
 
 function asRecord(value) {
@@ -74,6 +83,69 @@ function contextReferences(runContext) {
     userId: asString(context.userId) || null,
     runId: asString(context.runId) || null,
   };
+}
+
+function lifecycleReferences(event) {
+  const payload = asRecord(event?.payload);
+  const entityId = asString(event?.entityId) || null;
+  const entityType = asString(event?.entityType);
+  const taskId = asString(payload.taskId || payload.issueId)
+    || ((entityType === "task" || entityType === "issue") ? entityId : null);
+  const roomId = asString(payload.roomId) || (entityType === "room" ? entityId : null);
+  const projectId = asString(payload.projectId) || (entityType === "project" ? entityId : null);
+  const artifactId = asString(payload.artifactId) || (entityType === "artifact" ? entityId : null);
+  const agentId = asString(payload.agentId) || (entityType === "agent" ? entityId : null);
+  const userId = asString(payload.userId) || (entityType === "user" ? entityId : null);
+  return {
+    companyId: asString(event?.companyId) || null,
+    projectId,
+    agentId,
+    roomId,
+    taskId,
+    issueId: taskId,
+    artifactId,
+    userId,
+    runId: asString(payload.runId) || null,
+  };
+}
+
+function lifecycleScope(refs) {
+  if (refs.artifactId) return "artifact";
+  if (refs.taskId) return "task";
+  if (refs.roomId) return "room";
+  if (refs.projectId) return "project";
+  if (refs.agentId) return "agent";
+  if (refs.userId) return "user";
+  return "company";
+}
+
+async function recordLifecycleCandidate(ctx, event) {
+  if (!MEMORY_LIFECYCLE_EVENTS.has(event.eventType)) return;
+  const refs = lifecycleReferences(event);
+  if (!refs.companyId) return;
+  const scope = lifecycleScope(refs);
+  await sidecarRequest("/memory/candidates", {
+    method: "POST",
+    body: {
+      content: `Lifecycle checkpoint: ${event.eventType} completed. Review the referenced ${scope} before promoting any long-term memory.`,
+      scope,
+      type: "lifecycle",
+      tags: ["lifecycle", event.eventType],
+      idempotencyKey: `lifecycle:${event.eventId}`,
+      source: {
+        kind: "sps_memory_lifecycle",
+        note: event.eventType,
+        eventId: event.eventId,
+        runId: refs.runId,
+      },
+      ...refs,
+    },
+  });
+  ctx.logger.info("SPS memory lifecycle candidate recorded", {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    scope,
+  });
 }
 
 function formatRecall(data) {
@@ -168,6 +240,11 @@ const plugin = definePlugin({
   async setup(ctx) {
     ctx.tools.register("memory-recall", declarations.get("memory-recall"), safeTool(ctx, recall));
     ctx.tools.register("memory-propose", declarations.get("memory-propose"), safeTool(ctx, propose));
+    for (const eventType of MEMORY_LIFECYCLE_EVENTS) {
+      ctx.events.on(eventType, async (event) => {
+        await recordLifecycleCandidate(ctx, event);
+      });
+    }
   },
 });
 

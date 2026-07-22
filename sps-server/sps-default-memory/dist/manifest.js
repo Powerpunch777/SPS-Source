@@ -45,7 +45,7 @@ export default {
   description: "First-party, local-first memory for SPS Desktop Owner Host.",
   author: "SPS",
   categories: ["automation"],
-  capabilities: ["agent.tools.register", "memory.providers.register"],
+  capabilities: ["agent.tools.register", "events.subscribe", "memory.providers.register"],
   agentPlatform: {
     contractVersion: "1.0",
     kind: "store_provider"
@@ -56,7 +56,7 @@ export default {
     providerKey: "sps-default",
     displayName: "SPS Default Memory",
     scopes: ["company", "project", "agent", "room", "task", "artifact", "user"],
-    lifecycleEvents: ["project.created", "room.checkpoint", "room.compacted", "task.completed", "task.blocked", "artifact.published"],
+    lifecycleEvents: ["project.created", "room.checkpoint", "room.compacted", "task.completed", "task.blocked", "task.reopened", "artifact.published"],
     recallToolName: "memory-recall",
     proposeToolName: "memory-propose",
     defaultForNewCompanies: true,

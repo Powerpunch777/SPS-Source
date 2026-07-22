@@ -8,6 +8,6 @@
     "manifest": "./dist/manifest.js"
   },
   "scripts": {
-    "check": "node --check ./dist/manifest.js && node --check ./dist/worker.js"
+    "check": "node --check ./dist/manifest.js && node --check ./dist/worker.js && node ./scripts/verify-lifecycle.mjs"
   }
 }

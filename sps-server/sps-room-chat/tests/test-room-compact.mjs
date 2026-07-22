@@ -23,6 +23,7 @@ const documents = new Map([
   ["ROOM_CHECKPOINTS", { latestRevisionId: "checkpoints-1", body: "[]\n" }]
 ]);
 const writes = [];
+const memoryLifecycleEvents = [];
 const originalFetch = globalThis.fetch;
 
 globalThis.fetch = async (url, init) => {
@@ -52,7 +53,10 @@ const ctx = {
     listComments: async () => [{ id: "comment-before-compact", body: "Earlier room context" }],
     documents: { get: async (_issueId, key) => documents.get(key) ?? null }
   },
-  agents: { get: async () => agent }
+  agents: { get: async () => agent },
+  memory: {
+    publishLifecycle: async (event) => { memoryLifecycleEvents.push(event); }
+  }
 };
 
 const result = await handleRoomCompact(ctx, { issueId: roomId }, { actor: { type: "user" }, companyId });
@@ -68,6 +72,11 @@ assert.equal(writes[2].payload.length, 1);
 assert.equal(writes[2].payload[0].summary, "Current goal: verify compact.\nNext action: review the saved checkpoint.");
 assert.equal(writes[3].payload.checkpoint.compactedAt !== null, true);
 assert.equal(writes[3].payload.runtime.codexThreadId, "thread-compact");
+assert.deepEqual(memoryLifecycleEvents.map((event) => event.eventType), ["room.checkpoint", "room.compacted"]);
+assert.deepEqual(memoryLifecycleEvents.map((event) => event.idempotencyKey), [
+  `room:${roomId}:room.checkpoint:1`,
+  `room:${roomId}:room.compacted:1`
+]);
 
 setCodexClientForTest(null);
 globalThis.fetch = originalFetch;

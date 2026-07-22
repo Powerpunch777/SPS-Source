@@ -4586,6 +4586,9 @@ var PLUGIN_CAPABILITIES = [
   "local.folders",
   // Agent Tools
   "agent.tools.register",
+  "agent.tools.dynamic.register",
+  // Memory lifecycle publication (Workplanes and trusted workflow plugins)
+  "memory.lifecycle.publish",
   // UI
   "instance.settings.register",
   "ui.sidebar.register",
@@ -4742,6 +4745,43 @@ var PLUGIN_STATE_SCOPE_KINDS = [
   "goal",
   "run"
 ];
+var PLUGIN_EVENT_TYPES = [
+  "company.created",
+  "company.updated",
+  "project.created",
+  "project.updated",
+  "project.workspace_created",
+  "project.workspace_updated",
+  "project.workspace_deleted",
+  "issue.created",
+  "issue.updated",
+  "issue.comment.created",
+  "issue.document.created",
+  "issue.document.updated",
+  "issue.document.deleted",
+  "issue.relations.updated",
+  "issue.checked_out",
+  "issue.released",
+  "issue.assignment_wakeup_requested",
+  "agent.created",
+  "agent.updated",
+  "agent.deleted",
+  "agent.status_changed",
+  "agent.error_cleared",
+  "agent.run.started",
+  "agent.run.finished",
+  "agent.run.failed",
+  "agent.run.cancelled",
+  "goal.created",
+  "goal.updated",
+  "approval.created",
+  "approval.decided",
+  "budget.incident.opened",
+  "budget.incident.resolved",
+  "cost_event.created",
+  "activity.logged",
+  ...PLUGIN_MEMORY_LIFECYCLE_EVENTS
+];
 
 // ../../external/sps-core/packages/shared/src/adapter-type.ts
 var agentAdapterTypeSchema = external_exports.string().trim().min(1).default("process").describe(`Known built-in adapters: ${AGENT_ADAPTER_TYPES.join(", ")}. External adapters may register additional non-empty string types at runtime.`);
@@ -4849,6 +4889,16 @@ var agentPlatformExtensionSchema = external_exports.object({
   kind: agentPlatformExtensionKindSchema,
   displayName: external_exports.string().min(1)
 });
+function normalizeAgentPlatformScope(scope) {
+  return {
+    organizationId: scope.organizationId,
+    projectId: scope.projectId ?? null,
+    workItemId: scope.workItemId ?? null,
+    threadId: scope.threadId ?? null,
+    agentId: scope.agentId ?? null,
+    artifactId: scope.artifactId ?? null
+  };
+}
 function isAgentPlatformContractCompatible(version) {
   const major = version.trim().split(".", 1)[0];
   return major === AGENT_PLATFORM_CONTRACT_VERSION.split(".", 1)[0];
@@ -8907,12 +8957,42 @@ var spsNodeCapabilitySchema = external_exports.object({
   version: external_exports.string().trim().max(120).optional().nullable(),
   models: external_exports.array(external_exports.string().trim().min(1).max(160)).max(100).optional()
 });
+var spsNodeRunnerAvailabilityStatusSchema = external_exports.enum([
+  "available",
+  "busy",
+  "quota_limited",
+  "auth_required",
+  "offline",
+  "unknown"
+]);
+var spsNodeRunnerCredentialStatusSchema = external_exports.enum(["ready", "auth_required", "unknown"]);
+var spsNodeRunnerAvailabilitySourceSchema = external_exports.enum(["node_probe", "adapter", "manual"]);
+var spsNodeRunnerAvailabilitySchema = external_exports.object({
+  status: spsNodeRunnerAvailabilityStatusSchema,
+  observedAt: external_exports.string().datetime({ offset: true }),
+  source: spsNodeRunnerAvailabilitySourceSchema,
+  confidence: external_exports.number().int().min(0).max(100).optional().nullable(),
+  retryAfter: external_exports.string().datetime({ offset: true }).optional().nullable(),
+  detail: external_exports.string().trim().min(1).max(500).optional().nullable()
+});
+var spsNodeRunnerProfileSchema = spsNodeCapabilitySchema.extend({
+  runnerKey: external_exports.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/),
+  profileLabel: external_exports.string().trim().min(1).max(120).optional().nullable(),
+  credentialStatus: spsNodeRunnerCredentialStatusSchema.optional(),
+  availability: spsNodeRunnerAvailabilitySchema.optional()
+});
+var uniqueRunnerKeys = (profiles) => new Set(profiles.map((profile) => profile.runnerKey)).size === profiles.length;
 var createSpsNodeSchema = external_exports.object({
   displayName: external_exports.string().trim().min(1).max(120),
   publicKey: external_exports.string().trim().min(32).max(8192),
   platform: external_exports.string().trim().min(1).max(120),
   appVersion: external_exports.string().trim().max(120).optional().nullable(),
-  capabilities: external_exports.array(spsNodeCapabilitySchema).max(32).default([])
+  capabilities: external_exports.array(spsNodeCapabilitySchema).max(32).default([]),
+  runners: external_exports.array(spsNodeRunnerProfileSchema).max(64).optional()
+}).superRefine((value, context) => {
+  if (value.runners && !uniqueRunnerKeys(value.runners)) {
+    context.addIssue({ code: external_exports.ZodIssueCode.custom, path: ["runners"], message: "Runner keys must be unique per Node" });
+  }
 });
 var updateSpsNodeStatusSchema = external_exports.object({
   status: external_exports.enum(["active", "revoked"])
@@ -8941,6 +9021,17 @@ var spsNodeCommandCompleteSchema = external_exports.object({
   signal: external_exports.string().trim().max(120).nullable().optional(),
   timedOut: external_exports.boolean().default(false),
   error: external_exports.string().trim().max(16e3).nullable().optional()
+});
+var reportSpsNodeRunnerAvailabilitySchema = external_exports.object({
+  runners: external_exports.array(external_exports.object({
+    runnerKey: external_exports.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/),
+    credentialStatus: spsNodeRunnerCredentialStatusSchema.optional(),
+    availability: spsNodeRunnerAvailabilitySchema
+  })).min(1).max(64)
+}).superRefine((value, context) => {
+  if (!uniqueRunnerKeys(value.runners)) {
+    context.addIssue({ code: external_exports.ZodIssueCode.custom, path: ["runners"], message: "Runner keys must be unique per Node" });
+  }
 });
 
 // ../../external/sps-core/packages/shared/src/validators/plugin.ts
@@ -9482,6 +9573,7 @@ var pluginManifestV1Schema = external_exports.object({
   jobs: external_exports.array(pluginJobDeclarationSchema).optional(),
   webhooks: external_exports.array(pluginWebhookDeclarationSchema).optional(),
   tools: external_exports.array(pluginToolDeclarationSchema).optional(),
+  agentToolAccess: external_exports.enum(["company_default", "explicit_grant"]).optional(),
   database: pluginDatabaseDeclarationSchema.optional(),
   apiRoutes: external_exports.array(pluginApiRouteDeclarationSchema).optional(),
   environmentDrivers: external_exports.array(pluginEnvironmentDriverDeclarationSchema).optional(),
@@ -10089,6 +10181,120 @@ var adapterRegistryEntrySchema = external_exports.object({
 }).strict();
 var adapterRegistrySchema = external_exports.array(adapterRegistryEntrySchema);
 
+// ../../external/sps-core/packages/plugins/sdk/dist/platform-client.js
+function scopeForSession(session, organizationId) {
+  return normalizeAgentPlatformScope({
+    organizationId,
+    projectId: session.context?.projectId ?? null,
+    workItemId: session.context?.issueId ?? null,
+    threadId: session.sessionId,
+    agentId: session.agentId
+  });
+}
+function toThread(session, organizationId) {
+  return {
+    id: session.sessionId,
+    scope: scopeForSession(session, organizationId),
+    agentId: session.agentId,
+    status: session.status === "closed" ? "closed" : "active",
+    backendId: null,
+    lastRunId: session.lastRunId,
+    lastError: session.lastError,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt ?? session.createdAt
+  };
+}
+function platformScopeToStateScope(scope) {
+  const normalized = normalizeAgentPlatformScope(scope);
+  if (normalized.threadId)
+    return { scopeKind: "thread", scopeId: normalized.threadId };
+  if (normalized.workItemId)
+    return { scopeKind: "issue", scopeId: normalized.workItemId };
+  if (normalized.agentId)
+    return { scopeKind: "agent", scopeId: normalized.agentId };
+  if (normalized.projectId)
+    return { scopeKind: "project", scopeId: normalized.projectId };
+  return { scopeKind: "company", scopeId: normalized.organizationId };
+}
+function createPluginPlatformClient(deps) {
+  return {
+    contractVersion: AGENT_PLATFORM_CONTRACT_VERSION,
+    threads: {
+      async create(input) {
+        const scope = normalizeAgentPlatformScope(input.scope);
+        const session = await deps.agents.sessions.create(input.agentId, scope.organizationId, {
+          taskKey: input.threadKey ? `platform:${input.threadKey}` : void 0,
+          reason: input.reason,
+          context: {
+            ...scope.projectId ? { projectId: scope.projectId } : {},
+            ...scope.workItemId ? { issueId: scope.workItemId } : {}
+          }
+        });
+        return toThread(session, scope.organizationId);
+      },
+      async list(input) {
+        const sessions = await deps.agents.sessions.list(input.agentId, input.organizationId);
+        return sessions.map((session) => toThread(session, input.organizationId));
+      },
+      async send(input) {
+        const result = await deps.agents.sessions.sendMessage(input.threadId, input.organizationId, {
+          prompt: input.prompt,
+          reason: input.reason,
+          onEvent: input.onEvent
+        });
+        const now2 = (/* @__PURE__ */ new Date()).toISOString();
+        return {
+          id: result.runId,
+          scope: normalizeAgentPlatformScope({
+            organizationId: input.organizationId,
+            threadId: input.threadId
+          }),
+          threadId: input.threadId,
+          agentId: "unknown",
+          backendId: null,
+          status: "queued",
+          startedAt: null,
+          finishedAt: null,
+          error: null,
+          createdAt: now2
+        };
+      },
+      async close(input) {
+        await deps.agents.sessions.close(input.threadId, input.organizationId);
+      }
+    },
+    stores: {
+      async getState(input) {
+        const target = platformScopeToStateScope(input.scope);
+        return deps.state.get({ ...target, stateKey: input.stateKey, namespace: input.namespace });
+      },
+      async setState(input, value) {
+        const target = platformScopeToStateScope(input.scope);
+        await deps.state.set({ ...target, stateKey: input.stateKey, namespace: input.namespace }, value);
+      },
+      async deleteState(input) {
+        const target = platformScopeToStateScope(input.scope);
+        await deps.state.delete({ ...target, stateKey: input.stateKey, namespace: input.namespace });
+      }
+    },
+    backends: {
+      async describeAgent(input) {
+        const agent = await deps.agents.get(input.agentId, input.organizationId);
+        if (!agent)
+          throw new Error(`Agent not found: ${input.agentId}`);
+        return {
+          id: `agent:${agent.id}:adapter`,
+          organizationId: input.organizationId,
+          kind: "adapter",
+          displayName: agent.adapterType,
+          status: agent.status === "terminated" ? "disabled" : "configured",
+          capabilities: ["agent.run"]
+        };
+      }
+    }
+  };
+}
+
 // ../../external/sps-core/packages/plugins/sdk/dist/worker-rpc-host.js
 import fs from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -10275,6 +10481,7 @@ function startWorkerRpcHost(options) {
   const dataHandlers = /* @__PURE__ */ new Map();
   const actionHandlers = /* @__PURE__ */ new Map();
   const toolHandlers = /* @__PURE__ */ new Map();
+  const dynamicToolNames = /* @__PURE__ */ new Set();
   const sessionEventCallbacks = /* @__PURE__ */ new Map();
   const pendingRequests = /* @__PURE__ */ new Map();
   let nextOutboundId = 1;
@@ -10346,7 +10553,7 @@ function startWorkerRpcHost(options) {
     }
   }
   function buildContext() {
-    return {
+    const context = {
       get manifest() {
         if (!manifest)
           throw new Error("Plugin context accessed before initialization");
@@ -10425,6 +10632,11 @@ function startWorkerRpcHost(options) {
         },
         async emit(name, companyId, payload) {
           await callHost("events.emit", { name, companyId, payload });
+        }
+      },
+      memory: {
+        async publishLifecycle(input) {
+          await callHost("memory.publishLifecycle", input);
         }
       },
       jobs: {
@@ -11071,6 +11283,37 @@ function startWorkerRpcHost(options) {
       tools: {
         register(name, declaration, fn) {
           toolHandlers.set(name, { declaration, fn });
+        },
+        async replaceDynamic(tools) {
+          const seenNames = /* @__PURE__ */ new Set();
+          for (const tool of tools) {
+            if (!tool.name || seenNames.has(tool.name)) {
+              throw new Error("Dynamic tool names must be non-empty and unique");
+            }
+            seenNames.add(tool.name);
+          }
+          const previousHandlers = new Map(toolHandlers);
+          const previousNames = new Set(dynamicToolNames);
+          for (const name of dynamicToolNames)
+            toolHandlers.delete(name);
+          dynamicToolNames.clear();
+          for (const tool of tools) {
+            toolHandlers.set(tool.name, { declaration: tool.declaration, fn: tool.fn });
+            dynamicToolNames.add(tool.name);
+          }
+          try {
+            return await callHost("agentTools.replaceDynamic", {
+              tools: tools.map((tool) => ({ name: tool.name, ...tool.declaration }))
+            });
+          } catch (error) {
+            toolHandlers.clear();
+            for (const [name, handler] of previousHandlers)
+              toolHandlers.set(name, handler);
+            dynamicToolNames.clear();
+            for (const name of previousNames)
+              dynamicToolNames.add(name);
+            throw error;
+          }
         }
       },
       metrics: {
@@ -11098,6 +11341,13 @@ function startWorkerRpcHost(options) {
         }
       }
     };
+    Object.defineProperty(context, "platform", {
+      configurable: false,
+      enumerable: true,
+      value: createPluginPlatformClient(context),
+      writable: false
+    });
+    return context;
   }
   const ctx = buildContext();
   async function handleHostRequest(request) {
@@ -11259,6 +11509,7 @@ function startWorkerRpcHost(options) {
   }
   async function handleOnEvent(params) {
     const event = params.event;
+    const handlerErrors = [];
     for (const registration of eventHandlers) {
       const exactMatch = registration.name === event.eventType;
       const wildcardPluginAll = registration.name === "plugin.*" && event.eventType.startsWith("plugin.");
@@ -11270,12 +11521,16 @@ function startWorkerRpcHost(options) {
       try {
         await registration.fn(event);
       } catch (err) {
+        handlerErrors.push(err);
         notifyHost("log", {
           level: "error",
           message: `Event handler for "${registration.name}" failed: ${err instanceof Error ? err.message : String(err)}`,
           meta: { eventType: event.eventType, stack: err instanceof Error ? err.stack : void 0 }
         });
       }
+    }
+    if (handlerErrors.length > 0) {
+      throw new AggregateError(handlerErrors, `${handlerErrors.length} event handler(s) failed for "${event.eventType}"`);
     }
   }
   async function handleRunJob(params) {
@@ -11588,7 +11843,7 @@ function startWorkerRpcHost(options) {
 var manifest_default = {
   id: "local.room-chat",
   apiVersion: 1,
-  version: "0.3.60",
+  version: "0.3.61",
   displayName: "SPS Rooms",
   description: "Long-lived project Agent Rooms backed by SPS Agent Sessions.",
   author: "local",
@@ -11614,6 +11869,7 @@ var manifest_default = {
     "project.workspaces.read",
     "project.workspaces.write",
     "events.subscribe",
+    "memory.lifecycle.publish",
     "jobs.schedule",
     "plugin.state.read",
     "plugin.state.write",
@@ -11634,7 +11890,7 @@ var manifest_default = {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.60"
+    ui: "./dist/ui-v0.3.61"
   },
   ui: {
     slots: [
@@ -12496,6 +12752,7 @@ import path2 from "node:path";
 var ROOM_STATE_KEY = "ROOM_STATE";
 var ROOM_WORK_STATE_KEY = "ROOM_WORK_STATE";
 var ROOM_CHECKPOINTS_KEY = "ROOM_CHECKPOINTS";
+var ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY = "room-memory-lifecycle-reconcile-v1";
 var ROOM_NATIVE_COMPACTIONS_KEY = "ROOM_NATIVE_COMPACTIONS";
 var TASK_ROOM_STATE_KEY = "TASK_ROOM_STATE";
 var ROOM_PREFIX = "[Agent Room] ";
@@ -12985,6 +13242,50 @@ async function reconcileAllProjectAgentRooms(ctx) {
     summaries.push({ companyId: company.id });
   }
   return { companyCount: summaries.length, companies: summaries };
+}
+async function reconcileRoomMemoryLifecycle(ctx) {
+  const summary = { companies: 0, rooms: 0, checkpointsPublished: 0, compactionsPublished: 0, failed: 0 };
+  if (!ctx.memory?.publishLifecycle) return summary;
+  const companies = await ctx.companies.list({ limit: 200 });
+  for (const company of companies) {
+    if (!company?.id) continue;
+    summary.companies += 1;
+    const projects = await ctx.projects.list({ companyId: company.id, limit: 200 });
+    for (const project of projects) {
+      const issues = await ctx.issues.list({ companyId: company.id, projectId: project.id, limit: 500 });
+      for (const room of issues) {
+        if (!isAgentRoom(room)) continue;
+        summary.rooms += 1;
+        try {
+          const document = await ctx.issues.documents.get(room.id, ROOM_CHECKPOINTS_KEY, company.id);
+          const checkpoints = parseState(document?.body);
+          const latest = Array.isArray(checkpoints) ? checkpoints.at(-1) : null;
+          const version = Number(latest?.version);
+          if (!Number.isInteger(version) || version < 1) continue;
+          const marker = await ctx.state.get("issue", room.id, ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY);
+          const deliveredVersion = Number(asRecord3(marker)?.checkpointVersion ?? 0);
+          if (deliveredVersion >= version) continue;
+          await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.checkpoint", latest);
+          summary.checkpointsPublished += 1;
+          if (typeof latest.compactedAt === "string" && latest.compactedAt) {
+            await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.compacted", latest);
+            summary.compactionsPublished += 1;
+          }
+          await ctx.state.set("issue", room.id, ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY, {
+            checkpointVersion: version,
+            reconciledAt: now()
+          });
+        } catch (error) {
+          summary.failed += 1;
+          ctx.logger?.warn?.("Room memory lifecycle reconciliation failed.", {
+            issueId: room.id,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
+  }
+  return summary;
 }
 async function syncAgentRoomTitles(ctx, companyId, agentId) {
   const agent = await ctx.agents.get(agentId, companyId);
@@ -14483,6 +14784,26 @@ async function appendCheckpoint(ctx, companyId, issueId, checkpoint) {
     format: "markdown",
     changeSummary: "Append Room compact checkpoint"
   });
+  await publishRoomMemoryLifecycle(ctx, companyId, issueId, "room.checkpoint", checkpoint);
+}
+async function publishRoomMemoryLifecycle(ctx, companyId, issueId, eventType, checkpoint) {
+  if (!ctx.memory?.publishLifecycle) return;
+  try {
+    await ctx.memory.publishLifecycle({
+      eventType,
+      companyId,
+      entityType: "room",
+      entityId: issueId,
+      roomId: issueId,
+      idempotencyKey: `room:${issueId}:${eventType}:${checkpoint.version}`
+    });
+  } catch (error) {
+    ctx.logger?.warn?.("Room memory lifecycle publication failed.", {
+      issueId,
+      eventType,
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 function roomStreamChannel(issueId) {
   return `room:${issueId}`;
@@ -17155,7 +17476,10 @@ async function handleRoomCompact(ctx, params, actionCtx) {
         if (threadId) manualCodexCompactionThreads.delete(threadId);
       }
     }
-    if (compacted.compacted === true) state.checkpoint.compactedAt = now();
+    if (compacted.compacted === true) {
+      state.checkpoint.compactedAt = now();
+      await publishRoomMemoryLifecycle(ctx, companyId, issue.id, "room.compacted", state.checkpoint);
+    }
     state.runtime.updatedAt = now();
     await saveRoomState(ctx, companyId, issue.id, state, "Record native Codex compact completion");
     return { ok: true, checkpoint: state.checkpoint, compacted: compacted.compacted };
@@ -17401,7 +17725,10 @@ async function runDurableRoomCompact(ctx, { companyId, runtime, job: initialJob 
           if (threadId) manualCodexCompactionThreads.delete(threadId);
         }
       }
-      if (compacted.compacted === true) state.checkpoint.compactedAt = now();
+      if (compacted.compacted === true) {
+        state.checkpoint.compactedAt = now();
+        await publishRoomMemoryLifecycle(ctx, companyId, issue.id, "room.compacted", state.checkpoint);
+      }
       state.runtime.updatedAt = now();
       state.runtime.lastError = null;
       state.pendingTurn = null;
@@ -17759,7 +18086,7 @@ async function completeRoomCompactOutsideInvocation({ apiUrl, issueId, state, co
         if (threadId) manualCodexCompactionThreads.delete(threadId);
       }
     }
-    state.checkpoint.compactedAt = now();
+    if (compacted.compacted === true) state.checkpoint.compactedAt = now();
     state.runtime.updatedAt = now();
     state.pendingTurn = null;
     finishRoomActivity(state, "completed");
@@ -19796,12 +20123,14 @@ var plugin = definePlugin({
     ctx.actions.register("workspace-profile-create-workspace", (params, actionCtx) => handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx));
     ctx.jobs.register("workplane-reconcile", async (job) => {
       const roomSummary = await reconcileAllProjectAgentRooms(ctx);
+      const roomMemorySummary = await reconcileRoomMemoryLifecycle(ctx);
       const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
       ctx.logger?.info?.("Workplane reconciliation completed.", {
         runId: job.runId,
         trigger: job.trigger,
         roomSummary,
+        roomMemorySummary,
         interruptedRoomJobSummary,
         ownerSummary,
         quotaRetryPolicy: "manual_only"
@@ -20010,6 +20339,7 @@ export {
   reconcileInterruptedRoomJobs,
   reconcileProviderQuotaRetries,
   reconcileProviderQuotaTask,
+  reconcileRoomMemoryLifecycle,
   reconcileRoomProviderQuotaRetries,
   reconcileTaskOwnerNotificationStateForJob,
   reconcileTaskOwnerReportBoundaries,
