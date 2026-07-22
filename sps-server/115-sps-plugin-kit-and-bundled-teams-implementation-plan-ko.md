@@ -81,7 +81,7 @@ SPS가 단순히 MCP 서버 하나를 실행하는 데서 끝나지 않고, 외�
 
 1. SPS 정보를 외부 Agent에 제공하는 `@sps/mcp-server`를 표준 명칭·`SPS_*` 환경 변수·`sps*` 도구 이름으로 제공한다.
 2. 이전 `PAPERCLIP_*` 환경 변수와 `paperclip*` 도구 이름은 설치 전환 기간에만 호환 모드로 유지한다.
-3. 외부 MCP는 `connector` 플러그인이 `agent.tools.register`, `http.outbound`, `secrets.read-ref` 등 기존 권한을 조합해 제공하도록 한다.
+3. 외부 MCP는 `connector` 플러그인이 `agent.tools.register`, `agent.tools.dynamic.register`, `http.outbound`, `secrets.read-ref` 등 기존 권한을 조합해 제공하도록 한다. 동적으로 발견된 Tool은 Core의 이름·개수·정적 Tool 충돌 검사를 통과하고 Plugin lifecycle에 묶인다.
 4. 원격 MCP는 허용된 HTTPS endpoint와 Secret Reference만 사용한다. 로컬 `stdio` MCP는 승인된 Desktop Node가 준비된 뒤 별도 Node Bridge 경로로 지원한다.
 5. MCP 도구별 허용 Agent·Project·Node·읽기/쓰기/실행 범위와 호출 결과를 감사 가능하게 남긴다.
 

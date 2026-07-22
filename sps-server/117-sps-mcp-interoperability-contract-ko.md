@@ -28,7 +28,7 @@ MCP 서버는 Hub DB를 직접 읽지 않는다. 모든 요청은 기존 Hub API
 
 SPS Agent가 GitHub, Figma, Obsidian, Unity Cloud, Blender 자동화 서비스, 이미지·음성 서비스 등의 MCP 도구를 사용할 때는 `connector` 플러그인으로 만든다.
 
-현재 Plugin SDK의 Agent Tool은 manifest에 정적으로 선언된다. 따라서 범용 MCP Connector가 연결 직후 원격 서버의 모든 도구를 자동으로 Agent에게 노출하는 기능은 아직 제공하지 않는다. 현 단계에서는 Connector가 명시적으로 선언한 도구만 제공하고, 다음 Core 단계에서 발견된 도구를 allowlist·승인 범위 안에서 등록하는 `dynamicToolProvider` 표준을 추가한다.
+기본 Agent Tool은 manifest에 정적으로 선언된다. 다만 `agent.tools.dynamic.register` capability를 선언한 Connector는 연결 뒤 발견한 도구를 `ctx.tools.replaceDynamic(...)`으로 교체 등록할 수 있다. Core는 도구 이름·개수·정적 Tool 충돌을 검사하고, 이 목록을 메모리에만 보관해 Plugin 비활성화·제거 때 함께 정리한다. Connector의 allowlist와 Agent·Project 범위 UI는 다음 단계에서 이 기반 위에 추가한다.
 
 ### 기본 원칙
 
@@ -42,6 +42,7 @@ SPS Agent가 GitHub, Figma, Obsidian, Unity Cloud, Blender 자동화 서비스, 
 
 ```text
 agent.tools.register
+agent.tools.dynamic.register
 http.outbound
 secrets.read-ref
 plugin.state.read
