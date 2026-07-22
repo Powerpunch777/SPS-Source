@@ -6,9 +6,42 @@ SPS(SonParkServer)는 프로젝트, 대화, 작업, 승인, 실행 결과를 한
 
 - 제품 사이트: [redongames.com](https://redongames.com)
 - 협업 Hub: [app.redongames.com](https://app.redongames.com)
-- 제품 범위: 게임 제작을 시작점으로 하되, 역할 기반 AI 협업이 필요한 모든 프로젝트
+- 제품 범위: 사용자가 역할별 AI 팀과 작업 방식을 플러그인으로 구성하는 로컬 중심 멀티에이전트 제작 플랫폼
 
-> 현재 SPS는 Hub와 Desktop Node 흐름을 검증한 파일럿 단계입니다. 실제 두 번째 컴퓨터 초대·연결과 서명된 Windows 배포는 출시 전 운영 검증 항목으로 남아 있습니다.
+> 현재 SPS는 Hub·Agent Room·Task Room·Desktop Node의 핵심 작업 루프를 검증한 파일럿 단계입니다. 아래의 Plugin Kit과 공식 팀 플러그인은 첫 제품 출시를 위한 확정된 제품 범위이며, 구현 완료 기능으로 오해하지 않도록 각 문서에서 현재 상태를 별도로 표시합니다.
+
+
+## 첫 제품 출시 방향
+
+SPS의 첫 제품은 **여러 AI Agent를 실제 소규모 팀처럼 구성하고, 작업 배정부터 로컬 실행·검증·기억 관리까지 운영하는 개발 플랫폼**을 목표로 합니다.
+
+첫 출시 범위는 다음 세 층으로 고정합니다.
+
+| 층 | 첫 출시 범위 |
+| --- | --- |
+| **SPS Core Product** | Hub, Agent Room, Task Room, 프로젝트별 Workspace, Desktop Node, 실행 기록, 승인·권한, Memory 후보 흐름 |
+| **SPS Plugin Kit** | 표준 manifest, 권한 선언, lifecycle, 개발 CLI, 테스트 도구, 로컬 설치·비활성화·업데이트 계약 |
+| **Bundled Team Plugins** | Plugin Studio, Development Core, Indie Game Team, App Product Team, Web Product Team |
+
+### 기본 제공 플러그인
+
+- **Plugin Studio**: 자연어 요구사항에서 플러그인 골격·manifest·권한·테스트를 만들고, 검사와 사용자 승인 후 로컬 패키지로 내보냅니다.
+- **Development Core**: 요구사항 분석, Task 분해, Git 작업 흐름, 코드 리뷰, 테스트, 빌드 로그, 릴리스 관리 등 개발 플러그인의 공통 계약을 제공합니다.
+- **Indie Game Team**: 소규모 게임 팀의 기획·게임플레이 구현·에셋 협업·QA·빌드 흐름을 제공합니다.
+- **App Product Team**: 모바일·데스크톱 앱의 제품 기획·UX·클라이언트·백엔드·QA·스토어 배포 흐름을 제공합니다.
+- **Web Product Team**: 웹 서비스의 제품 기획·UI·프론트엔드·백엔드·QA·배포 흐름을 제공합니다.
+
+게임·앱·웹 플러그인은 독립 제품처럼 설치되지만, 내부 구현에서는 `Development Core`를 공유해 중복 정책과 코드를 줄입니다.
+
+### 첫 출시에서 제외하는 것
+
+유료 플러그인 거래, 판매자 정산, 공개 Marketplace 결제, 기업용 SSO·SAML, 최종 코어 라이선스 결정은 첫 출시 범위가 아닙니다. 초기에는 공식 플러그인과 직접 설치 가능한 무료·로컬 플러그인에 집중합니다.
+
+자세한 제품 계약과 구현 순서는 다음 문서를 기준으로 합니다.
+
+- [제품 및 플러그인 플랫폼 계약](sps-server/114-sps-product-and-plugin-platform-contract-ko.md)
+- [Plugin Kit 및 공식 팀 플러그인 구현 계획](sps-server/115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md)
+- [문서 체계 감사와 기준 문서 지도](sps-server/116-sps-documentation-audit-and-migration-ko.md)
 
 ## SPS가 해결하는 일
 
@@ -199,6 +232,10 @@ node ..\website\scripts\check-site.mjs
 
 ## 제품 및 운영 문서
 
+- [문서 체계와 현재 기준](sps-server/DOCUMENTATION.md)
+- [제품 및 플러그인 플랫폼 계약](sps-server/114-sps-product-and-plugin-platform-contract-ko.md)
+- [Plugin Kit 및 공식 팀 플러그인 구현 계획](sps-server/115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md)
+- [문서 체계 감사와 마이그레이션](sps-server/116-sps-documentation-audit-and-migration-ko.md)
 - [현재 서버 사용자 안내](sps-server/97-current-server-user-guide-ko.md)
 - [SPS Desktop Hosted Hub 모드](sps-server/110-sps-desktop-host-mode-ko.md)
 - [Public Hub Docker 배포](sps-server/105-sps-public-hub-docker-deployment-ko.md)

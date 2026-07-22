@@ -1,5 +1,8 @@
 # SPS Game Production Work Plane
 
+> **문서 상태: 역사적 설계 자료**
+> 이 문서는 게임 제작 Work Plane을 출발점으로 한 초기 분석을 보존합니다. 현재 제품 범위, 플러그인 플랫폼, 기본 제공 팀 플러그인과 출시 경계는 `114-sps-product-and-plugin-platform-contract-ko.md`가 우선합니다. 구현 순서는 `115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md`를 따릅니다.
+
 > ## Current Canonical Architecture
 >
 > This document retains the original work-plane analysis. The current SPS platform
