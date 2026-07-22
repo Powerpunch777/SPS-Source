@@ -31,6 +31,7 @@ import {
   resolveSpsNodeInvocation,
   resolveSpsNodeWorkspace,
   scanLocalCapabilities,
+  scanLocalRunnerProfiles,
   sendSpsNodeHeartbeat,
   SpsHubRequestError,
 } from "../src/index.mjs";
@@ -187,6 +188,31 @@ test("publishes bounded local model identifiers without local filesystem paths",
     { kind: "lm_studio", label: "LM Studio", version: "lms 1.2.3", models: ["lmstudio-community/qwen3-4b"] },
   ]);
   assert.equal(JSON.stringify(capabilities).includes("member"), false);
+});
+
+test("publishes safe Runner Profile availability without local credentials", async () => {
+  const runners = await scanLocalRunnerProfiles({
+    findCommand: (command) => command === "codex",
+    readVersion: () => "codex 1.2.3",
+    readModels: () => [],
+  });
+  assert.equal(runners.length, 1);
+  assert.deepEqual(runners[0], {
+    runnerKey: "codex_cli:default",
+    kind: "codex_cli",
+    label: "Codex CLI",
+    version: "codex 1.2.3",
+    credentialStatus: "unknown",
+    availability: {
+      status: "unknown",
+      observedAt: runners[0].availability.observedAt,
+      source: "node_probe",
+      confidence: 25,
+    },
+  });
+  assert.match(runners[0].availability.observedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(JSON.stringify(runners).includes("privateKeyPem"), false);
+  assert.equal(JSON.stringify(runners).includes("CODEX_HOME"), false);
 });
 
 test("parses official Ollama and LM Studio model listings conservatively", () => {
@@ -464,6 +490,18 @@ test("uses the Hub API for registration and signed heartbeats", async () => {
     platform: "Windows",
     appVersion: "0.1.0",
     capabilities: [],
+    runners: [{
+      runnerKey: "codex_cli:personal",
+      kind: "codex_cli",
+      label: "Codex CLI",
+      profileLabel: "Personal",
+      credentialStatus: "unknown",
+      availability: {
+        status: "unknown",
+        observedAt: "2026-07-22T00:00:00.000Z",
+        source: "node_probe",
+      },
+    }],
   });
   await sendSpsNodeHeartbeat({
     fetchImpl,
@@ -476,6 +514,7 @@ test("uses the Hub API for registration and signed heartbeats", async () => {
   assert.equal(requests[0].url, "https://sps.example.test/api/companies/company-1/sps-nodes");
   assert.equal(requests[1].url, "https://sps.example.test/api/sps-nodes/node-1/heartbeat");
   assert.equal(JSON.parse(requests[0].options.body).privateKeyPem, undefined);
+  assert.equal(JSON.parse(requests[0].options.body).runners[0].profileLabel, "Personal");
   assert.equal(JSON.parse(requests[1].options.body).signature.length > 0, true);
 });
 

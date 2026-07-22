@@ -17,6 +17,7 @@ import {
   probeSpsHub,
   registerSpsNode,
   scanLocalCapabilities,
+  scanLocalRunnerProfiles,
   sendSpsNodeHeartbeat,
   SpsHubRequestError,
   startSpsDesktopAuth,
@@ -1389,6 +1390,7 @@ async function connectNode() {
   const identity = await ensureIdentity();
   resetNodeRuntimeStatus();
   const capabilities = await scanLocalCapabilities();
+  const runners = await scanLocalRunnerProfiles();
   const node = await registerSpsNode({
     hubUrl: state.profile.hubUrl,
     companyId: state.profile.companyId,
@@ -1397,6 +1399,7 @@ async function connectNode() {
     platform: process.platform,
     appVersion: app.getVersion(),
     capabilities,
+    runners,
     accessToken,
   });
   const verified = await sendSpsNodeHeartbeat({
@@ -1410,7 +1413,7 @@ async function connectNode() {
   nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
   await persistState();
   scheduleHeartbeat({ immediate: false });
-  return { node, verified, capabilities };
+  return { node, verified, capabilities, runners };
 }
 
 async function disconnectCurrentNode() {

@@ -17,7 +17,7 @@ SPS Server는 사람과 역할별 AI Agent가 같은 프로젝트에서 안전�
 
 SPS의 첫 제품은 다음 세 층으로 구성한다.
 
-1. **Core Product**: Hub, Project·Task·Agent·Agent Session, Workspace, Desktop Node, 실행 기록, 권한과 확장 Runtime
+1. **Core Product**: Hub, Project·Task·Agent·Agent Session, Workspace, Desktop Node, Runner Profile·Availability Snapshot·Agent Runner 권한, 실행 기록과 확장 Runtime
 2. **SPS Extension Profile + Plugin Kit**: 기존 Core SDK 위의 데이터·권한·lifecycle 표준화, SDK, Test Kit, CLI와 패키징
 3. **공식 플러그인**: Plugin Studio, Development Core, Indie Game Team, App Product Team, Web Product Team
 
@@ -53,7 +53,7 @@ sps-server/
 - SPS는 프로젝트, Task, 댓글, 문서, Work Product와 실행 상태의 기준 시스템이다.
 - Agent Session은 지속 가능한 Agent 대화·실행의 범용 Core 단위다.
 - Agent Room과 Task Room은 Team/Workplane 플러그인이 Agent Session과 Task를 조합해 제공하는 사용자 경험이다.
-- Desktop Node는 Hub가 승인한 프로젝트·Agent·명령 경계 안에서만 로컬 실행한다.
+- Desktop Node는 Hub가 승인한 프로젝트·Agent·Runner·명령 경계 안에서만 로컬 실행하며, 자격 증명은 자기 컴퓨터에만 보관한다.
 - Memory Provider는 승인된 기억을 검색하고 후보를 제안하며, 권한 없이 Task를 생성·배정·완료하지 않는다.
 - 플러그인 플랫폼의 기본값은 최소 권한이어야 한다.
 

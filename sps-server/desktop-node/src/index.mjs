@@ -1,4 +1,4 @@
-export { scanLocalCapabilities } from "./capability-scan.mjs";
+export { scanLocalCapabilities, scanLocalRunnerProfiles } from "./capability-scan.mjs";
 export {
   assertSpsNodeCommandRuntime,
   buildSpsNodeRuntimeEnvironment,

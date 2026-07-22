@@ -19,7 +19,7 @@ SPS의 첫 제품은 **여러 AI Agent를 실제 소규모 팀처럼 구성하�
 
 | 층 | 첫 출시 범위 |
 | --- | --- |
-| **SPS Core Product** | Hub, Project·Task·Agent·Agent Session, 프로젝트별 Workspace, Desktop Node, 실행 기록, 승인·권한, 확장 Runtime |
+| **SPS Core Product** | Hub, Project·Task·Agent·Agent Session, 프로젝트별 Workspace, Desktop Node, Runner Profile·Availability Snapshot·Agent Runner 권한, 실행 기록, 승인·권한, 확장 Runtime |
 | **SPS Extension Profile + Plugin Kit** | Core 호환 데이터·권한·lifecycle 표준화 후 제공하는 manifest, 개발 CLI, 테스트 도구, 로컬 설치·비활성화·업데이트 계약 |
 | **Bundled Team Plugins** | Plugin Studio, Development Core, Indie Game Team, App Product Team, Web Product Team |
 
@@ -52,7 +52,7 @@ AI Agent에게 일을 맡길 때 필요한 맥락, 권한, 결과, 책임을 작
 | **Hub / Core** | 팀의 Project, Task, Agent, Agent Session, 멤버십, 권한 및 실행 기록을 보관하는 범용 협업 기반입니다. |
 | **Agent Room** | 선택한 Team/Workplane 플러그인이 Agent Session 위에 구성하는 장기 역할 대화 경험입니다. |
 | **Task Room** | 선택한 Team/Workplane 플러그인이 Core Task 위에 구성하는 목표·범위·담당자·첨부 파일·결과 중심의 작업 경험입니다. |
-| **Desktop Node** | 사용자의 컴퓨터에서 승인된 Agent 명령과 로컬 AI를 실행하는 안전한 실행 노드입니다. |
+| **Desktop Node** | 사용자의 컴퓨터에서 승인된 Agent 명령과 로컬 AI를 실행하는 안전한 실행 노드입니다. Node는 안전한 Runner Profile 상태만 Hub에 보고하며 실제 자격 증명은 자기 컴퓨터에 보관합니다. |
 | **Memory Provider** | 승인된 기억을 검색하고 새 기억은 후보로 제안하는 선택 가능한 Provider입니다. 기억이 작업을 자동 생성하거나 배정하지는 않습니다. |
 
 ```text
@@ -93,7 +93,7 @@ flowchart TB
 | 계층 | 포함 요소 | 책임 | 보관하지 않는 것 |
 | --- | --- | --- | --- |
 | 공개 사이트 | `redongames.com`, `sps-server/website/` | 제품 소개, 문서와 다운로드 진입점 | Hub 쿠키, 프로젝트 데이터, 관리자 화면 |
-| 협업 Hub | `app.redongames.com`, `deploy/hub/`, SPS Core, PostgreSQL | 로그인, 초대, Project, Task, Agent Session, Node 승인, Agent 실행 권한, 결과 기록 | Node의 CLI 로그인, API 키, 로컬 모델, 절대 작업 경로 |
+| 협업 Hub | `app.redongames.com`, `deploy/hub/`, SPS Core, PostgreSQL | 로그인, 초대, Project, Task, Agent Session, Node 승인, Runner 상태, Agent·Runner 실행 권한, 결과 기록 | Node의 CLI 로그인, API 키, 로컬 모델, 절대 작업 경로 |
 | Desktop Node | `desktop/`, `desktop-node/` | Hub에 연결, 로컬 실행기 확인, 승인된 명령 실행, 결과 회수 | 다른 Node의 자격 증명·작업 폴더 |
 | 협업 플러그인 | `sps-room-chat/`, `sps-memory/` | Room UI, Task 협업, 기억 검색과 후보 제안 | 임의 Task 생성·배정, 승인된 기억의 자동 변경 |
 | 로컬 보조 서비스 | `memory-sidecar/`, `direct-task-*` | 개발·로컬 Workplane에서의 기억 지원과 명시적 Task 실행 | 공개 Hub 비밀 값, 외부 공개 포트 |

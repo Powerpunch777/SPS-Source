@@ -54,6 +54,25 @@ sps-server/
 - 기존 게임 중심 문서가 전체 제품의 단일 기준처럼 보이지 않는다.
 - 라이선스와 유료 Marketplace가 미결정 사항으로 명시된다.
 
+## P0.5 Core Node·Runner 운영 계약
+
+Plugin Kit보다 먼저, 모든 팀과 Adapter가 공통으로 사용할 수 있는 Node·Runner 운영 모델을 Core에 고정한다.
+
+### 작업
+
+1. `Node`, `Runner Profile`, `Availability Snapshot`, `Agent Runner Grant`, 실행·감사 기록의 데이터·API 계약을 정의한다.
+2. Node는 실행기 종류·버전·모델·안전한 별칭과 현재 상태만 보고하고, 토큰·API 키·쿠키·CLI 홈·공급자 계정 ID는 Hub에 보내지 않게 한다.
+3. 실행 시 Node 수준 권한과 선택된 Runner 수준 권한을 함께 검증한다. Runner Profile이 있는 Node에서는 Agent Runner Grant가 없으면 작업을 실행하지 않는다.
+4. `available`, `busy`, `quota_limited`, `auth_required`, `offline`, `unknown`을 표준 상태로 사용하고 관측 시각·출처·신뢰도·재시도 시각을 함께 기록한다.
+5. 공급자별 한도·로그인 probe는 Core에 넣지 않고 Adapter가 정규화된 Snapshot을 보고하게 한다.
+
+### 완료 기준
+
+- 기존 Node·Agent 실행 경로가 호환성을 유지한다.
+- `quota_limited` 또는 `auth_required` Runner에 새 명령을 배정하지 않는다.
+- Node 소유자의 실제 CLI 로그인 정보가 Hub DB·Activity Log·명령 행에 남지 않는다.
+- Node 관리 화면에서 연결 상태와 안전한 Runner 상태를 구분해 볼 수 있다.
+
 ## P1. SPS Extension Profile 표준화 (Plugin Kit 이전)
 
 이 단계의 목적은 새 runtime을 만드는 것이 아니라, 이미 존재하는 Core plugin SDK와 SPS 제품 규칙 사이의 호환 표준을 고정하는 것이다. P1이 끝나기 전에는 `@sps/plugin-sdk`, 새 CLI, Plugin Studio를 만들지 않는다.

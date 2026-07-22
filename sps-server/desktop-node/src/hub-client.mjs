@@ -160,6 +160,7 @@ export async function registerSpsNode({
   platform,
   appVersion,
   capabilities,
+  runners,
   accessToken,
 }) {
   if (!identity?.publicKeyPem) throw new Error("SPS Node identity does not contain a public key");
@@ -173,6 +174,7 @@ export async function registerSpsNode({
       platform,
       appVersion,
       capabilities,
+      ...(runners ? { runners } : {}),
     },
     accessToken,
   );

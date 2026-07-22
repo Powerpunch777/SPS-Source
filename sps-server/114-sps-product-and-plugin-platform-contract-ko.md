@@ -38,6 +38,7 @@ SPS는 단순한 다중 채팅 UI나 AI 코드 생성기만을 목표로 하지 
 - Agent와 durable Agent Session
 - 프로젝트별 Workspace 연결
 - 승인된 Desktop Node와 로컬 실행기 연결
+- Node별 Runner Profile, 현재 Availability Snapshot, Agent별 Runner 실행 권한
 - Task별 실행 상태, 취소, 오류, 결과 기록
 - 첨부 파일, 문서, Work Product와 변경 파일 확인
 - 플러그인 Provider의 범위·권한·상태 선언과 발견
@@ -46,6 +47,22 @@ SPS는 단순한 다중 채팅 UI나 AI 코드 생성기만을 목표로 하지 
 - 중복 실행과 중복 완료 방지
 
 Core는 `Agent Room`, 특정 역할 조직도, Task 운영 의식, Memory 저장·검색 전략을 고정 타입으로 만들지 않는다. Core는 그것들을 구성할 수 있는 Task, Agent Session, 권한, 실행 기록, 이벤트와 확장 Runtime을 제공한다.
+
+### 2.1.1 Core 운영 편의 계약
+
+Node와 실행기의 운영 정보는 특정 AI 공급자나 팀 플러그인에 묶이지 않는 Core 계약이다.
+
+| Core 객체 | 책임 | 저장하거나 노출하지 않는 것 |
+| --- | --- | --- |
+| `Node` | 승인된 컴퓨터의 연결, 플랫폼, 버전, heartbeat, Workspace 실행 경계 | 다른 컴퓨터의 파일·자격 증명 |
+| `Runner Profile` | Node 안의 실행기와 사용자가 붙인 안전한 별칭, 실행기 종류·버전·모델 목록 | 토큰, API 키, 쿠키, CLI 홈 경로, 공급자 계정 ID |
+| `Availability Snapshot` | `available`, `busy`, `quota_limited`, `auth_required`, `offline`, `unknown` 상태와 관측 시각·출처·신뢰도·재시도 시각 | 남은 토큰 수를 사실처럼 단정한 값 |
+| `Agent Runner Grant` | 허가된 Agent가 어느 Node의 어느 Runner Profile을 사용할 수 있는지. Runner Profile이 존재하는 Node에서는 실제 실행에 반드시 필요 | Node 소유자의 실제 로그인 정보 |
+| 실행·감사 기록 | 선택된 Node·Runner, 명령 결과, 취소와 권한 변경 근거 | 비밀 값이 포함된 원시 환경 변수 |
+
+Core는 이 객체의 수명주기와 최소 권한 검사를 책임진다. Codex, Agy, Ollama 등의 로그인 확인, 사용 한도 탐지, 공급자별 오류 해석은 Adapter가 `Availability Snapshot`으로 정규화한다. 한도 정보는 공급자가 신뢰할 수 있게 제공하지 않을 수 있으므로 `observedAt`, `source`, `confidence`, `retryAfter`를 함께 보관하는 **운영상의 증거**이며 결제·사용량의 확정 원장이 아니다.
+
+Node는 자기 OS의 안전한 저장소에만 자격 증명을 보관한다. Hub와 플러그인은 Node가 보고한 안전한 상태와 명시적으로 승인된 Node·Agent·Runner 조합만 사용한다. 기본 SPS에는 `Nodes`, `Runners & Accounts`, `Availability` 관리 화면이 포함될 수 있지만, 공급자별 상세 사용량 화면이나 계정 전환 구현은 Adapter 또는 선택 확장으로 남긴다.
 
 ### 2.2 SPS Extension Profile: Plugin Kit 이전의 표준화
 

@@ -171,3 +171,27 @@ export async function scanLocalCapabilities({
   }
   return capabilities;
 }
+
+/**
+ * The Hub receives a safe operational summary, never the CLI home, provider
+ * account ID, tokens, cookies, or API keys. Provider adapters can later
+ * replace the initial unknown snapshot with observed quota/auth information.
+ */
+export async function scanLocalRunnerProfiles(options = {}) {
+  const observedAt = new Date().toISOString();
+  const capabilities = await scanLocalCapabilities(options);
+  return capabilities.map((capability) => ({
+    runnerKey: `${capability.kind}:default`,
+    kind: capability.kind,
+    label: capability.label,
+    version: capability.version ?? null,
+    ...(capability.models?.length ? { models: capability.models } : {}),
+    credentialStatus: "unknown",
+    availability: {
+      status: "unknown",
+      observedAt,
+      source: "node_probe",
+      confidence: 25,
+    },
+  }));
+}
