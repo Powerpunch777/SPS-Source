@@ -8,8 +8,11 @@ if (-not (Test-Path -LiteralPath $CatalogPath -PathType Leaf)) {
   throw "SPS adapter model catalog was not found: $CatalogPath"
 }
 
-$catalogJson = Get-Content -LiteralPath $CatalogPath -Raw
-$catalog = $catalogJson | ConvertFrom-Json
+$catalog = (Get-Content -LiteralPath $CatalogPath -Raw) | ConvertFrom-Json
+# Windows processes can inherit a multi-line registry environment value only
+# through its first line. Persist this operator setting as one-line JSON so
+# desktop, scheduled-task, and CLI launches all see the complete catalog.
+$catalogJson = $catalog | ConvertTo-Json -Depth 32 -Compress
 $codexModels = @($catalog.codex_local)
 
 if ($codexModels.Count -eq 0 -or @($codexModels | Where-Object { $_.id -match '^gpt-5\.6-(sol|terra|luna)$' }).Count -eq 0) {

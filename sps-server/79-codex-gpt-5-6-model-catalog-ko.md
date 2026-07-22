@@ -19,8 +19,11 @@ settings. Existing agents keep their configured model until a user changes it.
 
 ## Runtime Behavior
 
-1. The synchronizer validates the JSON and writes it to the current process
-   and the Windows user environment as `PAPERCLIP_ADAPTER_MODELS`.
+1. The synchronizer validates the JSON and writes it as one-line JSON to the
+   current process and the Windows user environment as
+   `PAPERCLIP_ADAPTER_MODELS`. This prevents Windows-launched desktop or
+   scheduled processes from inheriting only the first line of a formatted JSON
+   value.
 2. SPS reads that variable when serving the agent-model endpoint.
 3. The pre-existing `SPSLocalServer` scheduled task inherits the user
    environment after the next logon or reboot, so it also receives the catalog
