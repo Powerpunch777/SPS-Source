@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { inspectLocalRegistry } from "../registry/local-registry-v1.mjs";
@@ -29,6 +32,14 @@ async function makePlugin(t) {
   return { root, sourceDirectory };
 }
 
+async function nextWorkerResponse(lines) {
+  const [line] = await Promise.race([
+    once(lines, "line"),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("Generated plugin worker did not respond.")), 2_000)),
+  ]);
+  return JSON.parse(line);
+}
+
 test("creates a source tree whose static manifest can be packaged without importing runtime code", async (t) => {
   const { root, sourceDirectory } = await makePlugin(t);
   const inspected = await inspectPluginDirectory(sourceDirectory);
@@ -37,7 +48,8 @@ test("creates a source tree whose static manifest can be packaged without import
   const worker = await readFile(path.join(sourceDirectory, "dist", "worker.js"), "utf8");
   assert.match(runtime, /apiVersion: 1/);
   assert.match(runtime, /entrypoints: \{ worker: "\.\/dist\/worker\.js" \}/);
-  assert.match(worker, /async setup\(\)/);
+  assert.match(worker, /createInterface/);
+  assert.match(worker, /supportedMethods/);
   const runtimeManifest = (await import(pathToFileURL(path.join(sourceDirectory, "dist", "manifest.js")).href)).default;
   assert.deepEqual(runtimeManifest, {
     id: "com.example.weather",
@@ -47,7 +59,7 @@ test("creates a source tree whose static manifest can be packaged without import
     description: "Generated SPS Plugin.",
     author: "SPS Plugin Author",
     categories: ["automation"],
-    capabilities: [],
+    capabilities: ["plugin.state.read"],
     entrypoints: { worker: "./dist/worker.js" },
   });
   const archive = await packagePluginDirectory({
@@ -56,6 +68,34 @@ test("creates a source tree whose static manifest can be packaged without import
   });
   assert.equal(archive.archive.valid, true);
   assert.equal(archive.archive.package.staticManifest.plugin.id, "com.example.weather");
+});
+
+test("keeps the generated worker alive for the minimum Host RPC lifecycle", async (t) => {
+  const { sourceDirectory } = await makePlugin(t);
+  const worker = spawn(process.execPath, [path.join(sourceDirectory, "dist", "worker.js")], {
+    cwd: sourceDirectory,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const lines = createInterface({ input: worker.stdout });
+  t.after(() => {
+    lines.close();
+    if (worker.exitCode === null) worker.kill();
+  });
+
+  const initialized = nextWorkerResponse(lines);
+  worker.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+  assert.deepEqual(await initialized, { jsonrpc: "2.0", id: 1, result: { ok: true, supportedMethods: ["health"] } });
+
+  const healthy = nextWorkerResponse(lines);
+  worker.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "health", params: {} })}\n`);
+  assert.deepEqual(await healthy, { jsonrpc: "2.0", id: 2, result: { status: "ok", message: "Generated SPS Plugin is ready" } });
+
+  const stopped = nextWorkerResponse(lines);
+  const exited = once(worker, "exit");
+  worker.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "shutdown", params: {} })}\n`);
+  assert.deepEqual(await stopped, { jsonrpc: "2.0", id: 3, result: null });
+  const [code] = await exited;
+  assert.equal(code, 0);
 });
 
 test("rejects source directories that accidentally include a likely secret", async (t) => {

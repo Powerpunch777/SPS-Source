@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -17,9 +19,25 @@ const temporaryRoot = path.join(os.tmpdir(), `sps-owner-host-smoke-${process.pid
 const executionRuntimeRoot = runtimeRoot;
 const configPath = path.join(temporaryRoot, "config.json");
 const memoryConfigPath = path.join(temporaryRoot, "memory", "config.json");
-const port = 31_207;
-const databasePort = 54_337;
-const memoryPort = 31_208;
+async function findAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const selectedPort = typeof address === "object" && address ? address.port : null;
+      server.close((error) => {
+        if (error) reject(error);
+        else if (!selectedPort) reject(new Error("Could not reserve a local smoke-test port."));
+        else resolve(selectedPort);
+      });
+    });
+  });
+}
+
+const port = await findAvailablePort();
+const databasePort = await findAvailablePort();
+const memoryPort = await findAvailablePort();
 const memoryToken = "sps-owner-host-smoke-memory-token";
 const config = {
   $meta: { version: 1, updatedAt: new Date().toISOString(), source: "onboard" },
@@ -115,6 +133,104 @@ async function assertRoomsPlugin() {
   return rooms;
 }
 
+function sha256(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+async function writeRegistrySmokePackage(version) {
+  const packageRoot = path.join(temporaryRoot, "registry-staging", `registry-smoke-${version}`);
+  const manifestSource = [
+    "export default {",
+    '  id: "sps.registry-smoke",',
+    "  apiVersion: 1,",
+    `  version: ${JSON.stringify(version)},`,
+    '  displayName: "Registry Smoke",',
+    '  description: "Packaged Registry lifecycle smoke plugin.",',
+    '  author: "SPS",',
+    '  categories: ["automation"],',
+    '  capabilities: ["plugin.state.read"],',
+    '  entrypoints: { worker: "./dist/worker.js" },',
+    "};",
+    "",
+  ].join("\n");
+  const workerSource = [
+    'import { createInterface } from "node:readline";',
+    'const input = createInterface({ input: process.stdin });',
+    'function reply(id, result) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n"); }',
+    'function reject(id, message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message } }) + "\\n"); }',
+    'input.on("line", (line) => {',
+    "  let request;",
+    "  try { request = JSON.parse(line); } catch { return; }",
+    '  if (!request || request.jsonrpc !== "2.0" || request.id === undefined) return;',
+    '  if (request.method === "initialize") reply(request.id, { ok: true, supportedMethods: ["health"] });',
+    '  else if (request.method === "health") reply(request.id, { status: "ok" });',
+    '  else if (request.method === "shutdown") { reply(request.id, null); input.close(); setImmediate(() => process.exit(0)); }',
+    '  else reject(request.id, "Unknown method: " + request.method);',
+    "});",
+    "",
+  ].join("\n");
+  const capabilities = ["plugin.state.read"];
+  const staticManifest = {
+    schemaVersion: 1,
+    plugin: { id: "sps.registry-smoke", version, apiVersion: "1" },
+    runtime: { manifestEntry: "dist/manifest.js", manifestSha256: sha256(manifestSource) },
+    capabilities,
+    permissionsDigest: sha256(JSON.stringify(capabilities)),
+  };
+  await mkdir(path.join(packageRoot, "dist"), { recursive: true });
+  await Promise.all([
+    writeFile(path.join(packageRoot, "package.json"), `${JSON.stringify({
+      name: "sps-registry-smoke",
+      version,
+      private: true,
+      type: "module",
+      paperclipPlugin: { manifest: "./dist/manifest.js", worker: "./dist/worker.js" },
+    }, null, 2)}\n`, "utf8"),
+    writeFile(path.join(packageRoot, "dist", "manifest.js"), manifestSource, "utf8"),
+    writeFile(path.join(packageRoot, "dist", "worker.js"), workerSource, "utf8"),
+    writeFile(path.join(packageRoot, "sps-plugin.json"), `${JSON.stringify(staticManifest, null, 2)}\n`, "utf8"),
+  ]);
+  return { packageRoot, artifactSha256: sha256(`registry-smoke-${version}`) };
+}
+
+async function ownerHostJson(pathname, body) {
+  const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`Owner Host Registry request ${pathname} failed with ${response.status}: ${JSON.stringify(payload)}`);
+  }
+  return payload;
+}
+
+async function assertRegistryLifecycle() {
+  const v1 = await writeRegistrySmokePackage("1.0.0");
+  const v2 = await writeRegistrySmokePackage("1.0.1");
+  const source = { registryId: "sps.runtime-smoke", kind: "local", releaseLocator: "runtime-smoke" };
+
+  const stageV1 = await ownerHostJson("/api/plugins/registry/stages", { ...v1, source: { ...source, releaseLocator: "runtime-smoke/1.0.0" } });
+  if (stageV1.status !== "staged") throw new Error("Registry smoke v1 was not kept in the disabled stage.");
+  const installed = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(stageV1.stageId)}/enable`, {});
+  if (installed.plugin?.version !== "1.0.0" || installed.plugin?.status !== "ready") {
+    throw new Error("Registry smoke v1 did not install and activate.");
+  }
+
+  const stageV2 = await ownerHostJson("/api/plugins/registry/stages", { ...v2, source: { ...source, releaseLocator: "runtime-smoke/1.0.1" } });
+  const upgraded = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(stageV2.stageId)}/enable`, {});
+  if (upgraded.plugin?.version !== "1.0.1" || upgraded.plugin?.status !== "ready") {
+    throw new Error("Registry smoke v2 did not replace the active plugin.");
+  }
+
+  const rolledBack = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(stageV1.stageId)}/enable`, {});
+  if (rolledBack.plugin?.version !== "1.0.0" || rolledBack.plugin?.status !== "ready") {
+    throw new Error("Registry smoke did not restore the earlier reviewed version.");
+  }
+}
+
 async function removeWithRetry(target, attempts = 30) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -181,7 +297,7 @@ memoryChild.stdout.on("data", (chunk) => { memoryOutput += chunk.toString(); });
 memoryChild.stderr.on("data", (chunk) => { memoryOutput += chunk.toString(); });
 const child = spawn(
   electronBinary,
-  ["sps-owner-host-bootstrap.mjs"],
+  [path.join(executionRuntimeRoot, "sps-owner-host-bootstrap.mjs")],
   {
     cwd: executionRuntimeRoot,
     env: {
@@ -217,8 +333,9 @@ try {
   const health = await waitForHealth(child);
   await assertDefaultMemoryPlugin();
   await assertRoomsPlugin();
+  await assertRegistryLifecycle();
   passed = true;
-  console.log(`Packaged SPS Owner Host, SPS Default Memory, and SPS Rooms smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
+  console.log(`Packaged SPS Owner Host, bundled SPS plugins, and Registry install/update/rollback smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
 } finally {
   await stopChildTree(child);
   await stopChildTree(memoryChild);
