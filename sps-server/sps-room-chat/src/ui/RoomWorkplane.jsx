@@ -51,7 +51,7 @@ const STYLES = `
   .rw-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr) 280px; height: min(760px, calc(100dvh - 150px)); min-height: 540px; overflow: hidden; border: 1px solid var(--border, #d8dee9); background: var(--background, #fff); }
   .rw-rooms, .rw-context { min-width: 0; min-height: 0; background: var(--muted, #f7f8fa); overscroll-behavior: contain; }
   .rw-rooms { border-right: 1px solid var(--border, #d8dee9); overflow: auto; }
-  .rw-context { border-left: 1px solid var(--border, #d8dee9); display: flex; flex-direction: column; overflow: hidden; }
+  .rw-context { border-left: 1px solid var(--border, #d8dee9); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
   .rw-main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--background, #fff); }
   .rw-header { min-height: 58px; padding: 12px 16px; border-bottom: 1px solid var(--border, #d8dee9); display: flex; justify-content: space-between; gap: 12px; align-items: center; }
   .rw-title { font-size: 15px; font-weight: 700; margin: 0; }
@@ -91,6 +91,7 @@ const STYLES = `
   .rw-composer-status { margin-right: auto; color: var(--muted-foreground, #667085); font-size: 11px; white-space: nowrap; }
   .rw-composer-buttons { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
   .rw-composer-tools { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+  .rw-composer-tools .rw-button { flex: 0 0 auto; white-space: nowrap; }
   .rw-button { appearance: none; border: 1px solid var(--border, #cfd7e3); background: var(--background, #fff); color: inherit; border-radius: 5px; padding: 7px 10px; cursor: pointer; font: inherit; }
   .rw-button.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
   .rw-button:disabled { cursor: default; opacity: .55; }
@@ -103,13 +104,22 @@ const STYLES = `
   .rw-attachment-chip button { border: 0; padding: 0 1px; color: var(--muted-foreground, #667085); background: transparent; cursor: pointer; font: inherit; font-size: 15px; line-height: 1; }
   .rw-attachment-chip img { width: 24px; height: 24px; object-fit: cover; border-radius: 3px; background: #fff; }
   .rw-message-attachments { margin-top: 8px; }
+  .rw-context-header { padding: 12px; border-bottom: 1px solid var(--border, #d8dee9); background: var(--background, #fff); }
+  .rw-context-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .rw-context-heading strong { font-size: 13px; }
+  .rw-context-heading span { color: var(--muted-foreground, #667085); font-size: 11px; }
+  .rw-context-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .rw-context-tab { min-width: 0; border: 1px solid transparent; border-radius: 5px; padding: 6px 4px; background: transparent; color: var(--muted-foreground, #667085); cursor: pointer; font: 600 11px/1.2 system-ui, sans-serif; white-space: nowrap; }
+  .rw-context-tab:hover { background: var(--muted, #f7f8fa); color: var(--foreground, #172033); }
+  .rw-context-tab.active { border-color: var(--border, #cfd7e3); background: var(--accent, #eaf2ff); color: var(--foreground, #172033); }
+  .rw-context-body { min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .rw-context-panel { min-height: 100%; padding: 14px; }
   .rw-context-files { display: grid; gap: 6px; }
   .rw-context-files .rw-attachment-chip { width: 100%; }
-  .rw-context-focus { flex: 0 1 210px; overflow: auto; }
-  .rw-context-tasks { flex: 0 1 170px; overflow: auto; }
-  .rw-context-changes-section { display: flex; flex: 1 1 180px; flex-direction: column; min-height: 150px; overflow: hidden; }
-  .rw-context-changes { min-height: 0; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: 4px; }
-  .rw-context-session { flex: 0 0 auto; max-height: 156px; overflow: auto; }
+  .rw-context-task-list { display: grid; gap: 2px; }
+  .rw-context-changes { min-height: 0; overflow: hidden; }
+  .rw-context-empty { margin: 0; color: var(--muted-foreground, #667085); font-size: 12px; line-height: 1.5; }
+  .rw-context-session { margin-top: 18px; border-top: 1px solid var(--border, #d8dee9); padding-top: 12px; }
   .rw-context-session summary { cursor: pointer; color: var(--muted-foreground, #667085); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
   .wp-routing { margin-top: 16px; border-top: 1px solid var(--border, #d8dee9); border-bottom: 1px solid var(--border, #d8dee9); padding: 12px 0; }
   .wp-routing summary { cursor: pointer; font-weight: 700; }
@@ -124,8 +134,7 @@ const STYLES = `
   .rw-file-preview-body { min-height: 240px; overflow: auto; padding: 18px; background: var(--muted, #f7f8fa); }
   .rw-file-preview-image { display: block; max-width: 100%; max-height: calc(100dvh - 150px); margin: 0 auto; object-fit: contain; image-rendering: pixelated; background: repeating-conic-gradient(#eef2f7 0 25%, #fff 0 50%) 50% / 16px 16px; }
   .rw-file-preview-text { min-height: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--foreground, #172033); }
-  .rw-context-section { padding: 14px; border-bottom: 1px solid var(--border, #d8dee9); }
-  .rw-context-section h3 { font-size: 12px; margin: 0 0 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, #667085); }
+  .rw-context-panel h3 { font-size: 12px; margin: 0 0 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, #667085); }
   .rw-task { display: block; text-decoration: none; color: inherit; padding: 8px 0; border-top: 1px solid var(--border, #e3e8f0); }
   .rw-task:first-of-type { border-top: 0; }
   .rw-task-title { font-size: 13px; font-weight: 600; }
@@ -403,6 +412,7 @@ function fileNodes(workspaces) {
 }
 
 function RoomContext({ data, navigation }) {
+  const [activeTab, setActiveTab] = useState("work");
   const state = data?.state || {};
   const workState = data?.workState || {};
   const activity = state.runtime?.activity || {};
@@ -412,46 +422,58 @@ function RoomContext({ data, navigation }) {
   const latestOutcome = workState.latestOutcome || null;
   const nextCandidate = workState.nextCandidate || null;
   const waitingFor = workState.waitingFor || { kind: "none" };
+  const tabs = [
+    { id: "work", label: "작업" },
+    { id: "tasks", label: `Tasks${tasks.length ? ` ${tasks.length}` : ""}` },
+    { id: "changes", label: `변경 ${data?.changedFileCount || nodes.length || ""}`.trim() },
+    { id: "files", label: `파일${attachments.length ? ` ${attachments.length}` : ""}` }
+  ];
   return <aside className="rw-context">
-    <section className="rw-context-section rw-context-focus">
-      <h3>Focus</h3>
-      <p className="rw-focus-value"><span className="rw-focus-label">Objective</span>{workState.objective || "Not established yet"}</p>
-      <p className="rw-focus-value"><span className="rw-focus-label">Phase</span>{workState.phase || "Not established yet"}</p>
-      <p className="rw-focus-value"><span className="rw-focus-label">Latest outcome</span>{latestOutcome ? `${latestOutcome.identifier || latestOutcome.taskId || "Outcome"}${latestOutcome.status ? ` · ${latestOutcome.status}` : ""}${latestOutcome.summary ? ` · ${latestOutcome.summary}` : ""}` : "Not recorded yet"}</p>
-      {nextCandidate?.summary ? <p className="rw-focus-value"><span className="rw-focus-label">Next candidate</span>{nextCandidate.summary}</p> : null}
-      {waitingFor.kind && waitingFor.kind !== "none" ? <p className="rw-focus-value"><span className="rw-focus-label">Waiting for</span>{waitingFor.kind}{waitingFor.detail ? ` · ${waitingFor.detail}` : ""}</p> : null}
-      {(workState.planReferences || []).length ? <ul className="rw-focus-sources">{workState.planReferences.map((reference) => <li key={reference}>{reference}</li>)}</ul> : null}
-    </section>
-    <section className="rw-context-section rw-context-tasks">
-      <h3>Tasks</h3>
-      {tasks.length ? tasks.map((task) => <a className="rw-task" key={task.id} {...navigation.linkProps(taskHref(navigation, task))}>
-        <div className="rw-task-title">{task.title}</div>
-        <div className="rw-task-meta">{task.identifier} · {task.status} · {task.assigneeAgent?.name || "Unassigned"}</div>
-      </a>) : <div className="rw-muted">이 Room에서 생성된 실행 Task가 없습니다.</div>}
-    </section>
-    <section className="rw-context-section rw-context-changes-section">
-      <h3>Changes</h3>
-      <div className="rw-context-changes">
-        <FileTree nodes={nodes} wrapLabels emptyState={{ title: "No workspace changes" }} />
+    <header className="rw-context-header">
+      <div className="rw-context-heading"><strong>Room 컨텍스트</strong><span>{activity.status === "working" ? "작업 중" : "저장됨"}</span></div>
+      <div className="rw-context-tabs" role="tablist" aria-label="Room context">
+        {tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={`rw-context-tab ${activeTab === tab.id ? "active" : ""}`} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}
       </div>
-    </section>
-    {attachments.length ? <section className="rw-context-section">
-      <h3>Room files</h3>
-      <AttachmentList attachments={attachments} className="rw-context-files" />
-    </section> : null}
-    <details className="rw-context-section rw-context-session">
-      <summary>Session details</summary>
-      <dl className="rw-key-value">
-        <dt>Runtime</dt><dd>{data?.runtime?.enabled ? (data?.runtime?.kind === "agy_print" ? "Agy" : "Codex") : "Disabled"}</dd>
-        <dt>Model</dt><dd>{data?.runtime?.model || "Default"}</dd>
-        <dt>Reasoning</dt><dd>{data?.runtime?.reasoningEffort || "Model default"}</dd>
-        <dt>Workspace</dt><dd>{state.workspace?.name || "Not bound"}</dd>
-        <dt>Conversation</dt><dd>{state.runtime?.codexThreadId || state.runtime?.agentSessionId || data?.runtime?.kind === "agy_print" ? "Resumable" : "Not started"}</dd>
-        <dt>Activity</dt><dd>{activity.status || "idle"}</dd>
-        <dt>Checkpoint</dt><dd>{state.checkpoint?.version || 0}</dd>
-        <dt>Auto compact</dt><dd>{data?.runtime?.kind === "codex_app_server" ? "Native Codex" : "Adapter managed"}</dd>
-      </dl>
-    </details>
+    </header>
+    <div className="rw-context-body">
+      {activeTab === "work" ? <section className="rw-context-panel">
+        <h3>현재 작업</h3>
+        <p className="rw-focus-value"><span className="rw-focus-label">목표</span>{workState.objective || "아직 설정되지 않았습니다."}</p>
+        <p className="rw-focus-value"><span className="rw-focus-label">단계</span>{workState.phase || "아직 설정되지 않았습니다."}</p>
+        <p className="rw-focus-value"><span className="rw-focus-label">최근 결과</span>{latestOutcome ? `${latestOutcome.identifier || latestOutcome.taskId || "결과"}${latestOutcome.status ? ` · ${latestOutcome.status}` : ""}${latestOutcome.summary ? ` · ${latestOutcome.summary}` : ""}` : "아직 기록된 결과가 없습니다."}</p>
+        {nextCandidate?.summary ? <p className="rw-focus-value"><span className="rw-focus-label">다음 후보</span>{nextCandidate.summary}</p> : null}
+        {waitingFor.kind && waitingFor.kind !== "none" ? <p className="rw-focus-value"><span className="rw-focus-label">대기 중</span>{waitingFor.kind}{waitingFor.detail ? ` · ${waitingFor.detail}` : ""}</p> : null}
+        {(workState.planReferences || []).length ? <ul className="rw-focus-sources">{workState.planReferences.map((reference) => <li key={reference}>{reference}</li>)}</ul> : null}
+        <details className="rw-context-session">
+          <summary>세션 상세</summary>
+          <dl className="rw-key-value">
+            <dt>Runtime</dt><dd>{data?.runtime?.enabled ? (data?.runtime?.kind === "agy_print" ? "Agy" : "Codex") : "Disabled"}</dd>
+            <dt>Model</dt><dd>{data?.runtime?.model || "Default"}</dd>
+            <dt>Reasoning</dt><dd>{data?.runtime?.reasoningEffort || "Model default"}</dd>
+            <dt>Workspace</dt><dd>{state.workspace?.name || "Not bound"}</dd>
+            <dt>Conversation</dt><dd>{state.runtime?.codexThreadId || state.runtime?.agentSessionId || data?.runtime?.kind === "agy_print" ? "Resumable" : "Not started"}</dd>
+            <dt>Activity</dt><dd>{activity.status || "idle"}</dd>
+            <dt>Checkpoint</dt><dd>{state.checkpoint?.version || 0}</dd>
+            <dt>Auto compact</dt><dd>{data?.runtime?.kind === "codex_app_server" ? "Native Codex" : "Adapter managed"}</dd>
+          </dl>
+        </details>
+      </section> : null}
+      {activeTab === "tasks" ? <section className="rw-context-panel">
+        <h3>이 Room의 Tasks</h3>
+        {tasks.length ? <div className="rw-context-task-list">{tasks.map((task) => <a className="rw-task" key={task.id} {...navigation.linkProps(taskHref(navigation, task))}>
+          <div className="rw-task-title">{task.title}</div>
+          <div className="rw-task-meta">{task.identifier} · {task.status} · {task.assigneeAgent?.name || "Unassigned"}</div>
+        </a>)}</div> : <p className="rw-context-empty">이 Room에서 생성된 실행 Task가 없습니다.</p>}
+      </section> : null}
+      {activeTab === "changes" ? <section className="rw-context-panel">
+        <h3>작업 폴더 변경사항</h3>
+        <div className="rw-context-changes"><FileTree nodes={nodes} wrapLabels emptyState={{ title: "No workspace changes" }} /></div>
+      </section> : null}
+      {activeTab === "files" ? <section className="rw-context-panel">
+        <h3>Room 파일</h3>
+        {attachments.length ? <AttachmentList attachments={attachments} className="rw-context-files" /> : <p className="rw-context-empty">이 Room에 첨부된 파일이 없습니다.</p>}
+      </section> : null}
+    </div>
   </aside>;
 }
 
