@@ -6,19 +6,22 @@
   "description": "SPS Extension Profile and Plugin Registry conformance contracts.",
   "exports": {
     "./profile/*": "./profile/*",
-    "./registry/*": "./registry/*"
+    "./registry/*": "./registry/*",
+    "./authoring/*": "./authoring/*"
+  },
+  "bin": {
+    "sps-plugin": "./cli/sps-plugin.mjs"
   },
   "scripts": {
-    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs",
+    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/plugin-package-v1.test.mjs",
     "check": "npm run test"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "yauzl": "3.4.0"
-  },
-  "devDependencies": {
+    "yauzl": "3.4.0",
     "yazl": "3.3.1"
-  }
+  },
+  "devDependencies": {}
 }

@@ -5,14 +5,16 @@ SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 
 ## 현재 구현
 
 - `profile/`: SPS Extension Profile v1 conformance 검사
-- `registry/`: release record 서명·무결성·Local Registry 검사
+- `registry/`: release record·Registry index 서명, archive 검사·안전한 압축 해제, local source 검사
+- `authoring/`: 실행 없는 source 검사, `.spsplugin` package 생성, Ed25519 key 생성, release record·Registry index 서명
+- `sps-plugin` CLI: `init`, `validate`, `pack`, `keygen`, `release`, `registry-index`
+- SPS Desktop: Owner Vault의 trusted Registry source 관리, remote signature 검증, disabled stage, 명시적 enable
 
 ## 아직 구현하지 않은 범위
 
-- `.spsplugin` archive 생성과 안전한 압축 해제
-- GitHub·official Registry 네트워크 source adapter
-- Owner Host 설치·활성화·rollback 연동
-- Desktop Registry 관리·설치 검토 UI
+- Test Kit의 mock project·Agent·Room lifecycle harness
+- Plugin Studio의 manifest form, code diff, local test UI
+- Registry update·rollback UI와 공식 example Registry 운영
 - Marketplace catalog, entitlement, 결제와 정산
 
 ## 검사
@@ -21,5 +23,17 @@ SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 
 cd .\sps-server\plugin-platform
 npm test
 ```
+
+## 제작자 빠른 시작
+
+```powershell
+cd .\sps-server\plugin-platform
+node .\cli\sps-plugin.mjs init .\my-plugin --id com.example.my-plugin --package @example/my-plugin
+node .\cli\sps-plugin.mjs validate .\my-plugin
+node .\cli\sps-plugin.mjs pack .\my-plugin --out .\release\my-plugin.spsplugin
+node .\cli\sps-plugin.mjs keygen --private .\keys\publisher-private.pem --public .\keys\publisher-public.pem
+```
+
+개인 키는 source tree와 Registry에 올리지 않는다. `release`와 `registry-index`는 immutable artifact URL, publisher key, Registry root key를 각각 명시적으로 요구한다.
 
 제품·보안·배포 결정은 [Plugin Registry 및 Marketplace 계약](../120-sps-plugin-registry-and-marketplace-contract-ko.md)을 따른다.

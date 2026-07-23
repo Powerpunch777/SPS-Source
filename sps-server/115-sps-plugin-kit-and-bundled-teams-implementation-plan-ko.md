@@ -153,9 +153,28 @@ sps plugin validate
 sps plugin test
 sps plugin package
 sps plugin inspect
+sps plugin keygen
+sps plugin release
+sps plugin registry-index
 ```
 
 `create-sps-plugin`은 `sps plugin create`의 독립 실행 wrapper로 제공할 수 있다.
+
+### 2026-07-23 구현 상태
+
+`@sps/plugin-platform`은 현재 아래의 실행 없는 authoring path를 제공한다.
+
+```text
+sps-plugin init
+-> static source validate
+-> deterministic file collection and .spsplugin pack
+-> archive inspect
+-> Ed25519 publisher key generation
+-> signed release record
+-> signed Registry index
+```
+
+package·release·Registry index 생성물은 현재 Local Registry verifier가 다시 검증하는 E2E test로 고정되어 있다. 아직 Plugin Studio, mock lifecycle Test Kit, `dev` runner는 제공하지 않는다.
 
 ### Test Kit
 

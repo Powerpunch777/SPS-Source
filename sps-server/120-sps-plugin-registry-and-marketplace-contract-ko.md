@@ -183,6 +183,12 @@ The Desktop Owner stores Registry source definitions in the Owner Vault, not in 
 
 Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` opens the source list, local/remote source form, verified release catalog, stage action, and explicit enable confirmation. Marketplace discovery, reviews, payment, entitlement, and automatic updates remain out of scope.
 
+### 5.3 Authoring Kit release flow (implemented)
+
+`sps-plugin` is the authoring-side complement to the Desktop Registry flow. It produces no trust bypass: `init` creates a minimal Core-compatible manifest and worker entry, `validate` performs static checks, `pack` refuses symlinks and likely secret files, `keygen` creates Ed25519 keys, `release` signs the immutable artifact tuple, and `registry-index` signs the catalog root.
+
+The authoring Kit rejects URL-like text in relative Registry paths, URL credentials, fragments, symlinked package entries, and package files likely to contain credentials. A resulting local Registry is verified again by the same Local Registry verifier used by SPS Desktop.
+
 ## 6. 보안 불변 조건
 
 1. Registry metadata, Marketplace page, 리뷰, 배지는 어떤 Plugin capability도 부여하지 않는다.

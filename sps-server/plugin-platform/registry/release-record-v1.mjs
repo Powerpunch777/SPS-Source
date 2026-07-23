@@ -47,8 +47,11 @@ export function isSafeRegistryRelativePath(value) {
     && !value.startsWith("/")
     && !value.startsWith("\\")
     && !value.includes("\\")
-    && !value.split("/").includes("..")
-    && !value.includes("\u0000");
+    && !value.includes(":")
+    && !value.includes("?")
+    && !value.includes("#")
+    && !value.includes("\u0000")
+    && value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
 function isArtifactLocator(value) {

@@ -5,6 +5,7 @@ import {
   canonicalizeJson,
   canonicalizeRegistryIndex,
   canonicalizeReleaseRecord,
+  isSafeRegistryRelativePath,
   validateRegistryIndex,
   validateReleaseRecord,
   verifyRegistryIndexSignature,
@@ -87,6 +88,12 @@ test("rejects unsafe artifact and release paths", () => {
 
   assert.equal(releaseResult.valid, false);
   assert.equal(indexResult.valid, false);
+});
+
+test("does not confuse URL-like text with a Registry relative path", () => {
+  assert.equal(isSafeRegistryRelativePath("https://user:password@example.test/plugin.spsplugin#mutable"), false);
+  assert.equal(isSafeRegistryRelativePath("releases//plugin.json"), false);
+  assert.equal(isSafeRegistryRelativePath("releases/./plugin.json"), false);
 });
 
 test("canonical JSON is independent of object key order", () => {
