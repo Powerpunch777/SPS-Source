@@ -50,6 +50,18 @@ Registry v1은 같은 release record 형식을 세 source에서 읽는다.
 
 `git`과 `official` source는 Owner가 미리 신뢰한 Registry root public key로 `registry.json` 자체를 검증해야 한다. release publisher key는 개별 package release를 검증하는 키이며 Registry index를 신뢰하는 근거가 아니다. `local` source는 사용자가 선택한 폴더를 명시적으로 신뢰하는 개발·오프라인 경로로만 unsigned index를 허용하며, UI에는 그 상태를 표시한다.
 
+Owner Host는 source 설정을 아래처럼 저장한다. `local`은 로컬 폴더를 선택한 Owner의 명시적 신뢰이고, `git`·`official`은 URL, root key ID, root public key가 함께 고정되어야 한다. Remote source가 unsigned index를 받아들이는 예외는 없다.
+
+```json
+{
+  "id": "sps.official",
+  "kind": "official",
+  "displayName": "SPS Official Registry",
+  "indexUrl": "https://registry.sps.example/registry.json",
+  "trustedRoot": { "keyId": "ed25519:sps-registry-root-1", "publicKey": "..." }
+}
+```
+
 ## 4. Registry index와 release record
 
 ### 4.1 Registry index

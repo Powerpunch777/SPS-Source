@@ -9,6 +9,7 @@
 - Ed25519 release signature 검증
 - trusted source root key를 통한 Registry index signature 검증
 - `.spsplugin` archive의 경로, 링크, 중복, 엔트리 수, 크기, 최상위 manifest 검사
+- local·git·official source의 trust policy와 root key pin 검사
 - `public`, `unlisted`, `private` visibility 제한
 - path traversal을 막는 상대 artifact·release path 검사
 - Local Registry에서 release·artifact의 실제 크기와 SHA-256 검사
@@ -26,4 +27,4 @@
 node --test .\sps-server\plugin-platform\registry\release-record-v1.test.mjs .\sps-server\plugin-platform\registry\local-registry-v1.test.mjs
 ```
 
-다음 단계에서 Owner Host는 이 archive inspector를 사용해 설치 전 미리보기를 만들고, 안전한 extractor가 같은 제한을 stream-time에 다시 확인한 뒤 disabled install만 수행한다.
+다음 단계에서 Owner Host는 이 archive inspector를 사용해 설치 전 미리보기를 만들고, 안전한 extractor가 signed release의 SHA-256·크기를 추출 전후와 stream-time에 다시 확인한 뒤 disabled install만 수행한다.

@@ -13,15 +13,16 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 }
 
-function isSafeArchiveEntryName(name) {
+export function isSafePluginArchiveEntryName(name) {
   if (typeof name !== "string" || name.length === 0 || name.length > 512) return false;
   const normalized = name.endsWith("/") ? name.slice(0, -1) : name;
+  const segments = normalized.split("/");
   return normalized.length > 0
     && !normalized.startsWith("/")
     && !normalized.startsWith("\\")
     && !normalized.includes("\\")
     && !normalized.includes("\u0000")
-    && !normalized.split("/").includes("..");
+    && segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
 function isSymbolicLink(entry) {
@@ -116,7 +117,7 @@ export async function inspectPluginArchive(archivePath) {
       const entryName = entry.fileName;
       const normalizedName = entryName.endsWith("/") ? entryName.slice(0, -1) : entryName;
       const collisionKey = normalizedName.toLowerCase();
-      if (!isSafeArchiveEntryName(entryName)) errors.push(`Unsafe archive entry path: ${entryName}.`);
+      if (!isSafePluginArchiveEntryName(entryName)) errors.push(`Unsafe archive entry path: ${entryName}.`);
       if (seenNames.has(collisionKey)) errors.push(`Duplicate or case-colliding archive entry: ${entryName}.`);
       seenNames.add(collisionKey);
       if (isSymbolicLink(entry)) errors.push(`Symbolic links are not allowed: ${entryName}.`);

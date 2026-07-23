@@ -6,6 +6,7 @@ import test from "node:test";
 import yazl from "yazl";
 import {
   inspectPluginArchive,
+  isSafePluginArchiveEntryName,
   MAX_PLUGIN_ARCHIVE_ENTRIES,
 } from "./archive-inspector-v1.mjs";
 
@@ -55,6 +56,13 @@ test("rejects case-colliding archive paths", async (t) => {
 
   assert.equal(report.valid, false);
   assert.ok(report.errors.some((message) => message.includes("Duplicate or case-colliding archive entry")));
+});
+
+test("rejects path spellings that would normalize to another entry", () => {
+  assert.equal(isSafePluginArchiveEntryName("dist/./index.js"), false);
+  assert.equal(isSafePluginArchiveEntryName("dist//index.js"), false);
+  assert.equal(isSafePluginArchiveEntryName("../index.js"), false);
+  assert.equal(isSafePluginArchiveEntryName("dist/index.js"), true);
 });
 
 test("rejects a package with no root package manifest", async (t) => {

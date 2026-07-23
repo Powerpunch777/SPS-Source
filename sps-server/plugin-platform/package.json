@@ -5,7 +5,7 @@
   "type": "module",
   "description": "SPS Extension Profile and Plugin Registry conformance contracts.",
   "scripts": {
-    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs",
+    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs",
     "check": "npm run test"
   },
   "engines": {
