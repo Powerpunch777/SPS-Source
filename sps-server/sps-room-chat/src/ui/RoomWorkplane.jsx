@@ -47,53 +47,64 @@ function taskTypesForProfile(profile) {
 }
 
 const STYLES = `
-  .rw-shell { color: var(--foreground, #172033); font: 14px/1.45 system-ui, sans-serif; }
-  .rw-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr) 280px; height: min(760px, calc(100dvh - 150px)); min-height: 540px; overflow: hidden; border: 1px solid var(--border, #d8dee9); background: var(--background, #fff); }
-  .rw-rooms, .rw-context { min-width: 0; min-height: 0; background: var(--muted, #f7f8fa); overscroll-behavior: contain; }
+  .rw-shell { color: var(--foreground, #172033); font: 14px/1.5 system-ui, sans-serif; }
+  .rw-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); height: min(780px, calc(100dvh - 142px)); min-height: 560px; overflow: hidden; border: 1px solid var(--border, #d8dee9); border-radius: 10px; background: var(--background, #fff); box-shadow: 0 12px 34px rgba(15, 23, 42, .06); }
+  .rw-layout.context-open { grid-template-columns: 236px minmax(0, 1fr) 348px; }
+  .rw-rooms, .rw-context { min-width: 0; min-height: 0; background: #fafbfc; overscroll-behavior: contain; }
   .rw-rooms { border-right: 1px solid var(--border, #d8dee9); overflow: auto; }
-  .rw-context { border-left: 1px solid var(--border, #d8dee9); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+  .rw-context { position: absolute; inset: 0 0 0 auto; z-index: 8; display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(348px, calc(100% - 236px)); overflow: hidden; border-left: 1px solid var(--border, #d8dee9); background: var(--background, #fff); box-shadow: -18px 0 32px rgba(15, 23, 42, .11); transform: translateX(calc(100% + 16px)); transition: transform 180ms ease, box-shadow 180ms ease; }
+  .rw-layout.context-open .rw-context { position: relative; grid-column: 3; grid-row: 1; width: auto; transform: translateX(0); box-shadow: none; }
   .rw-main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--background, #fff); }
-  .rw-header { min-height: 58px; padding: 12px 16px; border-bottom: 1px solid var(--border, #d8dee9); display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-  .rw-title { font-size: 15px; font-weight: 700; margin: 0; }
+  .rw-header { min-height: 60px; padding: 10px clamp(16px, 2vw, 24px); border-bottom: 1px solid var(--border, #e3e8f0); display: flex; justify-content: space-between; gap: 12px; align-items: center; background: rgba(255, 255, 255, .94); }
+  .rw-header-copy { min-width: 0; }
+  .rw-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
+  .rw-title { overflow: hidden; font-size: 15px; font-weight: 720; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
   .rw-subtitle, .rw-muted { color: var(--muted-foreground, #667085); font-size: 12px; margin: 2px 0 0; }
+  .rw-context-trigger, .rw-context-shortcut { appearance: none; border: 1px solid var(--border, #d8dee9); border-radius: 6px; padding: 6px 9px; background: var(--background, #fff); color: var(--muted-foreground, #667085); cursor: pointer; font: 650 12px/1.25 system-ui, sans-serif; white-space: nowrap; }
+  .rw-context-trigger:hover, .rw-context-shortcut:hover, .rw-context-trigger[aria-expanded="true"] { border-color: #a9b9d0; background: #f6f8fb; color: var(--foreground, #172033); }
+  .rw-context-trigger { color: var(--foreground, #172033); }
   .rw-room-list { padding: 8px; }
   .rw-room-project-link { display: block; margin: 2px 2px 10px; padding: 8px; color: inherit; text-decoration: none; border-bottom: 1px solid var(--border, #d8dee9); font-weight: 700; }
   .rw-room-project-link:hover { color: var(--primary, #2563eb); }
   .rw-room-project-link span { display: block; margin-top: 2px; color: var(--muted-foreground, #667085); font-size: 12px; font-weight: 400; }
-  .rw-room { display: block; color: inherit; text-decoration: none; border-radius: 6px; padding: 10px; margin-bottom: 3px; }
-  .rw-room:hover, .rw-room.active { background: var(--accent, #eaf2ff); }
+  .rw-room { display: block; color: inherit; text-decoration: none; border: 1px solid transparent; border-radius: 7px; padding: 10px; margin-bottom: 3px; }
+  .rw-room:hover { background: #f1f5f9; }
+  .rw-room.active { border-color: #d7e0ee; background: #edf3fb; box-shadow: 0 1px 2px rgba(15, 23, 42, .03); }
   .rw-room strong, .rw-room span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rw-room span { color: var(--muted-foreground, #667085); font-size: 12px; margin-top: 2px; }
   .rw-room small { display: block; overflow: hidden; color: #9a6700; font-size: 11px; font-weight: 600; margin-top: 3px; text-overflow: ellipsis; white-space: nowrap; }
-  .rw-thread { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px clamp(16px, 3vw, 36px); }
-  .rw-message { max-width: 860px; margin: 0 auto 18px; }
-  .rw-message-label { color: var(--muted-foreground, #667085); font-size: 12px; font-weight: 650; margin-bottom: 5px; display: flex; align-items: center; gap: 7px; }
+  .rw-thread { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 26px clamp(18px, 4vw, 52px) 18px; scrollbar-gutter: stable; }
+  .rw-message { max-width: 860px; margin: 0 auto 24px; }
+  .rw-message.user { max-width: min(680px, 100%); margin-right: max(0px, calc((100% - 860px) / 2)); margin-left: auto; padding: 13px 15px; border: 1px solid #e1e6ed; border-radius: 14px; background: #f7f8fa; box-shadow: 0 1px 2px rgba(15, 23, 42, .025); }
+  .rw-message-label { color: var(--muted-foreground, #667085); font-size: 12px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 7px; }
+  .rw-message.user .rw-message-label { color: #475569; }
   .rw-message-body { overflow-wrap: anywhere; }
   .rw-message-body img { display: block; width: auto; max-width: min(100%, 760px); max-height: 520px; margin: 10px 0 4px; object-fit: contain; image-rendering: pixelated; border: 1px solid var(--border, #d8dee9); border-radius: 6px; background: repeating-conic-gradient(#eef2f7 0 25%, #fff 0 50%) 50% / 16px 16px; cursor: zoom-in; }
   .rw-message-actions { display: flex; gap: 6px; margin-top: 7px; }
   .rw-text-button { border: 0; background: transparent; color: #2563eb; padding: 0; cursor: pointer; font: inherit; font-size: 12px; }
   .rw-text-button:disabled { color: var(--muted-foreground, #667085); cursor: default; }
-  .rw-working { max-width: 860px; margin: 0 auto 18px; border: 1px solid #c9d8f7; border-radius: 6px; background: #f7faff; }
-  .rw-working summary { cursor: pointer; list-style: none; padding: 10px 12px; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .rw-working { max-width: 860px; margin: 0 auto 22px; border: 0; border-radius: 0; background: transparent; }
+  .rw-working summary { cursor: pointer; list-style: none; padding: 9px 11px; display: flex; align-items: center; gap: 8px; border: 1px solid #dbe5f4; border-radius: 9px; background: #f8fbff; color: #40516b; font-size: 12px; }
   .rw-working summary::-webkit-details-marker { display: none; }
   .rw-working summary strong { flex: 1; }
-  .rw-working.failed { border-color: #f1c1c1; background: #fff8f8; }
-  .rw-working-body { border-top: 1px solid #dbe6fa; padding: 2px 12px 10px; }
+  .rw-working.failed summary { border-color: #f1c1c1; background: #fff8f8; }
+  .rw-working-body { padding: 5px 11px 0; }
   .rw-step { margin-top: 8px; font-size: 12px; color: #40516b; }
   .rw-step summary { padding: 0; display: block; color: inherit; cursor: pointer; }
   .rw-step pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 5px 0 0; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #40516b; }
-  .rw-composer { border-top: 1px solid var(--border, #d8dee9); padding: 12px clamp(14px, 2vw, 24px); background: var(--background, #fff); }
+  .rw-composer { border-top: 1px solid var(--border, #e3e8f0); padding: 14px clamp(16px, 3vw, 36px) 18px; background: #fff; }
+  .rw-composer-surface { width: min(900px, 100%); margin: 0 auto; padding: 11px; border: 1px solid #dce3ec; border-radius: 14px; background: #fff; box-shadow: 0 6px 20px rgba(15, 23, 42, .06); }
   .rw-workspace-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding: 9px 10px; border: 1px solid #e2c46b; border-radius: 6px; background: #fffbeb; color: #634b00; font-size: 12px; }
   .rw-workspace-notice strong, .rw-workspace-notice span { display: block; }
   .rw-workspace-notice span { margin-top: 2px; }
   .rw-retry-draft { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 9px; padding: 7px 9px; border-left: 3px solid #2563eb; background: #f4f8ff; color: #40516b; font-size: 12px; }
-  .rw-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
+  .rw-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 9px; }
   .rw-composer-status { margin-right: auto; color: var(--muted-foreground, #667085); font-size: 11px; white-space: nowrap; }
   .rw-composer-buttons { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
   .rw-composer-tools { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
   .rw-composer-tools .rw-button { flex: 0 0 auto; white-space: nowrap; }
-  .rw-button { appearance: none; border: 1px solid var(--border, #cfd7e3); background: var(--background, #fff); color: inherit; border-radius: 5px; padding: 7px 10px; cursor: pointer; font: inherit; }
-  .rw-button.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+  .rw-button { appearance: none; border: 1px solid var(--border, #cfd7e3); background: var(--background, #fff); color: inherit; border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
+  .rw-button.primary { background: #172033; border-color: #172033; color: #fff; }
   .rw-button:disabled { cursor: default; opacity: .55; }
   .rw-file-input { display: none; }
   .rw-attachment-queue, .rw-attachment-list { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -104,16 +115,19 @@ const STYLES = `
   .rw-attachment-chip button { border: 0; padding: 0 1px; color: var(--muted-foreground, #667085); background: transparent; cursor: pointer; font: inherit; font-size: 15px; line-height: 1; }
   .rw-attachment-chip img { width: 24px; height: 24px; object-fit: cover; border-radius: 3px; background: #fff; }
   .rw-message-attachments { margin-top: 8px; }
-  .rw-context-header { padding: 12px; border-bottom: 1px solid var(--border, #d8dee9); background: var(--background, #fff); }
+  .rw-context-header { padding: 13px 14px 10px; border-bottom: 1px solid var(--border, #e3e8f0); background: var(--background, #fff); }
   .rw-context-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .rw-context-heading-actions { display: flex; align-items: center; gap: 7px; }
+  .rw-context-close { appearance: none; border: 0; padding: 3px 5px; background: transparent; color: var(--muted-foreground, #667085); cursor: pointer; font: 700 15px/1 system-ui, sans-serif; }
+  .rw-context-close:hover { color: var(--foreground, #172033); }
   .rw-context-heading strong { font-size: 13px; }
   .rw-context-heading span { color: var(--muted-foreground, #667085); font-size: 11px; }
   .rw-context-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-  .rw-context-tab { min-width: 0; border: 1px solid transparent; border-radius: 5px; padding: 6px 4px; background: transparent; color: var(--muted-foreground, #667085); cursor: pointer; font: 600 11px/1.2 system-ui, sans-serif; white-space: nowrap; }
+  .rw-context-tab { min-width: 0; border: 1px solid transparent; border-radius: 5px; padding: 6px 4px; background: transparent; color: var(--muted-foreground, #667085); cursor: pointer; font: 650 11px/1.2 system-ui, sans-serif; white-space: nowrap; }
   .rw-context-tab:hover { background: var(--muted, #f7f8fa); color: var(--foreground, #172033); }
   .rw-context-tab.active { border-color: var(--border, #cfd7e3); background: var(--accent, #eaf2ff); color: var(--foreground, #172033); }
   .rw-context-body { min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
-  .rw-context-panel { min-height: 100%; padding: 14px; }
+  .rw-context-panel { min-height: 100%; padding: 16px 14px; }
   .rw-context-files { display: grid; gap: 6px; }
   .rw-context-files .rw-attachment-chip { width: 100%; }
   .rw-context-task-list { display: grid; gap: 2px; }
@@ -265,6 +279,17 @@ const STYLES = `
   @media (max-width: 720px) { .wp-workspace, .wp-agent, .wp-task-route, .wp-new-workspace, .wp-new-task-type { grid-template-columns: 1fr; } }
   @media (max-width: 1020px) { .rw-layout { grid-template-columns: 210px minmax(0, 1fr); } .rw-context { display: none; } .rw-actions { align-items: flex-end; flex-wrap: wrap; } .rw-composer-status { white-space: normal; } }
   @media (max-width: 720px) { .rw-layout { display: block; height: auto; min-height: 0; overflow: visible; } .rw-rooms { border-right: 0; border-bottom: 1px solid var(--border, #d8dee9); max-height: 210px; } .rw-main { min-height: 620px; } .rw-project { padding: 16px; } .rw-project-header { display: block; } .rw-project-actions { margin-top: 12px; } .rw-project-summary { grid-template-columns: 1fr; } }
+  @media (max-width: 1020px) {
+    .rw-layout.context-open { grid-template-columns: 210px minmax(0, 1fr); }
+    .rw-layout.context-open .rw-context { display: grid; position: absolute; inset: 0 0 0 auto; grid-column: auto; grid-row: auto; width: min(348px, calc(100% - 210px)); box-shadow: -18px 0 32px rgba(15, 23, 42, .14); }
+    .rw-context-shortcut { display: none; }
+  }
+  @media (max-width: 720px) {
+    .rw-layout.context-open { display: block; height: auto; min-height: 620px; overflow: hidden; }
+    .rw-layout.context-open .rw-context { position: absolute; inset: 0; width: auto; border-left: 0; box-shadow: none; }
+    .rw-header-actions { gap: 5px; }
+    .rw-header .rw-status-badge { display: none; }
+  }
 `;
 
 function Style() {
@@ -411,8 +436,7 @@ function fileNodes(workspaces) {
   })));
 }
 
-function RoomContext({ data, navigation }) {
-  const [activeTab, setActiveTab] = useState("work");
+function RoomContext({ data, navigation, activeTab, setActiveTab, onClose }) {
   const state = data?.state || {};
   const workState = data?.workState || {};
   const activity = state.runtime?.activity || {};
@@ -430,7 +454,7 @@ function RoomContext({ data, navigation }) {
   ];
   return <aside className="rw-context">
     <header className="rw-context-header">
-      <div className="rw-context-heading"><strong>Room 컨텍스트</strong><span>{activity.status === "working" ? "작업 중" : "저장됨"}</span></div>
+      <div className="rw-context-heading"><strong>Room 컨텍스트</strong><div className="rw-context-heading-actions"><span>{activity.status === "working" ? "작업 중" : "저장됨"}</span><button type="button" className="rw-context-close" onClick={onClose} aria-label="작업 패널 닫기">×</button></div></div>
       <div className="rw-context-tabs" role="tablist" aria-label="Room context">
         {tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={`rw-context-tab ${activeTab === tab.id ? "active" : ""}`} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}
       </div>
@@ -502,6 +526,8 @@ function RoomConversation({ context, roomId, workplane }) {
   const [queuedAttachments, setQueuedAttachments] = useState([]);
   const [retrySource, setRetrySource] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextTab, setContextTab] = useState("work");
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState("");
   const threadRef = useRef(null);
@@ -597,6 +623,14 @@ function RoomConversation({ context, roomId, workplane }) {
     : workspaceSetup?.state === "unavailable"
       ? "The selected Project Workspace is not available on this computer. Update its local path before starting an Agent turn."
       : "";
+  const contextTaskCount = (data?.tasks || []).filter((task) => task.status !== "cancelled").length;
+  const contextChangedCount = data?.changedFileCount || fileNodes(data?.workspaces).length;
+  const contextAttachmentCount = (data?.attachments || []).length;
+
+  const openContext = (tab = "work") => {
+    setContextTab(tab);
+    setContextOpen(true);
+  };
 
   const renderRoomText = (comment) => rewriteWorkspaceMarkdownLinks(roomText(comment), {
     linkBaseHref: roomPageHref,
@@ -642,6 +676,8 @@ function RoomConversation({ context, roomId, workplane }) {
     setQueuedAttachments([]);
     setRetrySource(null);
     setFilePreview(null);
+    setContextOpen(false);
+    setContextTab("work");
   }, [roomId]);
 
   useEffect(() => {
@@ -657,12 +693,18 @@ function RoomConversation({ context, roomId, workplane }) {
 
   if (loading && !data) return <div className="rw-empty">Loading Room...</div>;
   if (error && !data) return <div className="rw-error">{error.message}</div>;
-  return <div className="rw-layout">
+  return <div className={`rw-layout ${contextOpen ? "context-open" : ""}`}>
     {workplane ? <RoomList navigation={navigation} workplane={workplane} projectId={currentProjectId} roomId={roomId} /> : <div className="rw-rooms" />}
     <main className="rw-main">
       <header className="rw-header">
-        <div><h1 className="rw-title">{roomName}</h1><p className="rw-subtitle">지속 대화 Room</p></div>
-        <StatusBadge label={working ? "작업 중" : data?.runtime?.enabled ? "준비됨" : "런타임 비활성"} status={working ? "warning" : data?.runtime?.enabled ? "ok" : "pending"} />
+        <div className="rw-header-copy"><h1 className="rw-title">{roomName}</h1><p className="rw-subtitle">지속 대화 Room</p></div>
+        <div className="rw-header-actions">
+          <StatusBadge label={working ? "작업 중" : data?.runtime?.enabled ? "준비됨" : "런타임 비활성"} status={working ? "warning" : data?.runtime?.enabled ? "ok" : "pending"} />
+          <button type="button" className="rw-context-shortcut" onClick={() => openContext("tasks")}>Tasks{contextTaskCount ? ` ${contextTaskCount}` : ""}</button>
+          <button type="button" className="rw-context-shortcut" onClick={() => openContext("changes")}>변경{contextChangedCount ? ` ${contextChangedCount}` : ""}</button>
+          <button type="button" className="rw-context-shortcut" onClick={() => openContext("files")}>파일{contextAttachmentCount ? ` ${contextAttachmentCount}` : ""}</button>
+          <button type="button" className="rw-context-trigger" onClick={() => contextOpen ? setContextOpen(false) : openContext(contextTab)} aria-expanded={contextOpen}>패널</button>
+        </div>
       </header>
       <section className="rw-thread" ref={threadRef} onScroll={trackThreadScroll}>
         {messages.length ? messages.map((comment) => {
@@ -672,7 +714,7 @@ function RoomConversation({ context, roomId, workplane }) {
           const isUserMessage = roomLabel(comment) === "User";
           const isSuperseded = supersededMessageIds.has(comment.id);
           return <div key={comment.id || `${comment.createdAt}-${comment.body}`}>
-            <article className="rw-message">
+            <article className={`rw-message ${isUserMessage ? "user" : "agent"}`}>
               <div className="rw-message-label"><span>{roomLabel(comment)}{isSuperseded ? " (revised)" : ""}</span></div>
               <div onClick={openRoomFile}><MarkdownBlock className="rw-message-body" content={renderRoomText(comment)} enableWikiLinks /></div>
               <AttachmentList attachments={attachments} className="rw-message-attachments" />
@@ -683,7 +725,7 @@ function RoomConversation({ context, roomId, workplane }) {
         }) : <div className="rw-empty rw-room-empty"><strong>지속 대화를 시작하세요</strong><p>이 Room은 Agent의 맥락, 결정, 체크포인트를 여러 작업에 걸쳐 유지합니다.</p></div>}
         {activity && !activity.sourceCommentId ? <RoomActivity activity={activity} /> : null}
       </section>
-      <footer className="rw-composer">
+      <footer className="rw-composer"><div className="rw-composer-surface">
         {actionError ? <div className="rw-error">{actionError}</div> : null}
         {workspaceNotice ? <div className="rw-workspace-notice"><div><strong>프로젝트 작업 폴더가 필요합니다</strong><span>{workspaceNotice}</span></div>{workspaceSetupHref ? <a className="rw-button" {...navigation.linkProps(workspaceSetupHref)}>작업공간 설정 열기</a> : null}</div> : null}
         {retrySource ? <div className="rw-retry-draft"><span>이전 메시지를 수정하고 있습니다. 보내면 원문은 Room 이력에 남기고 수정본으로 재시도합니다.</span><button type="button" className="rw-text-button" onClick={() => setRetrySource(null)} disabled={submitting}>취소</button></div> : null}
@@ -695,9 +737,10 @@ function RoomConversation({ context, roomId, workplane }) {
           <span className="rw-muted">첨부 파일은 프로젝트 저장소가 아니라 이 Room에 보관됩니다.</span>
         </div>
         <div className="rw-actions"><span className="rw-composer-status">대화 이력은 자동 저장됩니다</span><div className="rw-composer-buttons"><button type="button" className="rw-button" onClick={compact} disabled={submitting || working || !workspaceReady || !data?.runtime?.enabled}>압축 및 체크포인트</button><button type="button" className="rw-button primary" onClick={send} disabled={submitting || working || !workspaceReady || (!message.trim() && !queuedAttachments.length && !retrySource?.attachmentIds?.length) || !data?.runtime?.enabled}>{retrySource ? "재시도" : "보내기"}</button></div></div>
+      </div>
       </footer>
     </main>
-    <RoomContext data={data} navigation={navigation} />
+    {contextOpen ? <RoomContext data={data} navigation={navigation} activeTab={contextTab} setActiveTab={setContextTab} onClose={() => setContextOpen(false)} /> : null}
     <RoomFilePreview preview={filePreview} onClose={() => setFilePreview(null)} />
   </div>;
 }

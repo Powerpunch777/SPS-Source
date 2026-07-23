@@ -1,6 +1,6 @@
 {
   "name": "sps-room-chat",
-  "version": "0.3.70",
+  "version": "0.3.71",
   "private": true,
   "type": "module",
   "description": "SPS Team Workplane with long-lived Team Rooms and bounded Task Rooms.",
