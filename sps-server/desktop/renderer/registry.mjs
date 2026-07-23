@@ -67,15 +67,19 @@ function renderReleases(report) {
     const capabilities = Array.isArray(release.capabilities)
       ? release.capabilities.length === 0 ? "No declared capabilities" : release.capabilities.join(", ")
       : "Full capability detail appears in the static review step.";
+    const publisherName = release.publisherProfile?.displayName || release.publisherId;
+    const publisherWebsite = release.publisherProfile?.websiteUrl
+      ? `<a class="publisher-link" href="${escapeHtml(release.publisherProfile.websiteUrl)}" target="_blank" rel="noreferrer">Publisher site</a>`
+      : "";
     return `
     <article class="release-card">
       <div class="release-copy">
         <h2>${escapeHtml(releaseLabel(release))}</h2>
         <p class="release-identity"><code>${escapeHtml(release.pluginId)}</code> / v${escapeHtml(release.version)}</p>
         ${summary}
-        <p class="release-publisher">Published by ${escapeHtml(release.publisherId)} / ${escapeHtml(release.visibility)}</p>
+        <p class="release-publisher">Published by ${escapeHtml(publisherName)} <code>${escapeHtml(release.publisherId)}</code> / ${escapeHtml(release.visibility)}</p>
         <p class="release-capabilities">Capabilities: ${escapeHtml(capabilities)}</p>
-        ${documentation}
+        <span class="release-links">${documentation}${publisherWebsite}</span>
       </div>
       <div class="release-meta"><span>${Math.ceil(release.artifact.sizeBytes / 1024)} KB</span><code>${escapeHtml(release.artifact.sha256.slice(0, 12))}...</code><span class="release-badge">${escapeHtml(report.source.kind === "official" ? "Official" : "Verified release")}</span></div>
       <button class="primary stage-release" type="button" data-plugin-id="${escapeHtml(release.pluginId)}" data-version="${escapeHtml(release.version)}">Stage for review</button>

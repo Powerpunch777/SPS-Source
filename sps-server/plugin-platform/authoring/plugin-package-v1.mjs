@@ -8,6 +8,7 @@ import {
   canonicalizeReleaseRecord,
   isSafeRegistryRelativePath,
   validateRegistryIndex,
+  validateRegistryPublisherProfile,
   validateReleaseRecord,
   verifyRegistryIndexSignature,
   verifyReleaseRecordSignature,
@@ -285,6 +286,7 @@ export function createSignedRegistryIndex({
   registryId,
   displayName,
   publisherKeys,
+  publisherProfiles = [],
   releaseRecords,
   registryRootKeyId,
   registryRootPrivateKey,
@@ -294,7 +296,7 @@ export function createSignedRegistryIndex({
   if (typeof displayName !== "string" || displayName.trim().length === 0) throw new Error("Registry display name is required.");
   if (typeof registryRootKeyId !== "string" || !registryRootKeyId.startsWith("ed25519:")) throw new Error("Registry root key id must be Ed25519.");
   if (typeof registryRootPrivateKey !== "string" || registryRootPrivateKey.length === 0) throw new Error("Registry root private key is required.");
-  if (!Array.isArray(publisherKeys) || !Array.isArray(releaseRecords)) throw new Error("Publisher keys and release records are required.");
+  if (!Array.isArray(publisherKeys) || !Array.isArray(publisherProfiles) || !Array.isArray(releaseRecords)) throw new Error("Publisher keys, profiles, and release records are required.");
   const publisherKeyMap = new Map(publisherKeys.map((key) => [key.keyId, key.publicKey]));
   const grouped = new Map();
   for (const release of releaseRecords) {
@@ -326,6 +328,7 @@ export function createSignedRegistryIndex({
     displayName,
     updatedAt,
     publisherKeys: [...publisherKeys].sort((left, right) => left.keyId.localeCompare(right.keyId)),
+    ...(publisherProfiles.length === 0 ? {} : { publishers: [...publisherProfiles].sort((left, right) => left.id.localeCompare(right.id)) }),
     plugins,
     signature: { keyId: registryRootKeyId, algorithm: "ed25519", value: "" },
   };
@@ -357,6 +360,7 @@ async function loadExistingLocalRegistry(registryRoot) {
   const validation = validateRegistryIndex(index);
   if (!validation.valid) throw new Error(validation.errors.join("\n"));
   const publisherKeys = new Map(index.publisherKeys.map((entry) => [entry.keyId, entry]));
+  const publisherProfiles = new Map((index.publishers ?? []).map((entry) => [entry.id, entry]));
   const releaseRecords = [];
   for (const plugin of index.plugins) {
     for (const releasePath of plugin.releases) {
@@ -365,7 +369,7 @@ async function loadExistingLocalRegistry(registryRoot) {
       releaseRecords.push({ releasePath, record });
     }
   }
-  return { index, publisherKeys, releaseRecords };
+  return { index, publisherKeys, publisherProfiles, releaseRecords };
 }
 
 async function replaceJson(filePath, value) {
@@ -396,6 +400,7 @@ export async function publishPluginToLocalRegistry({
   compatibilitySps = ">=0.4.0",
   visibility = "public",
   catalog,
+  publisherProfile,
   publishedAt = new Date().toISOString(),
 } = {}) {
   if (!registryDirectory) throw new Error("Local Registry directory is required.");
@@ -406,6 +411,11 @@ export async function publishPluginToLocalRegistry({
   if (typeof registryRootKeyId !== "string" || !registryRootKeyId.startsWith("ed25519:")) throw new Error("Registry root key id must be Ed25519.");
   if (typeof publisherPrivateKey !== "string" || publisherPrivateKey.length === 0) throw new Error("Publisher private key is required.");
   if (typeof registryRootPrivateKey !== "string" || registryRootPrivateKey.length === 0) throw new Error("Registry root private key is required.");
+  const nextPublisherProfile = publisherProfile === undefined ? null : { ...publisherProfile, id: publisherId };
+  if (nextPublisherProfile) {
+    const profileValidation = validateRegistryPublisherProfile(nextPublisherProfile);
+    if (!profileValidation.valid) throw new Error(profileValidation.errors.join("\n"));
+  }
 
   await fs.mkdir(path.resolve(registryDirectory), { recursive: true, mode: 0o700 });
   const registryRoot = await fs.realpath(registryDirectory);
@@ -442,6 +452,10 @@ export async function publishPluginToLocalRegistry({
     throw new Error("Publisher key id is already bound to a different public key.");
   }
   publisherKeys.set(publisherKeyId, { keyId: publisherKeyId, algorithm: "ed25519", publicKey: publisherPublicKey });
+  const publisherProfiles = new Map(existing?.publisherProfiles ?? []);
+  if (nextPublisherProfile) {
+    publisherProfiles.set(publisherId, nextPublisherProfile);
+  }
 
   await packagePluginDirectory({ sourceDirectory, archivePath: artifactPath });
   try {
@@ -461,6 +475,7 @@ export async function publishPluginToLocalRegistry({
       registryId,
       displayName,
       publisherKeys: [...publisherKeys.values()],
+      publisherProfiles: [...publisherProfiles.values()],
       releaseRecords: [...(existing?.releaseRecords ?? []), { releasePath: releaseRelativePath, record: release.record }],
       registryRootKeyId,
       registryRootPrivateKey,

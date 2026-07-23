@@ -128,6 +128,10 @@ test("publishes immutable releases to a verified local Registry without copying 
       summary: "A signed local Registry fixture.",
       documentationUrl: "https://docs.example.test/weather",
     },
+    publisherProfile: {
+      displayName: "Example Studio",
+      websiteUrl: "https://example.test",
+    },
   });
 
   const first = await publish(sourceDirectory, "2026-07-23T00:00:00.000Z");
@@ -141,6 +145,11 @@ test("publishes immutable releases to a verified local Registry without copying 
     displayName: "Weather",
     summary: "A signed local Registry fixture.",
     documentationUrl: "https://docs.example.test/weather",
+  });
+  assert.deepEqual(report.releases[0].publisherProfile, {
+    id: "example-studio",
+    displayName: "Example Studio",
+    websiteUrl: "https://example.test",
   });
   const registryIndex = await readFile(path.join(registryDirectory, "registry.json"), "utf8");
   assert.match(registryIndex, /ed25519:team-root/);

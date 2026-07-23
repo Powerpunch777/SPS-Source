@@ -4,6 +4,16 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import {
+  createPluginTemplate,
+  generatePluginSigningKeyPair,
+  publishPluginToLocalRegistry,
+} from "@sps/plugin-platform/authoring/plugin-package-v1.mjs";
+import {
+  acquireRegistryRelease,
+  inspectRegistrySource,
+} from "../src/registry-source-catalog.mjs";
+import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
 
 const runtimeRoot = path.resolve(process.env.SPS_OWNER_HOST_RUNTIME_ROOT || "");
 const electronBinary = path.resolve(process.env.SPS_OWNER_HOST_ELECTRON_BINARY || "");
@@ -234,6 +244,86 @@ async function assertRegistryLifecycle() {
   }
 }
 
+/**
+ * Exercises the public Plugin Kit contract end to end: an author creates a
+ * source tree, publishes a signed local Registry release, Desktop verifies
+ * and stages it without executing code, then Core explicitly enables it.
+ */
+async function assertRegistryAuthoringDesktopFlow() {
+  const sourceDirectory = path.join(temporaryRoot, "registry-authoring", "source");
+  const registryDirectory = path.join(temporaryRoot, "registry-authoring", "registry");
+  const publisher = generatePluginSigningKeyPair();
+  const registryRoot = generatePluginSigningKeyPair();
+  await createPluginTemplate({
+    directory: sourceDirectory,
+    pluginId: "sps.registry-pilot",
+    packageName: "@sps/registry-pilot",
+    displayName: "SPS Registry Pilot",
+    version: "1.0.0",
+  });
+  await publishPluginToLocalRegistry({
+    sourceDirectory,
+    registryDirectory,
+    registryId: "io.sps.registry-pilot",
+    displayName: "SPS Registry Pilot",
+    publisherId: "sps-smoke",
+    publisherKeyId: "ed25519:sps-smoke-publisher",
+    publisherPrivateKey: publisher.privateKey,
+    registryRootKeyId: "ed25519:sps-smoke-registry",
+    registryRootPrivateKey: registryRoot.privateKey,
+    catalog: {
+      displayName: "SPS Registry Pilot",
+      summary: "End-to-end signed Registry smoke plugin.",
+      documentationUrl: "https://docs.example.test/sps-registry-pilot",
+    },
+    publisherProfile: {
+      displayName: "SPS Smoke Publisher",
+      websiteUrl: "https://example.test",
+    },
+    publishedAt: "2026-07-23T00:00:00.000Z",
+  });
+  const source = {
+    id: "io.sps.registry-pilot",
+    kind: "local",
+    displayName: "SPS Registry Pilot",
+    localPath: registryDirectory,
+  };
+  const report = await inspectRegistrySource(source);
+  const release = report.releases.find((entry) => entry.pluginId === "sps.registry-pilot" && entry.version === "1.0.0");
+  if (
+    !report.valid
+    || !release
+    || release.catalog?.displayName !== "SPS Registry Pilot"
+    || release.publisherProfile?.displayName !== "SPS Smoke Publisher"
+    || release.publisherProfile?.websiteUrl !== "https://example.test"
+    || !release.capabilities?.includes("plugin.state.read")
+  ) {
+    throw new Error("The authored Registry release did not preserve its verified catalogue or publisher metadata.");
+  }
+
+  const acquired = await acquireRegistryRelease({
+    vaultRoot: temporaryRoot,
+    source,
+    pluginId: "sps.registry-pilot",
+    version: "1.0.0",
+  });
+  const staged = await stageSpsPluginArchive({
+    vaultRoot: temporaryRoot,
+    archivePath: acquired.archivePath,
+    expectedArtifact: acquired.artifact,
+    expectedRelease: acquired.release,
+    source: acquired.source,
+    registerStage: async (body) => await ownerHostJson("/api/plugins/registry/stages", body),
+  });
+  if (!staged.staged || staged.stage?.status !== "staged") {
+    throw new Error("The authored Registry release was not kept in the disabled Desktop stage.");
+  }
+  const enabled = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(staged.stage.stageId)}/enable`, {});
+  if (enabled.plugin?.pluginKey !== "sps.registry-pilot" || enabled.plugin?.version !== "1.0.0" || enabled.plugin?.status !== "ready") {
+    throw new Error("The authored Registry release did not explicitly activate through Core.");
+  }
+}
+
 async function removeWithRetry(target, attempts = 30) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -337,8 +427,9 @@ try {
   await assertDefaultMemoryPlugin();
   await assertRoomsPlugin();
   await assertRegistryLifecycle();
+  await assertRegistryAuthoringDesktopFlow();
   passed = true;
-  console.log(`Packaged SPS Owner Host, bundled SPS plugins, and Registry install/update/rollback smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
+  console.log(`Packaged SPS Owner Host, bundled SPS plugins, and Registry author/publish/install/update/rollback smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
 } finally {
   await stopChildTree(child);
   await stopChildTree(memoryChild);

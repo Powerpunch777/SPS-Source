@@ -8,6 +8,7 @@ import {
   canonicalizeReleaseRecord,
   isSafeRegistryRelativePath,
   validateRegistryIndex,
+  validateRegistryPublisherProfile,
   validateReleaseRecord,
   verifyRegistryIndexSignature,
   verifyReleaseRecordSignature,
@@ -108,6 +109,30 @@ test("binds an optional release capability preview to the signed permissions dig
   assert.ok(validateReleaseRecord(mismatched).errors.includes("permissionsDigest does not match release capabilities."));
 });
 
+test("validates Registry-root-signed publisher profiles separately from plugin permissions", () => {
+  const valid = validateRegistryPublisherProfile({
+    id: "example-studio",
+    displayName: "Example Studio",
+    websiteUrl: "https://example.test",
+  });
+  const unsafe = validateRegistryPublisherProfile({
+    id: "example-studio",
+    displayName: "Example Studio",
+    websiteUrl: "https://user:password@example.test/#fragment",
+  });
+  const unknown = validateRegistryPublisherProfile({
+    id: "example-studio",
+    displayName: "Example Studio",
+    verified: true,
+  });
+
+  assert.deepEqual(valid, { valid: true, errors: [] });
+  assert.equal(unsafe.valid, false);
+  assert.ok(unsafe.errors.includes("Registry publisher profile websiteUrl must be an HTTPS URL without credentials or a fragment."));
+  assert.equal(unknown.valid, false);
+  assert.ok(unknown.errors.includes("Registry publisher profile contains an unsupported field."));
+});
+
 test("rejects paid releases before the entitlement contract exists", () => {
   const result = validateReleaseRecord(makeRecord({ visibility: "paid" }));
 
@@ -160,6 +185,7 @@ test("verifies a signed Registry index with a trusted root key", () => {
     displayName: "Example Registry",
     updatedAt: "2026-07-23T00:00:00.000Z",
     publisherKeys: [{ keyId: "ed25519:example-1", algorithm: "ed25519", publicKey: publisherPublicKey }],
+    publishers: [{ id: "example-studio", displayName: "Example Studio", websiteUrl: "https://example.test" }],
     plugins: [{ id: "com.example.weather", latest: "1.0.0", releases: ["releases/com.example.weather-1.0.0.json"] }],
     signature: { keyId: "ed25519:registry-root-1", algorithm: "ed25519", value: "pending" },
   };

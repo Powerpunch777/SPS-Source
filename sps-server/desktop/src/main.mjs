@@ -920,6 +920,7 @@ async function inspectDesktopRegistrySource(sourceId) {
       ...(release.capabilities === undefined ? {} : { capabilities: [...release.capabilities] }),
       permissionsDigest: release.permissionsDigest,
       publisherId: release.publisherId,
+      ...(release.publisherProfile === undefined ? {} : { publisherProfile: { ...release.publisherProfile } }),
       publisherKeyId: release.publisherKeyId,
       artifact: { ...release.artifact },
     })),

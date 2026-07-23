@@ -87,6 +87,7 @@ export async function inspectLocalRegistry(registryRoot) {
     return { valid: false, errors: indexValidation.errors, releases };
   }
   const publisherKeys = new Map(index.publisherKeys.map((key) => [key.keyId, key.publicKey]));
+  const publisherProfiles = new Map((index.publishers ?? []).map((profile) => [profile.id, profile]));
   const versionsByPlugin = new Map(index.plugins.map((plugin) => [plugin.id, new Set()]));
 
   for (const plugin of index.plugins) {
@@ -149,6 +150,7 @@ export async function inspectLocalRegistry(registryRoot) {
           artifactSha256: record.artifact.sha256,
           artifactSizeBytes: record.artifact.sizeBytes,
           publisherId: record.publisher.id,
+          ...(publisherProfiles.has(record.publisher.id) ? { publisherProfile: { ...publisherProfiles.get(record.publisher.id) } } : {}),
           publisherKeyId: record.publisher.keyId,
         });
         versionsByPlugin.get(plugin.id)?.add(record.plugin.version);

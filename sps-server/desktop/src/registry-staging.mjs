@@ -22,7 +22,9 @@ function assertRegistrySource(source) {
 
 function equalCapabilities(left, right) {
   if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-  return [...left].sort().every((capability, index) => capability === [...right].sort()[index]);
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((capability, index) => capability === sortedRight[index]);
 }
 
 function assertExpectedRelease(extraction, expectedRelease) {

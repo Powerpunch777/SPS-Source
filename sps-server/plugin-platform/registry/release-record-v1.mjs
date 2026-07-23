@@ -11,7 +11,10 @@ const VISIBILITY = new Set(["public", "unlisted", "private"]);
 const MAX_CATALOG_NAME_LENGTH = 120;
 const MAX_CATALOG_SUMMARY_LENGTH = 600;
 const MAX_CATALOG_DOCUMENTATION_URL_LENGTH = 2_048;
+const MAX_PUBLISHER_NAME_LENGTH = 120;
+const MAX_PUBLISHER_WEBSITE_URL_LENGTH = 2_048;
 const CATALOG_FIELDS = new Set(["displayName", "summary", "documentationUrl"]);
+const PUBLISHER_PROFILE_FIELDS = new Set(["id", "displayName", "websiteUrl"]);
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
@@ -67,8 +70,8 @@ function isArtifactLocator(value) {
   }
 }
 
-function isSafeDocumentationUrl(value) {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_CATALOG_DOCUMENTATION_URL_LENGTH) {
+function isSafeHttpsUrl(value, maximumLength) {
+  if (typeof value !== "string" || value.length === 0 || value.length > maximumLength) {
     return false;
   }
   try {
@@ -77,6 +80,21 @@ function isSafeDocumentationUrl(value) {
   } catch {
     return false;
   }
+}
+
+function appendPublisherProfileValidation(profile, errors) {
+  pushIf(isPlainObject(profile), errors, "Registry publisher profile must be an object.");
+  if (!isPlainObject(profile)) return;
+  pushIf(Object.keys(profile).every((key) => PUBLISHER_PROFILE_FIELDS.has(key)), errors, "Registry publisher profile contains an unsupported field.");
+  pushIf(PUBLISHER_ID.test(profile.id ?? ""), errors, "Registry publisher profile id is invalid.");
+  pushIf(isBoundedText(profile.displayName, MAX_PUBLISHER_NAME_LENGTH), errors, `Registry publisher profile displayName must be non-empty text up to ${MAX_PUBLISHER_NAME_LENGTH} characters.`);
+  pushIf(profile.websiteUrl === undefined || isSafeHttpsUrl(profile.websiteUrl, MAX_PUBLISHER_WEBSITE_URL_LENGTH), errors, "Registry publisher profile websiteUrl must be an HTTPS URL without credentials or a fragment.");
+}
+
+export function validateRegistryPublisherProfile(profile) {
+  const errors = [];
+  appendPublisherProfileValidation(profile, errors);
+  return { valid: errors.length === 0, errors };
 }
 
 function isBoundedText(value, maximumLength) {
@@ -185,7 +203,7 @@ export function validateReleaseRecord(record) {
       pushIf(Object.keys(record.catalog).every((key) => CATALOG_FIELDS.has(key)), errors, "catalog contains an unsupported field.");
       pushIf(record.catalog.displayName === undefined || isBoundedText(record.catalog.displayName, MAX_CATALOG_NAME_LENGTH), errors, `catalog.displayName must be non-empty text up to ${MAX_CATALOG_NAME_LENGTH} characters.`);
       pushIf(record.catalog.summary === undefined || isBoundedText(record.catalog.summary, MAX_CATALOG_SUMMARY_LENGTH), errors, `catalog.summary must be non-empty text up to ${MAX_CATALOG_SUMMARY_LENGTH} characters.`);
-      pushIf(record.catalog.documentationUrl === undefined || isSafeDocumentationUrl(record.catalog.documentationUrl), errors, "catalog.documentationUrl must be an HTTPS URL without credentials or a fragment.");
+      pushIf(record.catalog.documentationUrl === undefined || isSafeHttpsUrl(record.catalog.documentationUrl, MAX_CATALOG_DOCUMENTATION_URL_LENGTH), errors, "catalog.documentationUrl must be an HTTPS URL without credentials or a fragment.");
     }
   }
   if (record.capabilities !== undefined) {
@@ -222,6 +240,7 @@ export function validateRegistryIndex(index) {
   pushIf(typeof index.displayName === "string" && index.displayName.trim().length > 0 && index.displayName.length <= 200, errors, "displayName is required.");
   pushIf(isIsoDate(index.updatedAt), errors, "updatedAt must be an ISO date.");
   pushIf(Array.isArray(index.publisherKeys), errors, "publisherKeys must be an array.");
+  if (index.publishers !== undefined) pushIf(Array.isArray(index.publishers), errors, "publishers must be an array when present.");
   pushIf(Array.isArray(index.plugins), errors, "plugins must be an array.");
   if (index.signature !== undefined) {
     pushIf(isPlainObject(index.signature), errors, "Registry signature must be an object.");
@@ -239,6 +258,15 @@ export function validateRegistryIndex(index) {
     if (key?.keyId) {
       pushIf(!keyIds.has(key.keyId), errors, `Duplicate publisher keyId: ${key.keyId}.`);
       keyIds.add(key.keyId);
+    }
+  }
+
+  const publisherIds = new Set();
+  for (const publisher of Array.isArray(index.publishers) ? index.publishers : []) {
+    appendPublisherProfileValidation(publisher, errors);
+    if (publisher?.id) {
+      pushIf(!publisherIds.has(publisher.id), errors, `Duplicate Registry publisher profile id: ${publisher.id}.`);
+      publisherIds.add(publisher.id);
     }
   }
 

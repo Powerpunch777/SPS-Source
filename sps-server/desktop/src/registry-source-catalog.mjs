@@ -187,6 +187,7 @@ async function inspectRemoteRegistrySource(source, { fetchImpl }) {
   if (!sourceResult.valid) throw new Error(sourceResult.errors.join(" "));
 
   const publisherKeys = new Map(index.publisherKeys.map((key) => [key.keyId, key.publicKey]));
+  const publisherProfiles = new Map((index.publishers ?? []).map((profile) => [profile.id, profile]));
   const releases = [];
   const errors = [];
   for (const plugin of index.plugins) {
@@ -210,6 +211,7 @@ async function inspectRemoteRegistrySource(source, { fetchImpl }) {
           ...(record.capabilities === undefined ? {} : { capabilities: [...record.capabilities] }),
           permissionsDigest: record.permissionsDigest,
           publisherId: record.publisher.id,
+          ...(publisherProfiles.has(record.publisher.id) ? { publisherProfile: { ...publisherProfiles.get(record.publisher.id) } } : {}),
           publisherKeyId: record.publisher.keyId,
           artifact: { ...record.artifact },
           artifactUrl: resolveArtifactUrl(releaseUrl, record.artifact.url),

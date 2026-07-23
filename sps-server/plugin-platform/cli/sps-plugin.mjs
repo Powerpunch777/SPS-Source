@@ -21,7 +21,7 @@ Commands:
   sps-plugin keygen --private <publisher-private.pem> --public <publisher-public.pem>
   sps-plugin release <plugin.spsplugin> --artifact-url <relative-or-https-url> --publisher-id <id> --publisher-key-id <ed25519:id> --private-key <pem> --out <release.json> [--catalog-name <name>] [--summary <text>] [--docs-url <https-url>]
   sps-plugin registry-index --registry-id <id> --display-name <name> --root-key-id <ed25519:id> --root-private-key <pem> --publisher-key <key-id=public.pem> --release <release-path=release.json> --out <registry.json>
-  sps-plugin publish-local <plugin-directory> --registry <directory> --registry-id <id> --display-name <name> --publisher-id <id> --publisher-key-id <ed25519:id> --publisher-private-key <pem> --root-key-id <ed25519:id> --root-private-key <pem> [--catalog-name <name>] [--summary <text>] [--docs-url <https-url>]
+  sps-plugin publish-local <plugin-directory> --registry <directory> --registry-id <id> --display-name <name> --publisher-id <id> --publisher-key-id <ed25519:id> --publisher-private-key <pem> --root-key-id <ed25519:id> --root-private-key <pem> [--catalog-name <name>] [--summary <text>] [--docs-url <https-url>] [--publisher-name <name>] [--publisher-url <https-url>]
 `;
 }
 
@@ -85,6 +85,14 @@ function catalogFromOptions(options) {
   return Object.keys(catalog).length === 0 ? undefined : catalog;
 }
 
+function publisherProfileFromOptions(options) {
+  const profile = {
+    ...(typeof options.get("publisher-name") === "string" ? { displayName: options.get("publisher-name") } : {}),
+    ...(typeof options.get("publisher-url") === "string" ? { websiteUrl: options.get("publisher-url") } : {}),
+  };
+  return Object.keys(profile).length === 0 ? undefined : profile;
+}
+
 async function run() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === "help" || command === "--help") {
@@ -146,6 +154,7 @@ async function run() {
       compatibilitySps: options.get("sps") || ">=0.4.0",
       visibility: options.get("visibility") || "public",
       catalog: catalogFromOptions(options),
+      publisherProfile: publisherProfileFromOptions(options),
     });
     const output = await writeJson(required(options, "out"), release.record);
     console.log(`Created signed release record: ${output}`);

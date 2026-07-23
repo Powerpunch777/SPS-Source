@@ -61,6 +61,11 @@ function makeRemoteFixture() {
       algorithm: "ed25519",
       publicKey: publisher.publicKey.export({ type: "spki", format: "pem" }),
     }],
+    publishers: [{
+      id: "example-studio",
+      displayName: "Example Studio",
+      websiteUrl: "https://example.test",
+    }],
     plugins: [{ id: "com.example.weather", latest: "1.0.0", releases: ["releases/weather.json"] }],
     signature: { keyId: "ed25519:example-root", algorithm: "ed25519", value: "" },
   };
@@ -114,6 +119,11 @@ test("verifies a signed remote source before exposing its release", async () => 
     displayName: "Example Weather",
     summary: "A signed weather summary.",
     documentationUrl: "https://docs.example.test/weather",
+  });
+  assert.deepEqual(report.releases[0].publisherProfile, {
+    id: "example-studio",
+    displayName: "Example Studio",
+    websiteUrl: "https://example.test",
   });
 });
 
@@ -172,6 +182,10 @@ test("stages a local release published by the Plugin Kit without executing it", 
         summary: "A signed local release.",
         documentationUrl: "https://docs.example.test/weather",
       },
+      publisherProfile: {
+        displayName: "Example Studio",
+        websiteUrl: "https://example.test",
+      },
     });
 
     const source = {
@@ -183,6 +197,7 @@ test("stages a local release published by the Plugin Kit without executing it", 
     const report = await inspectRegistrySource(source);
     assert.equal(report.valid, true);
     assert.equal(report.releases[0].catalog.displayName, "Weather");
+    assert.equal(report.releases[0].publisherProfile.displayName, "Example Studio");
     const acquired = await acquireRegistryRelease({
       vaultRoot,
       source,

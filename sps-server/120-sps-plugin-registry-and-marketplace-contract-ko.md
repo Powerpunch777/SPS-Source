@@ -75,6 +75,9 @@ Owner Host는 source 설정을 아래처럼 저장한다. `local`은 로컬 폴�
   "publisherKeys": [
     { "keyId": "ed25519:sps-official-1", "algorithm": "ed25519", "publicKey": "..." }
   ],
+  "publishers": [
+    { "id": "sps", "displayName": "SPS", "websiteUrl": "https://redongames.com" }
+  ],
   "signature": { "keyId": "ed25519:sps-registry-root-1", "algorithm": "ed25519", "value": "..." },
   "plugins": [
     {
@@ -89,7 +92,7 @@ Owner Host는 source 설정을 아래처럼 저장한다. `local`은 로컬 폴�
 }
 ```
 
-Index는 검색·발견용이다. remote source에서는 신뢰된 root key로 index signature를 먼저 검증하고, 설치 판단은 이어서 release record와 다운로드한 artifact의 검증 결과로 한다.
+Index는 검색·발견용이다. `publishers`는 선택적 Registry-root-signed profile이며 `id`, `displayName`, 선택적 HTTPS `websiteUrl`만 허용한다. profile은 표시용이며 source·publisher key·release signature 검증을 대체하지 않는다. remote source에서는 신뢰된 root key로 index signature를 먼저 검증하고, 설치 판단은 이어서 release record와 다운로드한 artifact의 검증 결과로 한다.
 
 ### 4.2 Release record
 
@@ -194,9 +197,11 @@ Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` opens the source
 
 ### 5.3 Authoring Kit release flow (implemented)
 
-`sps-plugin` is the authoring-side complement to the Desktop Registry flow. It produces no trust bypass: `init` creates a minimal Core-compatible manifest and worker entry, `validate` performs static checks, `pack` refuses symlinks and likely secret files, `keygen` creates Ed25519 keys, `release` signs the immutable artifact tuple, static capability preview, and optional catalog metadata, and `registry-index` signs the catalog root. `publish-local` packages one source tree into an explicit local Registry, writes a new immutable release record, and re-signs the index without copying either private key into the Registry. `--catalog-name`, `--summary`, `--docs-url` are optional; they are validated and signed, but never alter a package's permissions or installation state.
+`sps-plugin` is the authoring-side complement to the Desktop Registry flow. It produces no trust bypass: `init` creates a minimal Core-compatible manifest and worker entry, `validate` performs static checks, `pack` refuses symlinks and likely secret files, `keygen` creates Ed25519 keys, `release` signs the immutable artifact tuple, static capability preview, and optional catalog metadata, and `registry-index` signs the catalog root. `publish-local` packages one source tree into an explicit local Registry, writes a new immutable release record, publisher profile, and re-signs the index without copying either private key into the Registry. `--catalog-name`, `--summary`, `--docs-url`, `--publisher-name`, `--publisher-url` are optional; they are validated and signed, but never alter a package's permissions or installation state.
 
 The authoring Kit rejects URL-like text in relative Registry paths, URL credentials, fragments, symlinked package entries, and package files likely to contain credentials. A resulting local Registry is verified again by the same Local Registry verifier used by SPS Desktop.
+
+`desktop/scripts/smoke-packaged-owner-host-runtime.mjs`는 package된 Owner Host를 임시 Owner Vault에서 실제로 실행한다. 이 smoke는 Plugin Kit가 생성한 source tree를 `publish-local`로 서명된 local Registry에 게시하고, Desktop acquire·정적 extract·disabled stage를 거쳐 Core의 명시적 enable까지 연결한다. 그 과정에서 artifact hash, static capability preview, catalog, publisher profile이 그대로 검증되는지 확인하며, 기존의 install·update·rollback 검증과 함께 실행된다.
 
 ## 6. 보안 불변 조건
 
@@ -215,8 +220,8 @@ The authoring Kit rejects URL-like text in relative Registry paths, URL credenti
 
 ### Pilot
 
-- 구현됨: source 성격(공식·서명 remote·Owner-trusted local), 검증된 release 배지, 서명된 플러그인 이름·설명·문서 링크·권한 preview, 공개·링크 전용 visibility, 버전별 immutable release
-- 다음 범위: 게시자 프로필, 신고·advisory 연결, 공식 example Registry와 반복 E2E
+- 구현됨: source 성격(공식·서명 remote·Owner-trusted local), 검증된 release 배지, 서명된 플러그인 이름·설명·문서 링크·권한 preview·게시자 프로필, 공개·링크 전용 visibility, 버전별 immutable release, package된 Owner Host의 author → publish → stage → enable·update·rollback E2E
+- 다음 범위: 신고·advisory 연결, 공식 example Registry와 반복 E2E
 
 ### 거래 단계
 
