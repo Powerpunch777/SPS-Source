@@ -5,10 +5,16 @@
   "type": "module",
   "description": "SPS Extension Profile and Plugin Registry conformance contracts.",
   "scripts": {
-    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs",
+    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs",
     "check": "npm run test"
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "yauzl": "3.4.0"
+  },
+  "devDependencies": {
+    "yazl": "3.3.1"
   }
 }

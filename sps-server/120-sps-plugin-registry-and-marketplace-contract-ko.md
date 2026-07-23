@@ -127,7 +127,7 @@ Registry browse or direct source add
 
 1. Registry metadata, Marketplace page, 리뷰, 배지는 어떤 Plugin capability도 부여하지 않는다.
 2. `git`과 `official` Registry index는 source에 pin된 root key signature를 통과해야 한다. release publisher key만 바꿔 source 신뢰를 획득할 수 없다.
-3. package는 설치 전 실행하지 않으며 archive path traversal, symlink escape, oversized entry, duplicate entrypoint를 거부한다.
+3. package는 설치 전 실행하지 않으며 archive path traversal, symlink escape, oversized entry, duplicate·case-colliding entrypoint, encrypted·unsupported entry를 거부한다. archive inspector와 실제 extractor는 별도 단계에서 같은 크기 경계를 다시 확인한다.
 4. package는 Core 또는 다른 Plugin의 source tree를 수정하는 방식으로 설치될 수 없다.
 5. 위험 권한이 있는 package는 설치 후에도 기본 비활성 상태다.
 6. Node command, local CLI, local MCP, Workspace write는 해당 Node의 소유자 정책과 Agent Runner Grant를 모두 통과해야 한다.
@@ -159,10 +159,11 @@ Registry browse or direct source add
 
 1. SPS Extension Profile의 Core capability 호환 표와 conformance suite를 고정한다.
 2. Plugin Kit의 package, manifest, inspect, validate lifecycle을 검증한다.
-3. 이 문서의 Registry schema validator와 local fixture를 구현한다.
+3. 이 문서의 Registry schema validator, local fixture, package archive inspector를 구현한다.
 4. GitHub-backed static Registry와 official Registry fixture에서 같은 release를 검증한다.
-5. Desktop에 Registry source 관리, 설치 전 검토, disabled install, update preview를 추가한다.
-6. 실제 사용자와 공식 example plugin으로 설치·업데이트·rollback E2E를 반복한다.
-7. 그 결과를 바탕으로 Marketplace Pilot을 연다.
+5. Owner Host에 safe extractor, disabled install, update preview를 추가한다.
+6. Desktop에 Registry source 관리와 설치 전 검토 화면을 추가한다.
+7. 실제 사용자와 공식 example plugin으로 설치·업데이트·rollback E2E를 반복한다.
+8. 그 결과를 바탕으로 Marketplace Pilot을 연다.
 
-Marketplace는 1~6이 반복 E2E에서 안정적이기 전에는 출시하지 않는다.
+Marketplace는 1~7이 반복 E2E에서 안정적이기 전에는 출시하지 않는다.
