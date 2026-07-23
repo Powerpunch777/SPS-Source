@@ -9,12 +9,18 @@ import {
   canonicalizeReleaseRecord,
 } from "@sps/plugin-platform/registry/release-record-v1.mjs";
 import {
+  createPluginTemplate,
+  generatePluginSigningKeyPair,
+  publishPluginToLocalRegistry,
+} from "@sps/plugin-platform/authoring/plugin-package-v1.mjs";
+import {
   acquireRegistryRelease,
   addRegistrySource,
   inspectRegistrySource,
   loadRegistrySources,
   removeRegistrySource,
 } from "../src/registry-source-catalog.mjs";
+import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
 
 function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
@@ -122,6 +128,69 @@ test("downloads a verified remote artifact into the Owner Vault without executin
     });
   } finally {
     await rm(vaultRoot, { recursive: true, force: true });
+  }
+});
+
+test("stages a local release published by the Plugin Kit without executing it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-local-registry-flow-"));
+  try {
+    const sourceDirectory = path.join(root, "plugin");
+    const registryDirectory = path.join(root, "registry");
+    const vaultRoot = path.join(root, "owner-vault");
+    await createPluginTemplate({
+      directory: sourceDirectory,
+      pluginId: "com.example.weather",
+      packageName: "@example/weather",
+      displayName: "Weather",
+      version: "1.0.0",
+    });
+    const publisher = generatePluginSigningKeyPair();
+    const registryRoot = generatePluginSigningKeyPair();
+    await publishPluginToLocalRegistry({
+      sourceDirectory,
+      registryDirectory,
+      registryId: "io.sps.example",
+      displayName: "Example Registry",
+      publisherId: "example-studio",
+      publisherKeyId: "ed25519:example-publisher",
+      publisherPrivateKey: publisher.privateKey,
+      registryRootKeyId: "ed25519:example-root",
+      registryRootPrivateKey: registryRoot.privateKey,
+      publishedAt: "2026-07-23T00:00:00.000Z",
+    });
+
+    const source = {
+      id: "io.sps.example",
+      kind: "local",
+      displayName: "Example Registry",
+      localPath: registryDirectory,
+    };
+    const report = await inspectRegistrySource(source);
+    assert.equal(report.valid, true);
+    const acquired = await acquireRegistryRelease({
+      vaultRoot,
+      source,
+      pluginId: "com.example.weather",
+      version: "1.0.0",
+    });
+    const registered = [];
+    const staged = await stageSpsPluginArchive({
+      vaultRoot,
+      archivePath: acquired.archivePath,
+      expectedArtifact: acquired.artifact,
+      source: acquired.source,
+      registerStage: async (input) => {
+        registered.push(input);
+        return { stageId: "stage-1", status: "staged" };
+      },
+    });
+    assert.equal(staged.staged, true);
+    assert.equal(staged.stage.stageId, "stage-1");
+    assert.equal(registered.length, 1);
+    assert.equal(registered[0].source.registryId, "io.sps.example");
+    assert.equal(registered[0].artifactSha256, acquired.artifact.sha256);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
