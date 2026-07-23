@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import yauzl from "yauzl";
+import { validateStaticPluginManifest } from "./static-package-manifest-v1.mjs";
 
 export const MAX_PLUGIN_ARCHIVE_BYTES = 512 * 1024 * 1024;
 export const MAX_PLUGIN_ARCHIVE_ENTRIES = 4096;
@@ -49,6 +50,17 @@ async function readEntryUtf8(zipfile, entry) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+function inspectStaticPackageManifest(raw) {
+  let manifest;
+  try {
+    manifest = JSON.parse(raw);
+  } catch {
+    return { valid: false, errors: ["sps-plugin.json is not valid JSON."], manifest: null };
+  }
+  const validation = validateStaticPluginManifest(manifest);
+  return { valid: validation.valid, errors: validation.errors, manifest: validation.valid ? manifest : null };
 }
 
 function inspectPackageManifest(raw) {
@@ -105,6 +117,7 @@ export async function inspectPluginArchive(archivePath) {
   let entryCount = 0;
   let uncompressedBytes = 0;
   let packageManifestRaw = null;
+  let staticManifestRaw = null;
 
   try {
     for await (const entry of zipfile.eachEntry()) {
@@ -147,6 +160,15 @@ export async function inspectPluginArchive(archivePath) {
           packageManifestRaw = await readEntryUtf8(zipfile, entry);
         }
       }
+      if (entryName === "sps-plugin.json") {
+        if (entry.uncompressedSize > MAX_PACKAGE_MANIFEST_BYTES) {
+          errors.push("sps-plugin.json exceeds the manifest size limit.");
+        } else if (staticManifestRaw !== null) {
+          errors.push("Plugin archive contains duplicate sps-plugin.json entries.");
+        } else {
+          staticManifestRaw = await readEntryUtf8(zipfile, entry);
+        }
+      }
     }
   } catch (error) {
     errors.push(`Plugin archive could not be inspected safely: ${error.message}`);
@@ -157,11 +179,21 @@ export async function inspectPluginArchive(archivePath) {
     ? { valid: false, errors: [], package: null }
     : inspectPackageManifest(packageManifestRaw);
   errors.push(...manifestInspection.errors);
+  if (staticManifestRaw === null) errors.push("Plugin archive must contain one root sps-plugin.json.");
+  const staticManifestInspection = staticManifestRaw === null
+    ? { valid: false, errors: [], manifest: null }
+    : inspectStaticPackageManifest(staticManifestRaw);
+  errors.push(...staticManifestInspection.errors);
+  if (staticManifestInspection.manifest && !seenNames.has(staticManifestInspection.manifest.runtime.manifestEntry.toLowerCase())) {
+    errors.push("sps-plugin.json runtime.manifestEntry is missing from the archive.");
+  }
 
   return {
     valid: errors.length === 0,
     errors,
     archive: { sizeBytes: archiveBytes, entryCount, uncompressedBytes },
-    package: manifestInspection.package,
+    package: manifestInspection.package && staticManifestInspection.manifest
+      ? { ...manifestInspection.package, staticManifest: staticManifestInspection.manifest }
+      : null,
   };
 }

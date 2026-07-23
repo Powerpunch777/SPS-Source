@@ -9,6 +9,7 @@
 - Ed25519 release signature 검증
 - trusted source root key를 통한 Registry index signature 검증
 - `.spsplugin` archive의 경로, 링크, 중복, 엔트리 수, 크기, 최상위 manifest 검사
+- 실행 전 권한 미리보기를 위한 정적 `sps-plugin.json`과 runtime manifest hash 검사
 - local·git·official source의 trust policy와 root key pin 검사
 - `public`, `unlisted`, `private` visibility 제한
 - path traversal을 막는 상대 artifact·release path 검사
@@ -16,7 +17,7 @@
 
 ## 제공하지 않는 것
 
-- 파일 다운로드·압축 해제·plugin install
+- Core의 Registry disabled install·명시적 enable lifecycle
 - Marketplace 계정·결제·정산
 - 게시자 키 발급·보관 서비스
 - Runtime 권한 우회 또는 자동 활성화

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createWriteStream, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
   isSafePluginArchiveEntryName,
   MAX_PLUGIN_ARCHIVE_ENTRIES,
 } from "./archive-inspector-v1.mjs";
+import { calculateStaticCapabilitiesDigest } from "./static-package-manifest-v1.mjs";
 
 async function writeZip(destination, entries) {
   await new Promise((resolve, reject) => {
@@ -32,9 +34,21 @@ async function makeArchive(t, entries) {
   return archivePath;
 }
 
+const runtimeManifestContents = "export default {};";
+const staticCapabilities = ["agent.tools.register"];
 const validEntries = [
   { name: "package.json", contents: JSON.stringify({ name: "@example/weather", version: "1.2.3" }) },
-  { name: "dist/index.js", contents: "export default {};" },
+  { name: "sps-plugin.json", contents: JSON.stringify({
+    schemaVersion: 1,
+    plugin: { id: "com.example.weather", version: "1.2.3", apiVersion: "1" },
+    runtime: {
+      manifestEntry: "dist/manifest.js",
+      manifestSha256: createHash("sha256").update(runtimeManifestContents).digest("hex"),
+    },
+    capabilities: staticCapabilities,
+    permissionsDigest: calculateStaticCapabilitiesDigest(staticCapabilities),
+  }) },
+  { name: "dist/manifest.js", contents: runtimeManifestContents },
 ];
 
 test("inspects a plugin package without executing or extracting it", async (t) => {
@@ -43,8 +57,10 @@ test("inspects a plugin package without executing or extracting it", async (t) =
 
   assert.deepEqual(report.errors, []);
   assert.equal(report.valid, true);
-  assert.deepEqual(report.package, { name: "@example/weather", version: "1.2.3" });
-  assert.equal(report.archive.entryCount, 2);
+  assert.equal(report.package.name, "@example/weather");
+  assert.equal(report.package.version, "1.2.3");
+  assert.equal(report.package.staticManifest.plugin.id, "com.example.weather");
+  assert.equal(report.archive.entryCount, 3);
 });
 
 test("rejects case-colliding archive paths", async (t) => {
@@ -71,6 +87,17 @@ test("rejects a package with no root package manifest", async (t) => {
 
   assert.equal(report.valid, false);
   assert.ok(report.errors.includes("Plugin archive must contain one root package.json."));
+});
+
+test("requires a declarative static manifest and its declared runtime entry", async (t) => {
+  const archivePath = await makeArchive(t, [
+    { name: "package.json", contents: JSON.stringify({ name: "@example/weather", version: "1.2.3" }) },
+    { name: "dist/manifest.js", contents: runtimeManifestContents },
+  ]);
+  const report = await inspectPluginArchive(archivePath);
+
+  assert.equal(report.valid, false);
+  assert.ok(report.errors.includes("Plugin archive must contain one root sps-plugin.json."));
 });
 
 test("rejects symbolic links in an archive", async (t) => {

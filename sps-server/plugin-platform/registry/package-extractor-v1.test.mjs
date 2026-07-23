@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import yazl from "yazl";
 import { extractPluginArchive } from "./package-extractor-v1.mjs";
+import { calculateStaticCapabilitiesDigest } from "./static-package-manifest-v1.mjs";
 
 async function writeZip(destination, entries) {
   await new Promise((resolve, reject) => {
@@ -34,9 +35,21 @@ async function makeFixture(t, entries) {
   };
 }
 
+const runtimeManifestContents = "export default {};";
+const staticCapabilities = ["agent.tools.register"];
 const validEntries = [
   { name: "package.json", contents: JSON.stringify({ name: "@example/weather", version: "1.2.3" }) },
-  { name: "dist/index.js", contents: "export default {};" },
+  { name: "sps-plugin.json", contents: JSON.stringify({
+    schemaVersion: 1,
+    plugin: { id: "com.example.weather", version: "1.2.3", apiVersion: "1" },
+    runtime: {
+      manifestEntry: "dist/manifest.js",
+      manifestSha256: createHash("sha256").update(runtimeManifestContents).digest("hex"),
+    },
+    capabilities: staticCapabilities,
+    permissionsDigest: calculateStaticCapabilitiesDigest(staticCapabilities),
+  }) },
+  { name: "dist/manifest.js", contents: runtimeManifestContents },
 ];
 
 test("extracts an inspected plugin into a new staging directory", async (t) => {
@@ -45,7 +58,7 @@ test("extracts an inspected plugin into a new staging directory", async (t) => {
 
   assert.equal(result.extracted, true);
   assert.deepEqual(result.errors, []);
-  assert.equal(await fs.readFile(path.join(fixture.destinationRoot, "dist", "index.js"), "utf8"), "export default {};");
+  assert.equal(await fs.readFile(path.join(fixture.destinationRoot, "dist", "manifest.js"), "utf8"), runtimeManifestContents);
   assert.equal(await fs.readFile(path.join(fixture.destinationRoot, "package.json"), "utf8"), validEntries[0].contents);
 });
 
@@ -75,5 +88,22 @@ test("refuses an archive whose release hash differs before staging", async (t) =
 
   assert.equal(result.extracted, false);
   assert.ok(result.errors[0].includes("SHA-256"));
+  await assert.rejects(fs.stat(fixture.destinationRoot));
+});
+
+test("discards staging when the declared runtime manifest hash does not match", async (t) => {
+  const changedEntries = validEntries.map((entry) => ({ ...entry }));
+  changedEntries[1] = {
+    ...changedEntries[1],
+    contents: JSON.stringify({
+      ...JSON.parse(changedEntries[1].contents),
+      runtime: { manifestEntry: "dist/manifest.js", manifestSha256: "f".repeat(64) },
+    }),
+  };
+  const fixture = await makeFixture(t, changedEntries);
+  const result = await extractPluginArchive(fixture);
+
+  assert.equal(result.extracted, false);
+  assert.ok(result.errors[0].includes("Static runtime manifest SHA-256"));
   await assert.rejects(fs.stat(fixture.destinationRoot));
 });

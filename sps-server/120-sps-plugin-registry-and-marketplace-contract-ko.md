@@ -113,6 +113,22 @@ Index는 검색·발견용이다. remote source에서는 신뢰된 root key로 i
 
 서명은 canonicalized release record에서 `signature.value`를 제외한 내용을 대상으로 한다. Owner Host는 서명, artifact SHA-256, `permissionsDigest`, package 안의 manifest 및 파일 hash를 모두 검증해야 한다.
 
+### 4.3 Static package manifest
+
+Registry package는 root `package.json` 외에 root `sps-plugin.json`을 반드시 포함한다. 이 파일은 JavaScript를 import하지 않는 정적 JSON이며, 설치 전 권한 미리보기의 유일한 근거다.
+
+```json
+{
+  "schemaVersion": 1,
+  "plugin": { "id": "sps.team-workplane", "version": "1.0.0", "apiVersion": "1" },
+  "runtime": { "manifestEntry": "dist/manifest.js", "manifestSha256": "lowercase-hex" },
+  "capabilities": ["agent.tools.register", "ui.page.register"],
+  "permissionsDigest": "lowercase-hex"
+}
+```
+
+`permissionsDigest`는 정렬된 `capabilities` 배열의 canonical JSON SHA-256이다. archive inspector는 정적 manifest, runtime entry 경로, capability 중복을 확인한다. safe extractor는 runtime manifest 파일의 SHA-256도 다시 확인한다. 동적 JavaScript manifest import는 **명시적 enable 단계 전까지 금지**한다.
+
 ## 5. 설치와 업데이트 흐름
 
 ```text
@@ -120,11 +136,11 @@ Registry browse or direct source add
 -> select one immutable release
 -> verify registry/index and publisher key
 -> download with bounded size and SHA-256 check
--> inspect archive and manifest without executing it
+-> inspect archive and static manifest without executing it
 -> compare compatibility and permission delta
 -> show source, publisher, risk and Node implications
 -> Owner explicitly installs disabled
--> Owner explicitly enables
+-> Owner explicitly enables, then Core imports the runtime manifest and compares it with sps-plugin.json
 ```
 
 업데이트는 같은 흐름을 다시 거친다. 다음 중 하나라도 달라지면 업데이트는 자동 적용하지 않고 새 검토로 전환한다.
@@ -145,6 +161,8 @@ Registry browse or direct source add
 6. Node command, local CLI, local MCP, Workspace write는 해당 Node의 소유자 정책과 Agent Runner Grant를 모두 통과해야 한다.
 7. Registry advisory는 경고·비활성화 제안만 할 수 있다. 원격 서비스가 이미 설치된 코드를 조용히 교체·삭제·실행하지 않는다.
 8. offline mode에서는 마지막으로 검증한 release record와 local policy만 사용한다. 유료 entitlement의 offline cache·만료 규칙은 구매 전에 표시한다.
+
+현재 Core의 기존 `POST /api/plugins/install`은 Registry 설치 경로가 아니다. 이 API는 로컬 개발 Plugin 편의를 위해 build recovery와 JavaScript manifest import를 수행할 수 있으므로, Registry package에는 사용할 수 없다. Registry는 static manifest 검증과 staging extractor를 통과한 package만 새 `Registry disabled install` 경로로 등록하며, 이 경로는 enable 전에는 dynamic import·worker spawn·plugin migration을 수행하지 않는다.
 
 ## 7. Marketplace 단계
 
@@ -173,7 +191,7 @@ Registry browse or direct source add
 2. Plugin Kit의 package, manifest, inspect, validate lifecycle을 검증한다.
 3. 이 문서의 Registry schema validator, local fixture, package archive inspector를 구현한다.
 4. GitHub-backed static Registry와 official Registry fixture에서 같은 release를 검증한다.
-5. Owner Host에 safe extractor, disabled install, update preview를 추가한다.
+5. Owner Host Core에 static manifest 대조, safe extractor, Registry disabled install, update preview를 추가한다.
 6. Desktop에 Registry source 관리와 설치 전 검토 화면을 추가한다.
 7. 실제 사용자와 공식 example plugin으로 설치·업데이트·rollback E2E를 반복한다.
 8. 그 결과를 바탕으로 Marketplace Pilot을 연다.

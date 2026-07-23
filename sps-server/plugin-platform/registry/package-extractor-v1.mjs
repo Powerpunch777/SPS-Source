@@ -41,6 +41,17 @@ async function verifyArtifactFile(archivePath, expectedArtifact) {
   }
 }
 
+async function verifyStaticRuntimeManifest(destinationRoot, staticManifest) {
+  const manifestPath = resolveArchiveEntryPath(destinationRoot, staticManifest.runtime.manifestEntry);
+  const stats = await fs.lstat(manifestPath);
+  if (!stats.isFile() || stats.isSymbolicLink()) throw new Error("Static runtime manifest must be a regular file.");
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(manifestPath, { flags: "r" })) hash.update(chunk);
+  if (hash.digest("hex") !== staticManifest.runtime.manifestSha256) {
+    throw new Error("Static runtime manifest SHA-256 does not match sps-plugin.json.");
+  }
+}
+
 function resolveArchiveEntryPath(destinationRoot, entryName) {
   if (!isSafePluginArchiveEntryName(entryName)) throw new Error(`Archive entry path is unsafe: ${entryName}.`);
   const normalizedName = entryName.endsWith("/") ? entryName.slice(0, -1) : entryName;
@@ -171,6 +182,7 @@ export async function extractPluginArchive({ archivePath, destinationRoot, expec
   }
 
   try {
+    await verifyStaticRuntimeManifest(destination, inspection.package.staticManifest);
     await verifyArtifactFile(archivePath, expectedArtifact);
     return {
       extracted: true,
