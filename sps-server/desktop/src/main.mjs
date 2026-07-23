@@ -962,6 +962,23 @@ async function enableDesktopRegistryStage(stageId) {
   });
 }
 
+async function listDesktopRegistryStages() {
+  assertRegistryOwner();
+  const stages = await ownerHostApi("/plugins/registry/stages");
+  if (!Array.isArray(stages)) throw new Error("Owner Host returned an invalid Registry stage list.");
+  return stages.map((stage) => ({
+    stageId: stage.stageId,
+    pluginId: stage.pluginId,
+    version: stage.version,
+    packageName: stage.packageName,
+    artifactSha256: stage.artifactSha256,
+    source: stage.source,
+    status: stage.status,
+    stagedAt: stage.stagedAt,
+    capabilities: Array.isArray(stage.staticManifest?.capabilities) ? stage.staticManifest.capabilities : [],
+  }));
+}
+
 async function removeDesktopRegistrySource(sourceId) {
   assertRegistryOwner();
   const saved = await removeRegistrySource({ vaultRoot: ownerVaultRoot(), sourceId });
@@ -1888,6 +1905,7 @@ function registerIpc() {
   ipcMain.handle("desktop:registry-inspect-source", async (_event, input) => await inspectDesktopRegistrySource(input?.sourceId));
   ipcMain.handle("desktop:registry-stage-release", async (_event, input) => await stageDesktopRegistryRelease(input));
   ipcMain.handle("desktop:registry-enable-stage", async (_event, input) => await enableDesktopRegistryStage(input?.stageId));
+  ipcMain.handle("desktop:registry-list-stages", async () => await listDesktopRegistryStages());
   ipcMain.handle("desktop:configure-google-account", async (_event, input) => await configureDesktopGoogleClient(input));
   ipcMain.handle("desktop:start-google-account", async () => await startDesktopAccountSignIn());
   ipcMain.handle("desktop:sign-out-google-account", async () => await signOutDesktopAccount());

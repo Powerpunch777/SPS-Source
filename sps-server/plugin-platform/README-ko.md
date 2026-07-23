@@ -8,13 +8,13 @@ SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 
 - `registry/`: release record·Registry index 서명, archive 검사·안전한 압축 해제, local source 검사
 - `authoring/`: 실행 없는 source 검사, `.spsplugin` package 생성, Ed25519 key 생성, release record·Registry index 서명
 - `sps-plugin` CLI: `init`, `validate`, `pack`, `keygen`, `release`, `registry-index`
-- SPS Desktop: Owner Vault의 trusted Registry source 관리, remote signature 검증, disabled stage, 명시적 enable
+- SPS Desktop: Owner Vault의 trusted Registry source 관리, remote signature 검증, disabled stage, review queue, 명시적 apply
 
 ## 아직 구현하지 않은 범위
 
 - Test Kit의 mock project·Agent·Room lifecycle harness
 - Plugin Studio의 manifest form, code diff, local test UI
-- Registry update·rollback UI와 공식 example Registry 운영
+- 공식 example Registry 운영과 실제 사용자 반복 E2E
 - Marketplace catalog, entitlement, 결제와 정산
 
 ## 검사

@@ -51,12 +51,15 @@ test("keeps the Registry window on a narrow Owner-only preload bridge", async ()
   assert.match(main, /async function showRegistryWindow\(\) \{[\s\S]*?assertRegistryOwner\(\);[\s\S]*?registry-preload\.cjs/);
   assert.match(main, /ipcMain\.handle\("desktop:registry-list-sources"/);
   assert.match(main, /ipcMain\.handle\("desktop:registry-stage-release"/);
+  assert.match(main, /ipcMain\.handle\("desktop:registry-list-stages"/);
   assert.match(main, /ipcMain\.handle\("desktop:registry-enable-stage"/);
   assert.match(registryPreload, /contextBridge\.exposeInMainWorld\("spsRegistry"/);
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-add-source"/);
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-stage-release"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-list-stages"/);
   assert.doesNotMatch(registryPreload, /nodeIntegration|require\("node:/);
   assert.match(registryHtml, /default-src 'self'; style-src 'self'; script-src 'self'/);
+  assert.match(registryHtml, /Review queue/);
 });
 
 test("notifies the renderer when Google Desktop sign-in state changes", async () => {

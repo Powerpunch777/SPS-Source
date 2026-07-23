@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld("spsRegistry", {
   removeSource: (input) => ipcRenderer.invoke("desktop:registry-remove-source", input),
   inspectSource: (input) => ipcRenderer.invoke("desktop:registry-inspect-source", input),
   stageRelease: (input) => ipcRenderer.invoke("desktop:registry-stage-release", input),
+  listStages: () => ipcRenderer.invoke("desktop:registry-list-stages"),
   enableStage: (input) => ipcRenderer.invoke("desktop:registry-enable-stage", input),
 });

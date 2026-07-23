@@ -28,7 +28,7 @@ function renderSources() {
     <article class="source-card ${source.id === selectedSourceId ? "selected" : ""}">
       <button class="source-select" type="button" data-source-id="${escapeHtml(source.id)}">
         <strong>${escapeHtml(source.displayName)}</strong>
-        <span>${escapeHtml(source.kind)}${source.localFolderName ? ` · ${escapeHtml(source.localFolderName)}` : ""}</span>
+        <span>${escapeHtml(source.kind)}${source.localFolderName ? ` / ${escapeHtml(source.localFolderName)}` : ""}</span>
       </button>
       <button class="remove-source" type="button" data-remove-source-id="${escapeHtml(source.id)}" title="Remove source">Remove</button>
     </article>
@@ -49,11 +49,49 @@ function renderReleases(report) {
   }
   list.innerHTML = report.releases.map((release) => `
     <article class="release-card">
-      <div><h2>${escapeHtml(release.pluginId)}</h2><p>v${escapeHtml(release.version)} · ${escapeHtml(release.visibility)} · ${escapeHtml(release.publisherId)}</p></div>
+      <div><h2>${escapeHtml(release.pluginId)}</h2><p>v${escapeHtml(release.version)} / ${escapeHtml(release.visibility)} / ${escapeHtml(release.publisherId)}</p></div>
       <div class="release-meta"><span>${Math.ceil(release.artifact.sizeBytes / 1024)} KB</span><code>${escapeHtml(release.artifact.sha256.slice(0, 12))}...</code></div>
       <button class="primary stage-release" type="button" data-plugin-id="${escapeHtml(release.pluginId)}" data-version="${escapeHtml(release.version)}">Stage for review</button>
     </article>
   `).join("");
+}
+
+function renderStages(stages) {
+  const list = $("#stage-list");
+  if (!Array.isArray(stages) || stages.length === 0) {
+    list.innerHTML = '<p class="empty-state">No staged packages. Stage a verified release before any plugin code can run.</p>';
+    return;
+  }
+
+  const ordered = [...stages].sort((left, right) => String(right.stagedAt).localeCompare(String(left.stagedAt)));
+  list.innerHTML = ordered.map((stage) => {
+    const capabilities = Array.isArray(stage.capabilities) && stage.capabilities.length > 0
+      ? stage.capabilities.join(", ")
+      : "No declared capabilities";
+    const status = stage.status === "registered" ? "registered" : "staged";
+    const action = status === "registered" ? "Apply this verified version" : "Enable reviewed version";
+    return `
+      <article class="stage-card">
+        <div>
+          <h2>${escapeHtml(stage.pluginId)} <span>v${escapeHtml(stage.version)}</span></h2>
+          <p>${escapeHtml(stage.packageName)} / ${escapeHtml(stage.source?.registryId ?? "Unknown source")}</p>
+          <p>Capabilities: ${escapeHtml(capabilities)}</p>
+          <code>${escapeHtml(String(stage.artifactSha256).slice(0, 12))}...</code>
+        </div>
+        <span class="stage-status ${status}">${escapeHtml(status)}</span>
+        <button class="primary enable-stage" type="button" data-stage-id="${escapeHtml(stage.stageId)}">${action}</button>
+      </article>
+    `;
+  }).join("");
+}
+
+async function loadStages() {
+  $("#stage-list").innerHTML = '<p class="empty-state">Loading staged packages...</p>';
+  try {
+    renderStages(await window.spsRegistry.listStages());
+  } catch (error) {
+    $("#stage-list").innerHTML = `<div class="error-state"><strong>Could not load the review queue.</strong><pre>${escapeHtml(error instanceof Error ? error.message : String(error))}</pre></div>`;
+  }
 }
 
 async function loadSources() {
@@ -82,6 +120,7 @@ function toggleSourceFields() {
 }
 
 $("#refresh-sources").addEventListener("click", () => loadSources().catch((error) => setNotice(error.message, true)));
+$("#refresh-stages").addEventListener("click", () => loadStages());
 $("#source-kind").addEventListener("change", toggleSourceFields);
 $("#choose-local-folder").addEventListener("click", async () => {
   try {
@@ -93,7 +132,9 @@ $("#choose-local-folder").addEventListener("click", async () => {
       const slug = selected.localFolderName.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-+|-+$/g, "") || "registry";
       $("#source-id").value = `local.${slug}`.slice(0, 128);
     }
-  } catch (error) { setNotice(error.message, true); }
+  } catch (error) {
+    setNotice(error.message, true);
+  }
 });
 
 $("#source-form").addEventListener("submit", async (event) => {
@@ -119,7 +160,9 @@ $("#source-form").addEventListener("submit", async (event) => {
     $("#source-form").reset();
     toggleSourceFields();
     setNotice("Trusted Registry source added. No plugin was downloaded or run.");
-  } catch (error) { setNotice(error instanceof Error ? error.message : String(error), true); }
+  } catch (error) {
+    setNotice(error instanceof Error ? error.message : String(error), true);
+  }
 });
 
 $("#source-list").addEventListener("click", async (event) => {
@@ -141,7 +184,9 @@ $("#source-list").addEventListener("click", async (event) => {
       renderSources();
       await inspectSelectedSource();
     }
-  } catch (error) { setNotice(error instanceof Error ? error.message : String(error), true); }
+  } catch (error) {
+    setNotice(error instanceof Error ? error.message : String(error), true);
+  }
 });
 
 $("#release-list").addEventListener("click", async (event) => {
@@ -155,13 +200,8 @@ $("#release-list").addEventListener("click", async (event) => {
       pluginId: button.dataset.pluginId,
       version: button.dataset.version,
     });
-    const shouldEnable = window.confirm(`${staged.stage.pluginId} ${staged.stage.version} was staged without execution.\n\nEnable it now? This is the first point where SPS may load the plugin runtime.`);
-    if (shouldEnable) {
-      const enabled = await window.spsRegistry.enableStage({ stageId: staged.stage.stageId });
-      setNotice(`${enabled.plugin?.pluginKey ?? staged.stage.pluginId} is enabled.`);
-    } else {
-      setNotice(`${staged.stage.pluginId} is staged and disabled.`);
-    }
+    await loadStages();
+    setNotice(`${staged.stage.pluginId} v${staged.stage.version} is staged and disabled. Review it below before enabling.`);
   } catch (error) {
     setNotice(error instanceof Error ? error.message : String(error), true);
   } finally {
@@ -170,5 +210,26 @@ $("#release-list").addEventListener("click", async (event) => {
   }
 });
 
+$("#stage-list").addEventListener("click", async (event) => {
+  const button = event.target.closest(".enable-stage");
+  if (!button) return;
+  const stageId = button.dataset.stageId;
+  if (!stageId) return;
+  const confirmed = window.confirm("Apply this exact reviewed plugin version? SPS will import its runtime only after this confirmation. It may install, update, or roll back the current plugin version.");
+  if (!confirmed) return;
+  try {
+    button.disabled = true;
+    button.textContent = "Applying...";
+    const enabled = await window.spsRegistry.enableStage({ stageId });
+    await loadStages();
+    setNotice(`${enabled.plugin?.pluginKey ?? "Plugin"} v${enabled.plugin?.version ?? ""} is ready.`);
+  } catch (error) {
+    setNotice(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Apply this verified version";
+  }
+});
+
 toggleSourceFields();
-await loadSources();
+await Promise.all([loadSources(), loadStages()]);

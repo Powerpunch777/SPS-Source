@@ -180,8 +180,11 @@ The Desktop Owner stores Registry source definitions in the Owner Vault, not in 
 2. `git` and `official` sources require an HTTPS index URL plus a pinned Ed25519 Registry root key. The index signature and every publisher-signed release record are checked before a release is shown.
 3. Selecting `Stage for review` re-verifies the source, streams the artifact into an Owner-Vault temporary download with an exact size and SHA-256 check, then uses the existing code-free archive extractor and Core stage API.
 4. Downloaded remote archives are removed after extraction. A staged package remains disabled; enable is a separate Owner action and is the first point at which runtime code may be imported.
+5. The review queue lists every staged artifact separately. Applying one exact version may install a new plugin, update an installed plugin, or roll an installed plugin back to an earlier verified version. No catalog refresh or source update performs this action automatically.
 
-Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` opens the source list, local/remote source form, verified release catalog, stage action, and explicit enable confirmation. Marketplace discovery, reviews, payment, entitlement, and automatic updates remain out of scope.
+When an existing plugin is replaced, Core stops its active worker first, verifies the selected stage again, persists both the manifest and resolved package path together, and starts the reviewed version through the normal lifecycle. A capability expansion remains pending for the normal generic upgrade API; the Registry queue can apply it only because the Owner explicitly reviews and confirms the exact staged artifact.
+
+Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` opens the source list, local/remote source form, verified release catalog, disabled stage action, review queue, and explicit apply confirmation. Marketplace discovery, reviews, payment, entitlement, and automatic updates remain out of scope.
 
 ### 5.3 Authoring Kit release flow (implemented)
 
@@ -200,7 +203,7 @@ The authoring Kit rejects URL-like text in relative Registry paths, URL credenti
 7. Registry advisory는 경고·비활성화 제안만 할 수 있다. 원격 서비스가 이미 설치된 코드를 조용히 교체·삭제·실행하지 않는다.
 8. offline mode에서는 마지막으로 검증한 release record와 local policy만 사용한다. 유료 entitlement의 offline cache·만료 규칙은 구매 전에 표시한다.
 
-현재 Core의 기존 `POST /api/plugins/install`은 Registry 설치 경로가 아니다. 이 API는 로컬 개발 Plugin 편의를 위해 build recovery와 JavaScript manifest import를 수행할 수 있으므로, Registry package에는 사용할 수 없다. Registry는 static manifest 검증과 staging extractor를 통과한 package만 새 `Registry disabled install` 경로로 등록하며, 이 경로는 enable 전에는 dynamic import·worker spawn·plugin migration을 수행하지 않는다.
+현재 Core의 기존 `POST /api/plugins/install`은 Registry 설치 경로가 아니다. 이 API는 로컬 개발 Plugin 편의를 위해 build recovery와 JavaScript manifest import를 수행할 수 있으므로, Registry package에는 사용할 수 없다. Registry는 static manifest 검증과 staging extractor를 통과한 package만 review queue에 보관하며, 이 경로는 Owner apply 전에는 dynamic import·worker spawn·plugin migration을 수행하지 않는다.
 
 ## 7. Marketplace 단계
 
