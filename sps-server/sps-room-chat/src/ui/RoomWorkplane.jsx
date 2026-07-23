@@ -57,6 +57,9 @@ const STYLES = `
   .rw-title { font-size: 15px; font-weight: 700; margin: 0; }
   .rw-subtitle, .rw-muted { color: var(--muted-foreground, #667085); font-size: 12px; margin: 2px 0 0; }
   .rw-room-list { padding: 8px; }
+  .rw-room-project-link { display: block; margin: 2px 2px 10px; padding: 8px; color: inherit; text-decoration: none; border-bottom: 1px solid var(--border, #d8dee9); font-weight: 700; }
+  .rw-room-project-link:hover { color: var(--primary, #2563eb); }
+  .rw-room-project-link span { display: block; margin-top: 2px; color: var(--muted-foreground, #667085); font-size: 12px; font-weight: 400; }
   .rw-room { display: block; color: inherit; text-decoration: none; border-radius: 6px; padding: 10px; margin-bottom: 3px; }
   .rw-room:hover, .rw-room.active { background: var(--accent, #eaf2ff); }
   .rw-room strong, .rw-room span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -139,8 +142,18 @@ const STYLES = `
   .rw-room-empty strong { color: var(--foreground, #172033); font-size: 15px; }
   .rw-room-empty p { margin: 6px 0 0; }
   .rw-error { color: #b42318; }
-  .rw-project { padding: 18px; }
-  .rw-project h1 { font-size: 20px; margin: 0 0 3px; }
+  .rw-project { padding: 22px; max-width: 1160px; margin: 0 auto; }
+  .rw-project-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 18px; border-bottom: 1px solid var(--border, #d8dee9); }
+  .rw-project h1 { font-size: 22px; margin: 0 0 4px; }
+  .rw-project-header p { max-width: 620px; }
+  .rw-project-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 auto; }
+  .rw-project-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+  .rw-project-stat { padding: 13px 14px; border: 1px solid var(--border, #d8dee9); border-radius: 7px; background: var(--muted, #f7f8fa); }
+  .rw-project-stat strong, .rw-project-stat span { display: block; }
+  .rw-project-stat strong { font-size: 19px; }
+  .rw-project-stat span { margin-top: 2px; color: var(--muted-foreground, #667085); font-size: 12px; }
+  .rw-project-rooms-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; }
+  .rw-project-rooms-heading h2 { margin: 0; font-size: 15px; }
   .rw-project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 18px; }
   .rw-project-card { display: block; color: inherit; text-decoration: none; border: 1px solid var(--border, #d8dee9); border-radius: 6px; padding: 12px; background: var(--background, #fff); }
   .rw-project-card:hover { border-color: #2563eb; }
@@ -172,9 +185,17 @@ const STYLES = `
   .rw-task-empty { margin-top: 18px; }
   .rw-task-empty strong { display: block; color: var(--foreground, #172033); }
   .rw-task-empty p { margin: 4px 0 0; }
-  .rw-task-row { display: block; padding: 10px 0; border-bottom: 1px solid var(--border, #e3e8f0); color: inherit; text-decoration: none; }
-  .rw-task-row strong, .rw-task-row span { display: block; }
-  .rw-task-row span { color: var(--muted-foreground, #667085); font-size: 12px; margin-top: 2px; }
+  .rw-task-list { display: grid; gap: 8px; }
+  .rw-task-row { display: block; padding: 13px 14px; border: 1px solid var(--border, #e3e8f0); border-radius: 7px; color: inherit; text-decoration: none; background: var(--background, #fff); }
+  .rw-task-row:hover { border-color: var(--primary, #2563eb); background: var(--accent, #eaf2ff); }
+  .rw-task-row-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .rw-task-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rw-task-status { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--muted, #f1f5f9); color: var(--muted-foreground, #667085); }
+  .rw-task-status[data-tone="done"] { background: #dcfce7; color: #166534; }
+  .rw-task-status[data-tone="blocked"] { background: #fee2e2; color: #991b1b; }
+  .rw-task-status[data-tone="active"] { background: #dbeafe; color: #1d4ed8; }
+  .rw-task-row-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted-foreground, #667085); font-size: 12px; margin-top: 5px; }
+  .rw-task-row-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ca-page { max-width: 900px; padding: 20px; }
   .ca-page h1 { font-size: 20px; margin: 0 0 5px; }
   .ca-note { margin: 16px 0; padding: 10px 12px; border-left: 3px solid #2563eb; background: #f4f8ff; color: #40516b; font-size: 13px; }
@@ -234,7 +255,7 @@ const STYLES = `
   @container (max-width: 560px) { .org-agent { grid-template-columns: 1fr; grid-template-areas: "meta" "policy" "actions" "status"; } .org-agent-policy, .org-agent-advanced-content { grid-template-columns: 1fr; } .org-agent-actions { justify-content: flex-start; } }
   @media (max-width: 720px) { .wp-workspace, .wp-agent, .wp-task-route, .wp-new-workspace, .wp-new-task-type { grid-template-columns: 1fr; } }
   @media (max-width: 1020px) { .rw-layout { grid-template-columns: 210px minmax(0, 1fr); } .rw-context { display: none; } .rw-actions { align-items: flex-end; flex-wrap: wrap; } .rw-composer-status { white-space: normal; } }
-  @media (max-width: 720px) { .rw-layout { display: block; height: auto; min-height: 0; overflow: visible; } .rw-rooms { border-right: 0; border-bottom: 1px solid var(--border, #d8dee9); max-height: 210px; } .rw-main { min-height: 620px; } }
+  @media (max-width: 720px) { .rw-layout { display: block; height: auto; min-height: 0; overflow: visible; } .rw-rooms { border-right: 0; border-bottom: 1px solid var(--border, #d8dee9); max-height: 210px; } .rw-main { min-height: 620px; } .rw-project { padding: 16px; } .rw-project-header { display: block; } .rw-project-actions { margin-top: 12px; } .rw-project-summary { grid-template-columns: 1fr; } }
 `;
 
 function Style() {
@@ -345,6 +366,16 @@ function taskHref(navigation, task) {
   return navigation.resolveHref(`/issues/${encodeURIComponent(task.identifier || task.id)}`);
 }
 
+function taskStatusPresentation(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "done" || normalized === "completed") return { label: "완료", tone: "done" };
+  if (normalized === "blocked") return { label: "차단됨", tone: "blocked" };
+  if (normalized === "in_progress" || normalized === "in progress") return { label: "진행 중", tone: "active" };
+  if (normalized === "todo") return { label: "할 일", tone: "active" };
+  if (normalized === "backlog") return { label: "대기", tone: "default" };
+  return { label: status || "알 수 없음", tone: "default" };
+}
+
 function roomHref(navigation, projectId, roomId) {
   const params = new URLSearchParams({ project: projectId, room: roomId });
   return navigation.resolveHref(`/agent-rooms?${params.toString()}`);
@@ -353,7 +384,7 @@ function roomHref(navigation, projectId, roomId) {
 function roomRoleSummary(room) {
   const title = String(room?.title || "").trim().toLocaleLowerCase();
   const role = String(room?.agent?.role || "").trim();
-  return !role || title === role.toLocaleLowerCase() ? "Team Room" : `${role} Team Room`;
+  return !role || title === role.toLocaleLowerCase() ? "지속 대화 Room" : `역할: ${role}`;
 }
 
 function roomAgentAttention(room) {
@@ -396,7 +427,7 @@ function RoomContext({ data, navigation }) {
       {tasks.length ? tasks.map((task) => <a className="rw-task" key={task.id} {...navigation.linkProps(taskHref(navigation, task))}>
         <div className="rw-task-title">{task.title}</div>
         <div className="rw-task-meta">{task.identifier} · {task.status} · {task.assigneeAgent?.name || "Unassigned"}</div>
-      </a>) : <div className="rw-muted">No finite Tasks from this Room.</div>}
+      </a>) : <div className="rw-muted">이 Room에서 생성된 실행 Task가 없습니다.</div>}
     </section>
     <section className="rw-context-section rw-context-changes-section">
       <h3>Changes</h3>
@@ -426,7 +457,7 @@ function RoomContext({ data, navigation }) {
 
 function RoomActivity({ activity }) {
   if (!activity || !(activity.steps || []).length || activity.status === "completed") return null;
-  const status = activity.status === "working" ? "Working" : activity.status === "completed" ? "Completed" : "Failed";
+  const status = activity.status === "working" ? "작업 중" : activity.status === "completed" ? "완료" : "실패";
   return <section className={`rw-working ${activity.status === "failed" ? "failed" : ""}`}>
     <details open={activity.status === "working"}>
       <summary><strong>{status}</strong></summary>
@@ -608,8 +639,8 @@ function RoomConversation({ context, roomId, workplane }) {
     {workplane ? <RoomList navigation={navigation} workplane={workplane} projectId={currentProjectId} roomId={roomId} /> : <div className="rw-rooms" />}
     <main className="rw-main">
       <header className="rw-header">
-        <div><h1 className="rw-title">{roomName}</h1><p className="rw-subtitle">Team Room</p></div>
-        <StatusBadge label={working ? "Working" : data?.runtime?.enabled ? "Ready" : "Runtime disabled"} status={working ? "warning" : data?.runtime?.enabled ? "ok" : "pending"} />
+        <div><h1 className="rw-title">{roomName}</h1><p className="rw-subtitle">지속 대화 Room</p></div>
+        <StatusBadge label={working ? "작업 중" : data?.runtime?.enabled ? "준비됨" : "런타임 비활성"} status={working ? "warning" : data?.runtime?.enabled ? "ok" : "pending"} />
       </header>
       <section className="rw-thread" ref={threadRef} onScroll={trackThreadScroll}>
         {messages.length ? messages.map((comment) => {
@@ -623,25 +654,25 @@ function RoomConversation({ context, roomId, workplane }) {
               <div className="rw-message-label"><span>{roomLabel(comment)}{isSuperseded ? " (revised)" : ""}</span></div>
               <div onClick={openRoomFile}><MarkdownBlock className="rw-message-body" content={renderRoomText(comment)} enableWikiLinks /></div>
               <AttachmentList attachments={attachments} className="rw-message-attachments" />
-              {isUserMessage ? <div className="rw-message-actions"><button type="button" className="rw-text-button" onClick={() => editAndRetry(comment)} disabled={submitting || working || !data?.runtime?.enabled}>Edit and retry</button></div> : null}
+              {isUserMessage ? <div className="rw-message-actions"><button type="button" className="rw-text-button" onClick={() => editAndRetry(comment)} disabled={submitting || working || !data?.runtime?.enabled}>수정 후 재시도</button></div> : null}
             </article>
             {showActivity ? <RoomActivity activity={activity} /> : null}
           </div>;
-        }) : <div className="rw-empty rw-room-empty"><strong>Start the ongoing conversation</strong><p>This Team Room keeps the Agent's context, decisions, and checkpoints across work.</p></div>}
+        }) : <div className="rw-empty rw-room-empty"><strong>지속 대화를 시작하세요</strong><p>이 Room은 Agent의 맥락, 결정, 체크포인트를 여러 작업에 걸쳐 유지합니다.</p></div>}
         {activity && !activity.sourceCommentId ? <RoomActivity activity={activity} /> : null}
       </section>
       <footer className="rw-composer">
         {actionError ? <div className="rw-error">{actionError}</div> : null}
-        {workspaceNotice ? <div className="rw-workspace-notice"><div><strong>Project folder required</strong><span>{workspaceNotice}</span></div>{workspaceSetupHref ? <a className="rw-button" {...navigation.linkProps(workspaceSetupHref)}>Open Workspace Profile</a> : null}</div> : null}
-        {retrySource ? <div className="rw-retry-draft"><span>Editing a prior message. Sending creates a revised retry and keeps the original in Room history.</span><button type="button" className="rw-text-button" onClick={() => setRetrySource(null)} disabled={submitting}>Cancel</button></div> : null}
+        {workspaceNotice ? <div className="rw-workspace-notice"><div><strong>프로젝트 작업 폴더가 필요합니다</strong><span>{workspaceNotice}</span></div>{workspaceSetupHref ? <a className="rw-button" {...navigation.linkProps(workspaceSetupHref)}>작업공간 설정 열기</a> : null}</div> : null}
+        {retrySource ? <div className="rw-retry-draft"><span>이전 메시지를 수정하고 있습니다. 보내면 원문은 Room 이력에 남기고 수정본으로 재시도합니다.</span><button type="button" className="rw-text-button" onClick={() => setRetrySource(null)} disabled={submitting}>취소</button></div> : null}
         <MarkdownEditor value={message} onChange={setMessage} onSubmit={send} bordered placeholder={`${roomName}에게 메시지`} />
         <input ref={attachmentInputRef} className="rw-file-input" type="file" multiple onChange={queueFiles} />
         {queuedAttachments.length ? <div className="rw-attachment-queue">{queuedAttachments.map((attachment) => <div className="rw-attachment-chip" key={attachment.clientId}><span title={attachment.file.name}>{attachment.file.name}</span><small>{formatBytes(attachment.file.size)}</small><button type="button" aria-label={`${attachment.file.name} remove`} onClick={() => removeQueuedAttachment(attachment.clientId)} disabled={submitting}>×</button></div>)}</div> : null}
         <div className="rw-composer-tools">
-          <button type="button" className="rw-button" onClick={() => attachmentInputRef.current?.click()} disabled={submitting || working || !workspaceReady || !data?.runtime?.enabled}>Attach files</button>
-          <span className="rw-muted">Files are stored in this Room, not the project repository.</span>
+          <button type="button" className="rw-button" onClick={() => attachmentInputRef.current?.click()} disabled={submitting || working || !workspaceReady || !data?.runtime?.enabled}>파일 첨부</button>
+          <span className="rw-muted">첨부 파일은 프로젝트 저장소가 아니라 이 Room에 보관됩니다.</span>
         </div>
-        <div className="rw-actions"><span className="rw-composer-status">History saved automatically</span><div className="rw-composer-buttons"><button type="button" className="rw-button" onClick={compact} disabled={submitting || working || !workspaceReady || !data?.runtime?.enabled}>Compact &amp; checkpoint</button><button type="button" className="rw-button primary" onClick={send} disabled={submitting || working || !workspaceReady || (!message.trim() && !queuedAttachments.length && !retrySource?.attachmentIds?.length) || !data?.runtime?.enabled}>{retrySource ? "Retry" : "Send"}</button></div></div>
+        <div className="rw-actions"><span className="rw-composer-status">대화 이력은 자동 저장됩니다</span><div className="rw-composer-buttons"><button type="button" className="rw-button" onClick={compact} disabled={submitting || working || !workspaceReady || !data?.runtime?.enabled}>압축 및 체크포인트</button><button type="button" className="rw-button primary" onClick={send} disabled={submitting || working || !workspaceReady || (!message.trim() && !queuedAttachments.length && !retrySource?.attachmentIds?.length) || !data?.runtime?.enabled}>{retrySource ? "재시도" : "보내기"}</button></div></div>
       </footer>
     </main>
     <RoomContext data={data} navigation={navigation} />
@@ -650,7 +681,8 @@ function RoomConversation({ context, roomId, workplane }) {
 }
 
 function RoomList({ navigation, workplane, projectId, roomId }) {
-  return <aside className="rw-rooms"><div className="rw-room-list"><div className="rw-muted">{workplane.project?.name || "Project"}</div>{(workplane.rooms || []).map((room) => { const attention = roomAgentAttention(room); return <a className={`rw-room ${room.id === roomId ? "active" : ""}`} key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><span>{roomRoleSummary(room)}</span>{attention ? <small>{attention}</small> : null}</a>; })}</div></aside>;
+  const projectRoomsHref = navigation.resolveHref(`/agent-rooms?project=${encodeURIComponent(projectId)}`);
+  return <aside className="rw-rooms"><div className="rw-room-list"><a className="rw-room-project-link" {...navigation.linkProps(projectRoomsHref)}>{workplane.project?.name || "프로젝트"}<span>프로젝트 Rooms</span></a>{(workplane.rooms || []).map((room) => { const attention = roomAgentAttention(room); return <a className={`rw-room ${room.id === roomId ? "active" : ""}`} key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><span>{roomRoleSummary(room)}</span>{attention ? <small>{attention}</small> : null}</a>; })}</div></aside>;
 }
 
 function WorkspaceProfile({ context, workplane, onRefresh }) {
@@ -791,11 +823,20 @@ function WorkspaceProfile({ context, workplane, onRefresh }) {
 }
 
 function ProjectWorkplaneHome({ context, projectId, workplane, onRefresh, navigation }) {
+  const rooms = workplane?.rooms || [];
+  const tasksHref = navigation.resolveHref(`/tasks?project=${encodeURIComponent(projectId)}`);
   return <div className="rw-project">
-    <h1>{workplane?.project?.name || "Project"}</h1>
-    <p className="rw-muted">Choose a Team Room for ongoing collaboration. Bounded work remains in Tasks.</p>
+    <header className="rw-project-header">
+      <div><h1>{workplane?.project?.name || "프로젝트"}</h1><p className="rw-muted">이 프로젝트의 지속적인 대화와 결정은 Room에서 이어집니다. Lead는 작업이 준비되었을 때만 Worker에게 유한한 Task를 생성하고 배정합니다.</p></div>
+      <div className="rw-project-actions"><a className="rw-button" {...navigation.linkProps(tasksHref)}>프로젝트 Tasks</a></div>
+    </header>
+    <section className="rw-project-summary" aria-label="Project work summary">
+      <div className="rw-project-stat"><strong>{rooms.length}</strong><span>활성 Room</span></div>
+      <div className="rw-project-stat"><strong>{workplane?.taskCount || 0}</strong><span>프로젝트 Task</span></div>
+    </section>
+    <div className="rw-project-rooms-heading"><h2>Rooms</h2><span className="rw-muted">지속적인 대화와 의사결정</span></div>
     <div className="rw-project-grid">
-      {(workplane?.rooms || []).map((room) => <a className="rw-project-card" key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}>
+      {rooms.map((room) => <a className="rw-project-card" key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}>
         <strong>{room.title}</strong><p>{roomRoleSummary(room)}</p>
       </a>)}
     </div>
@@ -807,10 +848,10 @@ function ProjectRooms({ context, projectId, roomId }) {
   const navigation = useHostNavigation();
   const { data, loading, error, refresh } = usePluginData("project-workplane-view", { companyId: context.companyId, projectId });
   if (roomId) return <RoomConversation context={context} roomId={roomId} workplane={data} />;
-  if (loading) return <div className="rw-empty">Loading Rooms...</div>;
+  if (loading) return <div className="rw-empty">Rooms를 불러오는 중...</div>;
   if (error) return <div className="rw-error">{error.message}</div>;
   if (!roomId) return <ProjectWorkplaneHome context={context} projectId={projectId} workplane={data} onRefresh={refresh} navigation={navigation} />;
-  return <div className="rw-project"><h1>{data?.project?.name || "Project"}</h1><p className="rw-muted">Choose a Team Room for ongoing collaboration. Bounded work remains in Tasks.</p><div className="rw-project-grid">{(data?.rooms || []).map((room) => <a className="rw-project-card" key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><p>{roomRoleSummary(room)}</p></a>)}</div></div>;
+  return <div className="rw-project"><h1>{data?.project?.name || "프로젝트"}</h1><p className="rw-muted">지속적인 협업을 이어갈 Room을 선택하세요. 유한한 실행 작업은 Tasks에서 관리됩니다.</p><div className="rw-project-grid">{(data?.rooms || []).map((room) => <a className="rw-project-card" key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><p>{roomRoleSummary(room)}</p></a>)}</div></div>;
 }
 
 export function AgentRoomsPage({ context }) {
@@ -818,7 +859,7 @@ export function AgentRoomsPage({ context }) {
   const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const projectId = query.get("project") || context.projectId;
   const roomId = query.get("room");
-  if (!projectId && !roomId) return <><Style /><div className="rw-empty">Choose a Project to open its Team Rooms.</div></>;
+  if (!projectId && !roomId) return <><Style /><div className="rw-empty">프로젝트를 선택해 해당 프로젝트의 Rooms를 여세요.</div></>;
   return <div className="rw-shell"><Style /><ProjectRooms context={context} projectId={projectId} roomId={roomId} /></div>;
 }
 
@@ -835,16 +876,22 @@ export function ProjectTasksPage({ context }) {
   const navigation = useHostNavigation();
   const projectId = new URLSearchParams(location.search).get("project");
   const { data, loading, error } = usePluginData("project-tasks-view", { companyId: context.companyId, projectId: projectId || "" });
-  const projectName = data?.project?.name || "Project";
+  const projectName = data?.project?.name || "프로젝트";
   const roomsHref = projectId ? navigation.resolveHref(`/agent-rooms?project=${encodeURIComponent(projectId)}`) : "";
   const tasks = data?.tasks || [];
   return <div className="rw-task-board"><Style />
-    <header className="rw-task-board-header"><div><h1>{projectId ? `${projectName} Tasks` : "Project Tasks"}</h1><p className="rw-muted">Bounded work created from a Team Room. Task conversations stay in native SPS Task chat.</p></div>{roomsHref ? <a className="rw-button" {...navigation.linkProps(roomsHref)}>Open Team Rooms</a> : null}</header>
-    {!projectId ? <div className="rw-empty">Open Tasks from a Project to keep the Project, its Rooms, and finite work together.</div>
-      : loading ? <div className="rw-empty">Loading Tasks...</div>
+    <header className="rw-task-board-header"><div><h1>{projectId ? `${projectName} Tasks` : "프로젝트 Tasks"}</h1><p className="rw-muted">Room에서 생성된 유한한 실행 작업입니다. 작업 대화는 SPS 기본 Task 채팅에서 이어집니다.</p></div>{roomsHref ? <a className="rw-button" {...navigation.linkProps(roomsHref)}>Rooms 열기</a> : null}</header>
+    {!projectId ? <div className="rw-empty">프로젝트에서 Tasks를 열어 Room과 유한한 실행 작업을 함께 관리하세요.</div>
+      : loading ? <div className="rw-empty">Tasks를 불러오는 중...</div>
         : error ? <div className="rw-error">{error.message}</div>
-          : tasks.length ? tasks.map((task) => <a className="rw-task-row" key={task.id} {...navigation.linkProps(taskHref(navigation, task))}><strong>{task.title}</strong><span>{task.identifier} · {task.status} · {task.parentRoom?.title || "No owner Room"}</span></a>)
-            : <div className="rw-empty rw-task-empty"><strong>No finite Tasks yet.</strong><p>A configured Lead can create and assign a Task from its Team Room when work is ready.</p></div>}
+          : tasks.length ? <div className="rw-task-list">{tasks.map((task) => {
+            const status = taskStatusPresentation(task.status);
+            return <a className="rw-task-row" key={task.id} {...navigation.linkProps(taskHref(navigation, task))}>
+              <div className="rw-task-row-head"><strong>{task.title}</strong><span className="rw-task-status" data-tone={status.tone}>{status.label}</span></div>
+              <div className="rw-task-row-meta"><span>{task.identifier}</span><span>담당: {task.assigneeAgent?.name || "미배정"}</span><span>생성 Room: {task.parentRoom?.title || "없음"}</span></div>
+            </a>;
+          })}</div>
+            : <div className="rw-empty rw-task-empty"><strong>아직 실행 Task가 없습니다.</strong><p>작업이 준비되면 권한이 있는 Lead가 Room에서 Task를 생성하고 Worker에게 배정합니다.</p></div>}
   </div>;
 }
 
