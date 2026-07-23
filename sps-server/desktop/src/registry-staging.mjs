@@ -57,6 +57,7 @@ export async function stageSpsPluginArchive({
   vaultRoot,
   archivePath,
   source,
+  expectedArtifact = null,
   registerStage,
   fsApi = fs,
   randomId = randomUUID,
@@ -73,6 +74,12 @@ export async function stageSpsPluginArchive({
   const layout = ownerVaultRegistryLayout(vaultRoot);
   await fsApi.mkdir(layout.packagesRoot, { recursive: true, mode: 0o700 });
   const described = await describeArchive(archivePath, { fsApi });
+  if (expectedArtifact && (
+    expectedArtifact.sha256 !== described.artifact.sha256
+    || expectedArtifact.sizeBytes !== described.artifact.sizeBytes
+  )) {
+    throw new Error("Registry artifact no longer matches its signed release record.");
+  }
   const destinationRoot = path.join(layout.packagesRoot, `${described.artifact.sha256.slice(0, 16)}-${randomId()}`);
   const extraction = await extractArchive({
     archivePath: described.archivePath,

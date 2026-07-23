@@ -87,7 +87,7 @@ test("does not start when the packaged Owner Host runtime is missing", async () 
 test("prefers the packaged runtime and launches Electron as Node", async () => {
   const files = new Set([
     "C:/runtime/dist/index.js",
-    "C:/runtime/node_modules/tsx/dist/loader.mjs",
+    "C:/runtime/sps-owner-host-bootstrap.mjs",
   ]);
   const runtime = await resolveSpsOwnerHostRuntime({
     packagedRuntimeRoots: ["C:/runtime"],
@@ -100,9 +100,12 @@ test("prefers the packaged runtime and launches Electron as Node", async () => {
   });
 
   assert.equal(runtime.kind, "packaged-owner-runtime");
-  assert.deepEqual(runtime.environment, { ELECTRON_RUN_AS_NODE: "1", PAPERCLIP_HOME: "C:/SPS Vault" });
-  assert.deepEqual(runtime.args.slice(2, 4), ["-e", "await import('./dist/index.js')"]);
-  assert.deepEqual(runtime.args.slice(-2), ["--config", "C:/SPS Vault/config.json"]);
+  assert.deepEqual(runtime.args, ["sps-owner-host-bootstrap.mjs"]);
+  assert.deepEqual(runtime.environment, {
+    ELECTRON_RUN_AS_NODE: "1",
+    PAPERCLIP_HOME: "C:/SPS Vault",
+    PAPERCLIP_CONFIG: "C:/SPS Vault/config.json",
+  });
 });
 
 test("materializes the embedded runtime into the Owner data directory once", async () => {
@@ -113,6 +116,7 @@ test("materializes the embedded runtime into the Owner data directory once", asy
     await fs.mkdir(path.join(source, "dist"), { recursive: true });
     await fs.mkdir(path.join(source, "sps-vendor", "tsx", "dist"), { recursive: true });
     await fs.writeFile(path.join(source, "dist", "index.js"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "sps-owner-host-bootstrap.mjs"), "export {};\n", "utf8");
     await fs.writeFile(path.join(source, "sps-vendor", "tsx", "dist", "loader.mjs"), "export {};\n", "utf8");
     await fs.writeFile(path.join(source, "sps-owner-host-runtime.json"), "{\"format\":1}\n", "utf8");
     await fs.writeFile(path.join(source, "package.json"), "{\"name\":\"sps-owner-host-runtime\"}\n", "utf8");
@@ -134,6 +138,7 @@ test("runs a packaged node_modules runtime in place without copying dependencies
     await fs.mkdir(path.join(source, "dist"), { recursive: true });
     await fs.mkdir(path.join(source, "node_modules", "tsx", "dist"), { recursive: true });
     await fs.writeFile(path.join(source, "dist", "index.js"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "sps-owner-host-bootstrap.mjs"), "export {};\n", "utf8");
     await fs.writeFile(path.join(source, "node_modules", "tsx", "dist", "loader.mjs"), "export {};\n", "utf8");
     await fs.writeFile(path.join(source, "sps-owner-host-runtime.json"), "{\"format\":3}\n", "utf8");
     await fs.writeFile(path.join(source, "package.json"), "{\"name\":\"sps-owner-host-runtime\"}\n", "utf8");
@@ -166,6 +171,7 @@ test("retries a stale Windows staging runtime directory before materializing", a
     await fs.mkdir(path.join(source, "dist"), { recursive: true });
     await fs.mkdir(path.join(source, "sps-vendor", "tsx", "dist"), { recursive: true });
     await fs.writeFile(path.join(source, "dist", "index.js"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "sps-owner-host-bootstrap.mjs"), "export {};\n", "utf8");
     await fs.writeFile(path.join(source, "sps-vendor", "tsx", "dist", "loader.mjs"), "export {};\n", "utf8");
     await fs.writeFile(path.join(source, "sps-owner-host-runtime.json"), "{\"format\":1}\n", "utf8");
     await fs.writeFile(path.join(source, "package.json"), "{\"name\":\"sps-owner-host-runtime\"}\n", "utf8");

@@ -118,12 +118,14 @@ export async function materializeSpsOwnerHostRuntime({
   if (!sourceRuntimeRoot || !targetRuntimeRoot) return null;
   const sourceManifest = path.join(sourceRuntimeRoot, "sps-owner-host-runtime.json");
   const sourceEntry = path.join(sourceRuntimeRoot, "dist", "index.js");
+  const sourceBootstrap = path.join(sourceRuntimeRoot, "sps-owner-host-bootstrap.mjs");
   const sourceModules = path.join(sourceRuntimeRoot, "node_modules");
   const sourceVendor = path.join(sourceRuntimeRoot, "sps-vendor");
   const sourcePackage = path.join(sourceRuntimeRoot, "package.json");
   if (
     !(await fileExists(sourceManifest, fsApi))
     || !(await fileExists(sourceEntry, fsApi))
+    || !(await fileExists(sourceBootstrap, fsApi))
     || !(await fileExists(sourcePackage, fsApi))
   ) {
     return null;
@@ -137,6 +139,7 @@ export async function materializeSpsOwnerHostRuntime({
   if (!(await fileExists(sourceVendor, fsApi))) return null;
 
   const targetEntry = path.join(targetRuntimeRoot, "dist", "index.js");
+  const targetBootstrap = path.join(targetRuntimeRoot, "sps-owner-host-bootstrap.mjs");
   const targetTsx = path.join(targetRuntimeRoot, "node_modules", "tsx", "dist", "loader.mjs");
   const runtimeSupport = [
     { source: path.join(sourceRuntimeRoot, "sps-default-memory", "package.json"), target: path.join(targetRuntimeRoot, "sps-default-memory", "package.json") },
@@ -150,6 +153,7 @@ export async function materializeSpsOwnerHostRuntime({
   const targetHasSupport = await Promise.all(sourceSupport.map((entry) => fileExists(entry.target, fsApi)));
   if (
     (await fileExists(targetEntry, fsApi))
+    && (await fileExists(targetBootstrap, fsApi))
     && (await fileExists(targetTsx, fsApi))
     && targetHasSupport.every(Boolean)
   ) return targetRuntimeRoot;
@@ -164,6 +168,7 @@ export async function materializeSpsOwnerHostRuntime({
   await fsApi.cp(path.join(sourceRuntimeRoot, "dist"), path.join(stagingRoot, "dist"), { recursive: true, dereference: false });
   await fsApi.cp(sourceVendor, path.join(stagingRoot, "node_modules"), { recursive: true, dereference: false });
   await fsApi.copyFile(sourceManifest, path.join(stagingRoot, "sps-owner-host-runtime.json"));
+  await fsApi.copyFile(sourceBootstrap, path.join(stagingRoot, "sps-owner-host-bootstrap.mjs"));
   await fsApi.copyFile(sourcePackage, path.join(stagingRoot, "package.json"));
   for (const entry of sourceSupport) {
     const relative = path.relative(sourceRuntimeRoot, entry.source);
@@ -189,19 +194,19 @@ export async function resolveSpsOwnerHostRuntime({
   const packagedRoots = Array.isArray(packagedRuntimeRoots) ? packagedRuntimeRoots.filter(Boolean) : [];
   for (const runtimeRoot of packagedRoots) {
     const entry = path.join(runtimeRoot, "dist", "index.js");
-    const tsxLoader = path.join(runtimeRoot, "node_modules", "tsx", "dist", "loader.mjs");
-    if (!(await fileExists(entry, fsApi)) || !(await fileExists(tsxLoader, fsApi))) continue;
+    const bootstrap = path.join(runtimeRoot, "sps-owner-host-bootstrap.mjs");
+    if (!(await fileExists(entry, fsApi)) || !(await fileExists(bootstrap, fsApi))) continue;
     return {
       command: packagedNodeCommand,
       args: [
-        "--import", "tsx",
-        "-e", "await import('./dist/index.js')",
-        "run",
-        "--instance", "sps-desktop-owner",
-        ...(configPath ? ["--config", configPath] : []),
+        "sps-owner-host-bootstrap.mjs",
       ],
       cwd: runtimeRoot,
-      environment: { ELECTRON_RUN_AS_NODE: "1", ...environment },
+      environment: {
+        ELECTRON_RUN_AS_NODE: "1",
+        ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
+        ...environment,
+      },
       kind: "packaged-owner-runtime",
     };
   }

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,6 +63,13 @@ import { exportSpsOwnerVaultTransfer, inspectSpsOwnerVaultTransfer } from "./own
 import { inspectSpsPluginRuntime } from "./plugin-runtime.mjs";
 import { stageSpsPluginArchive } from "./registry-staging.mjs";
 import {
+  acquireRegistryRelease,
+  addRegistrySource,
+  inspectRegistrySource,
+  loadRegistrySources,
+  removeRegistrySource,
+} from "./registry-source-catalog.mjs";
+import {
   disableSpsTailscaleServe,
   enableSpsTailscaleServe,
   inspectSpsTailscale,
@@ -82,6 +89,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
 let mainWindow = null;
 let workspaceWindow = null;
+let registryWindow = null;
 let state = emptyState();
 let pendingAuth = null;
 let pendingDesktopAccount = null;
@@ -833,6 +841,133 @@ async function stageRegistryPluginFromFilePicker() {
   return { ...staged, enabled };
 }
 
+function assertRegistryOwner() {
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
+    throw new Error("Only the signed-in SPS Owner can manage Registry sources.");
+  }
+}
+
+function registrySourceView(source) {
+  return {
+    id: source.id,
+    kind: source.kind,
+    displayName: source.displayName,
+    ...(source.indexUrl ? { indexUrl: source.indexUrl } : {}),
+    ...(source.localPath ? { localFolderName: path.basename(source.localPath) || source.localPath } : {}),
+    ...(source.trustedRoot ? { trustedRootKeyId: source.trustedRoot.keyId } : {}),
+  };
+}
+
+async function listRegistrySources() {
+  assertRegistryOwner();
+  const configured = await loadRegistrySources({ vaultRoot: ownerVaultRoot() });
+  return configured.sources.map(registrySourceView);
+}
+
+async function addDesktopRegistrySource(input) {
+  assertRegistryOwner();
+  if (!input || typeof input !== "object") throw new Error("Registry source details are required.");
+  const source = input.kind === "local"
+    ? {
+      id: input.id,
+      kind: "local",
+      displayName: input.displayName,
+      localPath: input.localPath,
+    }
+    : {
+      id: input.id,
+      kind: input.kind,
+      displayName: input.displayName,
+      indexUrl: input.indexUrl,
+      trustedRoot: {
+        keyId: input.trustedRootKeyId,
+        publicKey: input.trustedRootPublicKey,
+      },
+    };
+  const inspection = await inspectRegistrySource(source);
+  if (!inspection.valid) throw new Error(inspection.errors.join("\n"));
+  const saved = await addRegistrySource({ vaultRoot: ownerVaultRoot(), source });
+  return saved.sources.map(registrySourceView);
+}
+
+async function chooseDesktopLocalRegistryFolder() {
+  assertRegistryOwner();
+  const selection = await dialog.showOpenDialog(registryWindow ?? mainWindow ?? undefined, {
+    title: "Choose a local SPS Registry folder",
+    properties: ["openDirectory"],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return null;
+  return { localPath: selection.filePaths[0], localFolderName: path.basename(selection.filePaths[0]) };
+}
+
+async function inspectDesktopRegistrySource(sourceId) {
+  assertRegistryOwner();
+  const configured = await loadRegistrySources({ vaultRoot: ownerVaultRoot() });
+  const source = configured.sources.find((entry) => entry.id === sourceId);
+  if (!source) throw new Error("Registry source was not found.");
+  const report = await inspectRegistrySource(source);
+  return {
+    source: registrySourceView(source),
+    valid: report.valid,
+    errors: report.errors,
+    trust: report.trust,
+    warning: report.warning,
+    releases: report.releases.map((release) => ({
+      pluginId: release.pluginId,
+      version: release.version,
+      visibility: release.visibility,
+      publisherId: release.publisherId,
+      publisherKeyId: release.publisherKeyId,
+      artifact: { ...release.artifact },
+    })),
+  };
+}
+
+async function stageDesktopRegistryRelease({ sourceId, pluginId, version } = {}) {
+  assertRegistryOwner();
+  await requireReadyOwnerHost();
+  const configured = await loadRegistrySources({ vaultRoot: ownerVaultRoot() });
+  const source = configured.sources.find((entry) => entry.id === sourceId);
+  if (!source) throw new Error("Registry source was not found.");
+  const acquired = await acquireRegistryRelease({
+    vaultRoot: ownerVaultRoot(),
+    source,
+    pluginId,
+    version,
+  });
+  try {
+    const staged = await stageSpsPluginArchive({
+      vaultRoot: ownerVaultRoot(),
+      archivePath: acquired.archivePath,
+      expectedArtifact: acquired.artifact,
+      source: acquired.source,
+      registerStage: async (body) => await ownerHostApi("/plugins/registry/stages", {
+        method: "POST",
+        body,
+      }),
+    });
+    if (!staged.staged) throw new Error(staged.errors.join("\n"));
+    return staged;
+  } finally {
+    if (acquired.cleanupArchive) await fs.rm(acquired.archivePath, { force: true }).catch(() => {});
+  }
+}
+
+async function enableDesktopRegistryStage(stageId) {
+  assertRegistryOwner();
+  if (typeof stageId !== "string" || stageId.length === 0) throw new Error("Registry stage id is required.");
+  return await ownerHostApi(`/plugins/registry/stages/${encodeURIComponent(stageId)}/enable`, {
+    method: "POST",
+    body: {},
+  });
+}
+
+async function removeDesktopRegistrySource(sourceId) {
+  assertRegistryOwner();
+  const saved = await removeRegistrySource({ vaultRoot: ownerVaultRoot(), sourceId });
+  return saved.sources.map(registrySourceView);
+}
+
 async function showRegistryPluginStages() {
   if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
     throw new Error("Only the signed-in SPS Owner can review Registry plugins.");
@@ -1269,6 +1404,40 @@ function configureWorkspaceNavigation(window, hubOrigin) {
   });
 }
 
+async function showRegistryWindow() {
+  assertRegistryOwner();
+  if (registryWindow && !registryWindow.isDestroyed()) {
+    registryWindow.show();
+    registryWindow.focus();
+    return;
+  }
+  const window = new BrowserWindow({
+    width: 1_080,
+    height: 780,
+    minWidth: 900,
+    minHeight: 620,
+    show: false,
+    title: "SPS Plugin Registry",
+    icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
+    webPreferences: createSpsSetupWindowPreferences(path.join(__dirname, "registry-preload.cjs")),
+  });
+  registryWindow = window;
+  window.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith("file:")) return;
+    event.preventDefault();
+    void shell.openExternal(url);
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  window.once("ready-to-show", () => window.show());
+  window.on("closed", () => {
+    if (registryWindow === window) registryWindow = null;
+  });
+  await window.loadFile(path.join(__dirname, "..", "renderer", "registry.html"));
+}
+
 async function openWorkspace() {
   if (!currentDesktopAccount()) throw new Error("Sign in with Google before opening SPS Workspace.");
   if (!state.profile) throw new Error("Save an SPS team connection first");
@@ -1373,6 +1542,7 @@ function createApplicationMenu() {
         { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(exportOwnerVaultTransfer) },
         { label: "Check SPS transfer bundle...", click: () => run(inspectOwnerVaultTransfer) },
         { label: "Check plugin runtime...", click: () => run(showPluginRuntimeStatus) },
+        { label: "Manage Plugin Registries...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryWindow) },
         { label: "Install Registry plugin...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(stageRegistryPluginFromFilePicker) },
         { label: "Review staged Registry plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryPluginStages) },
         { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
@@ -1401,6 +1571,7 @@ function refreshTrayMenu() {
     { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void exportOwnerVaultTransfer(); } },
     { label: "Check SPS transfer bundle...", click: () => { void inspectOwnerVaultTransfer(); } },
     { label: "Check plugin runtime...", click: () => { void showPluginRuntimeStatus(); } },
+    { label: "Manage Plugin Registries...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryWindow(); } },
     { label: "Install Registry plugin...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void stageRegistryPluginFromFilePicker(); } },
     { label: "Review staged Registry plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryPluginStages(); } },
     { label: "서버 연결 및 계정", click: () => { void showMainWindow().then(openSetup); } },
@@ -1710,6 +1881,13 @@ function registerIpc() {
     }
     return await signOutDesktopAccount();
   });
+  ipcMain.handle("desktop:registry-list-sources", async () => await listRegistrySources());
+  ipcMain.handle("desktop:registry-choose-local-source", async () => await chooseDesktopLocalRegistryFolder());
+  ipcMain.handle("desktop:registry-add-source", async (_event, input) => await addDesktopRegistrySource(input));
+  ipcMain.handle("desktop:registry-remove-source", async (_event, input) => await removeDesktopRegistrySource(input?.sourceId));
+  ipcMain.handle("desktop:registry-inspect-source", async (_event, input) => await inspectDesktopRegistrySource(input?.sourceId));
+  ipcMain.handle("desktop:registry-stage-release", async (_event, input) => await stageDesktopRegistryRelease(input));
+  ipcMain.handle("desktop:registry-enable-stage", async (_event, input) => await enableDesktopRegistryStage(input?.stageId));
   ipcMain.handle("desktop:configure-google-account", async (_event, input) => await configureDesktopGoogleClient(input));
   ipcMain.handle("desktop:start-google-account", async () => await startDesktopAccountSignIn());
   ipcMain.handle("desktop:sign-out-google-account", async () => await signOutDesktopAccount());

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>SPS Plugin Registry</title>
+    <link rel="stylesheet" href="./registry.css" />
+  </head>
+  <body>
+    <main class="registry-shell">
+      <header class="registry-header">
+        <div class="brand"><img src="../assets/sps-logo.png" alt="" /><span>SPS Plugin Registry</span></div>
+        <p>Browse verified plugin releases. Staging never runs plugin code.</p>
+      </header>
+      <section class="registry-grid" aria-label="Plugin Registry management">
+        <aside class="sources-panel">
+          <div class="panel-heading"><h1>Sources</h1><button id="refresh-sources" class="icon-button" type="button" title="Refresh sources">Refresh</button></div>
+          <div id="source-list" class="source-list" aria-live="polite"></div>
+          <details class="add-source" open>
+            <summary>Add trusted source</summary>
+            <form id="source-form">
+              <label>Source type<select id="source-kind"><option value="local">Local folder</option><option value="git">Git / HTTPS</option><option value="official">Official / HTTPS</option></select></label>
+              <label>Source ID<input id="source-id" required pattern="[a-z0-9][a-z0-9._-]{2,127}" placeholder="io.example.plugins" /></label>
+              <label>Display name<input id="source-name" required maxlength="200" placeholder="Example Plugins" /></label>
+              <div id="local-source-fields"><label>Folder<input id="local-path" readonly placeholder="Choose a Registry folder" /></label><button id="choose-local-folder" class="secondary" type="button">Choose folder</button></div>
+              <div id="remote-source-fields" hidden>
+                <label>Registry index URL<input id="source-index-url" type="url" placeholder="https://example.com/registry.json" /></label>
+                <label>Root key ID<input id="source-root-key-id" placeholder="ed25519:publisher-root-1" /></label>
+                <label>Root public key<textarea id="source-root-key" rows="4" placeholder="-----BEGIN PUBLIC KEY-----"></textarea></label>
+              </div>
+              <button class="primary" type="submit">Add and verify</button>
+            </form>
+          </details>
+        </aside>
+        <section class="catalog-panel">
+          <div class="panel-heading"><div><h1 id="catalog-title">Choose a source</h1><p id="catalog-status">A source is verified before its releases can be staged.</p></div></div>
+          <div id="release-list" class="release-list"><p class="empty-state">Select a trusted source to browse its releases.</p></div>
+        </section>
+      </section>
+      <p id="notice" class="notice" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="./registry.mjs"></script>
+  </body>
+</html>

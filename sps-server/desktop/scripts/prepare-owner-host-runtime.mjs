@@ -63,6 +63,21 @@ async function requireFile(entry, message) {
   }
 }
 
+async function buildOwnerHostCoreArtifacts() {
+  const dbTsconfig = path.join(coreRoot, "packages", "db", "tsconfig.json");
+  const serverTsconfig = path.join(coreRoot, "server", "tsconfig.json");
+  const tscCli = path.join(coreRoot, "node_modules", "typescript", "bin", "tsc");
+  await requireFile(tscCli, "SPS Owner Host requires the Core TypeScript compiler. Run pnpm install in external/sps-core first.");
+  await requireFile(dbTsconfig, "SPS Owner Host database TypeScript config is missing.");
+  await requireFile(serverTsconfig, "SPS Owner Host server TypeScript config is missing.");
+
+  // pnpm deploy packages built output, not the workspace TypeScript sources.
+  // Rebuild the two runtime packages here so a Desktop release cannot ship
+  // stale database/server code after a Core update.
+  await run(process.execPath, [tscCli, "-p", dbTsconfig], coreRoot);
+  await run(process.execPath, [tscCli, "-p", serverTsconfig], coreRoot);
+}
+
 async function normalizeWorkspacePackageExports(runtimeRoot) {
   const workspaceScopeRoot = path.join(runtimeRoot, "node_modules", "@paperclipai");
   let entries;
@@ -114,6 +129,29 @@ async function copyBundledSpsPluginRuntime(runtimeRoot) {
   await cp(sidecarSource, sidecarTarget);
 }
 
+async function writeOwnerHostBootstrap(runtimeRoot) {
+  const bootstrapPath = path.join(runtimeRoot, "sps-owner-host-bootstrap.mjs");
+  const source = [
+    "// SPS Desktop owns onboarding and configuration. Start the packaged server directly",
+    "// instead of routing Electron-as-Node through the general-purpose CLI parser.",
+    "import { cleanupWindowsSubstMappings } from '@paperclipai/db';",
+    "import { startServer } from '@paperclipai/server';",
+    "const releaseWindowsNativeMappings = () => cleanupWindowsSubstMappings();",
+    "process.prependOnceListener('SIGINT', releaseWindowsNativeMappings);",
+    "process.prependOnceListener('SIGTERM', releaseWindowsNativeMappings);",
+    "process.once('exit', releaseWindowsNativeMappings);",
+    "try {",
+    "  await startServer();",
+    "} catch (error) {",
+    "  releaseWindowsNativeMappings();",
+    "  console.error('SPS Owner Host failed to start.', error instanceof Error ? error.stack ?? error.message : String(error));",
+    "  process.exitCode = 1;",
+    "}",
+    "",
+  ].join("\n");
+  await writeFile(bootstrapPath, source, "utf8");
+}
+
 await requireFile(
   path.join(coreRoot, "cli", "dist", "index.js"),
   "SPS Owner Host CLI is not built. Build SPS Core before packaging SPS Desktop.",
@@ -122,6 +160,7 @@ await requireFile(
   path.join(coreRoot, "node_modules"),
   "SPS Core dependencies are missing. Run pnpm install in external/sps-core first.",
 );
+await buildOwnerHostCoreArtifacts();
 
 assertDesktopBuildPath(runtimeRoot);
 await rm(runtimeRoot, { recursive: true, force: true });
@@ -145,15 +184,15 @@ await run(
 );
 
 await normalizeWorkspacePackageExports(runtimeRoot);
-await run(process.execPath, ["--import", "tsx", "dist/index.js", "run", "--help"], runtimeRoot);
+await writeOwnerHostBootstrap(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
 await copyBundledSpsPluginRuntime(runtimeRoot);
 await writeFile(
   path.join(runtimeRoot, "sps-owner-host-runtime.json"),
   `${JSON.stringify({
-    format: 3,
+    format: 5,
     entry: "dist/index.js",
-    loader: "tsx",
+    loader: "node-esm",
     vendorDirectory: "node_modules",
     bundledDefaultMemory: true,
     version: process.env.npm_package_version || "development",

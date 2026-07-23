@@ -76,3 +76,28 @@ test("hashes only regular archive files", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("refuses to extract when the supplied release tuple differs from the archive", async () => {
+  const vaultRoot = await mkdtemp(path.join(os.tmpdir(), "sps-registry-vault-"));
+  try {
+    const archivePath = path.join(vaultRoot, "release.spsplugin");
+    await writeFile(archivePath, "release", "utf8");
+    await assert.rejects(
+      () => stageSpsPluginArchive({
+        vaultRoot,
+        archivePath,
+        source: { registryId: "io.sps.local", kind: "local", releaseLocator: "release.spsplugin" },
+        expectedArtifact: { sha256: "a".repeat(64), sizeBytes: 7 },
+        extractArchive: async () => {
+          throw new Error("The extractor must not run for an invalid release tuple.");
+        },
+        registerStage: async () => {
+          throw new Error("The stage API must not run for an invalid release tuple.");
+        },
+      }),
+      /release record/i,
+    );
+  } finally {
+    await rm(vaultRoot, { recursive: true, force: true });
+  }
+});

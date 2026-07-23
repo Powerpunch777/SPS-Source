@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 const preloadPath = new URL("../src/preload.cjs", import.meta.url);
 const mainPath = new URL("../src/main.mjs", import.meta.url);
 const workspacePreloadPath = new URL("../src/workspace-preload.cjs", import.meta.url);
+const registryPreloadPath = new URL("../src/registry-preload.cjs", import.meta.url);
+const registryHtmlPath = new URL("../renderer/registry.html", import.meta.url);
 
 test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   const [preload, workspacePreload, main] = await Promise.all([
@@ -37,6 +39,24 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-account"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
+});
+
+test("keeps the Registry window on a narrow Owner-only preload bridge", async () => {
+  const [main, registryPreload, registryHtml] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(registryPreloadPath, "utf8"),
+    readFile(registryHtmlPath, "utf8"),
+  ]);
+
+  assert.match(main, /async function showRegistryWindow\(\) \{[\s\S]*?assertRegistryOwner\(\);[\s\S]*?registry-preload\.cjs/);
+  assert.match(main, /ipcMain\.handle\("desktop:registry-list-sources"/);
+  assert.match(main, /ipcMain\.handle\("desktop:registry-stage-release"/);
+  assert.match(main, /ipcMain\.handle\("desktop:registry-enable-stage"/);
+  assert.match(registryPreload, /contextBridge\.exposeInMainWorld\("spsRegistry"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-add-source"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-stage-release"/);
+  assert.doesNotMatch(registryPreload, /nodeIntegration|require\("node:/);
+  assert.match(registryHtml, /default-src 'self'; style-src 'self'; script-src 'self'/);
 });
 
 test("notifies the renderer when Google Desktop sign-in state changes", async () => {

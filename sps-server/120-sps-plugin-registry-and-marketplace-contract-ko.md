@@ -172,6 +172,17 @@ Desktop은 다음 단계에서 다운로드·archive inspect·safe extract를 �
 - SPS·Plugin API compatibility
 - 권한·외부 도메인·local folder·Node command 선언
 
+### 5.2 Desktop Registry source flow (implemented)
+
+The Desktop Owner stores Registry source definitions in the Owner Vault, not in a shared company database. Source configuration is therefore portable with the Owner Vault and does not grant any Member Node a new capability.
+
+1. `local` sources require the Owner to select a folder. The folder is verified as a Registry before it is saved.
+2. `git` and `official` sources require an HTTPS index URL plus a pinned Ed25519 Registry root key. The index signature and every publisher-signed release record are checked before a release is shown.
+3. Selecting `Stage for review` re-verifies the source, streams the artifact into an Owner-Vault temporary download with an exact size and SHA-256 check, then uses the existing code-free archive extractor and Core stage API.
+4. Downloaded remote archives are removed after extraction. A staged package remains disabled; enable is a separate Owner action and is the first point at which runtime code may be imported.
+
+Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` opens the source list, local/remote source form, verified release catalog, stage action, and explicit enable confirmation. Marketplace discovery, reviews, payment, entitlement, and automatic updates remain out of scope.
+
 ## 6. 보안 불변 조건
 
 1. Registry metadata, Marketplace page, 리뷰, 배지는 어떤 Plugin capability도 부여하지 않는다.

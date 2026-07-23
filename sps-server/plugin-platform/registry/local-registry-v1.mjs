@@ -141,7 +141,10 @@ export async function inspectLocalRegistry(registryRoot) {
           pluginId: record.plugin.id,
           version: record.plugin.version,
           visibility: record.visibility,
+          releaseRelativePath: releasePath,
           artifactRelativePath: record.artifact.url,
+          artifactSha256: record.artifact.sha256,
+          artifactSizeBytes: record.artifact.sizeBytes,
           publisherId: record.publisher.id,
           publisherKeyId: record.publisher.keyId,
         });

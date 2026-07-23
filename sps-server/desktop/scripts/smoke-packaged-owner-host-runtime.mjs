@@ -55,8 +55,11 @@ const memoryConfig = {
   journals: [],
 };
 
-async function waitForHealth() {
+async function waitForHealth(ownerHost) {
   for (let attempt = 0; attempt < 360; attempt += 1) {
+    if (ownerHost.exitCode !== null) {
+      throw new Error(`The packaged SPS Owner Host exited before health became ready (exit ${ownerHost.exitCode}).`);
+    }
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1_000) });
       const body = await response.json();
@@ -178,13 +181,14 @@ memoryChild.stdout.on("data", (chunk) => { memoryOutput += chunk.toString(); });
 memoryChild.stderr.on("data", (chunk) => { memoryOutput += chunk.toString(); });
 const child = spawn(
   electronBinary,
-  ["--import", "tsx", "-e", "await import('./dist/index.js')", "run", "--instance", "sps-desktop-owner-smoke", "--config", configPath],
+  ["sps-owner-host-bootstrap.mjs"],
   {
     cwd: executionRuntimeRoot,
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
       PAPERCLIP_TELEMETRY_DISABLED: "1",
+      PAPERCLIP_CONFIG: configPath,
       PAPERCLIP_HOME: temporaryRoot,
       PAPERCLIP_DB_BACKUP_DIR: path.join(temporaryRoot, "backups"),
       PAPERCLIP_STORAGE_LOCAL_DIR: path.join(temporaryRoot, "storage"),
@@ -210,7 +214,7 @@ const childExited = new Promise((resolve) => child.once("exit", resolve));
 let passed = false;
 try {
   await waitForMemoryHealth();
-  const health = await waitForHealth();
+  const health = await waitForHealth(child);
   await assertDefaultMemoryPlugin();
   await assertRoomsPlugin();
   passed = true;
