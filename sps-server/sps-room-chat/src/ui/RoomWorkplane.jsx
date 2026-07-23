@@ -24,6 +24,55 @@ const LEGACY_TASK_TYPES = Object.freeze([
   Object.freeze({ id: "voice", label: "Voice / audio" })
 ]);
 const TASK_TYPE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const ROOM_LIST_WIDTH_KEY = "sps.room-workplane.room-list-width";
+const ROOM_LIST_DEFAULT_WIDTH = 236;
+const ROOM_LIST_MIN_WIDTH = 184;
+const ROOM_LIST_MAX_WIDTH = 360;
+const ROOM_CONTEXT_WIDTH_KEY = "sps.room-workplane.context-width";
+const ROOM_CONTEXT_DEFAULT_WIDTH = 348;
+const ROOM_CONTEXT_MIN_WIDTH = 288;
+const ROOM_CONTEXT_MAX_WIDTH = 440;
+const ROOM_MAIN_MIN_WIDTH = 360;
+
+function clampRoomListWidth(value, maximum = ROOM_LIST_MAX_WIDTH) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return ROOM_LIST_DEFAULT_WIDTH;
+  const requestedMaximum = Number(maximum);
+  const upperBound = Number.isFinite(requestedMaximum)
+    ? Math.max(ROOM_LIST_MIN_WIDTH, Math.min(ROOM_LIST_MAX_WIDTH, requestedMaximum))
+    : ROOM_LIST_MAX_WIDTH;
+  return Math.round(Math.min(upperBound, Math.max(ROOM_LIST_MIN_WIDTH, numeric)));
+}
+
+function savedRoomListWidth() {
+  if (typeof window === "undefined") return ROOM_LIST_DEFAULT_WIDTH;
+  try {
+    const saved = window.localStorage.getItem(ROOM_LIST_WIDTH_KEY);
+    return saved === null || !saved.trim() ? ROOM_LIST_DEFAULT_WIDTH : clampRoomListWidth(saved);
+  } catch {
+    return ROOM_LIST_DEFAULT_WIDTH;
+  }
+}
+
+function clampRoomContextWidth(value, maximum = ROOM_CONTEXT_MAX_WIDTH) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return ROOM_CONTEXT_DEFAULT_WIDTH;
+  const requestedMaximum = Number(maximum);
+  const upperBound = Number.isFinite(requestedMaximum)
+    ? Math.max(ROOM_CONTEXT_MIN_WIDTH, Math.min(ROOM_CONTEXT_MAX_WIDTH, requestedMaximum))
+    : ROOM_CONTEXT_MAX_WIDTH;
+  return Math.round(Math.min(upperBound, Math.max(ROOM_CONTEXT_MIN_WIDTH, numeric)));
+}
+
+function savedRoomContextWidth() {
+  if (typeof window === "undefined") return ROOM_CONTEXT_DEFAULT_WIDTH;
+  try {
+    const saved = window.localStorage.getItem(ROOM_CONTEXT_WIDTH_KEY);
+    return saved === null || !saved.trim() ? ROOM_CONTEXT_DEFAULT_WIDTH : clampRoomContextWidth(saved);
+  } catch {
+    return ROOM_CONTEXT_DEFAULT_WIDTH;
+  }
+}
 
 function taskTypeKey(value) {
   const key = String(value || "").trim().toLowerCase();
@@ -48,21 +97,32 @@ function taskTypesForProfile(profile) {
 
 const STYLES = `
   .rw-shell { color: var(--foreground, #172033); font: 14px/1.5 system-ui, sans-serif; }
-  .rw-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); height: min(780px, calc(100dvh - 142px)); min-height: 560px; overflow: hidden; border: 1px solid var(--border, #d8dee9); border-radius: 10px; background: var(--background, #fff); box-shadow: 0 12px 34px rgba(15, 23, 42, .06); }
-  .rw-layout.context-open { grid-template-columns: 236px minmax(0, 1fr) 348px; }
-  .rw-rooms, .rw-context { min-width: 0; min-height: 0; background: #fafbfc; overscroll-behavior: contain; }
-  .rw-rooms { border-right: 1px solid var(--border, #d8dee9); overflow: auto; }
-  .rw-context { position: absolute; inset: 0 0 0 auto; z-index: 8; display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(348px, calc(100% - 236px)); overflow: hidden; border-left: 1px solid var(--border, #d8dee9); background: var(--background, #fff); box-shadow: -18px 0 32px rgba(15, 23, 42, .11); transform: translateX(calc(100% + 16px)); transition: transform 180ms ease, box-shadow 180ms ease; }
+  .rw-layout { --rw-room-width: 236px; --rw-context-width: 348px; position: relative; display: grid; grid-template-columns: var(--rw-room-width) minmax(0, 1fr); height: min(780px, calc(100dvh - 142px)); min-height: 560px; overflow: hidden; border: 1px solid var(--border, #d8dee9); border-radius: 10px; background: var(--background, #fff); box-shadow: 0 12px 34px rgba(15, 23, 42, .06); }
+  .rw-layout.context-open { grid-template-columns: var(--rw-room-width) minmax(0, 1fr) var(--rw-context-width); }
+  .rw-layout.rooms-collapsed { --rw-room-width: 0px; }
+  .rw-rooms, .rw-context { min-width: 0; min-height: 0; overscroll-behavior: contain; }
+  .rw-rooms { position: relative; border-right: 1px solid var(--border, #e3e8f0); overflow: auto; background: var(--background, #fff); }
+  .rw-layout.rooms-collapsed .rw-rooms { display: none; }
+  .rw-room-resizer { position: absolute; z-index: 3; inset: 0 -4px 0 auto; width: 9px; cursor: col-resize; touch-action: none; }
+  .rw-room-resizer::after { position: absolute; top: 50%; left: 3px; width: 2px; height: 30px; border-radius: 999px; background: transparent; content: ""; transform: translateY(-50%); transition: background 120ms ease; }
+  .rw-room-resizer:hover::after, .rw-room-resizer:focus-visible::after { background: #94a3b8; }
+  .rw-room-resizer:focus-visible { outline: none; }
+  .rw-context { position: absolute; inset: 0 0 0 auto; z-index: 8; display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(var(--rw-context-width), calc(100% - var(--rw-room-width))); overflow: hidden; border-left: 1px solid var(--border, #d8dee9); background: var(--background, #fff); box-shadow: -18px 0 32px rgba(15, 23, 42, .11); transform: translateX(calc(100% + 16px)); transition: transform 180ms ease, box-shadow 180ms ease; }
   .rw-layout.context-open .rw-context { position: relative; grid-column: 3; grid-row: 1; width: auto; transform: translateX(0); box-shadow: none; }
-  .rw-main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--background, #fff); }
+  .rw-context-resizer { position: absolute; z-index: 4; inset: 0 auto 0 -4px; width: 9px; cursor: col-resize; touch-action: none; }
+  .rw-context-resizer::after { position: absolute; top: 50%; right: 3px; width: 2px; height: 30px; border-radius: 999px; background: transparent; content: ""; transform: translateY(-50%); transition: background 120ms ease; }
+  .rw-context-resizer:hover::after, .rw-context-resizer:focus-visible::after { background: #94a3b8; }
+  .rw-context-resizer:focus-visible { outline: none; }
+  .rw-main { grid-column: 2; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--background, #fff); }
   .rw-header { min-height: 60px; padding: 10px clamp(16px, 2vw, 24px); border-bottom: 1px solid var(--border, #e3e8f0); display: flex; justify-content: space-between; gap: 12px; align-items: center; background: rgba(255, 255, 255, .94); }
   .rw-header-copy { min-width: 0; }
   .rw-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
   .rw-title { overflow: hidden; font-size: 15px; font-weight: 720; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
   .rw-subtitle, .rw-muted { color: var(--muted-foreground, #667085); font-size: 12px; margin: 2px 0 0; }
-  .rw-context-trigger, .rw-context-shortcut { appearance: none; border: 1px solid var(--border, #d8dee9); border-radius: 6px; padding: 6px 9px; background: var(--background, #fff); color: var(--muted-foreground, #667085); cursor: pointer; font: 650 12px/1.25 system-ui, sans-serif; white-space: nowrap; }
-  .rw-context-trigger:hover, .rw-context-shortcut:hover, .rw-context-trigger[aria-expanded="true"] { border-color: #a9b9d0; background: #f6f8fb; color: var(--foreground, #172033); }
+  .rw-context-trigger, .rw-context-shortcut, .rw-room-list-trigger { appearance: none; border: 1px solid var(--border, #d8dee9); border-radius: 6px; padding: 6px 9px; background: var(--background, #fff); color: var(--muted-foreground, #667085); cursor: pointer; font: 650 12px/1.25 system-ui, sans-serif; white-space: nowrap; }
+  .rw-context-trigger:hover, .rw-context-shortcut:hover, .rw-room-list-trigger:hover, .rw-context-trigger[aria-expanded="true"], .rw-room-list-trigger[aria-expanded="true"] { border-color: #a9b9d0; background: #f6f8fb; color: var(--foreground, #172033); }
   .rw-context-trigger { color: var(--foreground, #172033); }
+  .rw-room-list-trigger { flex: none; padding: 6px 8px; font-size: 15px; line-height: 1; }
   .rw-room-list { padding: 8px; }
   .rw-room-project-link { display: block; margin: 2px 2px 10px; padding: 8px; color: inherit; text-decoration: none; border-bottom: 1px solid var(--border, #d8dee9); font-weight: 700; }
   .rw-room-project-link:hover { color: var(--primary, #2563eb); }
@@ -277,11 +337,11 @@ const STYLES = `
   @container (max-width: 920px) { .org-agent { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "meta actions" "policy policy" "status status"; } .org-agent-policy { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @container (max-width: 560px) { .org-agent { grid-template-columns: 1fr; grid-template-areas: "meta" "policy" "actions" "status"; } .org-agent-policy, .org-agent-advanced-content { grid-template-columns: 1fr; } .org-agent-actions { justify-content: flex-start; } }
   @media (max-width: 720px) { .wp-workspace, .wp-agent, .wp-task-route, .wp-new-workspace, .wp-new-task-type { grid-template-columns: 1fr; } }
-  @media (max-width: 1020px) { .rw-layout { grid-template-columns: 210px minmax(0, 1fr); } .rw-context { display: none; } .rw-actions { align-items: flex-end; flex-wrap: wrap; } .rw-composer-status { white-space: normal; } }
+  @media (max-width: 1200px) { .rw-layout { --rw-room-width: 210px; grid-template-columns: var(--rw-room-width) minmax(0, 1fr); } .rw-context { display: none; } .rw-room-resizer, .rw-context-resizer { display: none; } .rw-actions { align-items: flex-end; flex-wrap: wrap; } .rw-composer-status { white-space: normal; } }
   @media (max-width: 720px) { .rw-layout { display: block; height: auto; min-height: 0; overflow: visible; } .rw-rooms { border-right: 0; border-bottom: 1px solid var(--border, #d8dee9); max-height: 210px; } .rw-main { min-height: 620px; } .rw-project { padding: 16px; } .rw-project-header { display: block; } .rw-project-actions { margin-top: 12px; } .rw-project-summary { grid-template-columns: 1fr; } }
-  @media (max-width: 1020px) {
-    .rw-layout.context-open { grid-template-columns: 210px minmax(0, 1fr); }
-    .rw-layout.context-open .rw-context { display: grid; position: absolute; inset: 0 0 0 auto; grid-column: auto; grid-row: auto; width: min(348px, calc(100% - 210px)); box-shadow: -18px 0 32px rgba(15, 23, 42, .14); }
+  @media (max-width: 1200px) {
+    .rw-layout.context-open { grid-template-columns: var(--rw-room-width) minmax(0, 1fr); }
+    .rw-layout.context-open .rw-context { display: grid; position: absolute; inset: 0 0 0 auto; grid-column: auto; grid-row: auto; width: min(var(--rw-context-width), calc(100% - var(--rw-room-width))); box-shadow: -18px 0 32px rgba(15, 23, 42, .14); }
     .rw-context-shortcut { display: none; }
   }
   @media (max-width: 720px) {
@@ -442,7 +502,7 @@ function workspaceFileNodes(workspaces) {
   return { nodes, filesByNodePath };
 }
 
-function RoomContext({ data, navigation, activeTab, setActiveTab, onClose, onOpenWorkspaceFile }) {
+function RoomContext({ data, navigation, activeTab, setActiveTab, onClose, onOpenWorkspaceFile, width, onResizeStart, onResizeKeyDown, onResetWidth }) {
   const state = data?.state || {};
   const workState = data?.workState || {};
   const activity = state.runtime?.activity || {};
@@ -504,6 +564,7 @@ function RoomContext({ data, navigation, activeTab, setActiveTab, onClose, onOpe
         {attachments.length ? <AttachmentList attachments={attachments} className="rw-context-files" /> : <p className="rw-context-empty">이 Room에 첨부된 파일이 없습니다.</p>}
       </section> : null}
     </div>
+    <div className="rw-context-resizer" role="separator" tabIndex={0} aria-label="Room 컨텍스트 너비 조절" aria-orientation="vertical" aria-valuemin={ROOM_CONTEXT_MIN_WIDTH} aria-valuemax={ROOM_CONTEXT_MAX_WIDTH} aria-valuenow={width} title="드래그하여 Room 컨텍스트 너비 조절. 두 번 클릭하면 기본 너비로 복원합니다." onPointerDown={onResizeStart} onKeyDown={onResizeKeyDown} onDoubleClick={onResetWidth} />
   </aside>;
 }
 
@@ -534,8 +595,12 @@ function RoomConversation({ context, roomId, workplane }) {
   const [filePreview, setFilePreview] = useState(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [contextTab, setContextTab] = useState("work");
+  const [roomListOpen, setRoomListOpen] = useState(true);
+  const [roomListWidth, setRoomListWidth] = useState(savedRoomListWidth);
+  const [roomContextWidth, setRoomContextWidth] = useState(savedRoomContextWidth);
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState("");
+  const layoutRef = useRef(null);
   const threadRef = useRef(null);
   const followLatestRef = useRef(true);
   const attachmentInputRef = useRef(null);
@@ -549,6 +614,108 @@ function RoomConversation({ context, roomId, workplane }) {
     const timer = setInterval(() => { void refresh(); }, 2000);
     return () => clearInterval(timer);
   }, [working, refresh]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ROOM_LIST_WIDTH_KEY, String(roomListWidth));
+    } catch {
+      // Preference persistence is optional; a blocked localStorage must not
+      // interrupt a Room conversation.
+    }
+  }, [roomListWidth]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ROOM_CONTEXT_WIDTH_KEY, String(roomContextWidth));
+    } catch {
+      // Preference persistence is optional; a blocked localStorage must not
+      // interrupt a Room conversation.
+    }
+  }, [roomContextWidth]);
+
+  useEffect(() => {
+    if (!contextOpen || !roomListOpen || typeof window === "undefined" || !window.matchMedia("(min-width: 1201px)").matches) return;
+    const availableWidth = layoutRef.current?.clientWidth || 0;
+    if (!availableWidth) return;
+    const safeContextWidth = clampRoomContextWidth(roomContextWidth, availableWidth - roomListWidth - ROOM_MAIN_MIN_WIDTH);
+    const safeRoomListWidth = clampRoomListWidth(roomListWidth, availableWidth - safeContextWidth - ROOM_MAIN_MIN_WIDTH);
+    if (safeContextWidth !== roomContextWidth) setRoomContextWidth(safeContextWidth);
+    if (safeRoomListWidth !== roomListWidth) setRoomListWidth(safeRoomListWidth);
+  }, [contextOpen, roomListOpen, roomListWidth, roomContextWidth]);
+
+  const beginRoomListResize = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = roomListWidth;
+    const availableWidth = layoutRef.current?.clientWidth || 0;
+    const maximum = contextOpen && availableWidth ? availableWidth - roomContextWidth - ROOM_MAIN_MIN_WIDTH : ROOM_LIST_MAX_WIDTH;
+    const onMove = (moveEvent) => setRoomListWidth(clampRoomListWidth(startWidth + moveEvent.clientX - startX, maximum));
+    const onEnd = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+      window.removeEventListener("pointercancel", onEnd);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd);
+    window.addEventListener("pointercancel", onEnd);
+  };
+
+  const adjustRoomListWidth = (event) => {
+    const adjustment = event.key === "ArrowLeft" ? -16 : event.key === "ArrowRight" ? 16 : 0;
+    if (event.key === "Home") {
+      event.preventDefault();
+      setRoomListWidth(ROOM_LIST_MIN_WIDTH);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      setRoomListWidth(ROOM_LIST_MAX_WIDTH);
+      return;
+    }
+    if (!adjustment) return;
+    event.preventDefault();
+    const availableWidth = layoutRef.current?.clientWidth || 0;
+    const maximum = contextOpen && availableWidth ? availableWidth - roomContextWidth - ROOM_MAIN_MIN_WIDTH : ROOM_LIST_MAX_WIDTH;
+    setRoomListWidth((current) => clampRoomListWidth(current + adjustment, maximum));
+  };
+
+  const beginRoomContextResize = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = roomContextWidth;
+    const availableWidth = layoutRef.current?.clientWidth || 0;
+    const maximum = availableWidth ? availableWidth - (roomListOpen ? roomListWidth : 0) - ROOM_MAIN_MIN_WIDTH : ROOM_CONTEXT_MAX_WIDTH;
+    const onMove = (moveEvent) => setRoomContextWidth(clampRoomContextWidth(startWidth + startX - moveEvent.clientX, maximum));
+    const onEnd = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+      window.removeEventListener("pointercancel", onEnd);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd);
+    window.addEventListener("pointercancel", onEnd);
+  };
+
+  const adjustRoomContextWidth = (event) => {
+    const adjustment = event.key === "ArrowLeft" ? 16 : event.key === "ArrowRight" ? -16 : 0;
+    if (event.key === "Home") {
+      event.preventDefault();
+      setRoomContextWidth(ROOM_CONTEXT_MIN_WIDTH);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      setRoomContextWidth(ROOM_CONTEXT_MAX_WIDTH);
+      return;
+    }
+    if (!adjustment) return;
+    event.preventDefault();
+    const availableWidth = layoutRef.current?.clientWidth || 0;
+    const maximum = availableWidth ? availableWidth - (roomListOpen ? roomListWidth : 0) - ROOM_MAIN_MIN_WIDTH : ROOM_CONTEXT_MAX_WIDTH;
+    setRoomContextWidth((current) => clampRoomContextWidth(current + adjustment, maximum));
+  };
   const queueFiles = (event) => {
     const files = Array.from(event.target.files || []);
     if (!files.length) return;
@@ -733,12 +900,13 @@ function RoomConversation({ context, roomId, workplane }) {
 
   if (loading && !data) return <div className="rw-empty">Loading Room...</div>;
   if (error && !data) return <div className="rw-error">{error.message}</div>;
-  return <div className={`rw-layout ${contextOpen ? "context-open" : ""}`}>
-    {workplane ? <RoomList navigation={navigation} workplane={workplane} projectId={currentProjectId} roomId={roomId} /> : <div className="rw-rooms" />}
+  return <div ref={layoutRef} className={`rw-layout ${contextOpen ? "context-open" : ""} ${roomListOpen ? "" : "rooms-collapsed"}`} style={{ "--rw-room-width": roomListOpen ? `${roomListWidth}px` : "0px", "--rw-context-width": `${roomContextWidth}px` }}>
+    {roomListOpen && workplane ? <RoomList navigation={navigation} workplane={workplane} projectId={currentProjectId} roomId={roomId} width={roomListWidth} onResizeStart={beginRoomListResize} onResizeKeyDown={adjustRoomListWidth} onResetWidth={() => setRoomListWidth(ROOM_LIST_DEFAULT_WIDTH)} /> : null}
     <main className="rw-main">
       <header className="rw-header">
         <div className="rw-header-copy"><h1 className="rw-title">{roomName}</h1><p className="rw-subtitle">지속 대화 Room</p></div>
         <div className="rw-header-actions">
+          <button type="button" className="rw-room-list-trigger" onClick={() => setRoomListOpen((current) => !current)} aria-expanded={roomListOpen} aria-label={roomListOpen ? "Room 목록 닫기" : "Room 목록 열기"} title={roomListOpen ? "Room 목록 닫기" : "Room 목록 열기"}>☰</button>
           <StatusBadge label={working ? "작업 중" : data?.runtime?.enabled ? "준비됨" : "런타임 비활성"} status={working ? "warning" : data?.runtime?.enabled ? "ok" : "pending"} />
           <button type="button" className="rw-context-shortcut" onClick={(event) => openContext("tasks", event.currentTarget)}>Tasks{contextTaskCount ? ` ${contextTaskCount}` : ""}</button>
           <button type="button" className="rw-context-shortcut" onClick={(event) => openContext("changes", event.currentTarget)}>변경{contextChangedCount ? ` ${contextChangedCount}` : ""}</button>
@@ -780,14 +948,14 @@ function RoomConversation({ context, roomId, workplane }) {
       </div>
       </footer>
     </main>
-    {contextOpen ? <RoomContext data={data} navigation={navigation} activeTab={contextTab} setActiveTab={setContextTab} onClose={closeContext} onOpenWorkspaceFile={openWorkspaceFile} /> : null}
+    {contextOpen ? <RoomContext data={data} navigation={navigation} activeTab={contextTab} setActiveTab={setContextTab} onClose={closeContext} onOpenWorkspaceFile={openWorkspaceFile} width={roomContextWidth} onResizeStart={beginRoomContextResize} onResizeKeyDown={adjustRoomContextWidth} onResetWidth={() => setRoomContextWidth(ROOM_CONTEXT_DEFAULT_WIDTH)} /> : null}
     <RoomFilePreview preview={filePreview} onClose={() => setFilePreview(null)} />
   </div>;
 }
 
-function RoomList({ navigation, workplane, projectId, roomId }) {
+function RoomList({ navigation, workplane, projectId, roomId, width, onResizeStart, onResizeKeyDown, onResetWidth }) {
   const projectRoomsHref = navigation.resolveHref(`/agent-rooms?project=${encodeURIComponent(projectId)}`);
-  return <aside className="rw-rooms"><div className="rw-room-list"><a className="rw-room-project-link" {...navigation.linkProps(projectRoomsHref)}>{workplane.project?.name || "프로젝트"}<span>프로젝트 Rooms</span></a>{(workplane.rooms || []).map((room) => { const attention = roomAgentAttention(room); return <a className={`rw-room ${room.id === roomId ? "active" : ""}`} key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><span>{roomRoleSummary(room)}</span>{attention ? <small>{attention}</small> : null}</a>; })}</div></aside>;
+  return <aside className="rw-rooms"><div className="rw-room-list"><a className="rw-room-project-link" {...navigation.linkProps(projectRoomsHref)}>{workplane.project?.name || "프로젝트"}<span>프로젝트 Rooms</span></a>{(workplane.rooms || []).map((room) => { const attention = roomAgentAttention(room); return <a className={`rw-room ${room.id === roomId ? "active" : ""}`} key={room.id} {...navigation.linkProps(roomHref(navigation, projectId, room.id))}><strong>{room.title}</strong><span>{roomRoleSummary(room)}</span>{attention ? <small>{attention}</small> : null}</a>; })}</div><div className="rw-room-resizer" role="separator" tabIndex={0} aria-label="Room 목록 너비 조절" aria-orientation="vertical" aria-valuemin={ROOM_LIST_MIN_WIDTH} aria-valuemax={ROOM_LIST_MAX_WIDTH} aria-valuenow={width} title="드래그하여 Room 목록 너비 조절. 두 번 클릭하면 기본 너비로 복원합니다." onPointerDown={onResizeStart} onKeyDown={onResizeKeyDown} onDoubleClick={onResetWidth} /></aside>;
 }
 
 function WorkspaceProfile({ context, workplane, onRefresh }) {
