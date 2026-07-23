@@ -10,6 +10,34 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+const SPS_DESKTOP_ACCESS_HEADER = "X-SPS-Desktop-Access";
+const desktopOwnerHostToken = String(process.env.SPS_DESKTOP_ACCESS_TOKEN || "").trim();
+const desktopOwnerHostOrigin = (() => {
+  if (!desktopOwnerHostToken || !process.env.SPS_ROOM_API_URL) return null;
+  try {
+    return new URL(process.env.SPS_ROOM_API_URL).origin;
+  } catch {
+    return null;
+  }
+})();
+
+if (desktopOwnerHostOrigin) {
+  const nativeFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    try {
+      if (new URL(url).origin !== desktopOwnerHostOrigin) return nativeFetch(input, init);
+    } catch {
+      return nativeFetch(input, init);
+    }
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    for (const [name, value] of new Headers(init?.headers).entries()) headers.set(name, value);
+    headers.set(SPS_DESKTOP_ACCESS_HEADER, desktopOwnerHostToken);
+    if (input instanceof Request) return nativeFetch(new Request(input, { ...init, headers }));
+    return nativeFetch(input, { ...init, headers });
+  };
+}
+
 const ROOM_STATE_KEY = "ROOM_STATE";
 const ROOM_WORK_STATE_KEY = "ROOM_WORK_STATE";
 const ROOM_CHECKPOINTS_KEY = "ROOM_CHECKPOINTS";

@@ -38,6 +38,12 @@ import {
 } from "./account-connections.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService } from "./update-service.mjs";
+import {
+  createSpsDesktopAccessToken,
+  isSpsDesktopWorkspaceRequest,
+  SPS_DESKTOP_ACCESS_HEADER,
+  spsDesktopAccessEnvironment,
+} from "./desktop-local-access.mjs";
 import { createSpsOwnerHostManager, materializeSpsOwnerHostRuntime, resolveSpsOwnerHostRuntime } from "./owner-host.mjs";
 import {
   configureSpsOwnerHostLocalOnly,
@@ -114,6 +120,9 @@ let ownerHostStatus = {
   vaultPath: null,
 };
 let lastTeamWorkplaneBindingUrl = null;
+// This is never persisted. It separates the visible SPS Desktop Workspace from
+// a normal browser pointed at the loopback Owner Host.
+const ownerHostDesktopAccessToken = createSpsDesktopAccessToken();
 let ownerHostCompanies = [];
 let pluginRuntimeStatus = {
   state: "checking",
@@ -612,9 +621,11 @@ async function ensureOwnerHostManager() {
           SPS_WORKPLANE_DEFAULT_PROJECT_TAB: "plugin:local.room-chat:project-workplane",
           SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
           PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
+          // The Room Worker can run without the optional Memory provider, but
+          // it still needs the Owner Host address for its own tool calls.
+          SPS_ROOM_API_URL: url,
           ...(defaultMemory
             ? {
-              SPS_ROOM_API_URL: url,
               SPS_MEMORY_SIDECAR_URL: spsDefaultMemoryUrl(defaultMemory.config),
               SPS_MEMORY_SIDECAR_TOKEN: defaultMemory.config.security.token,
             }
@@ -626,6 +637,7 @@ async function ensureOwnerHostManager() {
               SPS_PLUGIN_NPM_CLI: pluginRuntimeStatus.npmCli,
             }
             : {}),
+          ...spsDesktopAccessEnvironment(ownerHostDesktopAccessToken),
           ...ownerHostTeamEnvironment(),
         },
       });
@@ -1245,6 +1257,12 @@ async function showWorkspace() {
 function configureWorkspaceRequestAuth() {
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const requestHeaders = { ...details.requestHeaders };
+    if (isOwnerHostProfile() && isSpsDesktopWorkspaceRequest({
+      url: details.url,
+      workspaceOrigin,
+    })) {
+      requestHeaders[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
+    }
     const accessToken = currentBoardToken();
     if (accessToken && isCurrentWorkspaceApiUrl(details.url)) {
       requestHeaders.Authorization = `Bearer ${accessToken}`;

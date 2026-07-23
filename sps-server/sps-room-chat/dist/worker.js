@@ -12774,6 +12774,32 @@ import { createHash, randomUUID as randomUUID2 } from "node:crypto";
 import fs2 from "node:fs";
 import os from "node:os";
 import path2 from "node:path";
+var SPS_DESKTOP_ACCESS_HEADER = "X-SPS-Desktop-Access";
+var desktopOwnerHostToken = String(process.env.SPS_DESKTOP_ACCESS_TOKEN || "").trim();
+var desktopOwnerHostOrigin = (() => {
+  if (!desktopOwnerHostToken || !process.env.SPS_ROOM_API_URL) return null;
+  try {
+    return new URL(process.env.SPS_ROOM_API_URL).origin;
+  } catch {
+    return null;
+  }
+})();
+if (desktopOwnerHostOrigin) {
+  const nativeFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    try {
+      if (new URL(url).origin !== desktopOwnerHostOrigin) return nativeFetch(input, init);
+    } catch {
+      return nativeFetch(input, init);
+    }
+    const headers = new Headers(input instanceof Request ? input.headers : void 0);
+    for (const [name, value] of new Headers(init?.headers).entries()) headers.set(name, value);
+    headers.set(SPS_DESKTOP_ACCESS_HEADER, desktopOwnerHostToken);
+    if (input instanceof Request) return nativeFetch(new Request(input, { ...init, headers }));
+    return nativeFetch(input, { ...init, headers });
+  };
+}
 var ROOM_STATE_KEY = "ROOM_STATE";
 var ROOM_WORK_STATE_KEY = "ROOM_WORK_STATE";
 var ROOM_CHECKPOINTS_KEY = "ROOM_CHECKPOINTS";
