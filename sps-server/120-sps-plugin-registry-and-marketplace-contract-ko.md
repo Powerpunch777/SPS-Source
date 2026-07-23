@@ -143,6 +143,27 @@ Registry browse or direct source add
 -> Owner explicitly enables, then Core imports the runtime manifest and compares it with sps-plugin.json
 ```
 
+### 5.1 현재 Core staging 계약
+
+Core는 기존 Plugin 설치 테이블과 별도로 Owner Host의 관리된 staging root에 Registry package record를 보관한다. Stage에는 `packageRoot`를 포함한 내부 경로가 남지만 API 응답에는 경로를 노출하지 않는다.
+
+| 상태 | 의미 | JavaScript 실행 |
+| --- | --- | --- |
+| `staged` | archive extractor가 만든 package를 정적 JSON·runtime file hash만 검사한 상태 | 금지 |
+| `registered` | Owner가 enable을 눌러 runtime manifest 대조, Plugin DB 등록, lifecycle 진입까지 요청한 상태 | Owner enable에서만 허용 |
+
+Core API는 모두 Instance Admin만 호출할 수 있다.
+
+| API | 역할 |
+| --- | --- |
+| `GET /api/plugins/registry/stages` | 정적 stage 목록 조회 |
+| `POST /api/plugins/registry/stages` | Owner Host가 safe extractor로 만든 package를 static-only stage로 등록 |
+| `POST /api/plugins/registry/stages/:stageId/enable` | Owner의 명시적 enable. import 전 source hash를 재검증하고, runtime manifest와 `sps-plugin.json`을 대조한 뒤에만 기존 Plugin lifecycle로 전달 |
+
+`stage` 요청은 임의 폴더를 등록할 수 없다. package root는 Owner Host가 설정한 staging root 안의 일반 디렉터리여야 하며, `sps-plugin.json`, `package.json`, runtime manifest 경로와 SHA-256을 다시 검사한다. import 전 해시 검증이 실패하면 JS module body는 평가되지 않는다.
+
+Desktop은 다음 단계에서 다운로드·archive inspect·safe extract를 수행한 뒤 이 API에 package path를 전달한다. Owner Host는 기본적으로 `PAPERCLIP_HOME/registry-staging`(SPS Desktop에서는 Owner Vault)만 staging root로 사용한다. 즉 현재 Core는 **보관·활성화 경계**를 담당하고, Desktop은 **원격 source와 artifact 취급**을 담당한다. 둘 중 하나만 신뢰해서는 설치가 완료되지 않는다.
+
 업데이트는 같은 흐름을 다시 거친다. 다음 중 하나라도 달라지면 업데이트는 자동 적용하지 않고 새 검토로 전환한다.
 
 - plugin ID 또는 version
@@ -191,8 +212,8 @@ Registry browse or direct source add
 2. Plugin Kit의 package, manifest, inspect, validate lifecycle을 검증한다.
 3. 이 문서의 Registry schema validator, local fixture, package archive inspector를 구현한다.
 4. GitHub-backed static Registry와 official Registry fixture에서 같은 release를 검증한다.
-5. Owner Host Core에 static manifest 대조, safe extractor, Registry disabled install, update preview를 추가한다.
-6. Desktop에 Registry source 관리와 설치 전 검토 화면을 추가한다.
+5. Owner Host Core에 static manifest 대조와 Registry disabled staging API를 추가한다. Desktop의 archive safe extractor와 연결해 실제 package를 staging root에 생성한다.
+6. Desktop에 Registry source 관리, 설치 전 검토, staged package enable 화면을 추가한다.
 7. 실제 사용자와 공식 example plugin으로 설치·업데이트·rollback E2E를 반복한다.
 8. 그 결과를 바탕으로 Marketplace Pilot을 연다.
 

@@ -61,6 +61,7 @@ import { isSpsHubApiUrl, requireSpsHubOrigin, requireSpsOwnerHostOrigin } from "
 import { requireSpsWorkspaceDirectory } from "./workspace-directory.mjs";
 import { exportSpsOwnerVaultTransfer, inspectSpsOwnerVaultTransfer } from "./owner-vault-transfer.mjs";
 import { inspectSpsPluginRuntime } from "./plugin-runtime.mjs";
+import { stageSpsPluginArchive } from "./registry-staging.mjs";
 import {
   disableSpsTailscaleServe,
   enableSpsTailscaleServe,
@@ -768,6 +769,87 @@ async function ownerHostApi(pathname, { method = "GET", body } = {}) {
   return data;
 }
 
+async function stageRegistryPluginFromFilePicker() {
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
+    throw new Error("Only the signed-in SPS Owner can stage a Registry plugin.");
+  }
+  await requireReadyOwnerHost();
+  const selection = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    title: "Choose an SPS plugin package",
+    properties: ["openFile"],
+    filters: [{ name: "SPS plugin package", extensions: ["spsplugin"] }],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return null;
+
+  const archivePath = selection.filePaths[0];
+  const staged = await stageSpsPluginArchive({
+    vaultRoot: ownerVaultRoot(),
+    archivePath,
+    source: {
+      registryId: "sps.desktop.local-file",
+      kind: "local",
+      // Keep the user-visible source useful without storing the full local path.
+      releaseLocator: `file-picker/${path.basename(archivePath)}`,
+    },
+    registerStage: async (body) => await ownerHostApi("/plugins/registry/stages", {
+      method: "POST",
+      body,
+    }),
+  });
+  if (!staged.staged) {
+    await dialog.showMessageBox(mainWindow ?? undefined, {
+      type: "error",
+      title: "Plugin package was not staged",
+      message: "SPS did not execute this package.",
+      detail: staged.errors.join("\n").slice(0, 2_000),
+    });
+    return staged;
+  }
+
+  const capabilities = Array.isArray(staged.stage?.staticManifest?.capabilities)
+    ? staged.stage.staticManifest.capabilities.join(", ") || "None"
+    : "Unknown";
+  const choice = await dialog.showMessageBox(mainWindow ?? undefined, {
+    type: "info",
+    title: "Plugin staged without execution",
+    message: `${staged.stage.pluginId} ${staged.stage.version} is ready for review.`,
+    detail: `Source: ${staged.stage.source.registryId}\nCapabilities: ${capabilities}\n\nNo plugin JavaScript, migration, or worker has run yet.`,
+    buttons: ["Enable now", "Keep disabled"],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (choice.response !== 0) return staged;
+
+  const enabled = await ownerHostApi(`/plugins/registry/stages/${encodeURIComponent(staged.stage.stageId)}/enable`, {
+    method: "POST",
+    body: {},
+  });
+  await dialog.showMessageBox(mainWindow ?? undefined, {
+    type: "info",
+    title: "Plugin enabled",
+    message: `${enabled.plugin?.pluginKey ?? staged.stage.pluginId} entered the SPS Plugin lifecycle.`,
+    detail: `Status: ${enabled.plugin?.status ?? "registered"}`,
+  });
+  return { ...staged, enabled };
+}
+
+async function showRegistryPluginStages() {
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
+    throw new Error("Only the signed-in SPS Owner can review Registry plugins.");
+  }
+  const stages = await ownerHostApi("/plugins/registry/stages");
+  const detail = stages.length === 0
+    ? "No Registry packages are staged on this Owner Host."
+    : stages.map((stage) => `${stage.pluginId} ${stage.version} - ${stage.status}`).join("\n");
+  await dialog.showMessageBox(mainWindow ?? undefined, {
+    type: "info",
+    title: "Staged Registry plugins",
+    message: stages.length === 0 ? "No staged plugins" : `${stages.length} staged Registry plugin(s)`,
+    detail,
+  });
+  return stages;
+}
+
 async function exportOwnerVaultTransfer() {
   if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
     throw new Error("Only the signed-in SPS Owner can export this Owner Vault.");
@@ -1291,6 +1373,8 @@ function createApplicationMenu() {
         { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(exportOwnerVaultTransfer) },
         { label: "Check SPS transfer bundle...", click: () => run(inspectOwnerVaultTransfer) },
         { label: "Check plugin runtime...", click: () => run(showPluginRuntimeStatus) },
+        { label: "Install Registry plugin...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(stageRegistryPluginFromFilePicker) },
+        { label: "Review staged Registry plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryPluginStages) },
         { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
         { type: "separator" },
         {
@@ -1317,6 +1401,8 @@ function refreshTrayMenu() {
     { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void exportOwnerVaultTransfer(); } },
     { label: "Check SPS transfer bundle...", click: () => { void inspectOwnerVaultTransfer(); } },
     { label: "Check plugin runtime...", click: () => { void showPluginRuntimeStatus(); } },
+    { label: "Install Registry plugin...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void stageRegistryPluginFromFilePicker(); } },
+    { label: "Review staged Registry plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryPluginStages(); } },
     { label: "서버 연결 및 계정", click: () => { void showMainWindow().then(openSetup); } },
     { type: "separator" },
     { label: "이 컴퓨터에서 로그아웃", enabled: Boolean(account), click: () => { void signOutDesktopAccount(); } },
