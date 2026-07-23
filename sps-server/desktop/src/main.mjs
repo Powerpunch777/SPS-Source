@@ -506,7 +506,10 @@ async function synchronizeReadyTeamWorkplane() {
   const ownerHostUrl = ownerHostStatus.url;
   if (!ownerHostIsReady() || !ownerHostUrl || lastTeamWorkplaneBindingUrl === ownerHostUrl) return;
   try {
-    await synchronizeSpsTeamWorkplaneConfig({ ownerHostUrl });
+    await synchronizeSpsTeamWorkplaneConfig({
+      ownerHostUrl,
+      desktopAccessToken: ownerHostDesktopAccessToken,
+    });
     lastTeamWorkplaneBindingUrl = ownerHostUrl;
   } catch (error) {
     // The Owner Host is usable before every optional extension finishes its
@@ -759,6 +762,7 @@ async function ownerHostApi(pathname, { method = "GET", body } = {}) {
   // Private team Hosts require the same protected Board session as their
   // remote address. Local-only bootstrap still works without this header.
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
+  if (isOwnerHostProfile()) headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
   const response = await fetch(`${requireSpsOwnerHostOrigin(ownerHostStatus.url)}/api${pathname}`, {
     method,
     headers,

@@ -26,7 +26,7 @@ test("updates a stale Team Workplane runtime address once", async () => {
   const result = await synchronizeSpsTeamWorkplaneConfig({
     ownerHostUrl: "http://127.0.0.1:31310",
     fetchImpl: async (url, init = {}) => {
-      calls.push({ url: String(url), method: init.method ?? "GET", body: init.body ?? null });
+      calls.push({ url: String(url), method: init.method ?? "GET", body: init.body ?? null, headers: new Headers(init.headers) });
       if (!init.method) return new Response(JSON.stringify({ configJson: { spsApiUrl: "http://127.0.0.1:3100", customSetting: true } }), { status: 200 });
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     },
@@ -38,6 +38,22 @@ test("updates a stale Team Workplane runtime address once", async () => {
   assert.deepEqual(JSON.parse(calls[1].body), {
     configJson: { spsApiUrl: "http://127.0.0.1:31310", customSetting: true },
   });
+  assert.equal(calls[0].headers.get("x-sps-desktop-access"), null);
+});
+
+test("uses the ephemeral Desktop access token when binding a protected Owner Host", async () => {
+  const calls = [];
+  await synchronizeSpsTeamWorkplaneConfig({
+    ownerHostUrl: "http://127.0.0.1:31310",
+    desktopAccessToken: "desktop-token-for-test",
+    fetchImpl: async (_url, init = {}) => {
+      calls.push(new Headers(init.headers));
+      return new Response(JSON.stringify({ configJson: { spsApiUrl: "http://127.0.0.1:31310" } }), { status: 200 });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].get("x-sps-desktop-access"), "desktop-token-for-test");
 });
 
 test("does not rewrite an already synchronized Team Workplane configuration", async () => {

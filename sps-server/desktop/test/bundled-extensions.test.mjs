@@ -2,14 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { areSpsBundledExtensionsEnabled, disabledSpsExtensionStatus } from "../src/bundled-extensions.mjs";
 
-test("keeps bundled SPS extensions disabled by default", () => {
-  assert.equal(areSpsBundledExtensionsEnabled({}), false);
+test("keeps official SPS extensions enabled by default", () => {
+  assert.equal(areSpsBundledExtensionsEnabled({}), true);
   assert.equal(areSpsBundledExtensionsEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "false" }), false);
 });
 
-test("allows a deliberate developer opt-in for bundled extension work", () => {
+test("accepts an explicit extension mode", () => {
   assert.equal(areSpsBundledExtensionsEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "true" }), true);
   assert.equal(areSpsBundledExtensionsEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: " TRUE " }), true);
+  assert.equal(areSpsBundledExtensionsEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: " FALSE " }), false);
 });
 
 test("reports disabled extensions without a fake runtime endpoint", () => {

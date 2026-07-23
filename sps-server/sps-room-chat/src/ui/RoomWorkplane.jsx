@@ -427,21 +427,27 @@ function roomAgentAttention(room) {
   return status === "error" ? "Agent needs attention" : `Agent ${status}`;
 }
 
-function fileNodes(workspaces) {
-  return (workspaces || []).flatMap((workspace) => (workspace.files || []).map((file) => ({
-    name: `${workspace.name}: ${file.path}`,
-    path: `${workspace.id || workspace.name}/${file.path}`,
-    kind: "file",
-    children: []
-  })));
+function workspaceFileNodes(workspaces) {
+  const filesByNodePath = new Map();
+  const nodes = (workspaces || []).flatMap((workspace) => (workspace.files || []).map((file, index) => {
+    const path = `workspace-${workspace.id || workspace.name}-${index}`;
+    filesByNodePath.set(path, { workspaceId: workspace.id, path: file.path });
+    return {
+      name: `${workspace.name}: ${file.path}`,
+      path,
+      kind: "file",
+      children: []
+    };
+  }));
+  return { nodes, filesByNodePath };
 }
 
-function RoomContext({ data, navigation, activeTab, setActiveTab, onClose }) {
+function RoomContext({ data, navigation, activeTab, setActiveTab, onClose, onOpenWorkspaceFile }) {
   const state = data?.state || {};
   const workState = data?.workState || {};
   const activity = state.runtime?.activity || {};
   const tasks = (data?.tasks || []).filter((task) => task.status !== "cancelled");
-  const nodes = fileNodes(data?.workspaces);
+  const { nodes, filesByNodePath } = workspaceFileNodes(data?.workspaces);
   const attachments = data?.attachments || [];
   const latestOutcome = workState.latestOutcome || null;
   const nextCandidate = workState.nextCandidate || null;
@@ -491,7 +497,7 @@ function RoomContext({ data, navigation, activeTab, setActiveTab, onClose }) {
       </section> : null}
       {activeTab === "changes" ? <section className="rw-context-panel">
         <h3>작업 폴더 변경사항</h3>
-        <div className="rw-context-changes"><FileTree nodes={nodes} wrapLabels emptyState={{ title: "No workspace changes" }} /></div>
+        <div className="rw-context-changes"><FileTree nodes={nodes} wrapLabels onSelectFile={(nodePath) => onOpenWorkspaceFile?.(filesByNodePath.get(nodePath))} emptyState={{ title: "No workspace changes" }} /></div>
       </section> : null}
       {activeTab === "files" ? <section className="rw-context-panel">
         <h3>Room 파일</h3>
@@ -533,6 +539,7 @@ function RoomConversation({ context, roomId, workplane }) {
   const threadRef = useRef(null);
   const followLatestRef = useRef(true);
   const attachmentInputRef = useRef(null);
+  const contextTriggerRef = useRef(null);
 
   const activity = data?.state?.runtime?.activity;
   const working = activity?.status === "working";
@@ -624,19 +631,62 @@ function RoomConversation({ context, roomId, workplane }) {
       ? "The selected Project Workspace is not available on this computer. Update its local path before starting an Agent turn."
       : "";
   const contextTaskCount = (data?.tasks || []).filter((task) => task.status !== "cancelled").length;
-  const contextChangedCount = data?.changedFileCount || fileNodes(data?.workspaces).length;
+  const contextChangedCount = data?.changedFileCount || workspaceFileNodes(data?.workspaces).nodes.length;
   const contextAttachmentCount = (data?.attachments || []).length;
 
-  const openContext = (tab = "work") => {
+  const closeContext = () => {
+    setContextOpen(false);
+    window.requestAnimationFrame(() => contextTriggerRef.current?.focus());
+  };
+
+  const openContext = (tab = "work", trigger = null) => {
+    if (trigger) contextTriggerRef.current = trigger;
     setContextTab(tab);
     setContextOpen(true);
   };
+
+  useEffect(() => {
+    if (!contextOpen || filePreview) return undefined;
+    const closeWithEscape = (event) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      closeContext();
+    };
+    window.addEventListener("keydown", closeWithEscape);
+    return () => window.removeEventListener("keydown", closeWithEscape);
+  }, [contextOpen, filePreview]);
+
+  useEffect(() => {
+    if (!filePreview) return undefined;
+    const closePreviewWithEscape = (event) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setFilePreview(null);
+    };
+    window.addEventListener("keydown", closePreviewWithEscape);
+    return () => window.removeEventListener("keydown", closePreviewWithEscape);
+  }, [filePreview]);
 
   const renderRoomText = (comment) => rewriteWorkspaceMarkdownLinks(roomText(comment), {
     linkBaseHref: roomPageHref,
     roomIssueId: roomId,
     targets: data?.workspaceLinkTargets
   });
+
+  const openWorkspaceFile = async ({ path: file, projectId = currentProjectId, workspaceId } = {}) => {
+    if (!file || !projectId || !workspaceId) return;
+    const params = new URLSearchParams({ path: file, projectId, workspaceId });
+    const contentHref = `/api/issues/${encodeURIComponent(roomId)}/file-resources/content?${params.toString()}`;
+    setFilePreview({ path: file, loading: true, error: "", resource: null, content: null, downloadHref: `${contentHref}&download=1` });
+    try {
+      const response = await fetch(contentHref, { credentials: "same-origin" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result?.error || result?.message || `File preview failed (HTTP ${response.status}).`);
+      setFilePreview({ path: file, loading: false, error: "", resource: result.resource, content: result.content, downloadHref: `${contentHref}&download=1` });
+    } catch (caught) {
+      setFilePreview((current) => current?.path === file ? { ...current, loading: false, error: caught?.message || "File preview failed." } : current);
+    }
+  };
 
   const openRoomFile = async (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -650,17 +700,7 @@ function RoomConversation({ context, roomId, workplane }) {
     const workspaceId = source.searchParams.get("workspaceId");
     if (!file || !projectId || !workspaceId) return;
     event.preventDefault();
-    const params = new URLSearchParams({ path: file, projectId, workspaceId });
-    const contentHref = `/api/issues/${encodeURIComponent(roomId)}/file-resources/content?${params.toString()}`;
-    setFilePreview({ path: file, loading: true, error: "", resource: null, content: null, downloadHref: `${contentHref}&download=1` });
-    try {
-      const response = await fetch(contentHref, { credentials: "same-origin" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result?.error || result?.message || `File preview failed (HTTP ${response.status}).`);
-      setFilePreview({ path: file, loading: false, error: "", resource: result.resource, content: result.content, downloadHref: `${contentHref}&download=1` });
-    } catch (caught) {
-      setFilePreview((current) => current?.path === file ? { ...current, loading: false, error: caught?.message || "File preview failed." } : current);
-    }
+    await openWorkspaceFile({ path: file, projectId, workspaceId });
   };
 
   const editAndRetry = (comment) => {
@@ -700,10 +740,10 @@ function RoomConversation({ context, roomId, workplane }) {
         <div className="rw-header-copy"><h1 className="rw-title">{roomName}</h1><p className="rw-subtitle">지속 대화 Room</p></div>
         <div className="rw-header-actions">
           <StatusBadge label={working ? "작업 중" : data?.runtime?.enabled ? "준비됨" : "런타임 비활성"} status={working ? "warning" : data?.runtime?.enabled ? "ok" : "pending"} />
-          <button type="button" className="rw-context-shortcut" onClick={() => openContext("tasks")}>Tasks{contextTaskCount ? ` ${contextTaskCount}` : ""}</button>
-          <button type="button" className="rw-context-shortcut" onClick={() => openContext("changes")}>변경{contextChangedCount ? ` ${contextChangedCount}` : ""}</button>
-          <button type="button" className="rw-context-shortcut" onClick={() => openContext("files")}>파일{contextAttachmentCount ? ` ${contextAttachmentCount}` : ""}</button>
-          <button type="button" className="rw-context-trigger" onClick={() => contextOpen ? setContextOpen(false) : openContext(contextTab)} aria-expanded={contextOpen}>패널</button>
+          <button type="button" className="rw-context-shortcut" onClick={(event) => openContext("tasks", event.currentTarget)}>Tasks{contextTaskCount ? ` ${contextTaskCount}` : ""}</button>
+          <button type="button" className="rw-context-shortcut" onClick={(event) => openContext("changes", event.currentTarget)}>변경{contextChangedCount ? ` ${contextChangedCount}` : ""}</button>
+          <button type="button" className="rw-context-shortcut" onClick={(event) => openContext("files", event.currentTarget)}>파일{contextAttachmentCount ? ` ${contextAttachmentCount}` : ""}</button>
+          <button type="button" className="rw-context-trigger" onClick={(event) => contextOpen ? closeContext() : openContext(contextTab, event.currentTarget)} aria-expanded={contextOpen}>패널</button>
         </div>
       </header>
       <section className="rw-thread" ref={threadRef} onScroll={trackThreadScroll}>
@@ -740,7 +780,7 @@ function RoomConversation({ context, roomId, workplane }) {
       </div>
       </footer>
     </main>
-    {contextOpen ? <RoomContext data={data} navigation={navigation} activeTab={contextTab} setActiveTab={setContextTab} onClose={() => setContextOpen(false)} /> : null}
+    {contextOpen ? <RoomContext data={data} navigation={navigation} activeTab={contextTab} setActiveTab={setContextTab} onClose={closeContext} onOpenWorkspaceFile={openWorkspaceFile} /> : null}
     <RoomFilePreview preview={filePreview} onClose={() => setFilePreview(null)} />
   </div>;
 }

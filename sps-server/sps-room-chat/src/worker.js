@@ -1905,16 +1905,21 @@ function loopbackSPSApiUrl(value) {
   return parsed.toString().replace(/\/$/, "");
 }
 
+function spsDesktopAccessHeaders(headers = {}) {
+  const token = String(process.env.SPS_DESKTOP_ACCESS_TOKEN || "").trim();
+  return token
+    ? { ...headers, "x-sps-desktop-access": token }
+    : headers;
+}
+
 async function paperclipJsonDirect(apiUrl, apiPath, { method = "GET", body, operation = "request" } = {}) {
   if (!String(apiPath || "").startsWith("/api/")) {
     throw new Error("SPS direct requests must use an /api/ path.");
   }
   const response = await fetch(`${loopbackSPSApiUrl(apiUrl)}${apiPath}`, {
     method,
-    ...(body === undefined ? {} : {
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body)
-    })
+    headers: spsDesktopAccessHeaders(body === undefined ? {} : { "content-type": "application/json" }),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
   const responseText = await response.text();
   let result = null;
@@ -2058,7 +2063,7 @@ async function updateAgentAdapterConfigDirect(apiUrl, companyId, agentId, adapte
   const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/agents/${encodeURIComponent(agentId)}?${query.toString()}`;
   const response = await fetch(endpoint, {
     method: "PATCH",
-    headers: { "content-type": "application/json" },
+    headers: spsDesktopAccessHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ adapterConfig, replaceAdapterConfig: true })
   });
   const body = await response.text();
@@ -2212,7 +2217,7 @@ function attachmentSnapshot(attachment) {
 
 async function listIssueAttachmentsDirect(apiUrl, issueId) {
   const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(issueId)}/attachments`;
-  const response = await fetch(endpoint);
+  const response = await fetch(endpoint, { headers: spsDesktopAccessHeaders() });
   if (!response.ok) throw new Error(`SPS attachment list failed (HTTP ${response.status}).`);
   const result = await response.json();
   return Array.isArray(result) ? result : Array.isArray(result?.attachments) ? result.attachments : [];
@@ -2252,7 +2257,7 @@ async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDir
     const directory = path.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
     const localPath = path.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
     const partialPath = `${localPath}.partial`;
-    const response = await fetch(roomAttachmentContentUrl(apiUrl, attachment));
+    const response = await fetch(roomAttachmentContentUrl(apiUrl, attachment), { headers: spsDesktopAccessHeaders() });
     if (!response.ok) throw new Error(`Could not read attached file ${roomAttachmentName(attachment)} (HTTP ${response.status}).`);
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(partialPath, Buffer.from(await response.arrayBuffer()));
@@ -2320,7 +2325,7 @@ async function putRoomDocument(apiUrl, input) {
   const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(input.issueId)}/documents/${encodeURIComponent(input.key)}`;
   const response = await fetch(endpoint, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: spsDesktopAccessHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       title: input.title,
       // SPS's public document API stores durable bodies as Markdown.
@@ -2357,7 +2362,7 @@ async function retryRoomDocumentWrite(work) {
 
 async function getRoomDocumentDirect(apiUrl, issueId, key) {
   const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(issueId)}/documents/${encodeURIComponent(key)}`;
-  const response = await fetch(endpoint);
+  const response = await fetch(endpoint, { headers: spsDesktopAccessHeaders() });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Room document read failed (${response.status}).`);
   return response.json();
@@ -2495,7 +2500,7 @@ async function createRoomCommentOutsideInvocation(apiUrl, issueId, body) {
   const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(issueId)}/comments`;
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: spsDesktopAccessHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ body })
   });
   if (!response.ok) throw new Error(`Room comment write failed (${response.status}).`);
@@ -5076,7 +5081,10 @@ async function handleRoomWorkspaceView(ctx, params) {
         ? "unavailable"
         : "ready";
   const workspaces = workingDirectory ? [workspaceGitChanges({
-    id: roomView.room.agentId,
+    // Changed files must retain the Project Workspace identifier. The file
+    // resource endpoint intentionally authorizes that ID, not the Room's
+    // Agent ID.
+    id: selectedWorkspace?.id ?? null,
     name: `${roomView.room.agentName} 작업 폴더`,
     cwd: workingDirectory,
     metadata: { kind: workspaceKindForAgent(agent) }
