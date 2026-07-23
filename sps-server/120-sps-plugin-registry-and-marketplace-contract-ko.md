@@ -48,6 +48,8 @@ Registry v1은 같은 release record 형식을 세 source에서 읽는다.
 
 각 source는 `registry.json` index와 release별 metadata를 제공한다. 패키지 artifact는 version별 immutable URL을 사용해야 한다. branch URL, mutable latest URL, 설치 시점에 달라질 수 있는 npm tag는 release artifact locator로 허용하지 않는다.
 
+`git`과 `official` source는 Owner가 미리 신뢰한 Registry root public key로 `registry.json` 자체를 검증해야 한다. release publisher key는 개별 package release를 검증하는 키이며 Registry index를 신뢰하는 근거가 아니다. `local` source는 사용자가 선택한 폴더를 명시적으로 신뢰하는 개발·오프라인 경로로만 unsigned index를 허용하며, UI에는 그 상태를 표시한다.
+
 ## 4. Registry index와 release record
 
 ### 4.1 Registry index
@@ -61,6 +63,7 @@ Registry v1은 같은 release record 형식을 세 source에서 읽는다.
   "publisherKeys": [
     { "keyId": "ed25519:sps-official-1", "algorithm": "ed25519", "publicKey": "..." }
   ],
+  "signature": { "keyId": "ed25519:sps-registry-root-1", "algorithm": "ed25519", "value": "..." },
   "plugins": [
     {
       "id": "sps.team-workplane",
@@ -74,7 +77,7 @@ Registry v1은 같은 release record 형식을 세 source에서 읽는다.
 }
 ```
 
-Index는 검색·발견용이다. 설치 판단은 반드시 release record와 다운로드한 artifact의 검증 결과로 한다.
+Index는 검색·발견용이다. remote source에서는 신뢰된 root key로 index signature를 먼저 검증하고, 설치 판단은 이어서 release record와 다운로드한 artifact의 검증 결과로 한다.
 
 ### 4.2 Release record
 
@@ -123,12 +126,13 @@ Registry browse or direct source add
 ## 6. 보안 불변 조건
 
 1. Registry metadata, Marketplace page, 리뷰, 배지는 어떤 Plugin capability도 부여하지 않는다.
-2. package는 설치 전 실행하지 않으며 archive path traversal, symlink escape, oversized entry, duplicate entrypoint를 거부한다.
-3. package는 Core 또는 다른 Plugin의 source tree를 수정하는 방식으로 설치될 수 없다.
-4. 위험 권한이 있는 package는 설치 후에도 기본 비활성 상태다.
-5. Node command, local CLI, local MCP, Workspace write는 해당 Node의 소유자 정책과 Agent Runner Grant를 모두 통과해야 한다.
-6. Registry advisory는 경고·비활성화 제안만 할 수 있다. 원격 서비스가 이미 설치된 코드를 조용히 교체·삭제·실행하지 않는다.
-7. offline mode에서는 마지막으로 검증한 release record와 local policy만 사용한다. 유료 entitlement의 offline cache·만료 규칙은 구매 전에 표시한다.
+2. `git`과 `official` Registry index는 source에 pin된 root key signature를 통과해야 한다. release publisher key만 바꿔 source 신뢰를 획득할 수 없다.
+3. package는 설치 전 실행하지 않으며 archive path traversal, symlink escape, oversized entry, duplicate entrypoint를 거부한다.
+4. package는 Core 또는 다른 Plugin의 source tree를 수정하는 방식으로 설치될 수 없다.
+5. 위험 권한이 있는 package는 설치 후에도 기본 비활성 상태다.
+6. Node command, local CLI, local MCP, Workspace write는 해당 Node의 소유자 정책과 Agent Runner Grant를 모두 통과해야 한다.
+7. Registry advisory는 경고·비활성화 제안만 할 수 있다. 원격 서비스가 이미 설치된 코드를 조용히 교체·삭제·실행하지 않는다.
+8. offline mode에서는 마지막으로 검증한 release record와 local policy만 사용한다. 유료 entitlement의 offline cache·만료 규칙은 구매 전에 표시한다.
 
 ## 7. Marketplace 단계
 

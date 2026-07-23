@@ -7,6 +7,7 @@
 - deterministic JSON canonicalization
 - release record와 Registry index 구조 검사
 - Ed25519 release signature 검증
+- trusted source root key를 통한 Registry index signature 검증
 - `public`, `unlisted`, `private` visibility 제한
 - path traversal을 막는 상대 artifact·release path 검사
 - Local Registry에서 release·artifact의 실제 크기와 SHA-256 검사

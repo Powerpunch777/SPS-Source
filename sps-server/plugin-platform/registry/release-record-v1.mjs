@@ -28,6 +28,18 @@ function isBase64(value) {
   return decoded.length > 0 && decoded.toString("base64") === value;
 }
 
+function isEd25519Signature(value) {
+  return isBase64(value) && Buffer.from(value, "base64").length === 64;
+}
+
+function verifyEd25519(payload, publicKey, signature) {
+  try {
+    return verify(null, Buffer.from(payload), publicKey, signature);
+  } catch {
+    return false;
+  }
+}
+
 export function isSafeRegistryRelativePath(value) {
   return typeof value === "string"
     && value.length > 0
@@ -87,6 +99,16 @@ export function canonicalizeReleaseRecord(record) {
   return canonicalizeJson({ ...record, signature });
 }
 
+/** Returns the exact signed payload for a Registry index. */
+export function canonicalizeRegistryIndex(index) {
+  if (!isPlainObject(index)) throw new TypeError("Registry index must be an object.");
+  const signature = isPlainObject(index.signature)
+    ? { ...index.signature, value: undefined }
+    : index.signature;
+  if (isPlainObject(signature)) delete signature.value;
+  return canonicalizeJson({ ...index, signature });
+}
+
 export function validateReleaseRecord(record) {
   const errors = [];
   if (!isPlainObject(record)) {
@@ -109,7 +131,7 @@ export function validateReleaseRecord(record) {
 
   pushIf(isPlainObject(record.signature), errors, "signature must be an object.");
   pushIf(record.signature?.algorithm === "ed25519", errors, "signature.algorithm must be ed25519.");
-  pushIf(isBase64(record.signature?.value), errors, "signature.value must be a bounded base64 string.");
+  pushIf(isEd25519Signature(record.signature?.value), errors, "signature.value must be a base64 Ed25519 signature.");
 
   pushIf(isPlainObject(record.compatibility), errors, "compatibility must be an object.");
   pushIf(typeof record.compatibility?.sps === "string" && record.compatibility.sps.length > 0 && record.compatibility.sps.length <= 256, errors, "compatibility.sps is required.");
@@ -128,7 +150,7 @@ export function verifyReleaseRecordSignature(record, publicKey) {
     return { valid: false, errors: ["Publisher public key is required."] };
   }
   const signature = Buffer.from(record.signature.value, "base64");
-  const verified = verify(null, Buffer.from(canonicalizeReleaseRecord(record)), publicKey, signature);
+  const verified = verifyEd25519(canonicalizeReleaseRecord(record), publicKey, signature);
   return verified
     ? { valid: true, errors: [] }
     : { valid: false, errors: ["Release record signature does not match the publisher key."] };
@@ -144,6 +166,12 @@ export function validateRegistryIndex(index) {
   pushIf(isIsoDate(index.updatedAt), errors, "updatedAt must be an ISO date.");
   pushIf(Array.isArray(index.publisherKeys), errors, "publisherKeys must be an array.");
   pushIf(Array.isArray(index.plugins), errors, "plugins must be an array.");
+  if (index.signature !== undefined) {
+    pushIf(isPlainObject(index.signature), errors, "Registry signature must be an object.");
+    pushIf(typeof index.signature?.keyId === "string" && index.signature.keyId.startsWith("ed25519:"), errors, "Registry signature keyId must be Ed25519.");
+    pushIf(index.signature?.algorithm === "ed25519", errors, "Registry signature algorithm must be ed25519.");
+    pushIf(isEd25519Signature(index.signature?.value), errors, "Registry signature value must be a base64 Ed25519 signature.");
+  }
 
   const keyIds = new Set();
   for (const key of Array.isArray(index.publisherKeys) ? index.publisherKeys : []) {
@@ -173,4 +201,28 @@ export function validateRegistryIndex(index) {
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Verifies a Registry index against a root key that the source configuration
+ * already trusts. A release publisher key is not a substitute for this root.
+ */
+export function verifyRegistryIndexSignature(index, trustedRoot) {
+  const validation = validateRegistryIndex(index);
+  if (!validation.valid) return validation;
+  if (!isPlainObject(index.signature)) {
+    return { valid: false, errors: ["Registry index signature is required for a trusted remote source."] };
+  }
+  const root = typeof trustedRoot === "string" ? { publicKey: trustedRoot } : trustedRoot;
+  if (typeof root?.keyId === "string" && index.signature.keyId !== root.keyId) {
+    return { valid: false, errors: ["Registry index signature keyId does not match the trusted root."] };
+  }
+  if (typeof root?.publicKey !== "string" || root.publicKey.length === 0) {
+    return { valid: false, errors: ["Registry root public key is required."] };
+  }
+  const signature = Buffer.from(index.signature.value, "base64");
+  const verified = verifyEd25519(canonicalizeRegistryIndex(index), root.publicKey, signature);
+  return verified
+    ? { valid: true, errors: [] }
+    : { valid: false, errors: ["Registry index signature does not match the trusted root key."] };
 }

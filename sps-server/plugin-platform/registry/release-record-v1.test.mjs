@@ -3,14 +3,18 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import {
   canonicalizeJson,
+  canonicalizeRegistryIndex,
   canonicalizeReleaseRecord,
   validateRegistryIndex,
   validateReleaseRecord,
+  verifyRegistryIndexSignature,
   verifyReleaseRecordSignature,
 } from "./release-record-v1.mjs";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+const { privateKey: registryRootPrivateKey, publicKey: registryRootPublicKey } = generateKeyPairSync("ed25519");
 const publisherPublicKey = publicKey.export({ type: "spki", format: "pem" });
+const registryRootPublicKeyPem = registryRootPublicKey.export({ type: "spki", format: "pem" });
 
 function makeRecord(overrides = {}) {
   const record = {
@@ -87,4 +91,46 @@ test("rejects unsafe artifact and release paths", () => {
 
 test("canonical JSON is independent of object key order", () => {
   assert.equal(canonicalizeJson({ b: [2, 1], a: { z: true, y: null } }), canonicalizeJson({ a: { y: null, z: true }, b: [2, 1] }));
+});
+
+test("verifies a signed Registry index with a trusted root key", () => {
+  const index = {
+    registrySchemaVersion: 1,
+    registryId: "io.sps.example",
+    displayName: "Example Registry",
+    updatedAt: "2026-07-23T00:00:00.000Z",
+    publisherKeys: [{ keyId: "ed25519:example-1", algorithm: "ed25519", publicKey: publisherPublicKey }],
+    plugins: [{ id: "com.example.weather", latest: "1.0.0", releases: ["releases/com.example.weather-1.0.0.json"] }],
+    signature: { keyId: "ed25519:registry-root-1", algorithm: "ed25519", value: "pending" },
+  };
+  index.signature.value = sign(null, Buffer.from(canonicalizeRegistryIndex(index)), registryRootPrivateKey).toString("base64");
+
+  assert.deepEqual(verifyRegistryIndexSignature(index, {
+    keyId: "ed25519:registry-root-1",
+    publicKey: registryRootPublicKeyPem,
+  }), { valid: true, errors: [] });
+  assert.deepEqual(verifyRegistryIndexSignature(index, {
+    keyId: "ed25519:another-root",
+    publicKey: registryRootPublicKeyPem,
+  }), {
+    valid: false,
+    errors: ["Registry index signature keyId does not match the trusted root."],
+  });
+  index.plugins[0].latest = "1.0.1";
+  assert.deepEqual(verifyRegistryIndexSignature(index, {
+    keyId: "ed25519:registry-root-1",
+    publicKey: registryRootPublicKeyPem,
+  }), {
+    valid: false,
+    errors: ["Registry index signature does not match the trusted root key."],
+  });
+});
+
+test("fails closed for an unusable publisher public key", () => {
+  const record = makeRecord();
+
+  assert.deepEqual(verifyReleaseRecordSignature(record, "not a public key"), {
+    valid: false,
+    errors: ["Release record signature does not match the publisher key."],
+  });
 });
