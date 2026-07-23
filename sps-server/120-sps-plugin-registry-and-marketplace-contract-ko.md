@@ -188,7 +188,7 @@ Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` opens the source
 
 ### 5.3 Authoring Kit release flow (implemented)
 
-`sps-plugin` is the authoring-side complement to the Desktop Registry flow. It produces no trust bypass: `init` creates a minimal Core-compatible manifest and worker entry, `validate` performs static checks, `pack` refuses symlinks and likely secret files, `keygen` creates Ed25519 keys, `release` signs the immutable artifact tuple, and `registry-index` signs the catalog root.
+`sps-plugin` is the authoring-side complement to the Desktop Registry flow. It produces no trust bypass: `init` creates a minimal Core-compatible manifest and worker entry, `validate` performs static checks, `pack` refuses symlinks and likely secret files, `keygen` creates Ed25519 keys, `release` signs the immutable artifact tuple, and `registry-index` signs the catalog root. `publish-local` packages one source tree into an explicit local Registry, writes a new immutable release record, and re-signs the index without copying either private key into the Registry.
 
 The authoring Kit rejects URL-like text in relative Registry paths, URL credentials, fragments, symlinked package entries, and package files likely to contain credentials. A resulting local Registry is verified again by the same Local Registry verifier used by SPS Desktop.
 

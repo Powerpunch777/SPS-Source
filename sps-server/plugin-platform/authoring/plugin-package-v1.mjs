@@ -335,6 +335,151 @@ export function createSignedRegistryIndex({
   return { index, publicKey };
 }
 
+function resolveRegistryFile(registryRoot, relativePath, label) {
+  if (!isSafeRegistryRelativePath(relativePath)) throw new Error(`${label} must be a safe Registry-relative path.`);
+  const target = path.resolve(registryRoot, ...relativePath.split("/"));
+  if (!isPathInside(registryRoot, target)) throw new Error(`${label} escapes the Registry root.`);
+  return target;
+}
+
+async function loadExistingLocalRegistry(registryRoot) {
+  const indexPath = path.join(registryRoot, "registry.json");
+  let index;
+  try {
+    index = await readJson(indexPath, "registry.json");
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  const validation = validateRegistryIndex(index);
+  if (!validation.valid) throw new Error(validation.errors.join("\n"));
+  const publisherKeys = new Map(index.publisherKeys.map((entry) => [entry.keyId, entry]));
+  const releaseRecords = [];
+  for (const plugin of index.plugins) {
+    for (const releasePath of plugin.releases) {
+      const absolutePath = resolveRegistryFile(registryRoot, releasePath, "Registry release record");
+      const record = await readJson(absolutePath, `Registry release record ${releasePath}`);
+      releaseRecords.push({ releasePath, record });
+    }
+  }
+  return { index, publisherKeys, releaseRecords };
+}
+
+async function replaceJson(filePath, value) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await fs.rename(temporaryPath, filePath);
+  } finally {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Publishes one immutable archive into an explicit local Registry folder.
+ * Private signing keys are supplied by the caller and never written there.
+ */
+export async function publishPluginToLocalRegistry({
+  sourceDirectory,
+  registryDirectory,
+  registryId,
+  displayName,
+  publisherId,
+  publisherKeyId,
+  publisherPrivateKey,
+  registryRootKeyId,
+  registryRootPrivateKey,
+  compatibilitySps = ">=0.4.0",
+  visibility = "public",
+  publishedAt = new Date().toISOString(),
+} = {}) {
+  if (!registryDirectory) throw new Error("Local Registry directory is required.");
+  if (!PUBLISHER_ID.test(registryId ?? "")) throw new Error("Registry id is invalid.");
+  if (typeof displayName !== "string" || displayName.trim().length === 0) throw new Error("Registry display name is required.");
+  if (!PUBLISHER_ID.test(publisherId ?? "")) throw new Error("Publisher id is invalid.");
+  if (typeof publisherKeyId !== "string" || !publisherKeyId.startsWith("ed25519:")) throw new Error("Publisher key id must be Ed25519.");
+  if (typeof registryRootKeyId !== "string" || !registryRootKeyId.startsWith("ed25519:")) throw new Error("Registry root key id must be Ed25519.");
+  if (typeof publisherPrivateKey !== "string" || publisherPrivateKey.length === 0) throw new Error("Publisher private key is required.");
+  if (typeof registryRootPrivateKey !== "string" || registryRootPrivateKey.length === 0) throw new Error("Registry root private key is required.");
+
+  await fs.mkdir(path.resolve(registryDirectory), { recursive: true, mode: 0o700 });
+  const registryRoot = await fs.realpath(registryDirectory);
+  const publisherPublicKey = createPublicKey(publisherPrivateKey).export({ type: "spki", format: "pem" });
+  const registryRootPublicKey = createPublicKey(registryRootPrivateKey).export({ type: "spki", format: "pem" });
+  const existing = await loadExistingLocalRegistry(registryRoot);
+  if (existing && (existing.index.registryId !== registryId || existing.index.displayName !== displayName)) {
+    throw new Error("Registry id and display name must match the existing Registry index.");
+  }
+  if (existing && existing.index.signature.keyId !== registryRootKeyId) {
+    throw new Error("Registry root key id must match the existing Registry index.");
+  }
+  if (existing) {
+    const signature = verifyRegistryIndexSignature(existing.index, {
+      keyId: registryRootKeyId,
+      publicKey: registryRootPublicKey,
+    });
+    if (!signature.valid) throw new Error(signature.errors.join("\n"));
+  }
+
+  const inspection = await inspectPluginDirectory(sourceDirectory);
+  if (!inspection.valid || !inspection.source) throw new Error(inspection.errors.join("\n"));
+  const plugin = inspection.source.staticManifest.plugin;
+  const artifactRelativePath = `packages/${plugin.id}-${plugin.version}.spsplugin`;
+  const releaseRelativePath = `releases/${plugin.id}-${plugin.version}.json`;
+  const artifactPath = resolveRegistryFile(registryRoot, artifactRelativePath, "Registry artifact");
+  const releasePath = resolveRegistryFile(registryRoot, releaseRelativePath, "Registry release record");
+  const existingReleasePaths = new Set(existing?.releaseRecords.map((entry) => entry.releasePath) ?? []);
+  if (existingReleasePaths.has(releaseRelativePath)) throw new Error("Registry release already exists and is immutable.");
+
+  const publisherKeys = new Map(existing?.publisherKeys ?? []);
+  const existingPublisher = publisherKeys.get(publisherKeyId);
+  if (existingPublisher && existingPublisher.publicKey !== publisherPublicKey) {
+    throw new Error("Publisher key id is already bound to a different public key.");
+  }
+  publisherKeys.set(publisherKeyId, { keyId: publisherKeyId, algorithm: "ed25519", publicKey: publisherPublicKey });
+
+  await packagePluginDirectory({ sourceDirectory, archivePath: artifactPath });
+  try {
+    const release = await createSignedPluginRelease({
+      archivePath: artifactPath,
+      artifactUrl: artifactRelativePath,
+      publisherId,
+      publisherKeyId,
+      publisherPrivateKey,
+      compatibilitySps,
+      visibility,
+      publishedAt,
+    });
+    await writeJsonNew(releasePath, release.record);
+    const signed = createSignedRegistryIndex({
+      registryId,
+      displayName,
+      publisherKeys: [...publisherKeys.values()],
+      releaseRecords: [...(existing?.releaseRecords ?? []), { releasePath: releaseRelativePath, record: release.record }],
+      registryRootKeyId,
+      registryRootPrivateKey,
+    });
+    if (signed.publicKey !== registryRootPublicKey) throw new Error("Registry root signing key could not be verified.");
+    const indexPath = path.join(registryRoot, "registry.json");
+    await replaceJson(indexPath, signed.index);
+    return {
+      registryRoot,
+      indexPath,
+      artifactPath,
+      releasePath,
+      plugin: release.record.plugin,
+      registryPublicKey: registryRootPublicKey,
+    };
+  } catch (error) {
+    await Promise.all([
+      fs.rm(artifactPath, { force: true }),
+      fs.rm(releasePath, { force: true }),
+    ]);
+    throw error;
+  }
+}
+
 /** Creates the smallest Core-valid Plugin source tree with a minimal scoped capability. */
 export async function createPluginTemplate({ directory, pluginId, packageName, displayName = "SPS Plugin", version = "0.1.0" } = {}) {
   if (!PLUGIN_ID.test(pluginId ?? "")) throw new Error("Plugin id is invalid.");

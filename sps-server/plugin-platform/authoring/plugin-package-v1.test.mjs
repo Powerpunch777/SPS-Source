@@ -15,6 +15,7 @@ import {
   generatePluginSigningKeyPair,
   inspectPluginDirectory,
   packagePluginDirectory,
+  publishPluginToLocalRegistry,
 } from "./plugin-package-v1.mjs";
 
 async function makePlugin(t) {
@@ -96,6 +97,46 @@ test("keeps the generated worker alive for the minimum Host RPC lifecycle", asyn
   assert.deepEqual(await stopped, { jsonrpc: "2.0", id: 3, result: null });
   const [code] = await exited;
   assert.equal(code, 0);
+});
+
+test("publishes immutable releases to a verified local Registry without copying private keys", async (t) => {
+  const { root, sourceDirectory } = await makePlugin(t);
+  const secondSource = path.join(root, "source-v2");
+  await createPluginTemplate({
+    directory: secondSource,
+    pluginId: "com.example.weather",
+    packageName: "@example/weather",
+    displayName: "Weather",
+    version: "1.2.4",
+  });
+  const publisher = generatePluginSigningKeyPair();
+  const registryRoot = generatePluginSigningKeyPair();
+  const registryDirectory = path.join(root, "team-registry");
+  const publish = (directory, publishedAt) => publishPluginToLocalRegistry({
+    sourceDirectory: directory,
+    registryDirectory,
+    registryId: "io.sps.team",
+    displayName: "Team Registry",
+    publisherId: "example-studio",
+    publisherKeyId: "ed25519:example-publisher",
+    publisherPrivateKey: publisher.privateKey,
+    registryRootKeyId: "ed25519:team-root",
+    registryRootPrivateKey: registryRoot.privateKey,
+    publishedAt,
+  });
+
+  const first = await publish(sourceDirectory, "2026-07-23T00:00:00.000Z");
+  const second = await publish(secondSource, "2026-07-23T00:01:00.000Z");
+  assert.equal(first.plugin.version, "1.2.3");
+  assert.equal(second.plugin.version, "1.2.4");
+  const report = await inspectLocalRegistry(registryDirectory);
+  assert.equal(report.valid, true);
+  assert.deepEqual(report.releases.map((release) => release.version), ["1.2.3", "1.2.4"]);
+  const registryIndex = await readFile(path.join(registryDirectory, "registry.json"), "utf8");
+  assert.match(registryIndex, /ed25519:team-root/);
+  assert.equal(registryIndex.includes(registryRoot.privateKey), false);
+  assert.equal(registryIndex.includes(publisher.privateKey), false);
+  await assert.rejects(() => publish(sourceDirectory, "2026-07-23T00:02:00.000Z"), /immutable/i);
 });
 
 test("rejects source directories that accidentally include a likely secret", async (t) => {

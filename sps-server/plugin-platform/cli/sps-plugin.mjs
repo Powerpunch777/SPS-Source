@@ -8,6 +8,7 @@ import {
   generatePluginSigningKeyPair,
   inspectPluginDirectory,
   packagePluginDirectory,
+  publishPluginToLocalRegistry,
 } from "../authoring/plugin-package-v1.mjs";
 
 function usage() {
@@ -20,6 +21,7 @@ Commands:
   sps-plugin keygen --private <publisher-private.pem> --public <publisher-public.pem>
   sps-plugin release <plugin.spsplugin> --artifact-url <relative-or-https-url> --publisher-id <id> --publisher-key-id <ed25519:id> --private-key <pem> --out <release.json>
   sps-plugin registry-index --registry-id <id> --display-name <name> --root-key-id <ed25519:id> --root-private-key <pem> --publisher-key <key-id=public.pem> --release <release-path=release.json> --out <registry.json>
+  sps-plugin publish-local <plugin-directory> --registry <directory> --registry-id <id> --display-name <name> --publisher-id <id> --publisher-key-id <ed25519:id> --publisher-private-key <pem> --root-key-id <ed25519:id> --root-private-key <pem>
 `;
 }
 
@@ -158,6 +160,23 @@ async function run() {
     });
     const output = await writeJson(required(options, "out"), result.index);
     console.log(`Created signed Registry index: ${output}`);
+    return;
+  }
+  if (command === "publish-local") {
+    const published = await publishPluginToLocalRegistry({
+      sourceDirectory: positionals[0],
+      registryDirectory: required(options, "registry"),
+      registryId: required(options, "registry-id"),
+      displayName: required(options, "display-name"),
+      publisherId: required(options, "publisher-id"),
+      publisherKeyId: required(options, "publisher-key-id"),
+      publisherPrivateKey: await readText(required(options, "publisher-private-key")),
+      registryRootKeyId: required(options, "root-key-id"),
+      registryRootPrivateKey: await readText(required(options, "root-private-key")),
+      compatibilitySps: options.get("sps") || ">=0.4.0",
+      visibility: options.get("visibility") || "public",
+    });
+    console.log(`Published ${published.plugin.id}@${published.plugin.version} to local Registry: ${published.registryRoot}`);
     return;
   }
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);
