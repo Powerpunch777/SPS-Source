@@ -6,6 +6,7 @@ const { getRuntimeConfig } = await import("../dist/worker.js");
 const defaultRuntime = await getRuntimeConfig({ config: { get: async () => ({}) } });
 assert.equal(defaultRuntime.enableAgyQuotaFallback, false);
 assert.equal(defaultRuntime.enableCodexRooms, true);
+assert.equal(defaultRuntime.enableTaskAssignment, true);
 
 const previousOwnerHostUrl = process.env.SPS_ROOM_API_URL;
 process.env.SPS_ROOM_API_URL = "http://127.0.0.1:31457";
@@ -26,4 +27,9 @@ const explicitlyDisabledRuntime = await getRuntimeConfig({
 });
 assert.equal(explicitlyDisabledRuntime.enableAgyQuotaFallback, false);
 
-console.log("PASS quota provider fallback is opt-in and never changes the default provider silently");
+const delegationPausedRuntime = await getRuntimeConfig({
+  config: { get: async () => ({ enableTaskAssignment: false }) }
+});
+assert.equal(delegationPausedRuntime.enableTaskAssignment, false);
+
+console.log("PASS provider fallback is opt-in and Lead delegation defaults on with an explicit emergency pause");

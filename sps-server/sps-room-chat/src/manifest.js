@@ -131,6 +131,12 @@ export default {
         description: "Loopback SPS API URL used for durable Room documents and attachment staging.",
         default: "http://127.0.0.1:3100"
       },
+      enableTaskAssignment: {
+        type: "boolean",
+        title: "Enable Lead task assignment",
+        description: "Allow explicitly configured Leads to create and assign Tasks to Workers allowed by their Workplane policy. Disable only to pause all delegation temporarily.",
+        default: true
+      },
       enableAgyQuotaFallback: {
         type: "boolean",
         description: "Opt in to continuing a Codex Room turn through Agy when the selected Codex account reaches provider quota. Disabled by default because this changes the selected provider and cost boundary.",

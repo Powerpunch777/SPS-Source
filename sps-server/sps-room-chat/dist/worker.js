@@ -11988,6 +11988,12 @@ var manifest_default = {
         description: "Loopback SPS API URL used for durable Room documents and attachment staging.",
         default: "http://127.0.0.1:3100"
       },
+      enableTaskAssignment: {
+        type: "boolean",
+        title: "Enable Lead task assignment",
+        description: "Allow explicitly configured Leads to create and assign Tasks to Workers allowed by their Workplane policy. Disable only to pause all delegation temporarily.",
+        default: true
+      },
       enableAgyQuotaFallback: {
         type: "boolean",
         description: "Opt in to continuing a Codex Room turn through Agy when the selected Codex account reaches provider quota. Disabled by default because this changes the selected provider and cost boundary.",
@@ -15380,7 +15386,10 @@ async function getRuntimeConfig(ctx) {
     agyFallbackModel: textParam(config, "agyFallbackModel", "gemini-3.1-pro-high"),
     agyFallbackPrintTimeout: textParam(config, "agyFallbackPrintTimeout", "2h"),
     agyFallbackTimeoutMs: Math.max(0, Number(config.agyFallbackTimeoutSec) || 0) * 1e3,
-    enableTaskAssignment: config.enableTaskAssignment === true,
+    // Lead and Worker policies are the authorization boundary. Task delegation
+    // should work by default once those policies are explicitly configured;
+    // this switch is only an emergency pause for an entire Workplane.
+    enableTaskAssignment: config.enableTaskAssignment !== false,
     // The packaged Owner Host chooses an available loopback port on first run.
     // Its process value must win over the manifest's old 3100 default; otherwise
     // Room UI can load while durable writes go to a different SPS server.
@@ -18740,6 +18749,9 @@ function taskBoundaryReportKind(body) {
   const bracketed = text4.match(/\[\s*(?:SPS\s+)?(Blocker|Final)\s+Report\s*\]\s*$/im)?.[1]?.toLowerCase();
   if (bracketed === "blocker") return "blocked";
   if (bracketed === "final") return "in_review";
+  if (/(?:^|\n)\s*(?:#{1,3}\s*)?(?:SPS\s+)?(?:final\s+(?:completion|report|record)|completion\s+record|최종\s*(?:완료|보고)|완료\s*보고)\b/im.test(text4)) {
+    return "in_review";
+  }
   return null;
 }
 function isSubstantiveTaskBoundaryReport(body, kind) {

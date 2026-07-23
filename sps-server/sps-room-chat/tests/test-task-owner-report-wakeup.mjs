@@ -15,6 +15,16 @@ const koreanWorkerReport = [
 assert.equal(taskBoundaryReportKind(koreanWorkerReport), "in_review");
 assert.equal(isSubstantiveTaskBoundaryReport(koreanWorkerReport, "in_review"), true);
 
+const naturalLanguageCompletionRecord = [
+  "Final completion record:",
+  "Output: created workspace-root loop-check-local.txt.",
+  "Verification: the file contains the required one-line text and git status reports only that file changed.",
+  "Risks: none. Next reviewer: SPS Loop Lead."
+].join("\n");
+assert.equal(taskBoundaryReportKind(naturalLanguageCompletionRecord), "in_review");
+assert.equal(isSubstantiveTaskBoundaryReport(naturalLanguageCompletionRecord, "in_review"), true);
+assert.equal(taskBoundaryReportKind("Completed the first implementation step; continuing verification."), null);
+
 const interruptedOwnerState = {
   ownerNotification: {
     status: "working",
