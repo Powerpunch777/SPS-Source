@@ -18,6 +18,16 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function sourceTrustLabel(source) {
+  if (source.kind === "official") return "Official source";
+  if (source.kind === "git") return "Signed remote source";
+  return "Owner-trusted local source";
+}
+
+function releaseLabel(release) {
+  return release.catalog?.displayName || release.pluginId;
+}
+
 function renderSources() {
   const list = $("#source-list");
   if (sources.length === 0) {
@@ -28,7 +38,7 @@ function renderSources() {
     <article class="source-card ${source.id === selectedSourceId ? "selected" : ""}">
       <button class="source-select" type="button" data-source-id="${escapeHtml(source.id)}">
         <strong>${escapeHtml(source.displayName)}</strong>
-        <span>${escapeHtml(source.kind)}${source.localFolderName ? ` / ${escapeHtml(source.localFolderName)}` : ""}</span>
+        <span>${escapeHtml(sourceTrustLabel(source))}${source.localFolderName ? ` / ${escapeHtml(source.localFolderName)}` : ""}</span>
       </button>
       <button class="remove-source" type="button" data-remove-source-id="${escapeHtml(source.id)}" title="Remove source">Remove</button>
     </article>
@@ -47,13 +57,31 @@ function renderReleases(report) {
     list.innerHTML = '<p class="empty-state">This Registry has no verified releases.</p>';
     return;
   }
-  list.innerHTML = report.releases.map((release) => `
+  list.innerHTML = report.releases.map((release) => {
+    const documentation = release.catalog?.documentationUrl
+      ? `<a class="documentation-link" href="${escapeHtml(release.catalog.documentationUrl)}" target="_blank" rel="noreferrer">Open documentation</a>`
+      : "";
+    const summary = release.catalog?.summary
+      ? `<p class="release-summary">${escapeHtml(release.catalog.summary)}</p>`
+      : "";
+    const capabilities = Array.isArray(release.capabilities)
+      ? release.capabilities.length === 0 ? "No declared capabilities" : release.capabilities.join(", ")
+      : "Full capability detail appears in the static review step.";
+    return `
     <article class="release-card">
-      <div><h2>${escapeHtml(release.pluginId)}</h2><p>v${escapeHtml(release.version)} / ${escapeHtml(release.visibility)} / ${escapeHtml(release.publisherId)}</p></div>
-      <div class="release-meta"><span>${Math.ceil(release.artifact.sizeBytes / 1024)} KB</span><code>${escapeHtml(release.artifact.sha256.slice(0, 12))}...</code></div>
+      <div class="release-copy">
+        <h2>${escapeHtml(releaseLabel(release))}</h2>
+        <p class="release-identity"><code>${escapeHtml(release.pluginId)}</code> / v${escapeHtml(release.version)}</p>
+        ${summary}
+        <p class="release-publisher">Published by ${escapeHtml(release.publisherId)} / ${escapeHtml(release.visibility)}</p>
+        <p class="release-capabilities">Capabilities: ${escapeHtml(capabilities)}</p>
+        ${documentation}
+      </div>
+      <div class="release-meta"><span>${Math.ceil(release.artifact.sizeBytes / 1024)} KB</span><code>${escapeHtml(release.artifact.sha256.slice(0, 12))}...</code><span class="release-badge">${escapeHtml(report.source.kind === "official" ? "Official" : "Verified release")}</span></div>
       <button class="primary stage-release" type="button" data-plugin-id="${escapeHtml(release.pluginId)}" data-version="${escapeHtml(release.version)}">Stage for review</button>
     </article>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function renderStages(stages) {

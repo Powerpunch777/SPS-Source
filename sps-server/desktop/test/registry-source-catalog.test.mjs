@@ -42,6 +42,11 @@ function makeRemoteFixture() {
     signature: { algorithm: "ed25519", value: "" },
     compatibility: { sps: ">=0.4.0", pluginApi: 1 },
     visibility: "public",
+    catalog: {
+      displayName: "Example Weather",
+      summary: "A signed weather summary.",
+      documentationUrl: "https://docs.example.test/weather",
+    },
     permissionsDigest: "a".repeat(64),
     publishedAt: "2026-07-23T00:00:00Z",
   };
@@ -105,6 +110,11 @@ test("verifies a signed remote source before exposing its release", async () => 
   assert.equal(report.valid, true);
   assert.equal(report.trust, "pinned-remote-root");
   assert.deepEqual(report.releases.map((release) => [release.pluginId, release.version]), [["com.example.weather", "1.0.0"]]);
+  assert.deepEqual(report.releases[0].catalog, {
+    displayName: "Example Weather",
+    summary: "A signed weather summary.",
+    documentationUrl: "https://docs.example.test/weather",
+  });
 });
 
 test("downloads a verified remote artifact into the Owner Vault without executing it", async () => {
@@ -157,6 +167,11 @@ test("stages a local release published by the Plugin Kit without executing it", 
       registryRootKeyId: "ed25519:example-root",
       registryRootPrivateKey: registryRoot.privateKey,
       publishedAt: "2026-07-23T00:00:00.000Z",
+      catalog: {
+        displayName: "Weather",
+        summary: "A signed local release.",
+        documentationUrl: "https://docs.example.test/weather",
+      },
     });
 
     const source = {
@@ -167,6 +182,7 @@ test("stages a local release published by the Plugin Kit without executing it", 
     };
     const report = await inspectRegistrySource(source);
     assert.equal(report.valid, true);
+    assert.equal(report.releases[0].catalog.displayName, "Weather");
     const acquired = await acquireRegistryRelease({
       vaultRoot,
       source,
@@ -178,6 +194,7 @@ test("stages a local release published by the Plugin Kit without executing it", 
       vaultRoot,
       archivePath: acquired.archivePath,
       expectedArtifact: acquired.artifact,
+      expectedRelease: acquired.release,
       source: acquired.source,
       registerStage: async (input) => {
         registered.push(input);

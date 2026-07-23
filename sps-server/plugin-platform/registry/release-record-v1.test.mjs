@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import {
+  calculateReleaseCapabilitiesDigest,
   canonicalizeJson,
   canonicalizeRegistryIndex,
   canonicalizeReleaseRecord,
@@ -53,6 +54,58 @@ test("rejects a release record when a signed field changes", () => {
     valid: false,
     errors: ["Release record signature does not match the publisher key."],
   });
+});
+
+test("signs optional Marketplace catalog metadata without changing installation authority", () => {
+  const record = makeRecord({
+    catalog: {
+      displayName: "Example Weather",
+      summary: "Adds a read-only weather summary to a team dashboard.",
+      documentationUrl: "https://docs.example.test/plugins/weather",
+    },
+  });
+
+  assert.deepEqual(validateReleaseRecord(record), { valid: true, errors: [] });
+  assert.deepEqual(verifyReleaseRecordSignature(record, publisherPublicKey), { valid: true, errors: [] });
+  record.catalog.summary = "Changed after signing.";
+  assert.deepEqual(verifyReleaseRecordSignature(record, publisherPublicKey), {
+    valid: false,
+    errors: ["Release record signature does not match the publisher key."],
+  });
+});
+
+test("rejects unsafe or unstructured Marketplace catalog metadata", () => {
+  const unsafeUrl = validateReleaseRecord(makeRecord({
+    catalog: { documentationUrl: "https://user:password@example.test/docs#fragment" },
+  }));
+  const unknownField = validateReleaseRecord(makeRecord({
+    catalog: { displayName: "Weather", price: "free" },
+  }));
+  const emptyCatalog = validateReleaseRecord(makeRecord({ catalog: {} }));
+
+  assert.equal(unsafeUrl.valid, false);
+  assert.ok(unsafeUrl.errors.includes("catalog.documentationUrl must be an HTTPS URL without credentials or a fragment."));
+  assert.equal(unknownField.valid, false);
+  assert.ok(unknownField.errors.includes("catalog contains an unsupported field."));
+  assert.equal(emptyCatalog.valid, false);
+  assert.ok(emptyCatalog.errors.includes("catalog must contain at least one supported field."));
+});
+
+test("binds an optional release capability preview to the signed permissions digest", () => {
+  const capabilities = ["plugin.state.read", "ui.page.register"];
+  const record = makeRecord({
+    capabilities,
+    permissionsDigest: calculateReleaseCapabilitiesDigest(capabilities),
+  });
+
+  assert.deepEqual(validateReleaseRecord(record), { valid: true, errors: [] });
+  assert.deepEqual(verifyReleaseRecordSignature(record, publisherPublicKey), { valid: true, errors: [] });
+  const mismatched = makeRecord({
+    capabilities,
+    permissionsDigest: "b".repeat(64),
+  });
+  assert.equal(validateReleaseRecord(mismatched).valid, false);
+  assert.ok(validateReleaseRecord(mismatched).errors.includes("permissionsDigest does not match release capabilities."));
 });
 
 test("rejects paid releases before the entitlement contract exists", () => {

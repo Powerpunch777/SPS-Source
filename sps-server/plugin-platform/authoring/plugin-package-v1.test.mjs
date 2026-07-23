@@ -123,6 +123,11 @@ test("publishes immutable releases to a verified local Registry without copying 
     registryRootKeyId: "ed25519:team-root",
     registryRootPrivateKey: registryRoot.privateKey,
     publishedAt,
+    catalog: {
+      displayName: "Weather",
+      summary: "A signed local Registry fixture.",
+      documentationUrl: "https://docs.example.test/weather",
+    },
   });
 
   const first = await publish(sourceDirectory, "2026-07-23T00:00:00.000Z");
@@ -132,6 +137,11 @@ test("publishes immutable releases to a verified local Registry without copying 
   const report = await inspectLocalRegistry(registryDirectory);
   assert.equal(report.valid, true);
   assert.deepEqual(report.releases.map((release) => release.version), ["1.2.3", "1.2.4"]);
+  assert.deepEqual(report.releases[0].catalog, {
+    displayName: "Weather",
+    summary: "A signed local Registry fixture.",
+    documentationUrl: "https://docs.example.test/weather",
+  });
   const registryIndex = await readFile(path.join(registryDirectory, "registry.json"), "utf8");
   assert.match(registryIndex, /ed25519:team-root/);
   assert.equal(registryIndex.includes(registryRoot.privateKey), false);

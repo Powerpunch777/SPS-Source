@@ -106,12 +106,18 @@ Index는 검색·발견용이다. remote source에서는 신뢰된 root key로 i
   "signature": { "algorithm": "ed25519", "value": "base64" },
   "compatibility": { "sps": ">=0.1.0 <1.0.0", "pluginApi": 1 },
   "visibility": "public",
+  "capabilities": ["agent.tools.register", "ui.page.register"],
+  "catalog": {
+    "displayName": "Example Plugin",
+    "summary": "Adds a reviewed workflow to SPS.",
+    "documentationUrl": "https://docs.example.invalid/plugins/example"
+  },
   "permissionsDigest": "lowercase-hex",
   "publishedAt": "2026-07-23T00:00:00Z"
 }
 ```
 
-서명은 canonicalized release record에서 `signature.value`를 제외한 내용을 대상으로 한다. Owner Host는 서명, artifact SHA-256, `permissionsDigest`, package 안의 manifest 및 파일 hash를 모두 검증해야 한다.
+`catalog`은 선택적 Marketplace 표시 정보다. `displayName`, `summary`, `documentationUrl`(credential·fragment 없는 HTTPS)만 허용하며 release signature에 포함된다. 이는 목록 표시와 외부 문서 열기 외의 효과가 없고, capability·설치·활성화 권한을 주지 않는다. `capabilities` 역시 선택적 표시용 static preview지만, 존재할 때는 중복 없는 문자열 배열이어야 하고 `permissionsDigest`와 일치해야 한다. Desktop은 package를 stage하기 직전에 이 preview와 실제 정적 manifest를 다시 비교한다. 서명은 canonicalized release record에서 `signature.value`를 제외한 내용을 대상으로 한다. Owner Host는 서명, artifact SHA-256, `permissionsDigest`, package 안의 manifest 및 파일 hash를 모두 검증해야 한다.
 
 ### 4.3 Static package manifest
 
@@ -188,7 +194,7 @@ Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` opens the source
 
 ### 5.3 Authoring Kit release flow (implemented)
 
-`sps-plugin` is the authoring-side complement to the Desktop Registry flow. It produces no trust bypass: `init` creates a minimal Core-compatible manifest and worker entry, `validate` performs static checks, `pack` refuses symlinks and likely secret files, `keygen` creates Ed25519 keys, `release` signs the immutable artifact tuple, and `registry-index` signs the catalog root. `publish-local` packages one source tree into an explicit local Registry, writes a new immutable release record, and re-signs the index without copying either private key into the Registry.
+`sps-plugin` is the authoring-side complement to the Desktop Registry flow. It produces no trust bypass: `init` creates a minimal Core-compatible manifest and worker entry, `validate` performs static checks, `pack` refuses symlinks and likely secret files, `keygen` creates Ed25519 keys, `release` signs the immutable artifact tuple, static capability preview, and optional catalog metadata, and `registry-index` signs the catalog root. `publish-local` packages one source tree into an explicit local Registry, writes a new immutable release record, and re-signs the index without copying either private key into the Registry. `--catalog-name`, `--summary`, `--docs-url` are optional; they are validated and signed, but never alter a package's permissions or installation state.
 
 The authoring Kit rejects URL-like text in relative Registry paths, URL credentials, fragments, symlinked package entries, and package files likely to contain credentials. A resulting local Registry is verified again by the same Local Registry verifier used by SPS Desktop.
 
@@ -209,10 +215,8 @@ The authoring Kit rejects URL-like text in relative Registry paths, URL credenti
 
 ### Pilot
 
-- 공식·서명됨·검증됨 표시
-- 플러그인 설명, 문서, 버전 이력, 권한 요약
-- 공개 무료와 링크 전용 배포
-- 게시자 프로필과 신고·advisory 연결
+- 구현됨: source 성격(공식·서명 remote·Owner-trusted local), 검증된 release 배지, 서명된 플러그인 이름·설명·문서 링크·권한 preview, 공개·링크 전용 visibility, 버전별 immutable release
+- 다음 범위: 게시자 프로필, 신고·advisory 연결, 공식 example Registry와 반복 E2E
 
 ### 거래 단계
 

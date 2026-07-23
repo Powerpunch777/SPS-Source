@@ -72,6 +72,7 @@ test("inspects a signed local Registry release without executing it", async (t) 
       artifactRelativePath: "packages/com.example.weather-1.0.0.spsplugin",
       artifactSha256: sha256(Buffer.from("SPS plugin fixture", "utf8")),
       artifactSizeBytes: Buffer.byteLength("SPS plugin fixture", "utf8"),
+      permissionsDigest: "b".repeat(64),
       publisherId: "example-studio",
       publisherKeyId: "ed25519:example-1",
     }],

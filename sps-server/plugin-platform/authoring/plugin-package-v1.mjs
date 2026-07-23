@@ -247,6 +247,7 @@ export async function createSignedPluginRelease({
   compatibilitySps = ">=0.4.0",
   pluginApi = 1,
   visibility = "public",
+  catalog,
   publishedAt = new Date().toISOString(),
 } = {}) {
   if (!PUBLISHER_ID.test(publisherId ?? "")) throw new Error("Publisher id is invalid.");
@@ -265,6 +266,8 @@ export async function createSignedPluginRelease({
     signature: { algorithm: "ed25519", value: "" },
     compatibility: { sps: compatibilitySps, pluginApi },
     visibility,
+    ...(catalog === undefined ? {} : { catalog }),
+    capabilities: [...staticManifest.capabilities],
     permissionsDigest: staticManifest.permissionsDigest,
     publishedAt,
   };
@@ -392,6 +395,7 @@ export async function publishPluginToLocalRegistry({
   registryRootPrivateKey,
   compatibilitySps = ">=0.4.0",
   visibility = "public",
+  catalog,
   publishedAt = new Date().toISOString(),
 } = {}) {
   if (!registryDirectory) throw new Error("Local Registry directory is required.");
@@ -449,6 +453,7 @@ export async function publishPluginToLocalRegistry({
       publisherPrivateKey,
       compatibilitySps,
       visibility,
+      catalog,
       publishedAt,
     });
     await writeJsonNew(releasePath, release.record);

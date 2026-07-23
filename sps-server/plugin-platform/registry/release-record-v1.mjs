@@ -1,4 +1,4 @@
-import { verify } from "node:crypto";
+import { createHash, verify } from "node:crypto";
 
 export const SPS_REGISTRY_SCHEMA_VERSION = 1;
 
@@ -8,6 +8,10 @@ const PUBLISHER_ID = /^[a-z0-9][a-z0-9._-]{1,127}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const VISIBILITY = new Set(["public", "unlisted", "private"]);
+const MAX_CATALOG_NAME_LENGTH = 120;
+const MAX_CATALOG_SUMMARY_LENGTH = 600;
+const MAX_CATALOG_DOCUMENTATION_URL_LENGTH = 2_048;
+const CATALOG_FIELDS = new Set(["displayName", "summary", "documentationUrl"]);
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
@@ -61,6 +65,40 @@ function isArtifactLocator(value) {
   } catch {
     return false;
   }
+}
+
+function isSafeDocumentationUrl(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_CATALOG_DOCUMENTATION_URL_LENGTH) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function isBoundedText(value, maximumLength) {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= maximumLength;
+}
+
+function areValidCapabilities(value) {
+  if (!Array.isArray(value)) return false;
+  const seen = new Set();
+  for (const capability of value) {
+    if (typeof capability !== "string" || capability.length === 0 || capability.length > 200 || seen.has(capability)) {
+      return false;
+    }
+    seen.add(capability);
+  }
+  return true;
+}
+
+export function calculateReleaseCapabilitiesDigest(capabilities) {
+  return createHash("sha256")
+    .update(JSON.stringify([...capabilities].sort()), "utf8")
+    .digest("hex");
 }
 
 function pushIf(condition, errors, message) {
@@ -140,6 +178,22 @@ export function validateReleaseRecord(record) {
   pushIf(typeof record.compatibility?.sps === "string" && record.compatibility.sps.length > 0 && record.compatibility.sps.length <= 256, errors, "compatibility.sps is required.");
   pushIf(Number.isSafeInteger(record.compatibility?.pluginApi) && record.compatibility.pluginApi >= 1 && record.compatibility.pluginApi <= 100, errors, "compatibility.pluginApi must be a positive integer.");
   pushIf(VISIBILITY.has(record.visibility), errors, "visibility must be public, unlisted, or private.");
+  if (record.catalog !== undefined) {
+    pushIf(isPlainObject(record.catalog), errors, "catalog must be an object when present.");
+    if (isPlainObject(record.catalog)) {
+      pushIf(Object.keys(record.catalog).length > 0, errors, "catalog must contain at least one supported field.");
+      pushIf(Object.keys(record.catalog).every((key) => CATALOG_FIELDS.has(key)), errors, "catalog contains an unsupported field.");
+      pushIf(record.catalog.displayName === undefined || isBoundedText(record.catalog.displayName, MAX_CATALOG_NAME_LENGTH), errors, `catalog.displayName must be non-empty text up to ${MAX_CATALOG_NAME_LENGTH} characters.`);
+      pushIf(record.catalog.summary === undefined || isBoundedText(record.catalog.summary, MAX_CATALOG_SUMMARY_LENGTH), errors, `catalog.summary must be non-empty text up to ${MAX_CATALOG_SUMMARY_LENGTH} characters.`);
+      pushIf(record.catalog.documentationUrl === undefined || isSafeDocumentationUrl(record.catalog.documentationUrl), errors, "catalog.documentationUrl must be an HTTPS URL without credentials or a fragment.");
+    }
+  }
+  if (record.capabilities !== undefined) {
+    pushIf(areValidCapabilities(record.capabilities), errors, "capabilities must be an array of unique bounded strings when present.");
+    if (areValidCapabilities(record.capabilities)) {
+      pushIf(calculateReleaseCapabilitiesDigest(record.capabilities) === record.permissionsDigest, errors, "permissionsDigest does not match release capabilities.");
+    }
+  }
   pushIf(SHA256.test(record.permissionsDigest ?? ""), errors, "permissionsDigest must be lowercase SHA-256 hex.");
   pushIf(isIsoDate(record.publishedAt), errors, "publishedAt must be an ISO date.");
 

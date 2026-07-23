@@ -20,6 +20,26 @@ function assertRegistrySource(source) {
   }
 }
 
+function equalCapabilities(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return [...left].sort().every((capability, index) => capability === [...right].sort()[index]);
+}
+
+function assertExpectedRelease(extraction, expectedRelease) {
+  if (!expectedRelease) return;
+  const staticManifest = extraction.inspection?.package?.staticManifest;
+  if (!staticManifest) throw new Error("Registry package has no inspected static manifest.");
+  if (expectedRelease.pluginId !== staticManifest.plugin.id || expectedRelease.version !== staticManifest.plugin.version) {
+    throw new Error("Registry package identity does not match the signed release record.");
+  }
+  if (expectedRelease.permissionsDigest !== staticManifest.permissionsDigest) {
+    throw new Error("Registry package permissions digest does not match the signed release record.");
+  }
+  if (expectedRelease.capabilities !== undefined && !equalCapabilities(expectedRelease.capabilities, staticManifest.capabilities)) {
+    throw new Error("Registry package capabilities do not match the signed release record.");
+  }
+}
+
 export function ownerVaultRegistryLayout(vaultRoot) {
   const root = path.resolve(vaultRoot);
   return {
@@ -58,6 +78,7 @@ export async function stageSpsPluginArchive({
   archivePath,
   source,
   expectedArtifact = null,
+  expectedRelease = null,
   registerStage,
   fsApi = fs,
   randomId = randomUUID,
@@ -96,6 +117,7 @@ export async function stageSpsPluginArchive({
   }
 
   try {
+    assertExpectedRelease(extraction, expectedRelease);
     const stage = await registerStage({
       packageRoot: extraction.destinationRoot,
       artifactSha256: described.artifact.sha256,

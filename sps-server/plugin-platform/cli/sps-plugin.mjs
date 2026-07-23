@@ -19,9 +19,9 @@ Commands:
   sps-plugin validate <directory>
   sps-plugin pack <directory> --out <plugin.spsplugin> [--overwrite]
   sps-plugin keygen --private <publisher-private.pem> --public <publisher-public.pem>
-  sps-plugin release <plugin.spsplugin> --artifact-url <relative-or-https-url> --publisher-id <id> --publisher-key-id <ed25519:id> --private-key <pem> --out <release.json>
+  sps-plugin release <plugin.spsplugin> --artifact-url <relative-or-https-url> --publisher-id <id> --publisher-key-id <ed25519:id> --private-key <pem> --out <release.json> [--catalog-name <name>] [--summary <text>] [--docs-url <https-url>]
   sps-plugin registry-index --registry-id <id> --display-name <name> --root-key-id <ed25519:id> --root-private-key <pem> --publisher-key <key-id=public.pem> --release <release-path=release.json> --out <registry.json>
-  sps-plugin publish-local <plugin-directory> --registry <directory> --registry-id <id> --display-name <name> --publisher-id <id> --publisher-key-id <ed25519:id> --publisher-private-key <pem> --root-key-id <ed25519:id> --root-private-key <pem>
+  sps-plugin publish-local <plugin-directory> --registry <directory> --registry-id <id> --display-name <name> --publisher-id <id> --publisher-key-id <ed25519:id> --publisher-private-key <pem> --root-key-id <ed25519:id> --root-private-key <pem> [--catalog-name <name>] [--summary <text>] [--docs-url <https-url>]
 `;
 }
 
@@ -74,6 +74,15 @@ function parsePair(value, label) {
   const separator = value.indexOf("=");
   if (separator <= 0 || separator === value.length - 1) throw new Error(`${label} must use key=value syntax.`);
   return [value.slice(0, separator), value.slice(separator + 1)];
+}
+
+function catalogFromOptions(options) {
+  const catalog = {
+    ...(typeof options.get("catalog-name") === "string" ? { displayName: options.get("catalog-name") } : {}),
+    ...(typeof options.get("summary") === "string" ? { summary: options.get("summary") } : {}),
+    ...(typeof options.get("docs-url") === "string" ? { documentationUrl: options.get("docs-url") } : {}),
+  };
+  return Object.keys(catalog).length === 0 ? undefined : catalog;
 }
 
 async function run() {
@@ -136,6 +145,7 @@ async function run() {
       publisherPrivateKey: await readText(required(options, "private-key")),
       compatibilitySps: options.get("sps") || ">=0.4.0",
       visibility: options.get("visibility") || "public",
+      catalog: catalogFromOptions(options),
     });
     const output = await writeJson(required(options, "out"), release.record);
     console.log(`Created signed release record: ${output}`);
@@ -175,6 +185,7 @@ async function run() {
       registryRootPrivateKey: await readText(required(options, "root-private-key")),
       compatibilitySps: options.get("sps") || ">=0.4.0",
       visibility: options.get("visibility") || "public",
+      catalog: catalogFromOptions(options),
     });
     console.log(`Published ${published.plugin.id}@${published.plugin.version} to local Registry: ${published.registryRoot}`);
     return;

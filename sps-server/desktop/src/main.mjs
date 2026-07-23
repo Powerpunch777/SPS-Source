@@ -916,6 +916,9 @@ async function inspectDesktopRegistrySource(sourceId) {
       pluginId: release.pluginId,
       version: release.version,
       visibility: release.visibility,
+      ...(release.catalog === undefined ? {} : { catalog: { ...release.catalog } }),
+      ...(release.capabilities === undefined ? {} : { capabilities: [...release.capabilities] }),
+      permissionsDigest: release.permissionsDigest,
       publisherId: release.publisherId,
       publisherKeyId: release.publisherKeyId,
       artifact: { ...release.artifact },
@@ -940,6 +943,7 @@ async function stageDesktopRegistryRelease({ sourceId, pluginId, version } = {})
       vaultRoot: ownerVaultRoot(),
       archivePath: acquired.archivePath,
       expectedArtifact: acquired.artifact,
+      expectedRelease: acquired.release,
       source: acquired.source,
       registerStage: async (body) => await ownerHostApi("/plugins/registry/stages", {
         method: "POST",
