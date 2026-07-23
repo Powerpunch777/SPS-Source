@@ -9,6 +9,7 @@
 | SPS가 어떤 제품인가? | `114-sps-product-and-plugin-platform-contract-ko.md` |
 | Core와 플러그인의 경계, Plugin Kit 이전 표준화는? | `114-sps-product-and-plugin-platform-contract-ko.md`의 `SPS Extension Profile` |
 | 무엇을 어떤 순서로 구현하는가? | `115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md` |
+| 플러그인은 어떻게 공유·검증·판매되는가? | `120-sps-plugin-registry-and-marketplace-contract-ko.md` |
 | 문서가 충돌하면 무엇을 따르는가? | `116-sps-documentation-audit-and-migration-ko.md` |
 | Room·Task·Workspace의 상세 UX와 기술 구조는? | `75-optimal-work-environment-blueprint-ko.md` |
 | 범용 Agent 플랫폼의 Core 경계는? | `113-sps-generic-agent-platform-core-contract-ko.md` |
@@ -29,11 +30,17 @@
 - App Product Team
 - Web Product Team
 
-첫 출시 이후 검토:
+공유 배포의 다음 단계:
+
+- local·GitHub·official Plugin Registry
+- 서명·무결성·권한 diff 기반 설치
+- 무료·링크 전용·비공개 배포
+
+Registry 검증 이후 검토:
 
 - 유료 Marketplace
-- 판매자 정산
-- 기업용 비공개 Marketplace
+- 판매자 정산·세금·환불
+- 기업용 private Registry federation
 - 코어 라이선스 최종 결정
 
 ## 문서 유형

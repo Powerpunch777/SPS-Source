@@ -3,7 +3,7 @@
 ## 문서 지위
 
 - 상태: 첫 제품 출시를 위한 제품 계약
-- 결정일: 2026-07-22
+- 결정일: 2026-07-23
 - 적용 범위: SPS Core Product, Plugin Kit, 공식 기본 제공 플러그인, 첫 출시 경계
 - 우선순위: 제품 범위에 관해 기존 게임 중심 설계나 구현 기록과 충돌하면 이 문서가 우선한다.
 - 구현 순서: `115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md`
@@ -120,6 +120,31 @@ SPS Plugin CLI
 5. `Web Product Team`
 
 게임·앱·웹 팀 플러그인은 사용자에게는 독립적으로 보이지만, 공통 개발 기능은 `Development Core`를 사용한다.
+
+### 2.5 SPS Plugin Registry와 Marketplace
+
+SPS는 사용자가 만든 플러그인을 다른 사용자와 공유할 수 있는 **Plugin Registry**를 제품의 표준 배포 경로로 제공한다. Registry는 단순한 다운로드 목록이 아니다. 패키지 출처, 버전, 호환성, 권한 변화, 무결성, 게시자 서명을 전달하고 SPS Desktop이 설치 전에 검증할 수 있게 하는 신뢰 계약이다.
+
+```text
+Plugin source
+→ SPS Plugin Kit 검증·패키징
+→ immutable .spsplugin release
+→ Registry release record
+→ SPS Desktop의 권한·출처 검토
+→ 명시적 설치·활성화
+```
+
+처음 지원하는 Registry source는 다음 세 종류다.
+
+1. `local`: 개발·오프라인·개인 팀용 로컬 폴더 Registry
+2. `git`: GitHub Release 또는 정적 HTTPS JSON을 사용하는 공개·비공개 Registry
+3. `official`: SPS가 운영하는 공식 Registry
+
+Marketplace는 Registry 위의 발견과 거래 계층이다. 공개 무료, 링크 전용, 조직 전용 공유는 Registry 계약이 검증된 뒤 우선 제공한다. 유료 판매, 세금, 정산, 환불, 판매자 심사와 원격 차단은 별도 Marketplace 운영 단계이며 플러그인 Runtime이나 Core 권한 모델을 우회하지 않는다.
+
+SPS Desktop은 Registry가 제공하는 카탈로그만으로 플러그인을 신뢰하지 않는다. 설치 전에 호환 SPS·Plugin API 버전, immutable package URL·크기·SHA-256, 게시자 공개 키·서명, manifest·파일 목록·진입점·해시, 권한 상승, 사용자·회사·Node 정책을 독립 검증한다.
+
+게시자 검증 배지나 구매 권한은 위험 권한을 자동 허용하지 않는다. 특히 Workspace 쓰기, Node 명령, 로컬 CLI·MCP 실행은 대상 Node 소유자의 별도 승인과 기존 Agent Runner Grant를 계속 요구한다.
 
 ## 3. 플러그인 표준 계약
 
@@ -269,6 +294,40 @@ SDK가 책임질 항목:
 - 사용자용 오류와 운영 로그 분리
 - 호스트 API 버전 호환 계층
 
+### 3.7 Registry Release Record
+
+Registry는 패키지 전체를 mutable URL로만 가리키지 않는다. 각 버전은 바뀌지 않는 release record를 가져야 한다.
+
+```json
+{
+  "registrySchemaVersion": 1,
+  "plugin": { "id": "com.example.plugin", "version": "1.0.0" },
+  "artifact": {
+    "url": "https://registry.example/releases/com.example.plugin-1.0.0.spsplugin",
+    "sha256": "...",
+    "sizeBytes": 123456
+  },
+  "publisher": { "id": "example-studio", "keyId": "ed25519:..." },
+  "signature": { "algorithm": "ed25519", "value": "..." },
+  "compatibility": { "sps": ">=0.1.0 <1.0.0", "pluginApi": 1 },
+  "visibility": "public",
+  "permissionsDigest": "...",
+  "publishedAt": "2026-07-23T00:00:00.000Z"
+}
+```
+
+`visibility`는 `public`, `unlisted`, `private`만이 Registry v1의 배포 범위다. `paid`는 향후 Marketplace entitlement가 추가될 때의 카탈로그 상태이며, 패키지 형식이나 설치 권한을 바꾸지 않는다.
+
+Registry와 Desktop은 release record를 캐시할 수 있지만, 이미 설치한 패키지의 SHA-256 또는 게시자 키를 조용히 바꾸면 안 된다. 업데이트는 새 version과 새 검토 화면으로만 이뤄진다.
+
+### 3.8 설치 신뢰와 철회
+
+- 기본 설치는 package 검사와 권한 검토를 통과해도 비활성 상태다.
+- 신뢰하지 않은 게시자의 패키지는 명확한 출처 경고와 함께 사용자가 직접 승인해야 한다.
+- 취약 버전 경고와 배포 중지는 공식 Registry가 전달할 수 있지만, 이미 설치된 플러그인을 조용히 삭제하거나 원격으로 실행 코드를 교체하지 않는다.
+- offline 환경에서는 마지막으로 검증한 release record와 사용자 정책에 따라 설치·실행하며, 온라인 entitlement가 필요한 유료 플러그인은 만료 정책을 설치 전에 표시한다.
+- 플러그인 권한이나 실행 범위의 최종 판정은 항상 로컬 SPS Owner Host와 Node 정책이 한다.
+
 ## 4. Plugin Studio 계약
 
 Plugin Studio는 “플러그인을 만드는 플러그인”이다.
@@ -307,7 +366,7 @@ Plugin Studio는 “플러그인을 만드는 플러그인”이다.
 - 로컬 test harness
 - `.spsplugin` 패키징
 
-여러 언어 SDK, 원격 빌드 서비스, Marketplace 직접 게시 기능은 이후 범위다.
+여러 언어 SDK와 원격 빌드 서비스는 이후 범위다. Registry 직접 게시 기능은 Package·서명·검증 계약을 완료한 뒤 추가하며, Marketplace 판매 게시 기능은 결제·정산 단계까지 보류한다.
 
 Profile이 고정되기 전에는 Plugin Studio를 구현하지 않는다. Studio가 임의의 manifest나 비표준 권한 이름을 생성하면 이후 모든 플러그인의 호환 비용이 커진다.
 

@@ -1,0 +1,14 @@
+{
+  "name": "@sps/plugin-platform",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SPS Extension Profile and Plugin Registry conformance contracts.",
+  "scripts": {
+    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs",
+    "check": "npm run test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

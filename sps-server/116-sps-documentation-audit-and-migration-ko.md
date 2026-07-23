@@ -2,7 +2,7 @@
 
 ## 문서 지위
 
-- 감사일: 2026-07-22
+- 감사일: 2026-07-23
 - 대상: 저장소 루트 README, `sps-server`의 설계·운영·배포·구현 기록, 주요 플러그인 README
 - 목적: 제품 정의와 구현 상태가 문서마다 달라지는 문제를 줄이고 현재 기준 문서를 한곳에서 찾게 한다.
 
@@ -26,7 +26,7 @@
 
 - 로컬 중심 멀티에이전트 제작 플랫폼
 - SPS Extension Profile
-- Plugin Kit
+- Plugin Kit, Plugin Registry
 - Plugin Studio
 - Development Core
 - 게임·앱·웹 공식 팀 플러그인
@@ -201,7 +201,7 @@ sps-server/docs/
 
 현재 올바른 예:
 
-> Plugin Studio는 첫 제품 출시의 확정 범위이며 구현 계획 단계다. 유료 Marketplace는 첫 출시 이후 검토한다.
+> Plugin Studio와 Plugin Registry는 구현 계획 단계다. Registry는 local·GitHub·official 공유 배포의 출처·무결성·권한 검토를 먼저 제공하며, 유료 Marketplace 거래는 Registry E2E 검증 이후에 검토한다.
 
 검증 수준:
 
@@ -227,8 +227,8 @@ planned
 
 따라서 README와 제품 계약은 다음만 말한다.
 
-- 플러그인 표준과 직접 설치는 첫 출시 범위다.
-- 유료 거래는 첫 출시 이후 검토한다.
+- 플러그인 표준, 직접 설치와 Registry 기반 공유 배포는 제품 범위다.
+- 유료 거래는 Registry의 package·권한·lifecycle E2E 이후 검토한다.
 - 라이선스는 기존 제3자 코드의 조건을 지키면서 별도 법률 검토 후 결정한다.
 
 ## 10. 후속 문서 작업

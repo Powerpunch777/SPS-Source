@@ -23,6 +23,7 @@ sps-server/
 │  ├─ cli/                    # sps plugin ...
 │  ├─ schemas/                # sps-plugin.schema.json
 │  ├─ packaging/              # .spsplugin 생성·검증
+│  ├─ registry/               # local·git·official Registry release contract
 │  └─ fixtures/               # 보안·호환성 fixture
 ├─ plugins/
 │  ├─ plugin-studio/
@@ -224,6 +225,59 @@ npm run package
 6. 비활성 상태로 설치한다.
 7. 사용자가 활성화한 뒤 실제 테스트 프로젝트에서 한 번 실행한다.
 
+## P3.5 Plugin Registry와 공유 배포
+
+Plugin Registry는 Marketplace의 선행 조건이다. 이 단계에서는 결제나 판매자 정산을 만들지 않고, 동일한 `.spsplugin` release를 local·git·official source에서 안전하게 발견·검증·설치하는 경로를 만든다.
+
+### 구현 범위
+
+1. versioned Registry index와 immutable release record schema
+2. `local`, GitHub Release/정적 HTTPS, `official` source adapter
+3. package SHA-256, 크기, 파일 목록, manifest entrypoint, path traversal 검사
+4. Ed25519 게시자 서명과 key fingerprint 표시
+5. `public`, `unlisted`, `private` visibility
+6. 설치 전 source·권한 diff·호환성·위험도 검토
+7. 설치 후 disabled 기본값, 명시적 enable, update rollback
+8. 공식 Registry의 취약 버전 advisory 표시와 로컬 cache
+
+### 명시적 비범위
+
+- 신용카드 결제, 세금, 환불, 판매자 정산
+- 사용자 권한을 우회하는 자동 설치
+- Node 소유자 승인 없이 다른 컴퓨터의 CLI·MCP·Workspace 실행
+- 설치된 코드를 원격에서 조용히 교체·삭제하는 kill switch
+
+### 완료 기준
+
+공식 예제 플러그인이 다음 세 source에서 같은 release record로 검증된다.
+
+```text
+local folder registry
+→ GitHub-backed registry
+→ official registry fixture
+→ inspect
+→ explicit permission approval
+→ disabled install
+→ enable
+→ update preview or rollback
+```
+
+## P3.75 Marketplace Pilot
+
+Registry와 Package lifecycle이 실제 사용자에게 안정적으로 검증된 뒤 Marketplace를 추가한다. Marketplace는 Desktop Runtime에 결제 로직을 넣는 기능이 아니라, Registry release와 entitlement를 연결하는 별도 서비스다.
+
+### Pilot 범위
+
+- 플러그인 상세·문서·버전 이력·게시자 프로필
+- 무료 배포와 링크 전용 배포
+- 검증됨·서명됨·공식 플러그인 구분
+- 구매 권한이 필요한 release를 위한 entitlement 조회 계약
+- offline cache와 재검증 시점 표시
+
+### 결제 이후 단계
+
+결제 공급자, 판매자 심사, 세금, 정산 수수료, 환불, 콘텐츠 정책은 Marketplace Pilot의 사용자·운영 데이터와 별도 법률 검토 뒤에만 확정한다.
+
 ## P4. Development Core
 
 ### 모듈
@@ -416,17 +470,15 @@ jobId
 - 임시·특정 환경 경로는 공식 Node command contract로 수렴한다.
 - 기존 안전 장치와 테스트는 삭제하지 않고 새 contract의 regression fixture로 사용한다.
 
-## 7. 출시 후 항목
+## 7. Marketplace 확장 항목
 
-다음은 Public Beta 이후 데이터에 따라 결정한다.
+Registry와 Marketplace Pilot 이후 데이터에 따라 결정한다.
 
-- 무료 Registry
-- 플러그인 서명 서비스
-- 검증됨 배지
-- 외부 개발자 게시 흐름
-- 후원과 외부 라이선스 연결
-- 유료 Marketplace
+- 유료 Marketplace 결제
 - 판매 수수료와 정산
+- 세금·환불·판매자 심사
+- 후원과 외부 라이선스 연결
+- 기업용 private Registry federation
 - 코어 라이선스와 상업적 재사용 정책
 
 ## 8. 다음 작업 순서
@@ -436,7 +488,8 @@ jobId
 3. lifecycle·permission·restart contract test 작성
 4. Plugin Kit의 CLI `validate`와 `package` 구현
 5. Plugin Studio의 Tool Plugin 생성 E2E
-6. Development Core의 범용 저장소 E2E
-7. 공식 팀 플러그인을 한 개씩 추가
+6. Plugin Registry의 local·git·official release 검증 E2E
+7. Development Core의 범용 저장소 E2E
+8. 공식 팀 플러그인을 한 개씩 추가
 
-새 기능 아이디어는 이 순서를 깨지 않는다. 첫 E2E가 안정되기 전에는 Marketplace, 결제, 기업 기능을 구현하지 않는다.
+새 기능 아이디어는 이 순서를 깨지 않는다. Registry가 package·권한·lifecycle E2E를 통과하기 전에는 Marketplace 결제, 판매자 정산, 기업 federation을 구현하지 않는다.
