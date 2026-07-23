@@ -137,7 +137,7 @@ function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-async function writeRegistrySmokePackage(version) {
+async function writeRegistrySmokePackage(version, capabilities = ["plugin.state.read"]) {
   const packageRoot = path.join(temporaryRoot, "registry-staging", `registry-smoke-${version}`);
   const manifestSource = [
     "export default {",
@@ -148,7 +148,7 @@ async function writeRegistrySmokePackage(version) {
     '  description: "Packaged Registry lifecycle smoke plugin.",',
     '  author: "SPS",',
     '  categories: ["automation"],',
-    '  capabilities: ["plugin.state.read"],',
+    `  capabilities: ${JSON.stringify(capabilities)},`,
     '  entrypoints: { worker: "./dist/worker.js" },',
     "};",
     "",
@@ -169,7 +169,6 @@ async function writeRegistrySmokePackage(version) {
     "});",
     "",
   ].join("\n");
-  const capabilities = ["plugin.state.read"];
   const staticManifest = {
     schemaVersion: 1,
     plugin: { id: "sps.registry-smoke", version, apiVersion: "1" },
@@ -209,7 +208,7 @@ async function ownerHostJson(pathname, body) {
 
 async function assertRegistryLifecycle() {
   const v1 = await writeRegistrySmokePackage("1.0.0");
-  const v2 = await writeRegistrySmokePackage("1.0.1");
+  const v2 = await writeRegistrySmokePackage("1.0.1", ["plugin.state.read", "plugin.state.write"]);
   const source = { registryId: "sps.runtime-smoke", kind: "local", releaseLocator: "runtime-smoke" };
 
   const stageV1 = await ownerHostJson("/api/plugins/registry/stages", { ...v1, source: { ...source, releaseLocator: "runtime-smoke/1.0.0" } });
@@ -221,7 +220,11 @@ async function assertRegistryLifecycle() {
 
   const stageV2 = await ownerHostJson("/api/plugins/registry/stages", { ...v2, source: { ...source, releaseLocator: "runtime-smoke/1.0.1" } });
   const upgraded = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(stageV2.stageId)}/enable`, {});
-  if (upgraded.plugin?.version !== "1.0.1" || upgraded.plugin?.status !== "ready") {
+  if (
+    upgraded.plugin?.version !== "1.0.1"
+    || upgraded.plugin?.status !== "ready"
+    || !upgraded.plugin?.manifestJson?.capabilities?.includes("plugin.state.write")
+  ) {
     throw new Error("Registry smoke v2 did not replace the active plugin.");
   }
 
