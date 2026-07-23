@@ -1024,7 +1024,7 @@ export function OrganizationSettingsPage({ context }) {
     } catch {
       setCollaborationReadiness({
         state: "configuration_unavailable",
-        checks: [{ label: "Collaboration access", status: "fail", message: "The readiness check could not run." }],
+        checks: [{ label: "팀 연결 상태", status: "fail", message: "준비 상태 확인을 실행하지 못했습니다." }],
         warnings: [],
         recommendation: "Check the SPS service, then try again."
       });
@@ -1092,60 +1092,60 @@ export function OrganizationSettingsPage({ context }) {
       setNotice(`${template.displayName}: ${updatedCount}개 Agent에 명시적 Workplane 정책을 적용했습니다.${failureCount ? ` ${failureCount}개는 적용하지 못했습니다.` : ""}`);
       await refresh();
     } catch (caught) {
-      setActionError(caught?.message || "Organization 템플릿을 적용하지 못했습니다.");
+      setActionError(caught?.message || "Workplane 템플릿을 적용하지 못했습니다.");
     } finally { setApplyingTemplateId(""); }
   };
 
   return <div className="rw-shell"><Style /><main className="org-page">
-    <h1>Organization</h1>
+    <h1>Workplane 운영</h1>
     <p className="rw-muted">Lead는 목표 안에서 Worker Task를 만들고 검토합니다. Worker는 배정받은 Task만 실행합니다.</p>
     <div className="ca-note">역할 이름은 자유롭게 정할 수 있습니다. Task 권한은 조직도나 `reportsTo`가 아니라 여기의 Lead/Worker 유형과 위임 대상 설정으로 결정됩니다.</div>
     <section className="org-access">
-      <div><strong>People and access</strong><span>Owner/Admin은 조직 정책과 CLI 계정을 관리하고, Operator는 Project, Room, Task 협업을 진행합니다.</span></div>
-      <a className="rw-button" {...navigation.linkProps("/company/settings/members")}>Manage members</a>
+      <div><strong>구성원과 권한</strong><span>Owner/Admin은 Workplane 정책과 CLI 계정을 관리하고, Operator는 Project, Room, Task 협업을 진행합니다.</span></div>
+      <a className="rw-button" {...navigation.linkProps("/company/settings/members")}>구성원 관리</a>
     </section>
     {canConfigureAgents ? <section className="org-collaboration">
       <div className="org-collaboration-head">
-        <div><strong>Collaboration access</strong><span>Keep the default local-only mode for solo work. This check never opens a port or reveals authentication secrets.</span></div>
-        <button type="button" className="rw-button" onClick={refreshCollaborationReadiness} disabled={collaborationLoading}>{collaborationLoading ? "Checking..." : "Check readiness"}</button>
+        <div><strong>팀 연결 상태</strong><span>개인 작업은 기본 로컬 전용 모드를 유지하세요. 이 확인은 포트를 열거나 인증 정보를 노출하지 않습니다.</span></div>
+        <button type="button" className="rw-button" onClick={refreshCollaborationReadiness} disabled={collaborationLoading}>{collaborationLoading ? "확인 중..." : "상태 확인"}</button>
       </div>
       {collaborationReadiness ? <>
         <div className={`org-readiness ${collaborationReadiness.state === "collaboration_ready" ? "ready" : collaborationReadiness.state === "local_only" ? "" : "attention"}`}>
-          <strong>{collaborationReadiness.state === "collaboration_ready" ? "Ready for private collaboration" : collaborationReadiness.state === "local_only" ? "Local-only mode (safe default)" : "Collaboration setup needs attention"}</strong>
+          <strong>{collaborationReadiness.state === "collaboration_ready" ? "비공개 협업 준비 완료" : collaborationReadiness.state === "local_only" ? "로컬 전용 모드 (기본 권장)" : "팀 연결 설정을 확인하세요"}</strong>
           <span>{collaborationReadiness.recommendation}</span>
         </div>
         <ul className="org-readiness-checks">{(collaborationReadiness.checks || []).map((check, index) => <li key={`${check.label}-${index}`}><strong>{check.label}</strong><span data-status={check.status}>{check.message}</span></li>)}</ul>
         {(collaborationReadiness.warnings || []).map((warning, index) => <p className="org-readiness-warning" key={`${warning}-${index}`}>{warning}</p>)}
-      </> : <div className="rw-muted" style={{ marginTop: 12 }}>Checking the local configuration...</div>}
+      </> : <div className="rw-muted" style={{ marginTop: 12 }}>로컬 설정을 확인하는 중...</div>}
     </section> : null}
-    {canConfigureAgents === null ? <div className="ca-note">Checking Organization configuration access...</div> : canConfigureAgents ? null : <div className="ca-note">Organization policy and CLI account changes are restricted to company Owners and Admins. Project, Room, and Task work remains available through your member role.</div>}
+    {canConfigureAgents === null ? <div className="ca-note">Workplane 설정 권한을 확인하는 중...</div> : canConfigureAgents ? null : <div className="ca-note">Workplane 정책과 CLI 계정 변경은 Owner와 Admin만 할 수 있습니다. 구성원 권한으로도 Project, Room, Task 협업은 계속할 수 있습니다.</div>}
     {actionError ? <div className="rw-error">{actionError}</div> : null}
     {notice ? <div className="ca-note">{notice}</div> : null}
-    {loading ? <div className="rw-empty">Organization을 불러오는 중...</div> : error ? <div className="rw-error">{error.message}</div> : <><div className="org-templates">
+    {loading ? <div className="rw-empty">Workplane 운영 정보를 불러오는 중...</div> : error ? <div className="rw-error">{error.message}</div> : <><div className="org-templates">
       {(data?.templates || []).map((template) => <section className="org-template" key={template.id}>
         <h2>{template.displayName}</h2>
         <p>{template.description}</p>
         <small>{template.actionable ? `${template.eligibleAgentCount || 0}개 Agent에 적용 가능 · 수동 설정 Agent ${template.configuredAgentCount || 0}개는 유지` : "역할 행에서 각 Agent의 정책을 직접 설정"}</small>
-        {template.actionable ? <button type="button" className="rw-button" onClick={() => applyTemplate(template)} disabled={!canConfigureAgents || (template.eligibleAgentCount || 0) === 0 || Boolean(savingAgentId) || Boolean(applyingTemplateId)}>{applyingTemplateId === template.id ? "Applying..." : (template.eligibleAgentCount || 0) === 0 ? "Add matching Agents first" : (template.actionLabel || "Apply template")}</button> : null}
+        {template.actionable ? <button type="button" className="rw-button" onClick={() => applyTemplate(template)} disabled={!canConfigureAgents || (template.eligibleAgentCount || 0) === 0 || Boolean(savingAgentId) || Boolean(applyingTemplateId)}>{applyingTemplateId === template.id ? "적용 중..." : (template.eligibleAgentCount || 0) === 0 ? "먼저 맞는 Agent를 추가하세요" : (template.actionLabel || "템플릿 적용")}</button> : null}
       </section>)}
     </div>{(data?.agents || []).length ? <div className="org-list">
       {(data?.agents || []).map((agent) => {
         const draft = drafts[agent.id] || {};
         const isWorker = draft.kind === "worker";
         return <section className="org-agent" key={agent.id}>
-          <div className="org-agent-meta"><strong>{agent.name}</strong><span>{agent.spsRole} · {agent.adapterType || "adapter"}{agent.model ? ` · ${agent.model}` : ""}</span></div>
+          <div className="org-agent-meta"><strong>{agent.name}</strong><span>{agent.spsRole} · {agent.adapterType || "연결 방식"}{agent.model ? ` · ${agent.model}` : ""}</span></div>
           <div className="org-agent-policy">
-            <div className="org-field"><label>Workplane type</label><select value={draft.kind || "worker"} onChange={(event) => updateDraft(agent.id, "kind", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId)}><option value="lead">Lead</option><option value="worker">Worker</option><option value="hybrid">Hybrid</option></select></div>
-            <div className="org-field"><label>Role ID</label><input value={draft.roleId || ""} onChange={(event) => updateDraft(agent.id, "roleId", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId)} /></div>
-            <div className="org-field"><label>Can assign roles</label><input value={draft.assignableRoleIds || ""} onChange={(event) => updateDraft(agent.id, "assignableRoleIds", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId) || isWorker} placeholder="worker, art-production" /></div>
-            <div className="org-field"><label>Worker result review</label><select value={draft.reviewMode || "automatic"} onChange={(event) => updateDraft(agent.id, "reviewMode", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId) || isWorker}><option value="automatic">Start Lead review automatically</option><option value="manual">Leave a Lead Room report only</option></select></div>
+            <div className="org-field"><label>Workplane 유형</label><select value={draft.kind || "worker"} onChange={(event) => updateDraft(agent.id, "kind", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId)}><option value="lead">Lead</option><option value="worker">Worker</option><option value="hybrid">Hybrid</option></select></div>
+            <div className="org-field"><label>역할 ID</label><input value={draft.roleId || ""} onChange={(event) => updateDraft(agent.id, "roleId", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId)} /></div>
+            <div className="org-field"><label>할당 가능 역할</label><input value={draft.assignableRoleIds || ""} onChange={(event) => updateDraft(agent.id, "assignableRoleIds", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId) || isWorker} placeholder="worker, art-production" /></div>
+            <div className="org-field"><label>Worker 결과 검토</label><select value={draft.reviewMode || "automatic"} onChange={(event) => updateDraft(agent.id, "reviewMode", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId) || isWorker}><option value="automatic">Lead 검토 자동 시작</option><option value="manual">Lead Room에 보고만 남기기</option></select></div>
           </div>
-          <div className="org-agent-actions"><button type="button" className="rw-button primary" onClick={() => save(agent)} disabled={!canConfigureAgents || Boolean(savingAgentId)}>{savingAgentId === agent.id ? "Saving..." : "Save Workplane policy"}</button><a className="rw-button" {...navigation.linkProps(`/agents/${encodeURIComponent(agent.urlKey || agent.id)}/configuration`)}>Configure model &amp; tools</a></div>
-          <div className="org-agent-status">{agent.workplane?.source === "legacy" ? "현재 호환 규칙에서 자동 인식됨" : agent.workplane?.source === "configured" ? "Organization 설정으로 관리됨" : "아직 Workplane 역할이 설정되지 않음"}</div>
-          <details className="org-agent-advanced"><summary>Advanced</summary><div className="org-agent-advanced-content"><div className="org-field"><label>SPS memory</label><select value={draft.memoryAccess || "read"} onChange={(event) => updateDraft(agent.id, "memoryAccess", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId)}><option value="read_write">Read and propose</option><option value="read">Read only</option><option value="none">Disabled</option></select></div></div></details>
+          <div className="org-agent-actions"><button type="button" className="rw-button primary" onClick={() => save(agent)} disabled={!canConfigureAgents || Boolean(savingAgentId)}>{savingAgentId === agent.id ? "저장 중..." : "Workplane 정책 저장"}</button><a className="rw-button" {...navigation.linkProps(`/agents/${encodeURIComponent(agent.urlKey || agent.id)}/configuration`)}>모델과 도구 설정</a></div>
+          <div className="org-agent-status">{agent.workplane?.source === "legacy" ? "현재 호환 규칙에서 자동 인식됨" : agent.workplane?.source === "configured" ? "Workplane 설정으로 관리됨" : "아직 Workplane 역할이 설정되지 않음"}</div>
+          <details className="org-agent-advanced"><summary>고급</summary><div className="org-agent-advanced-content"><div className="org-field"><label>SPS 메모리</label><select value={draft.memoryAccess || "read"} onChange={(event) => updateDraft(agent.id, "memoryAccess", event.target.value)} disabled={!canConfigureAgents || Boolean(savingAgentId)}><option value="read_write">읽고 제안</option><option value="read">읽기 전용</option><option value="none">사용 안 함</option></select></div></div></details>
         </section>;
       })}
-    </div> : <section className="org-empty"><div><strong>No hired Agents</strong><span>Add a Lead first, then add Workers as your organization needs them.</span></div>{canConfigureAgents ? <a className="rw-button primary" {...navigation.linkProps("/agents/all")}>Manage Agents</a> : null}</section>}</>}
+    </div> : <section className="org-empty"><div><strong>고용된 Agent가 없습니다</strong><span>먼저 Lead를 추가하고, 필요한 만큼 Worker를 추가하세요.</span></div>{canConfigureAgents ? <a className="rw-button primary" {...navigation.linkProps("/agents/all")}>Agent 관리</a> : null}</section>}</>}
   </main></div>;
 }
 

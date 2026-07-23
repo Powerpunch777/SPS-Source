@@ -1310,7 +1310,7 @@ function OrganizationSettingsPage({ context }) {
     } catch {
       setCollaborationReadiness({
         state: "configuration_unavailable",
-        checks: [{ label: "Collaboration access", status: "fail", message: "The readiness check could not run." }],
+        checks: [{ label: "\uD300 \uC5F0\uACB0 \uC0C1\uD0DC", status: "fail", message: "\uC900\uBE44 \uC0C1\uD0DC \uD655\uC778\uC744 \uC2E4\uD589\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4." }],
         warnings: [],
         recommendation: "Check the SPS service, then try again."
       });
@@ -1379,7 +1379,7 @@ function OrganizationSettingsPage({ context }) {
       setNotice(`${template.displayName}: ${updatedCount}\uAC1C Agent\uC5D0 \uBA85\uC2DC\uC801 Workplane \uC815\uCC45\uC744 \uC801\uC6A9\uD588\uC2B5\uB2C8\uB2E4.${failureCount ? ` ${failureCount}\uAC1C\uB294 \uC801\uC6A9\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.` : ""}`);
       await refresh();
     } catch (caught) {
-      setActionError(caught?.message || "Organization \uD15C\uD50C\uB9BF\uC744 \uC801\uC6A9\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+      setActionError(caught?.message || "Workplane \uD15C\uD50C\uB9BF\uC744 \uC801\uC6A9\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
     } finally {
       setApplyingTemplateId("");
     }
@@ -1387,27 +1387,27 @@ function OrganizationSettingsPage({ context }) {
   return /* @__PURE__ */ jsxs("div", { className: "rw-shell", children: [
     /* @__PURE__ */ jsx(Style, {}),
     /* @__PURE__ */ jsxs("main", { className: "org-page", children: [
-      /* @__PURE__ */ jsx("h1", { children: "Organization" }),
+      /* @__PURE__ */ jsx("h1", { children: "Workplane \uC6B4\uC601" }),
       /* @__PURE__ */ jsx("p", { className: "rw-muted", children: "Lead\uB294 \uBAA9\uD45C \uC548\uC5D0\uC11C Worker Task\uB97C \uB9CC\uB4E4\uACE0 \uAC80\uD1A0\uD569\uB2C8\uB2E4. Worker\uB294 \uBC30\uC815\uBC1B\uC740 Task\uB9CC \uC2E4\uD589\uD569\uB2C8\uB2E4." }),
       /* @__PURE__ */ jsx("div", { className: "ca-note", children: "\uC5ED\uD560 \uC774\uB984\uC740 \uC790\uC720\uB86D\uAC8C \uC815\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4. Task \uAD8C\uD55C\uC740 \uC870\uC9C1\uB3C4\uB098 `reportsTo`\uAC00 \uC544\uB2C8\uB77C \uC5EC\uAE30\uC758 Lead/Worker \uC720\uD615\uACFC \uC704\uC784 \uB300\uC0C1 \uC124\uC815\uC73C\uB85C \uACB0\uC815\uB429\uB2C8\uB2E4." }),
       /* @__PURE__ */ jsxs("section", { className: "org-access", children: [
         /* @__PURE__ */ jsxs("div", { children: [
-          /* @__PURE__ */ jsx("strong", { children: "People and access" }),
-          /* @__PURE__ */ jsx("span", { children: "Owner/Admin\uC740 \uC870\uC9C1 \uC815\uCC45\uACFC CLI \uACC4\uC815\uC744 \uAD00\uB9AC\uD558\uACE0, Operator\uB294 Project, Room, Task \uD611\uC5C5\uC744 \uC9C4\uD589\uD569\uB2C8\uB2E4." })
+          /* @__PURE__ */ jsx("strong", { children: "\uAD6C\uC131\uC6D0\uACFC \uAD8C\uD55C" }),
+          /* @__PURE__ */ jsx("span", { children: "Owner/Admin\uC740 Workplane \uC815\uCC45\uACFC CLI \uACC4\uC815\uC744 \uAD00\uB9AC\uD558\uACE0, Operator\uB294 Project, Room, Task \uD611\uC5C5\uC744 \uC9C4\uD589\uD569\uB2C8\uB2E4." })
         ] }),
-        /* @__PURE__ */ jsx("a", { className: "rw-button", ...navigation.linkProps("/company/settings/members"), children: "Manage members" })
+        /* @__PURE__ */ jsx("a", { className: "rw-button", ...navigation.linkProps("/company/settings/members"), children: "\uAD6C\uC131\uC6D0 \uAD00\uB9AC" })
       ] }),
       canConfigureAgents ? /* @__PURE__ */ jsxs("section", { className: "org-collaboration", children: [
         /* @__PURE__ */ jsxs("div", { className: "org-collaboration-head", children: [
           /* @__PURE__ */ jsxs("div", { children: [
-            /* @__PURE__ */ jsx("strong", { children: "Collaboration access" }),
-            /* @__PURE__ */ jsx("span", { children: "Keep the default local-only mode for solo work. This check never opens a port or reveals authentication secrets." })
+            /* @__PURE__ */ jsx("strong", { children: "\uD300 \uC5F0\uACB0 \uC0C1\uD0DC" }),
+            /* @__PURE__ */ jsx("span", { children: "\uAC1C\uC778 \uC791\uC5C5\uC740 \uAE30\uBCF8 \uB85C\uCEEC \uC804\uC6A9 \uBAA8\uB4DC\uB97C \uC720\uC9C0\uD558\uC138\uC694. \uC774 \uD655\uC778\uC740 \uD3EC\uD2B8\uB97C \uC5F4\uAC70\uB098 \uC778\uC99D \uC815\uBCF4\uB97C \uB178\uCD9C\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." })
           ] }),
-          /* @__PURE__ */ jsx("button", { type: "button", className: "rw-button", onClick: refreshCollaborationReadiness, disabled: collaborationLoading, children: collaborationLoading ? "Checking..." : "Check readiness" })
+          /* @__PURE__ */ jsx("button", { type: "button", className: "rw-button", onClick: refreshCollaborationReadiness, disabled: collaborationLoading, children: collaborationLoading ? "\uD655\uC778 \uC911..." : "\uC0C1\uD0DC \uD655\uC778" })
         ] }),
         collaborationReadiness ? /* @__PURE__ */ jsxs(Fragment, { children: [
           /* @__PURE__ */ jsxs("div", { className: `org-readiness ${collaborationReadiness.state === "collaboration_ready" ? "ready" : collaborationReadiness.state === "local_only" ? "" : "attention"}`, children: [
-            /* @__PURE__ */ jsx("strong", { children: collaborationReadiness.state === "collaboration_ready" ? "Ready for private collaboration" : collaborationReadiness.state === "local_only" ? "Local-only mode (safe default)" : "Collaboration setup needs attention" }),
+            /* @__PURE__ */ jsx("strong", { children: collaborationReadiness.state === "collaboration_ready" ? "\uBE44\uACF5\uAC1C \uD611\uC5C5 \uC900\uBE44 \uC644\uB8CC" : collaborationReadiness.state === "local_only" ? "\uB85C\uCEEC \uC804\uC6A9 \uBAA8\uB4DC (\uAE30\uBCF8 \uAD8C\uC7A5)" : "\uD300 \uC5F0\uACB0 \uC124\uC815\uC744 \uD655\uC778\uD558\uC138\uC694" }),
             /* @__PURE__ */ jsx("span", { children: collaborationReadiness.recommendation })
           ] }),
           /* @__PURE__ */ jsx("ul", { className: "org-readiness-checks", children: (collaborationReadiness.checks || []).map((check, index) => /* @__PURE__ */ jsxs("li", { children: [
@@ -1415,17 +1415,17 @@ function OrganizationSettingsPage({ context }) {
             /* @__PURE__ */ jsx("span", { "data-status": check.status, children: check.message })
           ] }, `${check.label}-${index}`)) }),
           (collaborationReadiness.warnings || []).map((warning, index) => /* @__PURE__ */ jsx("p", { className: "org-readiness-warning", children: warning }, `${warning}-${index}`))
-        ] }) : /* @__PURE__ */ jsx("div", { className: "rw-muted", style: { marginTop: 12 }, children: "Checking the local configuration..." })
+        ] }) : /* @__PURE__ */ jsx("div", { className: "rw-muted", style: { marginTop: 12 }, children: "\uB85C\uCEEC \uC124\uC815\uC744 \uD655\uC778\uD558\uB294 \uC911..." })
       ] }) : null,
-      canConfigureAgents === null ? /* @__PURE__ */ jsx("div", { className: "ca-note", children: "Checking Organization configuration access..." }) : canConfigureAgents ? null : /* @__PURE__ */ jsx("div", { className: "ca-note", children: "Organization policy and CLI account changes are restricted to company Owners and Admins. Project, Room, and Task work remains available through your member role." }),
+      canConfigureAgents === null ? /* @__PURE__ */ jsx("div", { className: "ca-note", children: "Workplane \uC124\uC815 \uAD8C\uD55C\uC744 \uD655\uC778\uD558\uB294 \uC911..." }) : canConfigureAgents ? null : /* @__PURE__ */ jsx("div", { className: "ca-note", children: "Workplane \uC815\uCC45\uACFC CLI \uACC4\uC815 \uBCC0\uACBD\uC740 Owner\uC640 Admin\uB9CC \uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4. \uAD6C\uC131\uC6D0 \uAD8C\uD55C\uC73C\uB85C\uB3C4 Project, Room, Task \uD611\uC5C5\uC740 \uACC4\uC18D\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." }),
       actionError ? /* @__PURE__ */ jsx("div", { className: "rw-error", children: actionError }) : null,
       notice ? /* @__PURE__ */ jsx("div", { className: "ca-note", children: notice }) : null,
-      loading ? /* @__PURE__ */ jsx("div", { className: "rw-empty", children: "Organization\uC744 \uBD88\uB7EC\uC624\uB294 \uC911..." }) : error ? /* @__PURE__ */ jsx("div", { className: "rw-error", children: error.message }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+      loading ? /* @__PURE__ */ jsx("div", { className: "rw-empty", children: "Workplane \uC6B4\uC601 \uC815\uBCF4\uB97C \uBD88\uB7EC\uC624\uB294 \uC911..." }) : error ? /* @__PURE__ */ jsx("div", { className: "rw-error", children: error.message }) : /* @__PURE__ */ jsxs(Fragment, { children: [
         /* @__PURE__ */ jsx("div", { className: "org-templates", children: (data?.templates || []).map((template) => /* @__PURE__ */ jsxs("section", { className: "org-template", children: [
           /* @__PURE__ */ jsx("h2", { children: template.displayName }),
           /* @__PURE__ */ jsx("p", { children: template.description }),
           /* @__PURE__ */ jsx("small", { children: template.actionable ? `${template.eligibleAgentCount || 0}\uAC1C Agent\uC5D0 \uC801\uC6A9 \uAC00\uB2A5 \xB7 \uC218\uB3D9 \uC124\uC815 Agent ${template.configuredAgentCount || 0}\uAC1C\uB294 \uC720\uC9C0` : "\uC5ED\uD560 \uD589\uC5D0\uC11C \uAC01 Agent\uC758 \uC815\uCC45\uC744 \uC9C1\uC811 \uC124\uC815" }),
-          template.actionable ? /* @__PURE__ */ jsx("button", { type: "button", className: "rw-button", onClick: () => applyTemplate(template), disabled: !canConfigureAgents || (template.eligibleAgentCount || 0) === 0 || Boolean(savingAgentId) || Boolean(applyingTemplateId), children: applyingTemplateId === template.id ? "Applying..." : (template.eligibleAgentCount || 0) === 0 ? "Add matching Agents first" : template.actionLabel || "Apply template" }) : null
+          template.actionable ? /* @__PURE__ */ jsx("button", { type: "button", className: "rw-button", onClick: () => applyTemplate(template), disabled: !canConfigureAgents || (template.eligibleAgentCount || 0) === 0 || Boolean(savingAgentId) || Boolean(applyingTemplateId), children: applyingTemplateId === template.id ? "\uC801\uC6A9 \uC911..." : (template.eligibleAgentCount || 0) === 0 ? "\uBA3C\uC800 \uB9DE\uB294 Agent\uB97C \uCD94\uAC00\uD558\uC138\uC694" : template.actionLabel || "\uD15C\uD50C\uB9BF \uC801\uC6A9" }) : null
         ] }, template.id)) }),
         (data?.agents || []).length ? /* @__PURE__ */ jsx("div", { className: "org-list", children: (data?.agents || []).map((agent) => {
           const draft = drafts[agent.id] || {};
@@ -1436,13 +1436,13 @@ function OrganizationSettingsPage({ context }) {
               /* @__PURE__ */ jsxs("span", { children: [
                 agent.spsRole,
                 " \xB7 ",
-                agent.adapterType || "adapter",
+                agent.adapterType || "\uC5F0\uACB0 \uBC29\uC2DD",
                 agent.model ? ` \xB7 ${agent.model}` : ""
               ] })
             ] }),
             /* @__PURE__ */ jsxs("div", { className: "org-agent-policy", children: [
               /* @__PURE__ */ jsxs("div", { className: "org-field", children: [
-                /* @__PURE__ */ jsx("label", { children: "Workplane type" }),
+                /* @__PURE__ */ jsx("label", { children: "Workplane \uC720\uD615" }),
                 /* @__PURE__ */ jsxs("select", { value: draft.kind || "worker", onChange: (event) => updateDraft(agent.id, "kind", event.target.value), disabled: !canConfigureAgents || Boolean(savingAgentId), children: [
                   /* @__PURE__ */ jsx("option", { value: "lead", children: "Lead" }),
                   /* @__PURE__ */ jsx("option", { value: "worker", children: "Worker" }),
@@ -1450,44 +1450,44 @@ function OrganizationSettingsPage({ context }) {
                 ] })
               ] }),
               /* @__PURE__ */ jsxs("div", { className: "org-field", children: [
-                /* @__PURE__ */ jsx("label", { children: "Role ID" }),
+                /* @__PURE__ */ jsx("label", { children: "\uC5ED\uD560 ID" }),
                 /* @__PURE__ */ jsx("input", { value: draft.roleId || "", onChange: (event) => updateDraft(agent.id, "roleId", event.target.value), disabled: !canConfigureAgents || Boolean(savingAgentId) })
               ] }),
               /* @__PURE__ */ jsxs("div", { className: "org-field", children: [
-                /* @__PURE__ */ jsx("label", { children: "Can assign roles" }),
+                /* @__PURE__ */ jsx("label", { children: "\uD560\uB2F9 \uAC00\uB2A5 \uC5ED\uD560" }),
                 /* @__PURE__ */ jsx("input", { value: draft.assignableRoleIds || "", onChange: (event) => updateDraft(agent.id, "assignableRoleIds", event.target.value), disabled: !canConfigureAgents || Boolean(savingAgentId) || isWorker, placeholder: "worker, art-production" })
               ] }),
               /* @__PURE__ */ jsxs("div", { className: "org-field", children: [
-                /* @__PURE__ */ jsx("label", { children: "Worker result review" }),
+                /* @__PURE__ */ jsx("label", { children: "Worker \uACB0\uACFC \uAC80\uD1A0" }),
                 /* @__PURE__ */ jsxs("select", { value: draft.reviewMode || "automatic", onChange: (event) => updateDraft(agent.id, "reviewMode", event.target.value), disabled: !canConfigureAgents || Boolean(savingAgentId) || isWorker, children: [
-                  /* @__PURE__ */ jsx("option", { value: "automatic", children: "Start Lead review automatically" }),
-                  /* @__PURE__ */ jsx("option", { value: "manual", children: "Leave a Lead Room report only" })
+                  /* @__PURE__ */ jsx("option", { value: "automatic", children: "Lead \uAC80\uD1A0 \uC790\uB3D9 \uC2DC\uC791" }),
+                  /* @__PURE__ */ jsx("option", { value: "manual", children: "Lead Room\uC5D0 \uBCF4\uACE0\uB9CC \uB0A8\uAE30\uAE30" })
                 ] })
               ] })
             ] }),
             /* @__PURE__ */ jsxs("div", { className: "org-agent-actions", children: [
-              /* @__PURE__ */ jsx("button", { type: "button", className: "rw-button primary", onClick: () => save(agent), disabled: !canConfigureAgents || Boolean(savingAgentId), children: savingAgentId === agent.id ? "Saving..." : "Save Workplane policy" }),
-              /* @__PURE__ */ jsx("a", { className: "rw-button", ...navigation.linkProps(`/agents/${encodeURIComponent(agent.urlKey || agent.id)}/configuration`), children: "Configure model & tools" })
+              /* @__PURE__ */ jsx("button", { type: "button", className: "rw-button primary", onClick: () => save(agent), disabled: !canConfigureAgents || Boolean(savingAgentId), children: savingAgentId === agent.id ? "\uC800\uC7A5 \uC911..." : "Workplane \uC815\uCC45 \uC800\uC7A5" }),
+              /* @__PURE__ */ jsx("a", { className: "rw-button", ...navigation.linkProps(`/agents/${encodeURIComponent(agent.urlKey || agent.id)}/configuration`), children: "\uBAA8\uB378\uACFC \uB3C4\uAD6C \uC124\uC815" })
             ] }),
-            /* @__PURE__ */ jsx("div", { className: "org-agent-status", children: agent.workplane?.source === "legacy" ? "\uD604\uC7AC \uD638\uD658 \uADDC\uCE59\uC5D0\uC11C \uC790\uB3D9 \uC778\uC2DD\uB428" : agent.workplane?.source === "configured" ? "Organization \uC124\uC815\uC73C\uB85C \uAD00\uB9AC\uB428" : "\uC544\uC9C1 Workplane \uC5ED\uD560\uC774 \uC124\uC815\uB418\uC9C0 \uC54A\uC74C" }),
+            /* @__PURE__ */ jsx("div", { className: "org-agent-status", children: agent.workplane?.source === "legacy" ? "\uD604\uC7AC \uD638\uD658 \uADDC\uCE59\uC5D0\uC11C \uC790\uB3D9 \uC778\uC2DD\uB428" : agent.workplane?.source === "configured" ? "Workplane \uC124\uC815\uC73C\uB85C \uAD00\uB9AC\uB428" : "\uC544\uC9C1 Workplane \uC5ED\uD560\uC774 \uC124\uC815\uB418\uC9C0 \uC54A\uC74C" }),
             /* @__PURE__ */ jsxs("details", { className: "org-agent-advanced", children: [
-              /* @__PURE__ */ jsx("summary", { children: "Advanced" }),
+              /* @__PURE__ */ jsx("summary", { children: "\uACE0\uAE09" }),
               /* @__PURE__ */ jsx("div", { className: "org-agent-advanced-content", children: /* @__PURE__ */ jsxs("div", { className: "org-field", children: [
-                /* @__PURE__ */ jsx("label", { children: "SPS memory" }),
+                /* @__PURE__ */ jsx("label", { children: "SPS \uBA54\uBAA8\uB9AC" }),
                 /* @__PURE__ */ jsxs("select", { value: draft.memoryAccess || "read", onChange: (event) => updateDraft(agent.id, "memoryAccess", event.target.value), disabled: !canConfigureAgents || Boolean(savingAgentId), children: [
-                  /* @__PURE__ */ jsx("option", { value: "read_write", children: "Read and propose" }),
-                  /* @__PURE__ */ jsx("option", { value: "read", children: "Read only" }),
-                  /* @__PURE__ */ jsx("option", { value: "none", children: "Disabled" })
+                  /* @__PURE__ */ jsx("option", { value: "read_write", children: "\uC77D\uACE0 \uC81C\uC548" }),
+                  /* @__PURE__ */ jsx("option", { value: "read", children: "\uC77D\uAE30 \uC804\uC6A9" }),
+                  /* @__PURE__ */ jsx("option", { value: "none", children: "\uC0AC\uC6A9 \uC548 \uD568" })
                 ] })
               ] }) })
             ] })
           ] }, agent.id);
         }) }) : /* @__PURE__ */ jsxs("section", { className: "org-empty", children: [
           /* @__PURE__ */ jsxs("div", { children: [
-            /* @__PURE__ */ jsx("strong", { children: "No hired Agents" }),
-            /* @__PURE__ */ jsx("span", { children: "Add a Lead first, then add Workers as your organization needs them." })
+            /* @__PURE__ */ jsx("strong", { children: "\uACE0\uC6A9\uB41C Agent\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4" }),
+            /* @__PURE__ */ jsx("span", { children: "\uBA3C\uC800 Lead\uB97C \uCD94\uAC00\uD558\uACE0, \uD544\uC694\uD55C \uB9CC\uD07C Worker\uB97C \uCD94\uAC00\uD558\uC138\uC694." })
           ] }),
-          canConfigureAgents ? /* @__PURE__ */ jsx("a", { className: "rw-button primary", ...navigation.linkProps("/agents/all"), children: "Manage Agents" }) : null
+          canConfigureAgents ? /* @__PURE__ */ jsx("a", { className: "rw-button primary", ...navigation.linkProps("/agents/all"), children: "Agent \uAD00\uB9AC" }) : null
         ] })
       ] })
     ] })

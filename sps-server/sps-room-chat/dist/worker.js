@@ -11964,7 +11964,7 @@ var manifest_default = {
       {
         type: "companySettingsPage",
         id: "organization-settings",
-        displayName: "Organization",
+        displayName: "Workplane \uC6B4\uC601",
         exportName: "OrganizationSettingsPage",
         routePath: "organization",
         order: 20
@@ -12649,30 +12649,30 @@ var SMALL_TEAM_WORKER_ROLES = /* @__PURE__ */ new Set(["generalist", "generalist
 var ORGANIZATION_TEMPLATES = Object.freeze([
   Object.freeze({
     id: "lead-worker",
-    displayName: "Custom Lead + Worker",
-    description: "A blank, general-purpose organization. Assign each Agent its Lead, Worker, or Hybrid policy in the rows below.",
+    displayName: "\uC0AC\uC6A9\uC790 \uC9C0\uC815 Lead + Worker",
+    description: "\uBC94\uC6A9 \uC2DC\uC791 \uAD6C\uC131\uC785\uB2C8\uB2E4. \uC544\uB798\uC5D0\uC11C \uAC01 Agent\uC758 Lead, Worker, Hybrid \uC815\uCC45\uC744 \uC9C1\uC811 \uC815\uD569\uB2C8\uB2E4.",
     actionable: false
   }),
   Object.freeze({
     id: "web-app-starter",
-    displayName: "Web / App starter",
-    description: "Sets recognized product and technical leads to Lead, and frontend, backend, mobile, QA, documentation, and DevOps Agents to Worker. Each Lead can delegate to the shared Worker pool.",
+    displayName: "\uC6F9/\uC571 \uC2DC\uC791 \uAD6C\uC131",
+    description: "\uC81C\uD488 \uBC0F \uAE30\uC220 Lead\uB294 Lead\uB85C, \uD504\uB860\uD2B8\uC5D4\uB4DC\xB7\uBC31\uC5D4\uB4DC\xB7\uBAA8\uBC14\uC77C\xB7QA\xB7\uBB38\uC11C\uD654\xB7DevOps Agent\uB294 Worker\uB85C \uC124\uC815\uD569\uB2C8\uB2E4. \uAC01 Lead\uB294 \uACF5\uC6A9 Worker \uD480\uC5D0 \uC791\uC5C5\uC744 \uC704\uC784\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
     actionable: true,
-    actionLabel: "Apply Web / App starter"
+    actionLabel: "\uC6F9/\uC571 \uC2DC\uC791 \uAD6C\uC131 \uC801\uC6A9"
   }),
   Object.freeze({
     id: "small-team-starter",
-    displayName: "Small team starter",
-    description: "Sets recognized project leads to Lead and generalist or QA Agents to Worker. Use it for a lightweight, domain-neutral delivery team.",
+    displayName: "\uC18C\uADDC\uBAA8 \uD300 \uC2DC\uC791 \uAD6C\uC131",
+    description: "\uD504\uB85C\uC81D\uD2B8 Lead\uB294 Lead\uB85C, \uC81C\uB108\uB7F4\uB9AC\uC2A4\uD2B8 \uBC0F QA Agent\uB294 Worker\uB85C \uC124\uC815\uD569\uB2C8\uB2E4. \uBD84\uC57C\uC640 \uAD00\uACC4\uC5C6\uC774 \uAC00\uBCBC\uC6B4 \uC81C\uC791 \uD300\uC744 \uC2DC\uC791\uD560 \uB54C \uC0AC\uC6A9\uD558\uC138\uC694.",
     actionable: true,
-    actionLabel: "Apply small team starter"
+    actionLabel: "\uC18C\uADDC\uBAA8 \uD300 \uC2DC\uC791 \uAD6C\uC131 \uC801\uC6A9"
   }),
   Object.freeze({
     id: "game-studio-compatibility",
-    displayName: "Legacy Workplane migration",
-    description: "Migrates a recognized legacy Lead and Worker setup to explicit generic Workplane policies without changing rooms or Tasks.",
+    displayName: "\uAE30\uC874 Workplane \uC774\uAD00",
+    description: "\uAE30\uC874 Lead\uC640 Worker \uAD6C\uC131\uC744 Room\uC774\uB098 Task\uB97C \uBC14\uAFB8\uC9C0 \uC54A\uACE0 \uBA85\uC2DC\uC801\uC778 \uBC94\uC6A9 Workplane \uC815\uCC45\uC73C\uB85C \uC774\uAD00\uD569\uB2C8\uB2E4.",
     actionable: true,
-    actionLabel: "Migrate legacy policy",
+    actionLabel: "\uAE30\uC874 \uC815\uCC45 \uC774\uAD00",
     visibleWhenEligible: true
   })
 ]);
@@ -12743,7 +12743,7 @@ function listOrganizationTemplates() {
 }
 function resolveOrganizationTemplate(templateId, agents) {
   const template = ORGANIZATION_TEMPLATES.find((candidate) => candidate.id === templateId);
-  if (!template) throw new Error("Organization template was not found.");
+  if (!template) throw new Error("Workplane \uD15C\uD50C\uB9BF\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.");
   const assignments = [];
   const skippedConfiguredAgentIds = [];
   const unmatchedAgentIds = [];
@@ -15457,43 +15457,43 @@ function collaborationReadinessFromConfig(config, { hasAuthenticationSecret = fa
   const warnings = [];
   const localOnlySafeDefault = deploymentMode === "local_trusted" && bind === "loopback";
   if (localOnlySafeDefault) {
-    checks.push({ label: "Access mode", status: "pass", message: "Local-only mode is safely bound to this computer." });
+    checks.push({ label: "\uC811\uC18D \uBC29\uC2DD", status: "pass", message: "\uB85C\uCEEC \uC804\uC6A9 \uBAA8\uB4DC\uAC00 \uC774 \uCEF4\uD4E8\uD130\uC5D0 \uC548\uC804\uD558\uAC8C \uBB36\uC5EC \uC788\uC2B5\uB2C8\uB2E4." });
   } else if (deploymentMode === "authenticated") {
     checks.push({
-      label: "Authentication secret",
+      label: "\uC778\uC99D \uBE44\uBC00\uAC12",
       status: hasAuthenticationSecret ? "pass" : "fail",
-      message: hasAuthenticationSecret ? "An authentication secret is configured." : "Authenticated access needs BETTER_AUTH_SECRET or PAPERCLIP_AGENT_JWT_SECRET in the SPS .env file."
+      message: hasAuthenticationSecret ? "\uC778\uC99D \uBE44\uBC00\uAC12\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." : "\uC778\uC99D \uC811\uC18D\uC5D0\uB294 SPS .env \uD30C\uC77C\uC758 BETTER_AUTH_SECRET \uB610\uB294 PAPERCLIP_AGENT_JWT_SECRET\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4."
     });
   } else {
-    checks.push({ label: "Access mode", status: "fail", message: "Non-local access must use authenticated mode." });
+    checks.push({ label: "\uC811\uC18D \uBC29\uC2DD", status: "fail", message: "\uB85C\uCEEC \uBC16\uC5D0\uC11C \uC811\uC18D\uD558\uB824\uBA74 \uC778\uC99D \uBAA8\uB4DC\uB97C \uC0AC\uC6A9\uD574\uC57C \uD569\uB2C8\uB2E4." });
   }
   if (deploymentMode === "authenticated" && exposure === "private") {
     if (bind === "tailnet") {
-      checks.push({ label: "Private network", status: "pass", message: "Tailnet private collaboration is configured." });
+      checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "pass", message: "Tailnet \uBE44\uACF5\uAC1C \uD611\uC5C5\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." });
     } else if (bind === "lan") {
-      checks.push({ label: "Private network", status: "warn", message: "Authenticated LAN access is configured. Prefer Tailnet for collaborators outside a trusted LAN." });
+      checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "warn", message: "\uC778\uC99D\uB41C LAN \uC811\uC18D\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4. \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 LAN \uBC16\uC758 \uD611\uC5C5\uC790\uB294 Tailnet\uC744 \uAD8C\uC7A5\uD569\uB2C8\uB2E4." });
     } else {
-      checks.push({ label: "Private network", status: "fail", message: "Private collaboration needs a Tailnet or trusted LAN binding." });
+      checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "fail", message: "\uBE44\uACF5\uAC1C \uD611\uC5C5\uC5D0\uB294 Tailnet \uB610\uB294 \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 LAN \uC5F0\uACB0\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
     }
     checks.push({
-      label: "Trusted hostname",
+      label: "\uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uD638\uC2A4\uD2B8 \uC774\uB984",
       status: allowedHostnames.length > 0 ? "pass" : "fail",
-      message: allowedHostnames.length > 0 ? `${allowedHostnames.length} trusted private hostname${allowedHostnames.length === 1 ? " is" : "s are"} configured.` : "Add the Tailnet DNS name or trusted private hostname before inviting a collaborator."
+      message: allowedHostnames.length > 0 ? `\uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uBE44\uACF5\uAC1C \uD638\uC2A4\uD2B8 \uC774\uB984 ${allowedHostnames.length}\uAC1C\uAC00 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4.` : "\uD611\uC5C5\uC790\uB97C \uCD08\uB300\uD558\uAE30 \uC804\uC5D0 Tailnet DNS \uC774\uB984 \uB610\uB294 \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uBE44\uACF5\uAC1C \uD638\uC2A4\uD2B8 \uC774\uB984\uC744 \uCD94\uAC00\uD558\uC138\uC694."
     });
   }
   if (deploymentMode === "authenticated" && exposure === "public") {
     const publicBaseUrl = textParam(auth, "publicBaseUrl");
     const hasHttpsBaseUrl = textParam(auth, "baseUrlMode") === "explicit" && publicBaseUrl.startsWith("https://");
     checks.push({
-      label: "Public URL",
+      label: "\uACF5\uAC1C URL",
       status: hasHttpsBaseUrl ? "pass" : "fail",
-      message: hasHttpsBaseUrl ? "A public HTTPS URL is configured." : "Public access needs an explicit HTTPS auth.publicBaseUrl."
+      message: hasHttpsBaseUrl ? "\uACF5\uAC1C HTTPS URL\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." : "\uACF5\uAC1C \uC811\uC18D\uC5D0\uB294 \uBA85\uC2DC\uC801\uC778 HTTPS auth.publicBaseUrl\uC774 \uD544\uC694\uD569\uB2C8\uB2E4."
     });
   }
   const hasFailures = checks.some((check) => check.status === "fail");
   const collaborationReady = deploymentMode === "authenticated" && bind !== "loopback" && !hasFailures;
   const state = localOnlySafeDefault ? "local_only" : collaborationReady ? "collaboration_ready" : "configuration_incomplete";
-  const recommendation = state === "local_only" ? "Solo work is ready. For a friend, configure authenticated private Tailnet access rather than exposing this computer directly." : state === "collaboration_ready" ? "Invite the collaborator as an Operator, then complete the two-person browser acceptance checklist." : "Fix the failed checks, restart the Workplane, and run this check again before inviting collaborators.";
+  const recommendation = state === "local_only" ? "\uAC1C\uC778 \uC791\uC5C5 \uC900\uBE44\uAC00 \uC644\uB8CC\uB410\uC2B5\uB2C8\uB2E4. \uCE5C\uAD6C\uB97C \uCD08\uB300\uD560 \uB54C\uB294 \uC774 \uCEF4\uD4E8\uD130\uB97C \uC9C1\uC811 \uB178\uCD9C\uD558\uC9C0 \uB9D0\uACE0 \uC778\uC99D\uB41C \uBE44\uACF5\uAC1C Tailnet \uC811\uC18D\uC744 \uC124\uC815\uD558\uC138\uC694." : state === "collaboration_ready" ? "\uD611\uC5C5\uC790\uB97C Operator\uB85C \uCD08\uB300\uD55C \uB4A4, \uB450 \uC0AC\uB78C\uC774 \uD568\uAED8 \uBE0C\uB77C\uC6B0\uC800 \uC811\uC18D \uD655\uC778\uC744 \uB9C8\uCE58\uC138\uC694." : "\uC2E4\uD328\uD55C \uD56D\uBAA9\uC744 \uACE0\uCE5C \uB4A4 Workplane\uC744 \uB2E4\uC2DC \uC2DC\uC791\uD558\uACE0, \uD611\uC5C5\uC790\uB97C \uCD08\uB300\uD558\uAE30 \uC804\uC5D0 \uC774 \uD655\uC778\uC744 \uB2E4\uC2DC \uC2E4\uD589\uD558\uC138\uC694.";
   return {
     state,
     localOnlySafeDefault,

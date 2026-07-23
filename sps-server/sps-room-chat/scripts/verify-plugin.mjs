@@ -79,7 +79,7 @@ assert.match(worker, /provisionProjectAgentRooms/);
 assert.match(worker, /reconcileAllProjectAgentRooms/);
 assert.match(worker, /agent\.deleted/);
 const ui = fs.readFileSync(path.join(root, manifest.default.entrypoints.ui, "index.js"), "utf8");
-assert.match(ui, /Manage Agents/);
+assert.match(ui, /agents\/all/);
 assert.match(worker, /PROVISIONED_AGENT_ROOM_ORIGIN/);
 assert.match(worker, /loadAgentInstructions/);
 assert.match(worker, /handleProjectTasksView/);

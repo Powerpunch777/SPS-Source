@@ -33,20 +33,20 @@ const missingSecret = collaborationReadinessFromConfig({
   auth: {}
 });
 assert.equal(missingSecret.state, "configuration_incomplete");
-assert.equal(missingSecret.checks.some((check) => check.status === "fail" && check.label === "Authentication secret"), true);
+assert.equal(missingSecret.checks.some((check) => check.status === "fail" && check.label === "인증 비밀값"), true);
 
 const missingHostname = collaborationReadinessFromConfig({
   server: { deploymentMode: "authenticated", exposure: "private", host: "100.64.0.12", bind: "tailnet", port: 3100 },
   auth: {}
 }, { hasAuthenticationSecret: true });
 assert.equal(missingHostname.state, "configuration_incomplete");
-assert.equal(missingHostname.checks.some((check) => check.status === "fail" && check.label === "Trusted hostname"), true);
+assert.equal(missingHostname.checks.some((check) => check.status === "fail" && check.label === "신뢰할 수 있는 호스트 이름"), true);
 
 const publicMissingUrl = collaborationReadinessFromConfig({
   server: { deploymentMode: "authenticated", exposure: "public", host: "0.0.0.0", bind: "lan", port: 3100 },
   auth: { baseUrlMode: "automatic" }
 }, { hasAuthenticationSecret: true });
 assert.equal(publicMissingUrl.state, "configuration_incomplete");
-assert.equal(publicMissingUrl.checks.some((check) => check.status === "fail" && check.label === "Public URL"), true);
+assert.equal(publicMissingUrl.checks.some((check) => check.status === "fail" && check.label === "공개 URL"), true);
 
 console.log("collaboration readiness tests passed");

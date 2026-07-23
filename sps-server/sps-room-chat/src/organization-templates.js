@@ -60,30 +60,30 @@ const SMALL_TEAM_WORKER_ROLES = new Set(["generalist", "generalist-worker", "qa"
 const ORGANIZATION_TEMPLATES = Object.freeze([
   Object.freeze({
     id: "lead-worker",
-    displayName: "Custom Lead + Worker",
-    description: "A blank, general-purpose organization. Assign each Agent its Lead, Worker, or Hybrid policy in the rows below.",
+    displayName: "사용자 지정 Lead + Worker",
+    description: "범용 시작 구성입니다. 아래에서 각 Agent의 Lead, Worker, Hybrid 정책을 직접 정합니다.",
     actionable: false
   }),
   Object.freeze({
     id: "web-app-starter",
-    displayName: "Web / App starter",
-    description: "Sets recognized product and technical leads to Lead, and frontend, backend, mobile, QA, documentation, and DevOps Agents to Worker. Each Lead can delegate to the shared Worker pool.",
+    displayName: "웹/앱 시작 구성",
+    description: "제품 및 기술 Lead는 Lead로, 프론트엔드·백엔드·모바일·QA·문서화·DevOps Agent는 Worker로 설정합니다. 각 Lead는 공용 Worker 풀에 작업을 위임할 수 있습니다.",
     actionable: true,
-    actionLabel: "Apply Web / App starter"
+    actionLabel: "웹/앱 시작 구성 적용"
   }),
   Object.freeze({
     id: "small-team-starter",
-    displayName: "Small team starter",
-    description: "Sets recognized project leads to Lead and generalist or QA Agents to Worker. Use it for a lightweight, domain-neutral delivery team.",
+    displayName: "소규모 팀 시작 구성",
+    description: "프로젝트 Lead는 Lead로, 제너럴리스트 및 QA Agent는 Worker로 설정합니다. 분야와 관계없이 가벼운 제작 팀을 시작할 때 사용하세요.",
     actionable: true,
-    actionLabel: "Apply small team starter"
+    actionLabel: "소규모 팀 시작 구성 적용"
   }),
   Object.freeze({
     id: "game-studio-compatibility",
-    displayName: "Legacy Workplane migration",
-    description: "Migrates a recognized legacy Lead and Worker setup to explicit generic Workplane policies without changing rooms or Tasks.",
+    displayName: "기존 Workplane 이관",
+    description: "기존 Lead와 Worker 구성을 Room이나 Task를 바꾸지 않고 명시적인 범용 Workplane 정책으로 이관합니다.",
     actionable: true,
-    actionLabel: "Migrate legacy policy",
+    actionLabel: "기존 정책 이관",
     visibleWhenEligible: true
   })
 ]);
@@ -168,7 +168,7 @@ export function listOrganizationTemplates() {
 
 export function resolveOrganizationTemplate(templateId, agents) {
   const template = ORGANIZATION_TEMPLATES.find((candidate) => candidate.id === templateId);
-  if (!template) throw new Error("Organization template was not found.");
+  if (!template) throw new Error("Workplane 템플릿을 찾을 수 없습니다.");
 
   const assignments = [];
   const skippedConfiguredAgentIds = [];

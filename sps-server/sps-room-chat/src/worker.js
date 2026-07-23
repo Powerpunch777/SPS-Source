@@ -3189,33 +3189,33 @@ function collaborationReadinessFromConfig(config, { hasAuthenticationSecret = fa
   const localOnlySafeDefault = deploymentMode === "local_trusted" && bind === "loopback";
 
   if (localOnlySafeDefault) {
-    checks.push({ label: "Access mode", status: "pass", message: "Local-only mode is safely bound to this computer." });
+    checks.push({ label: "접속 방식", status: "pass", message: "로컬 전용 모드가 이 컴퓨터에 안전하게 묶여 있습니다." });
   } else if (deploymentMode === "authenticated") {
     checks.push({
-      label: "Authentication secret",
+      label: "인증 비밀값",
       status: hasAuthenticationSecret ? "pass" : "fail",
       message: hasAuthenticationSecret
-        ? "An authentication secret is configured."
-        : "Authenticated access needs BETTER_AUTH_SECRET or PAPERCLIP_AGENT_JWT_SECRET in the SPS .env file."
+        ? "인증 비밀값이 설정되어 있습니다."
+        : "인증 접속에는 SPS .env 파일의 BETTER_AUTH_SECRET 또는 PAPERCLIP_AGENT_JWT_SECRET가 필요합니다."
     });
   } else {
-    checks.push({ label: "Access mode", status: "fail", message: "Non-local access must use authenticated mode." });
+    checks.push({ label: "접속 방식", status: "fail", message: "로컬 밖에서 접속하려면 인증 모드를 사용해야 합니다." });
   }
 
   if (deploymentMode === "authenticated" && exposure === "private") {
     if (bind === "tailnet") {
-      checks.push({ label: "Private network", status: "pass", message: "Tailnet private collaboration is configured." });
+      checks.push({ label: "비공개 네트워크", status: "pass", message: "Tailnet 비공개 협업이 설정되어 있습니다." });
     } else if (bind === "lan") {
-      checks.push({ label: "Private network", status: "warn", message: "Authenticated LAN access is configured. Prefer Tailnet for collaborators outside a trusted LAN." });
+      checks.push({ label: "비공개 네트워크", status: "warn", message: "인증된 LAN 접속이 설정되어 있습니다. 신뢰할 수 있는 LAN 밖의 협업자는 Tailnet을 권장합니다." });
     } else {
-      checks.push({ label: "Private network", status: "fail", message: "Private collaboration needs a Tailnet or trusted LAN binding." });
+      checks.push({ label: "비공개 네트워크", status: "fail", message: "비공개 협업에는 Tailnet 또는 신뢰할 수 있는 LAN 연결이 필요합니다." });
     }
     checks.push({
-      label: "Trusted hostname",
+      label: "신뢰할 수 있는 호스트 이름",
       status: allowedHostnames.length > 0 ? "pass" : "fail",
       message: allowedHostnames.length > 0
-        ? `${allowedHostnames.length} trusted private hostname${allowedHostnames.length === 1 ? " is" : "s are"} configured.`
-        : "Add the Tailnet DNS name or trusted private hostname before inviting a collaborator."
+        ? `신뢰할 수 있는 비공개 호스트 이름 ${allowedHostnames.length}개가 설정되어 있습니다.`
+        : "협업자를 초대하기 전에 Tailnet DNS 이름 또는 신뢰할 수 있는 비공개 호스트 이름을 추가하세요."
     });
   }
 
@@ -3223,11 +3223,11 @@ function collaborationReadinessFromConfig(config, { hasAuthenticationSecret = fa
     const publicBaseUrl = textParam(auth, "publicBaseUrl");
     const hasHttpsBaseUrl = textParam(auth, "baseUrlMode") === "explicit" && publicBaseUrl.startsWith("https://");
     checks.push({
-      label: "Public URL",
+      label: "공개 URL",
       status: hasHttpsBaseUrl ? "pass" : "fail",
       message: hasHttpsBaseUrl
-        ? "A public HTTPS URL is configured."
-        : "Public access needs an explicit HTTPS auth.publicBaseUrl."
+        ? "공개 HTTPS URL이 설정되어 있습니다."
+        : "공개 접속에는 명시적인 HTTPS auth.publicBaseUrl이 필요합니다."
     });
   }
 
@@ -3235,10 +3235,10 @@ function collaborationReadinessFromConfig(config, { hasAuthenticationSecret = fa
   const collaborationReady = deploymentMode === "authenticated" && bind !== "loopback" && !hasFailures;
   const state = localOnlySafeDefault ? "local_only" : collaborationReady ? "collaboration_ready" : "configuration_incomplete";
   const recommendation = state === "local_only"
-    ? "Solo work is ready. For a friend, configure authenticated private Tailnet access rather than exposing this computer directly."
+    ? "개인 작업 준비가 완료됐습니다. 친구를 초대할 때는 이 컴퓨터를 직접 노출하지 말고 인증된 비공개 Tailnet 접속을 설정하세요."
     : state === "collaboration_ready"
-      ? "Invite the collaborator as an Operator, then complete the two-person browser acceptance checklist."
-      : "Fix the failed checks, restart the Workplane, and run this check again before inviting collaborators.";
+      ? "협업자를 Operator로 초대한 뒤, 두 사람이 함께 브라우저 접속 확인을 마치세요."
+      : "실패한 항목을 고친 뒤 Workplane을 다시 시작하고, 협업자를 초대하기 전에 이 확인을 다시 실행하세요.";
 
   return {
     state,

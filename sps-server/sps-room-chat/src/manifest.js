@@ -107,7 +107,7 @@ export default {
       {
         type: "companySettingsPage",
         id: "organization-settings",
-        displayName: "Organization",
+        displayName: "Workplane 운영",
         exportName: "OrganizationSettingsPage",
         routePath: "organization",
         order: 20
