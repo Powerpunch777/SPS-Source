@@ -35,6 +35,10 @@ jobs:
         working-directory: external/sps-core
         run: pnpm install --frozen-lockfile
 
+      - name: Build the SPS Plugin SDK for the Owner Host
+        working-directory: external/sps-core
+        run: pnpm --filter @paperclipai/plugin-sdk run build
+
       - name: Build the SPS Owner Host CLI
         working-directory: external/sps-core
         run: pnpm --filter paperclipai run build
