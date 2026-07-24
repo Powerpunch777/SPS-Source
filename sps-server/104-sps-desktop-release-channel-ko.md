@@ -1,126 +1,86 @@
-# SPS Desktop Release Channel
+# SPS Desktop Release Channels
 
-## Purpose
+## Current policy
 
-SPS Desktop updates come from the public `Powerpunch777/SPS-Desktop-Releases`
-GitHub Releases channel. The Desktop app checks this channel after installation starts and then
-every six hours. It automatically downloads a verified signed update when one
-is available and installs it when SPS Desktop restarts.
+SPS Desktop currently ships through an **unsigned Beta** channel. This allows
+the product to be tested before SonParkServer has a registered business and a
+public Windows code-signing identity.
 
-`0.4.19`는 기존 공개 `Powerpunch777/SPS` Release를 사용하는 설치본을 옮기는
-단 한 번의 브리지 버전이다. 이 버전은 같은 서명 파일을 두 Release에 함께
-발행한다. `SPS-Desktop-Releases`가 첫 번째 publish provider이므로, 브리지 버전을
-설치한 앱은 그다음부터 새 artifact 채널을 기본으로 확인한다. `0.4.20`부터는
-기존 `SPS` mirror를 제거한다.
+The app checks for updates after startup and every six hours. A Beta update is
+never downloaded or installed silently: the user must choose **Download**, and
+then choose **Restart and install** after the download finishes. No version is
+mandatory while the release is unsigned, so an offline Owner Host can continue
+working.
 
-The updater uses `electron-updater` with the normal Windows signature
-verification path. SPS never replaces that verification with a custom
-always-allow hook.
+Windows may display an unknown-publisher warning for the first installer and
+for Beta updates. Beta releases are for trusted testers, not general public
+distribution.
 
-## What is published
+## Beta channel
 
-Only a signed NSIS release may be published to the channel. A valid release
-contains all of the following from the same build:
+- Tag format: `desktop-beta-v<package version>`
+- Workflow: `.github/workflows/sps-desktop-beta-release.yml`
+- Build command: `npm run release:beta:win`
+- Release type: GitHub prerelease
+- Artifact channel: `Powerpunch777/SPS-Desktop-Releases`
+- Transitional mirror: `Powerpunch777/SPS` while it remains public for older
+  Desktop installations
 
-- `SPS Desktop Setup <version>.exe`
-- `SPS Desktop Setup <version>.exe.blockmap`
-- `latest.yml`
+The Beta workflow intentionally does not read Windows signing secrets and does
+not enable `forceCodeSigning`. It still runs the complete Desktop test suite
+before publishing the NSIS installer, block map, and update manifest.
 
-`latest.yml` contains the artifact hash used by the updater. Do not upload a
-standalone installer or edit `latest.yml` by hand.
+### Required GitHub secret
 
-## GitHub Actions release gate
+Create one fine-grained GitHub token with **Contents: Read and write** access
+to both `Powerpunch777/SPS-Desktop-Releases` and `Powerpunch777/SPS`, then save
+it in the `SPS` repository as:
 
-The workflow is `.github/workflows/sps-desktop-release.yml`.
-
-1. Set repository secrets `SPS_WINDOWS_CSC_LINK` and
-   `SPS_WINDOWS_CSC_KEY_PASSWORD` from the Windows code-signing certificate.
-   The certificate subject must be the actual SPS publisher identity that will
-   sign every future release.
-2. 브리지 release를 발행할 때는 `Powerpunch777/SPS`와
-   `Powerpunch777/SPS-Desktop-Releases` 두 레포에만 **Contents: Read and
-   write**를 허용한 fine-grained GitHub token을 만든 뒤,
-   `SPS_DESKTOP_RELEASES_TOKEN`으로 저장한다. `0.4.19` 배포와 기기 업데이트
-   확인 뒤에는 이 token을 `SPS-Desktop-Releases` 단일 레포 권한으로 회전한다.
-3. Update `sps-server/desktop/package.json` to the release version.
-4. Run the Desktop tests locally.
-5. Push a tag exactly matching `desktop-v<package version>`, for example
-   `desktop-v0.1.1`.
-6. GitHub Actions verifies the tag and signing secrets, builds the Windows NSIS
-   installer with `forceCodeSigning=true`, and publishes the release files.
-
-The workflow fails before publishing if a signing secret or the release channel
-token is absent. This
-is intentional: test installers must not become an update source for friends.
-
-## Two-computer pilot installer
-
-Before a signing certificate is available, run **Build SPS Desktop Pilot**
-from the GitHub Actions **Run workflow** menu. It creates an unsigned Windows
-installer as a 14-day Actions artifact, after running the Desktop tests.
-
-This workflow never creates a GitHub Release, tag, or update manifest. Use it
-only to test a real invitation, Node approval, per-Agent grant, local project
-mapping, and a harmless Task on a second computer. Windows may warn because
-the pilot is unsigned; that is expected. Do not distribute the artifact as an
-SPS release or use it as an update source.
-
-Use the Pilot artifact with the explicit preflight mode below. The mode does
-not relax signing for normal releases:
-
-```powershell
-.\sps-server\scripts\Test-SPS-MultiNodeRelease.ps1 -AllowUnsignedPilot
+```text
+SPS_DESKTOP_RELEASES_TOKEN
 ```
 
-## Pilot preflight
+The workflow refuses to publish without this token. Never put the token in a
+source file, local configuration tracked by Git, or a release note.
 
-Before inviting a second computer, validate the Hub deployment on the Hub
-computer first. This checks the Docker configuration and Google OAuth values
-without printing any secret.
+## Signed production channel
 
-```powershell
-Set-Location ".\\sps-server\\deploy\\hub"
-.\\Test-SPSPublicHubDeployment.ps1 -CheckPublicHealth
-```
+The signed channel remains prepared but inactive until SPS has a public code
+signing identity.
 
-Then run the multi-node preflight from the SPS repository root on either the
-Hub computer or the second computer. It validates the public Hub reachability
-and the installer. The second computer never needs a copy of the Google OAuth
-secret.
+- Tag format: `desktop-v<package version>`
+- Workflow: `.github/workflows/sps-desktop-release.yml`
+- Build command: `npm run release:win`
+- Requires `SPS_WINDOWS_CSC_LINK` and `SPS_WINDOWS_CSC_KEY_PASSWORD`
+- Requires `forceCodeSigning=true`
 
-```powershell
-.\sps-server\scripts\Test-SPS-MultiNodeRelease.ps1
-```
+After a trusted signing service is configured, SPS can promote the same release
+process to a signed stable channel. Only then should the product enable
+mandatory minimum-version updates for security or data-format fixes.
 
-When `-InstallerPath` is omitted, the script finds the newest
-`SPS Desktop Setup *.exe` below `sps-server\desktop\dist*`. Pass
-`-InstallerPath` only to validate a specific installer. The preflight rejects
-an unsigned installer even when the local test build itself works.
+## Publishing a Beta
 
-When run on the Hub computer, the script also reads only the required OAuth
-key names from `deploy\hub\.env`; it never prints their values. On a
-collaborator computer it reports that OAuth configuration as an informational
-Hub-host check instead of failing because the secret is correctly absent.
+1. Update `sps-server/desktop/package.json` to the intended version.
+2. Run the Desktop test suite.
+3. Push the matching tag, for example `desktop-beta-v0.4.19`.
+4. Confirm the GitHub Actions Beta workflow publishes all three artifacts from
+   the same build:
+   - `SPS Desktop Setup <version>.exe`
+   - `SPS Desktop Setup <version>.exe.blockmap`
+   - `latest.yml`
+5. Install the first Beta manually on each tester computer. Later versions are
+   discovered by the in-app updater and require user confirmation.
 
-## Local release checks
+`latest.yml` contains the update artifact hash produced by electron-builder.
+Do not edit it by hand or upload an installer separately as an update.
 
-The production command is:
+## Development build note
 
-```powershell
-Set-Location "C:\Users\young\Documents\AGENT 구축\sps-server\desktop"
-$env:GH_TOKEN = "<GitHub token with release permission>"
-$env:WIN_CSC_LINK = "<base64 PFX or supported certificate location>"
-$env:WIN_CSC_KEY_PASSWORD = "<certificate password>"
-npm run release:win
-```
-
-Use GitHub Actions for ordinary releases so the certificate stays in repository
-secrets rather than on a collaborator's computer. Never commit a certificate,
-its password, `GH_TOKEN`, or Google OAuth credentials.
-
-## Current state
-
-The local `0.1.2` installer remains an unsigned Pilot build. It can be used
-for a deliberate two-computer setup and Node test with `-AllowUnsignedPilot`,
-but it must not be published as an SPS Desktop update. The release pipeline
-becomes usable after a valid Windows signing certificate is configured.
+SPS Desktop development now materializes its Owner Host runtime into the local
+user-data directory instead of running the build source in place. This keeps a
+running memory sidecar from locking `.owner-host-runtime` while the next
+Desktop package is being prepared. Restart an already-running older Desktop
+development process once after upgrading to this behavior. For a release
+verification that must run beside an older Desktop process, prepare a private
+staging runtime with `SPS_DESKTOP_RUNTIME_OUTPUT` and pass that folder to the
+runtime smoke test.

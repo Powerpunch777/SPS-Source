@@ -8,7 +8,8 @@ const desktopRoot = path.resolve(scriptDirectory, "..");
 const spsServerRoot = path.resolve(desktopRoot, "..");
 const workspaceRoot = path.resolve(desktopRoot, "..", "..");
 const coreRoot = path.resolve(process.env.SPS_HOST_CORE_ROOT || path.join(workspaceRoot, "external", "sps-core"));
-const runtimeRoot = path.join(desktopRoot, ".owner-host-runtime");
+const defaultRuntimeRoot = path.join(desktopRoot, ".owner-host-runtime");
+const runtimeRoot = path.resolve(process.env.SPS_DESKTOP_RUNTIME_OUTPUT?.trim() || defaultRuntimeRoot);
 
 function assertDesktopBuildPath(target) {
   const relative = path.relative(desktopRoot, target);

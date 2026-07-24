@@ -12,7 +12,8 @@
     "prepare:owner-host-runtime": "node scripts/prepare-owner-host-runtime.mjs",
     "smoke:owner-host-runtime": "node scripts/smoke-packaged-owner-host-runtime.mjs",
     "package:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis",
-    "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish always"
+    "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish always",
+    "release:beta:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.publish.releaseType=prerelease --publish always"
   },
   "dependencies": {
     "@sps/desktop-node": "file:../desktop-node",

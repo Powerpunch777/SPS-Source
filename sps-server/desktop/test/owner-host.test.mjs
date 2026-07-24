@@ -168,6 +168,35 @@ test("runs a packaged node_modules runtime in place without copying dependencies
   }
 });
 
+test("materializes a development node_modules runtime instead of locking the source runtime", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-runtime-development-"));
+  const source = path.join(temporaryRoot, "source");
+  const target = path.join(temporaryRoot, "target");
+  try {
+    await fs.mkdir(path.join(source, "dist"), { recursive: true });
+    await fs.mkdir(path.join(source, "node_modules", "tsx", "dist"), { recursive: true });
+    await fs.writeFile(path.join(source, "dist", "index.js"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "sps-owner-host-bootstrap.mjs"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "node_modules", "tsx", "dist", "loader.mjs"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "sps-owner-host-runtime.json"), "{\"format\":4}\n", "utf8");
+    await fs.writeFile(path.join(source, "package.json"), "{\"name\":\"sps-owner-host-runtime\"}\n", "utf8");
+
+    assert.equal(await materializeSpsOwnerHostRuntime({
+      sourceRuntimeRoot: source,
+      targetRuntimeRoot: target,
+      runInPlace: false,
+    }), target);
+    assert.equal(await fs.readFile(path.join(target, "node_modules", "tsx", "dist", "loader.mjs"), "utf8"), "export {};\n");
+    assert.equal(await materializeSpsOwnerHostRuntime({
+      sourceRuntimeRoot: source,
+      targetRuntimeRoot: target,
+      runInPlace: false,
+    }), target);
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("retries a stale Windows staging runtime directory before materializing", async () => {
   const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-runtime-retry-"));
   const source = path.join(temporaryRoot, "source");

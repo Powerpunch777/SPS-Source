@@ -1,0 +1,49 @@
+name: Release SPS Desktop Beta
+
+on:
+  push:
+    tags:
+      - "desktop-beta-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish-beta:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.SPS_DESKTOP_RELEASES_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sps-server/desktop/package-lock.json
+
+      - name: Verify Beta release tag and publishing credentials
+        shell: pwsh
+        working-directory: sps-server/desktop
+        run: |
+          $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
+          $expectedTag = "desktop-beta-v$($manifest.version)"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Beta release tag must be $expectedTag, but was $env:GITHUB_REF_NAME."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "SPS_DESKTOP_RELEASES_TOKEN is required to publish the SPS Desktop Beta release."
+          }
+
+      - name: Install Desktop dependencies
+        working-directory: sps-server/desktop
+        run: npm ci
+
+      - name: Run Desktop tests
+        working-directory: sps-server/desktop
+        run: npm test -- --test-concurrency=1
+
+      - name: Build and publish unsigned Beta release
+        working-directory: sps-server/desktop
+        run: npm run release:beta:win

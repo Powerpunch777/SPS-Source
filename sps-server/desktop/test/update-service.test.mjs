@@ -26,14 +26,15 @@ test("disables updates for an unpackaged SPS Desktop development run", async () 
   assert.equal(updater.checkCalls, 0);
 });
 
-test("downloads a signed update automatically and installs it on restart", async () => {
+test("discovers a Beta update automatically but requires the user to download and install it", async () => {
   const updater = createUpdater();
   const service = createSpsUpdateService({
     app: { isPackaged: true, getVersion: () => "0.1.0" },
     updater,
   });
-  assert.equal(updater.autoDownload, true);
-  assert.equal(updater.autoInstallOnAppQuit, true);
+  assert.equal(updater.autoDownload, false);
+  assert.equal(updater.autoInstallOnAppQuit, false);
+  assert.equal(updater.allowPrerelease, true);
 
   await service.check();
   assert.equal(updater.checkCalls, 1);
@@ -41,18 +42,22 @@ test("downloads a signed update automatically and installs it on restart", async
 
   updater.emit("update-available", { version: "0.2.0" });
   assert.deepEqual(service.getStatus(), {
-    state: "downloading",
+    state: "available",
+    channel: "beta",
+    trust: "unsigned-beta",
+    mandatory: false,
     currentVersion: "0.1.0",
     availableVersion: "0.2.0",
-    percent: 0,
-    message: "Downloading the latest SPS Desktop update...",
+    percent: null,
+    message: "A new SPS Desktop Beta update is ready to download.",
   });
 
+  await service.download();
   updater.emit("download-progress", { percent: 53.8 });
   assert.equal(service.getStatus().percent, 54);
   updater.emit("update-downloaded", { version: "0.2.0" });
   assert.equal(service.getStatus().state, "ready");
-  assert.equal(service.getStatus().message, "The update is ready and will install when SPS Desktop restarts.");
+  assert.equal(service.getStatus().message, "The Beta update is ready. Restart SPS Desktop when you are ready to install it.");
 
   service.install();
   assert.equal(updater.installCalls, 1);

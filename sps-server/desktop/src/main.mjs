@@ -116,12 +116,16 @@ let shutdownPromise = null;
 let shutdownComplete = false;
 const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
 let updateService = null;
+let lastPromptedUpdateVersion = null;
 // Status is rendered often by the setup screen. Do not synchronously ask
 // Windows for login-item settings on that hot IPC path: some Windows builds
 // can stall the call while their startup registration is being refreshed.
 let launchAtLoginEnabled = false;
 let updateStatus = {
   state: "initializing",
+  channel: "beta",
+  trust: "unsigned-beta",
+  mandatory: false,
   currentVersion: app.getVersion(),
   availableVersion: null,
   percent: null,
@@ -192,6 +196,9 @@ async function initializeUpdates() {
   if (!app.isPackaged) {
     updateStatus = {
       state: "disabled",
+      channel: "beta",
+      trust: "unsigned-beta",
+      mandatory: false,
       currentVersion: app.getVersion(),
       availableVersion: null,
       percent: null,
@@ -207,19 +214,80 @@ async function initializeUpdates() {
     updateService = createSpsUpdateService({
       app,
       updater: autoUpdater,
-      onStatus: (nextStatus) => { updateStatus = nextStatus; },
+      onStatus: (nextStatus) => {
+        updateStatus = nextStatus;
+        if (["available", "ready"].includes(nextStatus.state)) void promptDesktopBetaUpdate(nextStatus);
+      },
     });
     updateStatus = updateService.getStatus();
     updateService.start();
   } catch {
     updateStatus = {
       state: "unavailable",
+      channel: "beta",
+      trust: "unsigned-beta",
+      mandatory: false,
       currentVersion: app.getVersion(),
       availableVersion: null,
       percent: null,
       message: "Desktop update service is unavailable. Your current installation remains unchanged.",
     };
   }
+}
+
+async function promptDesktopBetaUpdate(status = updateStatus, { force = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const version = status.availableVersion ?? "a newer version";
+  const promptKey = `${status.state}:${version}`;
+  if (!force && lastPromptedUpdateVersion === promptKey) return;
+  lastPromptedUpdateVersion = promptKey;
+
+  if (status.state === "available") {
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "SPS Desktop Beta update",
+      message: `SPS Desktop ${version} is ready to download.`,
+      detail: "This is an unsigned Beta update. SPS will not download or install it until you choose Download.",
+      buttons: ["Download", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (result.response === 0 && updateService) {
+      updateStatus = await updateService.download();
+    }
+    return;
+  }
+
+  if (status.state === "ready") {
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "SPS Desktop Beta update ready",
+      message: `SPS Desktop ${version} is ready to install.`,
+      detail: "Restarting now closes the SPS Desktop window while its local services stop cleanly.",
+      buttons: ["Restart and install", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (result.response === 0 && updateService) {
+      updateStatus = updateService.install();
+    }
+  }
+}
+
+async function checkForDesktopBetaUpdate() {
+  const status = await requireUpdateService().check();
+  updateStatus = status;
+  if (status.state === "current") {
+    await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "SPS Desktop Beta",
+      message: "This SPS Desktop installation is up to date.",
+      buttons: ["OK"],
+    });
+  } else if (status.state === "available" || status.state === "ready") {
+    await promptDesktopBetaUpdate(status, { force: true });
+  }
+  return status;
 }
 
 function requireUpdateService() {
@@ -590,6 +658,7 @@ async function ensureOwnerHostManager() {
         const materializedRuntime = await materializeSpsOwnerHostRuntime({
           sourceRuntimeRoot,
           targetRuntimeRoot,
+          runInPlace: app.isPackaged,
         });
         const packagedEntry = materializedRuntime
           ? path.join(materializedRuntime, "memory-sidecar", "memory-sidecar.mjs")
@@ -600,6 +669,7 @@ async function ensureOwnerHostManager() {
         const materializedRuntime = await materializeSpsOwnerHostRuntime({
           sourceRuntimeRoot,
           targetRuntimeRoot,
+          runInPlace: app.isPackaged,
         });
         const bundledNode = materializedRuntime ? spsOwnerHostBundledNodePath(materializedRuntime) : null;
         return bundledNode && existsSync(bundledNode) ? bundledNode : process.execPath;
@@ -612,6 +682,7 @@ async function ensureOwnerHostManager() {
       const materializedRuntime = await materializeSpsOwnerHostRuntime({
         sourceRuntimeRoot,
         targetRuntimeRoot,
+        runInPlace: app.isPackaged,
       });
       const packagedMemoryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-default-memory") : null;
       const packagedRoomPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-room-chat") : null;
@@ -1623,6 +1694,7 @@ function createApplicationMenu() {
         { label: accountLabel, enabled: false },
         { type: "separator" },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
+        { label: "Check for Beta updates...", click: () => run(checkForDesktopBetaUpdate) },
         { label: "Official extensions...", accelerator: "CommandOrControl+Alt+E", enabled: Boolean(account), click: () => run(showOfficialExtensionsWindow) },
         { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
         {
@@ -1659,6 +1731,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
+    { label: "Check for Beta updates...", click: () => { void checkForDesktopBetaUpdate(); } },
     { label: "Official extensions...", accelerator: "CommandOrControl+Alt+E", enabled: Boolean(account), click: () => { void showOfficialExtensionsWindow(); } },
     {
       label: "Advanced",
@@ -1770,6 +1843,9 @@ function publicStatus() {
       : [],
     update: {
       state: updateStatus.state,
+      channel: updateStatus.channel,
+      trust: updateStatus.trust,
+      mandatory: updateStatus.mandatory,
       currentVersion: updateStatus.currentVersion,
       availableVersion: updateStatus.availableVersion,
       percent: updateStatus.percent,
