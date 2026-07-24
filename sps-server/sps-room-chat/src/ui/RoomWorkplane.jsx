@@ -97,7 +97,7 @@ function taskTypesForProfile(profile) {
 
 const STYLES = `
   .rw-shell { color: var(--foreground, #172033); font: 14px/1.5 system-ui, sans-serif; }
-  .rw-layout { --rw-room-width: 236px; --rw-context-width: 348px; position: relative; display: grid; grid-template-columns: var(--rw-room-width) minmax(0, 1fr); height: min(780px, calc(100dvh - 142px)); min-height: 560px; overflow: hidden; border: 1px solid var(--border, #d8dee9); border-radius: 10px; background: var(--background, #fff); box-shadow: 0 12px 34px rgba(15, 23, 42, .06); }
+  .rw-layout { --rw-room-width: 236px; --rw-context-width: 348px; position: relative; display: grid; grid-template-columns: var(--rw-room-width) minmax(0, 1fr); height: calc(100dvh - 72px); min-height: 560px; overflow: hidden; border: 1px solid var(--border, #d8dee9); border-radius: 10px; background: var(--background, #fff); box-shadow: 0 12px 34px rgba(15, 23, 42, .06); }
   .rw-layout.context-open { grid-template-columns: var(--rw-room-width) minmax(0, 1fr) var(--rw-context-width); }
   .rw-layout.rooms-collapsed { --rw-room-width: 0px; }
   .rw-rooms, .rw-context { min-width: 0; min-height: 0; overscroll-behavior: contain; }
