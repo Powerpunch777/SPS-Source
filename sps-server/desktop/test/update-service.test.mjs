@@ -26,14 +26,14 @@ test("disables updates for an unpackaged SPS Desktop development run", async () 
   assert.equal(updater.checkCalls, 0);
 });
 
-test("discovers a Beta update automatically but requires the user to download and install it", async () => {
+test("downloads an SPS Desktop update automatically and installs it when the app closes", async () => {
   const updater = createUpdater();
   const service = createSpsUpdateService({
     app: { isPackaged: true, getVersion: () => "0.1.0" },
     updater,
   });
-  assert.equal(updater.autoDownload, false);
-  assert.equal(updater.autoInstallOnAppQuit, false);
+  assert.equal(updater.autoDownload, true);
+  assert.equal(updater.autoInstallOnAppQuit, true);
   assert.equal(updater.allowPrerelease, true);
 
   await service.check();
@@ -49,16 +49,16 @@ test("discovers a Beta update automatically but requires the user to download an
     currentVersion: "0.1.0",
     availableVersion: "0.2.0",
     percent: null,
-    message: "A new SPS Desktop Beta update is ready to download.",
+    message: "A new SPS Desktop update is downloading automatically.",
   });
 
-  await service.download();
   updater.emit("download-progress", { percent: 53.8 });
   assert.equal(service.getStatus().percent, 54);
   updater.emit("update-downloaded", { version: "0.2.0" });
   assert.equal(service.getStatus().state, "ready");
-  assert.equal(service.getStatus().message, "The Beta update is ready. Restart SPS Desktop when you are ready to install it.");
+  assert.equal(service.getStatus().message, "The SPS Desktop update is ready and will install automatically when the app closes.");
 
+  // Restart is optional; an app quit also installs because autoInstallOnAppQuit is true.
   service.install();
   assert.equal(updater.installCalls, 1);
 });

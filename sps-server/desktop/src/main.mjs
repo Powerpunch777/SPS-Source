@@ -225,7 +225,7 @@ async function initializeUpdates() {
       updater: autoUpdater,
       onStatus: (nextStatus) => {
         updateStatus = nextStatus;
-        if (["available", "ready"].includes(nextStatus.state)) void promptDesktopBetaUpdate(nextStatus);
+        if (nextStatus.state === "ready") void promptDesktopBetaUpdate(nextStatus);
       },
     });
     updateStatus = updateService.getStatus();
@@ -251,28 +251,12 @@ async function promptDesktopBetaUpdate(status = updateStatus, { force = false } 
   if (!force && lastPromptedUpdateVersion === promptKey) return;
   lastPromptedUpdateVersion = promptKey;
 
-  if (status.state === "available") {
-    const result = await dialog.showMessageBox(mainWindow, {
-      type: "info",
-      title: "SPS Desktop Beta update",
-      message: `SPS Desktop ${version} is ready to download.`,
-      detail: "This is an unsigned Beta update. SPS will not download or install it until you choose Download.",
-      buttons: ["Download", "Later"],
-      defaultId: 0,
-      cancelId: 1,
-    });
-    if (result.response === 0 && updateService) {
-      updateStatus = await updateService.download();
-    }
-    return;
-  }
-
   if (status.state === "ready") {
     const result = await dialog.showMessageBox(mainWindow, {
       type: "info",
-      title: "SPS Desktop Beta update ready",
-      message: `SPS Desktop ${version} is ready to install.`,
-      detail: "Restarting now closes the SPS Desktop window while its local services stop cleanly.",
+      title: "SPS Desktop update ready",
+      message: `SPS Desktop ${version} has been downloaded.`,
+      detail: "It will install automatically the next time SPS Desktop closes. You can also restart now.",
       buttons: ["Restart and install", "Later"],
       defaultId: 0,
       cancelId: 1,
@@ -293,7 +277,7 @@ async function checkForDesktopBetaUpdate() {
       message: "This SPS Desktop installation is up to date.",
       buttons: ["OK"],
     });
-  } else if (status.state === "available" || status.state === "ready") {
+  } else if (status.state === "ready") {
     await promptDesktopBetaUpdate(status, { force: true });
   }
   return status;
@@ -1929,7 +1913,7 @@ function createApplicationMenu() {
         { label: accountLabel, enabled: false },
         { type: "separator" },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
-        { label: "Check for Beta updates...", click: () => run(checkForDesktopBetaUpdate) },
+        { label: "Check for SPS Desktop updates...", click: () => run(checkForDesktopBetaUpdate) },
         {
           label: "Official extensions...",
           accelerator: "CommandOrControl+Alt+E",
@@ -1973,7 +1957,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
-    { label: "Check for Beta updates...", click: () => { void checkForDesktopBetaUpdate(); } },
+    { label: "Check for SPS Desktop updates...", click: () => { void checkForDesktopBetaUpdate(); } },
     {
       label: "Official extensions...",
       accelerator: "CommandOrControl+Alt+E",

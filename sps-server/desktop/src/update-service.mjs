@@ -2,8 +2,8 @@ const DEFAULT_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 export const SPS_DESKTOP_UPDATE_POLICY = Object.freeze({
   channel: "beta",
   trust: "unsigned-beta",
-  automaticDownload: false,
-  automaticInstall: false,
+  automaticDownload: true,
+  automaticInstall: true,
   mandatory: false,
 });
 
@@ -64,7 +64,7 @@ export function createSpsUpdateService({
       state: "available",
       availableVersion: versionOf(info),
       percent: null,
-      message: "A new SPS Desktop Beta update is ready to download.",
+      message: "A new SPS Desktop update is downloading automatically.",
     }));
     updater.on("update-not-available", () => publish({
       state: "current",
@@ -75,13 +75,13 @@ export function createSpsUpdateService({
     updater.on("download-progress", (progress) => publish({
       state: "downloading",
       percent: Number.isFinite(progress?.percent) ? Math.round(progress.percent) : null,
-      message: "Downloading the SPS Desktop Beta update...",
+      message: "Downloading the SPS Desktop update...",
     }));
     updater.on("update-downloaded", (info) => publish({
       state: "ready",
       availableVersion: versionOf(info) ?? status.availableVersion,
       percent: 100,
-      message: "The Beta update is ready. Restart SPS Desktop when you are ready to install it.",
+      message: "The SPS Desktop update is ready and will install automatically when the app closes.",
     }));
     updater.on("error", () => publish({
       state: "error",
@@ -105,7 +105,7 @@ export function createSpsUpdateService({
     if (status.state !== "available") {
       throw new Error("No SPS Desktop update is ready to download.");
     }
-    publish({ state: "downloading", percent: 0, message: "Downloading the SPS Desktop Beta update..." });
+    publish({ state: "downloading", percent: 0, message: "Downloading the SPS Desktop update..." });
     try {
       await updater.downloadUpdate();
     } catch {
