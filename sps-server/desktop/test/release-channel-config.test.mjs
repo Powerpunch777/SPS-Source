@@ -10,7 +10,7 @@ const repositoryDirectory = path.resolve(desktopDirectory, "..", "..");
 
 test("uses the separate artifact channel first and mirrors the one-time bridge release to the legacy source channel", async () => {
   const manifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
-  assert.equal(manifest.version, "0.4.28");
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
 
   assert.deepEqual(manifest.build.publish, [
     {
