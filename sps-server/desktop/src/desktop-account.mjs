@@ -188,8 +188,6 @@ export async function startSpsDesktopGoogleSignIn({
       fail(new Error(value(requestUrl.searchParams.get("error")) || "Google sign-in was cancelled."));
       return;
     }
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(localCallbackPage({ success: true }));
     const address = server.address();
     const redirectUri = `http://127.0.0.1:${address.port}/oauth2/callback`;
     void (async () => {
@@ -198,6 +196,8 @@ export async function startSpsDesktopGoogleSignIn({
         const account = await verifyGoogleIdToken({ fetchImpl, idToken, clientId, nonce, now: now() });
         if (settled) return;
         settled = true;
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(localCallbackPage({ success: true }));
         server.close();
         settle(account);
       } catch (error) {

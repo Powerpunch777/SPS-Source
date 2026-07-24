@@ -458,6 +458,20 @@ function configuredDesktopGoogleCredentials() {
   return clientId ? { clientId, clientSecret } : null;
 }
 
+function safeDesktopAccountError(error) {
+  const message = error instanceof Error ? error.message.trim() : String(error ?? "").trim();
+  if (!message) return "Google sign-in could not finish.";
+  return message.slice(0, 360);
+}
+
+function recordDesktopAccountAttempt(status, error = null) {
+  state.desktopAccountLastAttempt = {
+    status,
+    at: new Date().toISOString(),
+    error: error ? safeDesktopAccountError(error) : null,
+  };
+}
+
 function sendDesktopAccountStatus() {
   createApplicationMenu();
   refreshTrayMenu();
@@ -472,22 +486,36 @@ async function startDesktopAccountSignIn() {
     throw new Error("Google login is not configured for this SPS Desktop build.");
   }
   desktopAccountError = null;
-  const signIn = await startSpsDesktopGoogleSignIn({
-    ...credentials,
-    openExternal: (url) => shell.openExternal(url),
-  });
+  recordDesktopAccountAttempt("pending");
+  await persistState();
+  let signIn;
+  try {
+    signIn = await startSpsDesktopGoogleSignIn({
+      ...credentials,
+      openExternal: (url) => shell.openExternal(url),
+    });
+  } catch (error) {
+    desktopAccountError = safeDesktopAccountError(error);
+    recordDesktopAccountAttempt("failed", error);
+    await persistState();
+    sendDesktopAccountStatus();
+    throw error;
+  }
   pendingDesktopAccount = signIn;
   sendDesktopAccountStatus();
   void signIn.result.then(async (account) => {
     state.encryptedDesktopAccount = encrypt(JSON.stringify(account));
     if (pendingDesktopAccount === signIn) desktopAccountError = null;
     restoreCurrentAccountConnection();
+    recordDesktopAccountAttempt("succeeded");
     await persistState();
     await maybeOpenWorkspaceForCurrentAccount();
-  }).catch((error) => {
+  }).catch(async (error) => {
     if (pendingDesktopAccount === signIn) {
-      desktopAccountError = error instanceof Error ? error.message : "Google sign-in could not finish.";
+      desktopAccountError = safeDesktopAccountError(error);
     }
+    recordDesktopAccountAttempt("failed", error);
+    await persistState().catch(() => {});
   }).finally(() => {
     if (pendingDesktopAccount === signIn) pendingDesktopAccount = null;
     sendDesktopAccountStatus();
@@ -1780,6 +1808,13 @@ function publicStatus() {
       email: desktopAccount?.email ?? null,
       picture: desktopAccount?.picture ?? null,
       verifiedAt: desktopAccount?.verifiedAt ?? null,
+      lastAttempt: state.desktopAccountLastAttempt
+        ? {
+          status: state.desktopAccountLastAttempt.status,
+          at: state.desktopAccountLastAttempt.at,
+          error: state.desktopAccountLastAttempt.error,
+        }
+        : null,
     },
     profile: state.profile
       ? {

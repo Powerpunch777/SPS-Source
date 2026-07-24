@@ -59,7 +59,7 @@ function renderAccount(status) {
   if (!configured) {
     note.textContent = "처음 한 번은 Google Desktop 로그인 client ID와 client secret 설정이 필요합니다.";
   } else if (desktopAccount.error) {
-    note.textContent = desktopAccount.error;
+    note.textContent = `Google login did not finish: ${desktopAccount.error}`;
   } else {
     note.textContent = "";
   }
@@ -206,7 +206,11 @@ $("#check-server-access").addEventListener("click", () => run(async () => {
 
 window.spsDesktop.onDesktopAccountChanged((status) => {
   render(status);
-  if (account(status).signedIn) setNotice("Google 계정을 확인했습니다.");
+  if (account(status).signedIn) {
+    setNotice("Google account is confirmed. Choose whether this computer creates or joins an SPS Server.");
+  } else if (account(status).lastAttempt?.status === "failed") {
+    setNotice(account(status).lastAttempt.error ?? "Google sign-in did not finish.", true);
+  }
 });
 
 window.spsDesktop.readyForJoinLink().then((join) => {

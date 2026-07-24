@@ -115,6 +115,6 @@ test("keeps a safe Google token exchange failure reason for Desktop retry", asyn
   const callback = authorization.searchParams.get("redirect_uri");
   const response = await fetch(`${callback}?code=google-code&state=${authorization.searchParams.get("state")}`);
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 400);
   await assert.rejects(pending.result, /OAuth client is not available yet\./);
 });

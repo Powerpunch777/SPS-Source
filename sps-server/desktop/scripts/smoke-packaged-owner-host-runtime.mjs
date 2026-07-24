@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createPluginTemplate,
   generatePluginSigningKeyPair,
@@ -15,12 +16,11 @@ import {
 } from "../src/registry-source-catalog.mjs";
 import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
 
-const runtimeRoot = path.resolve(process.env.SPS_OWNER_HOST_RUNTIME_ROOT || "");
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+const desktopRoot = path.resolve(scriptDirectory, "..");
+const runtimeRoot = path.resolve(process.env.SPS_OWNER_HOST_RUNTIME_ROOT || path.join(desktopRoot, ".owner-host-runtime"));
 const nodeBinary = path.resolve(process.env.SPS_OWNER_HOST_NODE_BINARY || path.join(runtimeRoot, "bin", process.platform === "win32" ? "node.exe" : "node"));
 
-if (!runtimeRoot || runtimeRoot === path.resolve(".")) {
-  throw new Error("Set SPS_OWNER_HOST_RUNTIME_ROOT to the packaged SPS Owner Host runtime.");
-}
 try {
   await access(nodeBinary);
 } catch {

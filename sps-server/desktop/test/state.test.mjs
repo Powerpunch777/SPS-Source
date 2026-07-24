@@ -14,12 +14,13 @@ test("adds private team access fields without discarding a v1 Desktop profile", 
       nodeId: "node-1",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 5);
+    assert.equal(state.version, 6);
     assert.equal(state.profile.hubUrl, "https://app.example.test");
     assert.equal(state.nodeId, "node-1");
     assert.equal(state.teamAccess, null);
     assert.equal(state.encryptedTeamCredentials, null);
     assert.equal(state.encryptedDesktopAccount, null);
+    assert.equal(state.desktopAccountLastAttempt, null);
     assert.equal(state.encryptedDesktopGoogleClientSecret, null);
     assert.deepEqual(state.accountConnections, {});
     assert.equal(state.ownerHostOwnerSubject, null);
@@ -42,6 +43,31 @@ test("persists an opt-in team access record without plaintext credentials", asyn
     assert.match(raw, /secure-storage-value/);
     assert.doesNotMatch(raw, /googleClientSecret/);
     assert.deepEqual(await loadState(root), state);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps only a bounded, valid Desktop account attempt diagnostic", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-"));
+  try {
+    await fs.writeFile(path.join(root, "sps-desktop-state.json"), JSON.stringify({
+      version: 6,
+      desktopAccountLastAttempt: {
+        status: "failed",
+        at: "2026-07-24T12:00:00.000Z",
+        error: "x".repeat(500),
+      },
+    }), "utf8");
+    const state = await loadState(root);
+    assert.equal(state.desktopAccountLastAttempt.status, "failed");
+    assert.equal(state.desktopAccountLastAttempt.error.length, 360);
+
+    await fs.writeFile(path.join(root, "sps-desktop-state.json"), JSON.stringify({
+      version: 6,
+      desktopAccountLastAttempt: { status: "other", at: "not-a-date" },
+    }), "utf8");
+    assert.equal((await loadState(root)).desktopAccountLastAttempt, null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
