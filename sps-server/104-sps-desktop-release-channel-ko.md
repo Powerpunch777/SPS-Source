@@ -2,8 +2,8 @@
 
 ## Purpose
 
-SPS Desktop updates come from the public `Powerpunch777/SPS` GitHub Releases
-channel. The Desktop app checks this channel after installation starts and then
+SPS Desktop updates come from the public `Powerpunch777/SPS-Desktop-Releases`
+GitHub Releases channel. The Desktop app checks this channel after installation starts and then
 every six hours. It does not download or install an update without a person
 pressing the relevant button in SPS Desktop.
 
@@ -31,14 +31,19 @@ The workflow is `.github/workflows/sps-desktop-release.yml`.
    `SPS_WINDOWS_CSC_KEY_PASSWORD` from the Windows code-signing certificate.
    The certificate subject must be the actual SPS publisher identity that will
    sign every future release.
-2. Update `sps-server/desktop/package.json` to the release version.
-3. Run the Desktop tests locally.
-4. Push a tag exactly matching `desktop-v<package version>`, for example
+2. Create a fine-grained GitHub token that has **Contents: Read and write** only
+   for `Powerpunch777/SPS-Desktop-Releases`, then store it as
+   `SPS_DESKTOP_RELEASES_TOKEN` in the product repository. Do not use a broad
+   personal access token.
+3. Update `sps-server/desktop/package.json` to the release version.
+4. Run the Desktop tests locally.
+5. Push a tag exactly matching `desktop-v<package version>`, for example
    `desktop-v0.1.1`.
-5. GitHub Actions verifies the tag and signing secrets, builds the Windows NSIS
+6. GitHub Actions verifies the tag and signing secrets, builds the Windows NSIS
    installer with `forceCodeSigning=true`, and publishes the release files.
 
-The workflow fails before publishing if either signing secret is absent. This
+The workflow fails before publishing if a signing secret or the separate release
+channel token is absent. This
 is intentional: test installers must not become an update source for friends.
 
 ## Two-computer pilot installer

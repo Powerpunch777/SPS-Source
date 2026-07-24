@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+const desktopDirectory = path.resolve(testDirectory, "..");
+const repositoryDirectory = path.resolve(desktopDirectory, "..", "..");
+
+test("publishes Desktop updates only to the artifact release repository", async () => {
+  const manifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
+  const channel = manifest.build.publish.find((entry) => entry.provider === "github");
+
+  assert.deepEqual(channel, {
+    provider: "github",
+    owner: "Powerpunch777",
+    repo: "SPS-Desktop-Releases",
+    releaseType: "release",
+  });
+});
+
+test("release workflow requires the narrow cross-repository publishing token", async () => {
+  const workflow = await readFile(
+    path.join(repositoryDirectory, ".github", "workflows", "sps-desktop-release.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /GH_TOKEN:\s*\$\{\{ secrets\.SPS_DESKTOP_RELEASES_TOKEN \}\}/);
+  assert.match(workflow, /SPS_DESKTOP_RELEASES_TOKEN is required/);
+  assert.doesNotMatch(workflow, /GH_TOKEN:\s*\$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+});
