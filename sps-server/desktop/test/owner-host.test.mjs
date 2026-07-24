@@ -4,7 +4,12 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createSpsOwnerHostManager, materializeSpsOwnerHostRuntime, resolveSpsOwnerHostRuntime } from "../src/owner-host.mjs";
+import {
+  createSpsOwnerHostManager,
+  materializeSpsOwnerHostRuntime,
+  resolveSpsOwnerHostRuntime,
+  spsOwnerHostBundledNodePath,
+} from "../src/owner-host.mjs";
 
 function response(payload) {
   return { ok: true, json: async () => payload };
@@ -133,15 +138,18 @@ test("materializes the embedded runtime into the Owner data directory once", asy
   try {
     await fs.mkdir(path.join(source, "dist"), { recursive: true });
     await fs.mkdir(path.join(source, "sps-vendor", "tsx", "dist"), { recursive: true });
+    await fs.mkdir(path.join(source, "bin"), { recursive: true });
     await fs.writeFile(path.join(source, "dist", "index.js"), "export {};\n", "utf8");
     await fs.writeFile(path.join(source, "sps-owner-host-bootstrap.mjs"), "export {};\n", "utf8");
     await fs.writeFile(path.join(source, "sps-vendor", "tsx", "dist", "loader.mjs"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(source, "bin", process.platform === "win32" ? "node.exe" : "node"), "node\n", "utf8");
     await fs.writeFile(path.join(source, "sps-owner-host-runtime.json"), "{\"format\":1}\n", "utf8");
     await fs.writeFile(path.join(source, "package.json"), "{\"name\":\"sps-owner-host-runtime\"}\n", "utf8");
 
     assert.equal(await materializeSpsOwnerHostRuntime({ sourceRuntimeRoot: source, targetRuntimeRoot: target }), target);
     assert.equal(await fs.readFile(path.join(target, "dist", "index.js"), "utf8"), "export {};\n");
     assert.equal(await fs.readFile(path.join(target, "node_modules", "tsx", "dist", "loader.mjs"), "utf8"), "export {};\n");
+    assert.equal(await fs.readFile(spsOwnerHostBundledNodePath(target), "utf8"), "node\n");
     assert.equal(await materializeSpsOwnerHostRuntime({ sourceRuntimeRoot: source, targetRuntimeRoot: target }), target);
   } finally {
     await fs.rm(temporaryRoot, { recursive: true, force: true });

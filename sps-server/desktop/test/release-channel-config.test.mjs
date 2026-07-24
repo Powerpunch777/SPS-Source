@@ -12,6 +12,18 @@ test("uses the separate artifact channel first and mirrors the one-time bridge r
   const manifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   assert.equal(manifest.build.artifactName, "SPS-Desktop-Setup-${version}.${ext}");
+  assert.deepEqual(manifest.build.extraResources, [
+    {
+      from: ".owner-host-runtime",
+      to: "sps-owner-host-runtime",
+      filter: ["**/*"],
+    },
+    {
+      from: ".owner-host-runtime/node_modules",
+      to: "sps-owner-host-runtime/node_modules",
+      filter: ["**/*"],
+    },
+  ]);
 
   assert.deepEqual(manifest.build.publish, [
     {

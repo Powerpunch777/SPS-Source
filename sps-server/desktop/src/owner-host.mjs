@@ -126,6 +126,7 @@ export async function materializeSpsOwnerHostRuntime({
   const sourceBootstrap = path.join(sourceRuntimeRoot, "sps-owner-host-bootstrap.mjs");
   const sourceModules = path.join(sourceRuntimeRoot, "node_modules");
   const sourceVendor = path.join(sourceRuntimeRoot, "sps-vendor");
+  const sourceBin = path.join(sourceRuntimeRoot, "bin");
   const sourcePackage = path.join(sourceRuntimeRoot, "package.json");
   if (
     !(await fileExists(sourceManifest, fsApi))
@@ -137,6 +138,7 @@ export async function materializeSpsOwnerHostRuntime({
   }
 
   const sourceModulesReady = await fileExists(path.join(sourceModules, "tsx", "dist", "loader.mjs"), fsApi);
+  const sourceHasBundledNode = await fileExists(spsOwnerHostBundledNodePath(sourceRuntimeRoot), fsApi);
   // A packaged runtime is read-only and all mutable state lives in the Owner
   // Vault. Development uses a private materialized copy so a live sidecar
   // cannot lock the source tree while a new Desktop build is prepared.
@@ -153,6 +155,7 @@ export async function materializeSpsOwnerHostRuntime({
   const targetEntry = path.join(targetRuntimeRoot, "dist", "index.js");
   const targetBootstrap = path.join(targetRuntimeRoot, "sps-owner-host-bootstrap.mjs");
   const targetTsx = path.join(targetRuntimeRoot, "node_modules", "tsx", "dist", "loader.mjs");
+  const targetBundledNode = spsOwnerHostBundledNodePath(targetRuntimeRoot);
   const sourceManifestText = await fsApi.readFile(sourceManifest, "utf8");
   const targetManifestText = await fsApi.readFile(path.join(targetRuntimeRoot, "sps-owner-host-runtime.json"), "utf8")
     .catch(() => null);
@@ -170,6 +173,7 @@ export async function materializeSpsOwnerHostRuntime({
     (await fileExists(targetEntry, fsApi))
     && (await fileExists(targetBootstrap, fsApi))
     && (await fileExists(targetTsx, fsApi))
+    && (!sourceHasBundledNode || await fileExists(targetBundledNode, fsApi))
     && targetManifestText === sourceManifestText
     && targetHasSupport.every(Boolean)
   ) return targetRuntimeRoot;
@@ -183,6 +187,9 @@ export async function materializeSpsOwnerHostRuntime({
   await fsApi.mkdir(stagingRoot, { recursive: true });
   await fsApi.cp(path.join(sourceRuntimeRoot, "dist"), path.join(stagingRoot, "dist"), { recursive: true, dereference: false });
   await fsApi.cp(sourceDependencyRoot, path.join(stagingRoot, "node_modules"), { recursive: true, dereference: false });
+  if (sourceHasBundledNode) {
+    await fsApi.cp(sourceBin, path.join(stagingRoot, "bin"), { recursive: true, dereference: false });
+  }
   await fsApi.copyFile(sourceManifest, path.join(stagingRoot, "sps-owner-host-runtime.json"));
   await fsApi.copyFile(sourceBootstrap, path.join(stagingRoot, "sps-owner-host-bootstrap.mjs"));
   await fsApi.copyFile(sourcePackage, path.join(stagingRoot, "package.json"));
