@@ -26,7 +26,10 @@ export const SPS_OFFICIAL_REGISTRY_SOURCE = Object.freeze({
   id: "io.sps.official",
   kind: "official",
   displayName: "SPS Official Registry",
-  indexUrl: "https://redongames.com/registry/registry.json",
+  // GitHub Pages is the current distribution transport. The public Redon
+  // domain remains the catalog and documentation home, but is not used for
+  // desktop acquisition until its TLS certificate is provisioned.
+  indexUrl: "https://raw.githubusercontent.com/Powerpunch777/SPS/codex/paperclip-workplane/sps-server/website/registry/registry.json",
   trustedRoot: Object.freeze({
     keyId: "ed25519:sps-official-registry-root-1",
     publicKey: "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAwulANS1+yX316js++mKcwkPcGh7pVkB+Dh+0wt0LTJE=\n-----END PUBLIC KEY-----\n",
@@ -197,8 +200,12 @@ function resolveRemoteUrl(baseUrl, locator, label) {
   return url.toString();
 }
 
-function resolveArtifactUrl(releaseUrl, locator) {
-  if (isSafeRegistryRelativePath(locator)) return resolveRemoteUrl(releaseUrl, locator, "Registry artifact");
+function resolveArtifactUrl(registryIndexUrl, locator) {
+  // Registry artifact paths are rooted at the signed Registry index. Release
+  // records live under `releases/`, while artifacts live beside that folder
+  // under `packages/`, so resolving from a release record would request an
+  // unintended `releases/packages/...` path.
+  if (isSafeRegistryRelativePath(locator)) return resolveRemoteUrl(registryIndexUrl, locator, "Registry artifact");
   const url = new URL(locator);
   if (url.protocol !== "https:" || url.username || url.password || url.hash) {
     throw new Error("Registry artifact must be an HTTPS URL without credentials or a fragment.");
@@ -258,7 +265,7 @@ async function inspectRemoteRegistrySource(source, { fetchImpl }) {
           ...(publisherProfiles.has(record.publisher.id) ? { publisherProfile: { ...publisherProfiles.get(record.publisher.id) } } : {}),
           publisherKeyId: record.publisher.keyId,
           artifact: { ...record.artifact },
-          artifactUrl: resolveArtifactUrl(releaseUrl, record.artifact.url),
+          artifactUrl: resolveArtifactUrl(source.indexUrl, record.artifact.url),
           releaseLocator,
         });
       } catch (error) {

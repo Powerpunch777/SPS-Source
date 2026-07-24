@@ -135,6 +135,7 @@ test("verifies the same pinned-root release contract for Git and official Regist
       displayName: "Example Studio",
       websiteUrl: "https://example.test",
     });
+    assert.equal(report.releases[0].artifactUrl, "https://registry.example.test/packages/weather.spsplugin");
   }
 });
 
