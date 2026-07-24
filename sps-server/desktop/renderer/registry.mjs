@@ -38,9 +38,9 @@ function renderSources() {
     <article class="source-card ${source.id === selectedSourceId ? "selected" : ""}">
       <button class="source-select" type="button" data-source-id="${escapeHtml(source.id)}">
         <strong>${escapeHtml(source.displayName)}</strong>
-        <span>${escapeHtml(sourceTrustLabel(source))}${source.localFolderName ? ` / ${escapeHtml(source.localFolderName)}` : ""}</span>
+        <span>${escapeHtml(sourceTrustLabel(source))}${source.isBundled ? " / Bundled" : ""}${source.localFolderName ? ` / ${escapeHtml(source.localFolderName)}` : ""}</span>
       </button>
-      <button class="remove-source" type="button" data-remove-source-id="${escapeHtml(source.id)}" title="Remove source">Remove</button>
+      ${source.isBundled ? "" : `<button class="remove-source" type="button" data-remove-source-id="${escapeHtml(source.id)}" title="Remove source">Remove</button>`}
     </article>
   `).join("");
 }

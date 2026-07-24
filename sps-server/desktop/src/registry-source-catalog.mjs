@@ -19,6 +19,20 @@ const REGISTRY_SOURCES_SCHEMA_VERSION = 1;
 const MAX_METADATA_BYTES = 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 
+// This key is intentionally compiled into SPS Desktop. Remote Registry data
+// never supplies its own trust root, so a compromised index cannot approve a
+// replacement signing key. Rotating this key requires a Desktop update.
+export const SPS_OFFICIAL_REGISTRY_SOURCE = Object.freeze({
+  id: "io.sps.official",
+  kind: "official",
+  displayName: "SPS Official Registry",
+  indexUrl: "https://redongames.com/registry/registry.json",
+  trustedRoot: Object.freeze({
+    keyId: "ed25519:sps-official-registry-root-1",
+    publicKey: "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAwulANS1+yX316js++mKcwkPcGh7pVkB+Dh+0wt0LTJE=\n-----END PUBLIC KEY-----\n",
+  }),
+});
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -55,6 +69,21 @@ function sourceDirectory(vaultRoot) {
   return path.join(path.resolve(vaultRoot), "registry-sources");
 }
 
+export function isBundledRegistrySource(sourceOrId) {
+  const sourceId = typeof sourceOrId === "string" ? sourceOrId : sourceOrId?.id;
+  return sourceId === SPS_OFFICIAL_REGISTRY_SOURCE.id;
+}
+
+function mergeBundledRegistrySources(sources) {
+  const configured = sources.filter((source) => !isBundledRegistrySource(source));
+  return [SPS_OFFICIAL_REGISTRY_SOURCE, ...configured]
+    .map((source) => ({
+      ...source,
+      ...(source.trustedRoot ? { trustedRoot: { ...source.trustedRoot } } : {}),
+    }))
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
+}
+
 export function ownerVaultRegistrySourcesPath(vaultRoot) {
   return path.join(sourceDirectory(vaultRoot), "sources.json");
 }
@@ -69,9 +98,14 @@ export async function loadRegistrySources({ vaultRoot, fsApi = fs } = {}) {
     }
     const parsed = JSON.parse(await fsApi.readFile(filePath, "utf8"));
     assertSourceList(parsed);
-    return { schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION, sources: parsed.sources.map((source) => ({ ...source })) };
+    return {
+      schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION,
+      sources: mergeBundledRegistrySources(parsed.sources),
+    };
   } catch (error) {
-    if (error?.code === "ENOENT") return { schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION, sources: [] };
+    if (error?.code === "ENOENT") {
+      return { schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION, sources: mergeBundledRegistrySources([]) };
+    }
     if (error instanceof SyntaxError) throw new Error("Registry source configuration is not valid JSON.");
     throw error;
   }
@@ -79,7 +113,10 @@ export async function loadRegistrySources({ vaultRoot, fsApi = fs } = {}) {
 
 export async function saveRegistrySources({ vaultRoot, sources, fsApi = fs, randomId = randomUUID } = {}) {
   if (!vaultRoot) throw new Error("Owner Vault root is required.");
-  const value = { schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION, sources: Array.isArray(sources) ? sources : null };
+  const configuredSources = Array.isArray(sources)
+    ? sources.filter((source) => !isBundledRegistrySource(source))
+    : null;
+  const value = { schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION, sources: configuredSources };
   assertSourceList(value);
   const directory = sourceDirectory(vaultRoot);
   const filePath = ownerVaultRegistrySourcesPath(vaultRoot);
@@ -91,7 +128,10 @@ export async function saveRegistrySources({ vaultRoot, sources, fsApi = fs, rand
   } finally {
     await fsApi.rm(temporaryPath, { force: true }).catch(() => {});
   }
-  return { schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION, sources: value.sources.map((source) => ({ ...source })) };
+  return {
+    schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION,
+    sources: mergeBundledRegistrySources(value.sources),
+  };
 }
 
 export async function addRegistrySource({ vaultRoot, source, fsApi = fs } = {}) {
@@ -101,13 +141,17 @@ export async function addRegistrySource({ vaultRoot, source, fsApi = fs } = {}) 
   if (current.sources.some((entry) => entry.id === source.id)) {
     throw new Error(`Registry source ${source.id} is already configured.`);
   }
-  current.sources.push({ ...source });
-  current.sources.sort((left, right) => left.displayName.localeCompare(right.displayName));
-  return await saveRegistrySources({ vaultRoot, sources: current.sources, fsApi });
+  const configuredSources = current.sources.filter((entry) => !isBundledRegistrySource(entry));
+  configuredSources.push({ ...source });
+  configuredSources.sort((left, right) => left.displayName.localeCompare(right.displayName));
+  return await saveRegistrySources({ vaultRoot, sources: configuredSources, fsApi });
 }
 
 export async function removeRegistrySource({ vaultRoot, sourceId, fsApi = fs } = {}) {
   if (typeof sourceId !== "string" || sourceId.trim().length === 0) throw new Error("Registry source id is required.");
+  if (isBundledRegistrySource(sourceId)) {
+    throw new Error("The bundled SPS Official Registry cannot be removed.");
+  }
   const current = await loadRegistrySources({ vaultRoot, fsApi });
   const remaining = current.sources.filter((source) => source.id !== sourceId);
   if (remaining.length === current.sources.length) throw new Error(`Registry source ${sourceId} was not found.`);

@@ -70,6 +70,7 @@ import { stageSpsPluginArchive } from "./registry-staging.mjs";
 import {
   acquireRegistryRelease,
   addRegistrySource,
+  isBundledRegistrySource,
   inspectRegistrySource,
   loadRegistrySources,
   removeRegistrySource,
@@ -869,6 +870,7 @@ function registrySourceView(source) {
     id: source.id,
     kind: source.kind,
     displayName: source.displayName,
+    isBundled: isBundledRegistrySource(source),
     ...(source.indexUrl ? { indexUrl: source.indexUrl } : {}),
     ...(source.localPath ? { localFolderName: path.basename(source.localPath) || source.localPath } : {}),
     ...(source.trustedRoot ? { trustedRootKeyId: source.trustedRoot.keyId } : {}),

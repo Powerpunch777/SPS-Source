@@ -17,8 +17,10 @@ import {
   acquireRegistryRelease,
   addRegistrySource,
   inspectRegistrySource,
+  isBundledRegistrySource,
   loadRegistrySources,
   removeRegistrySource,
+  SPS_OFFICIAL_REGISTRY_SOURCE,
 } from "../src/registry-source-catalog.mjs";
 import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
 
@@ -95,15 +97,22 @@ function makeRemoteFixture() {
   return { artifact, source, fetchImpl };
 }
 
-test("stores and removes Owner-trusted Registry source definitions", async () => {
+test("keeps the SPS Official Registry bundled while storing and removing Owner-trusted sources", async () => {
   const vaultRoot = await mkdtemp(path.join(os.tmpdir(), "sps-registry-sources-"));
   try {
     const source = { id: "io.sps.local", kind: "local", displayName: "Team Registry", localPath: path.join(vaultRoot, "registry") };
+    const initial = await loadRegistrySources({ vaultRoot });
+    assert.deepEqual(initial.sources, [SPS_OFFICIAL_REGISTRY_SOURCE]);
+    assert.equal(isBundledRegistrySource(initial.sources[0]), true);
     await addRegistrySource({ vaultRoot, source });
     const loaded = await loadRegistrySources({ vaultRoot });
-    assert.deepEqual(loaded.sources, [source]);
+    assert.deepEqual(loaded.sources.map((entry) => entry.id), ["io.sps.official", source.id]);
+    await assert.rejects(
+      () => removeRegistrySource({ vaultRoot, sourceId: SPS_OFFICIAL_REGISTRY_SOURCE.id }),
+      /cannot be removed/i,
+    );
     await removeRegistrySource({ vaultRoot, sourceId: source.id });
-    assert.deepEqual((await loadRegistrySources({ vaultRoot })).sources, []);
+    assert.deepEqual((await loadRegistrySources({ vaultRoot })).sources, [SPS_OFFICIAL_REGISTRY_SOURCE]);
   } finally {
     await rm(vaultRoot, { recursive: true, force: true });
   }
