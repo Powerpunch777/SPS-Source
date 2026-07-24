@@ -10,7 +10,8 @@ SPS는 제품 Core를 공개 소스로 배포하지 않는다. 대신 외부 개
 | Plugin SDK, CLI, package·Registry 계약 | 공개 | `Powerpunch777/sps-plugin-sdk` | 플러그인 작성·검사·서명 규격 |
 | 공식 확장 패키지·서명 Registry index | 공개 | `Powerpunch777/SPS-Official-Extensions` | 기본 제공 확장의 검증·배포 |
 | Windows 설치 파일과 업데이트 메타데이터 | 공개 | `Powerpunch777/SPS-Desktop-Releases` | 설치 앱의 안정적 업데이트 |
-| SPS Core, Desktop, Owner Host, 기본 Memory 구현 | 비공개 예정 | 제품 소스 저장소 | 제품 로직·보안 경계·사용자 데이터 처리 |
+| SPS Core runtime·DB·Plugin lifecycle | 비공개 예정 | `Powerpunch777/SPS-Core` | Paperclip 유래 고지를 보존하는 호환 Core |
+| SPS Desktop, Owner Host, Node, 기본 Memory, 제품 UI | 비공개 예정 | `Powerpunch777/SPS` | 제품 로직·보안 경계·사용자 데이터 처리 |
 | 사용자 프로젝트, Room, Task, Vault, API 키 | 공개 금지 | 각 Owner의 로컬 데이터 | 개인·팀 데이터 보호 |
 
 공개 SDK의 Apache-2.0 라이선스는 SDK 자체와 플러그인 작성 도구에만 적용한다.
@@ -63,7 +64,7 @@ SPS, SonParkServer, 로고, 공식 배지, 공식 Registry의 상표·운영 권
    새 Release 채널을 기본으로 확인한다.
 3. 사용 중인 모든 Owner·Member 컴퓨터가 브리지 버전 이상으로 업데이트됐는지
    확인한다.
-4. `Powerpunch777/SPS` 제품 소스 레포를 비공개 전환하고, 개발 인원만 초대한다.
+4. `Powerpunch777/SPS` 제품 소스 레포와 `Powerpunch777/SPS-Core` Core 레포를 함께 비공개 전환하고, 개발 인원만 초대한다.
 5. 새 비공개 제품 소스에서 후속 Desktop Release를 발행한다. 설치 앱은 계속
    공개 `SPS-Desktop-Releases`만 조회한다.
 

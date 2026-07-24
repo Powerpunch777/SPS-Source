@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
 
       - uses: actions/setup-node@v6
         with:
@@ -65,6 +66,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
 
       - uses: actions/setup-node@v6
         with:
@@ -116,6 +118,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
 
       - uses: actions/setup-node@v6
         with:

@@ -15,7 +15,7 @@ SPS Core는 별도 Git 저장소로 추적되는 호환 코어다. 그 안의 up
 | --- | --- | --- |
 | Product title, logo, browser title, Desktop installer | `SPS` / `SonParkServer` | End-user surface only. |
 | New public deployment configuration | `SPS_*` | Hub, Google OAuth, node and permission documentation use this form. |
-| Repository topology | `Powerpunch777/SPS` + pinned `Powerpunch777/SPS-Core` submodule | `git clone --recurse-submodules` restores a compatible whole server. |
+| Repository topology | `Powerpunch777/SPS` + pinned `Powerpunch777/SPS-Core` submodule | `git clone --recurse-submodules` restores a compatible whole server. 제품·Core 레포는 브리지 배포 뒤 함께 비공개로 전환한다. |
 | Compatibility internals | existing package namespaces, persisted keys, legacy environment fallbacks | Do not rename mechanically; preserve until a dual-read migration exists. |
 
 ## What is already enforced
