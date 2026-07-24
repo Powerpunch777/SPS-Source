@@ -36,5 +36,8 @@ test("release workflow requires the cross-repository publishing token", async ()
 
   assert.match(workflow, /GH_TOKEN:\s*\$\{\{ secrets\.SPS_DESKTOP_RELEASES_TOKEN \}\}/);
   assert.match(workflow, /SPS_DESKTOP_RELEASES_TOKEN is required/);
+  assert.match(workflow, /tags:\s*\r?\n\s*- "v\*"/);
+  assert.match(workflow, /\$expectedTag = "v\$\(\$manifest\.version\)"/);
+  assert.match(workflow, /gh release create \$tag --repo \$releaseRepo --target main/);
   assert.doesNotMatch(workflow, /GH_TOKEN:\s*\$\{\{ secrets\.GITHUB_TOKEN \}\}/);
 });

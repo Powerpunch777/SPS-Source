@@ -3,7 +3,7 @@ name: Release SPS Desktop
 on:
   push:
     tags:
-      - "desktop-v*"
+      - "v*"
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
         working-directory: sps-server/desktop
         run: |
           $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
-          $expectedTag = "desktop-v$($manifest.version)"
+          $expectedTag = "v$($manifest.version)"
           if ($env:GITHUB_REF_NAME -ne $expectedTag) {
             throw "Release tag must be $expectedTag, but was $env:GITHUB_REF_NAME."
           }
@@ -39,6 +39,18 @@ jobs:
           }
           if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
             throw "SPS_DESKTOP_RELEASES_TOKEN is required to publish to the separate Desktop release channel."
+          }
+
+      - name: Prepare Desktop update release
+        shell: pwsh
+        working-directory: sps-server/desktop
+        run: |
+          $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
+          $tag = "v$($manifest.version)"
+          $releaseRepo = "Powerpunch777/SPS-Desktop-Releases"
+          gh release view $tag --repo $releaseRepo *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $releaseRepo --target main --title "SPS Desktop $($manifest.version)" --prerelease --draft
           }
 
       - name: Install Desktop dependencies
