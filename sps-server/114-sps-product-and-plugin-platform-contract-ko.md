@@ -121,7 +121,7 @@ SPS Plugin CLI
 
 게임·앱·웹 팀 플러그인은 사용자에게는 독립적으로 보이지만, 공통 개발 기능은 `Development Core`를 사용한다.
 
-### 2.5 SPS Plugin Registry와 Marketplace
+### 2.5 SPS Plugin Registry와 Official Extensions
 
 SPS는 사용자가 만든 플러그인을 다른 사용자와 공유할 수 있는 **Plugin Registry**를 제품의 표준 배포 경로로 제공한다. Registry는 단순한 다운로드 목록이 아니다. 패키지 출처, 버전, 호환성, 권한 변화, 무결성, 게시자 서명을 전달하고 SPS Desktop이 설치 전에 검증할 수 있게 하는 신뢰 계약이다.
 
@@ -140,7 +140,7 @@ Plugin source
 2. `git`: GitHub Release 또는 정적 HTTPS JSON을 사용하는 공개·비공개 Registry
 3. `official`: SPS가 운영하는 공식 Registry
 
-Marketplace는 Registry 위의 발견과 거래 계층이다. 공개 무료, 링크 전용, 조직 전용 공유는 Registry 계약이 검증된 뒤 우선 제공한다. 유료 판매, 세금, 정산, 환불, 판매자 심사와 원격 차단은 별도 Marketplace 운영 단계이며 플러그인 Runtime이나 Core 권한 모델을 우회하지 않는다.
+Official Extensions는 Registry 위의 SPS 공식 release 발견 계층이다. 1차 출시에서 공개 무료, 링크 전용, 조직 전용 공유는 Owner가 신뢰한 Registry source를 통해서만 제공한다. 유료 판매, 세금, 정산, 환불, 판매자 심사와 원격 차단은 별도 Community Marketplace 운영 단계이며 플러그인 Runtime이나 Core 권한 모델을 우회하지 않는다.
 
 SPS Desktop은 Registry가 제공하는 카탈로그만으로 플러그인을 신뢰하지 않는다. 설치 전에 호환 SPS·Plugin API 버전, immutable package URL·크기·SHA-256, 게시자 공개 키·서명, manifest·파일 목록·진입점·해시, 권한 상승, 사용자·회사·Node 정책을 독립 검증한다.
 

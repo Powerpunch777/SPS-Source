@@ -76,7 +76,7 @@ import {
   removeRegistrySource,
   SPS_OFFICIAL_REGISTRY_SOURCE,
 } from "./registry-source-catalog.mjs";
-import { loadSpsOfficialMarketplaceCatalog } from "./marketplace-catalog.mjs";
+import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
   disableSpsTailscaleServe,
   enableSpsTailscaleServe,
@@ -98,7 +98,7 @@ const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
 let mainWindow = null;
 let workspaceWindow = null;
 let registryWindow = null;
-let marketplaceWindow = null;
+let officialExtensionsWindow = null;
 let state = emptyState();
 let pendingAuth = null;
 let pendingDesktopAccount = null;
@@ -1488,11 +1488,11 @@ async function showRegistryWindow({ sourceId = null } = {}) {
   );
 }
 
-async function showMarketplaceWindow() {
-  if (!currentDesktopAccount()) throw new Error("Sign in with Google before browsing the SPS Plugin Marketplace.");
-  if (marketplaceWindow && !marketplaceWindow.isDestroyed()) {
-    marketplaceWindow.show();
-    marketplaceWindow.focus();
+async function showOfficialExtensionsWindow() {
+  if (!currentDesktopAccount()) throw new Error("Sign in with Google before opening SPS Official Extensions.");
+  if (officialExtensionsWindow && !officialExtensionsWindow.isDestroyed()) {
+    officialExtensionsWindow.show();
+    officialExtensionsWindow.focus();
     return;
   }
   const window = new BrowserWindow({
@@ -1501,11 +1501,11 @@ async function showMarketplaceWindow() {
     minWidth: 760,
     minHeight: 560,
     show: false,
-    title: "SPS Plugin Marketplace",
+    title: "SPS Official Extensions",
     icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
-    webPreferences: createSpsSetupWindowPreferences(path.join(__dirname, "marketplace-preload.cjs")),
+    webPreferences: createSpsSetupWindowPreferences(path.join(__dirname, "official-extensions-preload.cjs")),
   });
-  marketplaceWindow = window;
+  officialExtensionsWindow = window;
   window.webContents.on("will-navigate", (event, url) => {
     if (url.startsWith("file:")) return;
     event.preventDefault();
@@ -1517,9 +1517,9 @@ async function showMarketplaceWindow() {
   });
   window.once("ready-to-show", () => window.show());
   window.on("closed", () => {
-    if (marketplaceWindow === window) marketplaceWindow = null;
+    if (officialExtensionsWindow === window) officialExtensionsWindow = null;
   });
-  await window.loadFile(path.join(__dirname, "..", "renderer", "marketplace.html"));
+  await window.loadFile(path.join(__dirname, "..", "renderer", "official-extensions.html"));
 }
 
 async function openWorkspace() {
@@ -1623,7 +1623,7 @@ function createApplicationMenu() {
         { label: accountLabel, enabled: false },
         { type: "separator" },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
-        { label: "Browse Plugin Marketplace...", accelerator: "CommandOrControl+Alt+M", enabled: Boolean(account), click: () => run(showMarketplaceWindow) },
+        { label: "Official extensions...", accelerator: "CommandOrControl+Alt+E", enabled: Boolean(account), click: () => run(showOfficialExtensionsWindow) },
         { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
         {
           label: "Advanced",
@@ -1659,7 +1659,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
-    { label: "Browse Plugin Marketplace...", accelerator: "CommandOrControl+Alt+M", enabled: Boolean(account), click: () => { void showMarketplaceWindow(); } },
+    { label: "Official extensions...", accelerator: "CommandOrControl+Alt+E", enabled: Boolean(account), click: () => { void showOfficialExtensionsWindow(); } },
     {
       label: "Advanced",
       submenu: [
@@ -1991,22 +1991,22 @@ function registerIpc() {
     await showRegistryWindow();
     return { opened: true };
   });
-  ipcMain.handle("desktop:open-marketplace", async (event) => {
+  ipcMain.handle("desktop:open-official-extensions", async (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender.id !== mainWindow.webContents.id) {
-      throw new Error("Marketplace requests must come from the SPS Desktop window.");
+      throw new Error("Official Extensions requests must come from the SPS Desktop window.");
     }
-    await showMarketplaceWindow();
+    await showOfficialExtensionsWindow();
     return { opened: true };
   });
-  ipcMain.handle("desktop:marketplace-load-catalog", async (event) => {
-    if (!marketplaceWindow || marketplaceWindow.isDestroyed() || event.sender.id !== marketplaceWindow.webContents.id) {
-      throw new Error("Marketplace catalog requests must come from the SPS Plugin Marketplace window.");
+  ipcMain.handle("desktop:official-extensions-load-catalog", async (event) => {
+    if (!officialExtensionsWindow || officialExtensionsWindow.isDestroyed() || event.sender.id !== officialExtensionsWindow.webContents.id) {
+      throw new Error("Official Extensions catalog requests must come from the SPS Official Extensions window.");
     }
-    return await loadSpsOfficialMarketplaceCatalog();
+    return await loadSpsOfficialExtensionsCatalog();
   });
-  ipcMain.handle("desktop:marketplace-open-install-review", async (event) => {
-    if (!marketplaceWindow || marketplaceWindow.isDestroyed() || event.sender.id !== marketplaceWindow.webContents.id) {
-      throw new Error("Marketplace install review requests must come from the SPS Plugin Marketplace window.");
+  ipcMain.handle("desktop:official-extensions-open-install-review", async (event) => {
+    if (!officialExtensionsWindow || officialExtensionsWindow.isDestroyed() || event.sender.id !== officialExtensionsWindow.webContents.id) {
+      throw new Error("Official Extensions install review requests must come from the SPS Official Extensions window.");
     }
     assertRegistryOwner();
     await showRegistryWindow({ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE.id });

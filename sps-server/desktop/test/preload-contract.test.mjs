@@ -7,8 +7,8 @@ const mainPath = new URL("../src/main.mjs", import.meta.url);
 const workspacePreloadPath = new URL("../src/workspace-preload.cjs", import.meta.url);
 const registryPreloadPath = new URL("../src/registry-preload.cjs", import.meta.url);
 const registryHtmlPath = new URL("../renderer/registry.html", import.meta.url);
-const marketplacePreloadPath = new URL("../src/marketplace-preload.cjs", import.meta.url);
-const marketplaceHtmlPath = new URL("../renderer/marketplace.html", import.meta.url);
+const officialExtensionsPreloadPath = new URL("../src/official-extensions-preload.cjs", import.meta.url);
+const officialExtensionsHtmlPath = new URL("../renderer/official-extensions.html", import.meta.url);
 
 test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   const [preload, workspacePreload, main] = await Promise.all([
@@ -26,7 +26,7 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:join-server"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:connect-node"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:disconnect-node"\)/);
-  assert.match(preload, /ipcRenderer\.invoke\("desktop:open-marketplace"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:open-official-extensions"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:choose-project-workspace"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-team-access"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:enable-private-team-access"/);
@@ -42,10 +42,10 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-open-plugin-registries"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-account"/);
-  assert.match(main, /ipcMain\.handle\("desktop:open-marketplace"[\s\S]*?Marketplace requests must come from the SPS Desktop window[\s\S]*?showMarketplaceWindow\(\)/);
+  assert.match(main, /ipcMain\.handle\("desktop:open-official-extensions"[\s\S]*?Official Extensions requests must come from the SPS Desktop window[\s\S]*?showOfficialExtensionsWindow\(\)/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-open-plugin-registries"[\s\S]*?Plugin Registry management[\s\S]*?showRegistryWindow\(\)/);
-  assert.match(main, /Browse Plugin Marketplace\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+M"/);
+  assert.match(main, /Official extensions\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+E"/);
   assert.match(main, /Plugin sources & review\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+R"/);
 });
 
@@ -70,21 +70,21 @@ test("keeps the Registry window on a narrow Owner-only preload bridge", async ()
   assert.match(registryHtml, /Review queue/);
 });
 
-test("keeps Marketplace discovery separate from Owner-only Registry installation review", async () => {
-  const [main, marketplacePreload, marketplaceHtml] = await Promise.all([
+test("keeps Official Extensions discovery separate from Owner-only Registry installation review", async () => {
+  const [main, officialExtensionsPreload, officialExtensionsHtml] = await Promise.all([
     readFile(mainPath, "utf8"),
-    readFile(marketplacePreloadPath, "utf8"),
-    readFile(marketplaceHtmlPath, "utf8"),
+    readFile(officialExtensionsPreloadPath, "utf8"),
+    readFile(officialExtensionsHtmlPath, "utf8"),
   ]);
 
-  assert.match(main, /async function showMarketplaceWindow\(\) \{[\s\S]*?marketplace-preload\.cjs/);
-  assert.match(main, /ipcMain\.handle\("desktop:marketplace-load-catalog"[\s\S]*?Marketplace window/);
-  assert.match(main, /ipcMain\.handle\("desktop:marketplace-open-install-review"[\s\S]*?assertRegistryOwner\(\)[\s\S]*?showRegistryWindow\(\{ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE\.id \}\)/);
-  assert.match(marketplacePreload, /contextBridge\.exposeInMainWorld\("spsMarketplace"/);
-  assert.match(marketplacePreload, /ipcRenderer\.invoke\("desktop:marketplace-load-catalog"\)/);
-  assert.match(marketplacePreload, /ipcRenderer\.invoke\("desktop:marketplace-open-install-review"\)/);
-  assert.match(marketplaceHtml, /default-src 'self'; style-src 'self'; script-src 'self'/);
-  assert.match(marketplaceHtml, /Open secure install review/);
+  assert.match(main, /async function showOfficialExtensionsWindow\(\) \{[\s\S]*?official-extensions-preload\.cjs/);
+  assert.match(main, /ipcMain\.handle\("desktop:official-extensions-load-catalog"[\s\S]*?Official Extensions window/);
+  assert.match(main, /ipcMain\.handle\("desktop:official-extensions-open-install-review"[\s\S]*?assertRegistryOwner\(\)[\s\S]*?showRegistryWindow\(\{ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE\.id \}\)/);
+  assert.match(officialExtensionsPreload, /contextBridge\.exposeInMainWorld\("spsOfficialExtensions"/);
+  assert.match(officialExtensionsPreload, /ipcRenderer\.invoke\("desktop:official-extensions-load-catalog"\)/);
+  assert.match(officialExtensionsPreload, /ipcRenderer\.invoke\("desktop:official-extensions-open-install-review"\)/);
+  assert.match(officialExtensionsHtml, /default-src 'self'; style-src 'self'; script-src 'self'/);
+  assert.match(officialExtensionsHtml, /Open secure install review/);
 });
 
 test("notifies the renderer when Google Desktop sign-in state changes", async () => {

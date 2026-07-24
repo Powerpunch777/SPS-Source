@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
-    <title>SPS Plugin Marketplace</title>
-    <link rel="stylesheet" href="./marketplace.css" />
+    <title>SPS Official Extensions</title>
+    <link rel="stylesheet" href="./official-extensions.css" />
   </head>
   <body>
-    <main class="marketplace-shell">
-      <header class="marketplace-header">
-        <div class="brand"><img src="../assets/sps-logo.png" alt="" /><span>SPS Plugin Marketplace</span></div>
+    <main class="extensions-shell">
+      <header class="extensions-header">
+        <div class="brand"><img src="../assets/sps-logo.png" alt="" /><span>SPS Official Extensions</span></div>
         <button id="refresh" class="secondary" type="button">Refresh catalog</button>
       </header>
       <section class="hero">
@@ -18,7 +18,7 @@
         <h1>Extend your SPS workspace.</h1>
         <p>Discover verified plugins from SPS. Browsing does not grant permissions, download code, or change your Server.</p>
       </section>
-      <section class="catalog-section" aria-label="Marketplace catalog">
+      <section class="catalog-section" aria-label="Official extensions catalog">
         <div class="section-heading">
           <div><h2>Official plugins</h2><p id="catalog-status">Checking the signed SPS catalog...</p></div>
           <button id="open-review" class="primary" type="button" hidden>Open secure install review</button>
@@ -27,10 +27,10 @@
       </section>
       <section class="trust-note">
         <h2>How installation stays safe</h2>
-        <p>Marketplace only helps you discover a plugin. An SPS Owner must still open Plugin sources &amp; review, inspect the exact version and capabilities, stage it disabled, then explicitly enable it.</p>
+        <p>Official Extensions only helps you discover a signed SPS plugin. An SPS Owner must still open Plugin sources &amp; review, inspect the exact version and capabilities, stage it disabled, then explicitly enable it.</p>
       </section>
       <p id="notice" class="notice" role="status" aria-live="polite"></p>
     </main>
-    <script type="module" src="./marketplace.mjs"></script>
+    <script type="module" src="./official-extensions.mjs"></script>
   </body>
 </html>

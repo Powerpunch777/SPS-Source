@@ -21,11 +21,11 @@ function publicCatalogRelease(release) {
 }
 
 /**
- * Marketplace discovery has no installation authority. It exposes only the
- * public, verified official catalog; Registry review remains the only route
- * that can stage or enable plugin code.
+ * Official Extensions discovery has no installation authority. It exposes
+ * only the signed SPS catalog; Registry review remains the only route that
+ * can stage or enable plugin code.
  */
-export async function loadSpsOfficialMarketplaceCatalog({ inspect = inspectRegistrySource } = {}) {
+export async function loadSpsOfficialExtensionsCatalog({ inspect = inspectRegistrySource } = {}) {
   try {
     const report = await inspect(SPS_OFFICIAL_REGISTRY_SOURCE);
     const publicReleases = report.valid

@@ -1,12 +1,12 @@
-# SPS Plugin Registry 및 Marketplace 계약
+# SPS Plugin Registry 및 Official Extensions 계약
 
 ## 문서 지위
 
 - 상태: Implementation Contract
 - 작성일: 2026-07-23
-- 구현 상태: `in_progress`
+- 구현 상태: `pilot`
 - 선행 문서: `114-sps-product-and-plugin-platform-contract-ko.md`, `115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md`
-- 적용 범위: 플러그인 공유·설치·업데이트·발견의 배포 경계. 결제·정산 정책은 포함하지 않는다.
+- 적용 범위: SPS 공식 플러그인의 발견·검증·설치·업데이트 경계. 커뮤니티 공개 게시·판매·결제·정산은 1차 출시 범위에 포함하지 않는다.
 
 ## 1. 목적
 
@@ -19,11 +19,13 @@ Registry
   -> immutable release metadata and artifacts
 SPS Desktop / Owner Host
   -> verify, preview permissions, install disabled, enable explicitly
-Marketplace
-  -> discover, document, review, license entitlement, payment later
+Official Extensions
+  -> discover signed SPS releases and send the Owner to installation review
+Community Marketplace (future)
+  -> public publishing, discovery, entitlement and commerce after product validation
 ```
 
-Registry가 신뢰하는 것은 특정 플러그인의 기능이 아니라 **검증 가능한 release**다. Marketplace가 판매하거나 추천하는 것은 Registry release이며, Marketplace의 구매 상태가 Runtime 권한을 증가시키지 않는다.
+Registry가 신뢰하는 것은 특정 플러그인의 기능이 아니라 **검증 가능한 release**다. Official Extensions는 SPS가 운영하는 서명된 release만 발견할 수 있으며 Runtime 권한을 증가시키지 않는다. 커뮤니티 Marketplace의 구매·추천·entitlement는 향후 별도 운영 계층이며 Runtime 권한을 우회하지 않는다.
 
 ## 2. 역할과 소유권
 
@@ -34,7 +36,8 @@ Registry가 신뢰하는 것은 특정 플러그인의 기능이 아니라 **검
 | Registry | package locator, release record, advisory, catalog metadata | Node·Workspace·비밀 값 접근 |
 | Owner Host | package 검사, 정책·호환성·권한 검토, plugin lifecycle | 게시자 계정의 자격 증명 보관 |
 | Desktop Node | 자신의 CLI·MCP·Workspace 실행 승인 | Hub가 임의 실행시키는 것 |
-| Marketplace | 발견, 문서, 게시자 프로필, entitlement·거래 UX | 패키지 해시 또는 권한 계약 우회 |
+| Official Extensions | SPS 공식 release의 발견과 문서 연결 | 패키지 해시 또는 권한 계약 우회 |
+| Community Marketplace (future) | 공개 게시, 발견, entitlement·거래 UX | 패키지 해시 또는 권한 계약 우회 |
 
 ## 3. 배포 source
 
@@ -120,7 +123,7 @@ Index는 검색·발견용이다. `publishers`는 선택적 Registry-root-signed
 }
 ```
 
-`catalog`은 선택적 Marketplace 표시 정보다. `displayName`, `summary`, `documentationUrl`(credential·fragment 없는 HTTPS)만 허용하며 release signature에 포함된다. 이는 목록 표시와 외부 문서 열기 외의 효과가 없고, capability·설치·활성화 권한을 주지 않는다. `capabilities` 역시 선택적 표시용 static preview지만, 존재할 때는 중복 없는 문자열 배열이어야 하고 `permissionsDigest`와 일치해야 한다. Desktop은 package를 stage하기 직전에 이 preview와 실제 정적 manifest를 다시 비교한다. 서명은 canonicalized release record에서 `signature.value`를 제외한 내용을 대상으로 한다. Owner Host는 서명, artifact SHA-256, `permissionsDigest`, package 안의 manifest 및 파일 hash를 모두 검증해야 한다.
+`catalog`은 선택적 Official Extensions 표시 정보다. `displayName`, `summary`, `documentationUrl`(credential·fragment 없는 HTTPS)만 허용하며 release signature에 포함된다. 이는 목록 표시와 외부 문서 열기 외의 효과가 없고, capability·설치·활성화 권한을 주지 않는다. `capabilities` 역시 선택적 표시용 static preview지만, 존재할 때는 중복 없는 문자열 배열이어야 하고 `permissionsDigest`와 일치해야 한다. Desktop은 package를 stage하기 직전에 이 preview와 실제 정적 manifest를 다시 비교한다. 서명은 canonicalized release record에서 `signature.value`를 제외한 내용을 대상으로 한다. Owner Host는 서명, artifact SHA-256, `permissionsDigest`, package 안의 manifest 및 파일 hash를 모두 검증해야 한다.
 
 ### 4.3 Static package manifest
 
@@ -193,7 +196,7 @@ The Desktop Owner stores Registry source definitions in the Owner Vault, not in 
 
 When an existing plugin is replaced, Core stops its active worker first, verifies the selected stage again, persists both the manifest and resolved package path together, and starts the reviewed version through the normal lifecycle. A capability expansion remains pending for the normal generic upgrade API; the Registry queue can apply it only because the Owner explicitly reviews and confirms the exact staged artifact.
 
-Current Desktop UI: signed-in SPS Desktop users can open `Browse Plugin Marketplace...` (`Ctrl+Alt+M`) to discover the latest public release of each plugin in the verified built-in SPS Official Registry. Marketplace has no source-add, artifact-download, stage, enable, or payment authority. Its `Open secure install review` action is available only to the local Owner Host and opens the separate `Advanced > Plugin sources & review...` (`Ctrl+Alt+R`) screen. That Owner-only screen contains the source list, local/remote source form, full verified release history, disabled stage action, review queue, and explicit apply confirmation. The Workspace bridge is exposed only in the local Owner Host window, never in a remote team window. Reviews, payment, entitlement, and automatic updates remain out of scope.
+Current Desktop UI: signed-in SPS Desktop users can open `Official extensions...` (`Ctrl+Alt+E`) to discover the latest public release of each plugin in the verified built-in SPS Official Registry. Official Extensions has no source-add, artifact-download, stage, enable, or payment authority. Its `Open secure install review` action is available only to the local Owner Host and opens the separate `Advanced > Plugin sources & review...` (`Ctrl+Alt+R`) screen. That Owner-only screen contains the source list, local/remote source form, full verified release history, disabled stage action, review queue, and explicit apply confirmation. The Workspace bridge is exposed only in the local Owner Host window, never in a remote team window. Reviews, payment, entitlement, and automatic updates remain out of scope.
 
 ### 5.3 Authoring Kit release flow (implemented)
 
@@ -205,7 +208,7 @@ The authoring Kit rejects URL-like text in relative Registry paths, URL credenti
 
 ## 6. 보안 불변 조건
 
-1. Registry metadata, Marketplace page, 리뷰, 배지는 어떤 Plugin capability도 부여하지 않는다.
+1. Registry metadata, Official Extensions page, 리뷰, 배지는 어떤 Plugin capability도 부여하지 않는다.
 2. `git`과 `official` Registry index는 source에 pin된 root key signature를 통과해야 한다. release publisher key만 바꿔 source 신뢰를 획득할 수 없다.
 3. package는 설치 전 실행하지 않으며 archive path traversal, symlink escape, oversized entry, duplicate·case-colliding entrypoint, encrypted·unsupported entry를 거부한다. archive inspector와 실제 extractor는 별도 단계에서 같은 크기 경계를 다시 확인한다.
 4. package는 Core 또는 다른 Plugin의 source tree를 수정하는 방식으로 설치될 수 없다.
@@ -216,19 +219,19 @@ The authoring Kit rejects URL-like text in relative Registry paths, URL credenti
 
 현재 Core의 기존 `POST /api/plugins/install`은 Registry 설치 경로가 아니다. 이 API는 로컬 개발 Plugin 편의를 위해 build recovery와 JavaScript manifest import를 수행할 수 있으므로, Registry package에는 사용할 수 없다. Registry는 static manifest 검증과 staging extractor를 통과한 package만 review queue에 보관하며, 이 경로는 Owner apply 전에는 dynamic import·worker spawn·plugin migration을 수행하지 않는다.
 
-## 7. Marketplace 단계
+## 7. Official Extensions 구현 상태와 Community Marketplace 보류
 
-### Pilot
+### Official Extensions Pilot
 
 - 구현됨: source 성격(공식·서명 remote·Owner-trusted local), `sps-plugin inspect`의 실행 없는 source/package/local Registry 검사, Git·official의 공통 pinned-root verifier, 검증된 release 배지, 서명된 플러그인 이름·설명·문서 링크·권한 preview·게시자 프로필, 공개·링크 전용 visibility, 버전별 immutable release, package된 Owner Host의 author → publish → stage → enable·update·rollback E2E
-- 구현됨: SPS Desktop의 분리된 `Browse Plugin Marketplace...` discovery 화면. 이 화면은 built-in SPS Official Registry의 서명 검증 결과 중 `public` release의 안전한 catalog 정보만 보여 주며, 설치는 Owner-only `Plugin sources & review`의 명시적 stage·enable 절차로만 넘긴다.
+- 구현됨: SPS Desktop의 분리된 `Official extensions...` discovery 화면. 이 화면은 built-in SPS Official Registry의 서명 검증 결과 중 `public` release의 안전한 catalog 정보만 보여 주며, 설치는 Owner-only `Plugin sources & review`의 명시적 stage·enable 절차로만 넘긴다.
 - 구현됨: `templates/github-static-registry-publish.yml`의 수동 GitHub Actions 발행 경로. Registry·publisher 개인 키는 Actions Secret에서만 runner 임시 파일로 전달하고, immutable release 작성 뒤 `inspect` 재검증을 통과한 Registry 폴더만 commit한다.
 - 구현됨: `Publish SPS Official Registry` 수동 Workflow와 `https://redongames.com/registry/registry.json` 정적 호스팅 경로. 최초 실서명 release를 발행하면 기존 GitHub Pages가 Registry folder를 함께 배포한다.
 - 다음 범위: 최초 실서명 release 발행, 두 Desktop에서 source·stage·enable·update·rollback 반복 E2E, 신고·advisory 연결
 
-### 거래 단계
+### Community Marketplace (Deferred)
 
-거래는 Marketplace가 entitlement를 발급하고 Desktop이 entitlement 상태를 읽는 방식으로 추가한다. `paid` release도 동일한 artifact hash·publisher signature·권한 검토를 사용한다.
+커뮤니티 공개 게시·검색·판매는 1차 출시에 넣지 않는다. 향후 Marketplace를 검토한다면 entitlement가 Runtime 권한을 우회하지 않도록 하고, `paid` release도 동일한 artifact hash·publisher signature·권한 검토를 사용한다.
 
 아직 확정하지 않는 항목:
 
@@ -247,6 +250,6 @@ The authoring Kit rejects URL-like text in relative Registry paths, URL credenti
 5. Owner Host Core에 static manifest 대조와 Registry disabled staging API를 추가한다. Desktop의 archive safe extractor와 연결해 실제 package를 staging root에 생성한다.
 6. Desktop에 Registry source 관리, 설치 전 검토, staged package enable 화면을 추가한다.
 7. 실제 사용자와 공식 example plugin으로 설치·업데이트·rollback E2E를 반복한다.
-8. 그 결과를 바탕으로 Marketplace Pilot을 연다.
+8. 그 결과를 바탕으로 Community Marketplace를 별도 제품 단계로 검토한다. 이는 1차 출시 완료 조건이 아니다.
 
-Marketplace는 1~7이 반복 E2E에서 안정적이기 전에는 출시하지 않는다.
+Community Marketplace는 1~7이 반복 E2E에서 안정적이고 게시자·지원·철회 정책이 준비되기 전에는 출시하지 않는다.

@@ -1,6 +1,6 @@
 # SPS Plugin Platform
 
-SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 플러그인을 만들고 공유할 때 필요한 Profile, package, Registry, Marketplace 경계를 Core의 실제 manifest·capability·lifecycle 위에서 표준화한다.
+SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 플러그인을 만들고 공유할 때 필요한 Profile, package, Registry, Official Extensions 경계를 Core의 실제 manifest·capability·lifecycle 위에서 표준화한다. 커뮤니티 Marketplace는 별도 출시 단계다.
 
 ## 현재 구현
 
@@ -60,4 +60,4 @@ node .\cli\sps-plugin.mjs inspect .\team-registry
 
 `dist/*.js`, `../outside`, 빈 경로처럼 포함 범위를 모호하게 만드는 값은 검증 단계에서 거부된다. `files`를 생략하면 기존 호환성을 위해 source tree 전체를 검사하고 패키징한다.
 
-제품·보안·배포 결정은 [Plugin Registry 및 Marketplace 계약](../120-sps-plugin-registry-and-marketplace-contract-ko.md)을 따른다.
+제품·보안·배포 결정은 [Plugin Registry 및 Official Extensions 계약](../120-sps-plugin-registry-and-official-extensions-contract-ko.md)을 따른다.

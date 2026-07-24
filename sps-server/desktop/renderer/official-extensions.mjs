@@ -64,7 +64,7 @@ function renderCatalog(catalog) {
 async function loadCatalog() {
   $("#catalog").innerHTML = '<p class="empty-state">Checking the signed SPS catalog...</p>';
   try {
-    renderCatalog(await window.spsMarketplace.loadCatalog());
+    renderCatalog(await window.spsOfficialExtensions.loadCatalog());
     setNotice("");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -77,7 +77,7 @@ async function loadCatalog() {
 $("#refresh").addEventListener("click", () => void loadCatalog());
 $("#open-review").addEventListener("click", async () => {
   try {
-    const result = await window.spsMarketplace.openInstallReview();
+    const result = await window.spsOfficialExtensions.openInstallReview();
     if (result?.opened) setNotice("Plugin sources & review opened. Nothing has been installed yet.");
   } catch (error) {
     setNotice(error instanceof Error ? error.message : String(error), true);

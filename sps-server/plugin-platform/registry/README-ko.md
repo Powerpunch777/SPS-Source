@@ -1,6 +1,6 @@
 # SPS Plugin Registry v1
 
-이 모듈은 Marketplace가 아니라 플러그인 공유를 위한 release metadata 신뢰 계약이다. Registry는 package download URL을 알려줄 수 있지만, SPS Owner Host는 반드시 release record 서명·artifact SHA-256·manifest·권한을 독립적으로 검증한다.
+이 모듈은 커뮤니티 Marketplace가 아니라 플러그인 공유를 위한 release metadata 신뢰 계약이다. Registry는 package download URL을 알려줄 수 있지만, SPS Owner Host는 반드시 release record 서명·artifact SHA-256·manifest·권한을 독립적으로 검증한다.
 
 ## 제공하는 것
 

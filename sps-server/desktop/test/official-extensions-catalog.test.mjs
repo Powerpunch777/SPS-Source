@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadSpsOfficialMarketplaceCatalog } from "../src/marketplace-catalog.mjs";
+import { loadSpsOfficialExtensionsCatalog } from "../src/official-extensions-catalog.mjs";
 
-test("Marketplace exposes only public, verified catalog information without artifact locations", async () => {
-  const catalog = await loadSpsOfficialMarketplaceCatalog({
+test("Official Extensions exposes only public, verified catalog information without artifact locations", async () => {
+  const catalog = await loadSpsOfficialExtensionsCatalog({
     inspect: async () => ({
       valid: true,
       warning: "Pinned Registry root verified.",
@@ -49,8 +49,8 @@ test("Marketplace exposes only public, verified catalog information without arti
   assert.deepEqual(catalog.releases[0].capabilities, ["ui.page.register"]);
 });
 
-test("Marketplace returns a safe unavailable catalog when verification fails", async () => {
-  const catalog = await loadSpsOfficialMarketplaceCatalog({
+test("Official Extensions returns a safe unavailable catalog when verification fails", async () => {
+  const catalog = await loadSpsOfficialExtensionsCatalog({
     inspect: async () => { throw new Error("Registry root signature failed."); },
   });
 

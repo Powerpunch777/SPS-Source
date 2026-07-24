@@ -2,7 +2,7 @@
 
 ## 목적
 
-SPS 공식 Registry는 `https://redongames.com/registry/registry.json`에서 제공하는 정적 release index다. Marketplace의 검색·리뷰·결제 서비스가 아니라, SPS Desktop이 서명된 플러그인 release를 확인하고 disabled stage로 가져오기 위한 배포 채널이다.
+SPS 공식 Registry는 `https://redongames.com/registry/registry.json`에서 제공하는 정적 release index다. 커뮤니티 Marketplace의 검색·리뷰·결제 서비스가 아니라, SPS Desktop Official Extensions가 서명된 플러그인 release를 확인하고 disabled stage로 가져오기 위한 배포 채널이다.
 
 SPS Desktop에는 `io.sps.official` source와 root public key가 기본 내장되어 있으므로 Owner가 같은 source를 수동 추가하거나 제거할 수 없다. 현재 GitHub Pages의 `redongames.com` TLS 인증서 발급이 완료되기 전까지 Desktop은 같은 서명 계약을 유지하는 GitHub raw index를 사용한다. 이 임시 URL은 사용자에게 노출되는 일반 설정값이 아니며, 인증서가 준비되면 source catalog의 URL만 공식 도메인으로 되돌린다. TLS 검증을 끄거나 인증서 오류를 무시하는 우회는 허용하지 않는다.
 
@@ -47,6 +47,6 @@ GitHub 저장소 `Powerpunch777/SPS`의 **Settings > Secrets and variables > Act
 - `Publish SPS Official Registry`는 normal push가 아닌 수동 실행만 가능하다.
 - 공식 Registry는 결제·entitlement·자동 enable 권한을 갖지 않는다.
 
-## Marketplace Pilot 진입 조건
+## 향후 Community Marketplace 검토 조건
 
-실제 공개 Registry에서 최소 하나의 유효 plugin release가 위 절차로 발행되고, 두 대 이상의 SPS Desktop에서 source 검증과 stage·enable·update·rollback이 반복 재현된 뒤에 Marketplace Pilot을 연다.
+실제 공개 Registry에서 최소 하나의 유효 plugin release가 위 절차로 발행되고, 두 대 이상의 SPS Desktop에서 source 검증과 stage·enable·update·rollback이 반복 재현된 뒤에만 Community Marketplace Pilot을 검토한다. 이는 1차 출시 범위가 아니다.

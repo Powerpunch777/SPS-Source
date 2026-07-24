@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld("spsDesktop", {
   connectNode: () => ipcRenderer.invoke("desktop:connect-node"),
   disconnectNode: () => ipcRenderer.invoke("desktop:disconnect-node"),
   openWorkspace: () => ipcRenderer.invoke("desktop:open-workspace"),
-  openMarketplace: () => ipcRenderer.invoke("desktop:open-marketplace"),
+  openOfficialExtensions: () => ipcRenderer.invoke("desktop:open-official-extensions"),
   openSetup: () => ipcRenderer.invoke("desktop:open-setup"),
   signOut: () => ipcRenderer.invoke("desktop:sign-out"),
   readyForJoinLink: () => ipcRenderer.invoke("desktop:ready-for-join-link"),

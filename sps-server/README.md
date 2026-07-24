@@ -13,7 +13,8 @@ SPS Server는 사람과 역할별 AI Agent가 같은 프로젝트에서 안전�
 - [Workplane 상세 청사진](75-optimal-work-environment-blueprint-ko.md)
 - [범용 Agent 플랫폼 Core 계약](113-sps-generic-agent-platform-core-contract-ko.md)
 - [SPS Team Workplane Plugin v1](119-sps-team-workplane-plugin-v1-ko.md)
-- [Plugin Registry 및 Marketplace 계약](120-sps-plugin-registry-and-marketplace-contract-ko.md)
+- [Plugin Registry 및 Official Extensions 계약](120-sps-plugin-registry-and-official-extensions-contract-ko.md)
+- [현재 제품 범위와 기능 상태](docs/current/PRODUCT-SCOPE.md)
 
 ## 현재 제품 방향
 
@@ -21,9 +22,9 @@ SPS의 첫 제품은 다음 세 층으로 구성한다.
 
 1. **Core Product**: Hub, Project·Task·Agent·Agent Session, Workspace, Desktop Node, Runner Profile·Availability Snapshot·Agent Runner 권한, 실행 기록과 확장 Runtime
 2. **SPS Extension Profile + Plugin Kit**: 기존 Core SDK 위의 데이터·권한·lifecycle 표준화, SDK, Test Kit, CLI와 패키징
-3. **공식 플러그인**: Plugin Studio, Development Core, Indie Game Team, App Product Team, Web Product Team
+3. **공식 확장 기능**: SPS Team Workplane과 기본 Memory Provider, 서명된 공식 Registry release의 발견과 Owner 검토 설치
 
-플러그인 공유는 local·GitHub·official Registry를 통해 단계적으로 제공한다. 유료 Marketplace, 판매자 정산과 코어 라이선스 최종 결정은 Registry의 보안·설치 lifecycle이 검증된 뒤로 미룬다.
+1차 출시에서 SPS는 커뮤니티 Marketplace나 판매를 제공하지 않는다. 플러그인 공유는 Owner가 신뢰하는 local·GitHub·official Registry source로 한정하며, 공개 게시·판매자 정산·결제·코어 라이선스 최종 결정은 Registry의 보안·설치 lifecycle이 실제 사용자에게 검증된 뒤로 미룬다.
 
 기본 SPS는 Core만으로 시작하며 공식 Team, Room, Memory 플러그인을 자동 활성화하지 않는다. 사용자는 필요한 작업 방식을 선택해 설치·활성화한다.
 
@@ -83,4 +84,4 @@ cd ..\..
 
 ## 문서와 구현 로그
 
-기존 번호 문서는 중요한 실패·수정·검증 기록이다. 삭제하지 않지만, 제품 범위와 구현 우선순위를 판단할 때는 `DOCUMENTATION.md`의 현재 기준을 먼저 따른다.
+기존 번호 문서는 중요한 실패·수정·검증 기록이다. 삭제하지 않지만, 제품 범위와 구현 우선순위를 판단할 때는 `docs/current/`와 `DOCUMENTATION.md`의 현재 기준을 먼저 따른다.
