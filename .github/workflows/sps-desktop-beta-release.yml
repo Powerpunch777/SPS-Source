@@ -16,12 +16,28 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || secrets.SPS_DESKTOP_RELEASES_TOKEN || github.token }}
 
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: sps-server/desktop/package-lock.json
+          cache-dependency-path: |
+            sps-server/desktop/package-lock.json
+            sps-server/plugin-platform/package-lock.json
+
+      - name: Install pinned pnpm for SPS Core
+        run: npm install --global pnpm@9.15.4
+
+      - name: Install SPS Core dependencies
+        working-directory: external/sps-core
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the SPS Owner Host CLI
+        working-directory: external/sps-core
+        run: pnpm --filter paperclipai run build
 
       - name: Verify Beta release tag and publishing credentials
         shell: pwsh
