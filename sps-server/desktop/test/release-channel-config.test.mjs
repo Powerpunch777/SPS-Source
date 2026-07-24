@@ -8,19 +8,27 @@ const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(testDirectory, "..");
 const repositoryDirectory = path.resolve(desktopDirectory, "..", "..");
 
-test("publishes Desktop updates only to the artifact release repository", async () => {
+test("uses the separate artifact channel first and mirrors the one-time bridge release to the legacy source channel", async () => {
   const manifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
-  const channel = manifest.build.publish.find((entry) => entry.provider === "github");
+  assert.equal(manifest.version, "0.4.19");
 
-  assert.deepEqual(channel, {
-    provider: "github",
-    owner: "Powerpunch777",
-    repo: "SPS-Desktop-Releases",
-    releaseType: "release",
-  });
+  assert.deepEqual(manifest.build.publish, [
+    {
+      provider: "github",
+      owner: "Powerpunch777",
+      repo: "SPS-Desktop-Releases",
+      releaseType: "release",
+    },
+    {
+      provider: "github",
+      owner: "Powerpunch777",
+      repo: "SPS",
+      releaseType: "release",
+    },
+  ]);
 });
 
-test("release workflow requires the narrow cross-repository publishing token", async () => {
+test("release workflow requires the cross-repository publishing token", async () => {
   const workflow = await readFile(
     path.join(repositoryDirectory, ".github", "workflows", "sps-desktop-release.yml"),
     "utf8",

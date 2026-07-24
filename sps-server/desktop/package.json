@@ -49,6 +49,12 @@
         "owner": "Powerpunch777",
         "repo": "SPS-Desktop-Releases",
         "releaseType": "release"
+      },
+      {
+        "provider": "github",
+        "owner": "Powerpunch777",
+        "repo": "SPS",
+        "releaseType": "release"
       }
     ],
     "win": {

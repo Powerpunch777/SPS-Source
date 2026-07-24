@@ -4,8 +4,14 @@
 
 SPS Desktop updates come from the public `Powerpunch777/SPS-Desktop-Releases`
 GitHub Releases channel. The Desktop app checks this channel after installation starts and then
-every six hours. It does not download or install an update without a person
-pressing the relevant button in SPS Desktop.
+every six hours. It automatically downloads a verified signed update when one
+is available and installs it when SPS Desktop restarts.
+
+`0.4.19`는 기존 공개 `Powerpunch777/SPS` Release를 사용하는 설치본을 옮기는
+단 한 번의 브리지 버전이다. 이 버전은 같은 서명 파일을 두 Release에 함께
+발행한다. `SPS-Desktop-Releases`가 첫 번째 publish provider이므로, 브리지 버전을
+설치한 앱은 그다음부터 새 artifact 채널을 기본으로 확인한다. `0.4.20`부터는
+기존 `SPS` mirror를 제거한다.
 
 The updater uses `electron-updater` with the normal Windows signature
 verification path. SPS never replaces that verification with a custom
@@ -31,10 +37,11 @@ The workflow is `.github/workflows/sps-desktop-release.yml`.
    `SPS_WINDOWS_CSC_KEY_PASSWORD` from the Windows code-signing certificate.
    The certificate subject must be the actual SPS publisher identity that will
    sign every future release.
-2. Create a fine-grained GitHub token that has **Contents: Read and write** only
-   for `Powerpunch777/SPS-Desktop-Releases`, then store it as
-   `SPS_DESKTOP_RELEASES_TOKEN` in the product repository. Do not use a broad
-   personal access token.
+2. 브리지 release를 발행할 때는 `Powerpunch777/SPS`와
+   `Powerpunch777/SPS-Desktop-Releases` 두 레포에만 **Contents: Read and
+   write**를 허용한 fine-grained GitHub token을 만든 뒤,
+   `SPS_DESKTOP_RELEASES_TOKEN`으로 저장한다. `0.4.19` 배포와 기기 업데이트
+   확인 뒤에는 이 token을 `SPS-Desktop-Releases` 단일 레포 권한으로 회전한다.
 3. Update `sps-server/desktop/package.json` to the release version.
 4. Run the Desktop tests locally.
 5. Push a tag exactly matching `desktop-v<package version>`, for example
@@ -42,8 +49,8 @@ The workflow is `.github/workflows/sps-desktop-release.yml`.
 6. GitHub Actions verifies the tag and signing secrets, builds the Windows NSIS
    installer with `forceCodeSigning=true`, and publishes the release files.
 
-The workflow fails before publishing if a signing secret or the separate release
-channel token is absent. This
+The workflow fails before publishing if a signing secret or the release channel
+token is absent. This
 is intentional: test installers must not become an update source for friends.
 
 ## Two-computer pilot installer

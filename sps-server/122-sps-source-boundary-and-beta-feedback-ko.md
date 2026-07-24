@@ -58,8 +58,9 @@ SPS, SonParkServer, 로고, 공식 배지, 공식 Registry의 상표·운영 권
 ## 비공개 전환 순서
 
 1. `sps-plugin-sdk`, `SPS-Official-Extensions`, `SPS-Desktop-Releases` 공개 레포를 유지한다.
-2. Desktop `0.4.19` 이상의 **서명된 브리지 업데이트**를 기존 공개 업데이트
-   채널로 한 번 배포한다. 이 버전부터 새 Release 채널을 확인한다.
+2. Desktop `0.4.19`의 **서명된 브리지 업데이트**를 새 Release 채널과 기존 공개
+   `Powerpunch777/SPS` 업데이트 채널에 같은 파일로 한 번 배포한다. 이 버전부터
+   새 Release 채널을 기본으로 확인한다.
 3. 사용 중인 모든 Owner·Member 컴퓨터가 브리지 버전 이상으로 업데이트됐는지
    확인한다.
 4. `Powerpunch777/SPS` 제품 소스 레포를 비공개 전환하고, 개발 인원만 초대한다.
@@ -68,9 +69,10 @@ SPS, SonParkServer, 로고, 공식 배지, 공식 Registry의 상표·운영 권
 
 2단계의 정식 Release에는 Windows 서명 인증서와
 `SPS_DESKTOP_RELEASES_TOKEN`이 필요하다. 이 토큰은
-`Powerpunch777/SPS-Desktop-Releases`에만 Contents 읽기·쓰기를 허용하는
-fine-grained token으로 제한한다. 이 두 준비가 없으면 unsigned 파일을 정식 업데이트
-채널에 올리지 않는다.
+브리지 배포 중에는 두 Release 레포에만 Contents 읽기·쓰기를 허용하고, 기기
+업데이트를 확인한 뒤 `Powerpunch777/SPS-Desktop-Releases` 단일 레포로 권한을
+축소하는 fine-grained token을 사용한다. 이 두 준비가 없으면 unsigned 파일을 정식
+업데이트 채널에 올리지 않는다.
 
 ## 완료 기준
 
