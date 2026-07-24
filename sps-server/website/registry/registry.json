@@ -1,0 +1,34 @@
+{
+  "registrySchemaVersion": 1,
+  "registryId": "io.sps.official",
+  "displayName": "SPS Official Registry",
+  "updatedAt": "2026-07-24T02:49:14.782Z",
+  "publisherKeys": [
+    {
+      "keyId": "ed25519:sps-official-publisher-1",
+      "algorithm": "ed25519",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEANRGTqwKpwZ7jj3ToubHTkNVB3RDPtyn5A62ZdfkIjb0=\n-----END PUBLIC KEY-----\n"
+    }
+  ],
+  "publishers": [
+    {
+      "displayName": "SPS",
+      "websiteUrl": "https://redongames.com",
+      "id": "sps"
+    }
+  ],
+  "plugins": [
+    {
+      "id": "local.room-chat",
+      "latest": "0.3.82",
+      "releases": [
+        "releases/local.room-chat-0.3.82.json"
+      ]
+    }
+  ],
+  "signature": {
+    "keyId": "ed25519:sps-official-registry-root-1",
+    "algorithm": "ed25519",
+    "value": "4RhrWS8FW9M+PaH3ZbdZe40Vh0W+Myvpm7h5L6ltr+PP3ETZr0xeb07tmvZVhrF5W1dnYpG68JPMu4+wpADiCQ=="
+  }
+}
