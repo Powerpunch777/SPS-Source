@@ -1,0 +1,60 @@
+{
+  "registrySchemaVersion": 1,
+  "plugin": {
+    "id": "local.room-chat",
+    "version": "0.3.83"
+  },
+  "artifact": {
+    "url": "packages/local.room-chat-0.3.83.spsplugin",
+    "sha256": "6ee8c5ca98a248e45c84cc5015aaf3f47dbbc5b4d49276045f5ea433e7e0c7fc",
+    "sizeBytes": 195279
+  },
+  "publisher": {
+    "id": "sps",
+    "keyId": "ed25519:sps-official-publisher-1"
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "value": "1uXeHvQau2vqlIArG+VLQtNhyIAHco8EuGw36a6LjA7AMPq4y7z2Jx65X0vtnVJ4+P+f2bgrk6SpLnMBhV3ACA=="
+  },
+  "compatibility": {
+    "sps": ">=0.4.0",
+    "pluginApi": 1
+  },
+  "visibility": "public",
+  "catalog": {
+    "displayName": "SPS Team Workplane",
+    "summary": "Durable Team Rooms and Lead-to-Worker task delivery for SPS projects.",
+    "documentationUrl": "https://github.com/Powerpunch777/SPS/tree/codex/paperclip-workplane/sps-server/sps-room-chat"
+  },
+  "capabilities": [
+    "ui.page.register",
+    "ui.sidebar.register",
+    "ui.detailTab.register",
+    "host.local_api.access",
+    "issues.read",
+    "issues.create",
+    "issues.update",
+    "issue.comments.read",
+    "issue.comments.create",
+    "issue.documents.read",
+    "issue.documents.write",
+    "agents.read",
+    "companies.read",
+    "agent.sessions.create",
+    "agent.sessions.list",
+    "agent.sessions.send",
+    "agent.sessions.close",
+    "projects.read",
+    "project.workspaces.read",
+    "project.workspaces.write",
+    "events.subscribe",
+    "memory.lifecycle.publish",
+    "jobs.schedule",
+    "plugin.state.read",
+    "plugin.state.write",
+    "instance.settings.register"
+  ],
+  "permissionsDigest": "0d6b36d601e7766c663de59e001d47d4058f036376ce7f38be153308ae91cc52",
+  "publishedAt": "2026-07-24T03:20:24.593Z"
+}
