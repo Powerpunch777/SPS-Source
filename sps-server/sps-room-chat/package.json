@@ -1,6 +1,6 @@
 {
   "name": "sps-room-chat",
-  "version": "0.3.82",
+  "version": "0.3.83",
   "private": true,
   "type": "module",
   "description": "SPS Team Workplane with long-lived Team Rooms and bounded Task Rooms.",
@@ -9,7 +9,7 @@
     "dist/codex-app-server-client.js",
     "dist/manifest.js",
     "dist/team-workplane-profile.js",
-    "dist/ui-v0.3.82",
+    "dist/ui-v0.3.83",
     "dist/worker.js"
   ],
   "paperclipPlugin": {

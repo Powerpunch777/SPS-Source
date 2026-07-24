@@ -5,7 +5,7 @@ export default {
   // Existing Rooms, Task Rooms, origins, and plugin state use this exact ID.
   id: SPS_TEAM_WORKPLANE_PROFILE.legacyPluginId,
   apiVersion: 1,
-  version: "0.3.82",
+  version: "0.3.83",
   displayName: SPS_TEAM_WORKPLANE_PROFILE.displayName,
   description: SPS_TEAM_WORKPLANE_PROFILE.description,
   author: SPS_TEAM_WORKPLANE_PROFILE.author,
@@ -53,7 +53,7 @@ export default {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.82"
+    ui: "./dist/ui-v0.3.83"
   },
   ui: {
     slots: [
