@@ -123,6 +123,11 @@ jobs:
           cache: npm
           cache-dependency-path: |
             sps-server/desktop/package-lock.json
+            sps-server/plugin-platform/package-lock.json
+
+      - name: Install SPS Plugin Kit dependencies for Desktop Registry tests
+        working-directory: sps-server/plugin-platform
+        run: npm ci
 
       - name: Install SPS Desktop dependencies
         working-directory: sps-server/desktop
