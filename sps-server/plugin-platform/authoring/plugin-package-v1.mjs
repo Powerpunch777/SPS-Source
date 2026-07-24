@@ -85,6 +85,48 @@ async function collectPluginFiles(root, directory = root, files = []) {
   return files;
 }
 
+function isSafeDistributionPath(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 512) return false;
+  const normalized = value.endsWith("/") ? value.slice(0, -1) : value;
+  return normalized.length > 0
+    && !normalized.startsWith("/")
+    && !normalized.startsWith("\\")
+    && !normalized.includes("\\")
+    && !normalized.includes("\u0000")
+    && !/[?*\[\]{}!]/.test(normalized)
+    && normalized.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+/**
+ * Honors a deliberately small, deterministic subset of npm's `files` field.
+ * Entries are literal files or directory roots only: no glob expansion means
+ * an author can inspect exactly what is signed before the archive is created.
+ */
+function selectDistributionFiles(files, packageManifest) {
+  if (packageManifest?.files === undefined) return { files, errors: [] };
+  if (!Array.isArray(packageManifest.files)) {
+    return { files: [], errors: ["package.json files must be an array of literal file or directory paths."] };
+  }
+
+  const selected = new Set(["package.json", "sps-plugin.json"]);
+  const errors = [];
+  for (const [index, value] of packageManifest.files.entries()) {
+    if (!isSafeDistributionPath(value)) {
+      errors.push(`package.json files[${index}] must be a safe literal file or directory path.`);
+      continue;
+    }
+    const prefix = value.endsWith("/") ? value.slice(0, -1) : value;
+    const matches = files.filter((file) => file.relative === prefix || file.relative.startsWith(`${prefix}/`));
+    if (matches.length === 0) {
+      errors.push(`package.json files[${index}] does not match a package file: ${value}.`);
+      continue;
+    }
+    for (const match of matches) selected.add(match.relative);
+  }
+
+  return { files: files.filter((file) => selected.has(file.relative)), errors };
+}
+
 function compareSemver(left, right) {
   const parse = (value) => {
     const [core, prerelease = ""] = value.split("-", 2);
@@ -134,11 +176,16 @@ export async function inspectPluginDirectory(sourceDirectory) {
     files = await collectPluginFiles(root);
     const totalBytes = files.reduce((sum, file) => sum + file.sizeBytes, 0);
     if (totalBytes > MAX_AUTHORING_TOTAL_BYTES) errors.push("Plugin package exceeds the total 512 MiB limit.");
+    const allFiles = files;
+    const allFileMap = new Map(allFiles.map((file) => [file.relative, file]));
+    if (!allFileMap.has("package.json")) errors.push("Plugin package must contain root package.json.");
+    if (!allFileMap.has("sps-plugin.json")) errors.push("Plugin package must contain root sps-plugin.json.");
+    if (allFileMap.has("package.json")) packageManifest = await readJson(path.join(root, "package.json"), "package.json");
+    if (allFileMap.has("sps-plugin.json")) staticManifest = await readJson(path.join(root, "sps-plugin.json"), "sps-plugin.json");
+    const distribution = selectDistributionFiles(allFiles, packageManifest);
+    files = distribution.files;
+    errors.push(...distribution.errors);
     const fileMap = new Map(files.map((file) => [file.relative, file]));
-    if (!fileMap.has("package.json")) errors.push("Plugin package must contain root package.json.");
-    if (!fileMap.has("sps-plugin.json")) errors.push("Plugin package must contain root sps-plugin.json.");
-    if (fileMap.has("package.json")) packageManifest = await readJson(path.join(root, "package.json"), "package.json");
-    if (fileMap.has("sps-plugin.json")) staticManifest = await readJson(path.join(root, "sps-plugin.json"), "sps-plugin.json");
     if (!isPlainObject(packageManifest) || typeof packageManifest?.name !== "string" || packageManifest.name.trim().length === 0) {
       errors.push("package.json name is required.");
     }

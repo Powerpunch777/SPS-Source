@@ -44,4 +44,20 @@ node .\cli\sps-plugin.mjs inspect .\team-registry
 
 `publish-local`은 package·release record·Registry index를 한 번에 생성하거나 갱신한다. `--catalog-name`, `--summary`, `--docs-url`은 release signature에 포함되는 표시 정보이고, `--publisher-name`과 `--publisher-url`은 Registry root signature에 포함되는 게시자 profile이다. 모두 선택 사항이며, 설치 권한을 바꾸지 않는다. 기존 release는 덮어쓰지 않으며, 기존 index를 갱신할 때는 같은 Registry root key 서명을 다시 검증한다. 개인 키는 source tree와 Registry에 올리지 않는다.
 
+## 배포 파일 선택
+
+`package.json`의 선택적 `files` 배열은 `.spsplugin`에 넣을 파일을 제한한다. SPS는 서명 대상을 예측 가능하게 유지하기 위해 글로브가 아닌 실제 파일 경로 또는 폴더 경로만 허용한다. `package.json`과 `sps-plugin.json`은 항상 함께 포함되고, `sps-plugin.json.runtime.manifestEntry`와 그 manifest가 참조하는 UI·Worker 파일도 `files`에 명시해야 한다.
+
+```json
+{
+  "files": [
+    "dist/manifest.js",
+    "dist/worker.js",
+    "dist/ui"
+  ]
+}
+```
+
+`dist/*.js`, `../outside`, 빈 경로처럼 포함 범위를 모호하게 만드는 값은 검증 단계에서 거부된다. `files`를 생략하면 기존 호환성을 위해 source tree 전체를 검사하고 패키징한다.
+
 제품·보안·배포 결정은 [Plugin Registry 및 Marketplace 계약](../120-sps-plugin-registry-and-marketplace-contract-ko.md)을 따른다.

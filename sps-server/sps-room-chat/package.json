@@ -4,6 +4,14 @@
   "private": true,
   "type": "module",
   "description": "SPS Team Workplane with long-lived Team Rooms and bounded Task Rooms.",
+  "files": [
+    "dist/agy-room-client.js",
+    "dist/codex-app-server-client.js",
+    "dist/manifest.js",
+    "dist/team-workplane-profile.js",
+    "dist/ui-v0.3.82",
+    "dist/worker.js"
+  ],
   "paperclipPlugin": {
     "manifest": "./dist/manifest.js"
   },

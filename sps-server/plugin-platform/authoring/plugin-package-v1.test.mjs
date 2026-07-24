@@ -166,6 +166,43 @@ test("rejects source directories that accidentally include a likely secret", asy
   assert.ok(inspected.errors.some((error) => error.includes("potentially secret file")));
 });
 
+test("honors literal package files while always retaining signed root metadata", async (t) => {
+  const { root, sourceDirectory } = await makePlugin(t);
+  const packagePath = path.join(sourceDirectory, "package.json");
+  const packageManifest = JSON.parse(await readFile(packagePath, "utf8"));
+  packageManifest.files = ["dist/manifest.js", "dist/worker.js"];
+  await writeFile(packagePath, `${JSON.stringify(packageManifest, null, 2)}\n`, "utf8");
+  await writeFile(path.join(sourceDirectory, "notes.txt"), "do not publish this source note", "utf8");
+
+  const inspected = await inspectPluginDirectory(sourceDirectory);
+  assert.equal(inspected.valid, true);
+  assert.deepEqual(inspected.files.map((file) => file.relative).sort(), [
+    "dist/manifest.js",
+    "dist/worker.js",
+    "package.json",
+    "sps-plugin.json",
+  ]);
+
+  const archive = await packagePluginDirectory({
+    sourceDirectory,
+    archivePath: path.join(root, "weather.spsplugin"),
+  });
+  assert.equal(archive.archive.valid, true);
+  assert.equal(archive.archive.archive.entryCount, 4);
+});
+
+test("rejects package files patterns because signed plugin inputs must stay explicit", async (t) => {
+  const { sourceDirectory } = await makePlugin(t);
+  const packagePath = path.join(sourceDirectory, "package.json");
+  const packageManifest = JSON.parse(await readFile(packagePath, "utf8"));
+  packageManifest.files = ["dist/*.js"];
+  await writeFile(packagePath, `${JSON.stringify(packageManifest, null, 2)}\n`, "utf8");
+
+  const inspected = await inspectPluginDirectory(sourceDirectory);
+  assert.equal(inspected.valid, false);
+  assert.ok(inspected.errors.some((error) => error.includes("safe literal")));
+});
+
 test("refuses a release locator that Desktop Registry sources would reject", async (t) => {
   const { root, sourceDirectory } = await makePlugin(t);
   const archivePath = path.join(root, "weather.spsplugin");
