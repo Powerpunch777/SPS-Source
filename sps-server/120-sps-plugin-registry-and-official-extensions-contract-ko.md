@@ -226,7 +226,7 @@ The authoring Kit rejects URL-like text in relative Registry paths, URL credenti
 - 구현됨: source 성격(공식·서명 remote·Owner-trusted local), `sps-plugin inspect`의 실행 없는 source/package/local Registry 검사, Git·official의 공통 pinned-root verifier, 검증된 release 배지, 서명된 플러그인 이름·설명·문서 링크·권한 preview·게시자 프로필, 공개·링크 전용 visibility, 버전별 immutable release, package된 Owner Host의 author → publish → stage → enable·update·rollback E2E
 - 구현됨: SPS Desktop의 분리된 `Official extensions...` discovery 화면. 이 화면은 built-in SPS Official Registry의 서명 검증 결과 중 `public` release의 안전한 catalog 정보만 보여 주며, 설치는 Owner-only `Plugin sources & review`의 명시적 stage·enable 절차로만 넘긴다.
 - 구현됨: `templates/github-static-registry-publish.yml`의 수동 GitHub Actions 발행 경로. Registry·publisher 개인 키는 Actions Secret에서만 runner 임시 파일로 전달하고, immutable release 작성 뒤 `inspect` 재검증을 통과한 Registry 폴더만 commit한다.
-- 구현됨: `Publish SPS Official Registry` 수동 Workflow와 `https://redongames.com/registry/registry.json` 정적 호스팅 경로. 최초 실서명 release를 발행하면 기존 GitHub Pages가 Registry folder를 함께 배포한다.
+- 구현됨: `Publish SPS Official Registry` 수동 Workflow와 `https://raw.githubusercontent.com/Powerpunch777/SPS-Official-Extensions/main/registry.json` 정적 호스팅 경로. workflow는 제품 source와 분리된 Registry artifact 레포만 변경한다.
 - 다음 범위: 최초 실서명 release 발행, 두 Desktop에서 source·stage·enable·update·rollback 반복 E2E, 신고·advisory 연결
 
 ### Community Marketplace (Deferred)

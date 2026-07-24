@@ -118,6 +118,14 @@ test("keeps the SPS Official Registry bundled while storing and removing Owner-t
   }
 });
 
+test("keeps the bundled Official Registry separate from the product source repository", () => {
+  assert.equal(
+    SPS_OFFICIAL_REGISTRY_SOURCE.indexUrl,
+    "https://raw.githubusercontent.com/Powerpunch777/SPS-Official-Extensions/main/registry.json",
+  );
+  assert.doesNotMatch(SPS_OFFICIAL_REGISTRY_SOURCE.indexUrl, /Powerpunch777\/SPS\//);
+});
+
 test("verifies the same pinned-root release contract for Git and official Registry sources", async () => {
   const { source, fetchImpl } = makeRemoteFixture();
   for (const kind of ["git", "official"]) {

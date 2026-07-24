@@ -8,6 +8,7 @@ SPS는 제품 Core를 공개 소스로 배포하지 않는다. 대신 외부 개
 | 구분 | 공개 여부 | 위치 | 목적 |
 | --- | --- | --- | --- |
 | Plugin SDK, CLI, package·Registry 계약 | 공개 | `Powerpunch777/sps-plugin-sdk` | 플러그인 작성·검사·서명 규격 |
+| 공식 확장 패키지·서명 Registry index | 공개 | `Powerpunch777/SPS-Official-Extensions` | 기본 제공 확장의 검증·배포 |
 | Windows 설치 파일과 업데이트 메타데이터 | 공개 | `Powerpunch777/SPS-Desktop-Releases` | 설치 앱의 안정적 업데이트 |
 | SPS Core, Desktop, Owner Host, 기본 Memory 구현 | 비공개 예정 | 제품 소스 저장소 | 제품 로직·보안 경계·사용자 데이터 처리 |
 | 사용자 프로젝트, Room, Task, Vault, API 키 | 공개 금지 | 각 Owner의 로컬 데이터 | 개인·팀 데이터 보호 |
@@ -56,7 +57,7 @@ SPS, SonParkServer, 로고, 공식 배지, 공식 Registry의 상표·운영 권
 
 ## 비공개 전환 순서
 
-1. `sps-plugin-sdk` 공개 레포와 `SPS-Desktop-Releases` 공개 Release 채널을 유지한다.
+1. `sps-plugin-sdk`, `SPS-Official-Extensions`, `SPS-Desktop-Releases` 공개 레포를 유지한다.
 2. Desktop `0.4.19` 이상의 **서명된 브리지 업데이트**를 기존 공개 업데이트
    채널로 한 번 배포한다. 이 버전부터 새 Release 채널을 확인한다.
 3. 사용 중인 모든 Owner·Member 컴퓨터가 브리지 버전 이상으로 업데이트됐는지

@@ -2,11 +2,11 @@
 
 ## 목적
 
-SPS 공식 Registry는 `https://redongames.com/registry/registry.json`에서 제공하는 정적 release index다. 커뮤니티 Marketplace의 검색·리뷰·결제 서비스가 아니라, SPS Desktop Official Extensions가 서명된 플러그인 release를 확인하고 disabled stage로 가져오기 위한 배포 채널이다.
+SPS 공식 Registry는 `https://raw.githubusercontent.com/Powerpunch777/SPS-Official-Extensions/main/registry.json`에서 제공하는 정적 release index다. 커뮤니티 Marketplace의 검색·리뷰·결제 서비스가 아니라, SPS Desktop Official Extensions가 서명된 플러그인 release를 확인하고 disabled stage로 가져오기 위한 배포 채널이다.
 
-SPS Desktop에는 `io.sps.official` source와 root public key가 기본 내장되어 있으므로 Owner가 같은 source를 수동 추가하거나 제거할 수 없다. 현재 GitHub Pages의 `redongames.com` TLS 인증서 발급이 완료되기 전까지 Desktop은 같은 서명 계약을 유지하는 GitHub raw index를 사용한다. 이 임시 URL은 사용자에게 노출되는 일반 설정값이 아니며, 인증서가 준비되면 source catalog의 URL만 공식 도메인으로 되돌린다. TLS 검증을 끄거나 인증서 오류를 무시하는 우회는 허용하지 않는다.
+SPS Desktop에는 `io.sps.official` source와 root public key가 기본 내장되어 있으므로 Owner가 같은 source를 수동 추가하거나 제거할 수 없다. 공식 index는 제품 source와 분리된 `Powerpunch777/SPS-Official-Extensions` 공개 레포에서 제공한다. 이 URL은 사용자에게 노출되는 일반 설정값이 아니며, TLS 검증을 끄거나 인증서 오류를 무시하는 우회는 허용하지 않는다.
 
-Registry 파일은 이 저장소의 `sps-server/website/registry/`에 저장된다. 기존 GitHub Pages 배포가 `sps-server/website/` 전체를 배포하므로, 별도 서버·DB·Cloudflare Worker를 추가하지 않는다.
+Registry 파일은 `Powerpunch777/SPS-Official-Extensions`에만 저장된다. 제품 source와 Registry artifact를 분리하므로, 제품 레포를 비공개로 전환해도 Desktop의 official source는 계속 읽을 수 있다.
 
 ## 최초 1회 설정
 
@@ -25,6 +25,7 @@ GitHub 저장소 `Powerpunch777/SPS`의 **Settings > Secrets and variables > Act
 
 - `SPS_REGISTRY_PUBLISHER_PRIVATE_KEY`: `sps-official-publisher-private.pem`의 전체 내용
 - `SPS_REGISTRY_ROOT_PRIVATE_KEY`: `sps-official-root-private.pem`의 전체 내용
+- `SPS_OFFICIAL_REGISTRY_TOKEN`: `Powerpunch777/SPS-Official-Extensions`에만 Contents 읽기·쓰기를 허용한 fine-grained token
 
 공개 key는 Secret이 아니다. 첫 발행 뒤 GitHub Actions summary가 출력하는 root key ID와 public key를 SPS Desktop의 Registry source에 한 번만 고정한다.
 
@@ -34,8 +35,8 @@ GitHub 저장소 `Powerpunch777/SPS`의 **Settings > Secrets and variables > Act
 2. GitHub Actions의 `Publish SPS Official Registry`를 수동 실행한다.
 3. source path, 표시명, 요약, HTTPS 문서 URL을 입력한다.
 4. Workflow가 package·release record·`registry.json`을 만들고 `inspect`로 다시 검증한다.
-5. 정상일 때만 `sps-server/website/registry/` 변경을 commit·push한다. Pages 배포가 이어서 실행된다.
-6. `https://redongames.com/registry/registry.json`이 정상 TLS 인증서로 HTTPS 응답하는지 확인한다. 인증서 발급 전에는 Desktop의 내장 GitHub raw fallback이 계속 사용되므로, 오류를 무시하도록 Desktop을 바꾸지 않는다.
+5. 정상일 때만 `Powerpunch777/SPS-Official-Extensions` 변경을 commit·push한다.
+6. `https://raw.githubusercontent.com/Powerpunch777/SPS-Official-Extensions/main/registry.json`이 정상 HTTPS 응답하는지 확인한다.
 7. SPS Desktop의 기본 `SPS Official Registry` source에서 새 release가 보이는지 확인한다. Root key와 source ID는 앱에 내장되어 있으므로 수동 입력하지 않는다.
 8. Desktop에서 source browse → stage → explicit enable → update → rollback을 각각 한 번 검증한다.
 

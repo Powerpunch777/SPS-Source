@@ -29,7 +29,7 @@ export const SPS_OFFICIAL_REGISTRY_SOURCE = Object.freeze({
   // GitHub Pages is the current distribution transport. The public Redon
   // domain remains the catalog and documentation home, but is not used for
   // desktop acquisition until its TLS certificate is provisioned.
-  indexUrl: "https://raw.githubusercontent.com/Powerpunch777/SPS/codex/paperclip-workplane/sps-server/website/registry/registry.json",
+  indexUrl: "https://raw.githubusercontent.com/Powerpunch777/SPS-Official-Extensions/main/registry.json",
   trustedRoot: Object.freeze({
     keyId: "ed25519:sps-official-registry-root-1",
     publicKey: "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAwulANS1+yX316js++mKcwkPcGh7pVkB+Dh+0wt0LTJE=\n-----END PUBLIC KEY-----\n",
