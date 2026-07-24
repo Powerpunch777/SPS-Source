@@ -8,7 +8,7 @@ function firstNonEmpty(...values) {
 }
 
 // A person may give a computer a custom name, but first-run setup should not
-// demand one before the Google account is known. The account name is a useful
+// demand one before the SPS account is known. The account name is a useful
 // default and the Windows host name remains a last-resort fallback.
 export function resolveSpsNodeDisplayName({ configuredName, accountName, hostname }) {
   return firstNonEmpty(configuredName, accountName, hostname, "SPS Desktop").slice(0, 120);

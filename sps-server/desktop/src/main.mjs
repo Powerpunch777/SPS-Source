@@ -88,16 +88,22 @@ import {
   createSpsWorkspaceWindowPreferences,
   isAllowedSpsWorkspaceNavigation,
 } from "./window-security.mjs";
-import { isSpsDesktopGoogleClientId, startSpsDesktopGoogleSignIn } from "./desktop-account.mjs";
+import {
+  configuredSpsIdentityUrl,
+  refreshSpsDesktopIdentity,
+  revokeSpsDesktopIdentity,
+  startSpsDesktopIdentitySignIn,
+} from "./sps-identity-account.mjs";
 import { resolveSpsServerAccess } from "./server-access-model.mjs";
-import { areSpsBundledExtensionsEnabled, disabledSpsExtensionStatus } from "./bundled-extensions.mjs";
+import {
+  disabledSpsExtensionStatus,
+  isSpsDefaultMemoryEnabled,
+  isSpsRoomWorkplaneBundled,
+} from "./bundled-extensions.mjs";
 import { synchronizeSpsTeamWorkplaneConfig } from "./bundled-workplane-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
-// OAuth client IDs identify a public native application. The Desktop flow uses
-// PKCE, so a fresh installation can sign in without distributing a secret.
-const BUILTIN_SPS_DESKTOP_GOOGLE_CLIENT_ID = "281595061165-v407jp3aqt9hlf0h1dr1m08q7hkm6ire.apps.googleusercontent.com";
 let mainWindow = null;
 let workspaceWindow = null;
 let registryWindow = null;
@@ -357,6 +363,11 @@ function currentDesktopAccount() {
       email: typeof parsed.email === "string" ? parsed.email : null,
       picture: typeof parsed.picture === "string" ? parsed.picture : null,
       verifiedAt: typeof parsed.verifiedAt === "string" ? parsed.verifiedAt : null,
+      accessToken: typeof parsed.accessToken === "string" ? parsed.accessToken : null,
+      refreshToken: typeof parsed.refreshToken === "string" ? parsed.refreshToken : null,
+      accessTokenExpiresAt: typeof parsed.accessTokenExpiresAt === "string" ? parsed.accessTokenExpiresAt : null,
+      deviceId: typeof parsed.deviceId === "string" ? parsed.deviceId : null,
+      identityUrl: typeof parsed.identityUrl === "string" ? parsed.identityUrl : null,
     };
   } catch {
     return null;
@@ -365,6 +376,129 @@ function currentDesktopAccount() {
 
 function currentDesktopAccountSubject() {
   return currentDesktopAccount()?.subject ?? null;
+}
+
+async function ensureDesktopIdentityAccessToken() {
+  const account = currentDesktopAccount();
+  if (!account?.accessToken || !account?.refreshToken || !account?.deviceId) return null;
+  const expiresAt = Date.parse(account.accessTokenExpiresAt ?? "");
+  if (Number.isFinite(expiresAt) && expiresAt > Date.now() + 2 * 60 * 1000) {
+    return account.accessToken;
+  }
+  const refreshed = await refreshSpsDesktopIdentity({
+    identityUrl: account.identityUrl || configuredDesktopIdentityUrl(),
+    refreshToken: account.refreshToken,
+    deviceId: account.deviceId,
+  });
+  state.encryptedDesktopAccount = encrypt(JSON.stringify({
+    ...account,
+    ...refreshed,
+    identityUrl: account.identityUrl || configuredDesktopIdentityUrl(),
+    verifiedAt: account.verifiedAt || new Date().toISOString(),
+  }));
+  await persistState();
+  return refreshed.accessToken;
+}
+
+function spsIdentitySessionCookieValue(response) {
+  const setCookies = typeof response.headers.getSetCookie === "function"
+    ? response.headers.getSetCookie()
+    : [response.headers.get("set-cookie")].filter(Boolean);
+  for (const header of setCookies) {
+    const match = String(header).match(/(?:^|,)\s*sps_identity_session=([^;]+)/i);
+    if (match?.[1]) return decodeURIComponent(match[1]);
+  }
+  return null;
+}
+
+async function establishSpsIdentityCoreSession(hubOrigin) {
+  const accessToken = await ensureDesktopIdentityAccessToken();
+  if (!accessToken) return null;
+  const response = await fetch(new URL("/api/sps-identity/session", `${hubOrigin}/`), {
+    method: "POST",
+    headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.error || "SPS Server could not accept the SPS Identity session.");
+  }
+  const token = spsIdentitySessionCookieValue(response);
+  if (!token) throw new Error("SPS Server did not create a secure SPS Identity session.");
+  const target = new URL(hubOrigin);
+  await session.defaultSession.cookies.set({
+    url: target.origin,
+    name: "sps_identity_session",
+    value: token,
+    httpOnly: true,
+    secure: target.protocol === "https:",
+    sameSite: "lax",
+    expirationDate: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+  });
+  return token;
+}
+
+async function clearSpsIdentityCoreSessions() {
+  const cookies = await session.defaultSession.cookies.get({ name: "sps_identity_session" });
+  await Promise.all(cookies.map(async (cookie) => {
+    const hostname = String(cookie.domain ?? "").replace(/^\./, "");
+    if (!hostname) return;
+    const protocol = cookie.secure ? "https:" : "http:";
+    const pathname = String(cookie.path ?? "/").startsWith("/") ? cookie.path : `/${cookie.path}`;
+    await session.defaultSession.cookies.remove(`${protocol}//${hostname}${pathname}`, "sps_identity_session").catch(() => undefined);
+  }));
+}
+
+function isSpsIdentityRemoteProfile(profile = state.profile) {
+  return profile?.connectionKind === "remote" && profile?.authMode === "sps-identity";
+}
+
+async function resolveSpsCoreRequestAccess(hubUrl, profile = state.profile) {
+  const accessToken = currentBoardToken();
+  if (accessToken) return { accessToken, sessionCookie: null };
+  if (!isSpsIdentityRemoteProfile(profile)) return { accessToken: null, sessionCookie: null };
+  const sessionCookie = await establishSpsIdentityCoreSession(hubUrl);
+  return { accessToken: null, sessionCookie };
+}
+
+async function requireSpsCoreRequestAccess(hubUrl, profile = state.profile) {
+  const access = await resolveSpsCoreRequestAccess(hubUrl, profile);
+  if (!access.accessToken && !access.sessionCookie) {
+    throw new Error("Sign in to SPS Desktop before contacting this SPS Server.");
+  }
+  return access;
+}
+
+async function refreshSpsIdentityTeamContext() {
+  if (!isSpsIdentityRemoteProfile() || !state.profile) return null;
+  const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
+  const companies = await listSpsCompanies({ hubUrl: state.profile.hubUrl, ...access });
+  state.companies = normalizeCompanyList(companies);
+  if (!state.profile.companyId && state.companies.length === 1) {
+    state.profile.companyId = state.companies[0].id;
+  }
+  await persistState();
+  if (state.profile.companyId) await refreshProjects();
+  return state.companies;
+}
+
+async function acceptSpsIdentityInvite(hubUrl, inviteToken) {
+  const sessionCookie = await establishSpsIdentityCoreSession(hubUrl);
+  if (!sessionCookie) return null;
+  const response = await fetch(new URL(`/api/invites/${encodeURIComponent(inviteToken)}/accept`, `${hubUrl}/`), {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      cookie: `sps_identity_session=${encodeURIComponent(sessionCookie)}`,
+    },
+    body: JSON.stringify({ requestType: "human" }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error || "SPS Server could not accept this team invitation.");
+  }
+  return payload;
 }
 
 function rememberCurrentAccountConnection() {
@@ -392,7 +526,7 @@ function profilesMatch(left, right) {
 }
 
 // v1-v4 had one machine-wide `profile`. On first v5 launch, claim that
-// legacy record for the already signed-in Google account only. Later account
+  // legacy record for the already signed-in SPS account only. Later account
 // switches never inherit another account's routing or local-workspace record.
 function restoreCurrentAccountConnection() {
   const account = currentDesktopAccount();
@@ -431,36 +565,21 @@ function currentAccountOwnsOwnerHost() {
   return Boolean(subject && state.ownerHostOwnerSubject === subject);
 }
 
-function configuredDesktopGoogleClientId() {
-  const fromState = String(state.desktopGoogleClientId ?? "").trim();
-  const fromEnvironment = String(process.env.SPS_DESKTOP_GOOGLE_CLIENT_ID ?? "").trim();
-  if (isSpsDesktopGoogleClientId(fromState)) return fromState;
-  if (isSpsDesktopGoogleClientId(fromEnvironment)) return fromEnvironment;
-  return BUILTIN_SPS_DESKTOP_GOOGLE_CLIENT_ID;
+function configuredDesktopIdentityUrl() {
+  return configuredSpsIdentityUrl(process.env.SPS_IDENTITY_URL);
 }
 
-function configuredDesktopGoogleClientSecret() {
-  if (state.encryptedDesktopGoogleClientSecret) {
-    try {
-      const fromState = String(decrypt(state.encryptedDesktopGoogleClientSecret) ?? "").trim();
-      if (fromState) return fromState;
-    } catch {
-      // A migrated profile can be configured again without losing its server.
-    }
-  }
-  const fromEnvironment = String(process.env.SPS_DESKTOP_GOOGLE_CLIENT_SECRET ?? "").trim();
-  return fromEnvironment || null;
-}
-
-function configuredDesktopGoogleCredentials() {
-  const clientId = configuredDesktopGoogleClientId();
-  const clientSecret = configuredDesktopGoogleClientSecret();
-  return clientId ? { clientId, clientSecret } : null;
+function ensureDesktopDeviceId() {
+  const existing = String(state.desktopDeviceId ?? "").trim();
+  if (/^[A-Za-z0-9._:-]{16,160}$/.test(existing)) return existing;
+  const created = `sps-desktop-${randomBytes(24).toString("base64url")}`;
+  state.desktopDeviceId = created;
+  return created;
 }
 
 function safeDesktopAccountError(error) {
   const message = error instanceof Error ? error.message.trim() : String(error ?? "").trim();
-  if (!message) return "Google sign-in could not finish.";
+  if (!message) return "SPS sign-in could not finish.";
   return message.slice(0, 360);
 }
 
@@ -472,6 +591,16 @@ function recordDesktopAccountAttempt(status, error = null) {
   };
 }
 
+async function adoptLegacyOwnerHostIfNeeded() {
+  if (!state.legacyOwnerHostAdoptionPending || state.ownerHostOwnerSubject || !currentDesktopAccount()) {
+    return false;
+  }
+  await startOwnerHost({ activate: true });
+  state.legacyOwnerHostAdoptionPending = false;
+  await persistState();
+  return true;
+}
+
 function sendDesktopAccountStatus() {
   createApplicationMenu();
   refreshTrayMenu();
@@ -481,17 +610,16 @@ function sendDesktopAccountStatus() {
 
 async function startDesktopAccountSignIn() {
   if (pendingDesktopAccount) return publicStatus();
-  const credentials = configuredDesktopGoogleCredentials();
-  if (!credentials) {
-    throw new Error("Google login is not configured for this SPS Desktop build.");
-  }
+  const identityUrl = configuredDesktopIdentityUrl();
+  const deviceId = ensureDesktopDeviceId();
   desktopAccountError = null;
   recordDesktopAccountAttempt("pending");
   await persistState();
   let signIn;
   try {
-    signIn = await startSpsDesktopGoogleSignIn({
-      ...credentials,
+    signIn = await startSpsDesktopIdentitySignIn({
+      identityUrl,
+      deviceId,
       openExternal: (url) => shell.openExternal(url),
     });
   } catch (error) {
@@ -504,11 +632,29 @@ async function startDesktopAccountSignIn() {
   pendingDesktopAccount = signIn;
   sendDesktopAccountStatus();
   void signIn.result.then(async (account) => {
-    state.encryptedDesktopAccount = encrypt(JSON.stringify(account));
+    state.encryptedDesktopAccount = encrypt(JSON.stringify({
+      ...account,
+      identityUrl,
+      verifiedAt: new Date().toISOString(),
+    }));
     if (pendingDesktopAccount === signIn) desktopAccountError = null;
     restoreCurrentAccountConnection();
     recordDesktopAccountAttempt("succeeded");
     await persistState();
+    // The first SPS Desktop stored a fully local Owner Host but had no central
+    // account subject. Adopt only the explicitly detected legacy Host after a
+    // successful SPS Identity sign-in on the same physical computer.
+    if (state.legacyOwnerHostAdoptionPending && !state.ownerHostOwnerSubject) {
+      try {
+        await adoptLegacyOwnerHostIfNeeded();
+      } catch (error) {
+        ownerHostStatus = {
+          ...ownerHostStatus,
+          state: "stopped",
+          lastError: error instanceof Error ? error.message : "Existing SPS Owner Host could not be adopted.",
+        };
+      }
+    }
     await maybeOpenWorkspaceForCurrentAccount();
   }).catch(async (error) => {
     if (pendingDesktopAccount === signIn) {
@@ -523,31 +669,24 @@ async function startDesktopAccountSignIn() {
   return publicStatus();
 }
 
-async function configureDesktopGoogleClient(input) {
-  const clientId = String(input?.clientId ?? "").trim();
-  const clientSecret = String(input?.clientSecret ?? "").trim();
-  if (!isSpsDesktopGoogleClientId(clientId)) {
-    throw new Error("Enter a valid Google OAuth Desktop client ID.");
-  }
-  state.desktopGoogleClientId = clientId;
-  state.encryptedDesktopGoogleClientSecret = clientSecret ? encrypt(clientSecret) : null;
-  desktopAccountError = null;
-  await persistState();
-  sendDesktopAccountStatus();
-  return publicStatus();
-}
-
 async function signOutDesktopAccount() {
   const signIn = pendingDesktopAccount;
   pendingDesktopAccount = null;
   signIn?.cancel();
   desktopAccountError = null;
   const account = currentDesktopAccount();
+  if (account?.refreshToken) {
+    await revokeSpsDesktopIdentity({
+      identityUrl: account.identityUrl || configuredDesktopIdentityUrl(),
+      refreshToken: account.refreshToken,
+    });
+  }
   let nodeDisconnect = null;
   if (account && state.profile) {
     nodeDisconnect = await disconnectCurrentNode();
     rememberCurrentAccountConnection();
   }
+  await clearSpsIdentityCoreSessions();
   clearActiveConnectionState();
   state.encryptedDesktopAccount = null;
   await persistState({ rememberActiveConnection: false });
@@ -561,12 +700,9 @@ function currentTeamCredentials() {
   if (!state.encryptedTeamCredentials) return null;
   try {
     const parsed = JSON.parse(decrypt(state.encryptedTeamCredentials));
-    if (
-      typeof parsed?.authSecret !== "string"
-      || typeof parsed?.googleClientId !== "string"
-      || typeof parsed?.googleClientSecret !== "string"
-    ) return null;
-    return parsed;
+    return typeof parsed?.authSecret === "string" && parsed.authSecret.trim()
+      ? { authSecret: parsed.authSecret }
+      : null;
   } catch {
     return null;
   }
@@ -588,9 +724,11 @@ function ownerHostTeamEnvironment() {
     // browser authentication. Keep both in the same encrypted Owner Vault
     // record so a private-team switch cannot leave Task execution unsigned.
     PAPERCLIP_AGENT_JWT_SECRET: credentials.authSecret,
-    SPS_GOOGLE_CLIENT_ID: credentials.googleClientId,
-    SPS_GOOGLE_CLIENT_SECRET: credentials.googleClientSecret,
-    SPS_AUTH_GOOGLE_ONLY: "true",
+    SPS_AUTH_IDENTITY_ENABLED: "true",
+    SPS_IDENTITY_ISSUER: configuredDesktopIdentityUrl(),
+    SPS_IDENTITY_AUDIENCE: "sps-core",
+    SPS_IDENTITY_JWKS_URL: `${configuredDesktopIdentityUrl()}/.well-known/jwks.json`,
+    SPS_AUTH_GOOGLE_ONLY: "false",
     // The request reaches Core from the local Tailscale Serve proxy. Core may
     // therefore trust only loopback forwarding headers, never arbitrary LAN.
     TRUST_PROXY: "loopback",
@@ -660,13 +798,14 @@ async function requireReadyOwnerHost() {
 async function ensureOwnerHostManager() {
   const vaultRoot = ownerVaultRoot();
   const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
-  const bundledExtensionsEnabled = areSpsBundledExtensionsEnabled();
-  const defaultMemory = bundledExtensionsEnabled
+  const defaultMemoryEnabled = isSpsDefaultMemoryEnabled();
+  const roomWorkplaneBundled = isSpsRoomWorkplaneBundled();
+  const defaultMemory = defaultMemoryEnabled
     ? await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot })
     : null;
   pluginRuntimeStatus = await inspectSpsPluginRuntime();
   const url = spsOwnerHostUrl(ownerHost.config);
-  if (ownerHostManager && ownerHostStatus.url === url && (!bundledExtensionsEnabled || defaultMemoryManager)) {
+  if (ownerHostManager && ownerHostStatus.url === url && (!defaultMemoryEnabled || defaultMemoryManager)) {
     return { ...ownerHost, defaultMemory, url };
   }
 
@@ -722,7 +861,10 @@ async function ensureOwnerHostManager() {
       const roomPluginPath = packagedRoomPluginPath && existsSync(path.join(packagedRoomPluginPath, "package.json"))
         ? packagedRoomPluginPath
         : developmentRoomPluginPath;
-      const bundledPluginPaths = bundledExtensionsEnabled ? [memoryPluginPath, roomPluginPath] : [];
+      const bundledPluginPaths = [
+        ...(defaultMemoryEnabled ? [memoryPluginPath] : []),
+        ...(roomWorkplaneBundled ? [roomPluginPath] : []),
+      ];
       return resolveSpsOwnerHostRuntime({
         // Development must execute the checked-out Core directly. The local
         // packaged runtime is intentionally a release artifact and otherwise
@@ -779,9 +921,9 @@ async function ensureOwnerHostManager() {
 
 async function activateOwnerHostProfile() {
   const account = currentDesktopAccount();
-  if (!account) throw new Error("Sign in with Google before activating this SPS Owner Host.");
+  if (!account) throw new Error("Sign in to SPS before activating this SPS Owner Host.");
   if (state.ownerHostOwnerSubject && state.ownerHostOwnerSubject !== account.subject) {
-    throw new Error("This computer already hosts an SPS Server for a different Google account. Sign in with that Owner account to manage it.");
+    throw new Error("This computer already hosts an SPS Server for a different SPS account. Sign in with that Owner account to manage it.");
   }
   if (!ownerHostIsReady() || !ownerHostStatus.url) {
     throw new Error(ownerHostStatus.lastError || "SPS Owner Host is still starting.");
@@ -798,6 +940,7 @@ async function activateOwnerHostProfile() {
     projectWorkspaces: {},
   };
   state.ownerHostOwnerSubject = account.subject;
+  state.legacyOwnerHostAdoptionPending = false;
   await persistState();
   return publicStatus();
 }
@@ -844,6 +987,23 @@ async function startOwnerHost({ activate = false } = {}) {
 }
 
 async function bootstrapOwnerHost() {
+  if (!state.ownerHostOwnerSubject && state.legacyOwnerHostAdoptionPending && currentDesktopAccount()) {
+    try {
+      await adoptLegacyOwnerHostIfNeeded();
+      await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+      await maybeOpenWorkspaceForCurrentAccount();
+      sendDesktopAccountStatus();
+      return;
+    } catch (error) {
+      ownerHostStatus = {
+        ...ownerHostStatus,
+        state: "stopped",
+        lastError: error instanceof Error ? error.message : "Existing SPS Owner Host could not be adopted.",
+      };
+      sendDesktopAccountStatus();
+      return;
+    }
+  }
   if (!state.ownerHostOwnerSubject) {
     ownerHostStatus = {
       ...ownerHostStatus,
@@ -881,6 +1041,13 @@ async function ownerHostApi(pathname, { method = "GET", body } = {}) {
   // remote address. Local-only bootstrap still works without this header.
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
   if (isOwnerHostProfile()) headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
+  if (state.teamAccess?.enabled) {
+    const identitySession = await establishSpsIdentityCoreSession(requireSpsOwnerHostOrigin(ownerHostStatus.url));
+    if (!identitySession) {
+      throw new Error("This private SPS Owner Host did not accept the SPS Identity session.");
+    }
+    headers.cookie = `sps_identity_session=${encodeURIComponent(identitySession)}`;
+  }
   const response = await fetch(`${requireSpsOwnerHostOrigin(ownerHostStatus.url)}/api${pathname}`, {
     method,
     headers,
@@ -1210,11 +1377,6 @@ async function enablePrivateTeamAccess(input) {
   }
   await requireReadyOwnerHost();
 
-  const googleClientId = String(input?.googleClientId ?? "").trim();
-  const googleClientSecret = String(input?.googleClientSecret ?? "").trim();
-  if (!googleClientId || !googleClientSecret) {
-    throw new Error("Google OAuth client ID and client secret are required for private team access.");
-  }
   const companyId = String(input?.companyId ?? "").trim();
   if (!companyId) throw new Error("Choose the company whose Owner invitation will initialize this private team Host.");
 
@@ -1245,8 +1407,6 @@ async function enablePrivateTeamAccess(input) {
 
   const credentials = {
     authSecret: randomBytes(48).toString("base64url"),
-    googleClientId,
-    googleClientSecret,
   };
   const nextTeamAccess = {
     enabled: true,
@@ -1275,6 +1435,13 @@ async function enablePrivateTeamAccess(input) {
     if (!tailscale.serve || !tailscale.tailnet) {
       throw new Error("Tailscale Serve did not confirm the SPS private team route.");
     }
+    const accepted = await ownerHostApi(`/invites/${encodeURIComponent(invitation.token)}/accept`, {
+      method: "POST",
+      body: { requestType: "human" },
+    });
+    if (accepted?.status !== "approved") {
+      throw new Error("SPS Owner Host did not grant the Owner's SPS account access.");
+    }
   } catch (error) {
     state.teamAccess = null;
     state.encryptedTeamCredentials = null;
@@ -1301,12 +1468,10 @@ async function enablePrivateTeamAccess(input) {
   };
   state.teamAccess = { ...nextTeamAccess, phase: "active" };
   await persistState();
-  const inviteUrl = buildInviteUrl(nextTeamAccess.url, invitation.token);
-  await shell.openExternal(inviteUrl);
   return {
     teamAccess: { ...nextTeamAccess },
-    initialOwnerInvite: { expiresAt: invitation.expiresAt ?? null },
-    googleRedirectUrl: `${nextTeamAccess.url}/api/auth/callback/google`,
+    initialOwnerInvite: { accepted: true, expiresAt: invitation.expiresAt ?? null },
+    identityIssuer: configuredDesktopIdentityUrl(),
   };
 }
 
@@ -1373,6 +1538,13 @@ async function saveRemoteProfile(input) {
   const displayName = String(input?.displayName ?? "").trim();
   const hubUrl = requireSpsHubOrigin(input?.hubUrl);
   const previousProfile = state.profile;
+  const requestedAuthMode = input?.authMode === "sps-identity"
+    ? "sps-identity"
+    : input?.authMode === "legacy"
+      ? "legacy"
+      : previousProfile?.hubUrl === hubUrl
+        ? previousProfile.authMode ?? "legacy"
+        : "legacy";
   const connectionScopeChanged = Boolean(
     previousProfile &&
     (previousProfile.hubUrl !== hubUrl || previousProfile.companyId !== companyId),
@@ -1391,13 +1563,14 @@ async function saveRemoteProfile(input) {
   state.profile = {
     hubUrl,
     connectionKind: "remote",
+    authMode: requestedAuthMode,
     companyId,
     displayName: displayName.slice(0, 120),
     defaultWorkspacePath: String(input?.defaultWorkspacePath ?? "").trim(),
     projectWorkspaces: connectionScopeChanged ? {} : state.profile?.projectWorkspaces ?? {},
   };
   await persistState();
-  if (companyId && currentBoardToken()) {
+  if (companyId && (currentBoardToken() || isSpsIdentityRemoteProfile(state.profile))) {
     try {
       await refreshProjects();
     } catch {
@@ -1414,17 +1587,29 @@ async function acceptInviteCode(input) {
   const pasted = String(input?.code ?? "").trim();
   const routed = parseSpsRoutedInviteCode(pasted);
   if (routed) {
+    const accepted = await acceptSpsIdentityInvite(routed.hub, routed.code);
     await saveRemoteProfile({
       hubUrl: routed.hub,
       companyId: "",
+      authMode: accepted ? "sps-identity" : "legacy",
       displayName: state.profile?.displayName ?? "",
       defaultWorkspacePath: state.profile?.defaultWorkspacePath ?? "",
     });
+    if (accepted) {
+      await refreshSpsIdentityTeamContext();
+      return { hub: routed.hub, status: accepted.status ?? "approved", direct: true };
+    }
     await shell.openExternal(buildInviteUrl(routed.hub, routed.code));
     return routed;
   }
   if (!state.profile?.hubUrl) {
     throw new Error("Paste the full SPS2 invitation code from the Owner. Short SPS codes work only after this computer already knows the team address.");
+  }
+  const accepted = await acceptSpsIdentityInvite(state.profile.hubUrl, pasted);
+  if (accepted) {
+    await saveRemoteProfile({ ...state.profile, authMode: "sps-identity" });
+    await refreshSpsIdentityTeamContext();
+    return { hub: state.profile.hubUrl, status: accepted.status ?? "approved", direct: true };
   }
   const url = buildInviteUrl(state.profile.hubUrl, pasted);
   await shell.openExternal(url);
@@ -1465,8 +1650,13 @@ async function refreshProjects() {
     return state.projects;
   }
   const companyId = state.profile?.companyId;
-  const accessToken = currentBoardToken();
-  if (!state.profile || !companyId || !accessToken) {
+  if (!state.profile || !companyId) {
+    state.projects = [];
+    await persistState();
+    return state.projects;
+  }
+  const access = await resolveSpsCoreRequestAccess(state.profile.hubUrl);
+  if (!access.accessToken && !access.sessionCookie) {
     state.projects = [];
     await persistState();
     return state.projects;
@@ -1474,7 +1664,7 @@ async function refreshProjects() {
   const projects = await listSpsProjects({
     hubUrl: state.profile.hubUrl,
     companyId,
-    accessToken,
+    ...access,
   });
   state.projects = normalizeProjectList(projects);
   await persistState();
@@ -1534,6 +1724,8 @@ function closeWorkspaceWindow() {
   const current = workspaceWindow;
   workspaceWindow = null;
   workspaceOrigin = null;
+  createApplicationMenu();
+  refreshTrayMenu();
   if (current && !current.isDestroyed()) current.close();
 }
 
@@ -1590,7 +1782,7 @@ async function showRegistryWindow({ sourceId = null } = {}) {
 }
 
 async function showOfficialExtensionsWindow() {
-  if (!currentDesktopAccount()) throw new Error("Sign in with Google before opening SPS Official Extensions.");
+  if (!currentDesktopAccount()) throw new Error("Sign in to SPS before opening SPS Official Extensions.");
   if (officialExtensionsWindow && !officialExtensionsWindow.isDestroyed()) {
     officialExtensionsWindow.show();
     officialExtensionsWindow.focus();
@@ -1624,16 +1816,24 @@ async function showOfficialExtensionsWindow() {
 }
 
 async function openWorkspace() {
-  if (!currentDesktopAccount()) throw new Error("Sign in with Google before opening SPS Workspace.");
+  if (!currentDesktopAccount()) throw new Error("Sign in to SPS before opening SPS Workspace.");
   if (!state.profile) throw new Error("Save an SPS team connection first");
   if (isOwnerHostProfile() && !currentAccountOwnsOwnerHost()) {
-    throw new Error("Sign in with the Google account that owns this SPS Server before opening its local Workspace.");
+    throw new Error("Sign in with the SPS account that owns this SPS Server before opening its local Workspace.");
   }
-  if (!isOwnerHostProfile() && !currentBoardToken()) {
-    throw new Error("Continue with Google before opening the SPS workspace");
+  if (!isOwnerHostProfile() && !currentBoardToken() && !currentDesktopAccount()?.accessToken) {
+    throw new Error("Continue with SPS sign-in before opening the SPS workspace");
   }
   const hubOrigin = workspaceHubUrl();
   if (!hubOrigin) throw new Error("Save an SPS team connection first");
+  // The local Owner Host is protected by the launch-scoped Desktop header.
+  // Central Identity sessions are for remote/private team access only.
+  const usesIdentitySession = isOwnerHostProfile()
+    ? false
+    : await establishSpsIdentityCoreSession(hubOrigin);
+  if (!isOwnerHostProfile() && !currentBoardToken() && !usesIdentitySession) {
+    throw new Error("This SPS Server still requires its existing browser sign-in. Complete its server access step first.");
+  }
   if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
     if (workspaceWindow.isMinimized()) workspaceWindow.restore();
     workspaceWindow.show();
@@ -1655,6 +1855,8 @@ async function openWorkspace() {
     ),
   });
   workspaceWindow = currentWindow;
+  createApplicationMenu();
+  refreshTrayMenu();
   configureWorkspaceNavigation(currentWindow, hubOrigin);
   currentWindow.once("ready-to-show", () => {
     currentWindow.show();
@@ -1664,6 +1866,8 @@ async function openWorkspace() {
     if (workspaceWindow !== currentWindow) return;
     workspaceWindow = null;
     workspaceOrigin = null;
+    createApplicationMenu();
+    refreshTrayMenu();
   });
   await currentWindow.loadURL(`${hubOrigin}/`);
 }
@@ -1672,7 +1876,7 @@ async function maybeOpenWorkspaceForCurrentAccount() {
   if (!currentDesktopAccount() || !state.profile) return false;
   if (isOwnerHostProfile()) {
     if (!currentAccountOwnsOwnerHost() || !ownerHostIsReady()) return false;
-  } else if (!currentBoardToken()) {
+  } else if (!currentBoardToken() && !currentDesktopAccount()?.accessToken) {
     return false;
   }
   await openWorkspace();
@@ -1716,7 +1920,8 @@ function createApplicationMenu() {
   const account = currentDesktopAccount();
   const accountLabel = account
     ? `${account.name}${account.email ? ` (${account.email})` : ""}`
-    : "Google 계정에 로그인";
+    : "SPS 계정에 로그인";
+  const workspaceOpen = Boolean(workspaceWindow && !workspaceWindow.isDestroyed());
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: "SPS Desktop",
@@ -1725,16 +1930,22 @@ function createApplicationMenu() {
         { type: "separator" },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
         { label: "Check for Beta updates...", click: () => run(checkForDesktopBetaUpdate) },
-        { label: "Official extensions...", accelerator: "CommandOrControl+Alt+E", enabled: Boolean(account), click: () => run(showOfficialExtensionsWindow) },
+        {
+          label: "Official extensions...",
+          accelerator: "CommandOrControl+Alt+E",
+          visible: workspaceOpen,
+          enabled: Boolean(account && workspaceOpen),
+          click: () => run(showOfficialExtensionsWindow),
+        },
         { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
         {
           label: "Advanced",
           submenu: [
-            { label: "Plugin sources & review...", accelerator: "CommandOrControl+Alt+R", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryWindow) },
-            { label: "Stage a plugin file...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(stageRegistryPluginFromFilePicker) },
-            { label: "Review staged plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryPluginStages) },
+            { label: "Plugin sources & review...", accelerator: "CommandOrControl+Alt+R", visible: workspaceOpen, enabled: Boolean(account && workspaceOpen && isOwnerHostProfile()), click: () => run(showRegistryWindow) },
+            { label: "Stage a plugin file...", visible: workspaceOpen, enabled: Boolean(account && workspaceOpen && isOwnerHostProfile()), click: () => run(stageRegistryPluginFromFilePicker) },
+            { label: "Review staged plugins...", visible: workspaceOpen, enabled: Boolean(account && workspaceOpen && isOwnerHostProfile()), click: () => run(showRegistryPluginStages) },
             { type: "separator" },
-            { label: "Check plugin runtime...", click: () => run(showPluginRuntimeStatus) },
+            { label: "Check plugin runtime...", visible: workspaceOpen, enabled: workspaceOpen, click: () => run(showPluginRuntimeStatus) },
             { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(exportOwnerVaultTransfer) },
             { label: "Check SPS transfer bundle...", click: () => run(inspectOwnerVaultTransfer) },
           ],
@@ -1755,22 +1966,29 @@ function createApplicationMenu() {
 function refreshTrayMenu() {
   if (!tray) return;
   const account = currentDesktopAccount();
-  const accountLabel = account?.email ?? account?.name ?? "Google 계정에 로그인";
+  const accountLabel = account?.email ?? account?.name ?? "SPS 계정에 로그인";
+  const workspaceOpen = Boolean(workspaceWindow && !workspaceWindow.isDestroyed());
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: accountLabel, enabled: false },
     { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
     { label: "Check for Beta updates...", click: () => { void checkForDesktopBetaUpdate(); } },
-    { label: "Official extensions...", accelerator: "CommandOrControl+Alt+E", enabled: Boolean(account), click: () => { void showOfficialExtensionsWindow(); } },
+    {
+      label: "Official extensions...",
+      accelerator: "CommandOrControl+Alt+E",
+      visible: workspaceOpen,
+      enabled: Boolean(account && workspaceOpen),
+      click: () => { void showOfficialExtensionsWindow(); },
+    },
     {
       label: "Advanced",
       submenu: [
-        { label: "Plugin sources & review...", accelerator: "CommandOrControl+Alt+R", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryWindow(); } },
-        { label: "Stage a plugin file...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void stageRegistryPluginFromFilePicker(); } },
-        { label: "Review staged plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryPluginStages(); } },
+        { label: "Plugin sources & review...", accelerator: "CommandOrControl+Alt+R", visible: workspaceOpen, enabled: Boolean(account && workspaceOpen && isOwnerHostProfile()), click: () => { void showRegistryWindow(); } },
+        { label: "Stage a plugin file...", visible: workspaceOpen, enabled: Boolean(account && workspaceOpen && isOwnerHostProfile()), click: () => { void stageRegistryPluginFromFilePicker(); } },
+        { label: "Review staged plugins...", visible: workspaceOpen, enabled: Boolean(account && workspaceOpen && isOwnerHostProfile()), click: () => { void showRegistryPluginStages(); } },
         { type: "separator" },
-        { label: "Check plugin runtime...", click: () => { void showPluginRuntimeStatus(); } },
+        { label: "Check plugin runtime...", visible: workspaceOpen, enabled: workspaceOpen, click: () => { void showPluginRuntimeStatus(); } },
         { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void exportOwnerVaultTransfer(); } },
         { label: "Check SPS transfer bundle...", click: () => { void inspectOwnerVaultTransfer(); } },
       ],
@@ -1799,9 +2017,10 @@ function publicStatus() {
   const desktopAccount = currentDesktopAccount();
   return {
     desktopAccount: {
-      configured: Boolean(configuredDesktopGoogleCredentials()),
-      clientId: configuredDesktopGoogleClientId(),
-      signedIn: Boolean(desktopAccount),
+      configured: true,
+      provider: "SPS Identity",
+      identityUrl: configuredDesktopIdentityUrl(),
+        signedIn: Boolean(desktopAccount),
       pending: Boolean(pendingDesktopAccount),
       error: desktopAccountError,
       name: desktopAccount?.name ?? null,
@@ -1820,6 +2039,7 @@ function publicStatus() {
       ? {
         hubUrl: state.profile.hubUrl,
         connectionKind: state.profile.connectionKind,
+        authMode: state.profile.authMode ?? "legacy",
         companyId: state.profile.companyId,
         displayName: state.profile.displayName,
         defaultWorkspacePath: state.profile.defaultWorkspacePath,
@@ -1827,7 +2047,9 @@ function publicStatus() {
       }
       : null,
     hasIdentity: Boolean(state.identity),
-    signedIn: Boolean(state.encryptedBoardApiToken),
+    signedIn: Boolean(currentBoardToken())
+      || Boolean(isSpsIdentityRemoteProfile() && desktopAccount)
+      || Boolean(isOwnerHostProfile() && currentAccountOwnsOwnerHost()),
     nodeId: state.nodeId,
     nodeStatus: normalizeSpsNodeStatus(state.nodeStatus),
     companies: Array.isArray(state.companies)
@@ -1859,6 +2081,7 @@ function publicStatus() {
         vaultPath: defaultMemoryStatus.vaultPath,
       },
       pluginRuntime: { ...pluginRuntimeStatus },
+      legacyAdoptionPending: Boolean(state.legacyOwnerHostAdoptionPending),
     },
     teamAccess: state.teamAccess
       ? {
@@ -1897,8 +2120,7 @@ async function connectNode() {
   }
   if (!state.profile) throw new Error("Save an SPS team connection first");
   if (!state.profile.companyId) throw new Error("Choose an SPS company before registering this computer");
-  const accessToken = currentBoardToken();
-  if (!accessToken) throw new Error("Sign in to SPS Desktop before registering this computer");
+  const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
   const displayName = resolveSpsNodeDisplayName({
     configuredName: state.profile.displayName,
     hostname: os.hostname(),
@@ -1920,13 +2142,13 @@ async function connectNode() {
     appVersion: app.getVersion(),
     capabilities,
     runners,
-    accessToken,
+    ...access,
   });
   const verified = await sendSpsNodeHeartbeat({
     hubUrl: state.profile.hubUrl,
     nodeId: node.id,
     identity,
-    accessToken,
+    ...access,
   });
   state.nodeId = node.id;
   await applyNodeStatus(verified.status ?? node.status, { persist: false });
@@ -1939,15 +2161,15 @@ async function connectNode() {
 async function disconnectCurrentNode() {
   const nodeId = state.nodeId;
   const hubUrl = state.profile?.hubUrl;
-  const accessToken = currentBoardToken();
   let remoteDisconnected = false;
   let remoteError = null;
 
   stopNodeScheduling();
   await cancelSpsNodeCommands("This SPS Desktop Node was disconnected, so its local command stopped.");
-  if (nodeId && hubUrl && accessToken) {
+  if (nodeId && hubUrl) {
     try {
-      await disconnectSpsNode({ hubUrl, nodeId, accessToken });
+      const access = await requireSpsCoreRequestAccess(hubUrl);
+      await disconnectSpsNode({ hubUrl, nodeId, ...access });
       remoteDisconnected = true;
     } catch (error) {
       remoteError = error instanceof Error ? error.message : "Could not disconnect this computer from the SPS team Host.";
@@ -1968,11 +2190,12 @@ async function disconnectCurrentNode() {
 async function sendNodeHeartbeat() {
   try {
     if (!state.nodeId || !state.profile || !state.identity) return null;
+    const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
     const node = await sendSpsNodeHeartbeat({
       hubUrl: state.profile.hubUrl,
       nodeId: state.nodeId,
       identity: currentIdentity(),
-      accessToken: currentBoardToken() ?? undefined,
+      ...access,
     });
     nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
     nodeRuntimeStatus.heartbeatError = null;
@@ -2005,16 +2228,15 @@ function scheduleHeartbeat({ immediate = true } = {}) {
 
 async function pollNodeCommands() {
   if (commandPollInFlight || !canRunSpsNodeCommands(state.nodeStatus) || !state.nodeId || !state.profile || !state.identity) return;
-  const accessToken = currentBoardToken();
-  if (!accessToken) return;
   commandPollInFlight = true;
   let claimedCommand = false;
   try {
+    const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
     const command = await claimSpsNodeCommand({
       hubUrl: state.profile.hubUrl,
       nodeId: state.nodeId,
       identity: currentIdentity(),
-      accessToken,
+      ...access,
     });
     nodeRuntimeStatus.lastCommandPollAt = new Date().toISOString();
     nodeRuntimeStatus.commandPollError = null;
@@ -2025,7 +2247,7 @@ async function pollNodeCommands() {
       hubUrl: state.profile.hubUrl,
       nodeId: state.nodeId,
       identity: currentIdentity(),
-      accessToken,
+      ...access,
       profile: state.profile,
     });
   } catch (error) {
@@ -2104,13 +2326,6 @@ function registerIpc() {
     await showRegistryWindow();
     return { opened: true };
   });
-  ipcMain.handle("desktop:open-official-extensions", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender.id !== mainWindow.webContents.id) {
-      throw new Error("Official Extensions requests must come from the SPS Desktop window.");
-    }
-    await showOfficialExtensionsWindow();
-    return { opened: true };
-  });
   ipcMain.handle("desktop:official-extensions-load-catalog", async (event) => {
     if (!officialExtensionsWindow || officialExtensionsWindow.isDestroyed() || event.sender.id !== officialExtensionsWindow.webContents.id) {
       throw new Error("Official Extensions catalog requests must come from the SPS Official Extensions window.");
@@ -2133,14 +2348,13 @@ function registerIpc() {
   ipcMain.handle("desktop:registry-stage-release", async (_event, input) => await stageDesktopRegistryRelease(input));
   ipcMain.handle("desktop:registry-enable-stage", async (_event, input) => await enableDesktopRegistryStage(input?.stageId));
   ipcMain.handle("desktop:registry-list-stages", async () => await listDesktopRegistryStages());
-  ipcMain.handle("desktop:configure-google-account", async (_event, input) => await configureDesktopGoogleClient(input));
-  ipcMain.handle("desktop:start-google-account", async () => await startDesktopAccountSignIn());
-  ipcMain.handle("desktop:sign-out-google-account", async () => await signOutDesktopAccount());
+  ipcMain.handle("desktop:start-sps-account", async () => await startDesktopAccountSignIn());
+  ipcMain.handle("desktop:sign-out-sps-account", async () => await signOutDesktopAccount());
   ipcMain.handle("desktop:create-owner-server", async () => {
     const account = currentDesktopAccount();
-    if (!account) throw new Error("Sign in with Google before creating an SPS Server.");
+    if (!account) throw new Error("Sign in to SPS before creating an SPS Server.");
     if (state.ownerHostOwnerSubject && state.ownerHostOwnerSubject !== account.subject) {
-      throw new Error("This computer already hosts an SPS Server for a different Google account. Sign in with that Owner account, or join its team with an invitation instead.");
+      throw new Error("This computer already hosts an SPS Server for a different SPS account. Sign in with that Owner account, or join its team with an invitation instead.");
     }
     if (state.profile && !isOwnerHostProfile()) {
       throw new Error("This computer is already joined to another SPS Server. Disconnect it before creating a new local Server.");
@@ -2150,7 +2364,7 @@ function registerIpc() {
     return publicStatus();
   });
   ipcMain.handle("desktop:join-server", async (_event, input) => {
-    if (!currentDesktopAccount()) throw new Error("Sign in with Google before joining an SPS Server.");
+    if (!currentDesktopAccount()) throw new Error("Sign in to SPS before joining an SPS Server.");
     return await acceptInviteCode(input);
   });
   ipcMain.handle("desktop:check-hub", async (_event, input) => {
@@ -2160,10 +2374,10 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:use-owner-host", async () => {
     if (!currentAccountOwnsOwnerHost() && state.ownerHostOwnerSubject) {
-      throw new Error("This SPS Owner Host belongs to a different Google account. Join it with an invitation instead.");
+      throw new Error("This SPS Owner Host belongs to a different SPS account. Join it with an invitation instead.");
     }
     if (isTeamAccessEnabled()) {
-      throw new Error("This Owner Host is already a private team Host. Finish Google sign-in for its private SPS address, or return it to local-only mode first.");
+      throw new Error("This Owner Host is already a private team Host. Finish SPS sign-in for its private address, or return it to local-only mode first.");
     }
     const wasRemoteProfile = Boolean(state.profile && !isOwnerHostProfile());
     if (wasRemoteProfile) await disconnectCurrentNode();
@@ -2182,7 +2396,7 @@ function registerIpc() {
     return {
       tailnet,
       companies: [...ownerHostCompanies],
-      googleRedirectUrl: `${tailnet.url}/api/auth/callback/google`,
+      identityIssuer: configuredDesktopIdentityUrl(),
       teamAccess: state.teamAccess ? { ...state.teamAccess } : null,
     };
   });
@@ -2263,7 +2477,22 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:start-auth", async () => {
     if (!state.profile) throw new Error("Save an SPS team connection first");
-    if (isOwnerHostProfile()) throw new Error("Google sign-in is used for remote team access, not local Owner Host mode.");
+    if (isOwnerHostProfile()) throw new Error("SPS sign-in is used for remote team access, not local Owner Host mode.");
+    if (isSpsIdentityRemoteProfile()) {
+      let companyAccess = "unavailable";
+      try {
+        await refreshSpsIdentityTeamContext();
+        companyAccess = state.companies.length === 0
+          ? "none"
+          : state.profile.companyId
+            ? "selected"
+            : "choose";
+      } catch {
+        // The SPS Identity login remains valid even if the Owner Host is offline.
+      }
+      await maybeOpenWorkspaceForCurrentAccount();
+      return { ...publicStatus(), auth: { status: "approved", provider: "sps-identity", companyAccess } };
+    }
     pendingAuth = await startSpsDesktopAuth({
       hubUrl: state.profile.hubUrl,
       companyId: state.profile.companyId,
@@ -2272,6 +2501,21 @@ function registerIpc() {
     return publicStatus();
   });
   ipcMain.handle("desktop:poll-auth", async () => {
+    if (isSpsIdentityRemoteProfile() && state.profile) {
+      let companyAccess = "unavailable";
+      try {
+        await refreshSpsIdentityTeamContext();
+        companyAccess = state.companies.length === 0
+          ? "none"
+          : state.profile.companyId
+            ? "selected"
+            : "choose";
+      } catch {
+        // The SPS Identity login remains valid even if the Owner Host is offline.
+      }
+      await maybeOpenWorkspaceForCurrentAccount();
+      return { ...publicStatus(), auth: { status: "approved", provider: "sps-identity", companyAccess } };
+    }
     if (!state.profile || !pendingAuth) throw new Error("No SPS Desktop sign-in is waiting for approval");
     const result = await pollSpsDesktopAuth({
       hubUrl: state.profile.hubUrl,

@@ -40,6 +40,8 @@ h1 { margin: 0; color: #fff; font-size: 30px; font-weight: 650; letter-spacing: 
 .configuration-form, .join-form { margin: 18px auto 0; padding: 16px; border: 1px solid #303033; border-radius: 10px; background: #171719; text-align: left; }
 .configuration-form label, .join-form label { display: block; margin-bottom: 8px; color: #d4d4d8; font-size: 12px; font-weight: 600; }
 .configuration-form p, .join-form p { margin: 10px 0 0; color: #89898f; font-size: 12px; line-height: 1.45; }
+.configuration-form .configuration-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 12px; margin-bottom: 0; color: #b4b4bc; font-weight: 400; }
+.configuration-form .configuration-checkbox input { min-width: auto; flex: 0 0 auto; padding: 0; }
 .input-row { display: flex; gap: 8px; }
 input { min-width: 0; flex: 1; border: 1px solid #3f3f46; border-radius: 7px; outline: none; background: #101112; color: #fff; padding: 10px 11px; }
 input:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(161, 161, 170, .12); }

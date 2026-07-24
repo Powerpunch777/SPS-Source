@@ -2,9 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("spsDesktop", {
   getStatus: () => ipcRenderer.invoke("desktop:status"),
-  configureGoogleAccount: (input) => ipcRenderer.invoke("desktop:configure-google-account", input),
-  startGoogleAccount: () => ipcRenderer.invoke("desktop:start-google-account"),
-  signOutGoogleAccount: () => ipcRenderer.invoke("desktop:sign-out-google-account"),
+  startSpsAccount: () => ipcRenderer.invoke("desktop:start-sps-account"),
+  signOutSpsAccount: () => ipcRenderer.invoke("desktop:sign-out-sps-account"),
   createOwnerServer: () => ipcRenderer.invoke("desktop:create-owner-server"),
   joinServer: (input) => ipcRenderer.invoke("desktop:join-server", input),
   checkHub: (input) => ipcRenderer.invoke("desktop:check-hub", input),
@@ -35,7 +34,6 @@ contextBridge.exposeInMainWorld("spsDesktop", {
   connectNode: () => ipcRenderer.invoke("desktop:connect-node"),
   disconnectNode: () => ipcRenderer.invoke("desktop:disconnect-node"),
   openWorkspace: () => ipcRenderer.invoke("desktop:open-workspace"),
-  openOfficialExtensions: () => ipcRenderer.invoke("desktop:open-official-extensions"),
   openSetup: () => ipcRenderer.invoke("desktop:open-setup"),
   signOut: () => ipcRenderer.invoke("desktop:sign-out"),
   readyForJoinLink: () => ipcRenderer.invoke("desktop:ready-for-join-link"),

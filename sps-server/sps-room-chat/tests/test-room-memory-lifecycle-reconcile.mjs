@@ -33,8 +33,8 @@ const ctx = {
     }
   },
   state: {
-    get: async (_scopeKind, scopeId, stateKey) => markers.get(`${scopeId}:${stateKey}`) ?? null,
-    set: async (_scopeKind, scopeId, stateKey, value) => markers.set(`${scopeId}:${stateKey}`, value)
+    get: async ({ scopeKind, scopeId, stateKey }) => markers.get(`${scopeKind}:${scopeId}:${stateKey}`) ?? null,
+    set: async ({ scopeKind, scopeId, stateKey }, value) => markers.set(`${scopeKind}:${scopeId}:${stateKey}`, value)
   },
   memory: {
     publishLifecycle: async (event) => { publications.push(event); }

@@ -38,9 +38,10 @@ export async function probeSpsHub({
   return data;
 }
 
-async function requestJson(fetchImpl, url, method, body, accessToken) {
+async function requestJson(fetchImpl, url, method, body, accessToken, sessionCookie) {
   const headers = { "content-type": "application/json" };
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
+  if (sessionCookie) headers.cookie = `sps_identity_session=${encodeURIComponent(sessionCookie)}`;
   const response = await fetchImpl(url, {
     method,
     headers,
@@ -63,12 +64,13 @@ async function signedNodeRequestJson({
   nodeId,
   identity,
   accessToken,
+  sessionCookie,
   method,
   path,
   payload,
 }) {
   const body = createSignedNodeRequest({ identity, nodeId, method, path, payload });
-  return requestJson(fetchImpl, apiUrl(hubUrl, path), method, body, accessToken);
+  return requestJson(fetchImpl, apiUrl(hubUrl, path), method, body, accessToken, sessionCookie);
 }
 
 export async function startSpsDesktopAuth({
@@ -94,16 +96,18 @@ export async function listSpsCompanies({
   fetchImpl = fetch,
   hubUrl,
   accessToken,
+  sessionCookie,
 }) {
-  return requestJson(fetchImpl, apiUrl(hubUrl, "/companies"), "GET", undefined, accessToken);
+  return requestJson(fetchImpl, apiUrl(hubUrl, "/companies"), "GET", undefined, accessToken, sessionCookie);
 }
 
 export async function getSpsDesktopAccount({
   fetchImpl = fetch,
   hubUrl,
   accessToken,
+  sessionCookie,
 }) {
-  const result = await requestJson(fetchImpl, apiUrl(hubUrl, "/cli-auth/me"), "GET", undefined, accessToken);
+  const result = await requestJson(fetchImpl, apiUrl(hubUrl, "/cli-auth/me"), "GET", undefined, accessToken, sessionCookie);
   return result?.user ?? null;
 }
 
@@ -112,6 +116,7 @@ export async function listSpsProjects({
   hubUrl,
   companyId,
   accessToken,
+  sessionCookie,
 }) {
   if (!companyId) throw new Error("Choose an SPS company before loading projects");
   return requestJson(
@@ -120,6 +125,7 @@ export async function listSpsProjects({
     "GET",
     undefined,
     accessToken,
+    sessionCookie,
   );
 }
 
@@ -162,6 +168,7 @@ export async function registerSpsNode({
   capabilities,
   runners,
   accessToken,
+  sessionCookie,
 }) {
   if (!identity?.publicKeyPem) throw new Error("SPS Node identity does not contain a public key");
   return requestJson(
@@ -177,6 +184,7 @@ export async function registerSpsNode({
       ...(runners ? { runners } : {}),
     },
     accessToken,
+    sessionCookie,
   );
 }
 
@@ -186,6 +194,7 @@ export async function sendSpsNodeHeartbeat({
   nodeId,
   identity,
   accessToken,
+  sessionCookie,
   timestamp,
   nonce,
 }) {
@@ -196,6 +205,7 @@ export async function sendSpsNodeHeartbeat({
     "POST",
     heartbeat,
     accessToken,
+    sessionCookie,
   );
 }
 
@@ -204,6 +214,7 @@ export async function disconnectSpsNode({
   hubUrl,
   nodeId,
   accessToken,
+  sessionCookie,
 }) {
   return requestJson(
     fetchImpl,
@@ -211,6 +222,7 @@ export async function disconnectSpsNode({
     "POST",
     {},
     accessToken,
+    sessionCookie,
   );
 }
 
@@ -220,9 +232,10 @@ export async function claimSpsNodeCommand({
   nodeId,
   identity,
   accessToken,
+  sessionCookie,
 }) {
   const path = `/sps-nodes/${encodeURIComponent(nodeId)}/commands/claim-next`;
-  return signedNodeRequestJson({ fetchImpl, hubUrl, nodeId, identity, accessToken, method: "POST", path, payload: {} });
+  return signedNodeRequestJson({ fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie, method: "POST", path, payload: {} });
 }
 
 export async function appendSpsNodeCommandEvent({
@@ -231,6 +244,7 @@ export async function appendSpsNodeCommandEvent({
   nodeId,
   identity,
   accessToken,
+  sessionCookie,
   commandId,
   sequence,
   stream,
@@ -243,6 +257,7 @@ export async function appendSpsNodeCommandEvent({
     nodeId,
     identity,
     accessToken,
+    sessionCookie,
     method: "POST",
     path,
     payload: { sequence, stream, body },
@@ -255,6 +270,7 @@ export async function checkSpsNodeCommandLease({
   nodeId,
   identity,
   accessToken,
+  sessionCookie,
   commandId,
 }) {
   const path = `/sps-nodes/${encodeURIComponent(nodeId)}/commands/${encodeURIComponent(commandId)}/lease`;
@@ -264,6 +280,7 @@ export async function checkSpsNodeCommandLease({
     nodeId,
     identity,
     accessToken,
+    sessionCookie,
     method: "POST",
     path,
     payload: {},
@@ -276,6 +293,7 @@ export async function completeSpsNodeCommand({
   nodeId,
   identity,
   accessToken,
+  sessionCookie,
   commandId,
   completion,
 }) {
@@ -286,6 +304,7 @@ export async function completeSpsNodeCommand({
     nodeId,
     identity,
     accessToken,
+    sessionCookie,
     method: "POST",
     path,
     payload: completion,

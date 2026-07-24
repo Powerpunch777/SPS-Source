@@ -17,6 +17,11 @@ sps-server/**/node_modules/
 sps-server/desktop/dist/
 sps-server/desktop/dist-google-login/
 sps-server/desktop/dist-*/
+sps-server/desktop/.owner-host-runtime*/
+sps-server/desktop/*.stderr.log
+sps-server/desktop/*.stdout.log
+sps-server/desktop/*.url
+sps-server/desktop/sps-desktop-restart.log
 sps-server/desktop/.host-runtime*/
 sps-server/desktop/*.tgz
 sps-server/deploy/hub/.env
@@ -24,3 +29,9 @@ sps-server/direct-task-pipe-broker/config.local.json
 sps-server/direct-task-pipe-broker/runtime/
 sps-server/image-worker-asset-tool/node_modules/
 sps-server/desktop/.onboarding-e2e-profile/
+
+# SPS central Identity deployment material. Public source stays in Git; keys,
+# OAuth secrets, local D1 state, and Wrangler session data never do.
+sps-server/sps-identity/.dev.vars
+sps-server/sps-identity/.wrangler/
+sps-server/sps-identity/.secrets/

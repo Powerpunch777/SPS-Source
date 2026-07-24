@@ -1,16 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { areSpsBundledExtensionsEnabled, disabledSpsExtensionStatus } from "../src/bundled-extensions.mjs";
+import {
+  disabledSpsExtensionStatus,
+  isSpsDefaultMemoryEnabled,
+  isSpsRoomWorkplaneBundled,
+} from "../src/bundled-extensions.mjs";
 
-test("keeps official SPS extensions enabled by default", () => {
-  assert.equal(areSpsBundledExtensionsEnabled({}), true);
-  assert.equal(areSpsBundledExtensionsEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "false" }), false);
+test("starts Default Memory but does not choose a Team Workplane by default", () => {
+  assert.equal(isSpsDefaultMemoryEnabled({}), true);
+  assert.equal(isSpsRoomWorkplaneBundled({}), false);
 });
 
-test("accepts an explicit extension mode", () => {
-  assert.equal(areSpsBundledExtensionsEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "true" }), true);
-  assert.equal(areSpsBundledExtensionsEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: " TRUE " }), true);
-  assert.equal(areSpsBundledExtensionsEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: " FALSE " }), false);
+test("accepts explicit provider, Workplane, and legacy bundle modes", () => {
+  assert.equal(isSpsDefaultMemoryEnabled({ SPS_ENABLE_DEFAULT_MEMORY: "false" }), false);
+  assert.equal(isSpsRoomWorkplaneBundled({ SPS_ENABLE_ROOM_WORKPLANE: "true" }), true);
+  assert.equal(isSpsDefaultMemoryEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "false" }), false);
+  assert.equal(isSpsRoomWorkplaneBundled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "false" }), false);
+  assert.equal(isSpsRoomWorkplaneBundled({ SPS_ENABLE_BUNDLED_EXTENSIONS: " TRUE " }), true);
 });
 
 test("reports disabled extensions without a fake runtime endpoint", () => {

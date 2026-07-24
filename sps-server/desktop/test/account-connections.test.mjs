@@ -15,7 +15,7 @@ const ownerProfile = {
   projectWorkspaces: { "project-1": "C:\\Work\\project-1" },
 };
 
-test("keeps SPS connection metadata isolated by Google account subject", () => {
+test("keeps SPS connection metadata isolated by SPS account subject", () => {
   const ownerConnections = setSpsAccountConnection({}, "google-owner", ownerProfile);
   const memberConnections = setSpsAccountConnection(ownerConnections, "google-member", {
     ...ownerProfile,
@@ -38,6 +38,7 @@ test("does not persist tokens or unknown fields in an SPS account connection", (
   });
 
   assert.deepEqual(Object.keys(normalized).sort(), [
+    "authMode",
     "companyId",
     "connectionKind",
     "defaultWorkspacePath",

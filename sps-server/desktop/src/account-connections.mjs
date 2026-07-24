@@ -24,9 +24,11 @@ export function normalizeSpsAccountConnection(value) {
   const hubUrl = stringOrEmpty(value.hubUrl);
   if (!hubUrl) return null;
   const connectionKind = value.connectionKind === "owner-host" ? "owner-host" : "remote";
+  const authMode = value.authMode === "sps-identity" ? "sps-identity" : "legacy";
   return {
     hubUrl,
     connectionKind,
+    authMode,
     companyId: stringOrEmpty(value.companyId, 240),
     displayName: stringOrEmpty(value.displayName, 120),
     defaultWorkspacePath: stringOrEmpty(value.defaultWorkspacePath),

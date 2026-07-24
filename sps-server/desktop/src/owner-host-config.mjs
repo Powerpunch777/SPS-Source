@@ -143,8 +143,8 @@ export function configureSpsOwnerHostPrivateTeamAccess(config, { hostname, now =
       ...(config.auth ?? {}),
       baseUrlMode: "explicit",
       publicBaseUrl: `https://${normalizedHostname}`,
-      // Google authentication may create a user record, but company access is
-      // still granted only by the one-time invitation created before switch.
+      // SPS Identity proves the user, but company access is still granted only
+      // by the one-time invitation created before this switch.
       disableSignUp: false,
     },
   };

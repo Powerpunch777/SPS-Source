@@ -676,6 +676,22 @@ test("can authenticate before choosing a company and then list allowed companies
   assert.deepEqual(companies, [{ id: "company-1", name: "Acme Robotics" }]);
 });
 
+test("uses a Core-local SPS Identity session cookie without exposing a central bearer token", async () => {
+  const requests = [];
+  const companies = await listSpsCompanies({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return new Response(JSON.stringify([{ id: "company-1", name: "Acme Robotics" }]), { status: 200 });
+    },
+    hubUrl: "https://sps.example.test",
+    sessionCookie: "core-session-token",
+  });
+
+  assert.deepEqual(companies, [{ id: "company-1", name: "Acme Robotics" }]);
+  assert.equal(requests[0].options.headers.authorization, undefined);
+  assert.equal(requests[0].options.headers.cookie, "sps_identity_session=core-session-token");
+});
+
 test("lists only projects available to the signed-in Desktop member", async () => {
   const requests = [];
   const fetchImpl = async (url, options) => {

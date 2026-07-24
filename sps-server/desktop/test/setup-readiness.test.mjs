@@ -18,7 +18,7 @@ test("shows the secure Desktop onboarding order before a profile exists", () => 
   assert.equal(readiness.canConnectNode, false);
 });
 
-test("allows Google sign-in before a computer name is chosen", () => {
+test("allows SPS sign-in before a computer name is chosen", () => {
   const readiness = createSpsDesktopSetupReadiness({
     profile: { hubUrl: "https://hub.example.test", displayName: "", companyId: "" },
     signedIn: false,

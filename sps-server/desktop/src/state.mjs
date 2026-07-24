@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { normalizeSpsAccountConnection } from "./account-connections.mjs";
 
-const STATE_VERSION = 6;
+const STATE_VERSION = 9;
 
 function statePath(userDataPath) {
   return path.join(userDataPath, "sps-desktop-state.json");
@@ -25,10 +25,12 @@ export function emptyState() {
     version: STATE_VERSION,
     encryptedDesktopAccount: null,
     desktopAccountLastAttempt: null,
-    desktopGoogleClientId: null,
-    encryptedDesktopGoogleClientSecret: null,
+    desktopDeviceId: null,
     accountConnections: {},
     ownerHostOwnerSubject: null,
+    // A narrowly-scoped bridge for the original local-only SPS Desktop. It is
+    // set only when that legacy state and its physical Owner Vault coexist.
+    legacyOwnerHostAdoptionPending: false,
     profile: null,
     identity: null,
     encryptedBoardApiToken: null,
@@ -45,11 +47,15 @@ export async function loadState(userDataPath) {
   try {
     const raw = await fs.readFile(statePath(userDataPath), "utf8");
     const parsed = JSON.parse(raw);
-    if (![1, 2, 3, 4, 5, STATE_VERSION].includes(parsed?.version)) return emptyState();
+    if (![1, 2, 3, 4, 5, 6, 7, 8, STATE_VERSION].includes(parsed?.version)) return emptyState();
     // Earlier state versions contain a valid profile and Node identity. v5 adds
     // account-scoped connection records while keeping the physical Owner Host
     // and its vault on this computer.
     const state = { ...emptyState(), ...parsed, version: STATE_VERSION };
+    // Version 8 retires the former per-machine Google OAuth configuration.
+    // The central SPS Identity service owns the confidential Google client.
+    delete state.desktopGoogleClientId;
+    delete state.encryptedDesktopGoogleClientSecret;
     if (!state.accountConnections || typeof state.accountConnections !== "object" || Array.isArray(state.accountConnections)) {
       state.accountConnections = {};
     }
@@ -63,6 +69,26 @@ export async function loadState(userDataPath) {
     state.ownerHostOwnerSubject = typeof state.ownerHostOwnerSubject === "string" && state.ownerHostOwnerSubject.length > 0
       ? state.ownerHostOwnerSubject.slice(0, 512)
       : null;
+    state.legacyOwnerHostAdoptionPending = Boolean(state.legacyOwnerHostAdoptionPending);
+
+    // v1-v4 predate SPS Identity and therefore cannot carry an Owner subject.
+    // Do not infer ownership from a vault alone: require the old authenticated
+    // local record as well, then defer the one-time adoption until a user signs
+    // in through SPS Identity on this same computer.
+    const legacyLocalOwnerState = Number(parsed.version) <= 4
+      && Boolean(parsed.encryptedBoardApiToken)
+      && Array.isArray(parsed.companies)
+      && parsed.companies.length > 0
+      && !state.ownerHostOwnerSubject;
+    if (legacyLocalOwnerState) {
+      try {
+        const vaultConfig = path.join(userDataPath, "owner-vault", "config.json");
+        await fs.access(vaultConfig);
+        state.legacyOwnerHostAdoptionPending = true;
+      } catch {
+        // A stale state file without its vault is not an Owner Host to adopt.
+      }
+    }
     return state;
   } catch (error) {
     if (error?.code === "ENOENT") return emptyState();

@@ -14,7 +14,6 @@
           <img src="../assets/sps-logo.png" alt="SPS" />
           <span>SPS</span>
         </div>
-        <button id="open-official-extensions" class="header-action" type="button" hidden>Official extensions</button>
       </header>
 
       <section id="account-screen" class="screen account-screen" aria-labelledby="account-title">
@@ -22,27 +21,14 @@
         <div class="screen-copy">
           <p class="eyebrow">SONPARKSERVER</p>
           <h1 id="account-title">SPS에 로그인</h1>
-          <p>Google 계정은 SPS에서 나를 식별합니다. 회사·프로젝트·Room·기억 데이터는 이 계정이 아니라 SPS Server에 저장됩니다.</p>
+          <p>SPS 계정은 나를 식별합니다. 지금은 Google로 로그인하며, 회사·프로젝트·Room·기억 데이터는 이 계정이 아니라 SPS Server에 저장됩니다.</p>
         </div>
-        <button id="start-google-account" class="primary-action google-action" type="button">
+        <button id="start-sps-account" class="primary-action google-action" type="button">
           <span class="google-mark" aria-hidden="true">G</span>
-          <span id="google-action-label">Google로 계속</span>
+          <span id="sps-action-label">Google로 계속</span>
         </button>
-        <button id="cancel-google-account" class="text-action pending-cancel" type="button" hidden>로그인 취소</button>
+        <button id="cancel-sps-account" class="text-action pending-cancel" type="button" hidden>로그인 취소</button>
         <p id="account-configuration-note" class="subtle-note" hidden></p>
-        <button id="show-google-configuration" class="text-action" type="button" hidden>Google 로그인 설정</button>
-        <form id="google-configuration-form" class="configuration-form" hidden>
-          <label for="google-client-id">Google OAuth Desktop client ID</label>
-          <div class="input-row">
-            <input id="google-client-id" autocomplete="off" placeholder="...apps.googleusercontent.com" />
-          </div>
-          <label for="google-client-secret">Google OAuth Desktop client secret</label>
-          <div class="input-row">
-            <input id="google-client-secret" type="password" autocomplete="off" placeholder="GOCSPX-..." />
-            <button type="submit" class="secondary-action">저장</button>
-          </div>
-          <p>이 값은 이 컴퓨터의 SPS 보안 저장소에만 보관되며, 다른 SPS Server로 전송되지 않습니다.</p>
-        </form>
       </section>
 
       <section id="server-choice-screen" class="screen server-choice-screen" aria-labelledby="server-choice-title" hidden>
@@ -52,12 +38,12 @@
             <strong id="account-name"></strong>
             <span id="account-email"></span>
           </div>
-          <button id="sign-out-google-account" class="text-action" type="button">계정 변경</button>
+          <button id="sign-out-sps-account" class="text-action" type="button">계정 변경</button>
         </div>
         <div class="screen-copy">
           <p class="eyebrow">SPS DESKTOP</p>
           <h1 id="server-choice-title">어디에서 시작할까요?</h1>
-          <p>SPS Server가 회사, 프로젝트, Rooms, Tasks, 장기기억과 컴퓨터 권한을 소유합니다. Google 계정은 그 서버에 접근할 사람을 구분합니다.</p>
+          <p>SPS Server가 회사, 프로젝트, Rooms, Tasks, 장기기억과 컴퓨터 권한을 소유합니다. SPS 계정은 그 서버에 접근할 사람을 구분합니다.</p>
         </div>
         <p id="server-data-note" class="server-data-note"></p>
         <div class="choice-grid">

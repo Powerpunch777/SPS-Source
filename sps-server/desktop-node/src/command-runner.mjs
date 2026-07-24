@@ -333,6 +333,7 @@ export async function executeSpsNodeCommand({
   nodeId,
   identity,
   accessToken,
+  sessionCookie,
   profile,
   resolveInvocation = resolveSpsNodeInvocation,
   checkCommandLease = checkSpsNodeCommandLease,
@@ -351,6 +352,7 @@ export async function executeSpsNodeCommand({
         nodeId,
         identity,
         accessToken,
+        sessionCookie,
         commandId: command.id,
         sequence: eventSequence,
         stream,
@@ -427,6 +429,7 @@ export async function executeSpsNodeCommand({
             nodeId,
             identity,
             accessToken,
+            sessionCookie,
             commandId: command.id,
           });
           if (!lease?.active) {
@@ -470,6 +473,7 @@ export async function executeSpsNodeCommand({
       nodeId,
       identity,
       accessToken,
+      sessionCookie,
       commandId: command.id,
       completion: {
         status: result.exitCode === 0 && !result.timedOut && !leaseCancellationError ? "succeeded" : "failed",
@@ -489,6 +493,7 @@ export async function executeSpsNodeCommand({
       nodeId,
       identity,
       accessToken,
+      sessionCookie,
       commandId: command.id,
       completion: {
         status: "failed",

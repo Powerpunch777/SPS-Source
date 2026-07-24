@@ -83,7 +83,7 @@ export async function exportSpsOwnerVaultTransfer({
       included,
       excluded: [
         "secrets",
-        "desktop Google account credentials",
+        "desktop SPS account credentials",
         "memory sidecar token and configuration",
         "live embedded database files",
         "logs",

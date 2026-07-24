@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveSpsNodeDisplayName } from "../src/node-display-name.mjs";
 
-test("keeps a custom computer name ahead of the Google account name", () => {
+test("keeps a custom computer name ahead of the SPS account name", () => {
   assert.equal(resolveSpsNodeDisplayName({
     configuredName: "Jimin's laptop",
     accountName: "Jimin Park",
@@ -10,7 +10,7 @@ test("keeps a custom computer name ahead of the Google account name", () => {
   }), "Jimin's laptop");
 });
 
-test("uses the Google account name when setup did not name the computer", () => {
+test("uses the SPS account name when setup did not name the computer", () => {
   assert.equal(resolveSpsNodeDisplayName({
     configuredName: " ",
     accountName: "Jimin Park",

@@ -57,13 +57,13 @@ export function createSpsDesktopSetupReadiness(status) {
     {
       id: "profile",
       title: "Save team connection",
-      detail: profileReady ? "Team address is saved. Google names this computer after sign-in." : "Open an invitation or enter the team address for this computer.",
+      detail: profileReady ? "Team address is saved. SPS identifies this computer after sign-in." : "Open an invitation or enter the team address for this computer.",
       state: profileReady ? "complete" : "current",
     },
     {
       id: "sign-in",
-      title: "Sign in with Google",
-      detail: signedIn ? "This computer has a protected SPS Desktop session." : "Accept an invitation when needed, then approve Google sign-in in your browser.",
+      title: "Sign in to SPS",
+      detail: signedIn ? "This computer has a protected SPS Desktop session." : "Accept an invitation when needed, then complete SPS sign-in in your browser.",
       state: signedIn ? "complete" : profileReady ? "current" : "blocked",
     },
     {

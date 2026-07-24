@@ -837,7 +837,12 @@ async function reconcileRoomMemoryLifecycle(ctx) {
           const latest = Array.isArray(checkpoints) ? checkpoints.at(-1) : null;
           const version = Number(latest?.version);
           if (!Number.isInteger(version) || version < 1) continue;
-          const marker = await ctx.state.get("issue", room.id, ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY);
+          const markerScope = {
+            scopeKind: "issue",
+            scopeId: room.id,
+            stateKey: ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY
+          };
+          const marker = await ctx.state.get(markerScope);
           const deliveredVersion = Number(asRecord(marker)?.checkpointVersion ?? 0);
           if (deliveredVersion >= version) continue;
           await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.checkpoint", latest);
@@ -846,7 +851,7 @@ async function reconcileRoomMemoryLifecycle(ctx) {
             await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.compacted", latest);
             summary.compactionsPublished += 1;
           }
-          await ctx.state.set("issue", room.id, ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY, {
+          await ctx.state.set(markerScope, {
             checkpointVersion: version,
             reconciledAt: now()
           });

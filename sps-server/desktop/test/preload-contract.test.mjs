@@ -21,12 +21,11 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /require\("electron"\)/);
   assert.match(preload, /contextBridge\.exposeInMainWorld\("spsDesktop"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:check-hub"/);
-  assert.match(preload, /ipcRenderer\.invoke\("desktop:start-google-account"/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:start-sps-account"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:create-owner-server"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:join-server"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:connect-node"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:disconnect-node"\)/);
-  assert.match(preload, /ipcRenderer\.invoke\("desktop:open-official-extensions"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:choose-project-workspace"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-team-access"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:enable-private-team-access"/);
@@ -42,11 +41,22 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-open-plugin-registries"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-account"/);
-  assert.match(main, /ipcMain\.handle\("desktop:open-official-extensions"[\s\S]*?Official Extensions requests must come from the SPS Desktop window[\s\S]*?showOfficialExtensionsWindow\(\)/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-open-plugin-registries"[\s\S]*?Plugin Registry management[\s\S]*?showRegistryWindow\(\)/);
-  assert.match(main, /Official extensions\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+E"/);
-  assert.match(main, /Plugin sources & review\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+R"/);
+  assert.match(main, /Official extensions\.\.\."[\s\S]*?visible: workspaceOpen/);
+  assert.match(main, /Plugin sources & review\.\.\."[\s\S]*?visible: workspaceOpen/);
+});
+
+test("keeps plugins out of the SPS sign-in and server-setup screens", async () => {
+  const [onboardingHtml, onboardingRenderer, preload] = await Promise.all([
+    readFile(new URL("../renderer/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../renderer/renderer.mjs", import.meta.url), "utf8"),
+    readFile(preloadPath, "utf8"),
+  ]);
+
+  assert.doesNotMatch(onboardingHtml, /open-official-extensions/);
+  assert.doesNotMatch(onboardingRenderer, /openOfficialExtensions/);
+  assert.doesNotMatch(preload, /desktop:open-official-extensions/);
 });
 
 test("keeps the Registry window on a narrow Owner-only preload bridge", async () => {
@@ -87,17 +97,55 @@ test("keeps Official Extensions discovery separate from Owner-only Registry inst
   assert.match(officialExtensionsHtml, /Open secure install review/);
 });
 
-test("notifies the renderer when Google Desktop sign-in state changes", async () => {
+test("notifies the renderer when SPS Identity Desktop sign-in state changes", async () => {
   const main = await readFile(mainPath, "utf8");
 
   assert.match(
     main,
-    /async function configureDesktopGoogleClient\(input\) \{[\s\S]*?await persistState\(\);\s*sendDesktopAccountStatus\(\);[\s\S]*?return publicStatus\(\);/,
+    /async function startDesktopAccountSignIn\(\) \{[\s\S]*?startSpsDesktopIdentitySignIn\([\s\S]*?recordDesktopAccountAttempt\("succeeded"\)[\s\S]*?sendDesktopAccountStatus\(\);/,
   );
   assert.match(
     main,
     /async function signOutDesktopAccount\(\) \{[\s\S]*?await disconnectCurrentNode\(\);[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?await persistState\(\{ rememberActiveConnection: false \}\);[\s\S]*?sendDesktopAccountStatus\(\);[\s\S]*?return \{ \.\.\.publicStatus\(\), nodeDisconnect \};/,
   );
+});
+
+test("resumes a pending legacy Owner Host adoption after Desktop restarts", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(
+    main,
+    /async function adoptLegacyOwnerHostIfNeeded\(\)[\s\S]*?startOwnerHost\(\{ activate: true \}\)[\s\S]*?legacyOwnerHostAdoptionPending = false/,
+  );
+  assert.match(
+    main,
+    /async function bootstrapOwnerHost\(\)[\s\S]*?legacyOwnerHostAdoptionPending[\s\S]*?adoptLegacyOwnerHostIfNeeded\(\)/,
+  );
+});
+
+test("keeps central OAuth secrets out of the Desktop renderer and uses SPS Identity", async () => {
+  const [main, renderer, preload] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(new URL("../renderer/renderer.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/preload.cjs", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(main, /configuredSpsIdentityUrl\(process\.env\.SPS_IDENTITY_URL\)/);
+  assert.match(main, /startSpsDesktopIdentitySignIn/);
+  assert.doesNotMatch(main, /SPS_DESKTOP_GOOGLE_CLIENT_SECRET/);
+  assert.doesNotMatch(renderer, /configureGoogleAccount/);
+  assert.doesNotMatch(preload, /configureGoogleAccount/);
+});
+
+test("uses the Desktop-only access path for a local Owner Host workspace", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(
+    main,
+    /const usesIdentitySession = isOwnerHostProfile\(\)[\s\S]*?\? false[\s\S]*?: await establishSpsIdentityCoreSession\(hubOrigin\)/,
+  );
+  assert.match(main, /requestHeaders\[SPS_DESKTOP_ACCESS_HEADER\] = ownerHostDesktopAccessToken/);
+  assert.match(main, /signedIn:[\s\S]*?isOwnerHostProfile\(\) && currentAccountOwnsOwnerHost\(\)/);
 });
 
 test("shuts down the Owner Host gracefully before quitting Desktop", async () => {

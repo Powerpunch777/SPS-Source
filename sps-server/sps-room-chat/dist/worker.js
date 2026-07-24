@@ -11863,7 +11863,7 @@ var manifest_default = {
   // Existing Rooms, Task Rooms, origins, and plugin state use this exact ID.
   id: SPS_TEAM_WORKPLANE_PROFILE.legacyPluginId,
   apiVersion: 1,
-  version: "0.3.83",
+  version: "0.3.85",
   displayName: SPS_TEAM_WORKPLANE_PROFILE.displayName,
   description: SPS_TEAM_WORKPLANE_PROFILE.description,
   author: SPS_TEAM_WORKPLANE_PROFILE.author,
@@ -11911,7 +11911,7 @@ var manifest_default = {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.83"
+    ui: "./dist/ui-v0.3.85"
   },
   ui: {
     slots: [
@@ -13315,7 +13315,12 @@ async function reconcileRoomMemoryLifecycle(ctx) {
           const latest = Array.isArray(checkpoints) ? checkpoints.at(-1) : null;
           const version = Number(latest?.version);
           if (!Number.isInteger(version) || version < 1) continue;
-          const marker = await ctx.state.get("issue", room.id, ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY);
+          const markerScope = {
+            scopeKind: "issue",
+            scopeId: room.id,
+            stateKey: ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY
+          };
+          const marker = await ctx.state.get(markerScope);
           const deliveredVersion = Number(asRecord3(marker)?.checkpointVersion ?? 0);
           if (deliveredVersion >= version) continue;
           await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.checkpoint", latest);
@@ -13324,7 +13329,7 @@ async function reconcileRoomMemoryLifecycle(ctx) {
             await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.compacted", latest);
             summary.compactionsPublished += 1;
           }
-          await ctx.state.set("issue", room.id, ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY, {
+          await ctx.state.set(markerScope, {
             checkpointVersion: version,
             reconciledAt: now()
           });
