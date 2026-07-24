@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 
 let latestStatus = null;
 let ownerHostRecoveryTimer = null;
+let memberInviteCode = null;
 const OWNER_HOST_RECOVERY_INTERVAL_MS = 2_000;
 
 function account(status) {
@@ -77,6 +78,47 @@ function renderServerChoice(status) {
   $("#server-data-note").textContent = "이 컴퓨터에 서버를 만들면 회사 데이터는 Owner Vault에 저장됩니다. 나중에 팀 접속을 켜면 초대된 SPS 계정별로 회사와 Agent 권한을 적용합니다.";
 }
 
+function renderOwnerServer(status) {
+  const desktopAccount = account(status);
+  const visible = desktopAccount.signedIn === true && isOwnerHost(status) && ownerHostReady(status);
+  show($("#owner-server-screen"), visible);
+  if (!visible) return;
+
+  $("#owner-account-name").textContent = desktopAccount.name ?? "SPS account";
+  $("#owner-account-email").textContent = desktopAccount.email ?? "";
+  const picture = $("#owner-account-picture");
+  if (desktopAccount.picture) {
+    picture.src = desktopAccount.picture;
+    picture.hidden = false;
+  } else {
+    picture.removeAttribute("src");
+    picture.hidden = true;
+  }
+
+  const teamEnabled = status?.teamAccess?.enabled === true;
+  const companies = Array.isArray(status?.ownerHostCompanies) ? status.ownerHostCompanies : [];
+  const companySelect = $("#private-team-company");
+  const previousCompany = companySelect.value;
+  companySelect.replaceChildren(...companies.map((company) => {
+    const option = document.createElement("option");
+    option.value = company.id;
+    option.textContent = company.name;
+    return option;
+  }));
+  if (companies.some((company) => company.id === previousCompany)) companySelect.value = previousCompany;
+  $("#enable-private-team").disabled = companies.length === 0;
+
+  show($("#owner-team-setup"), !teamEnabled);
+  show($("#owner-member-invite"), teamEnabled);
+  $("#owner-server-detail").textContent = teamEnabled
+    ? `팀 접근이 ${status.teamAccess.url}에서 활성화되어 있습니다.`
+    : companies.length > 0
+      ? "팀 접근을 활성화한 뒤 전체 SPS2 초대 코드를 만들어 전달하세요."
+      : "Workspace에서 회사를 만든 뒤 팀 접근을 활성화할 수 있습니다.";
+  $("#member-invite-code").value = memberInviteCode ?? "";
+  $("#copy-member-invite").disabled = !memberInviteCode;
+}
+
 function renderWorkspace(status) {
   const hasProfile = Boolean(status?.profile) && account(status).signedIn === true;
   const local = isOwnerHost(status);
@@ -106,6 +148,7 @@ function render(status) {
   latestStatus = status;
   renderAccount(status);
   renderServerChoice(status);
+  renderOwnerServer(status);
   renderWorkspace(status);
   setPending(Boolean(account(status).pending));
   syncOwnerHostRecovery(status);
@@ -142,6 +185,34 @@ $("#cancel-sps-account").addEventListener("click", () => run(async () => {
 
 $("#sign-out-sps-account").addEventListener("click", () => run(async () => {
   await window.spsDesktop.signOutSpsAccount();
+}));
+
+$("#owner-sign-out").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.signOutSpsAccount();
+}));
+
+$("#enable-private-team").addEventListener("click", () => run(async () => {
+  const companyId = $("#private-team-company").value;
+  if (!companyId) throw new Error("Workspace에서 먼저 팀 접근을 연결할 회사를 만드세요.");
+  await window.spsDesktop.enablePrivateTeamAccess({ companyId });
+  memberInviteCode = null;
+  setNotice("팀 접근을 활성화했습니다. 이제 전체 SPS2 초대 코드를 만들 수 있습니다.");
+}));
+
+$("#create-member-invite").addEventListener("click", () => run(async () => {
+  const invite = await window.spsDesktop.createMemberInvite();
+  memberInviteCode = invite.code;
+  setNotice("전체 SPS2 초대 코드를 만들었습니다. 팀원에게 그대로 전달하세요.");
+}));
+
+$("#copy-member-invite").addEventListener("click", () => run(async () => {
+  if (!memberInviteCode) throw new Error("먼저 팀원 초대를 만드세요.");
+  await window.spsDesktop.copyText({ text: memberInviteCode });
+  setNotice("전체 SPS2 초대 코드를 복사했습니다.");
+}));
+
+$("#owner-open-workspace").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.openWorkspace();
 }));
 
 $("#create-owner-server").addEventListener("click", () => run(async () => {

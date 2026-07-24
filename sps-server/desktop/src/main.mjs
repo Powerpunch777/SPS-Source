@@ -1442,16 +1442,11 @@ async function enablePrivateTeamAccess(input) {
   state.encryptedBoardApiToken = null;
   state.companies = [];
   state.projects = [];
-  state.profile = {
-    hubUrl: nextTeamAccess.url,
-    connectionKind: "remote",
-    companyId,
-    displayName: `${os.hostname()} Owner Host`,
-    defaultWorkspacePath: "",
-    projectWorkspaces: {},
-  };
   state.teamAccess = { ...nextTeamAccess, phase: "active" };
-  await persistState();
+  // The Owner continues to use the local Desktop-trusted URL. Tailscale is
+  // the Member Node route, not a reason to turn the physical Owner Host into
+  // a remote client and lose its invitation-management surface.
+  await activateOwnerHostProfile();
   return {
     teamAccess: { ...nextTeamAccess },
     initialOwnerInvite: { accepted: true, expiresAt: invitation.expiresAt ?? null },
@@ -1878,6 +1873,34 @@ async function showWorkspace() {
   await openWorkspace();
 }
 
+function canCreateMemberInvite() {
+  return Boolean(
+    currentDesktopAccount()
+    && isOwnerHostProfile()
+    && currentAccountOwnsOwnerHost()
+    && isTeamAccessEnabled(),
+  );
+}
+
+async function showMemberInvite() {
+  if (!canCreateMemberInvite()) {
+    throw new Error("Enable private team access before creating a teammate invitation.");
+  }
+  const invite = await createMemberInvite();
+  const expires = invite.expiresAt ? `\n\nExpires: ${new Date(invite.expiresAt).toLocaleString()}` : "";
+  const result = await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
+    type: "info",
+    title: "SPS teammate invitation",
+    message: "Share this full SPS2 invitation code with one teammate.",
+    detail: `${invite.code}${expires}\n\nA new computer needs the complete SPS2 code so it knows the trusted SPS Server address.`,
+    buttons: ["Copy code", "Close"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (result.response === 0) clipboard.writeText(invite.code);
+  return invite;
+}
+
 function configureWorkspaceRequestAuth() {
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const requestHeaders = { ...details.requestHeaders };
@@ -1913,6 +1936,7 @@ function createApplicationMenu() {
         { label: accountLabel, enabled: false },
         { type: "separator" },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
+        { label: "Create teammate invitation...", visible: canCreateMemberInvite(), click: () => run(showMemberInvite) },
         { label: "Check for SPS Desktop updates...", click: () => run(checkForDesktopBetaUpdate) },
         {
           label: "Official extensions...",
@@ -1957,6 +1981,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
+    { label: "Create teammate invitation...", visible: canCreateMemberInvite(), click: () => { void showMemberInvite(); } },
     { label: "Check for SPS Desktop updates...", click: () => { void checkForDesktopBetaUpdate(); } },
     {
       label: "Official extensions...",

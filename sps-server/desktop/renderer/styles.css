@@ -7,7 +7,7 @@
 
 * { box-sizing: border-box; }
 body { min-width: 0; margin: 0; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .58; }
 
@@ -43,8 +43,8 @@ h1 { margin: 0; color: #fff; font-size: 30px; font-weight: 650; letter-spacing: 
 .configuration-form .configuration-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 12px; margin-bottom: 0; color: #b4b4bc; font-weight: 400; }
 .configuration-form .configuration-checkbox input { min-width: auto; flex: 0 0 auto; padding: 0; }
 .input-row { display: flex; gap: 8px; }
-input { min-width: 0; flex: 1; border: 1px solid #3f3f46; border-radius: 7px; outline: none; background: #101112; color: #fff; padding: 10px 11px; }
-input:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(161, 161, 170, .12); }
+input, select { min-width: 0; flex: 1; border: 1px solid #3f3f46; border-radius: 7px; outline: none; background: #101112; color: #fff; padding: 10px 11px; }
+input:focus, select:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(161, 161, 170, .12); }
 
 .server-choice-screen { margin-top: 68px; }
 .account-summary { display: flex; align-items: center; gap: 10px; margin-bottom: 34px; padding-bottom: 18px; border-bottom: 1px solid #29292d; }
@@ -62,6 +62,14 @@ input:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(161, 161, 170, .
 .choice-card strong { font-size: 15px; }
 .choice-card span:last-child { color: #a1a1aa; font-size: 13px; line-height: 1.5; }
 .choice-icon { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #4b4b52; border-radius: 7px; color: #dedee3; font-size: 18px; }
+
+.owner-server-screen { margin-top: 54px; }
+.owner-server-screen .screen-copy { text-align: left; }
+.owner-server-screen .screen-copy p:last-child { margin-left: 0; }
+.owner-server-screen .configuration-form { display: grid; gap: 11px; }
+.owner-server-screen .configuration-form p { margin: 0; }
+.owner-server-screen .configuration-form .primary-action { justify-self: start; }
+.owner-server-actions { margin-top: 18px; justify-content: flex-start; }
 
 .workspace-screen { margin-top: 112px; }
 .workspace-actions { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }

@@ -68,6 +68,40 @@
         </form>
       </section>
 
+      <section id="owner-server-screen" class="screen owner-server-screen" aria-labelledby="owner-server-title" hidden>
+        <div class="account-summary">
+          <img id="owner-account-picture" alt="" hidden />
+          <div>
+            <strong id="owner-account-name"></strong>
+            <span id="owner-account-email"></span>
+          </div>
+          <button id="owner-sign-out" class="text-action" type="button">계정 변경</button>
+        </div>
+        <div class="screen-copy">
+          <p class="eyebrow">THIS COMPUTER'S SPS SERVER</p>
+          <h1 id="owner-server-title">SPS Server 관리</h1>
+          <p id="owner-server-detail">이 컴퓨터가 회사 데이터와 팀 접근 권한을 관리합니다.</p>
+        </div>
+        <div id="owner-team-setup" class="configuration-form">
+          <label for="private-team-company">팀 접근을 연결할 회사</label>
+          <select id="private-team-company"></select>
+          <p>활성화하면 Tailscale 네트워크에 있는 초대된 팀원이 이 SPS Server에 안전하게 참여할 수 있습니다.</p>
+          <button id="enable-private-team" class="primary-action" type="button">팀 접근 활성화</button>
+        </div>
+        <div id="owner-member-invite" class="configuration-form" hidden>
+          <label for="member-invite-code">팀원 초대 코드</label>
+          <div class="input-row">
+            <input id="member-invite-code" autocomplete="off" readonly placeholder="새 초대 만들기" />
+            <button id="copy-member-invite" class="secondary-action" type="button" disabled>복사</button>
+          </div>
+          <button id="create-member-invite" class="primary-action" type="button">새 팀원 초대 만들기</button>
+          <p>전체 <strong>SPS2-...</strong> 코드를 그대로 전달하세요. 새 컴퓨터에는 짧은 SPS 코드만으로 서버 주소를 알 수 없습니다.</p>
+        </div>
+        <div class="workspace-actions owner-server-actions">
+          <button id="owner-open-workspace" class="secondary-action" type="button">Workspace 열기</button>
+        </div>
+      </section>
+
       <section id="workspace-screen" class="screen workspace-screen" aria-labelledby="workspace-title" hidden>
         <div class="screen-mark"><img src="../assets/sps-logo.png" alt="" /></div>
         <div class="screen-copy">
