@@ -84,10 +84,11 @@ test("does not start when the packaged Owner Host runtime is missing", async () 
   assert.match(status.lastError, /runtime is not installed/);
 });
 
-test("prefers the packaged runtime and launches Electron as Node", async () => {
+test("prefers the bundled Node runtime for packaged Owner Host dependencies", async () => {
   const files = new Set([
     "C:/runtime/dist/index.js",
     "C:/runtime/sps-owner-host-bootstrap.mjs",
+    "C:/runtime/bin/node.exe",
   ]);
   const runtime = await resolveSpsOwnerHostRuntime({
     packagedRuntimeRoots: ["C:/runtime"],
@@ -100,12 +101,29 @@ test("prefers the packaged runtime and launches Electron as Node", async () => {
   });
 
   assert.equal(runtime.kind, "packaged-owner-runtime");
+  assert.equal(runtime.command, path.join("C:/runtime", "bin", "node.exe"));
   assert.deepEqual(runtime.args, ["sps-owner-host-bootstrap.mjs"]);
   assert.deepEqual(runtime.environment, {
-    ELECTRON_RUN_AS_NODE: "1",
     PAPERCLIP_HOME: "C:/SPS Vault",
     PAPERCLIP_CONFIG: "C:/SPS Vault/config.json",
   });
+});
+
+test("keeps the Electron-as-Node fallback for an older packaged runtime", async () => {
+  const files = new Set([
+    "C:/runtime/dist/index.js",
+    "C:/runtime/sps-owner-host-bootstrap.mjs",
+  ]);
+  const runtime = await resolveSpsOwnerHostRuntime({
+    packagedRuntimeRoots: ["C:/runtime"],
+    packagedNodeCommand: "C:/SPS Desktop.exe",
+    fsApi: { access: async (entry) => {
+      if (!files.has(String(entry).replaceAll("\\", "/"))) throw new Error("missing");
+    } },
+  });
+
+  assert.equal(runtime.command, "C:/SPS Desktop.exe");
+  assert.equal(runtime.environment.ELECTRON_RUN_AS_NODE, "1");
 });
 
 test("materializes the embedded runtime into the Owner data directory once", async () => {

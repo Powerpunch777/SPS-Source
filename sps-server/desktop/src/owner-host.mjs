@@ -109,6 +109,10 @@ async function findTsxLoader(coreRoot, fsApi) {
   return { loader, preflight };
 }
 
+export function spsOwnerHostBundledNodePath(runtimeRoot, platform = process.platform) {
+  return path.join(runtimeRoot, "bin", platform === "win32" ? "node.exe" : "node");
+}
+
 export async function materializeSpsOwnerHostRuntime({
   sourceRuntimeRoot,
   targetRuntimeRoot,
@@ -196,14 +200,18 @@ export async function resolveSpsOwnerHostRuntime({
     const entry = path.join(runtimeRoot, "dist", "index.js");
     const bootstrap = path.join(runtimeRoot, "sps-owner-host-bootstrap.mjs");
     if (!(await fileExists(entry, fsApi)) || !(await fileExists(bootstrap, fsApi))) continue;
+    const bundledNodeCommand = spsOwnerHostBundledNodePath(runtimeRoot);
+    const hasBundledNode = await fileExists(bundledNodeCommand, fsApi);
     return {
-      command: packagedNodeCommand,
+      command: hasBundledNode ? bundledNodeCommand : packagedNodeCommand,
       args: [
         "sps-owner-host-bootstrap.mjs",
       ],
       cwd: runtimeRoot,
       environment: {
-        ELECTRON_RUN_AS_NODE: "1",
+        // Older Desktop packages used Electron as Node. Keep that fallback so
+        // an existing runtime can still be opened during an in-place update.
+        ...(hasBundledNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
         ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
         ...environment,
       },

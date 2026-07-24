@@ -109,22 +109,24 @@ test("stores and removes Owner-trusted Registry source definitions", async () =>
   }
 });
 
-test("verifies a signed remote source before exposing its release", async () => {
+test("verifies the same pinned-root release contract for Git and official Registry sources", async () => {
   const { source, fetchImpl } = makeRemoteFixture();
-  const report = await inspectRegistrySource(source, { fetchImpl });
-  assert.equal(report.valid, true);
-  assert.equal(report.trust, "pinned-remote-root");
-  assert.deepEqual(report.releases.map((release) => [release.pluginId, release.version]), [["com.example.weather", "1.0.0"]]);
-  assert.deepEqual(report.releases[0].catalog, {
-    displayName: "Example Weather",
-    summary: "A signed weather summary.",
-    documentationUrl: "https://docs.example.test/weather",
-  });
-  assert.deepEqual(report.releases[0].publisherProfile, {
-    id: "example-studio",
-    displayName: "Example Studio",
-    websiteUrl: "https://example.test",
-  });
+  for (const kind of ["git", "official"]) {
+    const report = await inspectRegistrySource({ ...source, kind }, { fetchImpl });
+    assert.equal(report.valid, true);
+    assert.equal(report.trust, "pinned-remote-root");
+    assert.deepEqual(report.releases.map((release) => [release.pluginId, release.version]), [["com.example.weather", "1.0.0"]]);
+    assert.deepEqual(report.releases[0].catalog, {
+      displayName: "Example Weather",
+      summary: "A signed weather summary.",
+      documentationUrl: "https://docs.example.test/weather",
+    });
+    assert.deepEqual(report.releases[0].publisherProfile, {
+      id: "example-studio",
+      displayName: "Example Studio",
+      websiteUrl: "https://example.test",
+    });
+  }
 });
 
 test("downloads a verified remote artifact into the Owner Vault without executing it", async () => {

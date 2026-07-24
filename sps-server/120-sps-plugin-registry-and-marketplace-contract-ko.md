@@ -220,7 +220,7 @@ The authoring Kit rejects URL-like text in relative Registry paths, URL credenti
 
 ### Pilot
 
-- 구현됨: source 성격(공식·서명 remote·Owner-trusted local), 검증된 release 배지, 서명된 플러그인 이름·설명·문서 링크·권한 preview·게시자 프로필, 공개·링크 전용 visibility, 버전별 immutable release, package된 Owner Host의 author → publish → stage → enable·update·rollback E2E
+- 구현됨: source 성격(공식·서명 remote·Owner-trusted local), `sps-plugin inspect`의 실행 없는 source/package/local Registry 검사, Git·official의 공통 pinned-root verifier, 검증된 release 배지, 서명된 플러그인 이름·설명·문서 링크·권한 preview·게시자 프로필, 공개·링크 전용 visibility, 버전별 immutable release, package된 Owner Host의 author → publish → stage → enable·update·rollback E2E
 - 다음 범위: 신고·advisory 연결, 공식 example Registry와 반복 E2E
 
 ### 거래 단계

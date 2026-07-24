@@ -10,6 +10,8 @@ import {
   packagePluginDirectory,
   publishPluginToLocalRegistry,
 } from "../authoring/plugin-package-v1.mjs";
+import { inspectPluginArchive } from "../registry/archive-inspector-v1.mjs";
+import { inspectLocalRegistry } from "../registry/local-registry-v1.mjs";
 
 function usage() {
   return `SPS Plugin Kit
@@ -17,6 +19,7 @@ function usage() {
 Commands:
   sps-plugin init <directory> --id <plugin-id> --package <package-name> [--name <display-name>] [--version <semver>]
   sps-plugin validate <directory>
+  sps-plugin inspect <plugin-directory|registry-directory|plugin.spsplugin>
   sps-plugin pack <directory> --out <plugin.spsplugin> [--overwrite]
   sps-plugin keygen --private <publisher-private.pem> --public <publisher-public.pem>
   sps-plugin release <plugin.spsplugin> --artifact-url <relative-or-https-url> --publisher-id <id> --publisher-key-id <ed25519:id> --private-key <pem> --out <release.json> [--catalog-name <name>] [--summary <text>] [--docs-url <https-url>]
@@ -70,6 +73,34 @@ async function writeJson(filePath, value) {
   return output;
 }
 
+async function inspectPath(inputPath) {
+  if (typeof inputPath !== "string" || inputPath.length === 0) {
+    throw new Error("inspect requires a plugin directory, Registry directory, or .spsplugin archive path.");
+  }
+  const target = path.resolve(inputPath);
+  let stats;
+  try {
+    stats = await fs.lstat(target);
+  } catch (error) {
+    throw new Error(`Inspect target is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (stats.isSymbolicLink()) throw new Error("Inspect target must not be a symbolic link.");
+  if (stats.isDirectory()) {
+    try {
+      const registry = await fs.lstat(path.join(target, "registry.json"));
+      if (registry.isSymbolicLink() || !registry.isFile()) throw new Error("registry.json must be a regular file.");
+      return { kind: "local-registry", target, report: await inspectLocalRegistry(target) };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      return { kind: "plugin-source", target, report: await inspectPluginDirectory(target) };
+    }
+  }
+  if (stats.isFile() && target.toLowerCase().endsWith(".spsplugin")) {
+    return { kind: "plugin-archive", target, report: await inspectPluginArchive(target) };
+  }
+  throw new Error("Inspect accepts a plugin source directory, Registry directory, or .spsplugin archive.");
+}
+
 function parsePair(value, label) {
   const separator = value.indexOf("=");
   if (separator <= 0 || separator === value.length - 1) throw new Error(`${label} must use key=value syntax.`);
@@ -117,6 +148,12 @@ async function run() {
     const report = await inspectPluginDirectory(positionals[0]);
     console.log(JSON.stringify(report, null, 2));
     if (!report.valid) process.exitCode = 1;
+    return;
+  }
+  if (command === "inspect") {
+    const result = await inspectPath(positionals[0]);
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.report.valid) process.exitCode = 1;
     return;
   }
   if (command === "pack") {

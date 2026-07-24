@@ -110,6 +110,18 @@ const SPS_BUNDLED_OWNER_HOST_PLUGINS = [
   "sps-room-chat",
 ];
 
+async function copyBundledSpsNodeRuntime(runtimeRoot) {
+  // The deployed Core includes native dependencies. Run it with the same Node
+  // executable that prepared those dependencies instead of Electron's bundled
+  // Node, whose ABI can differ from the release build environment.
+  const executableName = process.platform === "win32" ? "node.exe" : "node";
+  const nodeTarget = path.join(runtimeRoot, "bin", executableName);
+  await requireFile(process.execPath, "SPS Owner Host requires a Node.js executable while preparing the Desktop runtime.");
+  await mkdir(path.dirname(nodeTarget), { recursive: true });
+  await cp(process.execPath, nodeTarget);
+  return { executableName, version: process.version };
+}
+
 async function copyBundledSpsPluginRuntime(runtimeRoot) {
   for (const pluginName of SPS_BUNDLED_OWNER_HOST_PLUGINS) {
     const pluginSource = path.join(spsServerRoot, pluginName);
@@ -187,13 +199,15 @@ await normalizeWorkspacePackageExports(runtimeRoot);
 await writeOwnerHostBootstrap(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
 await copyBundledSpsPluginRuntime(runtimeRoot);
+const bundledNode = await copyBundledSpsNodeRuntime(runtimeRoot);
 await writeFile(
   path.join(runtimeRoot, "sps-owner-host-runtime.json"),
   `${JSON.stringify({
-    format: 5,
+    format: 6,
     entry: "dist/index.js",
     loader: "node-esm",
     vendorDirectory: "node_modules",
+    nodeRuntime: bundledNode,
     bundledDefaultMemory: true,
     version: process.env.npm_package_version || "development",
     createdAt: new Date().toISOString(),

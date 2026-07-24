@@ -167,6 +167,7 @@ sps plugin registry-index
 ```text
 sps-plugin init
 -> static source validate
+-> source/package/local Registry inspect
 -> deterministic file collection and .spsplugin pack
 -> archive inspect
 -> Ed25519 publisher key generation
@@ -174,7 +175,7 @@ sps-plugin init
 -> signed Registry index
 ```
 
-package·release·Registry index 생성물은 현재 Local Registry verifier가 다시 검증하는 E2E test로 고정되어 있다. 아직 Plugin Studio, mock lifecycle Test Kit, `dev` runner는 제공하지 않는다.
+`inspect`는 source tree, `.spsplugin` archive, local Registry를 실행 없이 식별·검증하고 JSON report를 반환한다. package·release·Registry index 생성물은 현재 Local Registry verifier가 다시 검증하는 E2E test로 고정되어 있다. 아직 Plugin Studio, mock lifecycle Test Kit, `dev` runner는 제공하지 않는다.
 
 ### Test Kit
 

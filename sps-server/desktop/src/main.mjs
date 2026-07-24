@@ -44,7 +44,12 @@ import {
   SPS_DESKTOP_ACCESS_HEADER,
   spsDesktopAccessEnvironment,
 } from "./desktop-local-access.mjs";
-import { createSpsOwnerHostManager, materializeSpsOwnerHostRuntime, resolveSpsOwnerHostRuntime } from "./owner-host.mjs";
+import {
+  createSpsOwnerHostManager,
+  materializeSpsOwnerHostRuntime,
+  resolveSpsOwnerHostRuntime,
+  spsOwnerHostBundledNodePath,
+} from "./owner-host.mjs";
 import {
   configureSpsOwnerHostLocalOnly,
   configureSpsOwnerHostPrivateTeamAccess,
@@ -586,6 +591,14 @@ async function ensureOwnerHostManager() {
           ? path.join(materializedRuntime, "memory-sidecar", "memory-sidecar.mjs")
           : null;
         return packagedEntry && existsSync(packagedEntry) ? packagedEntry : developmentMemorySidecarEntry;
+      },
+      resolveNodeCommand: async () => {
+        const materializedRuntime = await materializeSpsOwnerHostRuntime({
+          sourceRuntimeRoot,
+          targetRuntimeRoot,
+        });
+        const bundledNode = materializedRuntime ? spsOwnerHostBundledNodePath(materializedRuntime) : null;
+        return bundledNode && existsSync(bundledNode) ? bundledNode : process.execPath;
       },
     })
     : null;

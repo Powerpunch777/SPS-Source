@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import os from "node:os";
@@ -16,13 +16,15 @@ import {
 import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
 
 const runtimeRoot = path.resolve(process.env.SPS_OWNER_HOST_RUNTIME_ROOT || "");
-const electronBinary = path.resolve(process.env.SPS_OWNER_HOST_ELECTRON_BINARY || "");
+const nodeBinary = path.resolve(process.env.SPS_OWNER_HOST_NODE_BINARY || path.join(runtimeRoot, "bin", process.platform === "win32" ? "node.exe" : "node"));
 
 if (!runtimeRoot || runtimeRoot === path.resolve(".")) {
   throw new Error("Set SPS_OWNER_HOST_RUNTIME_ROOT to the packaged SPS Owner Host runtime.");
 }
-if (!electronBinary || electronBinary === path.resolve(".")) {
-  throw new Error("Set SPS_OWNER_HOST_ELECTRON_BINARY to the SPS Desktop executable.");
+try {
+  await access(nodeBinary);
+} catch {
+  throw new Error("Set SPS_OWNER_HOST_NODE_BINARY to the Node executable bundled with the SPS Owner Host runtime.");
 }
 
 const temporaryRoot = path.join(os.tmpdir(), `sps-owner-host-smoke-${process.pid}-${Date.now()}`);
@@ -371,13 +373,12 @@ await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 await mkdir(path.dirname(memoryConfigPath), { recursive: true });
 await writeFile(memoryConfigPath, `${JSON.stringify(memoryConfig, null, 2)}\n`, "utf8");
 const memoryChild = spawn(
-  electronBinary,
+  nodeBinary,
   [path.join(executionRuntimeRoot, "memory-sidecar", "memory-sidecar.mjs"), "--config", memoryConfigPath],
   {
     cwd: executionRuntimeRoot,
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
       MEMORY_SIDECAR_CONFIG: memoryConfigPath,
       MEMORY_SIDECAR_TOKEN: memoryToken,
     },
@@ -389,13 +390,12 @@ let memoryOutput = "";
 memoryChild.stdout.on("data", (chunk) => { memoryOutput += chunk.toString(); });
 memoryChild.stderr.on("data", (chunk) => { memoryOutput += chunk.toString(); });
 const child = spawn(
-  electronBinary,
+  nodeBinary,
   [path.join(executionRuntimeRoot, "sps-owner-host-bootstrap.mjs")],
   {
     cwd: executionRuntimeRoot,
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
       PAPERCLIP_TELEMETRY_DISABLED: "1",
       PAPERCLIP_CONFIG: configPath,
       PAPERCLIP_HOME: temporaryRoot,

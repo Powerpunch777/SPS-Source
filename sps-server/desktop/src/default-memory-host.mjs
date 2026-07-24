@@ -145,6 +145,7 @@ export function createSpsDefaultMemoryManager({
   configPath,
   resolveEntry = async () => null,
   nodeCommand = process.execPath,
+  resolveNodeCommand = async () => nodeCommand,
   spawn = spawnChildProcess,
   fetchImpl = fetch,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -175,7 +176,12 @@ export function createSpsDefaultMemoryManager({
       return inspect();
     }
     try {
-      const child = spawn(nodeCommand, [entry, "--config", configPath], {
+      const command = await resolveNodeCommand();
+      if (!command) {
+        lastError = "SPS Default Memory Node runtime is not installed on this computer.";
+        return inspect();
+      }
+      const child = spawn(command, [entry, "--config", configPath], {
         cwd: path.dirname(entry),
         stdio: "ignore",
         windowsHide: true,
