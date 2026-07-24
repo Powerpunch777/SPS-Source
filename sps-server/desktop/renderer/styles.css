@@ -68,7 +68,7 @@ input:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(161, 161, 170, .
 .notice { min-height: 20px; margin: 30px auto 0; color: #a1a1aa; text-align: center; font-size: 13px; }
 .notice.error { color: #fca5a5; }
 body.pending .screen:not(.account-screen) { pointer-events: none; }
-body.pending .account-screen > :not(#cancel-google-account) { pointer-events: none; }
+body.pending .account-screen > :not(#cancel-sps-account) { pointer-events: none; }
 
 @media (max-width: 620px) {
   .onboarding-shell { width: min(100% - 28px, 700px); }
