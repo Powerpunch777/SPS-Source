@@ -37,8 +37,11 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(workspacePreload, /contextBridge\.exposeInMainWorld\("spsDesktopWorkspace"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-account"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-open-plugin-registries"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-account"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
+  assert.match(main, /ipcMain\.handle\("desktop:workspace-open-plugin-registries"[\s\S]*?Plugin Registry management[\s\S]*?showRegistryWindow\(\)/);
+  assert.match(main, /Manage Plugin Registries\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+R"/);
 });
 
 test("keeps the Registry window on a narrow Owner-only preload bridge", async () => {

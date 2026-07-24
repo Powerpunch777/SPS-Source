@@ -1583,7 +1583,7 @@ function createApplicationMenu() {
         { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(exportOwnerVaultTransfer) },
         { label: "Check SPS transfer bundle...", click: () => run(inspectOwnerVaultTransfer) },
         { label: "Check plugin runtime...", click: () => run(showPluginRuntimeStatus) },
-        { label: "Manage Plugin Registries...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryWindow) },
+        { label: "Manage Plugin Registries...", accelerator: "CommandOrControl+Alt+R", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryWindow) },
         { label: "Install Registry plugin...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(stageRegistryPluginFromFilePicker) },
         { label: "Review staged Registry plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryPluginStages) },
         { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
@@ -1612,7 +1612,7 @@ function refreshTrayMenu() {
     { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void exportOwnerVaultTransfer(); } },
     { label: "Check SPS transfer bundle...", click: () => { void inspectOwnerVaultTransfer(); } },
     { label: "Check plugin runtime...", click: () => { void showPluginRuntimeStatus(); } },
-    { label: "Manage Plugin Registries...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryWindow(); } },
+    { label: "Manage Plugin Registries...", accelerator: "CommandOrControl+Alt+R", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryWindow(); } },
     { label: "Install Registry plugin...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void stageRegistryPluginFromFilePicker(); } },
     { label: "Review staged Registry plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryPluginStages(); } },
     { label: "서버 연결 및 계정", click: () => { void showMainWindow().then(openSetup); } },
@@ -1921,6 +1921,18 @@ function registerIpc() {
       throw new Error("SPS Desktop sign-out is available only in the local Owner Host Workspace.");
     }
     return await signOutDesktopAccount();
+  });
+  ipcMain.handle("desktop:workspace-open-plugin-registries", async (event) => {
+    if (
+      !isOwnerHostProfile()
+      || !workspaceWindow
+      || workspaceWindow.isDestroyed()
+      || event.sender.id !== workspaceWindow.webContents.id
+    ) {
+      throw new Error("Plugin Registry management is available only in the local Owner Host Workspace.");
+    }
+    await showRegistryWindow();
+    return { opened: true };
   });
   ipcMain.handle("desktop:registry-list-sources", async () => await listRegistrySources());
   ipcMain.handle("desktop:registry-choose-local-source", async () => await chooseDesktopLocalRegistryFolder());

@@ -5,4 +5,5 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("spsDesktopWorkspace", {
   getDesktopAccount: () => ipcRenderer.invoke("desktop:workspace-account"),
   signOutDesktopAccount: () => ipcRenderer.invoke("desktop:workspace-sign-out"),
+  openPluginRegistries: () => ipcRenderer.invoke("desktop:workspace-open-plugin-registries"),
 });
