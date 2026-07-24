@@ -76,16 +76,19 @@ async function requireFile(entry, message) {
 async function buildOwnerHostCoreArtifacts() {
   const dbTsconfig = path.join(coreRoot, "packages", "db", "tsconfig.json");
   const serverTsconfig = path.join(coreRoot, "server", "tsconfig.json");
+  const prepareServerUiDist = path.join(coreRoot, "scripts", "prepare-server-ui-dist.mjs");
   const tscCli = path.join(coreRoot, "node_modules", "typescript", "bin", "tsc");
   await requireFile(tscCli, "SPS Owner Host requires the Core TypeScript compiler. Run pnpm install in external/sps-core first.");
   await requireFile(dbTsconfig, "SPS Owner Host database TypeScript config is missing.");
   await requireFile(serverTsconfig, "SPS Owner Host server TypeScript config is missing.");
+  await requireFile(prepareServerUiDist, "SPS Owner Host UI packaging script is missing.");
 
   // pnpm deploy packages built output, not the workspace TypeScript sources.
   // Rebuild the two runtime packages here so a Desktop release cannot ship
   // stale database/server code after a Core update.
   await run(process.execPath, [tscCli, "-p", dbTsconfig], coreRoot);
   await run(process.execPath, [tscCli, "-p", serverTsconfig], coreRoot);
+  await run(process.execPath, [prepareServerUiDist], coreRoot);
 }
 
 async function normalizeWorkspacePackageExports(runtimeRoot) {
@@ -207,6 +210,9 @@ await run(
 );
 
 await normalizeWorkspacePackageExports(runtimeRoot);
+const serverUiDist = path.join(coreRoot, "server", "ui-dist");
+await requireFile(path.join(serverUiDist, "index.html"), "SPS Owner Host static UI is missing after the Core build.");
+await cp(serverUiDist, path.join(runtimeRoot, "ui-dist"), { recursive: true });
 await writeOwnerHostBootstrap(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
 await copyBundledSpsPluginRuntime(runtimeRoot);

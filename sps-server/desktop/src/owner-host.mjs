@@ -268,7 +268,9 @@ export function createSpsOwnerHostManager({
   spawn = spawnChildProcess,
   fetchImpl = fetch,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  startupAttempts = 240,
+  // First launch has to initialize Embedded PostgreSQL and can take several
+  // minutes while Windows inspects its native runtime files.
+  startupAttempts = 720,
   terminateTree = terminateWindowsProcessTree,
 } = {}) {
   if (!url) throw new Error("SPS Owner Host URL is required.");

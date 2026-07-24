@@ -86,7 +86,7 @@ const memoryConfig = {
 };
 
 async function waitForHealth(ownerHost) {
-  for (let attempt = 0; attempt < 360; attempt += 1) {
+  for (let attempt = 0; attempt < 720; attempt += 1) {
     if (ownerHost.exitCode !== null) {
       throw new Error(`The packaged SPS Owner Host exited before health became ready (exit ${ownerHost.exitCode}).`);
     }
@@ -99,7 +99,7 @@ async function waitForHealth(ownerHost) {
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error("The packaged SPS Owner Host did not become healthy within 180 seconds.");
+  throw new Error("The packaged SPS Owner Host did not become healthy within 360 seconds.");
 }
 
 async function waitForMemoryHealth() {
@@ -117,6 +117,14 @@ async function waitForMemoryHealth() {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("The packaged SPS Default Memory sidecar did not become healthy within 20 seconds.");
+}
+
+async function assertStaticWorkspaceUi() {
+  const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(5_000) });
+  const body = await response.text();
+  if (!response.ok || !response.headers.get("content-type")?.includes("text/html") || !body.includes("<title>SPS</title>")) {
+    throw new Error("The packaged SPS Owner Host did not serve its branded static Workspace UI.");
+  }
 }
 
 async function assertDefaultMemoryPlugin() {
@@ -424,6 +432,7 @@ let passed = false;
 try {
   await waitForMemoryHealth();
   const health = await waitForHealth(child);
+  await assertStaticWorkspaceUi();
   await assertDefaultMemoryPlugin();
   await assertRoomsPlugin();
   await assertRegistryLifecycle();
