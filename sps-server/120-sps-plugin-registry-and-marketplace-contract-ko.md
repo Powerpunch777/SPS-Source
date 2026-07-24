@@ -193,7 +193,7 @@ The Desktop Owner stores Registry source definitions in the Owner Vault, not in 
 
 When an existing plugin is replaced, Core stops its active worker first, verifies the selected stage again, persists both the manifest and resolved package path together, and starts the reviewed version through the normal lifecycle. A capability expansion remains pending for the normal generic upgrade API; the Registry queue can apply it only because the Owner explicitly reviews and confirms the exact staged artifact.
 
-Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` opens the source list, local/remote source form, verified release catalog, disabled stage action, review queue, and explicit apply confirmation. Marketplace discovery, reviews, payment, entitlement, and automatic updates remain out of scope.
+Current Desktop UI: `SPS Desktop > Manage Plugin Registries...` 또는 local Owner Host Workspace의 `Ctrl+Alt+R`이 source list, local/remote source form, verified release catalog, disabled stage action, review queue, and explicit apply confirmation을 연다. Workspace bridge는 local Owner Host window에서만 노출되며 원격 team window에는 존재하지 않는다. Marketplace discovery, reviews, payment, entitlement, and automatic updates remain out of scope.
 
 ### 5.3 Authoring Kit release flow (implemented)
 
