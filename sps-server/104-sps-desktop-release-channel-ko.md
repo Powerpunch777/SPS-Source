@@ -7,10 +7,10 @@ the product to be tested before SonParkServer has a registered business and a
 public Windows code-signing identity.
 
 The app checks for updates after startup and every six hours. A Beta update is
-never downloaded or installed silently: the user must choose **Download**, and
-then choose **Restart and install** after the download finishes. No version is
-mandatory while the release is unsigned, so an offline Owner Host can continue
-working.
+downloaded automatically and becomes ready to install when the app closes. The
+user can also choose **Restart and install** from the update status when they
+want to apply it immediately. No version is mandatory while the release is
+unsigned, so an offline Owner Host can continue working.
 
 Windows may display an unknown-publisher warning for the first installer and
 for Beta updates. Beta releases are for trusted testers, not general public
@@ -18,10 +18,10 @@ distribution.
 
 ## Beta channel
 
-- Tag format: `desktop-beta-v<package version>`
-- Workflow: `.github/workflows/sps-desktop-beta-release.yml`
-- Build command: `npm run release:beta:win`
-- Release type: GitHub prerelease
+- Tag format: `v<package version>`
+- Build command: `npm run package:win`
+- Release type: GitHub release (the current Desktop update feed permits Beta
+  builds)
 - Artifact channel: `Powerpunch777/SPS-Desktop-Releases`
 - Transitional mirror: `Powerpunch777/SPS` while it remains public for older
   Desktop installations
@@ -62,14 +62,14 @@ mandatory minimum-version updates for security or data-format fixes.
 
 1. Update `sps-server/desktop/package.json` to the intended version.
 2. Run the Desktop test suite.
-3. Push the matching tag, for example `desktop-beta-v0.4.19`.
-4. Confirm the GitHub Actions Beta workflow publishes all three artifacts from
-   the same build:
-   - `SPS Desktop Setup <version>.exe`
-   - `SPS Desktop Setup <version>.exe.blockmap`
+3. Push the matching tag, for example `v0.4.44`.
+4. Confirm the release publishes all three artifacts from the same build:
+   - `SPS-Desktop-Setup-<version>.exe`
+   - `SPS-Desktop-Setup-<version>.exe.blockmap`
    - `latest.yml`
 5. Install the first Beta manually on each tester computer. Later versions are
-   discovered by the in-app updater and require user confirmation.
+   discovered and downloaded by the in-app updater, then installed when SPS
+   closes or when the user selects an immediate restart.
 
 `latest.yml` contains the update artifact hash produced by electron-builder.
 Do not edit it by hand or upload an installer separately as an update.
