@@ -26,6 +26,7 @@ test("keeps the unsigned Desktop Beta release separate from the signed release c
   assert.match(workflow, /pnpm install --frozen-lockfile/);
   assert.match(workflow, /pnpm --filter @paperclipai\/plugin-sdk run build/);
   assert.match(workflow, /pnpm --filter "@paperclipai\/adapter-\*" run build/);
+  assert.match(workflow, /pnpm --filter @paperclipai\/hermes-paperclip-adapter run build/);
   assert.match(workflow, /pnpm --filter paperclipai run build/);
   assert.match(workflow, /npm run release:beta:win/);
 });
