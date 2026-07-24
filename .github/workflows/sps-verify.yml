@@ -89,6 +89,26 @@ jobs:
         working-directory: sps-server/sps-room-chat
         run: npm run check
 
+  plugin-kit:
+    name: SPS Plugin Kit and Registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sps-server/plugin-platform/package-lock.json
+
+      - name: Install SPS Plugin Kit dependencies
+        working-directory: sps-server/plugin-platform
+        run: npm ci
+
+      - name: Verify SPS Plugin Kit, Registry, and publication templates
+        working-directory: sps-server/plugin-platform
+        run: npm test
+
   desktop:
     name: SPS Desktop and Node
     runs-on: windows-latest

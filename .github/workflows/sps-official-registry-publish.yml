@@ -1,0 +1,104 @@
+name: Publish SPS Official Registry
+
+# This is a manual publication boundary. It never runs from a normal source
+# push, and it only changes the static Registry files under the public site.
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_source:
+        description: SPS Plugin source directory, relative to this repository
+        required: true
+      catalog_name:
+        description: Display name shown by SPS Desktop
+        required: true
+      summary:
+        description: Short summary shown by SPS Desktop
+        required: true
+      documentation_url:
+        description: HTTPS documentation URL for this exact plugin release
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Sign one immutable SPS Official Registry release
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_DIRECTORY: sps-server/website/registry
+      REGISTRY_ID: io.sps.official
+      REGISTRY_DISPLAY_NAME: SPS Official Registry
+      PUBLISHER_ID: sps
+      PUBLISHER_KEY_ID: ed25519:sps-official-publisher-1
+      REGISTRY_ROOT_KEY_ID: ed25519:sps-official-registry-root-1
+      PUBLISHER_NAME: SPS
+      PUBLISHER_URL: https://redongames.com
+      PLUGIN_SOURCE: ${{ inputs.plugin_source }}
+      CATALOG_NAME: ${{ inputs.catalog_name }}
+      SUMMARY: ${{ inputs.summary }}
+      DOCUMENTATION_URL: ${{ inputs.documentation_url }}
+      SPS_REGISTRY_PUBLISHER_PRIVATE_KEY: ${{ secrets.SPS_REGISTRY_PUBLISHER_PRIVATE_KEY }}
+      SPS_REGISTRY_ROOT_PRIVATE_KEY: ${{ secrets.SPS_REGISTRY_ROOT_PRIVATE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sps-server/plugin-platform/package-lock.json
+
+      - name: Validate signing secrets
+        shell: bash
+        run: |
+          test -n "$SPS_REGISTRY_PUBLISHER_PRIVATE_KEY" || { echo "Missing SPS_REGISTRY_PUBLISHER_PRIVATE_KEY."; exit 1; }
+          test -n "$SPS_REGISTRY_ROOT_PRIVATE_KEY" || { echo "Missing SPS_REGISTRY_ROOT_PRIVATE_KEY."; exit 1; }
+
+      - name: Install SPS Plugin Kit
+        working-directory: sps-server/plugin-platform
+        run: npm ci
+
+      - name: Sign and verify release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          publisher_key="$RUNNER_TEMP/sps-official-publisher-private.pem"
+          root_key="$RUNNER_TEMP/sps-official-registry-root-private.pem"
+          printf '%s' "$SPS_REGISTRY_PUBLISHER_PRIVATE_KEY" > "$publisher_key"
+          printf '%s' "$SPS_REGISTRY_ROOT_PRIVATE_KEY" > "$root_key"
+
+          node sps-server/plugin-platform/cli/sps-plugin.mjs publish-local "$PLUGIN_SOURCE" \
+            --registry "$REGISTRY_DIRECTORY" \
+            --registry-id "$REGISTRY_ID" \
+            --display-name "$REGISTRY_DISPLAY_NAME" \
+            --publisher-id "$PUBLISHER_ID" \
+            --publisher-key-id "$PUBLISHER_KEY_ID" \
+            --publisher-private-key "$publisher_key" \
+            --root-key-id "$REGISTRY_ROOT_KEY_ID" \
+            --root-private-key "$root_key" \
+            --catalog-name "$CATALOG_NAME" \
+            --summary "$SUMMARY" \
+            --docs-url "$DOCUMENTATION_URL" \
+            --publisher-name "$PUBLISHER_NAME" \
+            --publisher-url "$PUBLISHER_URL" | tee "$RUNNER_TEMP/sps-official-release.json"
+          node sps-server/plugin-platform/cli/sps-plugin.mjs inspect "$REGISTRY_DIRECTORY" | tee "$RUNNER_TEMP/sps-official-inspect.json"
+          echo "Add this pinned root only once to SPS Desktop as the official source for https://redongames.com/registry/registry.json:" >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e 'import { readFile } from "node:fs/promises"; const release = JSON.parse(await readFile(process.argv[1], "utf8")); console.log(`\`${release.registry.rootKeyId}\`\n\n\`\`\`text\n${release.registry.rootPublicKey}\n\`\`\``);' "$RUNNER_TEMP/sps-official-release.json" >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$publisher_key" "$root_key"
+
+      - name: Commit public Registry files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- "$REGISTRY_DIRECTORY"
+          if git diff --cached --quiet; then
+            echo "No Registry files changed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "sps-registry-bot[bot]"
+          git config user.email "sps-registry-bot[bot]@users.noreply.github.com"
+          git commit -m "release: publish SPS Official Registry plugin"
+          git push

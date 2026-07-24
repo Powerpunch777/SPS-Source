@@ -219,6 +219,7 @@ async function run() {
     return;
   }
   if (command === "publish-local") {
+    const registryRootKeyId = required(options, "root-key-id");
     const published = await publishPluginToLocalRegistry({
       sourceDirectory: positionals[0],
       registryDirectory: required(options, "registry"),
@@ -227,13 +228,21 @@ async function run() {
       publisherId: required(options, "publisher-id"),
       publisherKeyId: required(options, "publisher-key-id"),
       publisherPrivateKey: await readText(required(options, "publisher-private-key")),
-      registryRootKeyId: required(options, "root-key-id"),
+      registryRootKeyId,
       registryRootPrivateKey: await readText(required(options, "root-private-key")),
       compatibilitySps: options.get("sps") || ">=0.4.0",
       visibility: options.get("visibility") || "public",
       catalog: catalogFromOptions(options),
+      publisherProfile: publisherProfileFromOptions(options),
     });
-    console.log(`Published ${published.plugin.id}@${published.plugin.version} to local Registry: ${published.registryRoot}`);
+    console.log(JSON.stringify({
+      plugin: published.plugin,
+      registry: {
+        root: published.registryRoot,
+        rootKeyId: registryRootKeyId,
+        rootPublicKey: published.registryPublicKey,
+      },
+    }, null, 2));
     return;
   }
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);

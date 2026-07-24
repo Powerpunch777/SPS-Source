@@ -114,6 +114,8 @@ jobs:
 
           node sps-server/plugin-platform/cli/sps-plugin.mjs "${args[@]}" | tee "$RUNNER_TEMP/sps-registry-release.json"
           node sps-server/plugin-platform/cli/sps-plugin.mjs inspect "$REGISTRY_DIRECTORY" | tee "$RUNNER_TEMP/sps-registry-inspect.json"
+          echo "Registry root public key (copy this once into the SPS Desktop source configuration):" >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e 'import { readFile } from "node:fs/promises"; const release = JSON.parse(await readFile(process.argv[1], "utf8")); console.log(`\`${release.registry.rootKeyId}\`\n\n\`\`\`text\n${release.registry.rootPublicKey}\n\`\`\``);' "$RUNNER_TEMP/sps-registry-release.json" >> "$GITHUB_STEP_SUMMARY"
           rm -f "$publisher_key" "$root_key"
 
       - name: Commit Registry files

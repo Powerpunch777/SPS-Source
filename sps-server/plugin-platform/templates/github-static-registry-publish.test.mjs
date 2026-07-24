@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const templatePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "github-static-registry-publish.yml");
+const officialWorkflowPath = path.resolve(path.dirname(templatePath), "..", "..", "..", ".github", "workflows", "sps-official-registry-publish.yml");
 
 test("GitHub static Registry template keeps signing and publication manual", async () => {
   const workflow = await readFile(templatePath, "utf8");
@@ -17,4 +18,16 @@ test("GitHub static Registry template keeps signing and publication manual", asy
   assert.match(workflow, /sps-plugin\.mjs "\$\{args\[@\]\}"/);
   assert.match(workflow, /sps-plugin\.mjs inspect "\$REGISTRY_DIRECTORY"/);
   assert.match(workflow, /git add -- "\$REGISTRY_DIRECTORY"/);
+});
+
+test("SPS Official Registry workflow targets the public static site and remains manual", async () => {
+  const workflow = await readFile(officialWorkflowPath, "utf8");
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /^\s*(push|pull_request):/m);
+  assert.match(workflow, /REGISTRY_DIRECTORY: sps-server\/website\/registry/);
+  assert.match(workflow, /SPS_REGISTRY_PUBLISHER_PRIVATE_KEY/);
+  assert.match(workflow, /SPS_REGISTRY_ROOT_PRIVATE_KEY/);
+  assert.match(workflow, /sps-plugin\.mjs publish-local/);
+  assert.match(workflow, /sps-plugin\.mjs inspect "\$REGISTRY_DIRECTORY"/);
+  assert.match(workflow, /https:\/\/redongames\.com\/registry\/registry\.json/);
 });
