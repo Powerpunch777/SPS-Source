@@ -143,17 +143,3 @@ jobs:
       - name: Test SPS node signing, command lease, and capability flow
         working-directory: sps-server/desktop-node
         run: npm test
-
-  website:
-    name: SPS public website
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Verify Redon Games static website
-        working-directory: sps-server/website
-        run: node scripts/check-site.mjs

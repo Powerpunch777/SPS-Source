@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="sps-server/website/assets/sps-logo.png" alt="SPS logo" width="120" />
+  <img src="sps-server/desktop/assets/sps-logo.png" alt="SPS logo" width="120" />
 </p>
 
 <h1 align="center">SPS</h1>
@@ -214,9 +214,10 @@ sps-server/
 ├─ agent-instructions/        # 역할·권한·Task 운영 규칙
 ├─ config/                    # 모델과 Workplane 설정
 ├─ scripts/                   # 시작, 복구, E2E·보안 검사
-└─ website/                   # 공개 제품 사이트
 
 external/sps-core/            # 고정 커밋 SPS Core submodule
+
+Public website source          # github.com/Powerpunch777/redon-games-website
 ```
 
 ### 주요 검사
@@ -234,7 +235,8 @@ cd ..\sps-memory
 npm run check
 
 # 공개 사이트
-node ..\website\scripts\check-site.mjs
+# 별도 Public repository에서 검사·배포합니다.
+git -C ..\redon-games-website status
 ```
 
 ## 문서

@@ -2,74 +2,48 @@
 
 ## Decision
 
-`redongames.com` is the public Redon Games and SPS product site. It is not the
-SPS API origin. The authenticated collaboration service is isolated at
-`app.redongames.com`.
+`redongames.com` is the public Redon Games and SPS product website. It is not
+the SPS API origin and it must not be deployed from the private product source
+repository.
 
 | Address | Responsibility | Hosting |
 | --- | --- | --- |
-| `https://redongames.com` | Public SPS product site, documentation entry point, GitHub and Desktop release links | GitHub Pages with Cloudflare DNS |
-| `https://www.redongames.com` | Optional alternate hostname; not configured yet | Future DNS-only CNAME to `Powerpunch777.github.io` |
-| `https://app.redongames.com` | Google-authenticated SPS Hub, invitations, Rooms, Tasks, Nodes and Agent grants | Cloudflare Tunnel to the private Hub Docker network |
+| `https://redongames.com` | Public product introduction, beta entry point and feedback contact | Public [`redon-games-website`](https://github.com/Powerpunch777/redon-games-website) repository on GitHub Pages |
+| `https://app.redongames.com` | Authenticated SPS Hub, invitations, Rooms, Tasks, Nodes and Agent grants | SPS Hub deployment |
 
-This prevents the static public site from sharing cookies, runtime data,
-PostgreSQL access, or Docker lifecycle with the collaboration Hub.
+This prevents the static public website from sharing product source,
+credentials, cookies, runtime data, PostgreSQL access, or Docker lifecycle
+with the SPS Hub.
 
-## Current domain state
+## Current State
 
-On 2026-07-19, `redongames.com` was configured as the GitHub Pages custom
-domain before DNS changes. Cloudflare now publishes the four official GitHub
-Pages apex A records as DNS-only records. HTTPS remains pending until GitHub
-finishes certificate issuance.
+On 2026-07-24 the public website was moved from `SPS/sps-server/website` to
+`Powerpunch777/redon-games-website` before the product repositories are made
+private. GitHub Pages now owns `redongames.com`, HTTPS is enforced, and the
+GitHub Pages certificate is approved.
 
-## Website implementation
+The website repository contains only static product content, the SPS logo,
+site validation, and its Pages workflow. It contains no SPS Desktop, Core,
+Hub, Node, private extension source, credential, invite, database, or project
+data.
 
-The static website lives in `sps-server/website`.
+## Operating Rules
 
-- It uses the approved SPS bitmap logo from the Desktop product assets.
-- GitHub Pages publishes the current default branch to the temporary address
-  `https://powerpunch777.github.io/SPS/` and the configured production domain
-  `https://redongames.com`.
-- Cloudflare provides DNS only. The static `_headers` file is retained for a
-  future Cloudflare Pages migration and is not currently served by GitHub Pages.
-- It describes the actual SPS Room, Task, Node and permission flow rather than
-  pretending that a public Hub is already open.
-- It links to the intended Hub address without embedding credentials, invite
-  codes, or any internal server endpoint.
-- `_headers` supplies static-host security headers and the site contains no
-  external analytics or third-party script dependency.
+1. Change public copy and web design only in `redon-games-website`.
+2. Keep the product and Core repositories private after the Desktop update
+   bridge is verified.
+3. The public website may link to `app.redongames.com`, but must never embed an
+   invite code, OAuth secret, Hub administrator route, or local network URL.
+4. The public website does not make a Node trustworthy. Google login, an SPS
+   invite, Owner approval, and an Agent-Node grant remain separate controls.
 
-Run its source check before publishing:
+## Verification
 
 ```powershell
-node .\sps-server\website\scripts\check-site.mjs
+Set-Location .\redon-games-website
+node .\scripts\check-site.mjs
 ```
 
-## Publication order
-
-1. Add `redongames.com` to GitHub Pages before changing DNS.
-2. Create the four DNS-only GitHub Pages apex A records in Cloudflare and wait
-   for GitHub HTTPS issuance. Add a direct `www` CNAME to
-   `Powerpunch777.github.io` only when the alternate hostname is needed.
-3. Choose a continuously available Hub computer or VPS. A friend-facing Hub
-   cannot depend on a laptop that is usually asleep.
-4. Create a remotely-managed Cloudflare Tunnel and publish
-   `app.redongames.com` to `http://sps-hub:3100`. Cloudflare creates the
-   proxied tunnel DNS record; no public IP record or inbound port is needed.
-5. Create the Google OAuth web client using only
-   `https://app.redongames.com/api/auth/callback/google` as its redirect URI.
-6. Create the ignored Hub `.env` with
-   `Initialize-SPSHubDeployment.ps1 -Domain app.redongames.com` and the Tunnel
-   connector token, deploy Docker, and pass the public health preflight.
-7. Run the real two-computer invitation, Node approval, Agent grant, and
-   harmless command execution test.
-
-## Boundaries that must remain true
-
-- The public website must never expose the Hub administration interface.
-- The Hub must never store a connected computer's CLI credential or local model
-  files.
-- Google login identifies a person. An SPS invite and company role still decide
-  whether that person can enter a company.
-- A new Node remains pending until an Owner approves it, and it cannot execute
-  an Agent without an explicit Node-Agent grant.
+Verify the live site at `https://redongames.com` after deployment. The GitHub
+Pages Custom domain must remain `redongames.com` and HTTPS enforcement must
+remain enabled.
