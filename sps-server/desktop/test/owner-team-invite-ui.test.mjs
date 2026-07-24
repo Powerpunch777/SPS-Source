@@ -20,6 +20,7 @@ test("lets an Owner enable team access and share a complete SPS2 invitation", as
   assert.match(renderer, /enablePrivateTeamAccess\(\{ companyId \}\)/);
   assert.match(renderer, /createMemberInvite\(\)/);
   assert.match(renderer, /copyText\(\{ text: memberInviteCode \}\)/);
+  assert.match(renderer, /const workspaceReady = account\(status\)\.signedIn[\s\S]*?isOwnerHost\(status\) \? ownerHostReady\(status\) : Boolean\(status\.signedIn\)[\s\S]*?await window\.spsDesktop\.openWorkspace\(\)/);
   assert.match(main, /async function showMemberInvite\(\)[\s\S]*?createMemberInvite\(\)[\s\S]*?clipboard\.writeText\(invite\.code\)/);
   assert.match(main, /async function enablePrivateTeamAccess\([\s\S]*?state\.teamAccess = \{ \.\.\.nextTeamAccess, phase: "active" \};[\s\S]*?await activateOwnerHostProfile\(\);/);
   assert.match(main, /Create teammate invitation\.\.\./);

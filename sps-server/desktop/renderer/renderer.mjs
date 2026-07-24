@@ -157,7 +157,10 @@ function render(status) {
 async function refreshStatus() {
   const status = await window.spsDesktop.getStatus();
   render(status);
-  if (account(status).signedIn && isOwnerHost(status) && ownerHostReady(status)) {
+  const workspaceReady = account(status).signedIn
+    && status?.profile
+    && (isOwnerHost(status) ? ownerHostReady(status) : Boolean(status.signedIn));
+  if (workspaceReady) {
     await window.spsDesktop.openWorkspace();
   }
 }
