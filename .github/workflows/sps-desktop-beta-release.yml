@@ -39,9 +39,9 @@ jobs:
         working-directory: external/sps-core
         run: pnpm --filter @paperclipai/plugin-sdk run build
 
-      - name: Build SPS adapter utilities for the Owner Host
+      - name: Build SPS agent adapters for the Owner Host
         working-directory: external/sps-core
-        run: pnpm --filter @paperclipai/adapter-utils run build
+        run: pnpm --filter "@paperclipai/adapter-*" run build
 
       - name: Build the SPS Owner Host CLI
         working-directory: external/sps-core
