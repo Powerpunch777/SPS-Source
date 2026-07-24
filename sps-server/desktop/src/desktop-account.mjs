@@ -90,17 +90,21 @@ export function validateSpsDesktopGoogleClaims(claims, { clientId, nonce, now = 
 }
 
 async function exchangeGoogleCode({ fetchImpl, clientId, clientSecret, redirectUri, verifier, code }) {
+  const body = new URLSearchParams({
+    client_id: clientId,
+    code,
+    code_verifier: verifier,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri,
+  });
+  // Native desktop OAuth clients use PKCE. A client secret is optional and must
+  // never be required for a fresh SPS Desktop installation.
+  const normalizedClientSecret = value(clientSecret);
+  if (normalizedClientSecret) body.set("client_secret", normalizedClientSecret);
   const response = await fetchImpl(GOOGLE_TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: requiredText(clientSecret, "Google Desktop client secret is not configured."),
-      code,
-      code_verifier: verifier,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri,
-    }),
+    body,
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !value(payload?.id_token)) {
@@ -148,7 +152,6 @@ export async function startSpsDesktopGoogleSignIn({
   if (!isSpsDesktopGoogleClientId(clientId)) {
     throw new Error("Google login is not configured for this SPS Desktop build.");
   }
-  requiredText(clientSecret, "Google Desktop client secret is not configured.");
   const state = randomBytes(32).toString("base64url");
   const nonce = randomBytes(32).toString("base64url");
   const { verifier, challenge } = createGooglePkce(randomBytes);

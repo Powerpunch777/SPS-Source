@@ -62,15 +62,18 @@ test("returns from the loopback callback only after PKCE token exchange and ID t
   const header = encode({ alg: "RS256", kid: "test-google-key" });
   let idToken = null;
   let openedUrl = null;
+  let tokenRequestBody = null;
   const randomBytes = (size) => Buffer.alloc(size, 9);
   const pending = await startSpsDesktopGoogleSignIn({
     clientId,
-    clientSecret,
     randomBytes,
     now: () => 1_700_000_000_000,
     openExternal: async (url) => { openedUrl = url; },
-    fetchImpl: async (url) => {
-      if (String(url).includes("/token")) return new Response(JSON.stringify({ id_token: idToken }), { status: 200 });
+    fetchImpl: async (url, options) => {
+      if (String(url).includes("/token")) {
+        tokenRequestBody = new URLSearchParams(options.body);
+        return new Response(JSON.stringify({ id_token: idToken }), { status: 200 });
+      }
       return new Response(JSON.stringify({ keys: [{ ...publicKey.export({ format: "jwk" }), kid: "test-google-key", kty: "RSA" }] }), { status: 200 });
     },
   });
@@ -93,6 +96,8 @@ test("returns from the loopback callback only after PKCE token exchange and ID t
   const account = await pending.result;
   assert.equal(account.subject, "google-subject");
   assert.equal(account.name, "SPS Member");
+  assert.equal(tokenRequestBody.get("client_secret"), null);
+  assert.equal(tokenRequestBody.get("code_verifier"), Buffer.alloc(48, 9).toString("base64url"));
 });
 
 test("keeps a safe Google token exchange failure reason for Desktop retry", async () => {

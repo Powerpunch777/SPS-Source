@@ -95,6 +95,9 @@ import { synchronizeSpsTeamWorkplaneConfig } from "./bundled-workplane-config.mj
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
+// OAuth client IDs identify a public native application. The Desktop flow uses
+// PKCE, so a fresh installation can sign in without distributing a secret.
+const BUILTIN_SPS_DESKTOP_GOOGLE_CLIENT_ID = "281595061165-v407jp3aqt9hlf0h1dr1m08q7hkm6ire.apps.googleusercontent.com";
 let mainWindow = null;
 let workspaceWindow = null;
 let registryWindow = null;
@@ -433,7 +436,7 @@ function configuredDesktopGoogleClientId() {
   const fromEnvironment = String(process.env.SPS_DESKTOP_GOOGLE_CLIENT_ID ?? "").trim();
   if (isSpsDesktopGoogleClientId(fromState)) return fromState;
   if (isSpsDesktopGoogleClientId(fromEnvironment)) return fromEnvironment;
-  return null;
+  return BUILTIN_SPS_DESKTOP_GOOGLE_CLIENT_ID;
 }
 
 function configuredDesktopGoogleClientSecret() {
@@ -452,7 +455,7 @@ function configuredDesktopGoogleClientSecret() {
 function configuredDesktopGoogleCredentials() {
   const clientId = configuredDesktopGoogleClientId();
   const clientSecret = configuredDesktopGoogleClientSecret();
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
+  return clientId ? { clientId, clientSecret } : null;
 }
 
 function sendDesktopAccountStatus() {
@@ -466,7 +469,7 @@ async function startDesktopAccountSignIn() {
   if (pendingDesktopAccount) return publicStatus();
   const credentials = configuredDesktopGoogleCredentials();
   if (!credentials) {
-    throw new Error("Google login is not configured for this SPS Desktop build. Add the Desktop OAuth client ID and client secret first.");
+    throw new Error("Google login is not configured for this SPS Desktop build.");
   }
   desktopAccountError = null;
   const signIn = await startSpsDesktopGoogleSignIn({
@@ -498,9 +501,8 @@ async function configureDesktopGoogleClient(input) {
   if (!isSpsDesktopGoogleClientId(clientId)) {
     throw new Error("Enter a valid Google OAuth Desktop client ID.");
   }
-  if (!clientSecret) throw new Error("Enter the Google OAuth Desktop client secret.");
   state.desktopGoogleClientId = clientId;
-  state.encryptedDesktopGoogleClientSecret = encrypt(clientSecret);
+  state.encryptedDesktopGoogleClientSecret = clientSecret ? encrypt(clientSecret) : null;
   desktopAccountError = null;
   await persistState();
   sendDesktopAccountStatus();
