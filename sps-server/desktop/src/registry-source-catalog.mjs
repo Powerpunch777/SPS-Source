@@ -257,6 +257,7 @@ async function inspectRemoteRegistrySource(source, { fetchImpl }) {
         releases.push({
           pluginId: record.plugin.id,
           version: record.plugin.version,
+          isLatest: plugin.latest === record.plugin.version,
           visibility: record.visibility,
           ...(record.catalog === undefined ? {} : { catalog: { ...record.catalog } }),
           ...(record.capabilities === undefined ? {} : { capabilities: [...record.capabilities] }),

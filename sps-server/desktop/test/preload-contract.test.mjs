@@ -7,6 +7,8 @@ const mainPath = new URL("../src/main.mjs", import.meta.url);
 const workspacePreloadPath = new URL("../src/workspace-preload.cjs", import.meta.url);
 const registryPreloadPath = new URL("../src/registry-preload.cjs", import.meta.url);
 const registryHtmlPath = new URL("../renderer/registry.html", import.meta.url);
+const marketplacePreloadPath = new URL("../src/marketplace-preload.cjs", import.meta.url);
+const marketplaceHtmlPath = new URL("../renderer/marketplace.html", import.meta.url);
 
 test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   const [preload, workspacePreload, main] = await Promise.all([
@@ -24,6 +26,7 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:join-server"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:connect-node"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:disconnect-node"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:open-marketplace"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:choose-project-workspace"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-team-access"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:enable-private-team-access"/);
@@ -39,9 +42,11 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-open-plugin-registries"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-account"/);
+  assert.match(main, /ipcMain\.handle\("desktop:open-marketplace"[\s\S]*?Marketplace requests must come from the SPS Desktop window[\s\S]*?showMarketplaceWindow\(\)/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-open-plugin-registries"[\s\S]*?Plugin Registry management[\s\S]*?showRegistryWindow\(\)/);
-  assert.match(main, /Manage Plugin Registries\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+R"/);
+  assert.match(main, /Browse Plugin Marketplace\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+M"/);
+  assert.match(main, /Plugin sources & review\.\.\."\s*,\s*accelerator: "CommandOrControl\+Alt\+R"/);
 });
 
 test("keeps the Registry window on a narrow Owner-only preload bridge", async () => {
@@ -51,7 +56,7 @@ test("keeps the Registry window on a narrow Owner-only preload bridge", async ()
     readFile(registryHtmlPath, "utf8"),
   ]);
 
-  assert.match(main, /async function showRegistryWindow\(\) \{[\s\S]*?assertRegistryOwner\(\);[\s\S]*?registry-preload\.cjs/);
+  assert.match(main, /async function showRegistryWindow\(\{ sourceId = null \} = \{\}\) \{[\s\S]*?assertRegistryOwner\(\);[\s\S]*?registry-preload\.cjs/);
   assert.match(main, /ipcMain\.handle\("desktop:registry-list-sources"/);
   assert.match(main, /ipcMain\.handle\("desktop:registry-stage-release"/);
   assert.match(main, /ipcMain\.handle\("desktop:registry-list-stages"/);
@@ -63,6 +68,23 @@ test("keeps the Registry window on a narrow Owner-only preload bridge", async ()
   assert.doesNotMatch(registryPreload, /nodeIntegration|require\("node:/);
   assert.match(registryHtml, /default-src 'self'; style-src 'self'; script-src 'self'/);
   assert.match(registryHtml, /Review queue/);
+});
+
+test("keeps Marketplace discovery separate from Owner-only Registry installation review", async () => {
+  const [main, marketplacePreload, marketplaceHtml] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(marketplacePreloadPath, "utf8"),
+    readFile(marketplaceHtmlPath, "utf8"),
+  ]);
+
+  assert.match(main, /async function showMarketplaceWindow\(\) \{[\s\S]*?marketplace-preload\.cjs/);
+  assert.match(main, /ipcMain\.handle\("desktop:marketplace-load-catalog"[\s\S]*?Marketplace window/);
+  assert.match(main, /ipcMain\.handle\("desktop:marketplace-open-install-review"[\s\S]*?assertRegistryOwner\(\)[\s\S]*?showRegistryWindow\(\{ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE\.id \}\)/);
+  assert.match(marketplacePreload, /contextBridge\.exposeInMainWorld\("spsMarketplace"/);
+  assert.match(marketplacePreload, /ipcRenderer\.invoke\("desktop:marketplace-load-catalog"\)/);
+  assert.match(marketplacePreload, /ipcRenderer\.invoke\("desktop:marketplace-open-install-review"\)/);
+  assert.match(marketplaceHtml, /default-src 'self'; style-src 'self'; script-src 'self'/);
+  assert.match(marketplaceHtml, /Open secure install review/);
 });
 
 test("notifies the renderer when Google Desktop sign-in state changes", async () => {

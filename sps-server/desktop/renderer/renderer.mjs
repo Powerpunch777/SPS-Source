@@ -114,6 +114,7 @@ function render(status) {
   renderAccount(status);
   renderServerChoice(status);
   renderWorkspace(status);
+  show($("#open-marketplace"), account(status).signedIn === true);
   setPending(Boolean(account(status).pending));
   syncOwnerHostRecovery(status);
 }
@@ -140,6 +141,11 @@ async function run(action) {
 $("#start-google-account").addEventListener("click", () => run(async () => {
   await window.spsDesktop.startGoogleAccount();
   setNotice("브라우저에서 Google 로그인을 완료하면 SPS Desktop으로 자동으로 이어집니다.");
+}));
+
+$("#open-marketplace").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.openMarketplace();
+  setNotice("Plugin Marketplace opened. Installing a plugin still requires Owner review.");
 }));
 
 $("#cancel-google-account").addEventListener("click", () => run(async () => {

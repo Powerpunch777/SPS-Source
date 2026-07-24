@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 
 let sources = [];
 let selectedSourceId = null;
+const requestedSourceId = new URLSearchParams(window.location.search).get("source");
 
 function setNotice(message = "", error = false) {
   const notice = $("#notice");
@@ -265,3 +266,8 @@ $("#stage-list").addEventListener("click", async (event) => {
 
 toggleSourceFields();
 await Promise.all([loadSources(), loadStages()]);
+if (requestedSourceId && sources.some((source) => source.id === requestedSourceId)) {
+  selectedSourceId = requestedSourceId;
+  renderSources();
+  await inspectSelectedSource();
+}

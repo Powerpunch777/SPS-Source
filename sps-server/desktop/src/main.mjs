@@ -74,7 +74,9 @@ import {
   inspectRegistrySource,
   loadRegistrySources,
   removeRegistrySource,
+  SPS_OFFICIAL_REGISTRY_SOURCE,
 } from "./registry-source-catalog.mjs";
+import { loadSpsOfficialMarketplaceCatalog } from "./marketplace-catalog.mjs";
 import {
   disableSpsTailscaleServe,
   enableSpsTailscaleServe,
@@ -96,6 +98,7 @@ const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
 let mainWindow = null;
 let workspaceWindow = null;
 let registryWindow = null;
+let marketplaceWindow = null;
 let state = emptyState();
 let pendingAuth = null;
 let pendingDesktopAccount = null;
@@ -1445,9 +1448,12 @@ function configureWorkspaceNavigation(window, hubOrigin) {
   });
 }
 
-async function showRegistryWindow() {
+async function showRegistryWindow({ sourceId = null } = {}) {
   assertRegistryOwner();
   if (registryWindow && !registryWindow.isDestroyed()) {
+    if (sourceId) {
+      await registryWindow.loadFile(path.join(__dirname, "..", "renderer", "registry.html"), { query: { source: sourceId } });
+    }
     registryWindow.show();
     registryWindow.focus();
     return;
@@ -1458,7 +1464,7 @@ async function showRegistryWindow() {
     minWidth: 900,
     minHeight: 620,
     show: false,
-    title: "SPS Plugin Registry",
+    title: "SPS Plugin Sources & Review",
     icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
     webPreferences: createSpsSetupWindowPreferences(path.join(__dirname, "registry-preload.cjs")),
   });
@@ -1476,7 +1482,44 @@ async function showRegistryWindow() {
   window.on("closed", () => {
     if (registryWindow === window) registryWindow = null;
   });
-  await window.loadFile(path.join(__dirname, "..", "renderer", "registry.html"));
+  await window.loadFile(
+    path.join(__dirname, "..", "renderer", "registry.html"),
+    sourceId ? { query: { source: sourceId } } : undefined,
+  );
+}
+
+async function showMarketplaceWindow() {
+  if (!currentDesktopAccount()) throw new Error("Sign in with Google before browsing the SPS Plugin Marketplace.");
+  if (marketplaceWindow && !marketplaceWindow.isDestroyed()) {
+    marketplaceWindow.show();
+    marketplaceWindow.focus();
+    return;
+  }
+  const window = new BrowserWindow({
+    width: 1_120,
+    height: 780,
+    minWidth: 760,
+    minHeight: 560,
+    show: false,
+    title: "SPS Plugin Marketplace",
+    icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
+    webPreferences: createSpsSetupWindowPreferences(path.join(__dirname, "marketplace-preload.cjs")),
+  });
+  marketplaceWindow = window;
+  window.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith("file:")) return;
+    event.preventDefault();
+    void shell.openExternal(url);
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  window.once("ready-to-show", () => window.show());
+  window.on("closed", () => {
+    if (marketplaceWindow === window) marketplaceWindow = null;
+  });
+  await window.loadFile(path.join(__dirname, "..", "renderer", "marketplace.html"));
 }
 
 async function openWorkspace() {
@@ -1580,13 +1623,20 @@ function createApplicationMenu() {
         { label: accountLabel, enabled: false },
         { type: "separator" },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
-        { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(exportOwnerVaultTransfer) },
-        { label: "Check SPS transfer bundle...", click: () => run(inspectOwnerVaultTransfer) },
-        { label: "Check plugin runtime...", click: () => run(showPluginRuntimeStatus) },
-        { label: "Manage Plugin Registries...", accelerator: "CommandOrControl+Alt+R", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryWindow) },
-        { label: "Install Registry plugin...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(stageRegistryPluginFromFilePicker) },
-        { label: "Review staged Registry plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryPluginStages) },
+        { label: "Browse Plugin Marketplace...", accelerator: "CommandOrControl+Alt+M", enabled: Boolean(account), click: () => run(showMarketplaceWindow) },
         { label: "서버 연결 및 계정", click: () => run(async () => { await showMainWindow(); await openSetup(); }) },
+        {
+          label: "Advanced",
+          submenu: [
+            { label: "Plugin sources & review...", accelerator: "CommandOrControl+Alt+R", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryWindow) },
+            { label: "Stage a plugin file...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(stageRegistryPluginFromFilePicker) },
+            { label: "Review staged plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(showRegistryPluginStages) },
+            { type: "separator" },
+            { label: "Check plugin runtime...", click: () => run(showPluginRuntimeStatus) },
+            { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => run(exportOwnerVaultTransfer) },
+            { label: "Check SPS transfer bundle...", click: () => run(inspectOwnerVaultTransfer) },
+          ],
+        },
         { type: "separator" },
         {
           label: "이 컴퓨터에서 로그아웃",
@@ -1609,12 +1659,19 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
-    { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void exportOwnerVaultTransfer(); } },
-    { label: "Check SPS transfer bundle...", click: () => { void inspectOwnerVaultTransfer(); } },
-    { label: "Check plugin runtime...", click: () => { void showPluginRuntimeStatus(); } },
-    { label: "Manage Plugin Registries...", accelerator: "CommandOrControl+Alt+R", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryWindow(); } },
-    { label: "Install Registry plugin...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void stageRegistryPluginFromFilePicker(); } },
-    { label: "Review staged Registry plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryPluginStages(); } },
+    { label: "Browse Plugin Marketplace...", accelerator: "CommandOrControl+Alt+M", enabled: Boolean(account), click: () => { void showMarketplaceWindow(); } },
+    {
+      label: "Advanced",
+      submenu: [
+        { label: "Plugin sources & review...", accelerator: "CommandOrControl+Alt+R", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryWindow(); } },
+        { label: "Stage a plugin file...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void stageRegistryPluginFromFilePicker(); } },
+        { label: "Review staged plugins...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void showRegistryPluginStages(); } },
+        { type: "separator" },
+        { label: "Check plugin runtime...", click: () => { void showPluginRuntimeStatus(); } },
+        { label: "Export SPS server data...", enabled: Boolean(account && isOwnerHostProfile()), click: () => { void exportOwnerVaultTransfer(); } },
+        { label: "Check SPS transfer bundle...", click: () => { void inspectOwnerVaultTransfer(); } },
+      ],
+    },
     { label: "서버 연결 및 계정", click: () => { void showMainWindow().then(openSetup); } },
     { type: "separator" },
     { label: "이 컴퓨터에서 로그아웃", enabled: Boolean(account), click: () => { void signOutDesktopAccount(); } },
@@ -1932,6 +1989,27 @@ function registerIpc() {
       throw new Error("Plugin Registry management is available only in the local Owner Host Workspace.");
     }
     await showRegistryWindow();
+    return { opened: true };
+  });
+  ipcMain.handle("desktop:open-marketplace", async (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender.id !== mainWindow.webContents.id) {
+      throw new Error("Marketplace requests must come from the SPS Desktop window.");
+    }
+    await showMarketplaceWindow();
+    return { opened: true };
+  });
+  ipcMain.handle("desktop:marketplace-load-catalog", async (event) => {
+    if (!marketplaceWindow || marketplaceWindow.isDestroyed() || event.sender.id !== marketplaceWindow.webContents.id) {
+      throw new Error("Marketplace catalog requests must come from the SPS Plugin Marketplace window.");
+    }
+    return await loadSpsOfficialMarketplaceCatalog();
+  });
+  ipcMain.handle("desktop:marketplace-open-install-review", async (event) => {
+    if (!marketplaceWindow || marketplaceWindow.isDestroyed() || event.sender.id !== marketplaceWindow.webContents.id) {
+      throw new Error("Marketplace install review requests must come from the SPS Plugin Marketplace window.");
+    }
+    assertRegistryOwner();
+    await showRegistryWindow({ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE.id });
     return { opened: true };
   });
   ipcMain.handle("desktop:registry-list-sources", async () => await listRegistrySources());

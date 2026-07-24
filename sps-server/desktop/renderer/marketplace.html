@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>SPS Plugin Marketplace</title>
+    <link rel="stylesheet" href="./marketplace.css" />
+  </head>
+  <body>
+    <main class="marketplace-shell">
+      <header class="marketplace-header">
+        <div class="brand"><img src="../assets/sps-logo.png" alt="" /><span>SPS Plugin Marketplace</span></div>
+        <button id="refresh" class="secondary" type="button">Refresh catalog</button>
+      </header>
+      <section class="hero">
+        <p class="eyebrow">OFFICIAL CATALOG</p>
+        <h1>Extend your SPS workspace.</h1>
+        <p>Discover verified plugins from SPS. Browsing does not grant permissions, download code, or change your Server.</p>
+      </section>
+      <section class="catalog-section" aria-label="Marketplace catalog">
+        <div class="section-heading">
+          <div><h2>Official plugins</h2><p id="catalog-status">Checking the signed SPS catalog...</p></div>
+          <button id="open-review" class="primary" type="button" hidden>Open secure install review</button>
+        </div>
+        <div id="catalog" class="plugin-grid" aria-live="polite"></div>
+      </section>
+      <section class="trust-note">
+        <h2>How installation stays safe</h2>
+        <p>Marketplace only helps you discover a plugin. An SPS Owner must still open Plugin sources &amp; review, inspect the exact version and capabilities, stage it disabled, then explicitly enable it.</p>
+      </section>
+      <p id="notice" class="notice" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="./marketplace.mjs"></script>
+  </body>
+</html>
