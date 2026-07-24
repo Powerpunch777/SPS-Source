@@ -13,7 +13,7 @@
     "sps-plugin": "./cli/sps-plugin.mjs"
   },
   "scripts": {
-    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/plugin-package-v1.test.mjs cli/sps-plugin.test.mjs",
+    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/plugin-package-v1.test.mjs cli/sps-plugin.test.mjs templates/github-static-registry-publish.test.mjs",
     "check": "npm run test"
   },
   "engines": {

@@ -9,6 +9,7 @@ SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 
 - `authoring/`: 실행 없는 source 검사, 최소 Host RPC lifecycle Worker, `.spsplugin` package 생성, Ed25519 key 생성, release record·Registry index 서명, 서명된 catalog metadata, local Registry 발행
 - `sps-plugin` CLI: `init`, `validate`, `inspect`, `pack`, `keygen`, `release`, `registry-index`, `publish-local`
 - SPS Desktop: Owner Vault의 trusted Registry source 관리, remote signature 검증, disabled stage, review queue, 명시적 apply
+- `templates/github-static-registry-publish.yml`: GitHub Actions Secret으로만 key를 읽어 정적 Registry release를 수동 발행하는 템플릿
 
 `sps-plugin init`이 만드는 시작 Worker는 의존성 없이 `initialize`·`health`·`shutdown`만 처리한다. 따라서 생성 직후에도 패키지 설치와 Host lifecycle 검증은 가능하지만, Tool·UI·Automation 같은 실제 기능을 추가할 때는 SDK 기반 Worker를 bundle하고 정적 manifest의 capability·hash를 함께 갱신해야 한다.
 
