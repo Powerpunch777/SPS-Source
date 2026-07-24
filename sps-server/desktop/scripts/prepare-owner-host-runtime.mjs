@@ -18,9 +18,9 @@ function assertDesktopBuildPath(target) {
   }
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, { shell = false } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit", windowsHide: true });
+    const child = spawn(command, args, { cwd, stdio: "inherit", windowsHide: true, shell });
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolve();
@@ -53,7 +53,16 @@ async function resolvePnpmInvocation() {
       prefixArgs: [path.resolve(directory, match[2].replaceAll("\\", path.sep))],
     };
   }
-  throw new Error("Could not locate a direct pnpm runtime. Install pnpm or set a pnpm.cmd entry on PATH.");
+  for (const directory of pathEntries) {
+    const commandFile = path.join(directory, "pnpm.cmd");
+    try {
+      await access(commandFile);
+      return { command: commandFile, prefixArgs: [], shell: true };
+    } catch {
+      // Keep searching PATH for a usable pnpm.cmd wrapper.
+    }
+  }
+  throw new Error("Could not locate a pnpm runtime. Install pnpm or set SPS_PNPM_CLI.");
 }
 
 async function requireFile(entry, message) {
@@ -194,6 +203,7 @@ await run(
     runtimeRoot,
   ],
   workspaceRoot,
+  { shell: pnpm.shell },
 );
 
 await normalizeWorkspacePackageExports(runtimeRoot);
