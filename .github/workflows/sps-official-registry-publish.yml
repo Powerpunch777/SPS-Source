@@ -20,6 +20,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   publish:
@@ -102,3 +104,18 @@ jobs:
           git config user.email "sps-registry-bot[bot]@users.noreply.github.com"
           git commit -m "release: publish SPS Official Registry plugin"
           git push
+
+      # A push made with GITHUB_TOKEN does not trigger the Pages workflow.
+      # Deploy here so the signed Registry and its public documentation become
+      # available as one explicit, manual publication action.
+      - uses: actions/configure-pages@v5
+
+      - name: Verify and deploy the updated SPS website
+        run: node sps-server/website/scripts/check-site.mjs
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: sps-server/website
+
+      - name: Deploy SPS website and Registry
+        uses: actions/deploy-pages@v4

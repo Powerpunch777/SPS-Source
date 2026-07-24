@@ -30,4 +30,8 @@ test("SPS Official Registry workflow targets the public static site and remains 
   assert.match(workflow, /sps-plugin\.mjs publish-local/);
   assert.match(workflow, /sps-plugin\.mjs inspect "\$REGISTRY_DIRECTORY"/);
   assert.match(workflow, /https:\/\/redongames\.com\/registry\/registry\.json/);
+  assert.match(workflow, /pages: write/);
+  assert.match(workflow, /actions\/configure-pages@v5/);
+  assert.match(workflow, /actions\/deploy-pages@v4/);
+  assert.ok(workflow.indexOf("git push") < workflow.indexOf("actions/deploy-pages@v4"));
 });
