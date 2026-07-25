@@ -42,6 +42,7 @@ import {
   createSpsDesktopAccessToken,
   isSpsDesktopWorkspaceRequest,
   SPS_DESKTOP_ACCESS_HEADER,
+  SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER,
   spsDesktopAccessEnvironment,
 } from "./desktop-local-access.mjs";
 import {
@@ -1032,8 +1033,11 @@ async function bootstrapOwnerHost() {
   }
 }
 
-async function ownerHostApi(pathname, { method = "GET", body } = {}) {
+async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = false } = {}) {
   await requireReadyOwnerHost();
+  if (ownerBootstrap && (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost())) {
+    throw new Error("Only this SPS Owner Host can repair its private team membership.");
+  }
   const accessToken = currentBoardToken();
   const ownerHostOrigin = requireSpsOwnerHostOrigin(ownerHostStatus.url);
   const headers = body === undefined
@@ -1043,6 +1047,7 @@ async function ownerHostApi(pathname, { method = "GET", body } = {}) {
   // remote address. Local-only bootstrap still works without this header.
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
   if (isOwnerHostProfile()) headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
+  if (ownerBootstrap) headers[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER] = ownerHostDesktopAccessToken;
   if (state.teamAccess?.enabled) {
     const identitySession = await establishSpsIdentityCoreSession(requireSpsOwnerHostOrigin(ownerHostStatus.url));
     if (!identitySession) {
@@ -1066,6 +1071,56 @@ async function ownerHostApi(pathname, { method = "GET", body } = {}) {
     throw new Error(data?.error || `SPS Owner Host request failed with ${response.status}.`);
   }
   return data;
+}
+
+async function listCurrentOwnerIdentityCompanies() {
+  const hubUrl = state.teamAccess?.url;
+  if (!hubUrl) throw new Error("Private team access is not configured for this SPS Owner Host.");
+  const sessionCookie = await establishSpsIdentityCoreSession(hubUrl);
+  if (!sessionCookie) throw new Error("SPS Identity could not create a private team session for this Owner.");
+  return normalizeCompanyList(await listSpsCompanies({ hubUrl, sessionCookie }));
+}
+
+async function ensurePrivateTeamOwnerMembership() {
+  if (!isTeamAccessEnabled() || !state.teamAccess?.companyId || !state.teamAccess.url) {
+    throw new Error("Enable private team access before managing team invitations.");
+  }
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
+    throw new Error("Sign in with this SPS Owner Host account before managing its team.");
+  }
+
+  const companyId = state.teamAccess.companyId;
+  const accessibleCompanies = await listCurrentOwnerIdentityCompanies();
+  if (accessibleCompanies.some((company) => company.id === companyId)) {
+    return { recovered: false, companies: accessibleCompanies };
+  }
+
+  // A Desktop can survive account refreshes and partially completed older
+  // hand-offs. Its per-launch local proof may mint exactly one Owner recovery
+  // invite, but the invite is accepted through the Tailscale Identity route so
+  // the resulting membership belongs to the actual signed-in SPS account.
+  const recoveryInvitation = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/invites`, {
+    method: "POST",
+    ownerBootstrap: true,
+    body: {
+      allowedJoinTypes: "human",
+      humanRole: "owner",
+      expiresInMinutes: 15,
+      agentMessage: "SPS Desktop Owner membership recovery.",
+    },
+  });
+  if (typeof recoveryInvitation?.token !== "string") {
+    throw new Error("SPS Owner Host did not return a membership recovery invitation.");
+  }
+  const accepted = await acceptSpsIdentityInvite(state.teamAccess.url, recoveryInvitation.token);
+  if (accepted?.status !== "approved") {
+    throw new Error("SPS Identity did not approve this Owner membership recovery.");
+  }
+  const verifiedCompanies = await listCurrentOwnerIdentityCompanies();
+  if (!verifiedCompanies.some((company) => company.id === companyId)) {
+    throw new Error("SPS could not verify the recovered Owner membership.");
+  }
+  return { recovered: true, companies: verifiedCompanies };
 }
 
 async function stageRegistryPluginFromFilePicker() {
@@ -1377,10 +1432,26 @@ async function enablePrivateTeamAccess(input) {
   if (!isOwnerHostProfile()) {
     throw new Error("Switch this SPS Desktop to its Owner Host before enabling private team access.");
   }
+  if (!currentAccountOwnsOwnerHost()) {
+    throw new Error("Sign in with this SPS Owner Host account before enabling private team access.");
+  }
   await requireReadyOwnerHost();
 
   const companyId = String(input?.companyId ?? "").trim();
   if (!companyId) throw new Error("Choose the company whose Owner invitation will initialize this private team Host.");
+
+  if (isTeamAccessEnabled()) {
+    if (state.teamAccess?.companyId !== companyId) {
+      throw new Error("Private team access is already enabled for another company. Disable it before switching companies.");
+    }
+    const membership = await ensurePrivateTeamOwnerMembership();
+    return {
+      teamAccess: { ...state.teamAccess },
+      initialOwnerInvite: { accepted: true, expiresAt: null },
+      membershipRecovered: membership.recovered,
+      identityIssuer: configuredDesktopIdentityUrl(),
+    };
+  }
 
   const companies = await refreshOwnerHostCompanies();
   if (!companies.some((company) => company.id === companyId)) {
@@ -1441,10 +1512,7 @@ async function enablePrivateTeamAccess(input) {
     if (!tailscale.serve || !tailscale.tailnet) {
       throw new Error("Tailscale Serve did not confirm the SPS private team route.");
     }
-    const accepted = await ownerHostApi(`/invites/${encodeURIComponent(invitation.token)}/accept`, {
-      method: "POST",
-      body: { requestType: "human" },
-    });
+    const accepted = await acceptSpsIdentityInvite(nextTeamAccess.url, invitation.token);
     if (accepted?.status !== "approved") {
       throw new Error("SPS Owner Host did not grant the Owner's SPS account access.");
     }
@@ -1486,6 +1554,7 @@ async function createMemberInvite() {
   if (!isTeamAccessEnabled() || !state.teamAccess?.companyId || !state.teamAccess.url) {
     throw new Error("Enable private team access before creating a member invitation.");
   }
+  const membership = await ensurePrivateTeamOwnerMembership();
   const invitation = await ownerHostApi(`/companies/${encodeURIComponent(state.teamAccess.companyId)}/invites`, {
     method: "POST",
     body: {
@@ -1498,10 +1567,17 @@ async function createMemberInvite() {
   if (typeof invitation?.token !== "string") {
     throw new Error("SPS Owner Host did not return a member invitation.");
   }
+  // The Workspace may have rendered before a recovered SPS Identity
+  // membership existed. Refresh it only after that one-time repair so the
+  // Owner is not left looking at a stale "No company access" screen.
+  if (membership.recovered && workspaceWindow && !workspaceWindow.isDestroyed()) {
+    workspaceWindow.webContents.reloadIgnoringCache();
+  }
   return {
     id: invitation.id,
     code: createSpsRoutedInviteCode(state.teamAccess.url, invitation.token),
     expiresAt: invitation.expiresAt ?? null,
+    membershipRecovered: membership.recovered,
   };
 }
 
@@ -1509,6 +1585,7 @@ async function listMemberInvites() {
   if (!isTeamAccessEnabled() || !state.teamAccess?.companyId) {
     throw new Error("Enable private team access before managing member invitations.");
   }
+  await ensurePrivateTeamOwnerMembership();
   const response = await ownerHostApi(
     `/companies/${encodeURIComponent(state.teamAccess.companyId)}/invites?state=active&limit=50`,
   );

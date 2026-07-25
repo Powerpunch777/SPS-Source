@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
 
 export const SPS_DESKTOP_ACCESS_HEADER = "X-SPS-Desktop-Access";
+// This is sent only for the narrow Owner-membership recovery operation. Core
+// requires it in addition to the normal per-launch Desktop access proof.
+export const SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER = "X-SPS-Desktop-Owner-Bootstrap";
 export const SPS_DESKTOP_ACCESS_TOKEN_ENV = "SPS_DESKTOP_ACCESS_TOKEN";
 
 export function createSpsDesktopAccessToken() {

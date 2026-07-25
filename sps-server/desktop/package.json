@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.46",
+  "version": "0.4.48",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
@@ -39,7 +39,8 @@
         "from": ".owner-host-runtime",
         "to": "sps-owner-host-runtime",
         "filter": [
-          "**/*"
+          "**/*",
+          "!node_modules/**"
         ]
       },
       {

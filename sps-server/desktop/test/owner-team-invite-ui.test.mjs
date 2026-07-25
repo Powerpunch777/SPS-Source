@@ -23,5 +23,13 @@ test("lets an Owner enable team access and share a complete SPS2 invitation", as
   assert.match(renderer, /const workspaceReady = account\(status\)\.signedIn[\s\S]*?isOwnerHost\(status\) \? ownerHostReady\(status\) : Boolean\(status\.signedIn\)[\s\S]*?await window\.spsDesktop\.openWorkspace\(\)/);
   assert.match(main, /async function showMemberInvite\(\)[\s\S]*?createMemberInvite\(\)[\s\S]*?clipboard\.writeText\(invite\.code\)/);
   assert.match(main, /async function enablePrivateTeamAccess\([\s\S]*?state\.teamAccess = \{ \.\.\.nextTeamAccess, phase: "active" \};[\s\S]*?await activateOwnerHostProfile\(\);/);
+  assert.match(main, /async function ensurePrivateTeamOwnerMembership\(\)[\s\S]*?SPS Desktop Owner membership recovery\.[\s\S]*?acceptSpsIdentityInvite\(state\.teamAccess\.url, recoveryInvitation\.token\)/);
+  assert.match(main, /const membership = await ensurePrivateTeamOwnerMembership\(\);[\s\S]*?membershipRecovered: membership\.recovered/);
+  assert.match(main, /membership\.recovered && workspaceWindow[\s\S]*?reloadIgnoringCache\(\)/);
+  assert.match(main, /const accepted = await acceptSpsIdentityInvite\(nextTeamAccess\.url, invitation\.token\)/);
+  assert.match(
+    renderer,
+    /const invite = await window\.spsDesktop\.createMemberInvite\(\);\s*memberInviteCode = invite\.code;\s*if \(invite\.membershipRecovered\) \{\s*setNotice\([^;]+;\s*\} else \{\s*setNotice\([^;]+;/,
+  );
   assert.match(main, /Create teammate invitation\.\.\./);
 });

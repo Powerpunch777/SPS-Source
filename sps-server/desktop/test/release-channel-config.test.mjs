@@ -16,7 +16,7 @@ test("uses the separate artifact channel first and mirrors the one-time bridge r
     {
       from: ".owner-host-runtime",
       to: "sps-owner-host-runtime",
-      filter: ["**/*"],
+      filter: ["**/*", "!node_modules/**"],
     },
     {
       from: ".owner-host-runtime/node_modules",

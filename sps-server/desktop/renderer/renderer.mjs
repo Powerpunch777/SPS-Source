@@ -205,7 +205,11 @@ $("#enable-private-team").addEventListener("click", () => run(async () => {
 $("#create-member-invite").addEventListener("click", () => run(async () => {
   const invite = await window.spsDesktop.createMemberInvite();
   memberInviteCode = invite.code;
-  setNotice("전체 SPS2 초대 코드를 만들었습니다. 팀원에게 그대로 전달하세요.");
+  if (invite.membershipRecovered) {
+    setNotice("Owner membership was repaired and the SPS2 invitation is ready to copy.");
+  } else {
+    setNotice("전체 SPS2 초대 코드를 만들었습니다. 팀원에게 그대로 전달하세요.");
+  }
 }));
 
 $("#copy-member-invite").addEventListener("click", () => run(async () => {
