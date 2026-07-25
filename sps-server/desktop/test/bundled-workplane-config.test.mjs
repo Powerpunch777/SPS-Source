@@ -56,6 +56,21 @@ test("uses the ephemeral Desktop access token when binding a protected Owner Hos
   assert.equal(calls[0].get("x-sps-desktop-access"), "desktop-token-for-test");
 });
 
+test("uses the authenticated SPS Identity session when a private Owner Host configures its Workplane", async () => {
+  const calls = [];
+  await synchronizeSpsTeamWorkplaneConfig({
+    ownerHostUrl: "http://127.0.0.1:31310",
+    sessionCookie: "identity-session-for-test",
+    fetchImpl: async (_url, init = {}) => {
+      calls.push(new Headers(init.headers));
+      return new Response(JSON.stringify({ configJson: { spsApiUrl: "http://127.0.0.1:31310" } }), { status: 200 });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].get("cookie"), "sps_identity_session=identity-session-for-test");
+});
+
 test("does not rewrite an already synchronized Team Workplane configuration", async () => {
   const calls = [];
   const result = await synchronizeSpsTeamWorkplaneConfig({

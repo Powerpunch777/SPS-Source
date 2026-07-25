@@ -152,6 +152,9 @@ let ownerHostStatus = {
   vaultPath: null,
 };
 let lastTeamWorkplaneBindingUrl = null;
+let teamWorkplaneSyncPromise = null;
+let lastTeamWorkplaneSyncAttempt = null;
+const TEAM_WORKPLANE_SYNC_RETRY_MS = 30_000;
 // This is never persisted. It separates the visible SPS Desktop Workspace from
 // a normal browser pointed at the loopback Owner Host.
 const ownerHostDesktopAccessToken = createSpsDesktopAccessToken();
@@ -752,19 +755,33 @@ function ownerHostIsReady() {
 async function synchronizeReadyTeamWorkplane() {
   const ownerHostUrl = ownerHostStatus.url;
   if (!ownerHostIsReady() || !ownerHostUrl || lastTeamWorkplaneBindingUrl === ownerHostUrl) return;
-  try {
-    await synchronizeSpsTeamWorkplaneConfig({
-      ownerHostUrl,
-      desktopAccessToken: ownerHostDesktopAccessToken,
-    });
-    lastTeamWorkplaneBindingUrl = ownerHostUrl;
-  } catch (error) {
-    // The Owner Host is usable before every optional extension finishes its
-    // own bootstrap. Keep the Desktop available and try again on the next
-    // status refresh instead of turning a transient plugin failure into a
-    // failed server startup.
-    console.warn("SPS Team Workplane could not bind to the Owner Host yet.", error);
-  }
+  if (teamWorkplaneSyncPromise) return teamWorkplaneSyncPromise;
+  if (
+    lastTeamWorkplaneSyncAttempt?.url === ownerHostUrl
+    && Date.now() - lastTeamWorkplaneSyncAttempt.at < TEAM_WORKPLANE_SYNC_RETRY_MS
+  ) return;
+
+  lastTeamWorkplaneSyncAttempt = { url: ownerHostUrl, at: Date.now() };
+  teamWorkplaneSyncPromise = (async () => {
+    try {
+      const sessionCookie = isTeamAccessEnabled()
+        ? await establishSpsIdentityCoreSession(ownerHostUrl)
+        : null;
+      await synchronizeSpsTeamWorkplaneConfig({
+        ownerHostUrl,
+        desktopAccessToken: ownerHostDesktopAccessToken,
+        sessionCookie,
+      });
+      lastTeamWorkplaneBindingUrl = ownerHostUrl;
+    } catch (error) {
+      // Workplane configuration is an optional post-start task. Never make a
+      // visible Desktop status refresh wait for it or fail because it retries.
+      console.warn("SPS Team Workplane could not bind to the Owner Host yet.", error);
+    } finally {
+      teamWorkplaneSyncPromise = null;
+    }
+  })();
+  return teamWorkplaneSyncPromise;
 }
 
 async function refreshOwnerRuntimeStatus() {
@@ -784,7 +801,7 @@ async function refreshOwnerRuntimeStatus() {
       ...ownerHost,
       vaultPath: ownerHostStatus.vaultPath ?? ownerVaultRoot(),
     };
-    await synchronizeReadyTeamWorkplane();
+    void synchronizeReadyTeamWorkplane();
   }
   return ownerHostStatus;
 }

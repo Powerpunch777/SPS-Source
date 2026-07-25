@@ -22,13 +22,22 @@ export function spsTeamWorkplaneRuntimeConfig(ownerHostUrl, currentConfig = {}) 
   };
 }
 
-export async function synchronizeSpsTeamWorkplaneConfig({ ownerHostUrl, desktopAccessToken = "", fetchImpl = fetch } = {}) {
+export async function synchronizeSpsTeamWorkplaneConfig({
+  ownerHostUrl,
+  desktopAccessToken = "",
+  sessionCookie = "",
+  fetchImpl = fetch,
+} = {}) {
   const origin = ownerHostOrigin(ownerHostUrl);
   const configUrl = new URL(`/api/plugins/${SPS_TEAM_WORKPLANE_PLUGIN_KEY}/config`, origin);
   const accessHeaders = String(desktopAccessToken || "").trim()
     ? { "x-sps-desktop-access": String(desktopAccessToken).trim() }
     : {};
-  const currentResponse = await fetchImpl(configUrl, { headers: { accept: "application/json", ...accessHeaders } });
+  const identityHeaders = String(sessionCookie || "").trim()
+    ? { cookie: `sps_identity_session=${encodeURIComponent(String(sessionCookie).trim())}` }
+    : {};
+  const headers = { accept: "application/json", ...accessHeaders, ...identityHeaders };
+  const currentResponse = await fetchImpl(configUrl, { headers });
   if (currentResponse.status === 404) {
     return { configured: false, changed: false, reason: "plugin_not_installed" };
   }
@@ -42,7 +51,7 @@ export async function synchronizeSpsTeamWorkplaneConfig({ ownerHostUrl, desktopA
   }
   const savedResponse = await fetchImpl(configUrl, {
     method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json", ...accessHeaders },
+    headers: { ...headers, "content-type": "application/json" },
     body: JSON.stringify({ configJson: config }),
   });
   if (!savedResponse.ok) {
