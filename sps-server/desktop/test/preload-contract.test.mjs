@@ -148,6 +148,15 @@ test("uses the Desktop-only access path for a local Owner Host workspace", async
   assert.match(main, /signedIn:[\s\S]*?isOwnerHostProfile\(\) && currentAccountOwnsOwnerHost\(\)/);
 });
 
+test("uses the Desktop-only access token while the Owner creates its private Identity session", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(
+    main,
+    /async function establishSpsIdentityCoreSession\(hubOrigin\)[\s\S]*?isOwnerHostProfile\(\)[\s\S]*?new URL\(hubOrigin\)\.origin === requireSpsOwnerHostOrigin\(ownerHostStatus\.url\)[\s\S]*?headers\[SPS_DESKTOP_ACCESS_HEADER\] = ownerHostDesktopAccessToken/,
+  );
+});
+
 test("shuts down the Owner Host gracefully before quitting Desktop", async () => {
   const main = await readFile(mainPath, "utf8");
 

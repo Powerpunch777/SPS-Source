@@ -398,9 +398,20 @@ function spsIdentitySessionCookieValue(response) {
 async function establishSpsIdentityCoreSession(hubOrigin) {
   const accessToken = await ensureDesktopIdentityAccessToken();
   if (!accessToken) return null;
+  const headers = { authorization: `Bearer ${accessToken}`, accept: "application/json" };
+  // During the private-team hand-off, the Owner exchanges its SPS Identity
+  // session with the same loopback Core. That protected local request needs
+  // the launch-scoped Desktop token; remote Member Hubs never receive it.
+  if (
+    isOwnerHostProfile()
+    && ownerHostStatus.url
+    && new URL(hubOrigin).origin === requireSpsOwnerHostOrigin(ownerHostStatus.url)
+  ) {
+    headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
+  }
   const response = await fetch(new URL("/api/sps-identity/session", `${hubOrigin}/`), {
     method: "POST",
-    headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
+    headers,
   });
   if (response.status === 404) return null;
   if (!response.ok) {
@@ -1404,6 +1415,9 @@ async function enablePrivateTeamAccess(input) {
 
   state.teamAccess = nextTeamAccess;
   state.encryptedTeamCredentials = encrypt(JSON.stringify(credentials));
+  // Keep the exact local target we hand to Tailscale so a failed hand-off can
+  // remove only the SPS route it just created.
+  let servedOwnerHostUrl = null;
   // Persist credentials before the Core changes mode. If Windows restarts in
   // the middle of the hand-off, the Owner Host can still start securely and
   // the owner can explicitly return to local-only mode instead of losing the
@@ -1415,7 +1429,8 @@ async function enablePrivateTeamAccess(input) {
       update: (config) => configureSpsOwnerHostPrivateTeamAccess(config, { hostname: tailnet.hostname }),
     });
     await restartOwnerHostForConfiguration();
-    const tailscale = await enableSpsTailscaleServe({ ownerHostUrl: ownerHostStatus.url });
+    servedOwnerHostUrl = ownerHostStatus.url;
+    const tailscale = await enableSpsTailscaleServe({ ownerHostUrl: servedOwnerHostUrl });
     if (!tailscale.serve || !tailscale.tailnet) {
       throw new Error("Tailscale Serve did not confirm the SPS private team route.");
     }
@@ -1427,6 +1442,12 @@ async function enablePrivateTeamAccess(input) {
       throw new Error("SPS Owner Host did not grant the Owner's SPS account access.");
     }
   } catch (error) {
+    if (servedOwnerHostUrl) {
+      await disableSpsTailscaleServe({
+        hostname: tailnet.hostname,
+        ownerHostUrl: servedOwnerHostUrl,
+      }).catch(() => undefined);
+    }
     state.teamAccess = null;
     state.encryptedTeamCredentials = null;
     await updateSpsOwnerHostConfig({ vaultRoot: ownerVaultRoot(), update: () => previousConfig }).catch(() => undefined);
