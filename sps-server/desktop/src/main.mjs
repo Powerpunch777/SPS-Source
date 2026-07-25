@@ -398,7 +398,11 @@ function spsIdentitySessionCookieValue(response) {
 async function establishSpsIdentityCoreSession(hubOrigin) {
   const accessToken = await ensureDesktopIdentityAccessToken();
   if (!accessToken) return null;
-  const headers = { authorization: `Bearer ${accessToken}`, accept: "application/json" };
+  const headers = {
+    authorization: `Bearer ${accessToken}`,
+    accept: "application/json",
+    origin: new URL(hubOrigin).origin,
+  };
   // During the private-team hand-off, the Owner exchanges its SPS Identity
   // session with the same loopback Core. That protected local request needs
   // the launch-scoped Desktop token; remote Member Hubs never receive it.
@@ -480,11 +484,13 @@ async function refreshSpsIdentityTeamContext() {
 async function acceptSpsIdentityInvite(hubUrl, inviteToken) {
   const sessionCookie = await establishSpsIdentityCoreSession(hubUrl);
   if (!sessionCookie) return null;
+  const origin = requireSpsHubOrigin(hubUrl);
   const response = await fetch(new URL(`/api/invites/${encodeURIComponent(inviteToken)}/accept`, `${hubUrl}/`), {
     method: "POST",
     headers: {
       accept: "application/json",
       "content-type": "application/json",
+      origin,
       cookie: `sps_identity_session=${encodeURIComponent(sessionCookie)}`,
     },
     body: JSON.stringify({ requestType: "human" }),
@@ -1029,9 +1035,10 @@ async function bootstrapOwnerHost() {
 async function ownerHostApi(pathname, { method = "GET", body } = {}) {
   await requireReadyOwnerHost();
   const accessToken = currentBoardToken();
+  const ownerHostOrigin = requireSpsOwnerHostOrigin(ownerHostStatus.url);
   const headers = body === undefined
-    ? { accept: "application/json" }
-    : { accept: "application/json", "content-type": "application/json" };
+    ? { accept: "application/json", origin: ownerHostOrigin }
+    : { accept: "application/json", "content-type": "application/json", origin: ownerHostOrigin };
   // Private team Hosts require the same protected Board session as their
   // remote address. Local-only bootstrap still works without this header.
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
@@ -1043,7 +1050,7 @@ async function ownerHostApi(pathname, { method = "GET", body } = {}) {
     }
     headers.cookie = `sps_identity_session=${encodeURIComponent(identitySession)}`;
   }
-  const response = await fetch(`${requireSpsOwnerHostOrigin(ownerHostStatus.url)}/api${pathname}`, {
+  const response = await fetch(`${ownerHostOrigin}/api${pathname}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),

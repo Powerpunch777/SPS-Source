@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import os from "node:os";
@@ -19,16 +19,24 @@ import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
 const runtimeRoot = path.resolve(process.env.SPS_OWNER_HOST_RUNTIME_ROOT || path.join(desktopRoot, ".owner-host-runtime"));
-const nodeBinary = path.resolve(process.env.SPS_OWNER_HOST_NODE_BINARY || path.join(runtimeRoot, "bin", process.platform === "win32" ? "node.exe" : "node"));
+
+const temporaryRoot = path.join(os.tmpdir(), `sps-owner-host-smoke-${process.pid}-${Date.now()}`);
+// PostgreSQL on Windows cannot initialise a UTF-8 cluster when its executable
+// path includes non-ASCII characters. Run the bundle via an ASCII temp junction
+// so the smoke test matches the installed app's path under LocalAppData.
+const executionRuntimeRoot = process.platform === "win32"
+  ? path.join(os.tmpdir(), `sps-owner-host-runtime-${process.pid}-${Date.now()}`)
+  : runtimeRoot;
+if (executionRuntimeRoot !== runtimeRoot) {
+  await symlink(runtimeRoot, executionRuntimeRoot, "junction");
+}
+const nodeBinary = path.resolve(process.env.SPS_OWNER_HOST_NODE_BINARY || path.join(executionRuntimeRoot, "bin", process.platform === "win32" ? "node.exe" : "node"));
 
 try {
   await access(nodeBinary);
 } catch {
   throw new Error("Set SPS_OWNER_HOST_NODE_BINARY to the Node executable bundled with the SPS Owner Host runtime.");
 }
-
-const temporaryRoot = path.join(os.tmpdir(), `sps-owner-host-smoke-${process.pid}-${Date.now()}`);
-const executionRuntimeRoot = runtimeRoot;
 const configPath = path.join(temporaryRoot, "config.json");
 const memoryConfigPath = path.join(temporaryRoot, "memory", "config.json");
 async function findAvailablePort() {
@@ -382,7 +390,7 @@ await mkdir(path.dirname(memoryConfigPath), { recursive: true });
 await writeFile(memoryConfigPath, `${JSON.stringify(memoryConfig, null, 2)}\n`, "utf8");
 const memoryChild = spawn(
   nodeBinary,
-  [path.join(executionRuntimeRoot, "memory-sidecar", "memory-sidecar.mjs"), "--config", memoryConfigPath],
+  ["--preserve-symlinks", "--preserve-symlinks-main", path.join(executionRuntimeRoot, "memory-sidecar", "memory-sidecar.mjs"), "--config", memoryConfigPath],
   {
     cwd: executionRuntimeRoot,
     env: {
@@ -399,7 +407,7 @@ memoryChild.stdout.on("data", (chunk) => { memoryOutput += chunk.toString(); });
 memoryChild.stderr.on("data", (chunk) => { memoryOutput += chunk.toString(); });
 const child = spawn(
   nodeBinary,
-  [path.join(executionRuntimeRoot, "sps-owner-host-bootstrap.mjs")],
+  ["--preserve-symlinks", "--preserve-symlinks-main", path.join(executionRuntimeRoot, "sps-owner-host-bootstrap.mjs")],
   {
     cwd: executionRuntimeRoot,
     env: {
@@ -453,5 +461,8 @@ try {
     await removeWithRetry(temporaryRoot);
   } else {
     console.warn(`Preserved failed smoke data at ${temporaryRoot}`);
+  }
+  if (executionRuntimeRoot !== runtimeRoot) {
+    await removeWithRetry(executionRuntimeRoot);
   }
 }

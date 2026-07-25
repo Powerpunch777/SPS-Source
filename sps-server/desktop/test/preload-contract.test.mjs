@@ -157,6 +157,23 @@ test("uses the Desktop-only access token while the Owner creates its private Ide
   );
 });
 
+test("marks Desktop-owned Core mutations with their exact trusted origin", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(
+    main,
+    /async function establishSpsIdentityCoreSession\(hubOrigin\)[\s\S]*?origin: new URL\(hubOrigin\)\.origin/,
+  );
+  assert.match(
+    main,
+    /async function acceptSpsIdentityInvite\(hubUrl, inviteToken\)[\s\S]*?const origin = requireSpsHubOrigin\(hubUrl\);[\s\S]*?origin,[\s\S]*?cookie:/,
+  );
+  assert.match(
+    main,
+    /async function ownerHostApi\(pathname,[\s\S]*?const ownerHostOrigin = requireSpsOwnerHostOrigin\(ownerHostStatus\.url\);[\s\S]*?origin: ownerHostOrigin/,
+  );
+});
+
 test("shuts down the Owner Host gracefully before quitting Desktop", async () => {
   const main = await readFile(mainPath, "utf8");
 
