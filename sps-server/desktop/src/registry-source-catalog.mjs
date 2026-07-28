@@ -61,8 +61,7 @@ function assertSourceList(value) {
   }
   const ids = new Set();
   for (const source of value.sources) {
-    const result = validateRegistrySource(source);
-    if (!result.valid) throw new Error(result.errors.join(" "));
+    assertSpsRegistrySourcePolicy(source);
     if (ids.has(source.id)) throw new Error(`Duplicate Registry source id: ${source.id}.`);
     ids.add(source.id);
   }
@@ -75,6 +74,23 @@ function sourceDirectory(vaultRoot) {
 export function isBundledRegistrySource(sourceOrId) {
   const sourceId = typeof sourceOrId === "string" ? sourceOrId : sourceOrId?.id;
   return sourceId === SPS_OFFICIAL_REGISTRY_SOURCE.id;
+}
+
+function isExactOfficialRegistrySource(source) {
+  return source?.id === SPS_OFFICIAL_REGISTRY_SOURCE.id
+    && source?.kind === SPS_OFFICIAL_REGISTRY_SOURCE.kind
+    && source?.displayName === SPS_OFFICIAL_REGISTRY_SOURCE.displayName
+    && source?.indexUrl === SPS_OFFICIAL_REGISTRY_SOURCE.indexUrl
+    && source?.trustedRoot?.keyId === SPS_OFFICIAL_REGISTRY_SOURCE.trustedRoot.keyId
+    && source?.trustedRoot?.publicKey === SPS_OFFICIAL_REGISTRY_SOURCE.trustedRoot.publicKey;
+}
+
+function assertSpsRegistrySourcePolicy(source, { allowBundledOfficial = false } = {}) {
+  const validation = validateRegistrySource(source);
+  if (!validation.valid) throw new Error(validation.errors.join(" "));
+  if (source.kind === "local") return;
+  if (allowBundledOfficial && isExactOfficialRegistrySource(source)) return;
+  throw new Error("SPS Desktop currently supports only the bundled SPS Official Registry and Owner-selected local development Registries.");
 }
 
 function mergeBundledRegistrySources(sources) {
@@ -116,9 +132,15 @@ export async function loadRegistrySources({ vaultRoot, fsApi = fs } = {}) {
 
 export async function saveRegistrySources({ vaultRoot, sources, fsApi = fs, randomId = randomUUID } = {}) {
   if (!vaultRoot) throw new Error("Owner Vault root is required.");
-  const configuredSources = Array.isArray(sources)
-    ? sources.filter((source) => !isBundledRegistrySource(source))
-    : null;
+  const sourceList = Array.isArray(sources) ? sources : null;
+  if (sourceList) {
+    for (const source of sourceList) {
+      if (isBundledRegistrySource(source) && !isExactOfficialRegistrySource(source)) {
+        throw new Error("The SPS Official Registry identity is reserved for the bundled source.");
+      }
+    }
+  }
+  const configuredSources = sourceList?.filter((source) => !isBundledRegistrySource(source)) ?? null;
   const value = { schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION, sources: configuredSources };
   assertSourceList(value);
   const directory = sourceDirectory(vaultRoot);
@@ -138,8 +160,7 @@ export async function saveRegistrySources({ vaultRoot, sources, fsApi = fs, rand
 }
 
 export async function addRegistrySource({ vaultRoot, source, fsApi = fs } = {}) {
-  const validation = validateRegistrySource(source);
-  if (!validation.valid) throw new Error(validation.errors.join(" "));
+  assertSpsRegistrySourcePolicy(source);
   const current = await loadRegistrySources({ vaultRoot, fsApi });
   if (current.sources.some((entry) => entry.id === source.id)) {
     throw new Error(`Registry source ${source.id} is already configured.`);
@@ -288,8 +309,7 @@ async function inspectRemoteRegistrySource(source, { fetchImpl }) {
  * sources are explicit owner trust; remote indexes and releases are signed.
  */
 export async function inspectRegistrySource(source, { fetchImpl = fetch, fsApi = fs } = {}) {
-  const validation = validateRegistrySource(source);
-  if (!validation.valid) throw new Error(validation.errors.join(" "));
+  assertSpsRegistrySourcePolicy(source, { allowBundledOfficial: true });
   if (source.kind === "local") {
     const local = await inspectLocalRegistry(source.localPath);
     return {

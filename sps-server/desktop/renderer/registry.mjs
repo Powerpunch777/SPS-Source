@@ -21,7 +21,6 @@ function escapeHtml(value) {
 
 function sourceTrustLabel(source) {
   if (source.kind === "official") return "Official source";
-  if (source.kind === "git") return "Signed remote source";
   return "Owner-trusted local source";
 }
 
@@ -143,18 +142,8 @@ async function inspectSelectedSource() {
   }
 }
 
-function toggleSourceFields() {
-  const local = $("#source-kind").value === "local";
-  $("#local-source-fields").hidden = !local;
-  $("#remote-source-fields").hidden = local;
-  $("#source-index-url").required = !local;
-  $("#source-root-key-id").required = !local;
-  $("#source-root-key").required = !local;
-}
-
 $("#refresh-sources").addEventListener("click", () => loadSources().catch((error) => setNotice(error.message, true)));
 $("#refresh-stages").addEventListener("click", () => loadStages());
-$("#source-kind").addEventListener("change", toggleSourceFields);
 $("#choose-local-folder").addEventListener("click", async () => {
   try {
     const selected = await window.spsRegistry.chooseLocalSource();
@@ -173,25 +162,17 @@ $("#choose-local-folder").addEventListener("click", async () => {
 $("#source-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    const kind = $("#source-kind").value;
     const input = {
       id: $("#source-id").value.trim(),
-      kind,
+      kind: "local",
       displayName: $("#source-name").value.trim(),
-      ...(kind === "local"
-        ? { localPath: $("#local-path").value }
-        : {
-          indexUrl: $("#source-index-url").value.trim(),
-          trustedRootKeyId: $("#source-root-key-id").value.trim(),
-          trustedRootPublicKey: $("#source-root-key").value.trim(),
-        }),
+      localPath: $("#local-path").value,
     };
     sources = await window.spsRegistry.addSource(input);
     selectedSourceId = input.id;
     renderSources();
     await inspectSelectedSource();
     $("#source-form").reset();
-    toggleSourceFields();
     setNotice("Trusted Registry source added. No plugin was downloaded or run.");
   } catch (error) {
     setNotice(error instanceof Error ? error.message : String(error), true);
@@ -264,7 +245,6 @@ $("#stage-list").addEventListener("click", async (event) => {
   }
 });
 
-toggleSourceFields();
 await Promise.all([loadSources(), loadStages()]);
 if (requestedSourceId && sources.some((source) => source.id === requestedSourceId)) {
   selectedSourceId = requestedSourceId;

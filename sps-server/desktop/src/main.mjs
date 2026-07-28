@@ -1232,23 +1232,15 @@ async function listRegistrySources() {
 async function addDesktopRegistrySource(input) {
   assertRegistryOwner();
   if (!input || typeof input !== "object") throw new Error("Registry source details are required.");
-  const source = input.kind === "local"
-    ? {
-      id: input.id,
-      kind: "local",
-      displayName: input.displayName,
-      localPath: input.localPath,
-    }
-    : {
-      id: input.id,
-      kind: input.kind,
-      displayName: input.displayName,
-      indexUrl: input.indexUrl,
-      trustedRoot: {
-        keyId: input.trustedRootKeyId,
-        publicKey: input.trustedRootPublicKey,
-      },
-    };
+  if (input.kind !== "local") {
+    throw new Error("SPS Desktop currently accepts only Owner-selected local development Registries. The signed SPS Official Registry is already available.");
+  }
+  const source = {
+    id: input.id,
+    kind: "local",
+    displayName: input.displayName,
+    localPath: input.localPath,
+  };
   const inspection = await inspectRegistrySource(source);
   if (!inspection.valid) throw new Error(inspection.errors.join("\n"));
   const saved = await addRegistrySource({ vaultRoot: ownerVaultRoot(), source });
