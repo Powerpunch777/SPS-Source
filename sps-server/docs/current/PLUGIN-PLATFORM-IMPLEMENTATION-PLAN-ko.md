@@ -87,6 +87,11 @@ remain `upgrade_pending` until the Host approves the reviewed plan. Approval
 must be bound to the exact target version and migration checksums so that it
 cannot be reused for another package.
 
+For Registry-delivered updates, Core also pins the exact staged artifact ID,
+capability delta, and migration-plan hash in a `review_pending` record. The
+Host approval action must name that record. A newer Registry stage cannot
+silently replace the candidate currently being reviewed.
+
 ### 3. Runs, Jobs, and External Tools
 
 Core will standardize one execution record for Agent, CLI, local AI, API, and

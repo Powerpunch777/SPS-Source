@@ -289,11 +289,22 @@ async function assertRegistryLifecycle() {
   }
 
   const stageV2 = await ownerHostJson("/api/plugins/registry/stages", { ...v2, source: { ...source, releaseLocator: "runtime-smoke/1.0.1" } });
-  const upgraded = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(stageV2.stageId)}/enable`, {});
+  const pending = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(stageV2.stageId)}/enable`, {});
+  if (pending.stage?.status !== "review_pending" || pending.plugin?.status !== "upgrade_pending") {
+    throw new Error("Registry smoke v2 did not stop for explicit capability review.");
+  }
+  const review = await ownerHostJson(`/api/plugins/${encodeURIComponent(installed.plugin.id)}/pending-update`);
+  if (review?.stageId !== stageV2.stageId || !review?.addedCapabilities?.includes("plugin.state.write")) {
+    throw new Error("Registry smoke v2 did not preserve the exact staged candidate for review.");
+  }
+  const upgraded = await ownerHostJson(`/api/plugins/${encodeURIComponent(installed.plugin.id)}/upgrade`, {
+    stageId: stageV2.stageId,
+    approvedCapabilityEscalation: true,
+  });
   if (
-    upgraded.plugin?.version !== "1.0.1"
-    || upgraded.plugin?.status !== "ready"
-    || !upgraded.plugin?.manifestJson?.capabilities?.includes("plugin.state.write")
+    upgraded?.version !== "1.0.1"
+    || upgraded?.status !== "ready"
+    || !upgraded?.manifestJson?.capabilities?.includes("plugin.state.write")
   ) {
     throw new Error("Registry smoke v2 did not replace the active plugin.");
   }

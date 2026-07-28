@@ -26,8 +26,8 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
     coreRoot,
     builtAt: "2026-07-28T00:00:00.000Z",
   });
-  assert.equal(baseline.desktopVersion, "0.4.79");
-  assert.equal(baseline.core.revision, "fcd805874bf6bb04937eb2df1358f7ea370e46f3");
+  assert.equal(baseline.desktopVersion, "0.4.80");
+  assert.equal(baseline.core.revision, "d502f9f1b2aad2b95b63a0d1400494f66874fd26");
   assert.deepEqual(baseline.pluginSdk, {
     repository: "Powerpunch777/sps-plugin-sdk",
     revision: "27b419db255e097ae871612943a8aec82d57092c",

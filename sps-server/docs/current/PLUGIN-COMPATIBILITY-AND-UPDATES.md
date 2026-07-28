@@ -20,7 +20,7 @@ The signed Registry release is the source of truth for Desktop and Profile compa
 2. The signed release must declare `compatibility.sps`, `compatibility.pluginApi`, and `compatibility.extensionProfile`.
 3. Before extraction or staging, SPS Desktop checks the signed release against its own version, API, and profile.
 4. During safe extraction, SPS compares the package identity, permission digest, capabilities, and Plugin API with the signed release.
-5. The Owner explicitly reviews and enables a staged release.
+5. The Host explicitly reviews and enables a staged release.
 6. Core checks the dynamic manifest API and `minimumHostVersion` before worker activation.
 
 If any check fails, the release is not staged or enabled. The previous installed release and its data remain untouched.
@@ -48,6 +48,8 @@ Unsupported shorthand such as `^0.4.0` or `~0.4.0` is rejected rather than guess
 - A first install may create its own empty plugin namespace. An upgrade that adds migrations to a plugin with applied migrations stops in `upgrade_pending`.
 - The Host reviews `GET /api/plugins/:pluginId/migration-plan`, then approves the exact review hash through the upgrade action. SPS creates a fresh Host database backup immediately before that approved migration can run.
 - `upgrade_pending` cannot be bypassed with a normal Enable action. The reviewed upgrade path is the only way to activate it.
+- A Registry candidate that requires review is pinned by its immutable stage ID. The review screen reads that staged candidate's version, capability delta, and migration plan; approval reuses the same stage ID rather than searching for a package again.
+- The Registry candidate remains `review_pending` until its reviewed lifecycle activation succeeds. A later Registry upload cannot replace the candidate already shown to the Host.
 
 ## Operator Experience
 
