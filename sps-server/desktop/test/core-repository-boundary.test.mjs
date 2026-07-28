@@ -31,7 +31,7 @@ test("pins the compatible SPS Core submodule", async () => {
   const modules = await readFile(path.join(repositoryDirectory, ".gitmodules"), "utf8");
   assert.match(modules, /path = external\/sps-core/);
   assert.match(modules, /url = https:\/\/github\.com\/Powerpunch777\/SPS-Core\.git/);
-  assert.match(modules, /branch = codex\/workplane-core-contract/);
+  assert.match(modules, /branch = main/);
 });
 
 test("keeps product source out of Core private implementation paths", async () => {

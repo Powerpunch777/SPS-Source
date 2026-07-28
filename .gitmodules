@@ -1,4 +1,4 @@
 [submodule "external/sps-core"]
 	path = external/sps-core
 	url = https://github.com/Powerpunch777/SPS-Core.git
-	branch = codex/workplane-core-contract
+	branch = main

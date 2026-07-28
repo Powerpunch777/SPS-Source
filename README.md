@@ -18,7 +18,7 @@ The Catalog is not a separate application. It is the discovery area inside `Sett
 ## Repository Layout
 
 ```text
-external/sps-core/       Core compatibility source during the SPS migration
+external/sps-core/       Private SPS product Core (tracked from its stable main branch)
 sps-server/              SPS Desktop, Host, Node, plugin runtime, and first-party extensions
 sps-plugin-sdk/          Public plugin authoring SDK and CLI
 sps-official-extensions/ Signed first-party extension distribution source
@@ -36,6 +36,10 @@ Current product decisions live in [sps-server/docs/current](sps-server/docs/curr
 ## Development
 
 The current tree contains an SPS migration layer over the existing Paperclip-compatible runtime. Do not treat compatibility package names as the permanent SPS public API. Run the focused package checks before changing a package.
+
+The product runtime lives in the private `SPS-Core` repository. The public
+`SPS-Core-Compat` repository is a Paperclip compatibility mirror only; it is
+not a product runtime, release channel, or support surface.
 
 ```powershell
 Set-Location .\sps-server\plugin-platform
