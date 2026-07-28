@@ -16,6 +16,7 @@ test("accepts the bundled SPS Team Workplane profile", async () => {
     kind: "workplane",
     profileKey: "sps-lead-worker",
   });
+  assert.equal(manifest.companyActivation?.defaultEnabled, false);
   assert.deepEqual(result.features, ["surface", "automation"]);
 });
 
@@ -26,6 +27,8 @@ test("accepts SPS Default Memory as a store provider", async () => {
   assert.equal(result.valid, true, result.errors.join("\n"));
   assert.equal(result.extension?.kind, "store_provider");
   assert.deepEqual(result.features, ["tool", "automation"]);
+  assert.equal(manifest.companyActivation?.defaultEnabled, false);
+  assert.equal(manifest.memoryProvider.defaultForNewCompanies, false);
 });
 
 test("reports legacy-compatible manifests without rejecting them", async () => {

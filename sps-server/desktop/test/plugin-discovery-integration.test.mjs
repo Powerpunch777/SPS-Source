@@ -14,6 +14,7 @@ test("Plugin Discovery is a neutral, valid SPS tool provider", () => {
   const profile = inspectSpsExtensionProfile(manifest);
   assert.equal(profile.valid, true, profile.errors.join("\n"));
   assert.equal(manifest.agentPlatform.kind, "tool_provider");
+  assert.equal(manifest.companyActivation?.defaultEnabled, true);
   assert.deepEqual(manifest.capabilities, ["agent.tools.register"]);
   assert.deepEqual(manifest.tools.map((tool) => tool.name), ["search-sps-extensions", "draft-sps-extension"]);
 });

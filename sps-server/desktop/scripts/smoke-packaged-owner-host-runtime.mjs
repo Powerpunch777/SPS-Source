@@ -156,6 +156,10 @@ async function assertDefaultMemoryPlugin() {
   if (!memory || memory.status !== "ready") {
     throw new Error("SPS Default Memory was not installed and ready in the packaged Owner Host.");
   }
+  if (memory.manifestJson?.companyActivation?.defaultEnabled !== false
+    || memory.manifestJson?.memoryProvider?.defaultForNewCompanies !== false) {
+    throw new Error("SPS Default Memory must remain opt-in for every new Company.");
+  }
   return memory;
 }
 
@@ -168,6 +172,9 @@ async function assertPluginDiscoveryPlugin() {
     : null;
   if (!discovery || discovery.status !== "ready") {
     throw new Error("SPS Plugin Discovery was not installed and ready in the packaged Owner Host.");
+  }
+  if (discovery.manifestJson?.companyActivation?.defaultEnabled !== true) {
+    throw new Error("SPS Plugin Discovery must start enabled for a new Company.");
   }
   const toolNames = Array.isArray(discovery.manifestJson?.tools)
     ? discovery.manifestJson.tools.map((tool) => tool?.name).sort()

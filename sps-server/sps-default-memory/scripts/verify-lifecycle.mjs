@@ -17,6 +17,8 @@ const expectedEvents = [
 ];
 
 assert.ok(manifest.capabilities.includes("events.subscribe"));
+assert.equal(manifest.companyActivation?.defaultEnabled, false);
+assert.equal(manifest.memoryProvider.defaultForNewCompanies, false);
 assert.deepEqual(
   [...manifest.memoryProvider.lifecycleEvents].sort(),
   [...expectedEvents].sort(),

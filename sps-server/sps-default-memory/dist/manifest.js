@@ -46,6 +46,7 @@ export default {
   author: "SPS",
   categories: ["automation"],
   capabilities: ["agent.tools.register", "events.subscribe", "memory.providers.register"],
+  companyActivation: { defaultEnabled: false },
   agentPlatform: {
     contractVersion: "1.0",
     kind: "store_provider"
@@ -59,6 +60,6 @@ export default {
     lifecycleEvents: ["project.created", "room.checkpoint", "room.compacted", "task.completed", "task.blocked", "task.reopened", "artifact.published"],
     recallToolName: "memory-recall",
     proposeToolName: "memory-propose",
-    defaultForNewCompanies: true,
+    defaultForNewCompanies: false,
   },
 };

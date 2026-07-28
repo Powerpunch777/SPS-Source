@@ -38,6 +38,7 @@ export default {
     "plugin.state.write",
     "instance.settings.register"
   ],
+  companyActivation: { defaultEnabled: false },
   agentPlatform: {
     contractVersion: SPS_TEAM_WORKPLANE_PROFILE.contractVersion,
     kind: SPS_TEAM_WORKPLANE_PROFILE.kind,

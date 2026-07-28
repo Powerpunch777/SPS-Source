@@ -40,6 +40,7 @@ export default {
   author: "SPS",
   categories: ["automation"],
   capabilities: ["agent.tools.register"],
+  companyActivation: { defaultEnabled: true },
   agentPlatform: {
     contractVersion: "1.0",
     kind: "tool_provider",

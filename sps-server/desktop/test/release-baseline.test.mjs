@@ -27,12 +27,12 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
     builtAt: "2026-07-28T00:00:00.000Z",
   });
   assert.equal(baseline.desktopVersion, "0.4.79");
-  assert.equal(baseline.core.revision, "c8846a0e93962f7f1179f859b299da7648b48a50");
+  assert.equal(baseline.core.revision, "99223c21e39a2e0b58cc49a36a225690e8fa6d66");
   assert.deepEqual(baseline.pluginSdk, {
     repository: "Powerpunch777/sps-plugin-sdk",
-    revision: "acf5c8011cff6afadf05bd542a2e640625413609",
+    revision: "28aad859bad5fbfc280b224b918b3a5404192d5e",
     package: "@sonparkserver/plugin-sdk",
-    version: "0.1.1",
+    version: "0.1.2",
     dirty: false,
   });
   assert.deepEqual(baseline.extensionProfile, { version: "1.0", pluginApi: 1 });

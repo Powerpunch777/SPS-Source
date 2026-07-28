@@ -13,7 +13,7 @@ SPS Core manages the Desktop Host, Agents, Nodes, execution records, plugin runt
 5. Talk to the Agent to discover, design, or build the plugins and Packs you need.
 6. Use `Settings > Plugins` to inspect Catalog results and manage installed plugins.
 
-The Catalog is not a separate application. It is the discovery area inside `Settings > Plugins`. A selected recommendation has no automatic lifecycle side effect; Agents decide how to respond to user requests using the available tools. The current Core lifecycle loads bundled tool providers on the Owner Host. Per-Company enablement is a later Core lifecycle extension.
+The Catalog is not a separate application. It is the discovery area inside `Settings > Plugins`. A selected recommendation has no automatic lifecycle side effect; Agents decide how to respond to user requests using the available tools. Plugin packages and workers are installed once on the Owner Host, while each Company independently enables or disables the installed extensions it uses.
 
 ## Repository Layout
 
@@ -32,6 +32,7 @@ Current product decisions live in [sps-server/docs/current](sps-server/docs/curr
 - [Product model](sps-server/docs/current/PRODUCT-MODEL-ko.md)
 - [Plugin developer platform](sps-server/docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)
 - [Roadmap](sps-server/docs/current/ROADMAP.md)
+- [Company plugin activation](sps-server/docs/current/COMPANY-PLUGIN-ACTIVATION.md)
 
 ## Development
 
