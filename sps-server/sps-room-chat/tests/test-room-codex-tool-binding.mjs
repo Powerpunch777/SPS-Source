@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
-const { handleRoomSendJob, parseState, setCodexClientForTest } = await import("../dist/worker.js");
+const { handleRoomSendJob, parseState, runQueuedRoomJobs, setCodexClientForTest } = await import("../dist/worker.js");
 
 const companyId = "company-codex-tools";
 const projectId = "project-codex-tools";
@@ -138,6 +138,7 @@ const result = await handleRoomSendJob(
   { actor: { type: "user" }, companyId }
 );
 assert.equal(result.ok, true);
+await runQueuedRoomJobs(ctx);
 assert.ok(openedThreads[0]);
 const toolNames = openedThreads[0].dynamicTools[0].tools.map((tool) => tool.name);
 assert.ok(toolNames.includes("create_task"));
@@ -175,6 +176,7 @@ const secondResult = await handleRoomSendJob(
   { actor: { type: "user" }, companyId }
 );
 assert.equal(secondResult.ok, true);
+await runQueuedRoomJobs(ctx);
 for (let attempt = 0; attempt < 30; attempt += 1) {
   const state = parseState(documents.get("ROOM_STATE").body);
   if (state.pendingTurn === null && state.runtime.activity.status === "completed") break;
@@ -192,6 +194,7 @@ const rotatedResult = await handleRoomSendJob(
   { actor: { type: "user" }, companyId }
 );
 assert.equal(rotatedResult.ok, true);
+await runQueuedRoomJobs(ctx);
 for (let attempt = 0; attempt < 30; attempt += 1) {
   const state = parseState(documents.get("ROOM_STATE").body);
   if (state.pendingTurn === null && state.runtime.activity.status === "completed") break;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
-const { activeRoomProcessBlocksOwnerReport, handleTaskStatusUpdated, isSubstantiveTaskBoundaryReport, parseState, reconcileRoomProviderQuotaRetries, reconcileTaskOwnerNotificationStateForJob, reconcileTaskOwnerReportBoundaries, taskBoundaryReportKind, taskOwnerRoomResultVisibilityOutsideInvocation } = await import("../dist/worker.js");
+const { activeRoomProcessBlocksOwnerReport, handleTaskStatusUpdated, isSubstantiveTaskBoundaryReport, parseState, reconcileRoomProviderQuotaRetries, reconcileTaskOwnerNotificationStateForJob, reconcileTaskOwnerReportBoundaries, runQueuedRoomJobs, taskBoundaryReportKind, taskOwnerRoomResultVisibilityOutsideInvocation } = await import("../dist/worker.js");
 
 const koreanWorkerReport = [
   "## SPS Final Report",
@@ -343,7 +343,7 @@ const concurrentDuplicate = await handleTaskStatusUpdated(ctx, {
 });
 assert.equal(concurrentDuplicate.scheduled, false);
 assert.equal(concurrentDuplicate.reason, "worker_report_in_progress");
-await disposition.completion;
+await runQueuedRoomJobs(ctx);
 ownerCompletionDelayMs = 0;
 
 const ownerComments = comments.get(ownerRoomId);
@@ -354,7 +354,7 @@ assert.match(ownerPrompt, /Changed paths: References\/Art\/hero\.png/);
 assert.match(ownerPrompt, /paperclip\.complete_task/i);
 assert.match(ownerPrompt, /technical completion decision/);
 assert.match(ownerPrompt, /Never say that you approved or accepted/);
-assert.equal([...entities.values()].some((record) => record.data.kind === "task_owner_report" && record.status === "working"), true);
+assert.equal([...entities.values()].some((record) => record.data.kind === "task_owner_report" && record.status === "completed"), true);
 const savedTaskState = parseState(documents.get(`${taskId}:TASK_ROOM_STATE`).body);
 assert.equal(savedTaskState.review.status, "owner_review_requested");
 assert.equal(savedTaskState.review.workerReportCommentId, workerReport.id);
@@ -521,7 +521,7 @@ assert.equal(revisedDisposition.normalized, true);
 assert.equal(revisedDisposition.scheduled, true);
 assert.equal(revisedDisposition.status, "in_review");
 assert.equal(revisedDisposition.reportCommentId, revisedReport.id);
-await revisedDisposition.completion;
+await runQueuedRoomJobs(ctx);
 for (let attempt = 0; attempt < 100; attempt += 1) {
   const current = parseState(documents.get(`${taskId}:TASK_ROOM_STATE`).body);
   if (current?.ownerNotification?.status === "completed" && current.ownerNotification.reportCommentId === revisedReport.id) break;
@@ -564,7 +564,7 @@ const blocked = await handleTaskStatusUpdated(ctx, {
   payload: { status: "blocked", _previous: { status: "in_progress" }, agentId: workerId }
 });
 assert.equal(blocked.scheduled, true);
-await blocked.completion;
+await runQueuedRoomJobs(ctx);
 assert.match(ownerPrompt, /The Task is blocked/);
 assert.equal(parseState(documents.get(`${taskId}:TASK_ROOM_STATE`).body).review.status, "blocked_reported");
 
@@ -675,6 +675,7 @@ comments.set(watchdogTaskId, [{
 const watchdogOwnerCommentCount = comments.get(watchdogOwnerRoomId).length;
 const watchdog = await reconcileTaskOwnerReportBoundaries(ctx, { runId: "watchdog-test-first" });
 assert.equal(watchdog.scheduled, 1, JSON.stringify({ watchdog, testWarnings }));
+await runQueuedRoomJobs(ctx);
 for (let attempt = 0; attempt < 100; attempt += 1) {
   const current = parseState(documents.get(`${watchdogTaskId}:TASK_ROOM_STATE`).body);
   if (current?.ownerNotification?.status === "completed") break;
@@ -767,6 +768,7 @@ documents.set(`${busyOwnerRoomId}:ROOM_STATE`, { latestRevisionId: "room-rev-bus
 entities.delete(busyJobId);
 const busyRetryPass = await reconcileTaskOwnerReportBoundaries(ctx, { runId: "scheduled-job-busy-retry" });
 assert.equal(busyRetryPass.scheduled, 1);
+await runQueuedRoomJobs(ctx);
 for (let attempt = 0; attempt < 100; attempt += 1) {
   const current = parseState(documents.get(`${busyTaskId}:TASK_ROOM_STATE`).body);
   if (current?.ownerNotification?.status === "completed") break;

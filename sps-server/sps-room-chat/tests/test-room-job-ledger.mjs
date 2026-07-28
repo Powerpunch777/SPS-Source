@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
-const { handleRoomSendJob, handleRoomView, mostRecentComments, parseState, setActiveRoomJobForTest } = await import("../dist/worker.js");
+const { handleRoomSendJob, handleRoomView, mostRecentComments, parseState, runQueuedRoomJobs, setActiveRoomJobForTest } = await import("../dist/worker.js");
 
 const companyId = "company-job";
 const roomId = "room-job";
@@ -93,12 +93,10 @@ const ctx = {
 const result = await handleRoomSendJob(ctx, { issueId: roomId, message: "Preserve this decision." }, { actor: { type: "user" }, companyId });
 assert.equal(result.ok, true);
 assert.equal(result.accepted, true);
+assert.equal(result.queued, true);
 assert.equal(comments[0].body.includes("Preserve this decision."), true);
-for (let attempt = 0; attempt < 30; attempt += 1) {
-  const state = parseState(documents.get("ROOM_STATE").body);
-  if (state.pendingTurn === null && state.runtime.activity.status === "completed") break;
-  await new Promise((resolve) => setTimeout(resolve, 5));
-}
+const firstDispatch = await runQueuedRoomJobs(ctx);
+assert.equal(firstDispatch.completed, 1);
 const state = parseState(documents.get("ROOM_STATE").body);
 assert.equal(state.pendingTurn, null);
 assert.equal(state.runtime.activity.status, "completed");
@@ -112,11 +110,8 @@ setActiveRoomJobForTest(roomId, new Promise(() => {}));
 const recovered = await handleRoomSendJob(ctx, { issueId: roomId, message: "Continue after the completed report." }, { actor: { type: "user" }, companyId });
 assert.equal(recovered.ok, true);
 assert.equal(recovered.accepted, true);
-for (let attempt = 0; attempt < 30; attempt += 1) {
-  const recoveredState = parseState(documents.get("ROOM_STATE").body);
-  if (recoveredState.pendingTurn === null && recoveredState.runtime.activity.status === "completed") break;
-  await new Promise((resolve) => setTimeout(resolve, 5));
-}
+const recoveredDispatch = await runQueuedRoomJobs(ctx);
+assert.equal(recoveredDispatch.completed, 1);
 assert.equal(comments.some((comment) => comment.body.includes("Continue after the completed report.")), true);
 
 const descendingHistory = Array.from({ length: 120 }, (_, index) => {
@@ -133,4 +128,4 @@ assert.equal(recentHistory[0].id, "history-21");
 assert.equal(recentHistory.at(-1).id, "history-120");
 
 globalThis.fetch = originalFetch;
-console.log("PASS native Room Session starts within the action scope, persists completion outside it, reconciles its durable job ledger, and keeps the newest comments visible");
+console.log("PASS native Room Session is queued by the action, completed in a fresh scheduler scope, reconciles its durable job ledger, and keeps the newest comments visible");

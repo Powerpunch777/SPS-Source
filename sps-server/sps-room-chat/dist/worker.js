@@ -11874,7 +11874,7 @@ var manifest_default = {
   // Existing Rooms, Task Rooms, origins, and plugin state use this exact ID.
   id: SPS_TEAM_WORKPLANE_PROFILE.legacyPluginId,
   apiVersion: 1,
-  version: "0.3.88",
+  version: "0.3.89",
   displayName: SPS_TEAM_WORKPLANE_PROFILE.displayName,
   description: SPS_TEAM_WORKPLANE_PROFILE.description,
   author: SPS_TEAM_WORKPLANE_PROFILE.author,
@@ -11922,7 +11922,7 @@ var manifest_default = {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.88"
+    ui: "./dist/ui-v0.3.89"
   },
   ui: {
     slots: [
@@ -14765,21 +14765,6 @@ async function updateRoomWorkStateOutsideInvocation(roomContext, patch, changeSu
     });
   });
 }
-async function appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint) {
-  const document = await getRoomDocumentDirect(apiUrl, issueId, ROOM_CHECKPOINTS_KEY);
-  let checkpoints = parseState(document?.body);
-  if (!Array.isArray(checkpoints)) checkpoints = [];
-  checkpoints.push(checkpoint);
-  return putRoomDocument(apiUrl, {
-    issueId,
-    key: ROOM_CHECKPOINTS_KEY,
-    body: serializeState(checkpoints),
-    title: "Room checkpoints",
-    format: "markdown",
-    baseRevisionId: document?.latestRevisionId ?? null,
-    changeSummary: "Append Room compact checkpoint"
-  });
-}
 function nativeCompactionEventId(message) {
   const params = asRecord3(message?.params);
   const threadId = textParam(params, "threadId");
@@ -14842,25 +14827,6 @@ async function recordNativeCodexCompaction(ctx, message) {
   } finally {
     if (nativeCompactionLocks.get(context.issueId) === next) nativeCompactionLocks.delete(context.issueId);
   }
-}
-async function createRoomCommentOutsideInvocation(apiUrl, issueId, body) {
-  const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(issueId)}/comments`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: spsDesktopAccessHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ body })
-  });
-  if (!response.ok) throw new Error(`Room comment write failed (${response.status}).`);
-  return response.json();
-}
-async function saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary) {
-  return saveRoomStateOutsideInvocation(apiUrl, issueId, state, changeSummary);
-}
-async function createRoomCommentDurably(apiUrl, companyId, issueId, body) {
-  return createRoomCommentOutsideInvocation(apiUrl, issueId, body);
-}
-async function appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint) {
-  return appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint);
 }
 async function appendCheckpoint(ctx, companyId, issueId, checkpoint) {
   const document = await ctx.issues.documents.get(issueId, ROOM_CHECKPOINTS_KEY, companyId);
@@ -15017,7 +14983,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
     if (Array.isArray(state.runtime.activity.steps)) {
       state.runtime.activity.steps.push({ id: `quota-block-${Date.now()}`, type: "runtime", label: "Agy quota reached; automatic retry is disabled", status: "error", updatedAt: now() });
     }
-    await saveRoomStateOutsideInvocation(runtime.spsApiUrl, issue.id, state, "Record Agy quota block without automatic retry");
+    await saveRoomState(ctx, job.companyId, issue.id, state, "Record Agy quota block without automatic retry");
     emitRoomEvent(ctx, job.companyId, issue.id, { type: "quota_retry_disabled", job: stoppedJob });
     return { ok: true, retryScheduled: false, retryDisabled: true, job: stoppedJob };
   }
@@ -15063,7 +15029,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
   if (Array.isArray(state.runtime.activity.steps)) {
     state.runtime.activity.steps.push({ id: `quota-wait-${Date.now()}`, type: "runtime", label: "Agy quota reached; retrying in 30 minutes", status: "waiting", updatedAt: now() });
   }
-  await saveRoomStateOutsideInvocation(runtime.spsApiUrl, issue.id, state, "Keep Room Job queued for the next Agy quota retry");
+  await saveRoomState(ctx, job.companyId, issue.id, state, "Keep Room Job queued for the next Agy quota retry");
   emitRoomEvent(ctx, job.companyId, issue.id, { type: "quota_retry_scheduled", job: queuedJob, retryAt });
   return { ok: true, retryScheduled: true, retryAt, job: queuedJob };
 }
@@ -15096,9 +15062,7 @@ async function launchDueRoomProviderQuotaRetry(ctx, job, current = Date.now()) {
   beginRoomActivity(state, job.kind, job.id, job.sourceCommentId ?? null);
   state.runtime.activity.steps.push({ id: `quota-retry-${Date.now()}`, type: "runtime", label: "Retrying queued Room turn with Agy", status: "working", updatedAt: now() });
   await saveRoomState(ctx, job.companyId, issue.id, state, "Start due Agy provider quota Room retry");
-  const runtime = await getRuntimeConfig(ctx);
-  const started = startDurableRoomJob(ctx, { companyId: job.companyId, runtime, job });
-  return { launched: started, reason: started ? "launched" : "room_busy" };
+  return { launched: false, reason: "queued_for_scheduler" };
 }
 async function reconcileRoomProviderQuotaRetries(ctx, options = {}) {
   if (activeRoomQuotaRetryReconcile) return activeRoomQuotaRetryReconcile;
@@ -16150,84 +16114,6 @@ function nativeRoomActivityReporter(ctx, companyId, issueId, state) {
     }
   };
 }
-function roomActivityReporterOutsideInvocation(apiUrl, companyId, issueId, state) {
-  let writes = Promise.resolve();
-  let lastPersistedAt = 0;
-  let persistTimer = null;
-  let dirty = false;
-  const persist = (changeSummary) => {
-    lastPersistedAt = Date.now();
-    dirty = false;
-    writes = writes.then(() => saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary)).catch(() => {
-    });
-  };
-  const schedulePersist = () => {
-    const remaining = Math.max(0, 1e3 - (Date.now() - lastPersistedAt));
-    if (remaining === 0) {
-      persist("Update Room activity");
-      return;
-    }
-    if (persistTimer !== null) return;
-    persistTimer = setTimeout(() => {
-      persistTimer = null;
-      persist("Update Room activity");
-    }, remaining);
-  };
-  return {
-    report(event) {
-      if (!applyRoomActivityEvent(state, event)) return;
-      dirty = true;
-      schedulePersist();
-    },
-    flush() {
-      if (persistTimer !== null) {
-        clearTimeout(persistTimer);
-        persistTimer = null;
-      }
-      if (dirty) persist("Persist final Room activity");
-      return writes;
-    }
-  };
-}
-function nativeRoomActivityReporterOutsideInvocation(apiUrl, companyId, issueId, state) {
-  let writes = Promise.resolve();
-  let lastPersistedAt = 0;
-  let persistTimer = null;
-  let dirty = false;
-  const persist = (changeSummary) => {
-    lastPersistedAt = Date.now();
-    dirty = false;
-    writes = writes.then(() => saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary)).catch(() => {
-    });
-  };
-  const schedulePersist = () => {
-    const remaining = Math.max(0, 1e3 - (Date.now() - lastPersistedAt));
-    if (remaining === 0) {
-      persist("Update native Agent Session activity");
-      return;
-    }
-    if (persistTimer !== null) return;
-    persistTimer = setTimeout(() => {
-      persistTimer = null;
-      persist("Update native Agent Session activity");
-    }, remaining);
-  };
-  return {
-    report(event) {
-      if (!applyNativeSessionActivityEvent(state, event)) return;
-      dirty = true;
-      schedulePersist();
-    },
-    flush() {
-      if (persistTimer !== null) {
-        clearTimeout(persistTimer);
-        persistTimer = null;
-      }
-      if (dirty) persist("Persist final native Agent Session activity");
-      return writes;
-    }
-  };
-}
 async function getActiveTasksDirect(apiUrl, companyId, projectId, roomIssueId) {
   if (!projectId) return [];
   const issues = await listCompanyIssuesDirect(apiUrl, companyId, projectId);
@@ -16925,7 +16811,7 @@ async function handleRoomView(ctx, params) {
   const roomRuntime = agentRoomRuntime(runtime, agent);
   const pendingJobId = textParam(state.pendingTurn, "jobId");
   const pendingJob = jobs.find((job) => job.id === pendingJobId) ?? null;
-  if (pendingJob && ACTIVE_ROOM_JOB_STATUSES.has(pendingJob.status) && !activeRoomMessageJobs.has(issue.id)) {
+  if (pendingJob && ["starting", "working"].includes(pendingJob.status) && !activeRoomMessageJobs.has(issue.id)) {
     const interrupted = await updateRoomJob(ctx, pendingJob, {
       status: "interrupted",
       completedAt: now(),
@@ -17420,9 +17306,7 @@ ${message}`, companyId);
   beginRoomActivity(ownerState, job.kind, job.id);
   await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Persist queued Task owner feedback Job");
   emitRoomEvent(ctx, companyId, ownerRoom.id, { type: "job", job });
-  const started = startDurableRoomJob(ctx, { companyId, runtime, job });
-  if (!started) return { ok: false, code: "room_busy", message: `${agent.name} is already working in this Room.` };
-  return { ok: true, accepted: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
+  return { ok: true, accepted: true, queued: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
 }
 async function handleRoomBootstrap(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
@@ -17583,6 +17467,10 @@ async function handleRoomCompact(ctx, params, actionCtx) {
     return { ok: true, checkpoint: state.checkpoint, compacted: compacted.compacted };
   });
 }
+function durableRoomJobResultText(job, result, native = false) {
+  const message = native ? nativeSessionResultText(result) : turnResultText(result);
+  return job.kind === "task_owner_report" ? normalizeTaskOwnerCompletionReport(message) : message;
+}
 async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob }) {
   let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
   let state = null;
@@ -17595,20 +17483,20 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
     if (state.pendingTurn?.jobId !== job.id) return;
     if (isRoomCliRuntimeAgent(agent)) {
       if (textParam(agent, "adapterType") === "codex_local" && textParam(asRecord3(job.payload), "retryRuntime") === "agy") {
-        const workingDirectory2 = isWorkerOnlyRoomAgent(agent) ? workerRoomSandboxDirectory(companyId, issue, agent) : await resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state);
+        const workingDirectory3 = isWorkerOnlyRoomAgent(agent) ? workerRoomSandboxDirectory(companyId, issue, agent) : await resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state);
         job = await updateRoomJob(ctx, job, { status: "working" });
         await saveRoomState(ctx, companyId, issue.id, state, "Bind Agy fallback runtime for queued Room Job");
         emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
         activity = roomActivityReporter(ctx, companyId, issue.id, state);
-        const requestedAttachments2 = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
-        const stagedAttachments2 = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments2, workingDirectory2);
+        const requestedAttachments3 = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
+        const stagedAttachments3 = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments3, workingDirectory3);
         const fallbackSessionId = `agy-quota-retry-${job.id}`;
         const prepared3 = await prepareNativeRoomTurn(ctx, {
           companyId,
           issue,
           state,
           sessionId: fallbackSessionId,
-          currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments2, textParam(job.payload, "retryOfCommentId")),
+          currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments3, textParam(job.payload, "retryOfCommentId")),
           excludedCommentId: job.sourceCommentId
         });
         const turn2 = await runAgyRoomFallback(ctx, {
@@ -17617,15 +17505,15 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
           issue,
           agent,
           state,
-          workingDirectory: workingDirectory2,
+          workingDirectory: workingDirectory3,
           preparedText: prepared3.text,
-          stagedAttachments: stagedAttachments2,
+          stagedAttachments: stagedAttachments3,
           mode: effectiveRoomMessageMode(agent)
         });
         markNativeRoomContextHydrated(state, fallbackSessionId, prepared3);
         await activity.flush();
         const assistantComment3 = await ctx.issues.createComment(issue.id, `**${agent.name}**
-${turnResultText(turn2)}`, companyId);
+${durableRoomJobResultText(job, turn2)}`, companyId);
         state.runtime.updatedAt = now();
         state.runtime.lastError = null;
         state.runtime.quotaRetry = { ...asRecord3(state.runtime.quotaRetry), status: "resolved", resolvedAt: now(), resultCommentId: assistantComment3.id ?? null };
@@ -17637,26 +17525,26 @@ ${turnResultText(turn2)}`, companyId);
         emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
         return job;
       }
-      const { client, threadId, roomRuntime, workingDirectory, agyContext } = await openThread(ctx, runtime, state, companyId, issue, agent);
+      const { client, threadId, roomRuntime, workingDirectory: workingDirectory2, agyContext } = await openThread(ctx, runtime, state, companyId, issue, agent);
       job = await updateRoomJob(ctx, job, { status: "working" });
       await saveRoomState(ctx, companyId, issue.id, state, "Bind Codex app-server thread for Room Job");
       emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
       activity = roomActivityReporter(ctx, companyId, issue.id, state);
-      const requestedAttachments = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
-      const stagedAttachments = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments, workingDirectory);
+      const requestedAttachments2 = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
+      const stagedAttachments2 = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments2, workingDirectory2);
       const prepared2 = await prepareCodexRoomTurn(ctx, {
         companyId,
         issue,
         state,
         threadId,
-        currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments, textParam(job.payload, "retryOfCommentId")),
+        currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments2, textParam(job.payload, "retryOfCommentId")),
         excludedCommentId: job.sourceCommentId
       });
       const started2 = await startRoomTurn(
         client,
         threadId,
         prepared2.text,
-        stagedAttachments,
+        stagedAttachments2,
         agyContext,
         roomRuntime,
         effectiveRoomMessageMode(agent),
@@ -17674,14 +17562,14 @@ ${turnResultText(turn2)}`, companyId);
         issue,
         agent,
         state,
-        workingDirectory,
+        workingDirectory: workingDirectory2,
         preparedText: prepared2.text,
-        stagedAttachments,
+        stagedAttachments: stagedAttachments2,
         mode: effectiveRoomMessageMode(agent)
       }) : await started2.completion;
       await activity.flush();
       const assistantComment2 = await ctx.issues.createComment(issue.id, `**${agent.name}**
-${turnResultText(turn)}`, companyId);
+${durableRoomJobResultText(job, turn)}`, companyId);
       state.runtime.updatedAt = now();
       state.runtime.lastError = null;
       state.lastCommentId = assistantComment2.id ?? job.sourceCommentId ?? null;
@@ -17692,17 +17580,19 @@ ${turnResultText(turn)}`, companyId);
       emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
       return job;
     }
-    const { session } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
+    const { session, workingDirectory } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
     job = await updateRoomJob(ctx, job, { status: "working" });
     await saveRoomState(ctx, companyId, issue.id, state, "Bind native Agent Session for Room Job");
     emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
     activity = nativeRoomActivityReporter(ctx, companyId, issue.id, state);
+    const requestedAttachments = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
+    const stagedAttachments = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments, workingDirectory);
     const prepared = await prepareNativeRoomTurn(ctx, {
       companyId,
       issue,
       state,
       sessionId: session.sessionId,
-      currentText: textParam(job.payload, "message"),
+      currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments, textParam(job.payload, "retryOfCommentId")),
       excludedCommentId: job.sourceCommentId
     });
     const started = await startNativeAgentSessionTurn(ctx, {
@@ -17720,7 +17610,7 @@ ${turnResultText(turn)}`, companyId);
     await saveRoomState(ctx, companyId, issue.id, state, "Record started native Agent Session run");
     const terminalEvent = await started.completion;
     await activity.flush();
-    const assistantMessage = nativeSessionResultText(terminalEvent);
+    const assistantMessage = durableRoomJobResultText(job, terminalEvent, true);
     const assistantComment = await ctx.issues.createComment(issue.id, `**${agent.name}**
 ${assistantMessage}`, companyId);
     state.runtime.updatedAt = now();
@@ -17907,6 +17797,7 @@ async function runDurableRoomCompact(ctx, { companyId, runtime, job: initialJob 
     emitRoomEvent(ctx, companyId, job.roomIssueId, { type: "failed", job });
     throw error;
   }
+  return job;
 }
 async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initialJob }) {
   let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
@@ -18052,6 +17943,7 @@ ${nativeSessionResultText(terminalEvent)}`, companyId);
     emitRoomEvent(ctx, companyId, job.roomIssueId, { type: "failed", job });
     throw error;
   }
+  return job;
 }
 function trimRoomContext(value, limit) {
   const text4 = String(value || "").trim();
@@ -18113,580 +18005,51 @@ ${text4}` },
   if (!turnId) throw new Error("Codex app-server did not return a turn id.");
   return { turnId, completion: client.waitForTurn(threadId, turnId) };
 }
-async function completeRoomTurnOutsideInvocation({
-  apiUrl,
-  companyId,
-  issueId,
-  agentName,
-  state,
-  completion,
-  activityReporter = null,
-  resultVisibilityResolver = null,
-  onProviderQuota = null
-}) {
-  try {
-    const turn = await completion;
-    const assistantMessage = turnResultText(turn);
-    const visibility = resultVisibilityResolver ? await resultVisibilityResolver({ assistantMessage, turn }) : { publish: true };
-    const publishResult = visibility?.publish !== false;
-    const visibleAssistantMessage = typeof visibility?.transformAssistantMessage === "function" ? visibility.transformAssistantMessage(assistantMessage) : assistantMessage;
-    const assistantComment = publishResult ? await createRoomCommentDurably(apiUrl, companyId, issueId, `**${agentName}**
-${visibleAssistantMessage}`) : null;
-    state.runtime.updatedAt = now();
-    state.lastCommentId = assistantComment?.id ?? state.lastCommentId ?? null;
-    state.pendingTurn = null;
-    finishRoomActivity(state, "completed");
-    state.runtime.activity.resultCommentId = assistantComment?.id ?? null;
-    state.runtime.activity.resultSuppressed = !publishResult;
-    state.runtime.activity.suppressionReason = !publishResult ? textParam(visibility, "reason") || "internal_task_feedback" : null;
-    await activityReporter?.flush();
-    await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist completed Room turn");
-    return {
-      ok: true,
-      resultCommentId: assistantComment?.id ?? null,
-      suppressed: !publishResult,
-      suppressionReason: !publishResult ? textParam(visibility, "reason") || "internal_task_feedback" : null
-    };
-  } catch (error) {
-    if (onProviderQuota && isProviderQuotaError(error)) {
-      await activityReporter?.flush();
-      return onProviderQuota(error);
-    }
-    const message = String(error instanceof Error ? error.message : error).slice(0, 500);
-    state.pendingTurn = null;
-    finishRoomActivity(state, "failed", error);
-    try {
-      await activityReporter?.flush();
-      await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist failed Room turn");
-    } catch {
-    }
-    return { ok: false, error: message };
-  }
-}
-async function completeRoomCompactOutsideInvocation({ apiUrl, companyId, issueId, state, completion, client, threadId, activityReporter = null, onProviderQuota = null }) {
-  try {
-    const turn = await completion;
-    await activityReporter?.flush();
-    const checkpoint = {
-      version: (state.checkpoint?.version ?? 0) + 1,
-      summary: turnResultText(turn),
-      sourceCommentId: state.lastCommentId ?? state.pendingTurn?.sourceCommentId ?? null,
-      createdAt: now(),
-      compactedAt: null
-    };
-    state.checkpoint = checkpoint;
-    await appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint);
-    let compacted = { compacted: false, checkpointOnly: true };
-    if (turn?.fallbackFrom !== "codex" && typeof client.compactThread === "function") {
-      if (threadId) manualCodexCompactionThreads.add(threadId);
-      try {
-        compacted = await client.compactThread(threadId);
-      } finally {
-        if (threadId) manualCodexCompactionThreads.delete(threadId);
+async function runQueuedRoomJobs(ctx) {
+  const summary = { scanned: 0, started: 0, completed: 0, waiting: 0, skipped: 0, failed: 0 };
+  if (!ctx.entities?.list) return summary;
+  const runtime = await getRuntimeConfig(ctx);
+  const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
+  for (const record of records) {
+    const job = roomJobData(asRecord3(record.data));
+    if (job.status !== "queued" || !job.id || !job.companyId || !job.roomIssueId) continue;
+    summary.scanned += 1;
+    if (isRoomProviderQuotaRetryJob(job)) {
+      const retryAt = new Date(textParam(asRecord3(job.payload), "quotaRetryAt") || 0).getTime();
+      if (Number.isFinite(retryAt) && retryAt > Date.now()) {
+        summary.waiting += 1;
+        continue;
       }
     }
-    if (compacted.compacted === true) state.checkpoint.compactedAt = now();
-    state.runtime.updatedAt = now();
-    state.pendingTurn = null;
-    finishRoomActivity(state, "completed");
-    state.runtime.activity.compacted = compacted.compacted === true;
-    state.runtime.activity.checkpointOnly = compacted.checkpointOnly === true;
-    await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Record completed Room compact");
-  } catch (error) {
-    if (onProviderQuota && isProviderQuotaError(error)) {
-      await activityReporter?.flush();
-      return onProviderQuota(error);
+    if (activeRoomMessageJobs.has(job.roomIssueId)) {
+      summary.skipped += 1;
+      continue;
     }
-    state.pendingTurn = null;
-    finishRoomActivity(state, "failed", error);
+    const runner = ["room_message", "task_owner_report"].includes(job.kind) ? runDurableRoomMessage : job.kind === "compact_handoff" ? runDurableRoomCompact : runDurableTaskOwnerFeedback;
+    const promise = queueRoom(job.roomIssueId, () => runner(ctx, { companyId: job.companyId, runtime, job }));
+    trackActiveRoomJob(ctx, job.roomIssueId, promise, "Queued Room Job failed.");
+    summary.started += 1;
     try {
-      await activityReporter?.flush();
-      await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist failed Room compact");
-    } catch {
+      const completedJob = await promise;
+      if (completedJob?.status === "completed") summary.completed += 1;
+      else summary.skipped += 1;
+      await reconcileTaskOwnerNotificationForJob(ctx, completedJob).catch((error) => {
+        ctx.logger?.warn?.("Completed Task owner report notification could not be reconciled.", {
+          roomIssueId: job.roomIssueId,
+          taskIssueId: job.taskIssueId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+    } catch (error) {
+      summary.failed += 1;
+      ctx.logger?.warn?.("Queued Room Job could not be completed.", {
+        roomIssueId: job.roomIssueId,
+        taskIssueId: job.taskIssueId,
+        message: error instanceof Error ? error.message : String(error)
+      });
     }
   }
-}
-async function completeTaskOwnerFeedbackOutsideInvocation({ apiUrl, companyId, taskIssueId, ownerRoomIssueId, agentName, ownerState, completion, activityReporter = null, onProviderQuota = null }) {
-  try {
-    const turn = await completion;
-    await activityReporter?.flush();
-    const feedbackComment = await createRoomCommentDurably(apiUrl, companyId, taskIssueId, `## ${agentName} Feedback
-${turnResultText(turn)}`);
-    ownerState.runtime.updatedAt = now();
-    ownerState.pendingTurn = null;
-    finishRoomActivity(ownerState, "completed");
-    ownerState.runtime.activity.resultCommentId = feedbackComment.id ?? null;
-    await saveRoomStateDurably(apiUrl, companyId, ownerRoomIssueId, ownerState, "Persist completed Task feedback");
-  } catch (error) {
-    if (onProviderQuota && isProviderQuotaError(error)) {
-      await activityReporter?.flush();
-      return onProviderQuota(error);
-    }
-    ownerState.pendingTurn = null;
-    finishRoomActivity(ownerState, "failed", error);
-    try {
-      await activityReporter?.flush();
-      await saveRoomStateDurably(apiUrl, companyId, ownerRoomIssueId, ownerState, "Persist failed Task feedback");
-    } catch {
-    }
-  }
-}
-async function completeNativeRoomTurnOutsideInvocation({
-  apiUrl,
-  companyId,
-  issueId,
-  agentName,
-  state,
-  completion,
-  activityReporter,
-  resultVisibilityResolver = null,
-  onProviderQuota = null
-}) {
-  try {
-    const terminalEvent = await completion;
-    await activityReporter?.flush();
-    const assistantMessage = nativeSessionResultText(terminalEvent);
-    const visibility = resultVisibilityResolver ? await resultVisibilityResolver({ assistantMessage, terminalEvent }) : { publish: true };
-    const publishResult = visibility?.publish !== false;
-    const visibleAssistantMessage = typeof visibility?.transformAssistantMessage === "function" ? visibility.transformAssistantMessage(assistantMessage) : assistantMessage;
-    const assistantComment = publishResult ? await createRoomCommentDurably(apiUrl, companyId, issueId, `**${agentName}**
-${visibleAssistantMessage}`) : null;
-    state.runtime.updatedAt = now();
-    state.runtime.lastRunId = terminalEvent.runId;
-    state.runtime.lastError = null;
-    state.lastCommentId = assistantComment?.id ?? state.lastCommentId ?? null;
-    state.pendingTurn = null;
-    finishRoomActivity(state, "completed");
-    state.runtime.activity.resultCommentId = assistantComment?.id ?? null;
-    state.runtime.activity.resultSuppressed = !publishResult;
-    state.runtime.activity.suppressionReason = !publishResult ? textParam(visibility, "reason") || "internal_task_feedback" : null;
-    await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist completed native Agent Session turn");
-    return {
-      ok: true,
-      resultCommentId: assistantComment?.id ?? null,
-      suppressed: !publishResult,
-      suppressionReason: !publishResult ? textParam(visibility, "reason") || "internal_task_feedback" : null
-    };
-  } catch (error) {
-    if (onProviderQuota && isProviderQuotaError(error)) {
-      await activityReporter?.flush();
-      return onProviderQuota(error);
-    }
-    const message = String(error instanceof Error ? error.message : error).slice(0, 500);
-    state.runtime.updatedAt = now();
-    state.runtime.lastError = message;
-    state.pendingTurn = null;
-    finishRoomActivity(state, "failed", error);
-    try {
-      await activityReporter?.flush();
-      await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist failed native Agent Session turn");
-    } catch {
-    }
-    return { ok: false, error: message };
-  }
-}
-async function completeNativeRoomCheckpointOutsideInvocation({ apiUrl, companyId, issueId, state, completion, activityReporter, onProviderQuota = null }) {
-  try {
-    const terminalEvent = await completion;
-    await activityReporter?.flush();
-    const checkpoint = {
-      version: (state.checkpoint?.version ?? 0) + 1,
-      summary: nativeSessionResultText(terminalEvent),
-      sourceCommentId: state.lastCommentId ?? state.pendingTurn?.sourceCommentId ?? null,
-      createdAt: now(),
-      compactedAt: null
-    };
-    state.checkpoint = checkpoint;
-    await appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint);
-    state.runtime.updatedAt = now();
-    state.runtime.lastRunId = terminalEvent.runId;
-    state.runtime.lastError = null;
-    state.pendingTurn = null;
-    finishRoomActivity(state, "completed");
-    state.runtime.activity.checkpointOnly = true;
-    await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist native Agent Session checkpoint");
-  } catch (error) {
-    if (onProviderQuota && isProviderQuotaError(error)) {
-      await activityReporter?.flush();
-      return onProviderQuota(error);
-    }
-    state.runtime.updatedAt = now();
-    state.runtime.lastError = String(error instanceof Error ? error.message : error).slice(0, 500);
-    state.pendingTurn = null;
-    finishRoomActivity(state, "failed", error);
-    try {
-      await activityReporter?.flush();
-      await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist failed native Agent Session checkpoint");
-    } catch {
-    }
-  }
-}
-async function completeNativeTaskOwnerFeedbackOutsideInvocation({ apiUrl, companyId, taskIssueId, ownerRoomIssueId, agentName, ownerState, completion, activityReporter, onProviderQuota = null }) {
-  try {
-    const terminalEvent = await completion;
-    await activityReporter?.flush();
-    const feedbackComment = await createRoomCommentDurably(
-      apiUrl,
-      companyId,
-      taskIssueId,
-      `## ${agentName} Feedback
-${nativeSessionResultText(terminalEvent)}`
-    );
-    ownerState.runtime.updatedAt = now();
-    ownerState.runtime.lastRunId = terminalEvent.runId;
-    ownerState.runtime.lastError = null;
-    ownerState.pendingTurn = null;
-    finishRoomActivity(ownerState, "completed");
-    ownerState.runtime.activity.resultCommentId = feedbackComment.id ?? null;
-    await saveRoomStateDurably(apiUrl, companyId, ownerRoomIssueId, ownerState, "Persist completed native Task feedback");
-  } catch (error) {
-    if (onProviderQuota && isProviderQuotaError(error)) {
-      await activityReporter?.flush();
-      return onProviderQuota(error);
-    }
-    ownerState.runtime.updatedAt = now();
-    ownerState.runtime.lastError = String(error instanceof Error ? error.message : error).slice(0, 500);
-    ownerState.pendingTurn = null;
-    finishRoomActivity(ownerState, "failed", error);
-    try {
-      await activityReporter?.flush();
-      await saveRoomStateDurably(apiUrl, companyId, ownerRoomIssueId, ownerState, "Persist failed native Task feedback");
-    } catch {
-    }
-  }
-}
-async function launchRoomMessageWithinAction(ctx, {
-  companyId,
-  runtime,
-  job: initialJob,
-  issue,
-  agent,
-  state,
-  completionObserver = null,
-  resultVisibilityResolver = null
-}) {
-  let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
-  if (isRoomCliRuntimeAgent(agent)) {
-    const { client, threadId, roomRuntime, workingDirectory: workingDirectory2, agyContext } = await openThread(ctx, runtime, state, companyId, issue, agent);
-    const activityReporter2 = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, issue.id, state);
-    job = await updateRoomJob(ctx, job, { status: "working" });
-    await saveRoomState(ctx, companyId, issue.id, state, "Bind Codex app-server thread for Room Job");
-    emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
-    const requestedAttachments2 = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
-    const stagedAttachments2 = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments2, workingDirectory2);
-    const prepared2 = await prepareCodexRoomTurn(ctx, {
-      companyId,
-      issue,
-      state,
-      threadId,
-      currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments2, textParam(job.payload, "retryOfCommentId")),
-      excludedCommentId: job.sourceCommentId
-    });
-    const started2 = await startRoomTurn(
-      client,
-      threadId,
-      prepared2.text,
-      stagedAttachments2,
-      agyContext,
-      roomRuntime,
-      effectiveRoomMessageMode(agent),
-      activityReporter2
-    );
-    if (roomRuntime.kind === "codex_app_server") markCodexRoomContextHydrated(state, threadId, prepared2);
-    state.runtime.lastError = null;
-    state.runtime.activity.turnId = started2.turnId;
-    state.runtime.activity.updatedAt = now();
-    await saveRoomState(ctx, companyId, issue.id, state, "Record started Codex app-server Room run");
-    const resilientCompletion = roomRuntime.kind === "codex_app_server" ? codexCompletionWithAgyFallback(ctx, {
-      completion: started2.completion,
-      runtime,
-      companyId,
-      issue,
-      agent,
-      state,
-      workingDirectory: workingDirectory2,
-      preparedText: prepared2.text,
-      stagedAttachments: stagedAttachments2,
-      mode: effectiveRoomMessageMode(agent)
-    }) : started2.completion;
-    const baseCompletion2 = completeRoomTurnOutsideInvocation({
-      apiUrl: runtime.spsApiUrl,
-      companyId,
-      issueId: issue.id,
-      agentName: agent.name,
-      state,
-      completion: resilientCompletion,
-      activityReporter: activityReporter2,
-      resultVisibilityResolver,
-      onProviderQuota: (error) => scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state, error })
-    });
-    const completion2 = baseCompletion2.then(async (result) => {
-      if (completionObserver && !result?.retryScheduled) await completionObserver(result);
-      return result;
-    });
-    trackActiveRoomJob(ctx, issue.id, completion2);
-    return { ...job, completion: completion2 };
-  }
-  const { session, workingDirectory } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
-  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, issue.id, state);
-  job = await updateRoomJob(ctx, job, { status: "working" });
-  await saveRoomState(ctx, companyId, issue.id, state, "Bind native Agent Session for Room Job");
-  emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
-  const requestedAttachments = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
-  const stagedAttachments = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments, workingDirectory);
-  const retryOfCommentId = textParam(job.payload, "retryOfCommentId");
-  const prepared = await prepareNativeRoomTurn(ctx, {
-    companyId,
-    issue,
-    state,
-    sessionId: session.sessionId,
-    currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments, retryOfCommentId),
-    excludedCommentId: job.sourceCommentId
-  });
-  const started = await startNativeAgentSessionTurn(ctx, {
-    sessionId: session.sessionId,
-    companyId,
-    prompt: prepared.text,
-    reason: job.kind === "task_owner_report" ? "Review a Worker Task report in the owner Room" : "Continue the long-lived Agent Room",
-    onEvent: activityReporter.report
-  });
-  markNativeRoomContextHydrated(state, session.sessionId, prepared);
-  state.runtime.lastRunId = started.runId;
-  state.runtime.lastError = null;
-  state.runtime.activity.turnId = started.runId;
-  state.runtime.activity.updatedAt = now();
-  await saveRoomState(ctx, companyId, issue.id, state, "Record started native Agent Session run");
-  const baseCompletion = completeNativeRoomTurnOutsideInvocation({
-    apiUrl: runtime.spsApiUrl,
-    companyId,
-    issueId: issue.id,
-    agentName: agent.name,
-    state,
-    completion: started.completion,
-    activityReporter,
-    resultVisibilityResolver,
-    onProviderQuota: (error) => scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state, error })
-  });
-  const completion = baseCompletion.then(async (result) => {
-    if (completionObserver && !result?.retryScheduled) await completionObserver(result);
-    return result;
-  });
-  trackActiveRoomJob(ctx, issue.id, completion);
-  return { ...job, completion };
-}
-async function launchRoomCompactWithinAction(ctx, { companyId, runtime, job: initialJob, issue, agent, state }) {
-  let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
-  if (isRoomCliRuntimeAgent(agent)) {
-    const { client, threadId, roomRuntime, workingDirectory, agyContext } = await openThread(ctx, runtime, state, companyId, issue, agent);
-    const activityReporter2 = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, issue.id, state);
-    job = await updateRoomJob(ctx, job, { status: "working" });
-    await saveRoomState(ctx, companyId, issue.id, state, "Bind Codex app-server thread for checkpoint Job");
-    emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
-    const prepared2 = await prepareCodexRoomTurn(ctx, {
-      companyId,
-      issue,
-      state,
-      threadId,
-      currentText: "INTERNAL ROOM CHECKPOINT. Return only a concise handoff summary with current goal, confirmed decisions, referenced artifacts, active or blocked Tasks, open questions, and the next action. Do not greet the user and do not invent decisions."
-    });
-    const started2 = await startRoomTurn(
-      client,
-      threadId,
-      prepared2.text,
-      [],
-      agyContext,
-      roomRuntime,
-      effectiveRoomMessageMode(agent),
-      activityReporter2
-    );
-    if (roomRuntime.kind === "codex_app_server") markCodexRoomContextHydrated(state, threadId, prepared2);
-    state.runtime.lastError = null;
-    state.runtime.activity.turnId = started2.turnId;
-    state.runtime.activity.updatedAt = now();
-    await saveRoomState(ctx, companyId, issue.id, state, "Record started Codex app-server checkpoint run");
-    const resilientCompletion = roomRuntime.kind === "codex_app_server" ? codexCompletionWithAgyFallback(ctx, {
-      completion: started2.completion,
-      runtime,
-      companyId,
-      issue,
-      agent,
-      state,
-      workingDirectory,
-      preparedText: prepared2.text,
-      stagedAttachments: [],
-      mode: effectiveRoomMessageMode(agent)
-    }) : started2.completion;
-    const completion2 = completeRoomCompactOutsideInvocation({
-      apiUrl: runtime.spsApiUrl,
-      companyId,
-      issueId: issue.id,
-      state,
-      completion: resilientCompletion,
-      client,
-      threadId,
-      activityReporter: activityReporter2,
-      onProviderQuota: (error) => scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state, error })
-    });
-    trackActiveRoomJob(ctx, issue.id, completion2);
-    return job;
-  }
-  const { session } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
-  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, issue.id, state);
-  job = await updateRoomJob(ctx, job, { status: "working" });
-  await saveRoomState(ctx, companyId, issue.id, state, "Bind native Agent Session for checkpoint Job");
-  emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
-  const prepared = await prepareNativeRoomTurn(ctx, {
-    companyId,
-    issue,
-    state,
-    sessionId: session.sessionId,
-    currentText: "INTERNAL ROOM CHECKPOINT. Return only a concise handoff summary with current goal, confirmed decisions, referenced artifacts, active or blocked Tasks, open questions, and the next action. Do not greet the user and do not invent decisions."
-  });
-  const started = await startNativeAgentSessionTurn(ctx, {
-    sessionId: session.sessionId,
-    companyId,
-    prompt: prepared.text,
-    reason: "Create a durable Room checkpoint",
-    onEvent: activityReporter.report
-  });
-  markNativeRoomContextHydrated(state, session.sessionId, prepared);
-  state.runtime.lastRunId = started.runId;
-  state.runtime.lastError = null;
-  state.runtime.activity.turnId = started.runId;
-  state.runtime.activity.updatedAt = now();
-  await saveRoomState(ctx, companyId, issue.id, state, "Record started native checkpoint run");
-  const completion = completeNativeRoomCheckpointOutsideInvocation({
-    apiUrl: runtime.spsApiUrl,
-    companyId,
-    issueId: issue.id,
-    state,
-    completion: started.completion,
-    activityReporter,
-    onProviderQuota: (error) => scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state, error })
-  });
-  trackActiveRoomJob(ctx, issue.id, completion);
-  return job;
-}
-async function launchTaskOwnerFeedbackWithinAction(ctx, { companyId, runtime, job: initialJob, task, taskState, comments, ownerRoom, agent, ownerState }) {
-  let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
-  if (textParam(agent, "adapterType") === "codex_local") {
-    const { client, threadId, roomRuntime, workingDirectory } = await openThread(ctx, runtime, ownerState, companyId, ownerRoom, agent);
-    const activityReporter2 = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, ownerRoom.id, ownerState);
-    job = await updateRoomJob(ctx, job, { status: "working" });
-    await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Bind Codex app-server thread for Task feedback Job");
-    emitRoomEvent(ctx, companyId, ownerRoom.id, { type: "job", job });
-    const feedbackPrompt2 = [
-      "TASK ROOM FEEDBACK REQUEST.",
-      "Respond only with concise guidance for the Worker in this Task Room.",
-      "Do not create a new Task, implement work, or change Task status.",
-      `Task: ${task.identifier ?? task.id} ${task.title}`,
-      `Task state: ${JSON.stringify(taskState)}`,
-      `Recent Task comments: ${mostRecentComments(comments, 12).map((comment) => comment.body).join("\n---\n")}`,
-      `User request: ${textParam(job.payload, "message")}`
-    ].join("\n\n");
-    const prepared2 = await prepareCodexRoomTurn(ctx, {
-      companyId,
-      issue: ownerRoom,
-      state: ownerState,
-      threadId,
-      currentText: feedbackPrompt2
-    });
-    const started2 = await startRoomTurn(
-      client,
-      threadId,
-      prepared2.text,
-      [],
-      null,
-      roomRuntime,
-      "agent",
-      activityReporter2
-    );
-    markCodexRoomContextHydrated(ownerState, threadId, prepared2);
-    ownerState.runtime.lastError = null;
-    ownerState.runtime.activity.turnId = started2.turnId;
-    ownerState.runtime.activity.updatedAt = now();
-    await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Record started Codex app-server Task feedback run");
-    const resilientCompletion = codexCompletionWithAgyFallback(ctx, {
-      completion: started2.completion,
-      runtime,
-      companyId,
-      issue: ownerRoom,
-      agent,
-      state: ownerState,
-      workingDirectory,
-      preparedText: prepared2.text,
-      stagedAttachments: [],
-      mode: "agent"
-    });
-    const completion2 = completeTaskOwnerFeedbackOutsideInvocation({
-      apiUrl: runtime.spsApiUrl,
-      companyId,
-      taskIssueId: task.id,
-      ownerRoomIssueId: ownerRoom.id,
-      agentName: agent.name,
-      ownerState,
-      completion: resilientCompletion,
-      activityReporter: activityReporter2,
-      onProviderQuota: (error) => scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue: ownerRoom, state: ownerState, error })
-    });
-    trackActiveRoomJob(ctx, ownerRoom.id, completion2);
-    return job;
-  }
-  const { session } = await ensureNativeRoomSession(ctx, companyId, ownerRoom, agent, ownerState);
-  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, ownerRoom.id, ownerState);
-  job = await updateRoomJob(ctx, job, { status: "working" });
-  await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Bind native Agent Session for Task feedback Job");
-  emitRoomEvent(ctx, companyId, ownerRoom.id, { type: "job", job });
-  const feedbackPrompt = [
-    "TASK ROOM FEEDBACK REQUEST.",
-    "Respond only with concise guidance for the Worker in this Task Room.",
-    "Do not create a new Task, implement work, or change Task status.",
-    `Task: ${task.identifier ?? task.id} ${task.title}`,
-    `Task state: ${JSON.stringify(taskState)}`,
-    `Recent Task comments: ${mostRecentComments(comments, 12).map((comment) => comment.body).join("\n---\n")}`,
-    `User request: ${textParam(job.payload, "message")}`
-  ].join("\n\n");
-  const prepared = await prepareNativeRoomTurn(ctx, {
-    companyId,
-    issue: ownerRoom,
-    state: ownerState,
-    sessionId: session.sessionId,
-    currentText: feedbackPrompt
-  });
-  const started = await startNativeAgentSessionTurn(ctx, {
-    sessionId: session.sessionId,
-    companyId,
-    prompt: prepared.text,
-    reason: "Prepare owner feedback for a Worker Task",
-    onEvent: activityReporter.report
-  });
-  markNativeRoomContextHydrated(ownerState, session.sessionId, prepared);
-  ownerState.runtime.lastRunId = started.runId;
-  ownerState.runtime.lastError = null;
-  ownerState.runtime.activity.turnId = started.runId;
-  ownerState.runtime.activity.updatedAt = now();
-  await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Record started native Task feedback run");
-  const completion = completeNativeTaskOwnerFeedbackOutsideInvocation({
-    apiUrl: runtime.spsApiUrl,
-    companyId,
-    taskIssueId: task.id,
-    ownerRoomIssueId: ownerRoom.id,
-    agentName: agent.name,
-    ownerState,
-    completion: started.completion,
-    activityReporter,
-    onProviderQuota: (error) => scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue: ownerRoom, state: ownerState, error })
-  });
-  trackActiveRoomJob(ctx, ownerRoom.id, completion);
-  return job;
-}
-function startDurableRoomJob(ctx, input) {
-  const issueId = input.job.roomIssueId;
-  if (activeRoomMessageJobs.has(issueId)) return false;
-  const runner = ["room_message", "task_owner_report"].includes(input.job.kind) ? runDurableRoomMessage : input.job.kind === "compact_handoff" ? runDurableRoomCompact : runDurableTaskOwnerFeedback;
-  const promise = queueRoom(issueId, () => runner(ctx, input));
-  trackActiveRoomJob(ctx, issueId, promise);
-  return true;
+  return summary;
 }
 async function handleRoomSendJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
@@ -18713,20 +18076,7 @@ async function handleRoomSendJob(ctx, params, actionCtx) {
   beginRoomActivity(state, job.kind, job.id, userComment.id ?? null);
   await saveRoomState(ctx, companyId, issue.id, state, "Persist queued Room message Job");
   emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
-  try {
-    await launchRoomMessageWithinAction(ctx, { companyId, runtime, job, issue, agent, state });
-    return { ok: true, accepted: true, sourceCommentId: userComment.id ?? null, jobId: job.id };
-  } catch (error) {
-    state.pendingTurn = null;
-    finishRoomActivity(state, "failed", error);
-    await saveRoomState(ctx, companyId, issue.id, state, "Persist failed Room launch");
-    await updateRoomJob(ctx, job, {
-      status: "failed",
-      completedAt: now(),
-      error: String(error instanceof Error ? error.message : error).slice(0, 500)
-    });
-    throw error;
-  }
+  return { ok: true, accepted: true, queued: true, sourceCommentId: userComment.id ?? null, jobId: job.id };
 }
 async function handleRoomCompactJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
@@ -18746,16 +18096,7 @@ async function handleRoomCompactJob(ctx, params, actionCtx) {
   beginRoomActivity(state, job.kind, job.id);
   await saveRoomState(ctx, companyId, issue.id, state, "Persist queued Room compact Job");
   emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
-  try {
-    await launchRoomCompactWithinAction(ctx, { companyId, runtime, job, issue, agent, state });
-    return { ok: true, accepted: true, jobId: job.id };
-  } catch (error) {
-    state.pendingTurn = null;
-    finishRoomActivity(state, "failed", error);
-    await saveRoomState(ctx, companyId, issue.id, state, "Persist failed Room compact launch");
-    await updateRoomJob(ctx, job, { status: "failed", completedAt: now(), error: String(error instanceof Error ? error.message : error).slice(0, 500) });
-    throw error;
-  }
+  return { ok: true, accepted: true, queued: true, jobId: job.id };
 }
 async function handleTaskOwnerFeedbackJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
@@ -18786,17 +18127,7 @@ ${message}`, companyId);
   beginRoomActivity(ownerState, job.kind, job.id);
   await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Persist queued Task feedback Job");
   emitRoomEvent(ctx, companyId, ownerRoom.id, { type: "job", job });
-  const comments = await ctx.issues.listComments(task.id, companyId);
-  try {
-    await launchTaskOwnerFeedbackWithinAction(ctx, { companyId, runtime, job, task, taskState, comments, ownerRoom, agent, ownerState });
-    return { ok: true, accepted: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
-  } catch (error) {
-    ownerState.pendingTurn = null;
-    finishRoomActivity(ownerState, "failed", error);
-    await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Persist failed Task feedback launch");
-    await updateRoomJob(ctx, job, { status: "failed", completedAt: now(), error: String(error instanceof Error ? error.message : error).slice(0, 500) });
-    throw error;
-  }
+  return { ok: true, accepted: true, queued: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
 }
 function taskStatusTransition(event) {
   const payload = asRecord3(event?.payload);
@@ -18993,46 +18324,6 @@ function normalizeTaskOwnerCompletionReport(message) {
   );
   return normalized;
 }
-async function completeTaskOwnerNotificationOutsideInvocation({
-  apiUrl,
-  task,
-  eventId,
-  expectedStatus,
-  jobId,
-  reportCommentId,
-  reportFingerprint,
-  result
-}) {
-  const taskState = await latestTaskRoomStateOutsideInvocation(apiUrl, task, null);
-  if (!taskState) return { skipped: true, reason: "task_room_state_missing" };
-  const notification = asRecord3(taskState.ownerNotification);
-  if (textParam(notification, "reportCommentId") !== reportCommentId) {
-    return { skipped: true, reason: "review_cycle_changed" };
-  }
-  taskState.ownerNotification = {
-    ...notification,
-    eventId,
-    status: result?.ok ? "completed" : "failed",
-    taskStatus: expectedStatus,
-    jobId,
-    reportCommentId,
-    reportFingerprint,
-    resultCommentId: result?.resultCommentId ?? null,
-    ...result?.ok ? {} : {
-      error: String(result?.error || "The owner Room turn failed.").slice(0, 500)
-    },
-    updatedAt: now()
-  };
-  await upsertRoomDocumentOutsideInvocation(apiUrl, {
-    issueId: task.id,
-    key: TASK_ROOM_STATE_KEY,
-    body: serializeState(taskState),
-    title: "Task Room state",
-    format: "markdown",
-    changeSummary: result?.ok ? "Complete automatic Task owner report" : "Record failed automatic Task owner report"
-  });
-  return { ok: result?.ok === true };
-}
 function activeRoomProcessBlocksOwnerReport(ownerState, existingJob, activeProcessJob) {
   if (!activeProcessJob) return false;
   if (ownerState?.pendingTurn || existingJob) return true;
@@ -19109,72 +18400,12 @@ async function runAutomaticTaskOwnerReport(ctx, { companyId, eventId, taskIssueI
     format: "markdown",
     changeSummary: "Queue automatic Task owner report"
   });
-  let launched;
-  try {
-    launched = await launchRoomMessageWithinAction(ctx, {
-      companyId,
-      runtime,
-      job,
-      issue: ownerRoom,
-      agent,
-      state: ownerState,
-      resultVisibilityResolver: () => taskOwnerRoomResultVisibilityOutsideInvocation({
-        apiUrl: runtime.spsApiUrl,
-        task,
-        expectedStatus
-      }),
-      completionObserver: (result) => completeTaskOwnerNotificationOutsideInvocation({
-        apiUrl: runtime.spsApiUrl,
-        task,
-        eventId,
-        expectedStatus,
-        jobId: job.id,
-        reportCommentId,
-        reportFingerprint,
-        result
-      })
-    });
-  } catch (error) {
-    ownerState.pendingTurn = null;
-    finishRoomActivity(ownerState, "failed", error);
-    await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Persist failed automatic Task owner report launch").catch(() => {
-    });
-    const failedTaskState = await latestTaskRoomStateOutsideInvocation(runtime.spsApiUrl, task, taskState).catch(() => taskState);
-    failedTaskState.ownerNotification = {
-      ...asRecord3(failedTaskState.ownerNotification),
-      eventId,
-      status: "failed",
-      taskStatus: expectedStatus,
-      jobId: job.id,
-      reportCommentId,
-      reportFingerprint,
-      error: String(error instanceof Error ? error.message : error).slice(0, 500),
-      updatedAt: now()
-    };
-    await upsertRoomDocumentOutsideInvocation(runtime.spsApiUrl, {
-      issueId: task.id,
-      key: TASK_ROOM_STATE_KEY,
-      body: serializeState(failedTaskState),
-      title: "Task Room state",
-      format: "markdown",
-      changeSummary: "Record failed automatic Task owner report"
-    }).catch(() => {
-    });
-    await createRoomCommentOutsideInvocation(
-      runtime.spsApiUrl,
-      ownerRoom.id,
-      `**System - Task owner report failed**
-${task.identifier ?? task.id} could not be reviewed automatically: ${String(error instanceof Error ? error.message : error).slice(0, 500)}`
-    ).catch(() => {
-    });
-    throw error;
-  }
   return {
     ok: true,
     taskId: task.id,
     ownerRoomIssueId: ownerRoom.id,
     jobId: job.id,
-    completion: launched.completion
+    queued: true
   };
 }
 function issueRunTimestamp(run) {
@@ -19903,6 +19134,16 @@ async function handleTaskStatusUpdated(ctx, event) {
       completion: existingReport
     };
   }
+  const persistedOwnerReport = (await listRoomJobs(ctx, ownerRoomIssueId)).find((job) => job.kind === "task_owner_report" && job.taskIssueId === task.id && ACTIVE_ROOM_JOB_STATUSES.has(job.status) && (job.id === textParam(asRecord3(taskState.ownerNotification), "jobId") || textParam(asRecord3(job.payload), "reportCommentId") === report.comment.id));
+  if (persistedOwnerReport) {
+    return {
+      scheduled: false,
+      reason: "worker_report_in_progress",
+      taskId: task.id,
+      ownerRoomIssueId,
+      jobId: persistedOwnerReport.id
+    };
+  }
   if (taskBoundaryAlreadyReported(taskState, report)) return { scheduled: false, reason: "duplicate_worker_report" };
   const eventId = textParam(event, "eventId") || `${task.id}:${previousStatus}:${nextStatus || task.status}:${report.comment.id}`;
   if (processedTaskOwnerReportEvents.has(eventId)) return { scheduled: false, reason: "duplicate_event" };
@@ -20162,6 +19403,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
       });
       continue;
     }
+    if (job.status === "queued") continue;
     if (activeRoomMessageJobs.has(job.roomIssueId)) continue;
     try {
       const { issue, agent } = await requireRoom(ctx, job.companyId, job.roomIssueId);
@@ -20236,6 +19478,7 @@ var plugin = definePlugin({
       const roomMemorySummary = await reconcileRoomMemoryLifecycle(ctx);
       const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
+      const queuedRoomJobSummary = await runQueuedRoomJobs(ctx);
       ctx.logger?.info?.("Workplane reconciliation completed.", {
         runId: job.runId,
         trigger: job.trigger,
@@ -20243,6 +19486,7 @@ var plugin = definePlugin({
         roomMemorySummary,
         interruptedRoomJobSummary,
         ownerSummary,
+        queuedRoomJobSummary,
         quotaRetryPolicy: "manual_only"
       });
     });
@@ -20472,6 +19716,7 @@ export {
   roomUserCommentBody,
   roomWorkplaneBoundary,
   runAgyRoomFallback,
+  runQueuedRoomJobs,
   saveProjectWorkspaceProfile,
   saveRoomState,
   saveRoomStateOutsideInvocation,

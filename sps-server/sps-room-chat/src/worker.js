@@ -2718,7 +2718,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
     if (Array.isArray(state.runtime.activity.steps)) {
       state.runtime.activity.steps.push({ id: `quota-block-${Date.now()}`, type: "runtime", label: "Agy quota reached; automatic retry is disabled", status: "error", updatedAt: now() });
     }
-    await saveRoomStateOutsideInvocation(runtime.spsApiUrl, issue.id, state, "Record Agy quota block without automatic retry");
+    await saveRoomState(ctx, job.companyId, issue.id, state, "Record Agy quota block without automatic retry");
     emitRoomEvent(ctx, job.companyId, issue.id, { type: "quota_retry_disabled", job: stoppedJob });
     return { ok: true, retryScheduled: false, retryDisabled: true, job: stoppedJob };
   }
@@ -2764,7 +2764,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
   if (Array.isArray(state.runtime.activity.steps)) {
     state.runtime.activity.steps.push({ id: `quota-wait-${Date.now()}`, type: "runtime", label: "Agy quota reached; retrying in 30 minutes", status: "waiting", updatedAt: now() });
   }
-  await saveRoomStateOutsideInvocation(runtime.spsApiUrl, issue.id, state, "Keep Room Job queued for the next Agy quota retry");
+  await saveRoomState(ctx, job.companyId, issue.id, state, "Keep Room Job queued for the next Agy quota retry");
   emitRoomEvent(ctx, job.companyId, issue.id, { type: "quota_retry_scheduled", job: queuedJob, retryAt });
   return { ok: true, retryScheduled: true, retryAt, job: queuedJob };
 }
@@ -2798,9 +2798,7 @@ async function launchDueRoomProviderQuotaRetry(ctx, job, current = Date.now()) {
   beginRoomActivity(state, job.kind, job.id, job.sourceCommentId ?? null);
   state.runtime.activity.steps.push({ id: `quota-retry-${Date.now()}`, type: "runtime", label: "Retrying queued Room turn with Agy", status: "working", updatedAt: now() });
   await saveRoomState(ctx, job.companyId, issue.id, state, "Start due Agy provider quota Room retry");
-  const runtime = await getRuntimeConfig(ctx);
-  const started = startDurableRoomJob(ctx, { companyId: job.companyId, runtime, job });
-  return { launched: started, reason: started ? "launched" : "room_busy" };
+  return { launched: false, reason: "queued_for_scheduler" };
 }
 
 async function reconcileRoomProviderQuotaRetries(ctx, options = {}) {
@@ -4810,7 +4808,7 @@ async function handleRoomView(ctx, params) {
   const roomRuntime = agentRoomRuntime(runtime, agent);
   const pendingJobId = textParam(state.pendingTurn, "jobId");
   const pendingJob = jobs.find((job) => job.id === pendingJobId) ?? null;
-  if (pendingJob && ACTIVE_ROOM_JOB_STATUSES.has(pendingJob.status) && !activeRoomMessageJobs.has(issue.id)) {
+  if (pendingJob && ["starting", "working"].includes(pendingJob.status) && !activeRoomMessageJobs.has(issue.id)) {
     const interrupted = await updateRoomJob(ctx, pendingJob, {
       status: "interrupted",
       completedAt: now(),
@@ -5391,9 +5389,7 @@ async function handleTaskOwnerFeedback(ctx, params, actionCtx) {
   beginRoomActivity(ownerState, job.kind, job.id);
   await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Persist queued Task owner feedback Job");
   emitRoomEvent(ctx, companyId, ownerRoom.id, { type: "job", job });
-  const started = startDurableRoomJob(ctx, { companyId, runtime, job });
-  if (!started) return { ok: false, code: "room_busy", message: `${agent.name} is already working in this Room.` };
-  return { ok: true, accepted: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
+  return { ok: true, accepted: true, queued: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
 }
 
 async function handleRoomBootstrap(ctx, params, actionCtx) {
@@ -5562,6 +5558,11 @@ async function handleRoomCompact(ctx, params, actionCtx) {
   });
 }
 
+function durableRoomJobResultText(job, result, native = false) {
+  const message = native ? nativeSessionResultText(result) : turnResultText(result);
+  return job.kind === "task_owner_report" ? normalizeTaskOwnerCompletionReport(message) : message;
+}
+
 async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob }) {
   let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
   let state = null;
@@ -5605,7 +5606,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
         });
         markNativeRoomContextHydrated(state, fallbackSessionId, prepared);
         await activity.flush();
-        const assistantComment = await ctx.issues.createComment(issue.id, `**${agent.name}**\n${turnResultText(turn)}`, companyId);
+        const assistantComment = await ctx.issues.createComment(issue.id, `**${agent.name}**\n${durableRoomJobResultText(job, turn)}`, companyId);
         state.runtime.updatedAt = now();
         state.runtime.lastError = null;
         state.runtime.quotaRetry = { ...asRecord(state.runtime.quotaRetry), status: "resolved", resolvedAt: now(), resultCommentId: assistantComment.id ?? null };
@@ -5662,7 +5663,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
           })
         : await started.completion;
       await activity.flush();
-      const assistantComment = await ctx.issues.createComment(issue.id, `**${agent.name}**\n${turnResultText(turn)}`, companyId);
+      const assistantComment = await ctx.issues.createComment(issue.id, `**${agent.name}**\n${durableRoomJobResultText(job, turn)}`, companyId);
       state.runtime.updatedAt = now();
       state.runtime.lastError = null;
       state.lastCommentId = assistantComment.id ?? job.sourceCommentId ?? null;
@@ -5673,17 +5674,19 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
       emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
       return job;
     }
-    const { session } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
+    const { session, workingDirectory } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
     job = await updateRoomJob(ctx, job, { status: "working" });
     await saveRoomState(ctx, companyId, issue.id, state, "Bind native Agent Session for Room Job");
     emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
     activity = nativeRoomActivityReporter(ctx, companyId, issue.id, state);
+    const requestedAttachments = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
+    const stagedAttachments = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments, workingDirectory);
     const prepared = await prepareNativeRoomTurn(ctx, {
       companyId,
       issue,
       state,
       sessionId: session.sessionId,
-      currentText: textParam(job.payload, "message"),
+      currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments, textParam(job.payload, "retryOfCommentId")),
       excludedCommentId: job.sourceCommentId
     });
     const started = await startNativeAgentSessionTurn(ctx, {
@@ -5701,7 +5704,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
     await saveRoomState(ctx, companyId, issue.id, state, "Record started native Agent Session run");
     const terminalEvent = await started.completion;
     await activity.flush();
-    const assistantMessage = nativeSessionResultText(terminalEvent);
+    const assistantMessage = durableRoomJobResultText(job, terminalEvent, true);
     const assistantComment = await ctx.issues.createComment(issue.id, `**${agent.name}**\n${assistantMessage}`, companyId);
     state.runtime.updatedAt = now();
     state.runtime.lastRunId = terminalEvent.runId;
@@ -5890,6 +5893,7 @@ async function runDurableRoomCompact(ctx, { companyId, runtime, job: initialJob 
     emitRoomEvent(ctx, companyId, job.roomIssueId, { type: "failed", job });
     throw error;
   }
+  return job;
 }
 
 async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initialJob }) {
@@ -6034,6 +6038,7 @@ async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initi
     emitRoomEvent(ctx, companyId, job.roomIssueId, { type: "failed", job });
     throw error;
   }
+  return job;
 }
 
 function trimRoomContext(value, limit) {
@@ -6706,6 +6711,60 @@ function startDurableRoomJob(ctx, input) {
   return true;
 }
 
+async function runQueuedRoomJobs(ctx) {
+  const summary = { scanned: 0, started: 0, completed: 0, waiting: 0, skipped: 0, failed: 0 };
+  if (!ctx.entities?.list) return summary;
+  const runtime = await getRuntimeConfig(ctx);
+  const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
+
+  for (const record of records) {
+    const job = roomJobData(asRecord(record.data));
+    if (job.status !== "queued" || !job.id || !job.companyId || !job.roomIssueId) continue;
+    summary.scanned += 1;
+
+    if (isRoomProviderQuotaRetryJob(job)) {
+      const retryAt = new Date(textParam(asRecord(job.payload), "quotaRetryAt") || 0).getTime();
+      if (Number.isFinite(retryAt) && retryAt > Date.now()) {
+        summary.waiting += 1;
+        continue;
+      }
+    }
+    if (activeRoomMessageJobs.has(job.roomIssueId)) {
+      summary.skipped += 1;
+      continue;
+    }
+
+    const runner = ["room_message", "task_owner_report"].includes(job.kind)
+      ? runDurableRoomMessage
+      : job.kind === "compact_handoff"
+        ? runDurableRoomCompact
+        : runDurableTaskOwnerFeedback;
+    const promise = queueRoom(job.roomIssueId, () => runner(ctx, { companyId: job.companyId, runtime, job }));
+    trackActiveRoomJob(ctx, job.roomIssueId, promise, "Queued Room Job failed.");
+    summary.started += 1;
+    try {
+      const completedJob = await promise;
+      if (completedJob?.status === "completed") summary.completed += 1;
+      else summary.skipped += 1;
+      await reconcileTaskOwnerNotificationForJob(ctx, completedJob).catch((error) => {
+        ctx.logger?.warn?.("Completed Task owner report notification could not be reconciled.", {
+          roomIssueId: job.roomIssueId,
+          taskIssueId: job.taskIssueId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+    } catch (error) {
+      summary.failed += 1;
+      ctx.logger?.warn?.("Queued Room Job could not be completed.", {
+        roomIssueId: job.roomIssueId,
+        taskIssueId: job.taskIssueId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  return summary;
+}
+
 async function handleRoomSendJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
@@ -6731,20 +6790,7 @@ async function handleRoomSendJob(ctx, params, actionCtx) {
   beginRoomActivity(state, job.kind, job.id, userComment.id ?? null);
   await saveRoomState(ctx, companyId, issue.id, state, "Persist queued Room message Job");
   emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
-  try {
-    await launchRoomMessageWithinAction(ctx, { companyId, runtime, job, issue, agent, state });
-    return { ok: true, accepted: true, sourceCommentId: userComment.id ?? null, jobId: job.id };
-  } catch (error) {
-    state.pendingTurn = null;
-    finishRoomActivity(state, "failed", error);
-    await saveRoomState(ctx, companyId, issue.id, state, "Persist failed Room launch");
-    await updateRoomJob(ctx, job, {
-      status: "failed",
-      completedAt: now(),
-      error: String(error instanceof Error ? error.message : error).slice(0, 500)
-    });
-    throw error;
-  }
+  return { ok: true, accepted: true, queued: true, sourceCommentId: userComment.id ?? null, jobId: job.id };
 }
 
 async function handleRoomCompactJob(ctx, params, actionCtx) {
@@ -6765,16 +6811,7 @@ async function handleRoomCompactJob(ctx, params, actionCtx) {
   beginRoomActivity(state, job.kind, job.id);
   await saveRoomState(ctx, companyId, issue.id, state, "Persist queued Room compact Job");
   emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
-  try {
-    await launchRoomCompactWithinAction(ctx, { companyId, runtime, job, issue, agent, state });
-    return { ok: true, accepted: true, jobId: job.id };
-  } catch (error) {
-    state.pendingTurn = null;
-    finishRoomActivity(state, "failed", error);
-    await saveRoomState(ctx, companyId, issue.id, state, "Persist failed Room compact launch");
-    await updateRoomJob(ctx, job, { status: "failed", completedAt: now(), error: String(error instanceof Error ? error.message : error).slice(0, 500) });
-    throw error;
-  }
+  return { ok: true, accepted: true, queued: true, jobId: job.id };
 }
 
 async function handleTaskOwnerFeedbackJob(ctx, params, actionCtx) {
@@ -6805,17 +6842,7 @@ async function handleTaskOwnerFeedbackJob(ctx, params, actionCtx) {
   beginRoomActivity(ownerState, job.kind, job.id);
   await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Persist queued Task feedback Job");
   emitRoomEvent(ctx, companyId, ownerRoom.id, { type: "job", job });
-  const comments = await ctx.issues.listComments(task.id, companyId);
-  try {
-    await launchTaskOwnerFeedbackWithinAction(ctx, { companyId, runtime, job, task, taskState, comments, ownerRoom, agent, ownerState });
-    return { ok: true, accepted: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
-  } catch (error) {
-    ownerState.pendingTurn = null;
-    finishRoomActivity(ownerState, "failed", error);
-    await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Persist failed Task feedback launch");
-    await updateRoomJob(ctx, job, { status: "failed", completedAt: now(), error: String(error instanceof Error ? error.message : error).slice(0, 500) });
-    throw error;
-  }
+  return { ok: true, accepted: true, queued: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
 }
 
 function taskStatusTransition(event) {
@@ -7207,68 +7234,12 @@ async function runAutomaticTaskOwnerReport(ctx, { companyId, eventId, taskIssueI
     changeSummary: "Queue automatic Task owner report"
   });
 
-  let launched;
-  try {
-    launched = await launchRoomMessageWithinAction(ctx, {
-      companyId,
-      runtime,
-      job,
-      issue: ownerRoom,
-      agent,
-      state: ownerState,
-      resultVisibilityResolver: () => taskOwnerRoomResultVisibilityOutsideInvocation({
-        apiUrl: runtime.spsApiUrl,
-        task,
-        expectedStatus
-      }),
-      completionObserver: (result) => completeTaskOwnerNotificationOutsideInvocation({
-        apiUrl: runtime.spsApiUrl,
-        task,
-        eventId,
-        expectedStatus,
-        jobId: job.id,
-        reportCommentId,
-        reportFingerprint,
-        result
-      })
-    });
-  } catch (error) {
-    ownerState.pendingTurn = null;
-    finishRoomActivity(ownerState, "failed", error);
-    await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Persist failed automatic Task owner report launch").catch(() => {});
-    const failedTaskState = await latestTaskRoomStateOutsideInvocation(runtime.spsApiUrl, task, taskState).catch(() => taskState);
-    failedTaskState.ownerNotification = {
-      ...asRecord(failedTaskState.ownerNotification),
-      eventId,
-      status: "failed",
-      taskStatus: expectedStatus,
-      jobId: job.id,
-      reportCommentId,
-      reportFingerprint,
-      error: String(error instanceof Error ? error.message : error).slice(0, 500),
-      updatedAt: now()
-    };
-    await upsertRoomDocumentOutsideInvocation(runtime.spsApiUrl, {
-      issueId: task.id,
-      key: TASK_ROOM_STATE_KEY,
-      body: serializeState(failedTaskState),
-      title: "Task Room state",
-      format: "markdown",
-      changeSummary: "Record failed automatic Task owner report"
-    }).catch(() => {});
-    await createRoomCommentOutsideInvocation(
-      runtime.spsApiUrl,
-      ownerRoom.id,
-      `**System - Task owner report failed**\n${task.identifier ?? task.id} could not be reviewed automatically: ${String(error instanceof Error ? error.message : error).slice(0, 500)}`
-    ).catch(() => {});
-    throw error;
-  }
   return {
     ok: true,
     taskId: task.id,
     ownerRoomIssueId: ownerRoom.id,
     jobId: job.id,
-    completion: launched.completion
+    queued: true
   };
 }
 
@@ -8077,6 +8048,22 @@ async function handleTaskStatusUpdated(ctx, event) {
       completion: existingReport
     };
   }
+  const persistedOwnerReport = (await listRoomJobs(ctx, ownerRoomIssueId)).find((job) => (
+    job.kind === "task_owner_report"
+    && job.taskIssueId === task.id
+    && ACTIVE_ROOM_JOB_STATUSES.has(job.status)
+    && (job.id === textParam(asRecord(taskState.ownerNotification), "jobId")
+      || textParam(asRecord(job.payload), "reportCommentId") === report.comment.id)
+  ));
+  if (persistedOwnerReport) {
+    return {
+      scheduled: false,
+      reason: "worker_report_in_progress",
+      taskId: task.id,
+      ownerRoomIssueId,
+      jobId: persistedOwnerReport.id
+    };
+  }
   if (taskBoundaryAlreadyReported(taskState, report)) return { scheduled: false, reason: "duplicate_worker_report" };
 
   const eventId = textParam(event, "eventId") || `${task.id}:${previousStatus}:${nextStatus || task.status}:${report.comment.id}`;
@@ -8354,6 +8341,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
       });
       continue;
     }
+    if (job.status === "queued") continue;
     if (activeRoomMessageJobs.has(job.roomIssueId)) continue;
     try {
       const { issue, agent } = await requireRoom(ctx, job.companyId, job.roomIssueId);
@@ -8429,6 +8417,7 @@ const plugin = definePlugin({
       const roomMemorySummary = await reconcileRoomMemoryLifecycle(ctx);
       const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
+      const queuedRoomJobSummary = await runQueuedRoomJobs(ctx);
       ctx.logger?.info?.("Workplane reconciliation completed.", {
         runId: job.runId,
         trigger: job.trigger,
@@ -8436,6 +8425,7 @@ const plugin = definePlugin({
         roomMemorySummary,
         interruptedRoomJobSummary,
         ownerSummary,
+        queuedRoomJobSummary,
         quotaRetryPolicy: "manual_only"
       });
     });
@@ -8543,7 +8533,7 @@ function setActiveRoomJobForTest(issueId, promise) {
   else activeRoomMessageJobs.delete(issueId);
 }
 
-export { agentInstructions, agentInstructionsFingerprint, agentRoomAgentId, agentRoomRuntime, agentSessionContextMatches, appendCheckpoint, appendNativeCompactionOutsideInvocation, applyCodexAccountToAdapterConfig, applyNativeSessionActivityEvent, attachmentIdsParam, buildAgyRoomPrompt, buildRoomOperatingBrief, cancelResolvedTaskOwnerQuotaRetry, cancelResolvedTaskWorkerQuotaRetry, chooseDefaultWorkspace, chooseTaskWorkspace, cleanupRoomAttachmentCache, codexAccountLabel, codexClientKey, configuredEnvironment, configuredEnvironmentValue, defaultWorkspaceKindForAgent, enforceUtf8Text, ensureNativeRoomSession, excludeWorkspaceRoomAttachments, fetchRoomMemory, getCodexClient, getRuntimeConfig, handleCodexAccountSelect, handleCodexAccountsView, handleCodexServerRequest, handleOrganizationAgentPolicySave, handleOrganizationSettingsView, handleProjectTasksView, handleProjectWorkplaneView, handleRoomBootstrap, handleRoomCompact, handleRoomCompactJob, handleRoomSend, handleRoomSendJob, handleRoomTaskSummary, handleRoomView, handleRoomWorkspaceView, handleTaskOwnerFeedback, handleTaskOwnerFeedbackJob, handleTaskOwnerReportReconcile, handleTaskRoomView, handleTaskStatusUpdated, isAgentRoom, isCodexImageAttachment, isLongLivedRoom, isProviderQuotaError, isProviderQuotaRun, isRoomProviderQuotaRetryJob, isRoomUserComment, isWorkerOnlyRoomAgent, listIssueAttachmentsDirect, listIssueRunsDirect, listRoomJobs, loadAgentInstructions, loadRoomState, loadRoomWorkState, localCodexAccounts, mergeRoomAttachments, mergeRoomWorkState, mostRecentComments, nativeCompactionEventId, nativeSessionResultText, newRoomState, newRoomWorkState, nextProviderQuotaRetryAt, normalizeCodexHome, normalizeRoomWorkState, parseAgyFallbackEnvelope, parseState, prepareCodexRoomTurn, prepareNativeRoomTurn, proposeRoomMemory, providerQuotaRetryAtFromError, providerQuotaRetryState, provisionProjectAgentRooms, provisionAllProjectAgentRooms, queueProjectRoomProvision, queueRoomDocumentWrite, reconcileAllProjectAgentRooms, reconcileInterruptedRoomJobs, reconcileProviderQuotaRetries, reconcileProviderQuotaTask, reconcileRoomProviderQuotaRetries, reconcileTaskOwnerReportBoundaries, recordNativeCodexCompaction, repairUtf8Mojibake, resolveCodexHomeForAgent, resolveRoomAttachments, retryRoomDocumentWrite, roomAttachmentCommentBlock, roomAttachmentName, roomAttachmentWorkspaceRoot, roomHasActiveWork, roomRole, roomRuntimeDisabledResult, roomRuntimeWithRoomSafety, roomThreadIdForCodexRuntime, roomTools, roomTurnText, roomUserCommentBody, roomWorkplaneBoundary, runAgyRoomFallback, saveRoomState, saveRoomStateOutsideInvocation, saveRoomWorkState, scheduleRoomProviderQuotaRetry, searchRoomMemory, serializeState, setActiveRoomJobForTest, setActiveThreadContextForTest, setAgyClientFactoryForTest, setCodexClientForTest, stageRoomAttachments, startNativeAgentSessionTurn, startRoomTurn, syncAgentRoomTitles, taskOwnerReportPrompt, taskOwnerRoomResultVisibilityOutsideInvocation, taskStatusTransition, updateAgentAdapterConfigDirect, updateRoomWorkStateOutsideInvocation, validateRoomRetrySource, workspaceGitChanges, workspaceGitExcludePath, workspaceKindForProjectWorkspace, workspaceLocalPath };
+export { agentInstructions, agentInstructionsFingerprint, agentRoomAgentId, agentRoomRuntime, agentSessionContextMatches, appendCheckpoint, appendNativeCompactionOutsideInvocation, applyCodexAccountToAdapterConfig, applyNativeSessionActivityEvent, attachmentIdsParam, buildAgyRoomPrompt, buildRoomOperatingBrief, cancelResolvedTaskOwnerQuotaRetry, cancelResolvedTaskWorkerQuotaRetry, chooseDefaultWorkspace, chooseTaskWorkspace, cleanupRoomAttachmentCache, codexAccountLabel, codexClientKey, configuredEnvironment, configuredEnvironmentValue, defaultWorkspaceKindForAgent, enforceUtf8Text, ensureNativeRoomSession, excludeWorkspaceRoomAttachments, fetchRoomMemory, getCodexClient, getRuntimeConfig, handleCodexAccountSelect, handleCodexAccountsView, handleCodexServerRequest, handleOrganizationAgentPolicySave, handleOrganizationSettingsView, handleProjectTasksView, handleProjectWorkplaneView, handleRoomBootstrap, handleRoomCompact, handleRoomCompactJob, handleRoomSend, handleRoomSendJob, handleRoomTaskSummary, handleRoomView, handleRoomWorkspaceView, handleTaskOwnerFeedback, handleTaskOwnerFeedbackJob, handleTaskOwnerReportReconcile, handleTaskRoomView, handleTaskStatusUpdated, isAgentRoom, isCodexImageAttachment, isLongLivedRoom, isProviderQuotaError, isProviderQuotaRun, isRoomProviderQuotaRetryJob, isRoomUserComment, isWorkerOnlyRoomAgent, listIssueAttachmentsDirect, listIssueRunsDirect, listRoomJobs, loadAgentInstructions, loadRoomState, loadRoomWorkState, localCodexAccounts, mergeRoomAttachments, mergeRoomWorkState, mostRecentComments, nativeCompactionEventId, nativeSessionResultText, newRoomState, newRoomWorkState, nextProviderQuotaRetryAt, normalizeCodexHome, normalizeRoomWorkState, parseAgyFallbackEnvelope, parseState, prepareCodexRoomTurn, prepareNativeRoomTurn, proposeRoomMemory, providerQuotaRetryAtFromError, providerQuotaRetryState, provisionProjectAgentRooms, provisionAllProjectAgentRooms, queueProjectRoomProvision, queueRoomDocumentWrite, reconcileAllProjectAgentRooms, reconcileInterruptedRoomJobs, reconcileProviderQuotaRetries, reconcileProviderQuotaTask, reconcileRoomProviderQuotaRetries, reconcileTaskOwnerReportBoundaries, recordNativeCodexCompaction, repairUtf8Mojibake, resolveCodexHomeForAgent, resolveRoomAttachments, retryRoomDocumentWrite, roomAttachmentCommentBlock, roomAttachmentName, roomAttachmentWorkspaceRoot, roomHasActiveWork, roomRole, roomRuntimeDisabledResult, roomRuntimeWithRoomSafety, roomThreadIdForCodexRuntime, roomTools, roomTurnText, roomUserCommentBody, roomWorkplaneBoundary, runAgyRoomFallback, runQueuedRoomJobs, saveRoomState, saveRoomStateOutsideInvocation, saveRoomWorkState, scheduleRoomProviderQuotaRetry, searchRoomMemory, serializeState, setActiveRoomJobForTest, setActiveThreadContextForTest, setAgyClientFactoryForTest, setCodexClientForTest, stageRoomAttachments, startNativeAgentSessionTurn, startRoomTurn, syncAgentRoomTitles, taskOwnerReportPrompt, taskOwnerRoomResultVisibilityOutsideInvocation, taskStatusTransition, updateAgentAdapterConfigDirect, updateRoomWorkStateOutsideInvocation, validateRoomRetrySource, workspaceGitChanges, workspaceGitExcludePath, workspaceKindForProjectWorkspace, workspaceLocalPath };
 export { activeRoomProcessBlocksOwnerReport, isSubstantiveTaskBoundaryReport, reconcileTaskOwnerNotificationStateForJob, taskBoundaryReportKind };
 export { collaborationReadinessFromConfig, handleOrganizationCollaborationReadiness, handleOrganizationSettingsAccess, readCollaborationReadiness, requireAgentConfigurationAction };
 export { handleWorkspaceProfileAccess, handleWorkspaceProfileCreateWorkspace, handleWorkspaceProfileSave, loadProjectWorkspaceProfile, normalizeWorkspaceProfile, profileWorkspace, saveProjectWorkspaceProfile };

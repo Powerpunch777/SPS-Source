@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
-const { handleRoomSendJob } = await import("../dist/worker.js");
+const { handleRoomSendJob, runQueuedRoomJobs } = await import("../dist/worker.js");
 
 const companyId = "company-retry";
 const roomId = "room-retry";
@@ -109,15 +109,16 @@ const result = await handleRoomSendJob(ctx, {
 }, { actor: { type: "user" }, companyId });
 assert.equal(result.ok, true);
 assert.match(comments.find((comment) => comment.id === result.sourceCommentId).body, new RegExp(`paperclip-room-retry-of:${originalCommentId}`));
+actionCompleted = true;
+await runQueuedRoomJobs(ctx);
 assert.match(turnInput, /USER MESSAGE REVISION/);
 assert.match(turnInput, new RegExp(originalCommentId));
-actionCompleted = true;
 for (let attempt = 0; attempt < 30 && !comments.some((comment) => comment.body.includes("Revised request recorded.")); attempt += 1) {
   await new Promise((resolve) => setTimeout(resolve, 5));
 }
 assert.equal(comments.some((comment) => comment.body.includes("Revised request recorded.")), true);
-assert.equal(postActionDocumentReads, 0, "progress persistence must not use the expired action-scoped document API");
-assert.equal(postActionStreamEvents, 0, "progress persistence must not emit through an expired action-scoped stream");
+assert.ok(postActionDocumentReads > 0, "the scheduler must persist through its fresh document capability scope");
+assert.ok(postActionStreamEvents > 0, "the scheduler must publish Room activity through its fresh stream capability scope");
 
 globalThis.fetch = originalFetch;
-console.log("PASS Room retries preserve the original message and send the revised instruction as current");
+console.log("PASS Room retries preserve the original message and complete through a fresh scheduler capability scope");

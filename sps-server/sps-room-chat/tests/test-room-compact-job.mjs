@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
-const { handleRoomCompactJob, parseState } = await import("../dist/worker.js");
+const { handleRoomCompactJob, parseState, runQueuedRoomJobs } = await import("../dist/worker.js");
 
 const companyId = "company-compact-job";
 const roomId = "room-compact-job";
@@ -70,6 +70,15 @@ const ctx = {
       close: async () => {},
       sendMessage: async (_sessionId, _companyId, options) => {
         terminalCallback = options.onEvent;
+        setTimeout(() => terminalCallback({
+          sessionId: "session-compact-job",
+          runId: "run-compact-job",
+          seq: 1,
+          eventType: "done",
+          stream: "system",
+          message: "Run completed",
+          payload: { status: "succeeded", resultJson: { summary: "Goal and next action are recorded." } }
+        }), 5);
         return { runId: "run-compact-job" };
       }
     }
@@ -84,24 +93,9 @@ const ctx = {
 
 const result = await handleRoomCompactJob(ctx, { issueId: roomId }, { actor: { type: "user" }, companyId });
 assert.equal(result.ok, true);
-assert.equal(entities.get(result.jobId).status, "working");
-
-// The completion happens after the action is over. It may only use the direct Paperclip API.
-ctx.issues.get = async () => { throw new Error("missing, expired, or unknown invocation scope"); };
-terminalCallback({
-  sessionId: "session-compact-job",
-  runId: "run-compact-job",
-  seq: 1,
-  eventType: "done",
-  stream: "system",
-  message: "Run completed",
-  payload: { status: "succeeded", resultJson: { summary: "Goal and next action are recorded." } }
-});
-for (let attempt = 0; attempt < 30; attempt += 1) {
-  const current = parseState(documents.get("ROOM_STATE").body);
-  if (current.pendingTurn === null && current.runtime.activity.status === "completed") break;
-  await new Promise((resolve) => setTimeout(resolve, 5));
-}
+assert.equal(entities.get(result.jobId).status, "queued");
+const dispatch = await runQueuedRoomJobs(ctx);
+assert.equal(dispatch.completed, 1);
 const finalState = parseState(documents.get("ROOM_STATE").body);
 assert.equal(finalState.pendingTurn, null);
 assert.equal(finalState.runtime.activity.status, "completed");
@@ -111,4 +105,4 @@ assert.equal(finalState.runtime.activity.checkpointOnly, true);
 assert.equal(parseState(documents.get("ROOM_CHECKPOINTS").body).length, 1);
 
 globalThis.fetch = originalFetch;
-console.log("PASS native Room checkpoint starts in the action scope and finalizes without an invocation scope");
+console.log("PASS native Room checkpoint is queued by the action and completes in a fresh scheduler scope");

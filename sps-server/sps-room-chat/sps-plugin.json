@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "plugin": {
     "id": "local.room-chat",
-    "version": "0.3.88",
+    "version": "0.3.89",
     "apiVersion": "1"
   },
   "runtime": {
     "manifestEntry": "dist/manifest.js",
-    "manifestSha256": "fb35ae7bcd6e6a6938d2b29b9ee39df153cdce905b1b1227d66f783c733ebd17"
+    "manifestSha256": "f3564f2d0c9573e49df1a1841c07edffdaae84790c126edb2338395e38d26459"
   },
   "capabilities": [
     "ui.page.register",

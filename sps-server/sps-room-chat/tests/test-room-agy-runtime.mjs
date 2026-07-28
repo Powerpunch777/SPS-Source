@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
-const { handleRoomSendJob, handleRoomView, parseState, setAgyClientFactoryForTest } = await import("../dist/worker.js");
+const { handleRoomSendJob, handleRoomView, parseState, runQueuedRoomJobs, setAgyClientFactoryForTest } = await import("../dist/worker.js");
 
 const companyId = "company-agy";
 const roomId = "room-agy";
@@ -93,6 +93,7 @@ setAgyClientFactoryForTest(({ roomRuntime: runtime, workingDirectory }) => {
 
 const result = await handleRoomSendJob(ctx, { issueId: roomId, message: "Check this QA scenario." }, { actor: { type: "user" }, companyId });
 assert.equal(result.ok, true);
+await runQueuedRoomJobs(ctx);
 for (let attempt = 0; attempt < 30; attempt += 1) {
   const state = parseState(documents.get("ROOM_STATE").body);
   if (state.runtime.activity.status === "completed" && state.pendingTurn === null) break;
