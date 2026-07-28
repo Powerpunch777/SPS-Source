@@ -3,18 +3,23 @@ import assert from "node:assert/strict";
 import {
   disabledSpsExtensionStatus,
   isSpsDefaultMemoryEnabled,
+  isSpsPluginDiscoveryEnabled,
   isSpsRoomWorkplaneBundled,
 } from "../src/bundled-extensions.mjs";
 
-test("starts Default Memory but does not choose a Team Workplane by default", () => {
-  assert.equal(isSpsDefaultMemoryEnabled({}), true);
+test("starts Plugin Discovery but does not choose Memory or a Team Workplane by default", () => {
+  assert.equal(isSpsPluginDiscoveryEnabled({}), true);
+  assert.equal(isSpsDefaultMemoryEnabled({}), false);
   assert.equal(isSpsRoomWorkplaneBundled({}), false);
 });
 
 test("accepts explicit provider, Workplane, and legacy bundle modes", () => {
+  assert.equal(isSpsDefaultMemoryEnabled({ SPS_ENABLE_DEFAULT_MEMORY: "true" }), true);
   assert.equal(isSpsDefaultMemoryEnabled({ SPS_ENABLE_DEFAULT_MEMORY: "false" }), false);
   assert.equal(isSpsRoomWorkplaneBundled({ SPS_ENABLE_ROOM_WORKPLANE: "true" }), true);
   assert.equal(isSpsDefaultMemoryEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "false" }), false);
+  assert.equal(isSpsPluginDiscoveryEnabled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "false" }), false);
+  assert.equal(isSpsPluginDiscoveryEnabled({ SPS_ENABLE_PLUGIN_DISCOVERY: "false" }), false);
   assert.equal(isSpsRoomWorkplaneBundled({ SPS_ENABLE_BUNDLED_EXTENSIONS: "false" }), false);
   assert.equal(isSpsRoomWorkplaneBundled({ SPS_ENABLE_BUNDLED_EXTENSIONS: " TRUE " }), true);
 });

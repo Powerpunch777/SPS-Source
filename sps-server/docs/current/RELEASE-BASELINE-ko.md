@@ -16,7 +16,7 @@ Desktop 내부의 과거 `plugin-platform` 복제본은 release 입력이 아니
 | Desktop | 상태 | Core | Extension Profile | Plugin API | 배포 경로 |
 | --- | --- | --- | --- | --- | --- |
 | 0.4.49 | 기존 공개 파일 | 기록 미완성 | 기록 미완성 | 기록 미완성 | `SPS-Desktop-Releases` |
-| 0.4.79 | 개발 후보, 미배포 | `1ce4230334582b5da930cd121c3edd04df88df1e` | 1.0 | 1 | 비공개 Actions artifact만 허용 |
+| 0.4.79 | 개발 후보, 미배포 | `c8846a0e93962f7f1179f859b299da7648b48a50` | 1.0 | 1 | 비공개 Actions artifact만 허용 |
 
 `0.4.49`는 새 기준선 계약을 도입하기 전에 만들어졌으므로 Phase 0의 정식 지원 기준선으로 간주하지 않는다.
 `0.4.79`도 아직 정식 release가 아니다. 소스와 Core 작업 트리가 깨끗하고 아래 게이트를 모두 통과한 새 버전만
@@ -32,6 +32,7 @@ Desktop 내부의 과거 `plugin-platform` 복제본은 release 입력이 아니
 - SPS Extension Profile 1.0, Plugin API 1
 - 번들 extension:
   - SPS Default Memory 0.1.0
+  - Plugin Discovery & Builder 0.1.0
   - SPS Team Workplane 0.3.91
 
 ## 빌드가 기록하는 정보

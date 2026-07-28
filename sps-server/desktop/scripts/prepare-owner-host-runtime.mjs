@@ -142,6 +142,7 @@ async function normalizeWorkspacePackageExports(runtimeRoot) {
 
 const SPS_BUNDLED_OWNER_HOST_PLUGINS = [
   "sps-default-memory",
+  "sps-plugin-discovery",
   "sps-room-chat",
 ];
 

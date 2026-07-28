@@ -79,6 +79,10 @@ import {
 } from "./registry-source-catalog.mjs";
 import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
+  pluginDiscoveryVaultLayout,
+  refreshSpsDiscoveryCatalog,
+} from "./discovery-catalog.mjs";
+import {
   disableSpsTailscaleServe,
   enableSpsTailscaleServe,
   inspectSpsTailscale,
@@ -99,6 +103,7 @@ import { resolveSpsServerAccess } from "./server-access-model.mjs";
 import {
   disabledSpsExtensionStatus,
   isSpsDefaultMemoryEnabled,
+  isSpsPluginDiscoveryEnabled,
   isSpsRoomWorkplaneBundled,
 } from "./bundled-extensions.mjs";
 import { synchronizeSpsTeamWorkplaneConfig } from "./bundled-workplane-config.mjs";
@@ -819,7 +824,9 @@ async function ensureOwnerHostManager() {
   const vaultRoot = ownerVaultRoot();
   const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
   const defaultMemoryEnabled = isSpsDefaultMemoryEnabled();
+  const pluginDiscoveryEnabled = isSpsPluginDiscoveryEnabled();
   const roomWorkplaneBundled = isSpsRoomWorkplaneBundled();
+  const discoveryCatalog = pluginDiscoveryVaultLayout(vaultRoot);
   const defaultMemory = defaultMemoryEnabled
     ? await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot })
     : null;
@@ -829,6 +836,20 @@ async function ensureOwnerHostManager() {
     return { ...ownerHost, defaultMemory, url };
   }
 
+  // The Owner Host, rather than the Agent-facing plugin, verifies the official
+  // Registry. An offline refresh leaves the last trusted snapshot in place so
+  // startup and the rest of SPS do not depend on marketplace availability.
+  if (pluginDiscoveryEnabled) {
+    try {
+      const refreshed = await refreshSpsDiscoveryCatalog({ ownerVaultRoot: vaultRoot });
+      if (!refreshed.refreshed) {
+        console.warn("SPS Plugin Discovery catalog refresh was unavailable", refreshed.errors);
+      }
+    } catch (error) {
+      console.warn("SPS Plugin Discovery catalog refresh failed", error);
+    }
+  }
+
   const sourceRuntimeRoot = app.isPackaged
     ? path.join(process.resourcesPath, "sps-owner-host-runtime")
     : path.join(__dirname, "..", ".owner-host-runtime");
@@ -836,6 +857,7 @@ async function ensureOwnerHostManager() {
   const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
   const developmentMemorySidecarEntry = path.resolve(__dirname, "..", "..", "memory-sidecar", "memory-sidecar.mjs");
   const developmentMemoryPluginPath = path.resolve(__dirname, "..", "..", "sps-default-memory");
+  const developmentDiscoveryPluginPath = path.resolve(__dirname, "..", "..", "sps-plugin-discovery");
   const developmentRoomPluginPath = path.resolve(__dirname, "..", "..", "sps-room-chat");
   defaultMemoryManager = defaultMemory
     ? createSpsDefaultMemoryManager({
@@ -874,6 +896,7 @@ async function ensureOwnerHostManager() {
         runInPlace: app.isPackaged,
       });
       const packagedMemoryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-default-memory") : null;
+      const packagedDiscoveryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-plugin-discovery") : null;
       const packagedRoomPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-room-chat") : null;
       const memoryPluginPath = packagedMemoryPluginPath && existsSync(path.join(packagedMemoryPluginPath, "package.json"))
         ? packagedMemoryPluginPath
@@ -881,8 +904,12 @@ async function ensureOwnerHostManager() {
       const roomPluginPath = packagedRoomPluginPath && existsSync(path.join(packagedRoomPluginPath, "package.json"))
         ? packagedRoomPluginPath
         : developmentRoomPluginPath;
+      const discoveryPluginPath = packagedDiscoveryPluginPath && existsSync(path.join(packagedDiscoveryPluginPath, "package.json"))
+        ? packagedDiscoveryPluginPath
+        : developmentDiscoveryPluginPath;
       const bundledPluginPaths = [
         ...(defaultMemoryEnabled ? [memoryPluginPath] : []),
+        ...(pluginDiscoveryEnabled ? [discoveryPluginPath] : []),
         ...(roomWorkplaneBundled ? [roomPluginPath] : []),
       ];
       return resolveSpsOwnerHostRuntime({
@@ -912,6 +939,7 @@ async function ensureOwnerHostManager() {
           ].join(","),
           SPS_WORKPLANE_DEFAULT_PROJECT_TAB: "plugin:local.room-chat:project-workplane",
           SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
+          ...(pluginDiscoveryEnabled ? { SPS_PLUGIN_DISCOVERY_CATALOG_PATH: discoveryCatalog.catalogPath } : {}),
           PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
           // The Room Worker can run without the optional Memory provider, but
           // it still needs the Owner Host address for its own tool calls.

@@ -4,10 +4,19 @@ function enabledUnlessFalse(value, fallback) {
 }
 
 export function isSpsDefaultMemoryEnabled(env = process.env) {
-  // Default Memory is the first-party implementation of the Core memory
-  // provider contract, so a normal Owner Host starts it without installation.
+  // Memory strategy belongs to the Company, not the neutral SPS starting
+  // point. Desktop ships the provider, but the first Company does not start
+  // it until the owner deliberately enables it.
   if (!enabledUnlessFalse(env.SPS_ENABLE_BUNDLED_EXTENSIONS, true)) return false;
-  return enabledUnlessFalse(env.SPS_ENABLE_DEFAULT_MEMORY, true);
+  return enabledUnlessFalse(env.SPS_ENABLE_DEFAULT_MEMORY, false);
+}
+
+export function isSpsPluginDiscoveryEnabled(env = process.env) {
+  // Discovery is the one first-company helper. It only gives an already
+  // connected Agent catalog-search and draft tools; it does not select a
+  // Workplane, memory strategy, or access model.
+  if (!enabledUnlessFalse(env.SPS_ENABLE_BUNDLED_EXTENSIONS, true)) return false;
+  return enabledUnlessFalse(env.SPS_ENABLE_PLUGIN_DISCOVERY, true);
 }
 
 export function isSpsRoomWorkplaneBundled(env = process.env) {

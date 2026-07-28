@@ -52,14 +52,16 @@ Core는 사람 권한을 보유하지 않는다. 다만 플러그인 manifest에
 
 ## Plugin Discovery & Builder
 
-첫 Company에 활성화되는 기본 플러그인이다. 연결한 첫 Agent에게 다음 기능을 제공한다.
+Owner Host에 기본으로 로드되는 tool provider다. 연결한 Agent에게 다음 기능을 제공한다.
 
 - 사용자 목표와 Company 상태를 대화로 이해
 - Catalog에서 플러그인과 Development Pack 검색·비교·추천
-- 없는 기능의 플러그인 설계, source workspace, manifest, UI, tool, test 초안 작성
-- 생성물 검사, 패키지 준비, 문서 초안 작성
+- 없는 기능의 플러그인 설계, manifest와 capability, 검증 계획 초안 작성
+- 공식 Registry의 검증된 공개 metadata만 읽고, 로컬에 신뢰된 Catalog snapshot만 사용
 
-Agent는 대화 맥락에 따라 검색·제작·플러그인 lifecycle 도구를 사용할지 판단한다. 추천 항목을 선택하는 UI는 설치, 활성화, 업데이트 같은 side effect를 자동으로 호출하지 않는다.
+Discovery의 두 tool은 검색과 설계 초안만 제공한다. 파일 생성, package 설치, 활성화, 업데이트, 제거, Company 변경을 호출하지 않는다. Agent는 대화 맥락에 따라 다른 사용 가능한 도구를 사용할지 판단할 수 있지만, 추천 항목을 선택하는 UI는 설치, 활성화, 업데이트 같은 side effect를 자동으로 호출하지 않는다.
+
+현재 Core의 번들 plugin lifecycle은 Owner Host 단위다. 따라서 Discovery도 같은 Host의 Company에 공통으로 보인다. Company별 기본 활성화·비활성화는 Core가 Company-scoped plugin lifecycle을 제공할 때 구현한다.
 
 ## Settings > Plugins와 Catalog
 
@@ -98,7 +100,8 @@ Company, 실행 기록, Artifact, Memory index, plugin configuration, project so
 | --- | --- |
 | Desktop Host, Agent registry, Node/Runner, 실행 기록 | 구현·검증 진행 중 |
 | 플러그인 manifest, 상태, worker, UI slot, Registry 검사 | 구현되어 있으나 SPS SDK로 정리 중 |
-| Plugin Discovery & Builder 기본 경험 | 목표 |
+| Plugin Discovery & Builder 검색·초안 tool provider | 구현·패키지 런타임 smoke 검증 완료 |
+| Company별 plugin lifecycle | Core 설계 대기 |
 | Access Control, Workplane, Memory Provider | 목표 또는 선택형 확장 |
 | 공개 커뮤니티 Marketplace와 판매·정산 | 제품 방향만 정의, 출시 범위 아님 |
 

@@ -161,6 +161,7 @@ export async function materializeSpsOwnerHostRuntime({
     .catch(() => null);
   const runtimeSupport = [
     { source: path.join(sourceRuntimeRoot, "sps-default-memory", "package.json"), target: path.join(targetRuntimeRoot, "sps-default-memory", "package.json") },
+    { source: path.join(sourceRuntimeRoot, "sps-plugin-discovery", "package.json"), target: path.join(targetRuntimeRoot, "sps-plugin-discovery", "package.json") },
     { source: path.join(sourceRuntimeRoot, "sps-room-chat", "package.json"), target: path.join(targetRuntimeRoot, "sps-room-chat", "package.json") },
     { source: path.join(sourceRuntimeRoot, "memory-sidecar", "memory-sidecar.mjs"), target: path.join(targetRuntimeRoot, "memory-sidecar", "memory-sidecar.mjs") },
   ];

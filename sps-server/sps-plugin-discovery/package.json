@@ -1,0 +1,14 @@
+{
+  "name": "sps-plugin-discovery",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bundled SPS Plugin Discovery and Builder tool provider.",
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "scripts": {
+    "check": "node --test ./test/catalog-tools.test.mjs && node ./scripts/verify-manifest.mjs"
+  }
+}

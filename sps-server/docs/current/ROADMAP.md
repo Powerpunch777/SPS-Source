@@ -98,10 +98,9 @@ Plugin Discovery & Builder와 공식 확장은 이 Profile 위에서만 새 기�
 ### 구현 범위
 
 - 로그인 후 `서버 만들기` 또는 `서버 참여`를 완료하는 onboarding을 제공한다.
-- 새 Company에는 Company container, 연결 확인된 Agent 한 명, `Plugin Discovery & Builder`,
-  `Settings > Plugins`만 만든다. Project, Room, Task, 권한 역할, Memory 정책은 자동 생성하지 않는다.
-- Discovery & Builder는 Catalog 검색·비교·추천, plugin 설계 초안, source workspace와 manifest/test 초안
-  생성을 Agent tool로 지원한다.
+- 새 Company에는 Company container, 연결 확인된 Agent 한 명, `Settings > Plugins`만 만든다. Project, Room, Task, 권한 역할, Memory 정책은 자동 생성하지 않는다.
+- Discovery & Builder는 Owner Host에 번들 tool provider로 로드되어 Catalog 검색·비교·추천과 plugin 설계 초안을
+  Agent tool로 지원한다. Company별 provider 활성화는 Company-scoped plugin lifecycle이 구현되기 전까지 후속 항목이다.
 - Agent가 recommendation, design, lifecycle tool의 사용 여부를 판단한다. 추천을 선택하는 것만으로
   install·activate·update는 실행되지 않는다.
 - 실행 기록, Artifact, plugin lifecycle audit를 Company 안에서 확인·내보내기할 수 있게 한다.
@@ -110,7 +109,7 @@ Plugin Discovery & Builder와 공식 확장은 이 Profile 위에서만 새 기�
 
 1. 새 사용자 또는 새 기기가 로그인한다.
 2. Owner가 서버를 만들고 Agent 하나를 연결해 실행 확인을 받는다.
-3. 사용자가 자연어로 필요한 작업환경을 설명하면 Agent가 Catalog를 검색하거나 없는 plugin의 초안을 만든다.
+3. 사용자가 자연어로 필요한 작업환경을 설명하면 Agent가 검증된 Catalog를 검색하거나 없는 plugin의 구조화된 초안을 만든다.
 4. 사용자가 Settings > Plugins에서 명시적으로 plugin lifecycle을 수행한다.
 5. 앱을 종료·재실행해도 Company, Agent, plugin 상태, 실행 기록이 복구된다.
 

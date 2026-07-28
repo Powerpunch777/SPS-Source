@@ -159,6 +159,25 @@ async function assertDefaultMemoryPlugin() {
   return memory;
 }
 
+async function assertPluginDiscoveryPlugin() {
+  const response = await fetch(`http://127.0.0.1:${port}/api/plugins`, { signal: AbortSignal.timeout(5_000) });
+  if (!response.ok) throw new Error(`Could not inspect bundled plugins (${response.status}).`);
+  const plugins = await response.json();
+  const discovery = Array.isArray(plugins)
+    ? plugins.find((plugin) => plugin?.manifestJson?.id === "sps.plugin-discovery")
+    : null;
+  if (!discovery || discovery.status !== "ready") {
+    throw new Error("SPS Plugin Discovery was not installed and ready in the packaged Owner Host.");
+  }
+  const toolNames = Array.isArray(discovery.manifestJson?.tools)
+    ? discovery.manifestJson.tools.map((tool) => tool?.name).sort()
+    : [];
+  if (toolNames.join(",") !== "draft-sps-extension,search-sps-extensions") {
+    throw new Error("SPS Plugin Discovery did not expose its expected Agent tools in the packaged Owner Host.");
+  }
+  return discovery;
+}
+
 async function assertRoomsPlugin() {
   const response = await fetch(`http://127.0.0.1:${port}/api/plugins`, { signal: AbortSignal.timeout(5_000) });
   if (!response.ok) throw new Error(`Could not inspect bundled plugins (${response.status}).`);
@@ -399,6 +418,14 @@ await mkdir(temporaryRoot, { recursive: true });
 await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 await mkdir(path.dirname(memoryConfigPath), { recursive: true });
 await writeFile(memoryConfigPath, `${JSON.stringify(memoryConfig, null, 2)}\n`, "utf8");
+const discoveryCatalogPath = path.join(temporaryRoot, "plugin-discovery", "official-catalog.json");
+await mkdir(path.dirname(discoveryCatalogPath), { recursive: true });
+await writeFile(discoveryCatalogPath, `${JSON.stringify({
+  schemaVersion: 1,
+  source: { id: "io.sps.official", displayName: "SPS Official Registry" },
+  refreshedAt: new Date().toISOString(),
+  releases: [],
+}, null, 2)}\n`, "utf8");
 const memoryChild = spawn(
   nodeBinary,
   ["--preserve-symlinks", "--preserve-symlinks-main", path.join(executionRuntimeRoot, "memory-sidecar", "memory-sidecar.mjs"), "--config", memoryConfigPath],
@@ -432,8 +459,10 @@ const child = spawn(
       PAPERCLIP_PROJECTS_ROOT: path.join(temporaryRoot, "projects"),
       SPS_BUNDLED_PLUGIN_PATHS: [
         path.join(executionRuntimeRoot, "sps-default-memory"),
+        path.join(executionRuntimeRoot, "sps-plugin-discovery"),
         path.join(executionRuntimeRoot, "sps-room-chat"),
       ].join(path.delimiter),
+      SPS_PLUGIN_DISCOVERY_CATALOG_PATH: discoveryCatalogPath,
       SPS_ROOM_API_URL: `http://127.0.0.1:${port}`,
       SPS_MEMORY_SIDECAR_URL: `http://127.0.0.1:${memoryPort}`,
       SPS_MEMORY_SIDECAR_TOKEN: memoryToken,
@@ -453,6 +482,7 @@ try {
   const health = await waitForHealth(child);
   await assertStaticWorkspaceUi();
   await assertDefaultMemoryPlugin();
+  await assertPluginDiscoveryPlugin();
   await assertRoomsPlugin();
   await assertRegistryLifecycle();
   await assertRegistryAuthoringDesktopFlow();

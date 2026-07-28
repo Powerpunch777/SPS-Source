@@ -27,12 +27,12 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
     builtAt: "2026-07-28T00:00:00.000Z",
   });
   assert.equal(baseline.desktopVersion, "0.4.79");
-  assert.equal(baseline.core.revision, "1ce4230334582b5da930cd121c3edd04df88df1e");
+  assert.equal(baseline.core.revision, "c8846a0e93962f7f1179f859b299da7648b48a50");
   assert.deepEqual(baseline.pluginSdk, {
     repository: "Powerpunch777/sps-plugin-sdk",
-    revision: "8a3d991cffd2256d24310090c4538fffea4ecbbd",
+    revision: "acf5c8011cff6afadf05bd542a2e640625413609",
     package: "@sonparkserver/plugin-sdk",
-    version: "0.1.0",
+    version: "0.1.1",
     dirty: false,
   });
   assert.deepEqual(baseline.extensionProfile, { version: "1.0", pluginApi: 1 });
@@ -40,7 +40,7 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
   assert.equal(baseline.update.repository, "Powerpunch777/SPS-Desktop-Releases");
   assert.deepEqual(
     baseline.bundledExtensions.map((extension) => [extension.id, extension.version]),
-    [["sps.default-memory", "0.1.0"], ["local.room-chat", "0.3.91"]],
+    [["sps.default-memory", "0.1.0"], ["sps.plugin-discovery", "0.1.0"], ["local.room-chat", "0.3.91"]],
   );
 });
 

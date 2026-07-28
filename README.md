@@ -9,11 +9,11 @@ SPS Core manages the Desktop Host, Agents, Nodes, execution records, plugin runt
 1. Sign in to SPS Desktop and create or join a server.
 2. A new server creates an empty Company.
 3. Connect and verify one Agent. This is required.
-4. `Plugin Discovery & Builder` is enabled for that Company.
+4. SPS Desktop starts the bundled `Plugin Discovery & Builder` tool provider.
 5. Talk to the Agent to discover, design, or build the plugins and Packs you need.
 6. Use `Settings > Plugins` to inspect Catalog results and manage installed plugins.
 
-The Catalog is not a separate application. It is the discovery area inside `Settings > Plugins`. A selected recommendation has no automatic lifecycle side effect; Agents decide how to respond to user requests using the available tools.
+The Catalog is not a separate application. It is the discovery area inside `Settings > Plugins`. A selected recommendation has no automatic lifecycle side effect; Agents decide how to respond to user requests using the available tools. The current Core lifecycle loads bundled tool providers on the Owner Host. Per-Company enablement is a later Core lifecycle extension.
 
 ## Repository Layout
 

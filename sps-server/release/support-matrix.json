@@ -5,13 +5,13 @@
     "desktopVersion": "0.4.79",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
-      "revision": "1ce4230334582b5da930cd121c3edd04df88df1e"
+      "revision": "c8846a0e93962f7f1179f859b299da7648b48a50"
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",
-      "revision": "8a3d991cffd2256d24310090c4538fffea4ecbbd",
+      "revision": "acf5c8011cff6afadf05bd542a2e640625413609",
       "package": "@sonparkserver/plugin-sdk",
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
     "extensionProfile": {
       "version": "1.0",
@@ -33,6 +33,13 @@
       {
         "id": "sps.default-memory",
         "package": "sps-default-memory",
+        "version": "0.1.0",
+        "profile": "1.0",
+        "pluginApi": 1
+      },
+      {
+        "id": "sps.plugin-discovery",
+        "package": "sps-plugin-discovery",
         "version": "0.1.0",
         "profile": "1.0",
         "pluginApi": 1
