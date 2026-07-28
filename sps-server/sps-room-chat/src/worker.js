@@ -2532,6 +2532,32 @@ async function createRoomCommentOutsideInvocation(apiUrl, issueId, body) {
   return response.json();
 }
 
+// A Room turn can finish after the originating UI action returns. Use the
+// persistent plugin capability client when the current Core exposes it; never
+// retain the action context itself. The loopback fallback remains only for
+// older Hosts and isolated SDK tests that do not activate the plugin worker.
+function durableRoomPluginContext() {
+  return pluginCtx?.issues?.documents && pluginCtx?.issues?.createComment ? pluginCtx : null;
+}
+
+async function saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary) {
+  const durableCtx = durableRoomPluginContext();
+  if (durableCtx) return saveRoomState(durableCtx, companyId, issueId, state, changeSummary);
+  return saveRoomStateOutsideInvocation(apiUrl, issueId, state, changeSummary);
+}
+
+async function createRoomCommentDurably(apiUrl, companyId, issueId, body) {
+  const durableCtx = durableRoomPluginContext();
+  if (durableCtx) return durableCtx.issues.createComment(issueId, body, companyId);
+  return createRoomCommentOutsideInvocation(apiUrl, issueId, body);
+}
+
+async function appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint) {
+  const durableCtx = durableRoomPluginContext();
+  if (durableCtx) return appendCheckpoint(durableCtx, companyId, issueId, checkpoint);
+  return appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint);
+}
+
 async function appendCheckpoint(ctx, companyId, issueId, checkpoint) {
   const document = await ctx.issues.documents.get(issueId, ROOM_CHECKPOINTS_KEY, companyId);
   let checkpoints = parseState(document?.body);
@@ -3934,10 +3960,10 @@ function nativeRoomActivityReporter(ctx, companyId, issueId, state) {
   };
 }
 
-// A Codex turn outlives the plugin action that started it. Its progress must
-// therefore persist through SPS's loopback API rather than the expired
-// action-scoped plugin context.
-function roomActivityReporterOutsideInvocation(apiUrl, issueId, state) {
+// A Room turn outlives the UI action that started it. It therefore uses the
+// plugin worker's persistent capability client, never the expired action
+// context that initiated the turn.
+function roomActivityReporterOutsideInvocation(apiUrl, companyId, issueId, state) {
   let writes = Promise.resolve();
   let lastPersistedAt = 0;
   let persistTimer = null;
@@ -3945,7 +3971,7 @@ function roomActivityReporterOutsideInvocation(apiUrl, issueId, state) {
   const persist = (changeSummary) => {
     lastPersistedAt = Date.now();
     dirty = false;
-    writes = writes.then(() => saveRoomStateOutsideInvocation(apiUrl, issueId, state, changeSummary)).catch(() => {});
+    writes = writes.then(() => saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary)).catch(() => {});
   };
   const schedulePersist = () => {
     const remaining = Math.max(0, 1_000 - (Date.now() - lastPersistedAt));
@@ -3976,7 +4002,7 @@ function roomActivityReporterOutsideInvocation(apiUrl, issueId, state) {
   };
 }
 
-function nativeRoomActivityReporterOutsideInvocation(apiUrl, issueId, state) {
+function nativeRoomActivityReporterOutsideInvocation(apiUrl, companyId, issueId, state) {
   let writes = Promise.resolve();
   let lastPersistedAt = 0;
   let persistTimer = null;
@@ -3984,7 +4010,7 @@ function nativeRoomActivityReporterOutsideInvocation(apiUrl, issueId, state) {
   const persist = (changeSummary) => {
     lastPersistedAt = Date.now();
     dirty = false;
-    writes = writes.then(() => saveRoomStateOutsideInvocation(apiUrl, issueId, state, changeSummary)).catch(() => {});
+    writes = writes.then(() => saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary)).catch(() => {});
   };
   const schedulePersist = () => {
     const remaining = Math.max(0, 1_000 - (Date.now() - lastPersistedAt));
@@ -6083,6 +6109,7 @@ async function startRoomTurn(client, threadId, text, stagedAttachments = [], agy
 
 async function completeRoomTurnOutsideInvocation({
   apiUrl,
+  companyId,
   issueId,
   agentName,
   state,
@@ -6102,7 +6129,7 @@ async function completeRoomTurnOutsideInvocation({
       ? visibility.transformAssistantMessage(assistantMessage)
       : assistantMessage;
     const assistantComment = publishResult
-      ? await createRoomCommentOutsideInvocation(apiUrl, issueId, `**${agentName}**\n${visibleAssistantMessage}`)
+      ? await createRoomCommentDurably(apiUrl, companyId, issueId, `**${agentName}**\n${visibleAssistantMessage}`)
       : null;
     state.runtime.updatedAt = now();
     state.lastCommentId = assistantComment?.id ?? state.lastCommentId ?? null;
@@ -6112,7 +6139,7 @@ async function completeRoomTurnOutsideInvocation({
     state.runtime.activity.resultSuppressed = !publishResult;
     state.runtime.activity.suppressionReason = !publishResult ? textParam(visibility, "reason") || "internal_task_feedback" : null;
     await activityReporter?.flush();
-    await saveRoomStateOutsideInvocation(apiUrl, issueId, state, "Persist completed Room turn");
+    await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist completed Room turn");
     return {
       ok: true,
       resultCommentId: assistantComment?.id ?? null,
@@ -6129,7 +6156,7 @@ async function completeRoomTurnOutsideInvocation({
     finishRoomActivity(state, "failed", error);
     try {
       await activityReporter?.flush();
-      await saveRoomStateOutsideInvocation(apiUrl, issueId, state, "Persist failed Room turn");
+      await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist failed Room turn");
     } catch {
       // Keep the original Room-turn failure as the visible error whenever recovery persistence also fails.
     }
@@ -6137,7 +6164,7 @@ async function completeRoomTurnOutsideInvocation({
   }
 }
 
-async function completeRoomCompactOutsideInvocation({ apiUrl, issueId, state, completion, client, threadId, activityReporter = null, onProviderQuota = null }) {
+async function completeRoomCompactOutsideInvocation({ apiUrl, companyId, issueId, state, completion, client, threadId, activityReporter = null, onProviderQuota = null }) {
   try {
     const turn = await completion;
     await activityReporter?.flush();
@@ -6149,7 +6176,7 @@ async function completeRoomCompactOutsideInvocation({ apiUrl, issueId, state, co
       compactedAt: null
     };
     state.checkpoint = checkpoint;
-    await appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint);
+    await appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint);
     let compacted = { compacted: false, checkpointOnly: true };
     if (turn?.fallbackFrom !== "codex" && typeof client.compactThread === "function") {
       if (threadId) manualCodexCompactionThreads.add(threadId);
@@ -6165,7 +6192,7 @@ async function completeRoomCompactOutsideInvocation({ apiUrl, issueId, state, co
     finishRoomActivity(state, "completed");
     state.runtime.activity.compacted = compacted.compacted === true;
     state.runtime.activity.checkpointOnly = compacted.checkpointOnly === true;
-    await saveRoomStateOutsideInvocation(apiUrl, issueId, state, "Record completed Room compact");
+    await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Record completed Room compact");
   } catch (error) {
     if (onProviderQuota && isProviderQuotaError(error)) {
       await activityReporter?.flush();
@@ -6175,23 +6202,23 @@ async function completeRoomCompactOutsideInvocation({ apiUrl, issueId, state, co
     finishRoomActivity(state, "failed", error);
     try {
       await activityReporter?.flush();
-      await saveRoomStateOutsideInvocation(apiUrl, issueId, state, "Persist failed Room compact");
+      await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist failed Room compact");
     } catch {
       // Preserve the original compact failure when state recovery also fails.
     }
   }
 }
 
-async function completeTaskOwnerFeedbackOutsideInvocation({ apiUrl, taskIssueId, ownerRoomIssueId, agentName, ownerState, completion, activityReporter = null, onProviderQuota = null }) {
+async function completeTaskOwnerFeedbackOutsideInvocation({ apiUrl, companyId, taskIssueId, ownerRoomIssueId, agentName, ownerState, completion, activityReporter = null, onProviderQuota = null }) {
   try {
     const turn = await completion;
     await activityReporter?.flush();
-    const feedbackComment = await createRoomCommentOutsideInvocation(apiUrl, taskIssueId, `## ${agentName} Feedback\n${turnResultText(turn)}`);
+    const feedbackComment = await createRoomCommentDurably(apiUrl, companyId, taskIssueId, `## ${agentName} Feedback\n${turnResultText(turn)}`);
     ownerState.runtime.updatedAt = now();
     ownerState.pendingTurn = null;
     finishRoomActivity(ownerState, "completed");
     ownerState.runtime.activity.resultCommentId = feedbackComment.id ?? null;
-    await saveRoomStateOutsideInvocation(apiUrl, ownerRoomIssueId, ownerState, "Persist completed Task feedback");
+    await saveRoomStateDurably(apiUrl, companyId, ownerRoomIssueId, ownerState, "Persist completed Task feedback");
   } catch (error) {
     if (onProviderQuota && isProviderQuotaError(error)) {
       await activityReporter?.flush();
@@ -6201,7 +6228,7 @@ async function completeTaskOwnerFeedbackOutsideInvocation({ apiUrl, taskIssueId,
     finishRoomActivity(ownerState, "failed", error);
     try {
       await activityReporter?.flush();
-      await saveRoomStateOutsideInvocation(apiUrl, ownerRoomIssueId, ownerState, "Persist failed Task feedback");
+      await saveRoomStateDurably(apiUrl, companyId, ownerRoomIssueId, ownerState, "Persist failed Task feedback");
     } catch {
       // Preserve the original feedback failure when state recovery also fails.
     }
@@ -6210,6 +6237,7 @@ async function completeTaskOwnerFeedbackOutsideInvocation({ apiUrl, taskIssueId,
 
 async function completeNativeRoomTurnOutsideInvocation({
   apiUrl,
+  companyId,
   issueId,
   agentName,
   state,
@@ -6230,7 +6258,7 @@ async function completeNativeRoomTurnOutsideInvocation({
       ? visibility.transformAssistantMessage(assistantMessage)
       : assistantMessage;
     const assistantComment = publishResult
-      ? await createRoomCommentOutsideInvocation(apiUrl, issueId, `**${agentName}**\n${visibleAssistantMessage}`)
+      ? await createRoomCommentDurably(apiUrl, companyId, issueId, `**${agentName}**\n${visibleAssistantMessage}`)
       : null;
     state.runtime.updatedAt = now();
     state.runtime.lastRunId = terminalEvent.runId;
@@ -6241,7 +6269,7 @@ async function completeNativeRoomTurnOutsideInvocation({
     state.runtime.activity.resultCommentId = assistantComment?.id ?? null;
     state.runtime.activity.resultSuppressed = !publishResult;
     state.runtime.activity.suppressionReason = !publishResult ? textParam(visibility, "reason") || "internal_task_feedback" : null;
-    await saveRoomStateOutsideInvocation(apiUrl, issueId, state, "Persist completed native Agent Session turn");
+    await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist completed native Agent Session turn");
     return {
       ok: true,
       resultCommentId: assistantComment?.id ?? null,
@@ -6260,7 +6288,7 @@ async function completeNativeRoomTurnOutsideInvocation({
     finishRoomActivity(state, "failed", error);
     try {
       await activityReporter?.flush();
-      await saveRoomStateOutsideInvocation(apiUrl, issueId, state, "Persist failed native Agent Session turn");
+      await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist failed native Agent Session turn");
     } catch {
       // Preserve the Agent Session failure when recovery persistence also fails.
     }
@@ -6268,7 +6296,7 @@ async function completeNativeRoomTurnOutsideInvocation({
   }
 }
 
-async function completeNativeRoomCheckpointOutsideInvocation({ apiUrl, issueId, state, completion, activityReporter, onProviderQuota = null }) {
+async function completeNativeRoomCheckpointOutsideInvocation({ apiUrl, companyId, issueId, state, completion, activityReporter, onProviderQuota = null }) {
   try {
     const terminalEvent = await completion;
     await activityReporter?.flush();
@@ -6280,14 +6308,14 @@ async function completeNativeRoomCheckpointOutsideInvocation({ apiUrl, issueId, 
       compactedAt: null
     };
     state.checkpoint = checkpoint;
-    await appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint);
+    await appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint);
     state.runtime.updatedAt = now();
     state.runtime.lastRunId = terminalEvent.runId;
     state.runtime.lastError = null;
     state.pendingTurn = null;
     finishRoomActivity(state, "completed");
     state.runtime.activity.checkpointOnly = true;
-    await saveRoomStateOutsideInvocation(apiUrl, issueId, state, "Persist native Agent Session checkpoint");
+    await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist native Agent Session checkpoint");
   } catch (error) {
     if (onProviderQuota && isProviderQuotaError(error)) {
       await activityReporter?.flush();
@@ -6299,21 +6327,22 @@ async function completeNativeRoomCheckpointOutsideInvocation({ apiUrl, issueId, 
     finishRoomActivity(state, "failed", error);
     try {
       await activityReporter?.flush();
-      await saveRoomStateOutsideInvocation(apiUrl, issueId, state, "Persist failed native Agent Session checkpoint");
+      await saveRoomStateDurably(apiUrl, companyId, issueId, state, "Persist failed native Agent Session checkpoint");
     } catch {
       // Preserve the Agent Session failure when recovery persistence also fails.
     }
   }
 }
 
-async function completeNativeTaskOwnerFeedbackOutsideInvocation({ apiUrl, taskIssueId, ownerRoomIssueId, agentName, ownerState, completion, activityReporter, onProviderQuota = null }) {
+async function completeNativeTaskOwnerFeedbackOutsideInvocation({ apiUrl, companyId, taskIssueId, ownerRoomIssueId, agentName, ownerState, completion, activityReporter, onProviderQuota = null }) {
   try {
     const terminalEvent = await completion;
     await activityReporter?.flush();
-    const feedbackComment = await createRoomCommentOutsideInvocation(
+    const feedbackComment = await createRoomCommentDurably(
       apiUrl,
+      companyId,
       taskIssueId,
-      `## ${agentName} Feedback\n${nativeSessionResultText(terminalEvent)}`
+      `## ${agentName} Feedback\n${nativeSessionResultText(terminalEvent)}`,
     );
     ownerState.runtime.updatedAt = now();
     ownerState.runtime.lastRunId = terminalEvent.runId;
@@ -6321,7 +6350,7 @@ async function completeNativeTaskOwnerFeedbackOutsideInvocation({ apiUrl, taskIs
     ownerState.pendingTurn = null;
     finishRoomActivity(ownerState, "completed");
     ownerState.runtime.activity.resultCommentId = feedbackComment.id ?? null;
-    await saveRoomStateOutsideInvocation(apiUrl, ownerRoomIssueId, ownerState, "Persist completed native Task feedback");
+    await saveRoomStateDurably(apiUrl, companyId, ownerRoomIssueId, ownerState, "Persist completed native Task feedback");
   } catch (error) {
     if (onProviderQuota && isProviderQuotaError(error)) {
       await activityReporter?.flush();
@@ -6333,7 +6362,7 @@ async function completeNativeTaskOwnerFeedbackOutsideInvocation({ apiUrl, taskIs
     finishRoomActivity(ownerState, "failed", error);
     try {
       await activityReporter?.flush();
-      await saveRoomStateOutsideInvocation(apiUrl, ownerRoomIssueId, ownerState, "Persist failed native Task feedback");
+      await saveRoomStateDurably(apiUrl, companyId, ownerRoomIssueId, ownerState, "Persist failed native Task feedback");
     } catch {
       // Preserve the Agent Session failure when recovery persistence also fails.
     }
@@ -6353,7 +6382,7 @@ async function launchRoomMessageWithinAction(ctx, {
   let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
   if (isRoomCliRuntimeAgent(agent)) {
     const { client, threadId, roomRuntime, workingDirectory, agyContext } = await openThread(ctx, runtime, state, companyId, issue, agent);
-    const activityReporter = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, issue.id, state);
+    const activityReporter = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, issue.id, state);
     job = await updateRoomJob(ctx, job, { status: "working" });
     await saveRoomState(ctx, companyId, issue.id, state, "Bind Codex app-server thread for Room Job");
     emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
@@ -6398,6 +6427,7 @@ async function launchRoomMessageWithinAction(ctx, {
       : started.completion;
     const baseCompletion = completeRoomTurnOutsideInvocation({
       apiUrl: runtime.spsApiUrl,
+      companyId,
       issueId: issue.id,
       agentName: agent.name,
       state,
@@ -6414,7 +6444,7 @@ async function launchRoomMessageWithinAction(ctx, {
     return { ...job, completion };
   }
   const { session, workingDirectory } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
-  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, issue.id, state);
+  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, issue.id, state);
   job = await updateRoomJob(ctx, job, { status: "working" });
   await saveRoomState(ctx, companyId, issue.id, state, "Bind native Agent Session for Room Job");
   emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
@@ -6445,6 +6475,7 @@ async function launchRoomMessageWithinAction(ctx, {
 
   const baseCompletion = completeNativeRoomTurnOutsideInvocation({
     apiUrl: runtime.spsApiUrl,
+    companyId,
     issueId: issue.id,
     agentName: agent.name,
     state,
@@ -6465,7 +6496,7 @@ async function launchRoomCompactWithinAction(ctx, { companyId, runtime, job: ini
   let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
   if (isRoomCliRuntimeAgent(agent)) {
     const { client, threadId, roomRuntime, workingDirectory, agyContext } = await openThread(ctx, runtime, state, companyId, issue, agent);
-    const activityReporter = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, issue.id, state);
+    const activityReporter = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, issue.id, state);
     job = await updateRoomJob(ctx, job, { status: "working" });
     await saveRoomState(ctx, companyId, issue.id, state, "Bind Codex app-server thread for checkpoint Job");
     emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
@@ -6507,6 +6538,7 @@ async function launchRoomCompactWithinAction(ctx, { companyId, runtime, job: ini
       : started.completion;
     const completion = completeRoomCompactOutsideInvocation({
       apiUrl: runtime.spsApiUrl,
+      companyId,
       issueId: issue.id,
       state,
       completion: resilientCompletion,
@@ -6519,7 +6551,7 @@ async function launchRoomCompactWithinAction(ctx, { companyId, runtime, job: ini
     return job;
   }
   const { session } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
-  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, issue.id, state);
+  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, issue.id, state);
   job = await updateRoomJob(ctx, job, { status: "working" });
   await saveRoomState(ctx, companyId, issue.id, state, "Bind native Agent Session for checkpoint Job");
   emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
@@ -6545,6 +6577,7 @@ async function launchRoomCompactWithinAction(ctx, { companyId, runtime, job: ini
   await saveRoomState(ctx, companyId, issue.id, state, "Record started native checkpoint run");
   const completion = completeNativeRoomCheckpointOutsideInvocation({
     apiUrl: runtime.spsApiUrl,
+    companyId,
     issueId: issue.id,
     state,
     completion: started.completion,
@@ -6559,7 +6592,7 @@ async function launchTaskOwnerFeedbackWithinAction(ctx, { companyId, runtime, jo
   let job = await updateRoomJob(ctx, initialJob, { status: "starting", startedAt: now() });
   if (textParam(agent, "adapterType") === "codex_local") {
     const { client, threadId, roomRuntime, workingDirectory } = await openThread(ctx, runtime, ownerState, companyId, ownerRoom, agent);
-    const activityReporter = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, ownerRoom.id, ownerState);
+    const activityReporter = roomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, ownerRoom.id, ownerState);
     job = await updateRoomJob(ctx, job, { status: "working" });
     await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Bind Codex app-server thread for Task feedback Job");
     emitRoomEvent(ctx, companyId, ownerRoom.id, { type: "job", job });
@@ -6608,6 +6641,7 @@ async function launchTaskOwnerFeedbackWithinAction(ctx, { companyId, runtime, jo
     });
     const completion = completeTaskOwnerFeedbackOutsideInvocation({
       apiUrl: runtime.spsApiUrl,
+      companyId,
       taskIssueId: task.id,
       ownerRoomIssueId: ownerRoom.id,
       agentName: agent.name,
@@ -6620,7 +6654,7 @@ async function launchTaskOwnerFeedbackWithinAction(ctx, { companyId, runtime, jo
     return job;
   }
   const { session } = await ensureNativeRoomSession(ctx, companyId, ownerRoom, agent, ownerState);
-  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, ownerRoom.id, ownerState);
+  const activityReporter = nativeRoomActivityReporterOutsideInvocation(runtime.spsApiUrl, companyId, ownerRoom.id, ownerState);
   job = await updateRoomJob(ctx, job, { status: "working" });
   await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Bind native Agent Session for Task feedback Job");
   emitRoomEvent(ctx, companyId, ownerRoom.id, { type: "job", job });
@@ -6655,6 +6689,7 @@ async function launchTaskOwnerFeedbackWithinAction(ctx, { companyId, runtime, jo
   await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Record started native Task feedback run");
   const completion = completeNativeTaskOwnerFeedbackOutsideInvocation({
     apiUrl: runtime.spsApiUrl,
+    companyId,
     taskIssueId: task.id,
     ownerRoomIssueId: ownerRoom.id,
     agentName: agent.name,
