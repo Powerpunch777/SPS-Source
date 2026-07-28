@@ -3473,7 +3473,9 @@ async function runAgyRoomFallback(ctx, {
   const fallbackWorkspaces = await listProjectWorkspaces(ctx, companyId, issue.projectId);
   const fallbackWorkspaceProfile = await loadProjectWorkspaceProfile(ctx, issue.projectId, fallbackWorkspaces);
   const fallbackMode = isWorkerOnlyRoomAgent(agent) ? "ask" : mode;
-  activeThreadContexts.set(syntheticThreadId, roomToolContext(runtime, companyId, issue, agent, fallbackMode, fallbackWorkspaceProfile));
+  const fallbackToolContext = roomToolContext(runtime, companyId, issue, agent, fallbackMode, fallbackWorkspaceProfile);
+  fallbackToolContext.invocationCtx = ctx;
+  activeThreadContexts.set(syntheticThreadId, fallbackToolContext);
   const instructions = loadAgentInstructions(agent);
   const history = [];
   try {
@@ -3544,7 +3546,10 @@ async function getCodexClient(ctx, runtime, agent) {
   const client = new CodexAppServerClient({
     command: runtime.command,
     env: codexHome ? { ...process.env, CODEX_HOME: codexHome } : process.env,
-    onServerRequest: (request) => handleCodexServerRequest(ctx, request)
+    // A Codex client is retained across Room Jobs. The current Job scope is
+    // attached to its Room context by openThread, so never capture the first
+    // (and soon-expired) invocation scope here.
+    onServerRequest: (request) => handleCodexServerRequest(null, request)
   });
   client.onNotification((message) => {
     void recordNativeCodexCompaction(ctx, message);
@@ -3637,7 +3642,9 @@ async function openThread(ctx, runtime, state, companyId, issue, agent) {
     thread = await client.openRoomThread({ ...threadOptions, threadId: null });
   }
   if (!thread?.id) throw new Error("Codex app-server did not return a Room thread id.");
-  activeThreadContexts.set(thread.id, roomToolContext(runtime, companyId, issue, agent, effectiveRoomMessageMode(agent), workspaceProfile));
+  const toolContext = roomToolContext(runtime, companyId, issue, agent, effectiveRoomMessageMode(agent), workspaceProfile);
+  toolContext.invocationCtx = ctx;
+  activeThreadContexts.set(thread.id, toolContext);
   state.runtime.codexThreadId = thread.id;
   state.runtime.kind = "codex_app_server";
   state.runtime.model = roomRuntime.model;
@@ -4251,6 +4258,103 @@ async function getOwnedTaskRoomDirect(roomContext, taskId) {
   return { task, state };
 }
 
+function supportsDynamicToolCapabilityScope(value) {
+  try {
+    return Boolean(
+      value?.issues?.list
+      && value?.issues?.get
+      && value?.issues?.create
+      && value?.issues?.update
+      && value?.issues?.documents?.get
+      && value?.issues?.documents?.upsert
+      && value?.issues?.createComment
+      && value?.agents?.list
+      && value?.projects?.listWorkspaces
+    );
+  } catch {
+    return false;
+  }
+}
+
+function dynamicToolCapabilityScope(ctx, roomContext) {
+  const invocationCtx = roomContext?.invocationCtx ?? ctx;
+  if (supportsDynamicToolCapabilityScope(invocationCtx)) return invocationCtx;
+
+  // Legacy test fixtures deliberately exercise the pre-SPS direct adapter.
+  // Production Rooms must never fall back to an unauthenticated HTTP request:
+  // a queued Room Job has a fresh Core capability scope for the whole turn.
+  if (process.env.PAPERCLIP_ROOM_CHAT_TEST === "1") return null;
+  throw new Error("SPS Room tools require an active Core capability scope. Retry this Room turn from the SPS Desktop.");
+}
+
+async function getOwnedTaskRoom(ctx, roomContext, taskId) {
+  const task = await getProjectTask(ctx, roomContext.companyId, roomContext.projectId, taskId);
+  const stateDocument = await ctx.issues.documents.get(task.id, TASK_ROOM_STATE_KEY, roomContext.companyId);
+  const state = parseState(stateDocument?.body);
+  if (
+    task.parentId !== roomContext.issueId
+    || state?.kind !== "task_room"
+    || state.originatingRoomIssueId !== roomContext.issueId
+    || state.owningAgentId !== roomContext.agentId
+  ) {
+    throw new Error("Only the Agent Room that created this Task can modify or complete it.");
+  }
+  return { task, state };
+}
+
+function dynamicRoomToolApi(ctx, roomContext) {
+  const capabilityCtx = dynamicToolCapabilityScope(ctx, roomContext);
+  if (!capabilityCtx) {
+    return {
+      listAgents: () => listCompanyAgentsDirect(roomContext.spsApiUrl, roomContext.companyId),
+      listProjectWorkspaces: () => listProjectWorkspacesDirect(roomContext.spsApiUrl, roomContext.projectId),
+      getActiveTasks: () => getActiveTasksDirect(roomContext.spsApiUrl, roomContext.companyId, roomContext.projectId, roomContext.issueId),
+      previewTask: (affectedPaths) => previewTaskDirect(roomContext.spsApiUrl, roomContext.companyId, roomContext.projectId, roomContext.issueId, affectedPaths),
+      createIssue: (input) => createIssueDirect(roomContext.spsApiUrl, roomContext.companyId, input),
+      updateIssue: (issueId, input) => updateIssueDirect(roomContext.spsApiUrl, issueId, input),
+      getProjectTask: (taskId) => getProjectTaskDirect(roomContext.spsApiUrl, roomContext.companyId, roomContext.projectId, taskId),
+      getOwnedTaskRoom: (taskId) => getOwnedTaskRoomDirect(roomContext, taskId),
+      getDocument: (issueId, key) => getRoomDocumentDirect(roomContext.spsApiUrl, issueId, key),
+      upsertDocument: (input) => upsertRoomDocumentOutsideInvocation(roomContext.spsApiUrl, input),
+      listComments: (issueId) => listIssueCommentsDirect(roomContext.spsApiUrl, issueId),
+      createComment: (issueId, body) => createIssueCommentDirect(roomContext.spsApiUrl, issueId, body),
+      updateRoomWorkState: (patch, changeSummary, updatedBy) => updateRoomWorkStateOutsideInvocation(roomContext, patch, changeSummary, updatedBy)
+    };
+  }
+
+  return {
+    listAgents: () => capabilityCtx.agents.list({ companyId: roomContext.companyId, limit: 200 }),
+    listProjectWorkspaces: () => listProjectWorkspaces(capabilityCtx, roomContext.companyId, roomContext.projectId),
+    getActiveTasks: () => getActiveTasks(capabilityCtx, roomContext.companyId, roomContext.projectId, roomContext.issueId),
+    previewTask: (affectedPaths) => previewTask(capabilityCtx, roomContext.companyId, roomContext.projectId, roomContext.issueId, affectedPaths),
+    createIssue: (input) => capabilityCtx.issues.create({
+      ...input,
+      companyId: roomContext.companyId
+    }),
+    async updateIssue(issueId, input) {
+      const { comment, ...patch } = input;
+      // Store a correction report before changing status to todo, otherwise the
+      // Worker can wake without the instruction that explains the new cycle.
+      const createdComment = comment
+        ? await capabilityCtx.issues.createComment(issueId, comment, roomContext.companyId)
+        : null;
+      const issue = await capabilityCtx.issues.update(issueId, patch, roomContext.companyId);
+      return createdComment ? { ...issue, comment: createdComment } : issue;
+    },
+    getProjectTask: (taskId) => getProjectTask(capabilityCtx, roomContext.companyId, roomContext.projectId, taskId),
+    getOwnedTaskRoom: (taskId) => getOwnedTaskRoom(capabilityCtx, roomContext, taskId),
+    getDocument: (issueId, key) => capabilityCtx.issues.documents.get(issueId, key, roomContext.companyId),
+    upsertDocument: (input) => upsertRoomDocument(capabilityCtx, input),
+    listComments: (issueId) => capabilityCtx.issues.listComments(issueId, roomContext.companyId),
+    createComment: (issueId, body) => capabilityCtx.issues.createComment(issueId, body, roomContext.companyId),
+    async updateRoomWorkState(patch, changeSummary, updatedBy) {
+      const roomIssue = await capabilityCtx.issues.get(roomContext.issueId, roomContext.companyId);
+      if (!roomIssue) throw new Error("Agent Room is no longer available.");
+      return updateRoomWorkState(capabilityCtx, roomContext.companyId, roomIssue, patch, changeSummary, updatedBy);
+    }
+  };
+}
+
 async function handleCodexServerRequest(ctx, request) {
   if (request.method !== "item/tool/call") throw new Error(`Unsupported Codex request: ${request.method}`);
   const params = request.params ?? {};
@@ -4261,6 +4365,7 @@ async function handleCodexServerRequest(ctx, request) {
   let content;
 
   try {
+  const toolApi = dynamicRoomToolApi(ctx, roomContext);
   if (!roomModeAllowsTool(roomContext.mode, name)) {
     content = JSON.stringify({
       ok: false,
@@ -4296,8 +4401,7 @@ async function handleCodexServerRequest(ctx, request) {
     if (!Object.keys(patch).length) {
       content = JSON.stringify({ ok: false, code: "work_state_patch_required", message: "Provide at least one Room Work State field to update." });
     } else {
-      const workState = await updateRoomWorkStateOutsideInvocation(
-        roomContext,
+      const workState = await toolApi.updateRoomWorkState(
         patch,
         `Update Room operating bookmark from ${roomContext.agentName}`,
         { kind: "agent", agentId: roomContext.agentId, agentName: roomContext.agentName }
@@ -4305,7 +4409,7 @@ async function handleCodexServerRequest(ctx, request) {
       content = JSON.stringify({ ok: true, workState }, null, 2);
     }
   } else if (name === "paperclip.list_active_tasks") {
-    const activeTasks = await getActiveTasksDirect(roomContext.spsApiUrl, roomContext.companyId, roomContext.projectId, roomContext.issueId);
+    const activeTasks = await toolApi.getActiveTasks();
     content = JSON.stringify(activeTasks.map((task) => ({
       id: task.id,
       identifier: task.identifier,
@@ -4319,7 +4423,7 @@ async function handleCodexServerRequest(ctx, request) {
       content = JSON.stringify({ ok: false, code: "agent_cannot_assign_tasks", message: "This Agent is not configured as a Lead that can assign Worker Tasks." });
     } else {
       const ownerIdentity = workplaneIdentityForRoomContext(roomContext);
-      const agents = await listCompanyAgentsDirect(roomContext.spsApiUrl, roomContext.companyId);
+      const agents = await toolApi.listAgents();
       content = JSON.stringify(agents.filter((agent) => canDelegateTo(ownerIdentity, agent)).map((agent) => {
         const identity = resolveAgentWorkplaneIdentity(agent);
         return {
@@ -4338,7 +4442,7 @@ async function handleCodexServerRequest(ctx, request) {
     if (!roomContext.projectId) {
       content = JSON.stringify({ ok: false, code: "missing_project", message: "An Agent Room must belong to a project before it can preview Tasks." });
     } else {
-      const preview = await previewTaskDirect(roomContext.spsApiUrl, roomContext.companyId, roomContext.projectId, roomContext.issueId, listParam(args, "affectedPaths"));
+      const preview = await toolApi.previewTask(listParam(args, "affectedPaths"));
       content = JSON.stringify({ ok: true, ...preview }, null, 2);
     }
   } else if (name === "paperclip.create_task") {
@@ -4367,8 +4471,8 @@ async function handleCodexServerRequest(ctx, request) {
       const verification = listParam(args, "verification");
       const blockedByIssueIds = [...new Set(listParam(args, "blockedByIssueIds"))];
       const requestedProjectWorkspaceId = textParam(args, "projectWorkspaceId");
-      const projectWorkspaces = await listProjectWorkspacesDirect(roomContext.spsApiUrl, roomContext.projectId);
-      const companyAgents = await listCompanyAgentsDirect(roomContext.spsApiUrl, roomContext.companyId);
+      const projectWorkspaces = await toolApi.listProjectWorkspaces();
+      const companyAgents = await toolApi.listAgents();
       const selectedWorker = companyAgents.find((candidate) => candidate.id === assigneeAgentId) ?? null;
       const workspaceProfile = normalizeWorkspaceProfile(asRecord(roomContext.workspaceProfile), projectWorkspaces);
       const taskWorkspace = chooseTaskWorkspace(
@@ -4401,7 +4505,7 @@ async function handleCodexServerRequest(ctx, request) {
       } else if (!taskAffectedPaths.length && !taskTypeAllowsNoAffectedPaths(taskType)) {
         content = JSON.stringify({ ok: false, code: "affected_paths_required", message: "Declare affected paths before creating this Task. Only the legacy design and documentation types may omit paths." });
       } else {
-        const preview = await previewTaskDirect(roomContext.spsApiUrl, roomContext.companyId, roomContext.projectId, roomContext.issueId, taskAffectedPaths);
+        const preview = await toolApi.previewTask(taskAffectedPaths);
         const activeTaskIds = new Set(preview.activeTasks.map((task) => task.id));
         const unknownDependencies = blockedByIssueIds.filter((taskId) => !activeTaskIds.has(taskId));
         const missingConflictDependencies = preview.conflicts.filter((task) => !blockedByIssueIds.includes(task.id));
@@ -4433,7 +4537,7 @@ async function handleCodexServerRequest(ctx, request) {
           const descriptionWithContract = taskDescription({ description, ...taskInput });
           // SPS wakes an assigned todo Task immediately. Keep the Task parked
           // until its durable state and visible protocol are ready for the first run.
-          const created = await createIssueDirect(roomContext.spsApiUrl, roomContext.companyId, {
+          const created = await toolApi.createIssue({
             projectId: roomContext.projectId,
             projectWorkspaceId: taskInput.projectWorkspaceId,
             parentId: roomContext.issueId,
@@ -4449,7 +4553,7 @@ async function handleCodexServerRequest(ctx, request) {
           });
           const taskState = newTaskRoomState(created, roomContext, taskInput);
           try {
-            await upsertRoomDocumentOutsideInvocation(roomContext.spsApiUrl, {
+            await toolApi.upsertDocument({
               issueId: created.id,
               key: TASK_ROOM_STATE_KEY,
               body: serializeState(taskState),
@@ -4458,22 +4562,20 @@ async function handleCodexServerRequest(ctx, request) {
               format: "markdown",
               changeSummary: "Initialize Task Room state"
             });
-            await createIssueCommentDirect(roomContext.spsApiUrl, created.id, taskProtocolComment(roomContext, created, taskState));
+            await toolApi.createComment(created.id, taskProtocolComment(roomContext, created, taskState));
             const waitingForWorker = selectedWorker.status === "paused" || selectedWorker.status === "error";
             if (waitingForWorker) {
-              await createIssueCommentDirect(
-                roomContext.spsApiUrl,
+              await toolApi.createComment(
                 created.id,
                 `## Task waiting for assigned Worker\n${selectedWorker.name} is paused before the first run. Keep this Task assigned to the same Worker. After the Worker is resumed by the Owner, start this same Task with paperclip.start_task; do not create or assign a replacement.`
               );
             }
-            const activated = await updateIssueDirect(roomContext.spsApiUrl, created.id, {
+            const activated = await toolApi.updateIssue(created.id, {
               status: waitingForWorker ? "blocked" : "todo",
               assigneeAgentId,
               blockedByIssueIds
             });
-            const boundaryState = await updateRoomWorkStateOutsideInvocation(
-              roomContext,
+            const boundaryState = await toolApi.updateRoomWorkState(
               {
                 waitingFor: {
                   kind: "worker",
@@ -4498,8 +4600,8 @@ async function handleCodexServerRequest(ctx, request) {
               workStateUpdated: Boolean(boundaryState)
             }, null, 2);
           } catch (error) {
-            await createIssueCommentDirect(roomContext.spsApiUrl, created.id, `## Task Room initialization blocked\n${error.message}`);
-            await updateIssueDirect(roomContext.spsApiUrl, created.id, { status: "blocked" });
+            await toolApi.createComment(created.id, `## Task Room initialization blocked\n${error.message}`);
+            await toolApi.updateIssue(created.id, { status: "blocked" });
             content = JSON.stringify({ ok: false, code: "task_room_initialization_failed", taskId: created.id, message: error.message });
           }
         }
@@ -4509,10 +4611,10 @@ async function handleCodexServerRequest(ctx, request) {
     if (!roomContext.projectId) {
       content = JSON.stringify({ ok: false, code: "missing_project" });
     } else {
-      const task = await getProjectTaskDirect(roomContext.spsApiUrl, roomContext.companyId, roomContext.projectId, textParam(args, "taskId"));
+      const task = await toolApi.getProjectTask(textParam(args, "taskId"));
       const [stateDocument, comments] = await Promise.all([
-        getRoomDocumentDirect(roomContext.spsApiUrl, task.id, TASK_ROOM_STATE_KEY),
-        listIssueCommentsDirect(roomContext.spsApiUrl, task.id)
+        toolApi.getDocument(task.id, TASK_ROOM_STATE_KEY),
+        toolApi.listComments(task.id)
       ]);
       content = JSON.stringify({
         ok: true,
@@ -4527,10 +4629,10 @@ async function handleCodexServerRequest(ctx, request) {
     } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_ASSIGN)) {
       content = JSON.stringify({ ok: false, code: "agent_cannot_start_tasks" });
     } else {
-      const { task, state } = await getOwnedTaskRoomDirect(roomContext, textParam(args, "taskId"));
+      const { task, state } = await toolApi.getOwnedTaskRoom(textParam(args, "taskId"));
       const dispatch = asRecord(state.dispatch);
       const workerAgentId = textParam(state, "workerAgentId") || task.assigneeAgentId;
-      const companyAgents = await listCompanyAgentsDirect(roomContext.spsApiUrl, roomContext.companyId);
+      const companyAgents = await toolApi.listAgents();
       const selectedWorker = companyAgents.find((candidate) => candidate.id === workerAgentId && isTaskWorkerAgent(candidate));
       if (task.status !== "blocked" || dispatch.status !== "waiting_for_worker" || dispatch.reason !== "worker_paused_before_start") {
         content = JSON.stringify({
@@ -4558,7 +4660,7 @@ async function handleCodexServerRequest(ctx, request) {
           startedAt: now(),
           updatedAt: now()
         };
-        await upsertRoomDocumentOutsideInvocation(roomContext.spsApiUrl, {
+        await toolApi.upsertDocument({
           issueId: task.id,
           key: TASK_ROOM_STATE_KEY,
           body: serializeState(state),
@@ -4567,13 +4669,12 @@ async function handleCodexServerRequest(ctx, request) {
           format: "markdown",
           changeSummary: "Start Task after assigned Worker resumed"
         });
-        const activated = await updateIssueDirect(roomContext.spsApiUrl, task.id, {
+        const activated = await toolApi.updateIssue(task.id, {
           status: "todo",
           assigneeAgentId: selectedWorker.id,
           blockedByIssueIds: Array.isArray(state.dependencyTaskIds) ? state.dependencyTaskIds : []
         });
-        await updateRoomWorkStateOutsideInvocation(
-          roomContext,
+        await toolApi.updateRoomWorkState(
           { waitingFor: { kind: "worker", taskId: activated.id, detail: `${selectedWorker.name} is executing the resumed Task.` } },
           `Record resumed Worker Task boundary for ${activated.identifier || activated.id}`,
           { kind: "runtime", agentId: roomContext.agentId, agentName: roomContext.agentName }
@@ -4592,7 +4693,7 @@ async function handleCodexServerRequest(ctx, request) {
     } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_REVIEW)) {
       content = JSON.stringify({ ok: false, code: "agent_cannot_post_feedback" });
     } else {
-      const { task, state } = await getOwnedTaskRoomDirect(roomContext, textParam(args, "taskId"));
+      const { task, state } = await toolApi.getOwnedTaskRoom(textParam(args, "taskId"));
       const message = enforceTaskContractText(textParam(args, "message"), "Task feedback");
       if (!message) {
         content = JSON.stringify({ ok: false, code: "feedback_message_required" });
@@ -4644,7 +4745,7 @@ async function handleCodexServerRequest(ctx, request) {
           reason: null,
           updatedAt: feedbackAt
         };
-        await upsertRoomDocumentOutsideInvocation(roomContext.spsApiUrl, {
+        await toolApi.upsertDocument({
           issueId: task.id,
           key: TASK_ROOM_STATE_KEY,
           body: serializeState(state),
@@ -4655,12 +4756,12 @@ async function handleCodexServerRequest(ctx, request) {
         });
         let restarted;
         try {
-          restarted = await updateIssueDirect(roomContext.spsApiUrl, task.id, {
+          restarted = await toolApi.updateIssue(task.id, {
             status: "todo",
             comment: feedbackBody
           });
         } catch (error) {
-          await upsertRoomDocumentOutsideInvocation(roomContext.spsApiUrl, {
+          await toolApi.upsertDocument({
             issueId: task.id,
             key: TASK_ROOM_STATE_KEY,
             body: previousStateBody,
@@ -4679,7 +4780,7 @@ async function handleCodexServerRequest(ctx, request) {
           feedbackRestartedAt: feedbackAt,
           updatedAt: now()
         };
-        await upsertRoomDocumentOutsideInvocation(roomContext.spsApiUrl, {
+        await toolApi.upsertDocument({
           issueId: task.id,
           key: TASK_ROOM_STATE_KEY,
           body: serializeState(state),
@@ -4688,8 +4789,7 @@ async function handleCodexServerRequest(ctx, request) {
           format: "markdown",
           changeSummary: "Restart Task correction cycle after owner feedback"
         });
-        await updateRoomWorkStateOutsideInvocation(
-          roomContext,
+        await toolApi.updateRoomWorkState(
           { waitingFor: { kind: "worker", taskId: restarted.id, detail: "The assigned Worker is addressing owner feedback in the same Task." } },
           `Record Task correction boundary for ${restarted.identifier || restarted.id}`,
           { kind: "runtime", agentId: roomContext.agentId, agentName: roomContext.agentName }
@@ -4714,7 +4814,7 @@ async function handleCodexServerRequest(ctx, request) {
     } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_COMPLETE)) {
       content = JSON.stringify({ ok: false, code: "agent_cannot_complete_tasks" });
     } else {
-      const { task, state } = await getOwnedTaskRoomDirect(roomContext, textParam(args, "taskId"));
+      const { task, state } = await toolApi.getOwnedTaskRoom(textParam(args, "taskId"));
       const reviewSummary = enforceTaskContractText(textParam(args, "reviewSummary"), "Task review summary");
       const workerReportCommentId = textParam(asRecord(state.review), "workerReportCommentId");
       if (task.status !== "in_review") {
@@ -4724,7 +4824,7 @@ async function handleCodexServerRequest(ctx, request) {
       } else if (!reviewSummary) {
         content = JSON.stringify({ ok: false, code: "review_summary_required" });
       } else {
-        const completed = await updateIssueDirect(roomContext.spsApiUrl, task.id, { status: "done" });
+        const completed = await toolApi.updateIssue(task.id, { status: "done" });
         const previousReview = { ...asRecord(state.review) };
         delete previousReview.acceptedByAgentId;
         delete previousReview.acceptedByAgentName;
@@ -4739,7 +4839,7 @@ async function handleCodexServerRequest(ctx, request) {
           verifiedAt: now(),
           verificationSummary: reviewSummary
         };
-        await upsertRoomDocumentOutsideInvocation(roomContext.spsApiUrl, {
+        await toolApi.upsertDocument({
           issueId: task.id,
           key: TASK_ROOM_STATE_KEY,
           body: serializeState(state),
@@ -4748,8 +4848,7 @@ async function handleCodexServerRequest(ctx, request) {
           format: "markdown",
           changeSummary: "Record Task Owner technical verification"
         });
-        const boundaryState = await updateRoomWorkStateOutsideInvocation(
-          roomContext,
+        const boundaryState = await toolApi.updateRoomWorkState(
           {
             latestOutcome: {
               taskId: completed.id,

@@ -243,6 +243,36 @@ const runTool = async (tool, args) => {
 
 ctx.projects.listWorkspaces = async () => projectWorkspaces;
 
+// A retained Codex app-server client sends dynamic tool calls after its first
+// plugin invocation has expired. The active Room Job must provide the current
+// Core capability scope instead of falling back to an unauthenticated HTTP
+// request against an authenticated Owner Host.
+const currentSchedulerScope = {
+  ...ctx,
+  issues: {
+    ...ctx.issues,
+    documents: {
+      ...ctx.issues.documents,
+      upsert: async (input) => ({ id: "core-document", ...input })
+    }
+  },
+  projects: { ...ctx.projects },
+  agents: { ...ctx.agents }
+};
+setActiveThreadContextForTest("thread-1", {
+  companyId,
+  projectId,
+  issueId: roomId,
+  agentId: ctoAgent.id,
+  agentName: ctoAgent.name,
+  agentRole: ctoAgent.role,
+  workplaneRole: "cto",
+  paperclipApiUrl: "http://127.0.0.1:3100",
+  enableTaskAssignment: true,
+  mode: "agent",
+  invocationCtx: currentSchedulerScope
+});
+
 const workers = await runTool("list_workers", {});
 assert.deepEqual(workers.map((agent) => agent.id), [codeWorker.id]);
 
