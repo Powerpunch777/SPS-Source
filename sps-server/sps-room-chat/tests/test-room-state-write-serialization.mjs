@@ -29,8 +29,21 @@ globalThis.fetch = async (_url, init = {}) => {
 };
 
 const ctx = {
-  config: { get: async () => ({ enableCodexRooms: true, paperclipApiUrl: "http://127.0.0.1:3100" }) },
-  issues: { documents: { get: async () => document } }
+  issues: {
+    documents: {
+      get: async () => document,
+      upsert: async (input) => {
+        assert.equal(input.baseRevisionId, document.latestRevisionId);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        document = {
+          latestRevisionId: `revision-${writes.length + 2}`,
+          body: input.body
+        };
+        writes.push(parseState(input.body));
+        return document;
+      }
+    }
+  }
 };
 
 const inActionState = { revision: "in-action" };

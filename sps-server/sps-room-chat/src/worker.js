@@ -1871,11 +1871,11 @@ async function updateRoomWorkState(ctx, companyId, issue, patch, changeSummary, 
       const document = await ctx.issues.documents.get(issue.id, ROOM_WORK_STATE_KEY, companyId);
       const current = normalizeRoomWorkState(parseState(document?.body), issue);
       const next = mergeRoomWorkState(current, patch, issue, updatedBy);
-      const runtime = await getRuntimeConfig(ctx);
-      await putRoomDocument(runtime.spsApiUrl, {
+      await ctx.issues.documents.upsert({
         issueId: issue.id,
         key: ROOM_WORK_STATE_KEY,
         body: serializeState(next),
+        companyId,
         title: "Room work state",
         format: "markdown",
         baseRevisionId: document?.latestRevisionId ?? null,
@@ -1893,6 +1893,26 @@ async function upsertRoomDocument(ctx, input) {
 async function putRoomDocumentFromInvocation(ctx, input) {
   return retryRoomDocumentWrite(async () => {
     const existing = await ctx.issues.documents.get(input.issueId, input.key, input.companyId);
+    // A plugin action already runs through the Core capability gateway. Keep
+    // its document writes on that path instead of trying to replay a browser
+    // session to the local Owner Host. This preserves the plugin's declared
+    // `issue.documents.write` boundary and works for authenticated Desktops.
+    if (typeof ctx.issues?.documents?.upsert === "function") {
+      return ctx.issues.documents.upsert({
+        issueId: input.issueId,
+        key: input.key,
+        body: input.body,
+        companyId: input.companyId,
+        title: input.title,
+        format: input.format ?? "markdown",
+        baseRevisionId: existing?.latestRevisionId ?? null,
+        changeSummary: input.changeSummary
+      });
+    }
+
+    // Retain compatibility with a pre-upsert SDK only. Current SPS Core
+    // exposes the capability gateway above; this branch is not used by an
+    // authenticated Owner Desktop.
     const runtime = await getRuntimeConfig(ctx);
     return putRoomDocument(runtime.spsApiUrl, {
       ...input,

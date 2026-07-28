@@ -8986,6 +8986,7 @@ var uniqueRunnerKeys = (profiles) => new Set(profiles.map((profile) => profile.r
 var createSpsNodeSchema = external_exports.object({
   displayName: external_exports.string().trim().min(1).max(120),
   publicKey: external_exports.string().trim().min(32).max(8192),
+  transportPublicKey: external_exports.string().trim().min(64).max(8192).optional().nullable(),
   platform: external_exports.string().trim().min(1).max(120),
   appVersion: external_exports.string().trim().max(120).optional().nullable(),
   capabilities: external_exports.array(spsNodeCapabilitySchema).max(32).default([]),
@@ -9033,6 +9034,15 @@ var reportSpsNodeRunnerAvailabilitySchema = external_exports.object({
   if (!uniqueRunnerKeys(value.runners)) {
     context.addIssue({ code: external_exports.ZodIssueCode.custom, path: ["runners"], message: "Runner keys must be unique per Node" });
   }
+});
+
+// ../../external/sps-core/packages/shared/src/validators/sps-host-project-share.ts
+var upsertSpsHostProjectShareSchema = external_exports.object({
+  sharePath: external_exports.string().trim().min(5).max(1024)
+});
+var grantSpsHostProjectShareNodeSchema = external_exports.object({
+  credentialAlgorithm: external_exports.enum(["rsa-oaep-sha256", "rsa-oaep-sha256+a256gcm"]),
+  credentialEnvelope: external_exports.string().trim().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(128).max(32768)
 });
 
 // ../../external/sps-core/packages/shared/src/validators/plugin.ts
@@ -11036,6 +11046,7 @@ function startWorkerRpcHost(options) {
               companyId: input.companyId,
               title: input.title,
               format: input.format,
+              baseRevisionId: input.baseRevisionId,
               changeSummary: input.changeSummary
             });
           },
@@ -11863,7 +11874,7 @@ var manifest_default = {
   // Existing Rooms, Task Rooms, origins, and plugin state use this exact ID.
   id: SPS_TEAM_WORKPLANE_PROFILE.legacyPluginId,
   apiVersion: 1,
-  version: "0.3.85",
+  version: "0.3.86",
   displayName: SPS_TEAM_WORKPLANE_PROFILE.displayName,
   description: SPS_TEAM_WORKPLANE_PROFILE.description,
   author: SPS_TEAM_WORKPLANE_PROFILE.author,
@@ -11911,7 +11922,7 @@ var manifest_default = {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.85"
+    ui: "./dist/ui-v0.3.86"
   },
   ui: {
     slots: [
@@ -14241,11 +14252,11 @@ async function updateRoomWorkState(ctx, companyId, issue, patch, changeSummary, 
       const document = await ctx.issues.documents.get(issue.id, ROOM_WORK_STATE_KEY, companyId);
       const current = normalizeRoomWorkState(parseState(document?.body), issue);
       const next = mergeRoomWorkState(current, patch, issue, updatedBy);
-      const runtime = await getRuntimeConfig(ctx);
-      await putRoomDocument(runtime.spsApiUrl, {
+      await ctx.issues.documents.upsert({
         issueId: issue.id,
         key: ROOM_WORK_STATE_KEY,
         body: serializeState(next),
+        companyId,
         title: "Room work state",
         format: "markdown",
         baseRevisionId: document?.latestRevisionId ?? null,
@@ -14261,6 +14272,18 @@ async function upsertRoomDocument(ctx, input) {
 async function putRoomDocumentFromInvocation(ctx, input) {
   return retryRoomDocumentWrite(async () => {
     const existing = await ctx.issues.documents.get(input.issueId, input.key, input.companyId);
+    if (typeof ctx.issues?.documents?.upsert === "function") {
+      return ctx.issues.documents.upsert({
+        issueId: input.issueId,
+        key: input.key,
+        body: input.body,
+        companyId: input.companyId,
+        title: input.title,
+        format: input.format ?? "markdown",
+        baseRevisionId: existing?.latestRevisionId ?? null,
+        changeSummary: input.changeSummary
+      });
+    }
     const runtime = await getRuntimeConfig(ctx);
     return putRoomDocument(runtime.spsApiUrl, {
       ...input,
