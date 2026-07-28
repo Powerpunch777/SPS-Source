@@ -2532,29 +2532,20 @@ async function createRoomCommentOutsideInvocation(apiUrl, issueId, body) {
   return response.json();
 }
 
-// A Room turn can finish after the originating UI action returns. Use the
-// persistent plugin capability client when the current Core exposes it; never
-// retain the action context itself. The loopback fallback remains only for
-// older Hosts and isolated SDK tests that do not activate the plugin worker.
-function durableRoomPluginContext() {
-  return pluginCtx?.issues?.documents && pluginCtx?.issues?.createComment ? pluginCtx : null;
-}
-
+// A Room turn can finish after its originating UI action. Plugin capability
+// scopes are deliberately tied to that action, so retaining `ctx` here would
+// turn a successful Agent turn into an expired-scope failure. These writes use
+// the plugin's local API capability instead, including revision-aware document
+// updates above. They remain valid across the asynchronous completion window.
 async function saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary) {
-  const durableCtx = durableRoomPluginContext();
-  if (durableCtx) return saveRoomState(durableCtx, companyId, issueId, state, changeSummary);
   return saveRoomStateOutsideInvocation(apiUrl, issueId, state, changeSummary);
 }
 
 async function createRoomCommentDurably(apiUrl, companyId, issueId, body) {
-  const durableCtx = durableRoomPluginContext();
-  if (durableCtx) return durableCtx.issues.createComment(issueId, body, companyId);
   return createRoomCommentOutsideInvocation(apiUrl, issueId, body);
 }
 
 async function appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint) {
-  const durableCtx = durableRoomPluginContext();
-  if (durableCtx) return appendCheckpoint(durableCtx, companyId, issueId, checkpoint);
   return appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint);
 }
 

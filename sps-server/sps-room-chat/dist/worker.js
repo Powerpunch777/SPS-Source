@@ -11874,7 +11874,7 @@ var manifest_default = {
   // Existing Rooms, Task Rooms, origins, and plugin state use this exact ID.
   id: SPS_TEAM_WORKPLANE_PROFILE.legacyPluginId,
   apiVersion: 1,
-  version: "0.3.87",
+  version: "0.3.88",
   displayName: SPS_TEAM_WORKPLANE_PROFILE.displayName,
   description: SPS_TEAM_WORKPLANE_PROFILE.description,
   author: SPS_TEAM_WORKPLANE_PROFILE.author,
@@ -11922,7 +11922,7 @@ var manifest_default = {
   ],
   entrypoints: {
     worker: "./dist/worker.js",
-    ui: "./dist/ui-v0.3.87"
+    ui: "./dist/ui-v0.3.88"
   },
   ui: {
     slots: [
@@ -14853,22 +14853,13 @@ async function createRoomCommentOutsideInvocation(apiUrl, issueId, body) {
   if (!response.ok) throw new Error(`Room comment write failed (${response.status}).`);
   return response.json();
 }
-function durableRoomPluginContext() {
-  return pluginCtx?.issues?.documents && pluginCtx?.issues?.createComment ? pluginCtx : null;
-}
 async function saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary) {
-  const durableCtx = durableRoomPluginContext();
-  if (durableCtx) return saveRoomState(durableCtx, companyId, issueId, state, changeSummary);
   return saveRoomStateOutsideInvocation(apiUrl, issueId, state, changeSummary);
 }
 async function createRoomCommentDurably(apiUrl, companyId, issueId, body) {
-  const durableCtx = durableRoomPluginContext();
-  if (durableCtx) return durableCtx.issues.createComment(issueId, body, companyId);
   return createRoomCommentOutsideInvocation(apiUrl, issueId, body);
 }
 async function appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint) {
-  const durableCtx = durableRoomPluginContext();
-  if (durableCtx) return appendCheckpoint(durableCtx, companyId, issueId, checkpoint);
   return appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint);
 }
 async function appendCheckpoint(ctx, companyId, issueId, checkpoint) {
