@@ -1,6 +1,6 @@
 # SPS Plugin Platform
 
-이 디렉터리는 SPS Core가 제공하는 플러그인 개발 기반의 현재 compatibility tooling이다. 제품 경계는 [현재 Core/Plugin 계약](../docs/current/CORE-PLUGIN-BOUNDARY-ko.md)을 따른다.
+이 디렉터리는 SPS Core가 제공하는 플러그인 개발 기반의 현재 compatibility tooling이다. 제품 경계는 [현재 Product Model](../docs/current/PRODUCT-MODEL-ko.md)을 따른다.
 
 이 코드는 제품의 업무 방식이나 사람 권한을 정하지 않는다. manifest, package, Catalog/Registry record, source 검사, 서명, archive 검증 같은 제작·배포 기반만 제공한다.
 
@@ -62,4 +62,4 @@ node .\cli\sps-plugin.mjs inspect .\team-registry
 
 `dist/*.js`, `../outside`, 빈 경로처럼 포함 범위를 모호하게 만드는 값은 검증 단계에서 거부된다. `files`를 생략하면 기존 호환성을 위해 source tree 전체를 검사하고 패키징한다.
 
-제품 경계와 개발자 경험은 [현재 Core/Plugin 계약](../docs/current/CORE-PLUGIN-BOUNDARY-ko.md)과 [Plugin Developer Platform](../docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)을 따른다.
+제품 경계와 개발자 경험은 [현재 Product Model](../docs/current/PRODUCT-MODEL-ko.md)과 [Plugin Developer Platform](../docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)을 따른다.

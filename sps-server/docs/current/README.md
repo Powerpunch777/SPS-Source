@@ -5,11 +5,8 @@
 
 | 문서 | 내용 |
 | --- | --- |
-| [PRODUCT-SCOPE.md](PRODUCT-SCOPE.md) | SPS가 제공하는 제품 범위와 첫 회사의 시작 상태 |
-| [CORE-PLUGIN-BOUNDARY-ko.md](CORE-PLUGIN-BOUNDARY-ko.md) | Core와 플러그인의 책임 경계 |
-| [FIRST-COMPANY-AND-PLUGIN-DISCOVERY-ko.md](FIRST-COMPANY-AND-PLUGIN-DISCOVERY-ko.md) | 첫 회사, 첫 Agent, Plugin Discovery & Builder 흐름 |
+| [PRODUCT-MODEL-ko.md](PRODUCT-MODEL-ko.md) | 제품 범위, 첫 Company, Core/Plugin 경계, 협업 확장 모델 |
 | [PLUGIN-DEVELOPER-PLATFORM-ko.md](PLUGIN-DEVELOPER-PLATFORM-ko.md) | 플러그인 제작자가 Core에서 받는 SDK와 개발 도구 |
-| [ACCESS-CONTROL-PLUGIN-ko.md](ACCESS-CONTROL-PLUGIN-ko.md) | 권한을 Core가 아닌 Access Control 플러그인으로 제공하는 모델 |
 | [ROADMAP.md](ROADMAP.md) | 현재 구현과 목표 구조를 잇는 순서 |
 
 ## 문서 원칙

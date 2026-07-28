@@ -29,9 +29,7 @@ redon-games-website/     Redon Games public website
 
 Current product decisions live in [sps-server/docs/current](sps-server/docs/current/README.md).
 
-- [Product scope](sps-server/docs/current/PRODUCT-SCOPE.md)
-- [Core and plugin boundary](sps-server/docs/current/CORE-PLUGIN-BOUNDARY-ko.md)
-- [First Company flow](sps-server/docs/current/FIRST-COMPANY-AND-PLUGIN-DISCOVERY-ko.md)
+- [Product model](sps-server/docs/current/PRODUCT-MODEL-ko.md)
 - [Plugin developer platform](sps-server/docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)
 - [Roadmap](sps-server/docs/current/ROADMAP.md)
 
