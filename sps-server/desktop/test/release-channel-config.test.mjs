@@ -8,7 +8,7 @@ const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(testDirectory, "..");
 const repositoryDirectory = path.resolve(desktopDirectory, "..", "..");
 
-test("uses the separate artifact channel first and mirrors the one-time bridge release to the legacy source channel", async () => {
+test("keeps the unified SPS Desktop release on its explicit stable update channel", async () => {
   const manifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   assert.equal(manifest.build.artifactName, "SPS-Desktop-Setup-${version}.${ext}");
@@ -25,23 +25,21 @@ test("uses the separate artifact channel first and mirrors the one-time bridge r
     },
   ]);
 
-  assert.deepEqual(manifest.build.publish, [
-    {
-      provider: "github",
-      owner: "Powerpunch777",
-      repo: "SPS-Desktop-Releases",
-      releaseType: "release",
-    },
-    {
-      provider: "github",
-      owner: "Powerpunch777",
-      repo: "SPS",
-      releaseType: "release",
-    },
-  ]);
+  assert.deepEqual(manifest.build.publish, [{
+    provider: "github",
+    owner: "Powerpunch777",
+    repo: "SPS-Desktop-Releases",
+    releaseType: "release",
+    channel: "latest",
+  }]);
+  assert.deepEqual(manifest.build.nsis, {
+    oneClick: true,
+    perMachine: false,
+    deleteAppDataOnUninstall: false,
+  });
 });
 
-test("release workflow requires the cross-repository publishing token", async () => {
+test("release workflow requires the official Desktop release publishing token", async () => {
   const workflow = await readFile(
     path.join(repositoryDirectory, ".github", "workflows", "sps-desktop-release.yml"),
     "utf8",

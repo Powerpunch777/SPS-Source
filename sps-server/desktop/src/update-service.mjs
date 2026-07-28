@@ -1,11 +1,15 @@
 const DEFAULT_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 export const SPS_DESKTOP_UPDATE_POLICY = Object.freeze({
-  channel: "beta",
-  trust: "unsigned-beta",
+  channel: "latest",
+  trust: "official-release",
   automaticDownload: true,
   automaticInstall: true,
   mandatory: false,
 });
+
+export function resolveSpsDesktopUpdatePolicy() {
+  return { ...SPS_DESKTOP_UPDATE_POLICY };
+}
 
 function versionOf(info) {
   return typeof info?.version === "string" && info.version.trim() ? info.version.trim() : null;
@@ -51,9 +55,10 @@ export function createSpsUpdateService({
   };
 
   if (enabled) {
+    updater.channel = policy.channel;
     updater.autoDownload = policy.automaticDownload;
     updater.autoInstallOnAppQuit = policy.automaticInstall;
-    updater.allowPrerelease = policy.channel === "beta";
+    updater.allowPrerelease = false;
     updater.on("checking-for-update", () => publish({
       state: "checking",
       availableVersion: null,

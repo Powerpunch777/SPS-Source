@@ -37,7 +37,7 @@ import {
   setSpsAccountConnection,
 } from "./account-connections.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
-import { createSpsUpdateService } from "./update-service.mjs";
+import { createSpsUpdateService, resolveSpsDesktopUpdatePolicy } from "./update-service.mjs";
 import {
   createSpsDesktopAccessToken,
   isSpsDesktopWorkspaceRequest,
@@ -133,8 +133,8 @@ let lastPromptedUpdateVersion = null;
 let launchAtLoginEnabled = false;
 let updateStatus = {
   state: "initializing",
-  channel: "beta",
-  trust: "unsigned-beta",
+  channel: "latest",
+  trust: "official-release",
   mandatory: false,
   currentVersion: app.getVersion(),
   availableVersion: null,
@@ -209,8 +209,8 @@ async function initializeUpdates() {
   if (!app.isPackaged) {
     updateStatus = {
       state: "disabled",
-      channel: "beta",
-      trust: "unsigned-beta",
+      channel: "latest",
+      trust: "official-release",
       mandatory: false,
       currentVersion: app.getVersion(),
       availableVersion: null,
@@ -227,6 +227,7 @@ async function initializeUpdates() {
     updateService = createSpsUpdateService({
       app,
       updater: autoUpdater,
+      policy: resolveSpsDesktopUpdatePolicy(),
       onStatus: (nextStatus) => {
         updateStatus = nextStatus;
         if (nextStatus.state === "ready") void promptDesktopBetaUpdate(nextStatus);
@@ -237,8 +238,8 @@ async function initializeUpdates() {
   } catch {
     updateStatus = {
       state: "unavailable",
-      channel: "beta",
-      trust: "unsigned-beta",
+      channel: "latest",
+      trust: "official-release",
       mandatory: false,
       currentVersion: app.getVersion(),
       availableVersion: null,

@@ -12,6 +12,9 @@ AI 작업환경을 만들고 운영하는 Desktop-first 플랫폼을 완성하�
 - 업무 모델, 사람 역할, Memory 전략, Connector 사용 규칙, 게임·앱·웹 개발 방식은 플러그인이 정한다.
 - Core의 보안 경계는 제거할 수 없다. Host project source, device identity, Owner Vault, 서명된 command,
   plugin package 검증, 설치·활성화 동의, audit/revocation은 업무 권한 플러그인과 별개의 플랫폼 책임이다.
+- Core의 유일한 기술적 소유자는 `Host Owner`다. Access Control 같은 플러그인은 Host Owner 아래의
+  업무 역할만 정의하며, Host Owner의 서버 소유권을 대체하지 않는다.
+- 첫 출시는 Windows 10/11 x64와 Tailscale 기반의 Host/Member 연결만 공식 지원한다.
 - UI 고도화, 공개 Marketplace, 판매·정산은 아래 제품 게이트를 통과한 뒤 진행한다.
 
 ## 완료 기준의 공통 원칙
@@ -32,6 +35,10 @@ AI 작업환경을 만들고 운영하는 Desktop-first 플랫폼을 완성하�
 ### 구현 범위
 
 - Desktop release마다 Core revision과 `SPS Extension Profile` 버전을 기록한다.
+- 모든 사용자는 하나의 SPS Desktop installer와 `latest` update channel을 사용한다. 로그인 뒤 Host를
+  만들거나 Member Node로 참여하는 것은 앱의 역할 선택이며, 별도 Member installer나 channel이 아니다.
+- `SPS-Desktop-Releases`만 공식 installer·update metadata 저장소로 사용한다. 비공개 `SPS`는 제품
+  소스와 내부 문서만 보관하며 새 Desktop release artifact를 게시하지 않는다.
 - 공식 extension마다 최소/최대 Desktop 및 Profile 호환 범위를 manifest와 Catalog에 선언한다.
 - stable과 beta update channel을 분리하고, 설치본의 update metadata가 같은 release artifact를 가리키게 한다.
 - Website 다운로드 링크와 설치본 버전을 release metadata에서 생성하거나 검증한다.
@@ -39,7 +46,8 @@ AI 작업환경을 만들고 운영하는 Desktop-first 플랫폼을 완성하�
 
 ### 수용 기준
 
-- 새 PC가 공식 사이트에서 받은 installer로 최신 stable 버전을 설치한다.
+- 새 PC가 공식 사이트에서 받은 단일 installer로 최신 stable 버전을 설치하고, 로그인 후 Host 생성 또는
+  Member 참여를 선택할 수 있다.
 - 앱이 같은 stable channel의 update metadata만 수신한다.
 - 설치된 Desktop에서 공식 Registry의 지원 extension을 설치·활성화·재시작·비활성화할 수 있다.
 - 릴리스 문서 한 곳에서 지원 조합과 rollback 절차를 확인할 수 있다.
@@ -114,12 +122,12 @@ Owner Host와 Member Node가 서로 다른 컴퓨터에서 안전하게 협업�
 
 ### 구현 범위
 
-- Owner가 초대 생성, Member가 로그인·참여, Owner가 Node를 승인·철회하는 흐름을 완성한다.
+- Host Owner가 초대 생성, Member가 로그인·참여, Host Owner가 Node를 승인·철회하는 흐름을 완성한다.
 - Node가 보고하는 실행 가능 CLI, local AI, Connector capability와 상태를 확인한다.
 - Core는 Node/Backend/CLI profile과 project scope를 기술적으로 연결하되, 특정 사용자가 해당 Agent를
   실행할 수 있는지는 Access Control이나 Workplane 같은 설치된 플러그인이 발급한 실행 grant로만 판단한다.
   Core 자체는 Viewer·Operator·Admin 같은 사람 역할을 해석하지 않는다.
-- project source는 Host만 지정·변경한다. Member는 Host가 부여한 project source mapping으로만 접근하고
+- project source는 Host Owner만 지정·변경한다. Member는 Host가 부여한 project source mapping으로만 접근하고
   임의의 자기 로컬 폴더를 프로젝트 source로 등록할 수 없다.
 - 명령은 Company/Agent/Node/project scope, 만료, 승인 상태를 포함한 서명된 protocol로 전달하고
   audit log에 남긴다.
@@ -129,13 +137,13 @@ Owner Host와 Member Node가 서로 다른 컴퓨터에서 안전하게 협업�
 
 패키지된 앱을 설치한 물리 컴퓨터 두 대에서 다음을 검증한다.
 
-1. Owner가 서버를 만들고 Member를 초대한다.
-2. Member가 로그인·참여하고 Owner가 Node를 승인한다.
-3. Owner가 지정한 project source만 Member Node에서 사용한다.
+1. Host Owner가 서버를 만들고 Member를 초대한다.
+2. Member가 로그인·참여하고 Host Owner가 Node를 승인한다.
+3. Host Owner가 지정한 project source만 Member Node에서 사용한다.
 4. 설치된 정책 또는 업무 플러그인이 발급한 실행 grant를 가진 Agent만 해당 Node의 CLI 또는 local AI를
    실행하고 기록을 남긴다.
 5. Member 또는 Node를 철회하면 새 command와 project source 접근이 즉시 거절된다.
-6. Owner와 Member 앱을 각각 재시작한 뒤 Company·membership·Node 상태를 안전하게 복구한다.
+6. Host Owner와 Member 앱을 각각 재시작한 뒤 Company·membership·Node 상태를 안전하게 복구한다.
 
 ### 선행·차단 관계
 
@@ -152,7 +160,8 @@ Provider를 교체해도 Company의 기억과 운영 데이터를 잃지 않는 
 - Core는 Thread, Run, Artifact, Event를 Memory Provider가 읽을 수 있는 안정된 계약으로 제공한다.
 - Provider는 수집, 검색, 요약, checkpoint/compact, 승인 후보, retention을 구현한다.
 - Company·Project·plugin scope 격리와 삭제 정책을 정의한다.
-- Owner Vault, configuration, memory index, audit data의 backup/export와 restore 흐름을 제공한다.
+- Host PC의 Owner Vault, configuration, memory index, audit data를 암호화된 수동 backup으로 export하고
+  새 Host 또는 복구 환경에서 restore하는 흐름을 제공한다. 중앙 서비스는 Company 작업 데이터를 보관하지 않는다.
 - 진단 bundle은 비밀값과 live database를 제외하고, 지원자가 원인을 재현할 수 있는 상태·버전·로그를 담는다.
 
 ### 수용 기준
@@ -177,7 +186,7 @@ Provider를 교체해도 Company의 기억과 운영 데이터를 잃지 않는 
 
 ### 구현 순서
 
-1. Access Control: Viewer, Operator, Admin, Owner 역할을 제공하는 선택형 정책 plugin
+1. Access Control: Host Owner 아래의 Viewer, Operator, Admin 역할을 제공하는 선택형 정책 plugin
 2. Team Workplane: Room, bounded Task, Lead/Worker, 보고·검토를 제공하는 선택형 plugin
 3. Memory Provider와 Connector: 업무에 맞는 저장·검색·외부 도구 연결
 4. Plugin Development Pack: SPS plugin 제작을 위한 첫 공식 Pack

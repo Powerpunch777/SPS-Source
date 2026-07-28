@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createSpsUpdateService } from "../src/update-service.mjs";
+import { createSpsUpdateService, resolveSpsDesktopUpdatePolicy } from "../src/update-service.mjs";
 
 function createUpdater() {
   const updater = new EventEmitter();
@@ -34,7 +34,8 @@ test("downloads an SPS Desktop update automatically and installs it when the app
   });
   assert.equal(updater.autoDownload, true);
   assert.equal(updater.autoInstallOnAppQuit, true);
-  assert.equal(updater.allowPrerelease, true);
+  assert.equal(updater.allowPrerelease, false);
+  assert.equal(updater.channel, "latest");
 
   await service.check();
   assert.equal(updater.checkCalls, 1);
@@ -43,8 +44,8 @@ test("downloads an SPS Desktop update automatically and installs it when the app
   updater.emit("update-available", { version: "0.2.0" });
   assert.deepEqual(service.getStatus(), {
     state: "available",
-    channel: "beta",
-    trust: "unsigned-beta",
+    channel: "latest",
+    trust: "official-release",
     mandatory: false,
     currentVersion: "0.1.0",
     availableVersion: "0.2.0",
@@ -61,6 +62,21 @@ test("downloads an SPS Desktop update automatically and installs it when the app
   // Restart is optional; an app quit also installs because autoInstallOnAppQuit is true.
   service.install();
   assert.equal(updater.installCalls, 1);
+});
+
+test("uses the same stable update channel for every SPS Desktop role", () => {
+  const updater = createUpdater();
+  const policy = resolveSpsDesktopUpdatePolicy();
+  const service = createSpsUpdateService({
+    app: { isPackaged: true, getVersion: () => "0.1.0" },
+    updater,
+    policy,
+  });
+
+  assert.equal(updater.channel, "latest");
+  assert.equal(updater.allowPrerelease, false);
+  assert.equal(service.getStatus().channel, "latest");
+  assert.equal(service.getStatus().trust, "official-release");
 });
 
 test("does not expose updater errors and does not install before a download completes", async () => {
