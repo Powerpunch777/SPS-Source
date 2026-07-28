@@ -44,7 +44,10 @@ Unsupported shorthand such as `^0.4.0` or `~0.4.0` is rejected rather than guess
 - A breaking runtime API change increments Plugin API. Old releases are rejected until authors publish a compatible version.
 - A breaking SPS product contract change increments the Extension Profile major version. Desktop blocks releases for another major profile before extraction.
 - `minimumHostVersion` protects a plugin that needs a newer Desktop-owned host behavior. SPS Desktop passes its actual release version to the product-neutral Core through `PAPERCLIP_HOST_VERSION`.
-- Core updates do not run third-party migrations automatically. Any plugin-specific migration must be part of a future explicit, reviewed plugin lifecycle action.
+- Core updates never run third-party migrations automatically.
+- A first install may create its own empty plugin namespace. An upgrade that adds migrations to a plugin with applied migrations stops in `upgrade_pending`.
+- The Host reviews `GET /api/plugins/:pluginId/migration-plan`, then approves the exact review hash through the upgrade action. SPS creates a fresh Host database backup immediately before that approved migration can run.
+- `upgrade_pending` cannot be bypassed with a normal Enable action. The reviewed upgrade path is the only way to activate it.
 
 ## Operator Experience
 

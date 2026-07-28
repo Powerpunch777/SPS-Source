@@ -9,6 +9,7 @@ Current compatibility contract: [PLUGIN-COMPATIBILITY-AND-UPDATES.md](PLUGIN-COM
 | --- | --- |
 | [PRODUCT-MODEL-ko.md](PRODUCT-MODEL-ko.md) | 제품 범위, 첫 Company, Core/Plugin 경계, 협업 확장 모델 |
 | [PLUGIN-DEVELOPER-PLATFORM-ko.md](PLUGIN-DEVELOPER-PLATFORM-ko.md) | 플러그인 제작자가 Core에서 받는 SDK와 개발 도구 |
+| [PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md](PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md) | 위험도 기반 업데이트, 데이터 마이그레이션, SDK 표준화 구현 계획 |
 | [ROADMAP.md](ROADMAP.md) | 제품 기반을 완성하기 위한 단계별 구현 계획·수용 기준·릴리스 게이트 |
 | [RELEASE-BASELINE-ko.md](RELEASE-BASELINE-ko.md) | 현재 Desktop/Core/Profile 지원 조합과 배포·롤백 상태 |
 
