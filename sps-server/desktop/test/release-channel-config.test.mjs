@@ -49,6 +49,15 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(workflow, /SPS_DESKTOP_RELEASES_TOKEN is required/);
   assert.match(workflow, /tags:\s*\r?\n\s*- "v\*"/);
   assert.match(workflow, /\$expectedTag = "v\$\(\$manifest\.version\)"/);
+  assert.match(workflow, /submodules: recursive/);
+  assert.match(workflow, /SPS_SOURCE_READ_TOKEN/);
+  assert.match(workflow, /npm run release:win/);
+  assert.match(workflow, /SPS_REQUIRE_CLEAN_RELEASE:\s*"1"/);
+  assert.match(workflow, /SPS_RELEASE_STATUS:\s*"stable"/);
+  assert.match(workflow, /sps-release-manifest\.json/);
+  assert.match(workflow, /Get-AuthenticodeSignature/);
   assert.match(workflow, /gh release create \$tag --repo \$releaseRepo --target main/);
+  assert.match(workflow, /gh release edit \$tag --repo \$releaseRepo --draft=false --prerelease=false --latest/);
+  assert.doesNotMatch(workflow, /--clobber/);
   assert.doesNotMatch(workflow, /GH_TOKEN:\s*\$\{\{ secrets\.GITHUB_TOKEN \}\}/);
 });

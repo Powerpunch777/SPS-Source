@@ -1,24 +1,21 @@
-name: Release SPS Desktop Beta
+name: Build SPS Desktop Candidate
 
 on:
-  push:
-    tags:
-      - "desktop-beta-v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   build-and-publish-beta:
+    name: Package unsigned Windows candidate
     runs-on: windows-latest
-    env:
-      GH_TOKEN: ${{ secrets.SPS_DESKTOP_RELEASES_TOKEN }}
 
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || secrets.SPS_DESKTOP_RELEASES_TOKEN || github.token }}
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
 
       - uses: actions/setup-node@v6
         with:
@@ -49,19 +46,6 @@ jobs:
         working-directory: external/sps-core
         run: pnpm --filter paperclipai run build
 
-      - name: Verify Beta release tag and publishing credentials
-        shell: pwsh
-        working-directory: sps-server/desktop
-        run: |
-          $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
-          $expectedTag = "desktop-beta-v$($manifest.version)"
-          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
-            throw "Beta release tag must be $expectedTag, but was $env:GITHUB_REF_NAME."
-          }
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            throw "SPS_DESKTOP_RELEASES_TOKEN is required to publish the SPS Desktop Beta release."
-          }
-
       - name: Install Desktop dependencies
         working-directory: sps-server/desktop
         run: npm ci
@@ -77,6 +61,18 @@ jobs:
         working-directory: sps-server/desktop
         run: npm test -- --test-concurrency=1
 
-      - name: Build and publish unsigned Beta release
+      - name: Build unsigned candidate without publishing
         working-directory: sps-server/desktop
-        run: npm run release:beta:win
+        run: npm run package:candidate:win
+
+      - name: Upload candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sps-desktop-candidate-${{ github.sha }}
+          path: |
+            sps-server/desktop/dist/SPS-Desktop-Setup-*.exe
+            sps-server/desktop/dist/SPS-Desktop-Setup-*.exe.blockmap
+            sps-server/desktop/dist/latest.yml
+            sps-server/desktop/dist/sps-release-manifest.json
+          if-no-files-found: error
+          retention-days: 14

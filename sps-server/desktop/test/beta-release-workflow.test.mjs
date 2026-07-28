@@ -8,19 +8,19 @@ const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopDirectory = path.resolve(testDirectory, "..");
 const repositoryDirectory = path.resolve(desktopDirectory, "..", "..");
 
-test("keeps the unsigned Desktop Beta release separate from the signed release channel", async () => {
+test("keeps the unsigned Desktop candidate inside Actions and outside the update repository", async () => {
   const [manifestText, workflow] = await Promise.all([
     readFile(path.join(desktopDirectory, "package.json"), "utf8"),
     readFile(path.join(repositoryDirectory, ".github", "workflows", "sps-desktop-beta-release.yml"), "utf8"),
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.match(manifest.scripts["release:beta:win"], /--config\.publish\.releaseType=prerelease/);
-  assert.doesNotMatch(manifest.scripts["release:beta:win"], /forceCodeSigning/);
-  assert.match(workflow, /desktop-beta-v\*/);
-  assert.match(workflow, /desktop-beta-v\$\(\$manifest\.version\)/);
-  assert.match(workflow, /SPS_DESKTOP_RELEASES_TOKEN is required/);
-  assert.doesNotMatch(workflow, /SPS_WINDOWS_CSC_LINK/);
+  assert.match(manifest.scripts["package:candidate:win"], /electron-builder --win nsis --publish never/);
+  assert.match(manifest.scripts["package:candidate:win"], /create-release-manifest\.mjs/);
+  assert.match(workflow, /workflow_dispatch/);
+  assert.doesNotMatch(workflow, /desktop-beta-v\*/);
+  assert.doesNotMatch(workflow, /SPS_DESKTOP_RELEASES_TOKEN/);
+  assert.doesNotMatch(workflow, /gh release/);
   assert.match(workflow, /submodules: recursive/);
   assert.match(workflow, /working-directory: external\/sps-core/);
   assert.match(workflow, /pnpm install --frozen-lockfile/);
@@ -28,5 +28,7 @@ test("keeps the unsigned Desktop Beta release separate from the signed release c
   assert.match(workflow, /pnpm --filter "@paperclipai\/adapter-\*" run build/);
   assert.match(workflow, /pnpm --filter @paperclipai\/hermes-paperclip-adapter run build/);
   assert.match(workflow, /pnpm --filter paperclipai run build/);
-  assert.match(workflow, /npm run release:beta:win/);
+  assert.match(workflow, /npm run package:candidate:win/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /sps-release-manifest\.json/);
 });

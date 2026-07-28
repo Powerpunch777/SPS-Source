@@ -2,6 +2,7 @@ import { access, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/pro
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { writeSpsReleaseBaseline } from "./release-baseline.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -10,6 +11,7 @@ const workspaceRoot = path.resolve(desktopRoot, "..", "..");
 const coreRoot = path.resolve(process.env.SPS_HOST_CORE_ROOT || path.join(workspaceRoot, "external", "sps-core"));
 const defaultRuntimeRoot = path.join(desktopRoot, ".owner-host-runtime");
 const runtimeRoot = path.resolve(process.env.SPS_DESKTOP_RUNTIME_OUTPUT?.trim() || defaultRuntimeRoot);
+const releaseBaselinePath = path.join(runtimeRoot, "sps-release-baseline.json");
 
 function assertDesktopBuildPath(target) {
   const relative = path.relative(desktopRoot, target);
@@ -18,9 +20,15 @@ function assertDesktopBuildPath(target) {
   }
 }
 
-function run(command, args, cwd, { shell = false } = {}) {
+function run(command, args, cwd, { shell = false, environment = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit", windowsHide: true, shell });
+    const child = spawn(command, args, {
+      cwd,
+      stdio: "inherit",
+      windowsHide: true,
+      shell,
+      env: { ...process.env, ...environment },
+    });
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolve();
@@ -34,7 +42,21 @@ async function resolvePnpmInvocation() {
   if (configuredPnpmCli) {
     const cliPath = path.resolve(configuredPnpmCli);
     await requireFile(cliPath, "SPS_PNPM_CLI does not point to a pnpm CLI file.");
-    return { command: process.execPath, prefixArgs: [cliPath] };
+    const environment = { npm_execpath: cliPath };
+    if (process.platform === "win32") {
+      if ([process.execPath, cliPath].some((entry) => /[%"\r\n]/.test(entry))) {
+        throw new Error("SPS_PNPM_CLI and node.exe must use batch-safe Windows paths.");
+      }
+      const shimDirectory = path.join(spsServerRoot, ".tmp", `pnpm-cli-shim-${process.pid}`);
+      await mkdir(shimDirectory, { recursive: true });
+      await writeFile(
+        path.join(shimDirectory, "pnpm.cmd"),
+        `@echo off\r\n"${process.execPath}" "${cliPath}" %*\r\n`,
+        "utf8",
+      );
+      environment.PATH = `${shimDirectory}${path.delimiter}${process.env.PATH || ""}`;
+    }
+    return { command: process.execPath, prefixArgs: [cliPath], environment };
   }
   if (process.platform !== "win32") return { command: "pnpm", prefixArgs: [] };
   const pathEntries = String(process.env.PATH || "").split(path.delimiter).filter(Boolean);
@@ -206,7 +228,7 @@ await run(
     runtimeRoot,
   ],
   workspaceRoot,
-  { shell: pnpm.shell },
+  { shell: pnpm.shell, environment: pnpm.environment },
 );
 
 await normalizeWorkspacePackageExports(runtimeRoot);
@@ -217,16 +239,24 @@ await writeOwnerHostBootstrap(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
 await copyBundledSpsPluginRuntime(runtimeRoot);
 const bundledNode = await copyBundledSpsNodeRuntime(runtimeRoot);
+const releaseBaseline = await writeSpsReleaseBaseline({
+  outputPath: releaseBaselinePath,
+  workspaceRoot,
+  desktopRoot,
+  spsServerRoot,
+  coreRoot,
+});
 await writeFile(
   path.join(runtimeRoot, "sps-owner-host-runtime.json"),
   `${JSON.stringify({
-    format: 6,
+    format: 7,
     entry: "dist/index.js",
     loader: "node-esm",
     vendorDirectory: "node_modules",
     nodeRuntime: bundledNode,
     bundledDefaultMemory: true,
     version: process.env.npm_package_version || "development",
+    releaseBaseline,
     createdAt: new Date().toISOString(),
   }, null, 2)}\n`,
   "utf8",

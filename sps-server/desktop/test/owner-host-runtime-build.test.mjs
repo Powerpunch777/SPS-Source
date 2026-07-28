@@ -12,10 +12,16 @@ test("builds and bundles the static Core Workspace UI with the Owner Host runtim
   assert.match(buildScript, /prepare-server-ui-dist\.mjs/);
   assert.match(buildScript, /serverUiDist/);
   assert.match(buildScript, /path\.join\(runtimeRoot, "ui-dist"\)/);
+  assert.match(buildScript, /writeSpsReleaseBaseline/);
+  assert.match(buildScript, /releaseBaseline/);
+  assert.match(buildScript, /pnpm-cli-shim/);
+  assert.match(buildScript, /environment\.PATH/);
 });
 
 test("smoke test proves the packaged Owner Host serves its Workspace UI", async () => {
   const smokeScript = await readFile(path.join(desktopDirectory, "scripts", "smoke-packaged-owner-host-runtime.mjs"), "utf8");
   assert.match(smokeScript, /assertStaticWorkspaceUi/);
   assert.match(smokeScript, /<title>SPS<\/title>/);
+  assert.match(smokeScript, /sps-release-baseline\.json/);
+  assert.match(smokeScript, /runtimeManifest\.format < 7/);
 });

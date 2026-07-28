@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
 
       - uses: actions/setup-node@v6
         with:
@@ -22,8 +23,27 @@ jobs:
           cache: npm
           cache-dependency-path: sps-server/desktop/package-lock.json
 
+      - name: Install pinned pnpm for SPS Core
+        run: npm install --global pnpm@9.15.4
+
+      - name: Install SPS Core dependencies
+        working-directory: external/sps-core
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SPS Core package prerequisites
+        working-directory: external/sps-core
+        run: |
+          pnpm --filter @paperclipai/plugin-sdk run build
+          pnpm --filter "@paperclipai/adapter-*" run build
+          pnpm --filter @paperclipai/hermes-paperclip-adapter run build
+          pnpm --filter paperclipai run build
+
       - name: Install Desktop dependencies
         working-directory: sps-server/desktop
+        run: npm ci
+
+      - name: Install Plugin Platform dependencies
+        working-directory: sps-server/plugin-platform
         run: npm ci
 
       - name: Verify Desktop tests
@@ -36,15 +56,16 @@ jobs:
 
       - name: Build unsigned pilot installer without publishing
         working-directory: sps-server/desktop
-        run: npm run package:win -- --publish never
+        run: npm run package:candidate:win
 
       - name: Upload pilot installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: sps-desktop-pilot-${{ github.sha }}
           path: |
-            sps-server/desktop/dist/SPS Desktop Setup *.exe
-            sps-server/desktop/dist/SPS Desktop Setup *.exe.blockmap
+            sps-server/desktop/dist/SPS-Desktop-Setup-*.exe
+            sps-server/desktop/dist/SPS-Desktop-Setup-*.exe.blockmap
             sps-server/desktop/dist/latest.yml
+            sps-server/desktop/dist/sps-release-manifest.json
           if-no-files-found: error
           retention-days: 14

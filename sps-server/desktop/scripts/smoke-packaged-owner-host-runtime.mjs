@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import os from "node:os";
@@ -19,6 +19,17 @@ import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
 const runtimeRoot = path.resolve(process.env.SPS_OWNER_HOST_RUNTIME_ROOT || path.join(desktopRoot, ".owner-host-runtime"));
+const [runtimeManifest, releaseBaseline] = await Promise.all([
+  readFile(path.join(runtimeRoot, "sps-owner-host-runtime.json"), "utf8").then(JSON.parse),
+  readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8").then(JSON.parse),
+]);
+if (
+  runtimeManifest.format < 7
+  || runtimeManifest.releaseBaseline?.desktopVersion !== releaseBaseline.desktopVersion
+  || runtimeManifest.releaseBaseline?.core?.revision !== releaseBaseline.core?.revision
+) {
+  throw new Error("The packaged SPS Owner Host runtime is missing its matching release baseline.");
+}
 
 const temporaryRoot = path.join(os.tmpdir(), `sps-owner-host-smoke-${process.pid}-${Date.now()}`);
 // PostgreSQL on Windows cannot initialise a UTF-8 cluster when its executable

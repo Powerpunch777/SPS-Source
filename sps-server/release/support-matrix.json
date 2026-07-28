@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "candidate": {
+    "status": "development-candidate",
+    "desktopVersion": "0.4.79",
+    "core": {
+      "repository": "Powerpunch777/SPS-Core",
+      "revision": "1ce4230334582b5da930cd121c3edd04df88df1e"
+    },
+    "extensionProfile": {
+      "version": "1.0",
+      "pluginApi": 1
+    },
+    "platform": {
+      "operatingSystems": [
+        "windows-10-x64",
+        "windows-11-x64"
+      ],
+      "remoteTransport": "tailscale"
+    },
+    "update": {
+      "channel": "latest",
+      "trust": "official-release",
+      "repository": "Powerpunch777/SPS-Desktop-Releases"
+    },
+    "bundledExtensions": [
+      {
+        "id": "sps.default-memory",
+        "package": "sps-default-memory",
+        "version": "0.1.0",
+        "profile": "1.0",
+        "pluginApi": 1
+      },
+      {
+        "id": "local.room-chat",
+        "package": "sps-room-chat",
+        "version": "0.3.91",
+        "profile": "1.0",
+        "pluginApi": 1
+      }
+    ]
+  }
+}

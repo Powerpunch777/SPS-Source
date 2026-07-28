@@ -308,8 +308,18 @@ async function terminateProcessTree(child) {
         windowsHide: true,
         stdio: "ignore",
       });
-      killer.once("error", () => resolve());
-      killer.once("close", () => resolve());
+      const fallback = () => {
+        if (child.exitCode == null) child.kill();
+        resolve();
+      };
+      killer.once("error", fallback);
+      killer.once("close", (code) => {
+        if (code !== 0) {
+          fallback();
+          return;
+        }
+        resolve();
+      });
     });
     return;
   }

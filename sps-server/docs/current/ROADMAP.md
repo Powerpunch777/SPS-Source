@@ -39,8 +39,12 @@ AI 작업환경을 만들고 운영하는 Desktop-first 플랫폼을 완성하�
   만들거나 Member Node로 참여하는 것은 앱의 역할 선택이며, 별도 Member installer나 channel이 아니다.
 - `SPS-Desktop-Releases`만 공식 installer·update metadata 저장소로 사용한다. 비공개 `SPS`는 제품
   소스와 내부 문서만 보관하며 새 Desktop release artifact를 게시하지 않는다.
+- 개발 후보 설치본은 비공개 GitHub Actions artifact로만 배포하며 공식 update 저장소에 게시하지 않는다.
+- `sps-server/release/support-matrix.json`을 개발 후보의 기계 판독 기준선으로 사용하고, 패키지마다
+  같은 정보와 source/Core revision을 `sps-release-manifest.json`에 기록한다.
 - 공식 extension마다 최소/최대 Desktop 및 Profile 호환 범위를 manifest와 Catalog에 선언한다.
-- stable과 beta update channel을 분리하고, 설치본의 update metadata가 같은 release artifact를 가리키게 한다.
+- 정식 설치본은 `latest` stable channel만 구독한다. 내부 candidate는 자동 업데이트 채널을 만들지 않는다.
+- 설치본의 update metadata와 release manifest가 같은 installer 이름·버전·hash를 가리키게 한다.
 - Website 다운로드 링크와 설치본 버전을 release metadata에서 생성하거나 검증한다.
 - 버전이 맞지 않는 plugin은 설치 전에 차단하거나 사용자가 이해할 수 있는 호환성 오류를 보인다.
 
