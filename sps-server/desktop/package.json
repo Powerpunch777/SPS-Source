@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.49",
+  "version": "0.4.75",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
@@ -12,6 +12,7 @@
     "prepare:owner-host-runtime": "node scripts/prepare-owner-host-runtime.mjs",
     "smoke:owner-host-runtime": "node scripts/smoke-packaged-owner-host-runtime.mjs",
     "package:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis",
+    "package:member:win": "electron-builder --win nsis --config build.member.json",
     "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish always",
     "release:beta:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.publish.releaseType=prerelease --publish always"
   },
@@ -28,6 +29,7 @@
     "appId": "ai.sps.desktop",
     "productName": "SPS Desktop",
     "asar": true,
+    "compression": "normal",
     "files": [
       "src/**/*",
       "renderer/**/*",
@@ -58,17 +60,24 @@
         "provider": "github",
         "owner": "Powerpunch777",
         "repo": "SPS-Desktop-Releases",
-        "releaseType": "release"
+        "releaseType": "release",
+        "channel": "latest"
       },
       {
         "provider": "github",
         "owner": "Powerpunch777",
         "repo": "SPS",
-        "releaseType": "release"
+        "releaseType": "release",
+        "channel": "latest"
       }
     ],
     "win": {
       "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
     }
   }
 }
