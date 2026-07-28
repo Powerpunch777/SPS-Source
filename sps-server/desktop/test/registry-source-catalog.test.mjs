@@ -121,6 +121,11 @@ test("stages a local release published by the Plugin Kit without executing it", 
     assert.equal(report.valid, true);
     assert.equal(report.releases[0].catalog.displayName, "Weather");
     assert.equal(report.releases[0].publisherProfile.displayName, "Example Studio");
+    assert.deepEqual(report.releases[0].compatibility, {
+      sps: ">=0.4.0 <0.5.0",
+      pluginApi: 1,
+      extensionProfile: "1.0",
+    });
     const acquired = await acquireRegistryRelease({
       vaultRoot,
       source,

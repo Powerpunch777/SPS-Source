@@ -33,6 +33,7 @@ Current product decisions live in [sps-server/docs/current](sps-server/docs/curr
 - [Plugin developer platform](sps-server/docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)
 - [Roadmap](sps-server/docs/current/ROADMAP.md)
 - [Company plugin activation](sps-server/docs/current/COMPANY-PLUGIN-ACTIVATION.md)
+- [Plugin compatibility and updates](sps-server/docs/current/PLUGIN-COMPATIBILITY-AND-UPDATES.md)
 
 ## Development
 

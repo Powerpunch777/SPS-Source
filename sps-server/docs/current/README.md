@@ -1,5 +1,7 @@
 # SPS Current Product Documents
 
+Current compatibility contract: [PLUGIN-COMPATIBILITY-AND-UPDATES.md](PLUGIN-COMPATIBILITY-AND-UPDATES.md).
+
 이 폴더만 SPS의 현재 제품 결정을 설명한다. 루트의 과거 구현 로그, Paperclip 호환 기록,
 특정 게임 프로젝트 기록은 제품 계약이 아니다.
 

@@ -14,6 +14,7 @@ test("builds and bundles the static Core Workspace UI with the Owner Host runtim
   assert.match(buildScript, /path\.join\(runtimeRoot, "ui-dist"\)/);
   assert.match(buildScript, /writeSpsReleaseBaseline/);
   assert.match(buildScript, /releaseBaseline/);
+  assert.match(buildScript, /PAPERCLIP_HOST_VERSION/);
   assert.match(buildScript, /pnpm-cli-shim/);
   assert.match(buildScript, /environment\.PATH/);
 });

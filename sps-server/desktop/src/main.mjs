@@ -930,6 +930,10 @@ async function ensureOwnerHostManager() {
           // entrypoint. Desktop must always render the bundled static UI so
           // opening SPS never depends on a separate development web server.
           PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
+          // Core keeps host-version policy product-neutral. Desktop supplies
+          // its own release version so plugin minimumHostVersion guards are
+          // evaluated against the app that owns this Owner Host.
+          PAPERCLIP_HOST_VERSION: app.getVersion(),
           SPS_BASIC_MODE: "true",
           SPS_WORKPLANE_MODE: "true",
           SPS_WORKPLANE_ROOM_ORIGIN_PREFIXES: [
@@ -1303,6 +1307,7 @@ async function inspectDesktopRegistrySource(sourceId) {
       visibility: release.visibility,
       ...(release.catalog === undefined ? {} : { catalog: { ...release.catalog } }),
       ...(release.capabilities === undefined ? {} : { capabilities: [...release.capabilities] }),
+      compatibility: { ...release.compatibility },
       permissionsDigest: release.permissionsDigest,
       publisherId: release.publisherId,
       ...(release.publisherProfile === undefined ? {} : { publisherProfile: { ...release.publisherProfile } }),
@@ -1324,6 +1329,12 @@ async function stageDesktopRegistryRelease({ sourceId, pluginId, version } = {})
     pluginId,
     version,
   });
+  const compatibility = assessSpsPluginCompatibility(acquired.release.compatibility, {
+    desktopVersion: app.getVersion(),
+  });
+  if (!compatibility.compatible) {
+    throw new Error(`Plugin ${pluginId} ${version} is not compatible with this SPS Desktop. ${compatibility.reason}`);
+  }
   try {
     const staged = await stageSpsPluginArchive({
       vaultRoot: ownerVaultRoot(),

@@ -282,6 +282,7 @@ async function inspectRemoteRegistrySource(source, { fetchImpl }) {
           visibility: record.visibility,
           ...(record.catalog === undefined ? {} : { catalog: { ...record.catalog } }),
           ...(record.capabilities === undefined ? {} : { capabilities: [...record.capabilities] }),
+          compatibility: { ...record.compatibility },
           permissionsDigest: record.permissionsDigest,
           publisherId: record.publisher.id,
           ...(publisherProfiles.has(record.publisher.id) ? { publisherProfile: { ...publisherProfiles.get(record.publisher.id) } } : {}),

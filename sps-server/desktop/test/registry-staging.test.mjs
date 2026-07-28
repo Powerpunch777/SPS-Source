@@ -141,3 +141,44 @@ test("does not register when static package permissions differ from the signed r
     await rm(vaultRoot, { recursive: true, force: true });
   }
 });
+
+test("does not register when the package API differs from the signed compatibility contract", async () => {
+  const vaultRoot = await mkdtemp(path.join(os.tmpdir(), "sps-registry-vault-"));
+  try {
+    const archivePath = path.join(vaultRoot, "release.spsplugin");
+    await writeFile(archivePath, "release", "utf8");
+    let registered = false;
+    await assert.rejects(
+      () => stageSpsPluginArchive({
+        vaultRoot,
+        archivePath,
+        source: { registryId: "io.sps.local", kind: "local", releaseLocator: "release.spsplugin" },
+        expectedRelease: {
+          pluginId: "com.example.weather",
+          version: "1.0.0",
+          permissionsDigest: "a".repeat(64),
+          capabilities: ["plugin.state.read"],
+          compatibility: { pluginApi: 2 },
+        },
+        extractArchive: async ({ destinationRoot }) => ({
+          extracted: true,
+          destinationRoot,
+          inspection: {
+            package: {
+              staticManifest: {
+                plugin: { id: "com.example.weather", version: "1.0.0", apiVersion: "1" },
+                permissionsDigest: "a".repeat(64),
+                capabilities: ["plugin.state.read"],
+              },
+            },
+          },
+        }),
+        registerStage: async () => { registered = true; },
+      }),
+      /plugin API does not match/i,
+    );
+    assert.equal(registered, false);
+  } finally {
+    await rm(vaultRoot, { recursive: true, force: true });
+  }
+});

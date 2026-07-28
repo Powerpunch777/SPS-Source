@@ -40,6 +40,10 @@ function assertExpectedRelease(extraction, expectedRelease) {
   if (expectedRelease.capabilities !== undefined && !equalCapabilities(expectedRelease.capabilities, staticManifest.capabilities)) {
     throw new Error("Registry package capabilities do not match the signed release record.");
   }
+  if (expectedRelease.compatibility?.pluginApi !== undefined
+    && expectedRelease.compatibility.pluginApi !== Number(staticManifest.plugin.apiVersion)) {
+    throw new Error("Registry package plugin API does not match the signed release record.");
+  }
 }
 
 export function ownerVaultRegistryLayout(vaultRoot) {

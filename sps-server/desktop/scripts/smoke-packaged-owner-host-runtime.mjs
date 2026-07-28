@@ -202,13 +202,18 @@ function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-async function writeRegistrySmokePackage(version, capabilities = ["plugin.state.read"]) {
+async function writeRegistrySmokePackage(
+  version,
+  capabilities = ["plugin.state.read"],
+  minimumHostVersion = "0.4.0",
+) {
   const packageRoot = path.join(temporaryRoot, "registry-staging", `registry-smoke-${version}`);
   const manifestSource = [
     "export default {",
     '  id: "sps.registry-smoke",',
     "  apiVersion: 1,",
     `  version: ${JSON.stringify(version)},`,
+    `  minimumHostVersion: ${JSON.stringify(minimumHostVersion)},`,
     '  displayName: "Registry Smoke",',
     '  description: "Packaged Registry lifecycle smoke plugin.",',
     '  author: "SPS",',
@@ -296,6 +301,22 @@ async function assertRegistryLifecycle() {
   const rolledBack = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(stageV1.stageId)}/enable`, {});
   if (rolledBack.plugin?.version !== "1.0.0" || rolledBack.plugin?.status !== "ready") {
     throw new Error("Registry smoke did not restore the earlier reviewed version.");
+  }
+
+  const incompatible = await writeRegistrySmokePackage("1.0.2", ["plugin.state.read"], "0.5.0");
+  const incompatibleStage = await ownerHostJson("/api/plugins/registry/stages", {
+    ...incompatible,
+    source: { ...source, releaseLocator: "runtime-smoke/1.0.2" },
+  });
+  const incompatibleEnable = await fetch(`http://127.0.0.1:${port}/api/plugins/registry/stages/${encodeURIComponent(incompatibleStage.stageId)}/enable`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const incompatiblePayload = await incompatibleEnable.json().catch(() => null);
+  if (incompatibleEnable.ok || !String(incompatiblePayload?.error ?? "").includes("requires host version 0.5.0 or newer")) {
+    throw new Error("Registry smoke did not block a plugin that requires a newer SPS Desktop.");
   }
 }
 
