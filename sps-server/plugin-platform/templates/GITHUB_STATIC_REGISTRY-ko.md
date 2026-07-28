@@ -5,7 +5,7 @@
 ## 먼저 준비할 것
 
 1. 이 파일을 대상 저장소의 `.github/workflows/sps-registry-publish.yml`로 복사한다.
-2. 대상 저장소에 `sps-server/plugin-platform`이 있어야 한다. 일반 제작자용 독립 설치형 Plugin Kit 배포는 이후 단계다.
+2. 대상 저장소에 SPS Plugin SDK 또는 동등한 `sps-plugin` CLI가 있어야 한다.
 3. 보호된 branch를 사용한다. Registry 파일을 수정할 수 있는 사람은 게시 권한을 가진 사람뿐이어야 한다.
 4. GitHub Actions Secret 두 개를 만든다.
    - `SPS_REGISTRY_PUBLISHER_PRIVATE_KEY`: release record에 서명하는 Ed25519 PEM 개인 키
@@ -26,8 +26,8 @@ Registry의 index는 새 release가 생길 때 갱신되지만, `packages/<plugi
 
 ## 이 템플릿이 하지 않는 일
 
-- Marketplace 검색, 리뷰, 판매, 정산, entitlement 발급
-- 권한 자동 승인이나 자동 enable
+- Marketplace 검색 UI, 리뷰, 판매, 정산, entitlement 발급
+- 사람 권한 자동 승인이나 자동 enable
 - Secret 없는 임시 키 생성
 - production Registry의 호스트·도메인 구성
 

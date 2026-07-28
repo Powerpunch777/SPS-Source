@@ -1,4 +1,4 @@
-# SPS Desktop Node Core
+# SPS Desktop Node Runtime
 
 This package is the local, non-UI core that SPS Desktop will run from its Electron main process and its restricted execution worker.
 
@@ -9,12 +9,12 @@ It provides:
   OpenCode CLI, Pi CLI, Ollama, and LM Studio.
 - Published Ollama and LM Studio model identifiers, capped and filtered so
   local filesystem paths never leave the computer.
-- Hub registration, owner-authenticated heartbeats, and signed command requests.
+- Host registration, signed heartbeats, and signed command requests.
 - Approved CLI and local-model commands with argument-array process spawning.
-- Node-owner project folder mappings: a command for a Project cannot fall back
-  to the default folder or to another Project's repository.
-- Owner-initiated Node disconnection, which revokes that computer's Agent
-  authority and requires a fresh key and Owner approval before reconnecting.
+- Host-issued workspace access: a command cannot fall back to an unrelated
+  local folder or another Project workspace.
+- Computer-owner Node disconnection, which revokes that computer's active
+  execution connection and requires a fresh registration before reconnecting.
 
 It deliberately does not provide:
 

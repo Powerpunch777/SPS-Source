@@ -1,10 +1,10 @@
 # SPS Default Memory
 
-This is the bundled, first-party memory provider for SPS Desktop Owner Host.
+This is a first-party, optional memory provider for SPS Desktop Host.
 
 It intentionally has one job: expose scoped recall and candidate-recording tools.
-Task creation, work allocation, game-engine rules, and UI workflows do not belong
-here. The Owner Host owns startup, storage location, local authentication, backup,
+Task creation, work allocation, development-domain rules, and UI workflows do not
+belong here. The Host owns startup, storage location, local authentication, backup,
 and provider selection.
 
 The provider also receives the Core's declared memory lifecycle checkpoints. Each

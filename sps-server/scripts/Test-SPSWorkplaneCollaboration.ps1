@@ -106,7 +106,7 @@ $remoteConfigured = $mode -eq "authenticated" -and $bind -ne "loopback" -and -no
 $state = if ($isLocalOnly) { "local_only" } elseif ($remoteConfigured) { "collaboration_ready" } else { "configuration_incomplete" }
 $recommendation = switch ($state) {
   "local_only" { "Keep local-only mode for solo work. For a friend, use authenticated/private Tailnet access rather than exposing the local server directly." }
-  "collaboration_ready" { "Invite the collaborator as an Operator, then run the two-person browser acceptance checklist in 93-collaboration-deployment-readiness-ko.md." }
+  "collaboration_ready" { "Invite the collaborator through the active collaboration plugin, then run that plugin's documented two-person acceptance flow." }
   default { "Fix the failed checks, restart with Start-SPS.ps1, and run this preflight again before inviting collaborators." }
 }
 

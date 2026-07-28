@@ -1,6 +1,6 @@
 # SPS Extension Profile v1
 
-이 디렉터리는 Core plugin SDK 위에서 SPS 플러그인이 따르는 제품 수준 호환 표준의 첫 실행 가능한 검사기다. 새 runtime이나 새 권한 체계를 만들지 않는다.
+이 디렉터리는 Core plugin SDK 위에서 SPS 플러그인이 따르는 제품 수준 호환 표준의 첫 실행 가능한 검사기다. 새 runtime이나 사람 권한 체계를 만들지 않는다.
 
 ## 검사 대상
 
@@ -15,7 +15,7 @@
 
 ## 의도적인 제한
 
-- 이 검사는 구조적 conformance만 확인한다. 실제 권한 판정은 Core runtime이 한다.
+- 이 검사는 구조적 conformance만 확인한다. 사람 권한 정책은 Access Control 같은 플러그인이 결정한다.
 - 기존 플러그인은 `agentPlatform` 선언이 없어도 경고와 함께 호환 상태를 유지한다.
 - Registry·Marketplace는 이 검사 결과만으로 플러그인을 신뢰하거나 자동 활성화하지 않는다.
 

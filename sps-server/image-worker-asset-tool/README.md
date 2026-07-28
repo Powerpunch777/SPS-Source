@@ -1,8 +1,8 @@
 # Image Worker Asset Tool
 
-This is a local, provider-selectable tool for SPS's Image Worker. It is
-not a SPS Core modification and it never stores provider API keys in a
-specification, manifest, Room, or repository.
+This is an example domain connector for an image-production plugin. It is not a
+SPS Core modification, a default Agent, or a default Company capability. It never
+stores provider API keys in a specification, manifest, Thread, or repository.
 
 ## Provider Selection
 

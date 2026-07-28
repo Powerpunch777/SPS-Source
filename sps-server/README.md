@@ -1,87 +1,51 @@
 # SPS Server
 
-SPS Server는 사람과 역할별 AI Agent가 같은 프로젝트에서 안전하게 협업하도록 Hub, Project·Task·Agent Session·Desktop Node와 플러그인 실행 경계를 제공하는 서버·클라이언트 구성 모음이다. Room, 역할 조직, Memory 전략은 Core에 고정하지 않고 선택 가능한 플러그인으로 구성한다.
+This directory contains the SPS Desktop Host, Desktop Node runtime, plugin platform, and first-party extension sources.
 
-이 디렉터리에는 현재 제품 코드뿐 아니라 초기 게임 제작 Work Plane부터 최근 Hosted Hub·Desktop Node까지의 구현 기록이 함께 보존되어 있다. **번호가 붙은 모든 문서가 현재 기준인 것은 아니다.**
+SPS is moving from a Paperclip-compatible implementation to a product model where Core provides plugin-development primitives and plugins provide user-facing workflows.
 
-## 먼저 읽을 문서
+## Current Contract
 
-- [문서 지도](DOCUMENTATION.md)
-- [제품 및 플러그인 플랫폼 계약](114-sps-product-and-plugin-platform-contract-ko.md)
-- [Plugin Kit 및 공식 팀 플러그인 구현 계획](115-sps-plugin-kit-and-bundled-teams-implementation-plan-ko.md)
-- [문서 체계 감사와 마이그레이션](116-sps-documentation-audit-and-migration-ko.md)
-- [Workplane 상세 청사진](75-optimal-work-environment-blueprint-ko.md)
-- [범용 Agent 플랫폼 Core 계약](113-sps-generic-agent-platform-core-contract-ko.md)
-- [SPS Team Workplane Plugin v1](119-sps-team-workplane-plugin-v1-ko.md)
-- [Plugin Registry 및 Official Extensions 계약](120-sps-plugin-registry-and-official-extensions-contract-ko.md)
-- [현재 제품 범위와 기능 상태](docs/current/PRODUCT-SCOPE.md)
+Read [docs/current/README.md](docs/current/README.md) before changing product behavior.
 
-## 현재 제품 방향
+Core owns:
 
-SPS의 첫 제품은 다음 세 층으로 구성한다.
+- Desktop and Host lifecycle
+- Company containers, Agent registry, Node/Runner registry, execution records
+- neutral Thread, Run, Artifact, Store, event, and Connector primitives
+- plugin lifecycle, Catalog access, diagnostics, backup, and updates
 
-1. **Core Product**: Hub, Project·Task·Agent·Agent Session, Workspace, Desktop Node, Runner Profile·Availability Snapshot·Agent Runner 권한, 실행 기록과 확장 Runtime
-2. **SPS Extension Profile + Plugin Kit**: 기존 Core SDK 위의 데이터·권한·lifecycle 표준화, SDK, Test Kit, CLI와 패키징
-3. **공식 확장 기능**: SPS Team Workplane과 기본 Memory Provider, 서명된 공식 Registry release의 발견과 Owner 검토 설치
+Plugins own:
 
-1차 출시에서 SPS는 커뮤니티 Marketplace나 판매를 제공하지 않는다. 플러그인 공유는 Owner가 신뢰하는 local·GitHub·official Registry source로 한정하며, 공개 게시·판매자 정산·결제·코어 라이선스 최종 결정은 Registry의 보안·설치 lifecycle이 실제 사용자에게 검증된 뒤로 미룬다.
+- Discovery and plugin authoring experience
+- people and Agent access policy
+- Room, Task, Lead/Worker, and review workflows
+- memory strategies, external tools, and domain-specific development Packs
 
-기본 SPS는 Core만으로 시작하며 공식 Team, Room, Memory 플러그인을 자동 활성화하지 않는다. 사용자는 필요한 작업 방식을 선택해 설치·활성화한다.
-
-## 소스 지도
+## Source Map
 
 ```text
-sps-server/
-├─ deploy/hub/                # Hosted Hub Docker 배포
-├─ desktop/                   # Electron Desktop UI와 패키징
-├─ desktop-node/              # 승인된 로컬 실행 Node
-├─ plugin-platform/           # Extension Profile·Registry 배포 계약과 검사기
-├─ sps-room-chat/             # SPS Team Workplane 호환 패키지 (Team Room·Task Room)
-├─ sps-memory/                # Memory UI·도구 플러그인
-├─ sps-default-memory/        # 기본 Memory provider
-├─ memory-sidecar/            # 기존 로컬 Memory 보조 서비스
-├─ direct-task-bridge/        # 기존 loopback 실행 브리지
-├─ direct-task-pipe-broker/   # Windows Named Pipe 실행 경로
-├─ agent-instructions/        # 역할·권한·Task 운영 규칙
-├─ config/                    # 모델·Workplane 설정
-├─ codex-room-adapter/        # Codex app-server adapter
-├─ scripts/                   # 시작·복구·마이그레이션·검증
-├─ tests/                     # 보안·호환성·회귀 fixture
-├─ tasks/                     # 구현 작업 명세
-├─ templates/                 # 현재 문서·Room 템플릿
-└─ website/                   # 공개 제품 사이트
+desktop/             Electron SPS Desktop
+desktop-node/        local Node identity, capability discovery, command runtime
+plugin-platform/     authoring CLI, package, Registry, and conformance tooling
+sps-room-chat/       existing Team Workplane compatibility extension
+sps-default-memory/  first-party Memory Provider source
+sps-memory/          existing sidecar integration extension
+memory-sidecar/      legacy local memory helper
+sps-identity/        central identity service
+agent-instructions/  Team Workplane source templates, not a global SPS policy
+deploy/              optional hosted deployment material
+docs/current/        current product contracts
 ```
 
-## 현재 안정 계약
-
-- SPS는 프로젝트, Task, 댓글, 문서, Work Product와 실행 상태의 기준 시스템이다.
-- Agent Session은 지속 가능한 Agent 대화·실행의 범용 Core 단위다.
-- Agent Room과 Task Room은 Team/Workplane 플러그인이 Agent Session과 Task를 조합해 제공하는 사용자 경험이다.
-- Desktop Node는 Hub가 승인한 프로젝트·Agent·Runner·명령 경계 안에서만 로컬 실행하며, 자격 증명은 자기 컴퓨터에만 보관한다.
-- Memory Provider는 승인된 기억을 검색하고 후보를 제안하며, 권한 없이 Task를 생성·배정·완료하지 않는다.
-- 플러그인 플랫폼의 기본값은 최소 권한이어야 한다.
-
-## 개발 시작
+## Checks
 
 ```powershell
-git clone --recurse-submodules https://github.com/Powerpunch777/SPS.git
-cd SPS
+Set-Location .\plugin-platform
+npm test
 
-cd .\sps-server\sps-room-chat
-npm ci
+Set-Location ..\sps-room-chat
 npm run check
-
-cd ..\sps-memory
-npm ci
-npm run check
-
-cd ..\..
-.\sps-server\scripts\Start-SPS.ps1
-.\sps-server\scripts\Test-SPSWorkplaneReadiness.ps1 | Format-List
 ```
 
-기본 로컬 Hub 주소는 `http://127.0.0.1:3100`이다.
-
-## 문서와 구현 로그
-
-기존 번호 문서는 중요한 실패·수정·검증 기록이다. 삭제하지 않지만, 제품 범위와 구현 우선순위를 판단할 때는 `docs/current/`와 `DOCUMENTATION.md`의 현재 기준을 먼저 따른다.
+The numbered Workplane logs and old task specifications were removed from the working documentation set. Use Git history for historical implementation evidence.

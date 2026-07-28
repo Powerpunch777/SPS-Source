@@ -1,4 +1,6 @@
-# SPS 회사 공통 계약
+# SPS Team Workplane 예시 회사 계약
+
+> 이 문서는 기존 Team Workplane extension의 예시 template이다. SPS Core 또는 모든 Company의 기본 조직도로 사용하지 않는다.
 
 계약 버전: `2026-07-15.3`
 

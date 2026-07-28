@@ -1,6 +1,7 @@
 # SPS Memory Sidecar MVP
 
-This is the local-first journal and candidate store used by SPS Default Memory.
+This is a legacy local-first journal and candidate store. It can back a memory
+provider but is not enabled for a new SPS Company by default.
 
 It is intentionally not a controller.
 
@@ -13,9 +14,9 @@ It can:
 
 It must not:
 
-- create SPS issues
-- assign workers
-- close tasks
+- create work items
+- assign Agents
+- close workflow items
 - decide routing
 - replace SPS as the system of record
 

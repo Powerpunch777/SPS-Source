@@ -1,5 +1,7 @@
 # SPS Identity
 
+> 이 패키지는 외부 Host·원격 협업 모드에서 사용할 수 있는 identity runtime이다. 개인·소규모 팀 기본 제품 흐름의 역할·접근 정책은 Core가 아니라 활성화된 정책 플러그인이 정의한다.
+
 This Cloudflare Worker is SPS's central identity plane. It deliberately stores
 only identity, device, OAuth state, one-time code, and refresh-token records.
 It is not a workspace, Room, Task, agent, attachment, or execution server.

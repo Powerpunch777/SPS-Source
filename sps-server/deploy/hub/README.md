@@ -1,4 +1,6 @@
-# SPS Public Hub Deployment
+# SPS External Host Deployment
+
+> 이 문서는 향후 외부 Host·기업 모드용 배포 자료다. 개인·소규모 팀의 기본 제품 흐름은 SPS Desktop의 Host 모드이며, 현재 제품 기준은 [`../../docs/current/`](../../docs/current/)을 따른다.
 
 This folder deploys the shared SPS Hub for a small team. The Hub stores company
 data, invite records, Rooms, Tasks, and signed Node command records. Each

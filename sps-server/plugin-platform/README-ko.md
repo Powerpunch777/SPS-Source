@@ -1,6 +1,8 @@
 # SPS Plugin Platform
 
-SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 플러그인을 만들고 공유할 때 필요한 Profile, package, Registry, Official Extensions 경계를 Core의 실제 manifest·capability·lifecycle 위에서 표준화한다. 커뮤니티 Marketplace는 별도 출시 단계다.
+이 디렉터리는 SPS Core가 제공하는 플러그인 개발 기반의 현재 compatibility tooling이다. 제품 경계는 [현재 Core/Plugin 계약](../docs/current/CORE-PLUGIN-BOUNDARY-ko.md)을 따른다.
+
+이 코드는 제품의 업무 방식이나 사람 권한을 정하지 않는다. manifest, package, Catalog/Registry record, source 검사, 서명, archive 검증 같은 제작·배포 기반만 제공한다.
 
 ## 현재 구현
 
@@ -8,7 +10,7 @@ SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 
 - `registry/`: release record·Registry index 서명, archive 검사·안전한 압축 해제, local source 검사
 - `authoring/`: 실행 없는 source 검사, 최소 Host RPC lifecycle Worker, `.spsplugin` package 생성, Ed25519 key 생성, release record·Registry index 서명, 서명된 catalog metadata, local Registry 발행
 - `sps-plugin` CLI: `init`, `validate`, `inspect`, `pack`, `keygen`, `release`, `registry-index`, `publish-local`
-- SPS Desktop: Owner Vault의 trusted Registry source 관리, remote signature 검증, disabled stage, review queue, 명시적 apply
+- SPS Desktop: 연결한 Catalog source, remote signature 검증, 설치 상태, update/rollback lifecycle
 - `templates/github-static-registry-publish.yml`: GitHub Actions Secret으로만 key를 읽어 정적 Registry release를 수동 발행하는 템플릿
 
 `sps-plugin init`이 만드는 시작 Worker는 의존성 없이 `initialize`·`health`·`shutdown`만 처리한다. 따라서 생성 직후에도 패키지 설치와 Host lifecycle 검증은 가능하지만, Tool·UI·Automation 같은 실제 기능을 추가할 때는 SDK 기반 Worker를 bundle하고 정적 manifest의 capability·hash를 함께 갱신해야 한다.
@@ -16,8 +18,8 @@ SPS Plugin Platform은 Core plugin SDK를 대체하지 않는다. SPS 제품이 
 ## 아직 구현하지 않은 범위
 
 - Test Kit의 mock project·Agent·Room lifecycle harness
-- Plugin Studio의 manifest form, code diff, local test UI
-- 공식 example Registry 운영과 실제 사용자 반복 E2E
+- Plugin Discovery & Builder의 manifest form, code diff, local test UI
+- 공식 Catalog source와 실제 사용자 반복 E2E
 - 게시자 프로필, advisory·신고, entitlement, 결제와 정산
 
 ## 검사
@@ -42,7 +44,7 @@ node .\cli\sps-plugin.mjs publish-local .\my-plugin --registry .\team-registry -
 node .\cli\sps-plugin.mjs inspect .\team-registry
 ```
 
-`publish-local`은 package·release record·Registry index를 한 번에 생성하거나 갱신한다. `--catalog-name`, `--summary`, `--docs-url`은 release signature에 포함되는 표시 정보이고, `--publisher-name`과 `--publisher-url`은 Registry root signature에 포함되는 게시자 profile이다. 모두 선택 사항이며, 설치 권한을 바꾸지 않는다. 기존 release는 덮어쓰지 않으며, 기존 index를 갱신할 때는 같은 Registry root key 서명을 다시 검증한다. 개인 키는 source tree와 Registry에 올리지 않는다.
+`publish-local`은 package·release record·Registry index를 한 번에 생성하거나 갱신한다. `--catalog-name`, `--summary`, `--docs-url`은 release signature에 포함되는 표시 정보이고, `--publisher-name`과 `--publisher-url`은 Registry root signature에 포함되는 게시자 profile이다. 모두 선택 사항이며, 사람 권한 정책을 바꾸지 않는다. 기존 release는 덮어쓰지 않으며, 기존 index를 갱신할 때는 같은 Registry root key 서명을 다시 검증한다. 개인 키는 source tree와 Registry에 올리지 않는다.
 
 ## 배포 파일 선택
 
@@ -60,4 +62,4 @@ node .\cli\sps-plugin.mjs inspect .\team-registry
 
 `dist/*.js`, `../outside`, 빈 경로처럼 포함 범위를 모호하게 만드는 값은 검증 단계에서 거부된다. `files`를 생략하면 기존 호환성을 위해 source tree 전체를 검사하고 패키징한다.
 
-제품·보안·배포 결정은 [Plugin Registry 및 Official Extensions 계약](../120-sps-plugin-registry-and-official-extensions-contract-ko.md)을 따른다.
+제품 경계와 개발자 경험은 [현재 Core/Plugin 계약](../docs/current/CORE-PLUGIN-BOUNDARY-ko.md)과 [Plugin Developer Platform](../docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)을 따른다.

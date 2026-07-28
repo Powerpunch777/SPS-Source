@@ -1,4 +1,6 @@
-# SPS Agent Instructions 운영
+# SPS Team Workplane Agent Instructions
+
+> 이 디렉터리는 기존 Team Workplane extension의 source template이다. 새 SPS Company의 전역 정책이나 Core 계약이 아니다.
 
 ## 목적
 

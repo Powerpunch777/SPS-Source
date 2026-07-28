@@ -1,5 +1,7 @@
 # Agent Room: {{RoleName}}
 
+> 이 템플릿은 Team Workplane 계열 플러그인에서 사용할 수 있는 예시다. SPS Core나 새 Company의 기본 조직 구조를 정의하지 않는다.
+
 This is a long-lived role desk represented by an assigned SPS issue.
 
 ## Role Desk Protocol

@@ -1,6 +1,7 @@
 # SPS Memory Sidecar Plugin
 
-This is the SPS plugin wrapper for the game workplane Memory Sidecar.
+This is a legacy compatibility wrapper around the local Memory Sidecar. It is not
+enabled by a new SPS Company and is not the required SPS memory model.
 
 It keeps SPS as the production control plane and exposes only two agent tools:
 
@@ -18,7 +19,7 @@ It keeps SPS as the production control plane and exposes only two agent tools:
 
 ## What It Must Not Do
 
-- Create, assign, route, wake, or close SPS issues.
+- Create, assign, route, wake, or close work items.
 - Write directly to the SPS database.
 - Edit approved `LEARNINGS.md` files.
 - Replace SPS comments, documents, work products, or issue status as the source of truth.

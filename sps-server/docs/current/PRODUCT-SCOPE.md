@@ -1,40 +1,46 @@
-# SPS 1차 제품 범위와 기능 상태
+# SPS Product Scope
 
-최종 갱신: 2026-07-24
+최종 갱신: 2026-07-28
 
-## 제품 한 문장
+## 한 문장
 
-SPS는 **승인된 로컬 컴퓨터에서 AI가 수행한 작업을 프로젝트·권한·검증 기록과 함께 운영하는 Desktop-first AI 작업 제어 플랫폼**이다.
+SPS는 Agent, 실행기, 플러그인을 조합해 개인과 팀이 자기만의 AI 작업환경을 만드는 Desktop-first 플랫폼이다.
 
-## 1차 Golden Path
+## 첫 회사
 
-1. 사용자가 SPS Desktop에서 Google 계정으로 로그인한다.
-2. 이 컴퓨터에 Owner Host를 만들거나, 초대 코드로 기존 Server에 참여한다.
-3. Owner가 프로젝트 Workspace, Agent, Runner 권한을 등록한다.
-4. Team Workplane에서 Room으로 목표를 논의하고, 종료 조건이 있는 Task를 만든다.
-5. 허용된 Node와 Runner가 등록된 Workspace 안에서만 Task를 실행한다.
-6. 파일 변경, 출력, 테스트 결과를 Task 기록에서 검토하고 완료를 판단한다.
+새 서버를 만든 사용자는 빈 Company를 얻는다. 기본 Project, Team 구조, 역할 조직, Memory 전략은 생성되지 않는다.
 
-## 기능 상태
+첫 Company에는 다음만 준비된다.
 
-| 상태 | 항목 | 의미 |
-| --- | --- | --- |
-| Implemented | Hub, Project, Task, Agent Session, Desktop Node 경계 | 제품의 기본 작업 기록과 실행 권한 모델 |
-| Pilot | Owner Host, Google 로그인, 초대, 다중 Node, Team Workplane | 실제 개인·소규모 팀 사용으로 반복 검증 중 |
-| Pilot | Official Extensions와 local·git·official Registry source | 서명 검증, disabled stage, 명시적 enable, update·rollback |
-| Experimental | Plugin Kit, MCP Connector, 추가 Team·Tool·Automation extension | 계약과 테스트를 확장 중이며 기본 설치에 의존하지 않음 |
-| Contract only | 기업 Hosted Hub federation, 공개 Community Marketplace | 아직 일반 사용자 대상 기능으로 제공하지 않음 |
-| Deferred | 결제, 판매자 정산·세금·환불, 평점·검색·공개 게시자 포털 | Registry와 설치 lifecycle이 충분히 검증된 뒤 별도 제품 단계에서 판단 |
+1. 회사 컨테이너
+2. 사용자가 연결·검증한 Agent 한 명
+3. 활성화된 `Plugin Discovery & Builder` 플러그인
+4. `Settings > Plugins`의 플러그인 관리·Catalog 탐색 화면
 
-## Official Extensions의 경계
+첫 Agent는 `Plugin Discovery & Builder` 안에서 사용자와 대화한다. Agent는 Catalog를 검색해 적합한 플러그인 또는 Pack을 추천하고, 없으면 새 플러그인을 설계·제작할 수 있다.
 
-1차의 `Official Extensions`는 SPS가 서명한 플러그인의 **발견 화면**이다. 이 화면은 다운로드나 설치 권한이 없으며, 설치는 Owner가 `Plugin sources & review`에서 정확한 version·capability·호환성을 검토하고 disabled stage로 가져온 뒤 명시적으로 enable할 때만 일어난다.
+## 기본 원칙
 
-커뮤니티가 플러그인을 공개 게시하거나 판매하는 Marketplace는 만들지 않는다. 향후 이를 검토하려면 패키지 서명·철회, 게시자 신원, 호환성·권한 검토, 지원 정책을 먼저 반복 검증해야 한다.
+- Core는 특정 회사 조직, 개발 분야, Room/Task 흐름, 사람 권한, Memory 전략을 강제하지 않는다.
+- 게임, 앱, 웹, 플러그인 개발 방식은 Pack 또는 플러그인으로 제공한다.
+- Marketplace Catalog는 `Settings > Plugins`에 위치한다. Catalog 검색 자체는 읽기 전용이다.
+- 설치·활성화·업데이트·제거는 Core의 플러그인 lifecycle을 통해 기록된다. Agent가 어떤 lifecycle 도구를 사용할지는 대화 맥락을 바탕으로 Agent가 판단한다. 추천 결과 선택은 시스템의 자동 행동이 아니다.
+- 협업이 필요해지면 Access Control, Workplane, Memory, Connector 같은 플러그인을 원하는 조합으로 추가한다.
 
-## 이번 단계에서 의도적으로 하지 않는 것
+## 제품 상태
 
-- 모든 AI 역할이나 게임·웹·앱 개발 방식을 Core에 고정하지 않는다.
-- Hub가 Node의 임의 폴더나 비밀 값, 로그인 토큰을 읽지 않는다.
-- 카탈로그를 열었다고 플러그인이 자동 설치·업데이트·활성화되지 않는다.
-- 모델의 요약이나 추론을 자동으로 승인된 장기기억으로 확정하지 않는다.
+| 범위 | 상태 |
+| --- | --- |
+| Desktop Owner Host, Agent registry, Node/Runner, 실행 기록 | 구현·검증 진행 중 |
+| 플러그인 manifest, 상태, worker, UI slot, Registry 검사 | 구현되어 있으나 SPS SDK로 정리 중 |
+| Plugin Discovery & Builder 기본 회사 경험 | 목표 |
+| 권한을 제공하는 Access Control 플러그인 | 목표 |
+| 게임·앱·웹 Pack | 목표 |
+| 공개 커뮤니티 Marketplace, 판매·정산 | 제품 방향만 정의, 출시 범위 아님 |
+
+## 출시 범위 밖
+
+- 특정 AI 제공자나 특정 모델의 강제
+- Core에 게임 제작·웹 제작·앱 제작 조직도를 고정하는 일
+- 플러그인 자동 설치 또는 추천 결과에 따른 암묵적 활성화
+- 공개 플러그인 판매, 결제, 세금, 환불, 게시자 평점
