@@ -1,5 +1,11 @@
 # SPS Release Baseline
 
+## 공개 Plugin SDK 고정
+
+SPS Desktop은 `external/sps-plugin-sdk` Git submodule에 고정된 공개 SDK를 직접 포함한다.
+각 release baseline은 Core와 마찬가지로 SDK의 repository, revision, package, version, 작업 트리 상태를 함께 기록한다.
+Desktop 내부의 과거 `plugin-platform` 복제본은 release 입력이 아니며, 새 제품 코드는 공개 SDK만 사용한다.
+
 최종 갱신: 2026-07-28
 
 이 문서는 SPS Desktop 배포 상태를 사람이 읽을 수 있게 설명한다. 빌드가 검사하는 기계 판독 원본은

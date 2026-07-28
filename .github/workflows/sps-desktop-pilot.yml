@@ -42,10 +42,6 @@ jobs:
         working-directory: sps-server/desktop
         run: npm ci
 
-      - name: Install Plugin Platform dependencies
-        working-directory: sps-server/plugin-platform
-        run: npm ci
-
       - name: Verify Desktop tests
         working-directory: sps-server/desktop
         run: npm test -- --test-concurrency=1

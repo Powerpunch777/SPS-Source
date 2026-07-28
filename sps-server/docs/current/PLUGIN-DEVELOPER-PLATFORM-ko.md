@@ -1,5 +1,8 @@
 # SPS Plugin Developer Platform
 
+공개 SDK의 단일 원본은 [`Powerpunch777/sps-plugin-sdk`](https://github.com/Powerpunch777/sps-plugin-sdk)다.
+SPS Desktop도 이 SDK의 고정된 revision을 사용하며, 별도 내부 복제본을 제품 계약으로 취급하지 않는다.
+
 SPS Core는 플러그인 제작자가 반복 인프라를 새로 만들지 않도록 Plugin Developer Platform을 제공한다.
 
 ## Core SDK

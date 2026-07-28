@@ -9,7 +9,7 @@ import {
   createPluginTemplate,
   generatePluginSigningKeyPair,
   publishPluginToLocalRegistry,
-} from "@sps/plugin-platform/authoring/plugin-package-v1.mjs";
+} from "@sonparkserver/plugin-sdk/authoring/plugin-package-v1.mjs";
 import {
   acquireRegistryRelease,
   inspectRegistrySource,

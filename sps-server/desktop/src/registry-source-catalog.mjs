@@ -4,16 +4,16 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import {
   inspectLocalRegistry,
-} from "@sps/plugin-platform/registry/local-registry-v1.mjs";
+} from "@sonparkserver/plugin-sdk/registry/local-registry-v1.mjs";
 import {
   isSafeRegistryRelativePath,
   validateReleaseRecord,
   verifyReleaseRecordSignature,
-} from "@sps/plugin-platform/registry/release-record-v1.mjs";
+} from "@sonparkserver/plugin-sdk/registry/release-record-v1.mjs";
 import {
   validateRegistrySource,
   verifyRegistryIndexForSource,
-} from "@sps/plugin-platform/registry/source-trust-v1.mjs";
+} from "@sonparkserver/plugin-sdk/registry/source-trust-v1.mjs";
 
 const REGISTRY_SOURCES_SCHEMA_VERSION = 1;
 const MAX_METADATA_BYTES = 1024 * 1024;

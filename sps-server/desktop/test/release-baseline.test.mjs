@@ -28,6 +28,13 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
   });
   assert.equal(baseline.desktopVersion, "0.4.79");
   assert.equal(baseline.core.revision, "1ce4230334582b5da930cd121c3edd04df88df1e");
+  assert.deepEqual(baseline.pluginSdk, {
+    repository: "Powerpunch777/sps-plugin-sdk",
+    revision: "8a3d991cffd2256d24310090c4538fffea4ecbbd",
+    package: "@sonparkserver/plugin-sdk",
+    version: "0.1.0",
+    dirty: false,
+  });
   assert.deepEqual(baseline.extensionProfile, { version: "1.0", pluginApi: 1 });
   assert.equal(baseline.update.channel, "latest");
   assert.equal(baseline.update.repository, "Powerpunch777/SPS-Desktop-Releases");

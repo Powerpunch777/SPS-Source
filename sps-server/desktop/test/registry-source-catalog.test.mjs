@@ -7,12 +7,12 @@ import test from "node:test";
 import {
   canonicalizeRegistryIndex,
   canonicalizeReleaseRecord,
-} from "@sps/plugin-platform/registry/release-record-v1.mjs";
+} from "@sonparkserver/plugin-sdk/registry/release-record-v1.mjs";
 import {
   createPluginTemplate,
   generatePluginSigningKeyPair,
   publishPluginToLocalRegistry,
-} from "@sps/plugin-platform/authoring/plugin-package-v1.mjs";
+} from "@sonparkserver/plugin-sdk/authoring/plugin-package-v1.mjs";
 import {
   acquireRegistryRelease,
   addRegistrySource,

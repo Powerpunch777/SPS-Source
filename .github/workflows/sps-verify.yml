@@ -96,19 +96,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
 
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: sps-server/plugin-platform/package-lock.json
+          cache-dependency-path: external/sps-plugin-sdk/package-lock.json
 
       - name: Install SPS Plugin Kit dependencies
-        working-directory: sps-server/plugin-platform
+        working-directory: external/sps-plugin-sdk
         run: npm ci
 
       - name: Verify SPS Plugin Kit, Registry, and publication templates
-        working-directory: sps-server/plugin-platform
+        working-directory: external/sps-plugin-sdk
         run: npm test
 
   desktop:
@@ -126,11 +129,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             sps-server/desktop/package-lock.json
-            sps-server/plugin-platform/package-lock.json
-
-      - name: Install SPS Plugin Kit dependencies for Desktop Registry tests
-        working-directory: sps-server/plugin-platform
-        run: npm ci
+            external/sps-plugin-sdk/package-lock.json
 
       - name: Install SPS Desktop dependencies
         working-directory: sps-server/desktop

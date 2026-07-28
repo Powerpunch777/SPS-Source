@@ -23,7 +23,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             sps-server/desktop/package-lock.json
-            sps-server/plugin-platform/package-lock.json
+            external/sps-plugin-sdk/package-lock.json
 
       - name: Install pinned pnpm for SPS Core
         run: npm install --global pnpm@9.15.4
@@ -48,13 +48,6 @@ jobs:
 
       - name: Install Desktop dependencies
         working-directory: sps-server/desktop
-        run: npm ci
-
-      # The Desktop imports the local plugin platform through an npm file link.
-      # npm ci creates that link but does not install the linked package's own
-      # dependencies on a clean runner.
-      - name: Install Plugin Platform dependencies
-        working-directory: sps-server/plugin-platform
         run: npm ci
 
       - name: Run Desktop tests

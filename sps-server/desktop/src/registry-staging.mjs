@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
-import { extractPluginArchive } from "@sps/plugin-platform/registry/package-extractor-v1.mjs";
+import { extractPluginArchive } from "@sonparkserver/plugin-sdk/registry/package-extractor-v1.mjs";
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);

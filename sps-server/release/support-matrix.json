@@ -7,6 +7,12 @@
       "repository": "Powerpunch777/SPS-Core",
       "revision": "1ce4230334582b5da930cd121c3edd04df88df1e"
     },
+    "pluginSdk": {
+      "repository": "Powerpunch777/sps-plugin-sdk",
+      "revision": "8a3d991cffd2256d24310090c4538fffea4ecbbd",
+      "package": "@sonparkserver/plugin-sdk",
+      "version": "0.1.0"
+    },
     "extensionProfile": {
       "version": "1.0",
       "pluginApi": 1

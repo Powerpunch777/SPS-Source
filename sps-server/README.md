@@ -1,6 +1,6 @@
 # SPS Server
 
-This directory contains the SPS Desktop Host, Desktop Node runtime, plugin platform, and first-party extension sources.
+This directory contains the SPS Desktop Host, Desktop Node runtime, and first-party extension sources.
 
 SPS is moving from a Paperclip-compatible implementation to a product model where Core provides plugin-development primitives and plugins provide user-facing workflows.
 
@@ -27,7 +27,8 @@ Plugins own:
 ```text
 desktop/             Electron SPS Desktop
 desktop-node/        local Node identity, capability discovery, command runtime
-plugin-platform/     authoring CLI, package, Registry, and conformance tooling
+../external/sps-plugin-sdk/
+                     public authoring CLI, package, Registry, and conformance tooling
 sps-room-chat/       existing Team Workplane compatibility extension
 sps-default-memory/  first-party Memory Provider source
 sps-memory/          existing sidecar integration extension
@@ -41,7 +42,7 @@ docs/current/        current product contracts
 ## Checks
 
 ```powershell
-Set-Location .\plugin-platform
+Set-Location ..\external\sps-plugin-sdk
 npm test
 
 Set-Location ..\sps-room-chat

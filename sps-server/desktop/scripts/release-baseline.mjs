@@ -34,6 +34,28 @@ async function gitOutput(repositoryRoot, args) {
   return stdout.trim();
 }
 
+async function gitDiffHasChanges(repositoryRoot, args) {
+  try {
+    await gitOutput(repositoryRoot, args);
+    return false;
+  } catch (error) {
+    if (error?.code === 1) return true;
+    throw error;
+  }
+}
+
+// Windows may materialize a tracked LF file with CRLF line endings. A release
+// must reject real source changes, but not fail only because Git's checkout
+// conversion made an otherwise identical public SDK look modified.
+async function gitWorkingTreeIsDirty(repositoryRoot) {
+  const [unstaged, staged, untracked] = await Promise.all([
+    gitDiffHasChanges(repositoryRoot, ["diff", "--quiet", "--ignore-space-at-eol"]),
+    gitDiffHasChanges(repositoryRoot, ["diff", "--cached", "--quiet", "--ignore-space-at-eol"]),
+    gitOutput(repositoryRoot, ["ls-files", "--others", "--exclude-standard"]),
+  ]);
+  return unstaged || staged || untracked.length > 0;
+}
+
 export function validateSpsSupportMatrix(matrix) {
   const errors = [];
   const candidate = matrix?.candidate;
@@ -43,6 +65,18 @@ export function validateSpsSupportMatrix(matrix) {
   if (!SEMVER.test(candidate.desktopVersion ?? "")) errors.push("Support matrix desktopVersion must be SemVer.");
   if (candidate.core?.repository !== "Powerpunch777/SPS-Core") errors.push("Support matrix must use the official SPS Core repository.");
   if (!GIT_REVISION.test(candidate.core?.revision ?? "")) errors.push("Support matrix core revision must be a full Git revision.");
+  if (candidate.pluginSdk?.repository !== "Powerpunch777/sps-plugin-sdk") {
+    errors.push("Support matrix must use the official SPS Plugin SDK repository.");
+  }
+  if (!GIT_REVISION.test(candidate.pluginSdk?.revision ?? "")) {
+    errors.push("Support matrix plugin SDK revision must be a full Git revision.");
+  }
+  if (candidate.pluginSdk?.package !== "@sonparkserver/plugin-sdk") {
+    errors.push("Support matrix plugin SDK package is invalid.");
+  }
+  if (!SEMVER.test(candidate.pluginSdk?.version ?? "")) {
+    errors.push("Support matrix plugin SDK version must be SemVer.");
+  }
   if (!PROFILE_VERSION.test(candidate.extensionProfile?.version ?? "")) errors.push("Support matrix extension profile version is invalid.");
   if (!Number.isSafeInteger(candidate.extensionProfile?.pluginApi) || candidate.extensionProfile.pluginApi < 1) {
     errors.push("Support matrix plugin API must be a positive integer.");
@@ -79,14 +113,16 @@ export async function resolveSpsReleaseBaseline({
   desktopRoot,
   spsServerRoot,
   coreRoot,
+  pluginSdkRoot = path.join(workspaceRoot, "external", "sps-plugin-sdk"),
   environment = process.env,
   builtAt = new Date().toISOString(),
 } = {}) {
   const supportMatrixPath = path.join(spsServerRoot, "release", "support-matrix.json");
   const desktopPackagePath = path.join(desktopRoot, "package.json");
-  const [matrix, desktopPackage] = await Promise.all([
+  const [matrix, desktopPackage, pluginSdkPackage] = await Promise.all([
     readJson(supportMatrixPath),
     readJson(desktopPackagePath),
+    readJson(path.join(pluginSdkRoot, "package.json")),
   ]);
   const errors = validateSpsSupportMatrix(matrix);
   const candidate = matrix.candidate;
@@ -108,10 +144,33 @@ export async function resolveSpsReleaseBaseline({
   if (checkedOutCoreRevision !== candidate.core.revision) {
     errors.push(`Checked-out SPS Core ${checkedOutCoreRevision || "unknown"} does not match support matrix ${candidate.core.revision}.`);
   }
-  const coreWorkingTree = await gitOutput(coreRoot, ["status", "--porcelain", "--untracked-files=all"]);
-  const coreDirty = coreWorkingTree.length > 0;
+  const coreDirty = await gitWorkingTreeIsDirty(coreRoot);
   if (coreDirty && environment.SPS_REQUIRE_CLEAN_RELEASE === "1") {
     errors.push("SPS Core contains uncommitted changes. Refusing to create an official release baseline.");
+  }
+
+  const trackedPluginSdk = await gitOutput(workspaceRoot, ["ls-files", "--stage", "--", "external/sps-plugin-sdk"]);
+  const trackedPluginSdkMatch = trackedPluginSdk.match(/^160000\s+([0-9a-f]{40})\s+\d+\s+external\/sps-plugin-sdk$/);
+  if (!trackedPluginSdkMatch) {
+    errors.push("The SPS Plugin SDK Git submodule pin could not be resolved.");
+  } else if (trackedPluginSdkMatch[1] !== candidate.pluginSdk.revision) {
+    errors.push(`Tracked SPS Plugin SDK ${trackedPluginSdkMatch[1]} does not match support matrix ${candidate.pluginSdk.revision}.`);
+  }
+
+  let checkedOutPluginSdkRevision = environment.SPS_PLUGIN_SDK_REVISION?.trim() || "";
+  if (!checkedOutPluginSdkRevision) checkedOutPluginSdkRevision = await gitOutput(pluginSdkRoot, ["rev-parse", "HEAD"]);
+  if (checkedOutPluginSdkRevision !== candidate.pluginSdk.revision) {
+    errors.push(`Checked-out SPS Plugin SDK ${checkedOutPluginSdkRevision || "unknown"} does not match support matrix ${candidate.pluginSdk.revision}.`);
+  }
+  if (pluginSdkPackage.name !== candidate.pluginSdk.package) {
+    errors.push(`SPS Plugin SDK package ${pluginSdkPackage.name ?? "unknown"} does not match support matrix ${candidate.pluginSdk.package}.`);
+  }
+  if (pluginSdkPackage.version !== candidate.pluginSdk.version) {
+    errors.push(`SPS Plugin SDK version ${pluginSdkPackage.version ?? "unknown"} does not match support matrix ${candidate.pluginSdk.version}.`);
+  }
+  const pluginSdkDirty = await gitWorkingTreeIsDirty(pluginSdkRoot);
+  if (pluginSdkDirty && environment.SPS_REQUIRE_CLEAN_RELEASE === "1") {
+    errors.push("SPS Plugin SDK contains uncommitted changes. Refusing to create an official release baseline.");
   }
 
   for (const extension of candidate.bundledExtensions) {
@@ -126,8 +185,7 @@ export async function resolveSpsReleaseBaseline({
   let sourceRevision = environment.SPS_SOURCE_REVISION?.trim() || environment.GITHUB_SHA?.trim() || "";
   if (!sourceRevision) sourceRevision = await gitOutput(workspaceRoot, ["rev-parse", "HEAD"]);
   requireValue(GIT_REVISION.test(sourceRevision), "SPS source revision must be a full Git revision.");
-  const sourceWorkingTree = await gitOutput(workspaceRoot, ["status", "--porcelain", "--untracked-files=all"]);
-  const sourceDirty = sourceWorkingTree.length > 0;
+  const sourceDirty = await gitWorkingTreeIsDirty(workspaceRoot);
   if (sourceDirty && environment.SPS_REQUIRE_CLEAN_RELEASE === "1") {
     throw new Error("SPS source contains uncommitted changes. Refusing to create an official release baseline.");
   }
@@ -140,6 +198,7 @@ export async function resolveSpsReleaseBaseline({
     requireValue(environment.SPS_REQUIRE_CLEAN_RELEASE === "1", "A stable SPS baseline requires the clean-release gate.");
     requireValue(!sourceDirty, "A stable SPS baseline cannot include dirty SPS source.");
     requireValue(!coreDirty, "A stable SPS baseline cannot include a dirty Core.");
+    requireValue(!pluginSdkDirty, "A stable SPS baseline cannot include a dirty Plugin SDK.");
   }
 
   return {
@@ -150,6 +209,7 @@ export async function resolveSpsReleaseBaseline({
     sourceRevision,
     sourceDirty,
     core: { ...candidate.core, dirty: coreDirty },
+    pluginSdk: { ...candidate.pluginSdk, dirty: pluginSdkDirty },
     extensionProfile: { ...candidate.extensionProfile },
     platform: {
       operatingSystems: [...candidate.platform.operatingSystems],

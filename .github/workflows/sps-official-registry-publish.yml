@@ -44,6 +44,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
 
       - name: Checkout the public official Registry
         uses: actions/checkout@v5
@@ -57,7 +60,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: sps-server/plugin-platform/package-lock.json
+          cache-dependency-path: external/sps-plugin-sdk/package-lock.json
 
       - name: Validate signing secrets
         shell: bash
@@ -67,7 +70,7 @@ jobs:
           test -n "$SPS_OFFICIAL_REGISTRY_TOKEN" || { echo "Missing SPS_OFFICIAL_REGISTRY_TOKEN."; exit 1; }
 
       - name: Install SPS Plugin Kit
-        working-directory: sps-server/plugin-platform
+        working-directory: external/sps-plugin-sdk
         run: npm ci
 
       - name: Sign and verify release files
@@ -80,7 +83,7 @@ jobs:
           printf '%s' "$SPS_REGISTRY_PUBLISHER_PRIVATE_KEY" > "$publisher_key"
           printf '%s' "$SPS_REGISTRY_ROOT_PRIVATE_KEY" > "$root_key"
 
-          node sps-server/plugin-platform/cli/sps-plugin.mjs publish-local "$PLUGIN_SOURCE" \
+          node external/sps-plugin-sdk/cli/sps-plugin.mjs publish-local "$PLUGIN_SOURCE" \
             --registry "$REGISTRY_DIRECTORY" \
             --registry-id "$REGISTRY_ID" \
             --display-name "$REGISTRY_DISPLAY_NAME" \
@@ -94,7 +97,7 @@ jobs:
             --docs-url "$DOCUMENTATION_URL" \
             --publisher-name "$PUBLISHER_NAME" \
             --publisher-url "$PUBLISHER_URL" | tee "$RUNNER_TEMP/sps-official-release.json"
-          node sps-server/plugin-platform/cli/sps-plugin.mjs inspect "$REGISTRY_DIRECTORY" | tee "$RUNNER_TEMP/sps-official-inspect.json"
+          node external/sps-plugin-sdk/cli/sps-plugin.mjs inspect "$REGISTRY_DIRECTORY" | tee "$RUNNER_TEMP/sps-official-inspect.json"
           echo "Desktop pins this Registry root for https://raw.githubusercontent.com/Powerpunch777/SPS-Official-Extensions/main/registry.json:" >> "$GITHUB_STEP_SUMMARY"
           node --input-type=module -e 'import { readFile } from "node:fs/promises"; const release = JSON.parse(await readFile(process.argv[1], "utf8")); console.log(`\`${release.registry.rootKeyId}\`\n\n\`\`\`text\n${release.registry.rootPublicKey}\n\`\`\``);' "$RUNNER_TEMP/sps-official-release.json" >> "$GITHUB_STEP_SUMMARY"
           rm -f "$publisher_key" "$root_key"

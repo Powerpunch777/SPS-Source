@@ -2,3 +2,7 @@
 	path = external/sps-core
 	url = https://github.com/Powerpunch777/SPS-Core.git
 	branch = main
+[submodule "external/sps-plugin-sdk"]
+	path = external/sps-plugin-sdk
+	url = https://github.com/Powerpunch777/sps-plugin-sdk.git
+	branch = main
