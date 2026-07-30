@@ -68,8 +68,27 @@ test("downloads an SPS Desktop update automatically and installs it when the app
   assert.equal(updater.autoInstallOnAppQuit, true);
 
   // Restart is optional; an app quit also installs because autoInstallOnAppQuit is true.
-  service.install();
+  await service.install();
   assert.equal(updater.installCalls, 1);
+});
+
+test("delegates a restart install to the Desktop shutdown coordinator", async () => {
+  const updater = createUpdater();
+  let coordinatedInstallCalls = 0;
+  const service = createSpsUpdateService({
+    app: { isPackaged: true, getVersion: () => "0.1.0" },
+    updater,
+    onInstallRequested: async () => { coordinatedInstallCalls += 1; },
+  });
+
+  updater.emit("update-available", { version: "0.2.0" });
+  await new Promise((resolve) => setImmediate(resolve));
+  updater.emit("update-downloaded", { version: "0.2.0" });
+
+  await service.install();
+  assert.equal(coordinatedInstallCalls, 1);
+  assert.equal(updater.installCalls, 0);
+  assert.equal(service.getStatus().state, "installing");
 });
 
 test("uses the same stable update channel for every SPS Desktop role", () => {
@@ -123,7 +142,7 @@ test("does not expose updater errors and does not install before a download comp
     updater,
   });
 
-  assert.throws(() => service.install(), /must finish downloading/);
+  await assert.rejects(() => service.install(), /must finish downloading/);
   updater.emit("error", new Error("https://token.example.invalid/private"));
   assert.equal(service.getStatus().state, "error");
   assert.doesNotMatch(service.getStatus().message, /token|private/i);

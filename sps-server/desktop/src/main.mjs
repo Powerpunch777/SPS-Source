@@ -171,6 +171,8 @@ let shutdownPromise = null;
 let shutdownComplete = false;
 const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
 let updateService = null;
+let desktopAutoUpdater = null;
+let updateInstallPromise = null;
 let lastPromptedUpdateVersion = null;
 // Status is rendered often by the setup screen. Do not synchronously ask
 // Windows for login-item settings on that hot IPC path: some Windows builds
@@ -271,10 +273,12 @@ async function initializeUpdates() {
     // electron-updater is CommonJS. Dynamic ESM import exposes it under default.
     const autoUpdater = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater;
     if (!autoUpdater) throw new Error("electron-updater did not expose autoUpdater");
+    desktopAutoUpdater = autoUpdater;
     updateService = createSpsUpdateService({
       app,
       updater: autoUpdater,
       policy: resolveSpsDesktopUpdatePolicy(),
+      onInstallRequested: installDownloadedDesktopUpdate,
       onStatus: (nextStatus) => {
         updateStatus = nextStatus;
         if (nextStatus.state === "ready") void promptDesktopBetaUpdate(nextStatus);
@@ -314,7 +318,7 @@ async function promptDesktopBetaUpdate(status = updateStatus, { force = false } 
       cancelId: 1,
     });
     if (result.response === 0 && updateService) {
-      updateStatus = updateService.install();
+      updateStatus = await updateService.install();
     }
   }
 }
@@ -340,6 +344,23 @@ function requireUpdateService() {
     throw new Error("Desktop updates are unavailable in this SPS installation.");
   }
   return updateService;
+}
+
+async function installDownloadedDesktopUpdate() {
+  if (updateInstallPromise) return updateInstallPromise;
+  const updater = desktopAutoUpdater;
+  if (!updater) throw new Error("Desktop updates are unavailable in this SPS installation.");
+
+  updateInstallPromise = (async () => {
+    // electron-updater launches the NSIS installer before it schedules app.quit().
+    // Stop the embedded Owner Host first so the installer never races the
+    // asynchronous before-quit shutdown hook.
+    isQuitting = true;
+    await stopDesktopRuntimeGracefully().catch(() => undefined);
+    shutdownComplete = true;
+    updater.quitAndInstall();
+  })();
+  return updateInstallPromise;
 }
 
 function requireEncryption() {
@@ -3465,8 +3486,8 @@ function registerIpc() {
     updateStatus = await requireUpdateService().download();
     return publicStatus();
   });
-  ipcMain.handle("desktop:install-update", () => {
-    updateStatus = requireUpdateService().install();
+  ipcMain.handle("desktop:install-update", async () => {
+    updateStatus = await requireUpdateService().install();
     return publicStatus();
   });
   ipcMain.handle("desktop:ready-for-join-link", () => {

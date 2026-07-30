@@ -46,6 +46,7 @@ export function createSpsUpdateService({
   policy = SPS_DESKTOP_UPDATE_POLICY,
   checkIntervalMs = DEFAULT_CHECK_INTERVAL_MS,
   onStatus = () => {},
+  onInstallRequested = () => updater.quitAndInstall(),
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
 }) {
@@ -190,12 +191,21 @@ export function createSpsUpdateService({
     return { ...status };
   }
 
-  function install() {
+  async function install() {
     if (unavailable()) return unavailable();
     if (status.state !== "ready") {
       throw new Error("An SPS Desktop update must finish downloading before installation.");
     }
-    updater.quitAndInstall();
+    publish({
+      state: "installing",
+      percent: 100,
+      message: "SPS Desktop is closing safely before the update installs.",
+    });
+    try {
+      await onInstallRequested();
+    } catch {
+      return publish({ state: "error", percent: null, message: safeErrorMessage() });
+    }
     return { ...status };
   }
 
