@@ -235,7 +235,7 @@ async function assertPluginDiscoveryPlugin() {
   }
   try {
     await Promise.all([
-      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "ui-v0.3.0", "index.js")),
+      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "ui-v0.3.1", "index.js")),
       access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "conversation.js")),
     ]);
   } catch {

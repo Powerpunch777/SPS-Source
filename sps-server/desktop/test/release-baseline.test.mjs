@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
   validateSpsSupportMatrix,
 } from "../scripts/release-baseline.mjs";
 import { createSpsReleaseManifest } from "../scripts/create-release-manifest.mjs";
+import { writeSpsUpdateMetadata } from "../scripts/write-update-metadata.mjs";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(testDirectory, "..");
@@ -26,12 +27,12 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
     coreRoot,
     builtAt: "2026-07-28T00:00:00.000Z",
   });
-  assert.equal(baseline.desktopVersion, "0.4.90");
-  assert.equal(baseline.core.revision, "05b00e08c199680ab3183cd80cfa4bb261ffd841");
+  assert.equal(baseline.desktopVersion, "0.4.91");
+  assert.equal(baseline.core.revision, "69d297bfa7badda016af6141282c040205299ba8");
   assert.equal(baseline.pluginSdk.repository, "Powerpunch777/sps-plugin-sdk");
-  assert.equal(baseline.pluginSdk.revision, "1232ca3aa4a5ee109214ed9b0af9e6189e53b882");
+  assert.equal(baseline.pluginSdk.revision, "dd44cf039fc9a4bab5777786166b47cc61bf06a0");
   assert.equal(baseline.pluginSdk.package, "@sonparkserver/plugin-sdk");
-  assert.equal(baseline.pluginSdk.version, "0.2.0");
+  assert.equal(baseline.pluginSdk.version, "0.2.1");
   assert.equal(typeof baseline.pluginSdk.dirty, "boolean");
   assert.deepEqual(baseline.extensionProfile, { version: "2.0", pluginApi: 1 });
   assert.deepEqual(baseline.extensionProfiles, ["1.0", "2.0"]);
@@ -39,7 +40,7 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
   assert.equal(baseline.update.repository, "Powerpunch777/SPS-Desktop-Releases");
   assert.deepEqual(
     baseline.bundledExtensions.map((extension) => [extension.id, extension.version]),
-    [["sps.default-memory", "0.1.0"], ["sps.plugin-discovery", "0.3.0"], ["local.room-chat", "0.3.91"]],
+    [["sps.default-memory", "0.1.0"], ["sps.plugin-discovery", "0.3.1"], ["local.room-chat", "0.3.91"]],
   );
 });
 
@@ -88,6 +89,35 @@ test("creates a hash manifest only when latest.yml points to the exact installer
       () => createSpsReleaseManifest({ runtimeRoot, distRoot }),
       /does not match SPS-Desktop-Setup-0\.4\.79\.exe/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("writes update metadata from the exact candidate installer", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-update-metadata-"));
+  const runtimeRoot = path.join(root, "runtime");
+  const distRoot = path.join(root, "dist");
+  try {
+    await Promise.all([mkdir(runtimeRoot), mkdir(distRoot)]);
+    await writeFile(path.join(runtimeRoot, "sps-release-baseline.json"), JSON.stringify({
+      desktopVersion: "0.4.91",
+    }), "utf8");
+    await writeFile(path.join(distRoot, "SPS-Desktop-Setup-0.4.91.exe"), "installer", "utf8");
+
+    const { metadata } = await writeSpsUpdateMetadata({
+      runtimeRoot,
+      distRoot,
+      releasedAt: new Date("2026-07-30T12:00:00.000Z"),
+    });
+
+    assert.equal(metadata.version, "0.4.91");
+    assert.equal(metadata.path, "SPS-Desktop-Setup-0.4.91.exe");
+    assert.equal(metadata.files[0].size, 9);
+    const latest = await readFile(path.join(distRoot, "latest.yml"), "utf8");
+    assert.match(latest, /^version: 0\.4\.91$/m);
+    assert.match(latest, /path: SPS-Desktop-Setup-0\.4\.91\.exe/);
+    assert.equal((await stat(path.join(distRoot, "SPS-Desktop-Setup-0.4.91.exe.blockmap"))).isFile(), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

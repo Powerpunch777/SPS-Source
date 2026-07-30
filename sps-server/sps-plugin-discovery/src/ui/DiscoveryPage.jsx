@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  useHostNavigation,
   usePluginAction,
   usePluginData,
   usePluginStream,
@@ -47,20 +46,7 @@ function roleLabel(role) {
   return role === "assistant" ? "Assistant" : role === "system" ? "System" : "You";
 }
 
-export function PluginDiscoverySidebar({ context }) {
-  const navigation = useHostNavigation();
-  return (
-    <a
-      {...navigation.linkProps("/discover")}
-      style={{ display: "block", padding: "7px 9px", color: "inherit", textDecoration: "none", borderRadius: 6, fontWeight: 600, fontSize: 13 }}
-    >
-      Discover
-    </a>
-  );
-}
-
 export function PluginDiscoveryPage({ context }) {
-  const navigation = useHostNavigation();
   const toast = usePluginToast();
   const { data, loading, error, refresh } = usePluginData("discovery-workspace", { companyId: context.companyId });
   const selectAssistant = usePluginAction("discovery-select-assistant");

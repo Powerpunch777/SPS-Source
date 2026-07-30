@@ -58,6 +58,10 @@ Settings > Plugins contains:
 - Personal plugin staging, technical checks, and activation.
 - Plugin-specific settings and the entry point for Plugin Discovery & Builder.
 
+`Plugin Discovery & Builder`도 Workspace 왼쪽 메뉴가 아니라
+**Settings > Plugins > Discovery & Builder**에서 연다. Workspace Home은
+플러그인의 설치 상태나 관리 목록을 중복해서 보여주지 않는다.
+
 An enabled plugin may still contribute its *actual work surface* to the
 Workspace. For example, a Team Workplane may show Rooms or Tasks. That is not
 a second plugin-management screen; it is the function supplied by that
@@ -71,8 +75,8 @@ plugin.
 3. `Plugin Discovery & Builder` is the only default-enabled extension.
 4. The user registers one Initial Assistant from an available CLI, local AI,
    or API runtime.
-5. In the normal SPS Workspace, the user talks to that Assistant about the
-   environment they want to use.
+5. The user opens **Settings > Plugins > Discovery & Builder** and talks to
+   that Assistant about the environment they want to use.
 6. The Assistant can search the catalog, recommend options, or help author a
    new plugin. It does not silently install, enable, update, disable, or
    remove a plugin.

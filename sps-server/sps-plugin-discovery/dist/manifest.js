@@ -37,7 +37,7 @@ const draftExtensionTool = {
 export default {
   id: "sps.plugin-discovery",
   apiVersion: 1,
-  version: "0.3.0",
+  version: "0.3.1",
   displayName: "Plugin Discovery & Builder",
   description: "A conversational starting point for verified SPS extension discovery and non-destructive extension drafting.",
   author: "SPS",
@@ -52,8 +52,7 @@ export default {
     "registry.catalog.read",
     "plugin.state.read",
     "plugin.state.write",
-    "ui.page.register",
-    "ui.sidebar.register",
+    "instance.settings.register",
   ],
   companyActivation: { defaultEnabled: true },
   agentPlatform: {
@@ -65,22 +64,15 @@ export default {
     contractVersion: "2.0",
     primitives: [],
   },
-  entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui-v0.3.0" },
+  entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui-v0.3.1" },
   ui: {
     slots: [
       {
-        type: "page",
-        id: "plugin-discovery-page",
+        type: "companySettingsPage",
+        id: "plugin-discovery-settings-page",
         routePath: "discover",
-        displayName: "Discover",
+        displayName: "Discovery & Builder",
         exportName: "PluginDiscoveryPage",
-        order: 1,
-      },
-      {
-        type: "sidebar",
-        id: "plugin-discovery-sidebar",
-        displayName: "Discover",
-        exportName: "PluginDiscoverySidebar",
         order: 1,
       },
     ],
