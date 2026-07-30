@@ -10,6 +10,7 @@ import {
   generatePluginSigningKeyPair,
   publishPluginToLocalRegistry,
 } from "@sonparkserver/plugin-sdk/authoring/plugin-package-v1.mjs";
+import { buildPluginWorker } from "@sonparkserver/plugin-sdk/authoring/worker-bundle-v1.mjs";
 import {
   acquireRegistryRelease,
   inspectRegistrySource,
@@ -18,6 +19,7 @@ import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
+const publicSdkRoot = path.join(desktopRoot, "node_modules", "@sonparkserver", "plugin-sdk");
 const runtimeRoot = path.resolve(process.env.SPS_OWNER_HOST_RUNTIME_ROOT || path.join(desktopRoot, ".owner-host-runtime"));
 const [runtimeManifest, releaseBaseline] = await Promise.all([
   readFile(path.join(runtimeRoot, "sps-owner-host-runtime.json"), "utf8").then(JSON.parse),
@@ -235,7 +237,7 @@ async function assertPluginDiscoveryPlugin() {
   }
   try {
     await Promise.all([
-      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "ui-v0.3.1", "index.js")),
+      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "ui-v0.3.2", "index.js")),
       access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "conversation.js")),
     ]);
   } catch {
@@ -482,6 +484,11 @@ async function assertRegistryAuthoringDesktopFlow() {
     displayName: "SPS Registry Pilot",
     version: "1.0.0",
   });
+  const sdkLink = path.join(sourceDirectory, "node_modules", "@sonparkserver", "plugin-sdk");
+  await mkdir(path.dirname(sdkLink), { recursive: true });
+  await symlink(publicSdkRoot, sdkLink, process.platform === "win32" ? "junction" : "dir");
+  await buildPluginWorker({ sourceDirectory });
+  await rm(path.join(sourceDirectory, "node_modules"), { recursive: true, force: true });
   await publishPluginToLocalRegistry({
     sourceDirectory,
     registryDirectory,
@@ -542,6 +549,32 @@ async function assertRegistryAuthoringDesktopFlow() {
   const enabled = await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(staged.stage.stageId)}/enable`, {});
   if (enabled.plugin?.pluginKey !== "sps.registry-pilot" || enabled.plugin?.version !== "1.0.0" || enabled.plugin?.status !== "ready") {
     throw new Error("The authored Registry release did not explicitly activate through Core.");
+  }
+}
+
+async function assertPublicPluginWorkerHostConformance() {
+  const conformanceScript = path.join(scriptDirectory, "smoke-public-plugin-worker-host.mjs");
+  const result = await new Promise((resolve, reject) => {
+    const conformance = spawn(nodeBinary, ["--preserve-symlinks", "--preserve-symlinks-main", conformanceScript], {
+      cwd: executionRuntimeRoot,
+      env: {
+        ...process.env,
+        SPS_OWNER_HOST_RUNTIME_ROOT: executionRuntimeRoot,
+      },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    conformance.stdout.on("data", (chunk) => { output += chunk.toString(); });
+    conformance.stderr.on("data", (chunk) => { output += chunk.toString(); });
+    conformance.once("error", reject);
+    conformance.once("exit", (code, signal) => resolve({ code, signal, output }));
+  });
+  if (result.code !== 0 || result.signal !== null) {
+    throw new Error(`Packaged public SDK Worker Host conformance failed (exit ${result.code}, signal ${result.signal}): ${result.output.slice(-4_000)}`);
+  }
+  if (!result.output.includes("Packaged public SDK Worker Host conformance passed.")) {
+    throw new Error(`Packaged public SDK Worker Host conformance did not report success: ${result.output.slice(-4_000)}`);
   }
 }
 
@@ -668,6 +701,7 @@ try {
   await assertPluginDiscoveryPlugin();
   await assertPluginDiscoveryBridge();
   await assertRoomsPlugin();
+  await assertPublicPluginWorkerHostConformance();
   await assertRegistryLifecycle();
   await assertRegistryAuthoringDesktopFlow();
   passed = true;
