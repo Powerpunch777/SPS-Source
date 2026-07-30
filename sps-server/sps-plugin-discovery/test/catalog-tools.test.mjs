@@ -43,6 +43,33 @@ test("drafts only the requested extension surfaces", () => {
   });
   assert.equal(draft.draftOnly, true);
   assert.equal(draft.plugin.agentPlatform.kind, "tool_provider");
-  assert.deepEqual(draft.plugin.capabilities, ["agent.tools.register", "local.folders"]);
+  assert.deepEqual(draft.plugin.features, ["tools", "workspace_source"]);
+  assert.deepEqual(draft.plugin.capabilities, ["agent.tools.register", "sps.workspaceSources.read"]);
+  assert.deepEqual(draft.plugin.sps, {
+    contractVersion: "2.0",
+    primitives: ["workspace.sources.metadata", "workspace.sources.route"],
+  });
   assert.ok(draft.validationPlan.every((step) => !/install|enable|activate/i.test(step)));
+});
+
+test("maps neutral execution features to matching Profile 2.0 capabilities", () => {
+  const draft = draftSpsExtension({
+    goal: "Run an approved CLI and publish its result.",
+    features: ["runtime_execution", "artifacts", "secrets"],
+  });
+
+  assert.deepEqual(draft.plugin.capabilities, [
+    "sps.runtimes.read",
+    "sps.runs.dispatch",
+    "sps.runs.read",
+    "sps.artifacts.write",
+    "secrets.read-ref",
+  ]);
+  assert.deepEqual(draft.plugin.sps.primitives, [
+    "runtimes.list",
+    "runtimes.dispatch",
+    "runs.observe",
+    "artifacts.write",
+    "secrets.use",
+  ]);
 });

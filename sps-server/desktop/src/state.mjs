@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { normalizeSpsAccountConnection } from "./account-connections.mjs";
 
-const STATE_VERSION = 9;
+const STATE_VERSION = 11;
 
 function statePath(userDataPath) {
   return path.join(userDataPath, "sps-desktop-state.json");
@@ -25,11 +25,13 @@ export function emptyState() {
     version: STATE_VERSION,
     encryptedDesktopAccount: null,
     desktopAccountLastAttempt: null,
+    desktopJoinLastAttempt: null,
     desktopDeviceId: null,
     accountConnections: {},
     ownerHostOwnerSubject: null,
-    // A narrowly-scoped bridge for the original local-only SPS Desktop. It is
-    // set only when that legacy state and its physical Owner Vault coexist.
+    // A narrowly-scoped bridge for SPS Desktop states created before SPS
+    // Identity was required. It is set only when that legacy state and its
+    // physical Owner Vault coexist.
     legacyOwnerHostAdoptionPending: false,
     profile: null,
     identity: null,
@@ -38,16 +40,25 @@ export function emptyState() {
     projects: [],
     nodeId: null,
     nodeStatus: null,
+    // A local transport key is not usable for Host project access until the
+    // matching public key has been accepted by Core for this SPS Node.
+    transportKeyPublishedAt: null,
     teamAccess: null,
     encryptedTeamCredentials: null,
+    // Owner Host-only secrets for per-Node project source access. This is
+    // always protected by Windows secure storage and never copied into a
+    // Member connection record.
+    encryptedHostProjectShareSecrets: null,
   };
 }
 
 export async function loadState(userDataPath) {
   try {
     const raw = await fs.readFile(statePath(userDataPath), "utf8");
-    const parsed = JSON.parse(raw);
-    if (![1, 2, 3, 4, 5, 6, 7, 8, STATE_VERSION].includes(parsed?.version)) return emptyState();
+    // Windows tools can write a UTF-8 BOM even when the content is otherwise
+    // valid JSON. Treat it as transport encoding, not as part of the state.
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, STATE_VERSION].includes(parsed?.version)) return emptyState();
     // Earlier state versions contain a valid profile and Node identity. v5 adds
     // account-scoped connection records while keeping the physical Owner Host
     // and its vault on this computer.
@@ -66,6 +77,7 @@ export async function loadState(userDataPath) {
         .filter(([, connection]) => Boolean(connection)),
     );
     state.desktopAccountLastAttempt = normalizeDesktopAccountAttempt(state.desktopAccountLastAttempt);
+    state.desktopJoinLastAttempt = normalizeDesktopAccountAttempt(state.desktopJoinLastAttempt);
     state.ownerHostOwnerSubject = typeof state.ownerHostOwnerSubject === "string" && state.ownerHostOwnerSubject.length > 0
       ? state.ownerHostOwnerSubject.slice(0, 512)
       : null;

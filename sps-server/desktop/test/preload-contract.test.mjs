@@ -26,7 +26,9 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:join-server"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:connect-node"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:disconnect-node"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:save-default-workspace"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:choose-project-workspace"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:manage-host-project-source"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-team-access"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:enable-private-team-access"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:disable-private-team-access"\)/);
@@ -40,9 +42,16 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-account"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-open-plugin-registries"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-host-project-sources"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-choose-host-project-source"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-clear-host-project-source"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-manage-host-project-source"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-account"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-open-plugin-registries"[\s\S]*?Plugin Registry management[\s\S]*?showRegistryWindow\(\)/);
+  assert.match(main, /ipcMain\.handle\("desktop:workspace-host-project-sources"[\s\S]*?event\.sender\.id !== workspaceWindow\.webContents\.id/);
+  assert.match(main, /async function chooseHostProjectSourceForWorkspace\(projectId\)/);
+  assert.match(main, /Revoke every Member's source access before changing or clearing this Host project folder/);
   assert.match(main, /Official extensions\.\.\."[\s\S]*?visible: workspaceOpen/);
   assert.match(main, /Plugin sources & review\.\.\."[\s\S]*?visible: workspaceOpen/);
 });
@@ -57,6 +66,75 @@ test("keeps plugins out of the SPS sign-in and server-setup screens", async () =
   assert.doesNotMatch(onboardingHtml, /open-official-extensions/);
   assert.doesNotMatch(onboardingRenderer, /openOfficialExtensions/);
   assert.doesNotMatch(preload, /desktop:open-official-extensions/);
+});
+
+test("keeps a member Node identity available for the same account after an expired sign-in", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(main, /function suspendExpiredAccountConnection\(\)[\s\S]*?state\.encryptedBoardApiToken = null;[\s\S]*?state\.companies = \[\];[\s\S]*?state\.projects = \[\];/);
+  assert.match(main, /function restoreCurrentAccountConnection\(\) \{[\s\S]*?if \(!account\) \{\s*suspendExpiredAccountConnection\(\);\s*return false;/);
+});
+
+test("lets a signed-in Node owner map local task folders before opening Workspace", async () => {
+  const [main, onboardingHtml, onboardingRenderer] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(new URL("../renderer/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../renderer/renderer.mjs", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(main, /let setupMode = false;/);
+  assert.match(main, /ipcMain\.handle\("desktop:save-default-workspace"/);
+  assert.match(main, /ipcMain\.handle\("desktop:manage-host-project-source"/);
+  assert.match(main, /ownerHostApi\(`\/companies\/\$\{encodeURIComponent\(companyId\)\}\/projects`\)/);
+  assert.match(main, /state\.teamAccess\?\.companyId/);
+  assert.match(main, /async function openSetup\(\) \{[\s\S]*?await refreshProjects\(\)\.catch\(\(\) => \{\}\);/);
+  assert.match(main, /setupMode,/);
+  assert.match(onboardingHtml, /Host project folders/);
+  assert.match(onboardingHtml, /Only the Owner Host chooses/);
+  assert.match(onboardingHtml, /id="project-folder-list"/);
+  assert.match(onboardingRenderer, /function renderLocalFolders\(status\)/);
+  assert.match(onboardingRenderer, /saveProjectWorkspace\(\{ projectId, workspacePath \}\)/);
+  assert.doesNotMatch(onboardingRenderer, /Existing folder on this Owner Host/);
+  assert.doesNotMatch(onboardingRenderer, /button\.dataset\.action === "save"/);
+  assert.match(onboardingRenderer, /Share with Member/);
+  assert.match(onboardingRenderer, /manageHostProjectSource\(\{ projectId \}\)/);
+  assert.match(onboardingRenderer, /workspaceReady && status\?\.setupMode !== true/);
+});
+
+test("keeps the Hub address from a desktop invitation through member join", async () => {
+  const [main, renderer] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(new URL("../renderer/renderer.mjs", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(main, /const explicitHub = input\?\.hub \? requireSpsHubOrigin\(input\.hub\) : null;/);
+  assert.match(main, /const hubUrl = routed\?\.hub \?\? explicitHub \?\? state\.profile\?\.hubUrl \?\? null;/);
+  assert.match(renderer, /let pendingJoinHub = null;/);
+  assert.match(renderer, /hub: pendingJoinHub \?\? undefined/);
+  assert.match(renderer, /pendingJoinHub = join\.hub \?\? null;/);
+  assert.match(renderer, /\$\("#invite-code"\)\.focus\(\);/);
+});
+
+test("accepts a signed-in desktop invitation without relying on setup-screen timing", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(main, /async function acceptDesktopJoinLink\(join\) \{[\s\S]*?acceptInviteCode\(\{ code: join\.code, hub: join\.hub \}\)[\s\S]*?maybeOpenWorkspaceForCurrentAccount\(\)/);
+  assert.match(main, /function sendJoinToRenderer\(value\) \{[\s\S]*?pendingJoin = join;[\s\S]*?void acceptDesktopJoinLink\(join\);/);
+  assert.match(main, /if \(pendingJoin\) \{[\s\S]*?await acceptDesktopJoinLink\(pendingJoin\);[\s\S]*?\} else \{[\s\S]*?await maybeOpenWorkspaceForCurrentAccount\(\);/);
+  assert.match(main, /Before SPS account sign-in, retain the full routed invitation in the[\s\S]*?if \(!currentDesktopAccount\(\) \|\| isOwnerHostProfile\(\)\) return null;/);
+});
+
+test("opens the Member workspace after direct invitation acceptance", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(main, /async function acceptInviteCode\(input\) \{[\s\S]*?await refreshSpsIdentityTeamContext\(\);[\s\S]*?await maybeOpenWorkspaceForCurrentAccount\(\);[\s\S]*?direct: true/);
+});
+
+test("normalizes the readable SPS code before direct invite acceptance", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(main, /const normalizedInviteToken = normalizeSpsInviteToken\(inviteToken\);/);
+  assert.match(main, /\/api\/invites\/\$\{encodeURIComponent\(normalizedInviteToken\)\}\/accept/);
 });
 
 test("keeps the Registry window on a narrow Owner-only preload bridge", async () => {
@@ -123,6 +201,37 @@ test("resumes a pending legacy Owner Host adoption after Desktop restarts", asyn
   );
 });
 
+test("reopens an accepted Member workspace on Desktop restart", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(
+    main,
+    /void bootstrapOwnerHost\(\)\.finally\(\(\) => \{[\s\S]*?if \(isOwnerHostProfile\(\)\) return;[\s\S]*?maybeOpenWorkspaceForCurrentAccount\(\)/,
+  );
+});
+
+test("returns an expired Member refresh token to the SPS sign-in screen without losing its team connection", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(
+    main,
+    /async function ensureDesktopIdentityAccessToken\(\)[\s\S]*?isExpiredSpsDesktopRefreshToken\(error\)[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?recordDesktopAccountAttempt\("failed", "SPS sign-in expired\. Sign in again to continue\."\)[\s\S]*?persistState\(\{ rememberActiveConnection: false \}\)/,
+  );
+});
+
+test("shares one in-flight Desktop token refresh across concurrent SPS requests", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(main, /let desktopIdentityRefreshPromise = null;/);
+  assert.match(
+    main,
+    /if \(!desktopIdentityRefreshPromise\) \{[\s\S]*?desktopIdentityRefreshPromise = \(async \(\) => \{[\s\S]*?withSpsDesktopRefreshLock\([\s\S]*?refreshSpsDesktopIdentity\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?desktopIdentityRefreshPromise = null;/,
+  );
+  assert.match(main, /const persistedState = await loadState\(app\.getPath\("userData"\)\);/);
+  assert.match(main, /persistedAccount\?\.refreshToken && persistedAccount\.refreshToken !== account\.refreshToken/);
+  assert.match(main, /return await desktopIdentityRefreshPromise;/);
+});
+
 test("keeps central OAuth secrets out of the Desktop renderer and uses SPS Identity", async () => {
   const [main, renderer, preload] = await Promise.all([
     readFile(mainPath, "utf8"),
@@ -137,13 +246,10 @@ test("keeps central OAuth secrets out of the Desktop renderer and uses SPS Ident
   assert.doesNotMatch(preload, /configureGoogleAccount/);
 });
 
-test("uses the Desktop-only access path for a local Owner Host workspace", async () => {
+test("establishes an SPS Identity Workspace session for every Owner Host", async () => {
   const main = await readFile(mainPath, "utf8");
 
-  assert.match(
-    main,
-    /const usesIdentitySession = isOwnerHostProfile\(\)[\s\S]*?\? false[\s\S]*?: await establishSpsIdentityCoreSession\(hubOrigin\)/,
-  );
+  assert.match(main, /const usesIdentitySession = await establishSpsIdentityCoreSession\(hubOrigin\);/);
   assert.match(main, /requestHeaders\[SPS_DESKTOP_ACCESS_HEADER\] = ownerHostDesktopAccessToken/);
   assert.match(main, /signedIn:[\s\S]*?isOwnerHostProfile\(\) && currentAccountOwnsOwnerHost\(\)/);
 });

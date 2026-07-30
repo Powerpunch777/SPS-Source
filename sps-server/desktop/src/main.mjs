@@ -7,7 +7,12 @@ import { fileURLToPath } from "node:url";
 import {
   cancelSpsNodeCommands,
   createNodeIdentity,
+  createNodeTransportIdentity,
   claimSpsNodeCommand,
+  claimSpsPluginNodeRun,
+  appendSpsPluginNodeRunEvent,
+  checkSpsPluginNodeRunLease,
+  completeSpsPluginNodeRun,
   disconnectSpsNode,
   executeSpsNodeCommand,
   getSpsDesktopAccount,
@@ -22,24 +27,36 @@ import {
   SpsHubRequestError,
   startSpsDesktopAuth,
 } from "@sps/desktop-node";
+import { claimNextSpsNodeWork, executionTransportForSpsNodeWork } from "./node-command-poller.mjs";
 import {
   buildInviteUrl,
   createSpsRoutedInviteCode,
   findSpsJoinUriArg,
+  normalizeSpsInviteToken,
   parseSpsJoinUri,
   parseSpsRoutedInviteCode,
 } from "./invite.mjs";
 import { resolveSpsNodeDisplayName } from "./node-display-name.mjs";
+import { withSpsDesktopRefreshLock } from "./desktop-refresh-lock.mjs";
+import { shouldEnsureJoinedDesktopNode } from "./member-node-registration.mjs";
+import { isSpsTechnicalMemberAccessRemoved } from "./member-access.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
 import {
   getSpsAccountConnection,
   normalizeSpsAccountConnection,
   setSpsAccountConnection,
 } from "./account-connections.mjs";
+import {
+  addSpsWorkspaceSource,
+  normalizeSpsWorkspaceSources,
+  removeSpsWorkspaceSource,
+  renameSpsWorkspaceSource,
+} from "./workspace-sources.mjs";
 import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService, resolveSpsDesktopUpdatePolicy } from "./update-service.mjs";
 import {
   createSpsDesktopAccessToken,
+  isSpsDesktopTechnicalHostRequest,
   isSpsDesktopWorkspaceRequest,
   SPS_DESKTOP_ACCESS_HEADER,
   SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER,
@@ -52,7 +69,7 @@ import {
   spsOwnerHostBundledNodePath,
 } from "./owner-host.mjs";
 import {
-  configureSpsOwnerHostLocalOnly,
+  configureSpsOwnerHostAuthenticatedLocal,
   configureSpsOwnerHostPrivateTeamAccess,
   ensureSpsOwnerHostConfig,
   spsOwnerHostUrl,
@@ -65,8 +82,26 @@ import {
 } from "./default-memory-host.mjs";
 import { isSpsHubApiUrl, requireSpsHubOrigin, requireSpsOwnerHostOrigin } from "./workspace-url.mjs";
 import { requireSpsWorkspaceDirectory } from "./workspace-directory.mjs";
+import {
+  createSpsHostProjectShareCredential,
+  sealSpsHostProjectShareCredential,
+  spsHostProjectShareName,
+  spsHostProjectSharePath,
+  SPS_HOST_SHARE_CREDENTIAL_ALGORITHM,
+  updateSpsHostProjectShareWindowsAccess,
+} from "./host-project-share.mjs";
+import {
+  classifyHostProjectSourceMembers,
+  unavailableHostProjectSourceMemberDialog,
+} from "./host-project-source-members.mjs";
 import { exportSpsOwnerVaultTransfer, inspectSpsOwnerVaultTransfer } from "./owner-vault-transfer.mjs";
 import { inspectSpsPluginRuntime } from "./plugin-runtime.mjs";
+import {
+  installSpsAgentRuntimePack,
+  listSpsAgentRuntimePacks,
+  spsAgentRuntimePackEnvironment,
+  spsAgentRuntimePacksRoot,
+} from "./agent-runtime-packs.mjs";
 import { stageSpsPluginArchive } from "./registry-staging.mjs";
 import {
   acquireRegistryRelease,
@@ -77,6 +112,7 @@ import {
   removeRegistrySource,
   SPS_OFFICIAL_REGISTRY_SOURCE,
 } from "./registry-source-catalog.mjs";
+import { assessSpsPluginCompatibility } from "./plugin-compatibility.mjs";
 import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
   pluginDiscoveryVaultLayout,
@@ -95,10 +131,12 @@ import {
 } from "./window-security.mjs";
 import {
   configuredSpsIdentityUrl,
+  isExpiredSpsDesktopRefreshToken,
   refreshSpsDesktopIdentity,
   revokeSpsDesktopIdentity,
   startSpsDesktopIdentitySignIn,
 } from "./sps-identity-account.mjs";
+import { spsOwnerHostRuntimeEnvironment } from "./owner-host-identity.mjs";
 import { resolveSpsServerAccess } from "./server-access-model.mjs";
 import {
   disabledSpsExtensionStatus,
@@ -122,8 +160,10 @@ let heartbeatTimer = null;
 let commandPollTimer = null;
 let commandPollInFlight = false;
 let pendingJoin = null;
+let pendingJoinError = null;
 let rendererReadyForJoinLinks = false;
 let workspaceOrigin = null;
+let setupMode = false;
 let nodeRuntimeStatus = emptyNodeRuntimeStatus();
 let tray = null;
 let isQuitting = false;
@@ -160,6 +200,7 @@ let lastTeamWorkplaneBindingUrl = null;
 let teamWorkplaneSyncPromise = null;
 let lastTeamWorkplaneSyncAttempt = null;
 const TEAM_WORKPLANE_SYNC_RETRY_MS = 30_000;
+const SPS_REQUEST_TIMEOUT_MS = 15_000;
 // This is never persisted. It separates the visible SPS Desktop Workspace from
 // a normal browser pointed at the loopback Owner Host.
 const ownerHostDesktopAccessToken = createSpsDesktopAccessToken();
@@ -171,6 +212,7 @@ let pluginRuntimeStatus = {
   version: null,
   message: "Checking SPS plugin runtime.",
 };
+let agentRuntimePacks = [];
 
 function emptyNodeRuntimeStatus() {
   return {
@@ -283,7 +325,7 @@ async function checkForDesktopBetaUpdate() {
   if (status.state === "current") {
     await dialog.showMessageBox(mainWindow, {
       type: "info",
-      title: "SPS Desktop Beta",
+      title: "SPS Desktop update",
       message: "This SPS Desktop installation is up to date.",
       buttons: ["OK"],
     });
@@ -327,16 +369,35 @@ function currentIdentity() {
     algorithm: "ed25519",
     publicKeyPem: state.identity.publicKeyPem,
     privateKeyPem: decrypt(state.identity.encryptedPrivateKey),
+    transportAlgorithm: state.identity.transportAlgorithm ?? null,
+    transportPublicKeyPem: state.identity.transportPublicKeyPem ?? null,
+    transportPrivateKeyPem: state.identity.encryptedTransportPrivateKey
+      ? decrypt(state.identity.encryptedTransportPrivateKey)
+      : null,
   };
 }
 
 async function ensureIdentity() {
   const identity = currentIdentity();
-  if (identity) return identity;
+  if (identity?.transportPublicKeyPem && identity.transportPrivateKeyPem) return identity;
+  if (identity) {
+    const transport = createNodeTransportIdentity();
+    state.identity = {
+      ...state.identity,
+      transportAlgorithm: transport.transportAlgorithm,
+      transportPublicKeyPem: transport.transportPublicKeyPem,
+      encryptedTransportPrivateKey: encrypt(transport.transportPrivateKeyPem),
+    };
+    await persistState();
+    return currentIdentity();
+  }
   const created = createNodeIdentity();
   state.identity = {
     publicKeyPem: created.publicKeyPem,
     encryptedPrivateKey: encrypt(created.privateKeyPem),
+    transportAlgorithm: created.transportAlgorithm,
+    transportPublicKeyPem: created.transportPublicKeyPem,
+    encryptedTransportPrivateKey: encrypt(created.transportPrivateKeyPem),
   };
   await persistState();
   return created;
@@ -346,10 +407,10 @@ function currentBoardToken() {
   return state.encryptedBoardApiToken ? decrypt(state.encryptedBoardApiToken) : null;
 }
 
-function currentDesktopAccount() {
-  if (!state.encryptedDesktopAccount) return null;
+function desktopAccountFromEncryptedValue(encryptedValue) {
+  if (!encryptedValue) return null;
   try {
-    const parsed = JSON.parse(decrypt(state.encryptedDesktopAccount));
+    const parsed = JSON.parse(decrypt(encryptedValue));
     if (typeof parsed?.subject !== "string" || typeof parsed?.name !== "string") return null;
     return {
       subject: parsed.subject,
@@ -368,9 +429,15 @@ function currentDesktopAccount() {
   }
 }
 
+function currentDesktopAccount() {
+  return desktopAccountFromEncryptedValue(state.encryptedDesktopAccount);
+}
+
 function currentDesktopAccountSubject() {
   return currentDesktopAccount()?.subject ?? null;
 }
+
+let desktopIdentityRefreshPromise = null;
 
 async function ensureDesktopIdentityAccessToken() {
   const account = currentDesktopAccount();
@@ -379,19 +446,65 @@ async function ensureDesktopIdentityAccessToken() {
   if (Number.isFinite(expiresAt) && expiresAt > Date.now() + 2 * 60 * 1000) {
     return account.accessToken;
   }
-  const refreshed = await refreshSpsDesktopIdentity({
-    identityUrl: account.identityUrl || configuredDesktopIdentityUrl(),
-    refreshToken: account.refreshToken,
-    deviceId: account.deviceId,
-  });
-  state.encryptedDesktopAccount = encrypt(JSON.stringify({
-    ...account,
-    ...refreshed,
-    identityUrl: account.identityUrl || configuredDesktopIdentityUrl(),
-    verifiedAt: account.verifiedAt || new Date().toISOString(),
-  }));
-  await persistState();
-  return refreshed.accessToken;
+  if (!desktopIdentityRefreshPromise) {
+    desktopIdentityRefreshPromise = (async () => {
+      return await withSpsDesktopRefreshLock({
+        directory: app.getPath("userData"),
+        action: async () => {
+          // Another SPS Desktop process may have completed token rotation while
+          // this process waited for the lock. Use its replacement instead of
+          // treating the consumed token as an account-wide sign-out.
+          const persistedState = await loadState(app.getPath("userData"));
+          const persistedAccount = desktopAccountFromEncryptedValue(persistedState.encryptedDesktopAccount);
+          const currentAccount = persistedAccount?.refreshToken && persistedAccount.refreshToken !== account.refreshToken
+            ? persistedAccount
+            : account;
+          const persistedExpiry = Date.parse(currentAccount.accessTokenExpiresAt ?? "");
+          if (Number.isFinite(persistedExpiry) && persistedExpiry > Date.now() + 2 * 60 * 1000) {
+            state.encryptedDesktopAccount = persistedState.encryptedDesktopAccount;
+            return currentAccount.accessToken;
+          }
+
+          let refreshed;
+          try {
+            refreshed = await refreshSpsDesktopIdentity({
+              identityUrl: currentAccount.identityUrl || configuredDesktopIdentityUrl(),
+              refreshToken: currentAccount.refreshToken,
+              deviceId: currentAccount.deviceId,
+            });
+          } catch (error) {
+            if (isExpiredSpsDesktopRefreshToken(error)) {
+              // Keep the accepted team connection and local Node identity so a fresh
+              // sign-in can resume this computer without making the teammate join
+              // again. The stale token itself must never keep the UI looking signed in.
+              state.encryptedDesktopAccount = null;
+              state.companies = [];
+              state.projects = [];
+              pendingAuth = null;
+              stopNodeScheduling();
+              resetNodeRuntimeStatus();
+              recordDesktopAccountAttempt("failed", "SPS sign-in expired. Sign in again to continue.");
+              await persistState({ rememberActiveConnection: false });
+              sendDesktopAccountStatus();
+              throw new Error("SPS sign-in expired. Sign in again to continue.");
+            }
+            throw error;
+          }
+          state.encryptedDesktopAccount = encrypt(JSON.stringify({
+            ...currentAccount,
+            ...refreshed,
+            identityUrl: currentAccount.identityUrl || configuredDesktopIdentityUrl(),
+            verifiedAt: currentAccount.verifiedAt || new Date().toISOString(),
+          }));
+          await persistState();
+          return refreshed.accessToken;
+        }
+      });
+    })().finally(() => {
+      desktopIdentityRefreshPromise = null;
+    });
+  }
+  return await desktopIdentityRefreshPromise;
 }
 
 function spsIdentitySessionCookieValue(response) {
@@ -403,6 +516,15 @@ function spsIdentitySessionCookieValue(response) {
     if (match?.[1]) return decodeURIComponent(match[1]);
   }
   return null;
+}
+
+function spsRequestTimeoutSignal() {
+  return typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(SPS_REQUEST_TIMEOUT_MS) : undefined;
+}
+
+function spsRequestError(error, fallback) {
+  if (error?.name === "TimeoutError" || error?.name === "AbortError") return new Error(fallback);
+  return error;
 }
 
 async function establishSpsIdentityCoreSession(hubOrigin) {
@@ -423,10 +545,16 @@ async function establishSpsIdentityCoreSession(hubOrigin) {
   ) {
     headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
   }
-  const response = await fetch(new URL("/api/sps-identity/session", `${hubOrigin}/`), {
-    method: "POST",
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(new URL("/api/sps-identity/session", `${hubOrigin}/`), {
+      method: "POST",
+      headers,
+      signal: spsRequestTimeoutSignal(),
+    });
+  } catch (error) {
+    throw spsRequestError(error, "SPS sign-in session timed out. Sign in again and retry.");
+  }
   if (response.status === 404) return null;
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
@@ -494,8 +622,12 @@ async function refreshSpsIdentityTeamContext() {
 async function acceptSpsIdentityInvite(hubUrl, inviteToken) {
   const sessionCookie = await establishSpsIdentityCoreSession(hubUrl);
   if (!sessionCookie) return null;
+  const normalizedInviteToken = normalizeSpsInviteToken(inviteToken);
+  if (!normalizedInviteToken) {
+    throw new Error("Enter a valid SPS invitation code.");
+  }
   const origin = requireSpsHubOrigin(hubUrl);
-  const response = await fetch(new URL(`/api/invites/${encodeURIComponent(inviteToken)}/accept`, `${hubUrl}/`), {
+  const response = await fetch(new URL(`/api/invites/${encodeURIComponent(normalizedInviteToken)}/accept`, `${hubUrl}/`), {
     method: "POST",
     headers: {
       accept: "application/json",
@@ -524,6 +656,21 @@ function clearActiveConnectionState() {
   state.identity = null;
   state.nodeId = null;
   state.nodeStatus = null;
+  state.transportKeyPublishedAt = null;
+  state.encryptedBoardApiToken = null;
+  state.companies = [];
+  state.projects = [];
+  pendingAuth = null;
+  resetNodeRuntimeStatus();
+  closeWorkspaceWindow();
+}
+
+function suspendExpiredAccountConnection() {
+  // Keep the account-scoped Node identity intact while SPS Identity is signed
+  // out. A refreshed or newly completed sign-in for the same account can then
+  // resume the already approved computer instead of registering a duplicate
+  // pending Node. Account switching still uses clearActiveConnectionState().
+  stopNodeScheduling();
   state.encryptedBoardApiToken = null;
   state.companies = [];
   state.projects = [];
@@ -542,7 +689,7 @@ function profilesMatch(left, right) {
 function restoreCurrentAccountConnection() {
   const account = currentDesktopAccount();
   if (!account) {
-    clearActiveConnectionState();
+    suspendExpiredAccountConnection();
     return false;
   }
   if (Object.keys(state.accountConnections).length === 0 && state.profile) {
@@ -596,6 +743,14 @@ function safeDesktopAccountError(error) {
 
 function recordDesktopAccountAttempt(status, error = null) {
   state.desktopAccountLastAttempt = {
+    status,
+    at: new Date().toISOString(),
+    error: error ? safeDesktopAccountError(error) : null,
+  };
+}
+
+function recordDesktopJoinAttempt(status, error = null) {
+  state.desktopJoinLastAttempt = {
     status,
     at: new Date().toISOString(),
     error: error ? safeDesktopAccountError(error) : null,
@@ -666,7 +821,15 @@ async function startDesktopAccountSignIn() {
         };
       }
     }
-    await maybeOpenWorkspaceForCurrentAccount();
+    // A full SPS2 link can arrive before the Member has signed in. Keep that
+    // one-time invitation in the Desktop process and continue it only after
+    // the account callback succeeds; rendering a pre-login form must never
+    // consume the pending link.
+    if (pendingJoin) {
+      await acceptDesktopJoinLink(pendingJoin);
+    } else {
+      await maybeOpenWorkspaceForCurrentAccount();
+    }
   }).catch(async (error) => {
     if (pendingDesktopAccount === signIn) {
       desktopAccountError = safeDesktopAccountError(error);
@@ -719,31 +882,419 @@ function currentTeamCredentials() {
   }
 }
 
+function currentHostProjectShareSecrets() {
+  if (!state.encryptedHostProjectShareSecrets) return { version: 1, projects: {} };
+  try {
+    const parsed = JSON.parse(decrypt(state.encryptedHostProjectShareSecrets));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("invalid protected source-access state");
+    }
+    const projects = parsed.projects;
+    if (!projects || typeof projects !== "object" || Array.isArray(projects)) {
+      throw new Error("invalid protected source-access project records");
+    }
+    return { version: 1, projects: { ...projects } };
+  } catch {
+    throw new Error("Windows secure storage could not read SPS Host project source credentials. Existing Guest access was not changed.");
+  }
+}
+
+async function saveHostProjectShareSecrets(value) {
+  state.encryptedHostProjectShareSecrets = encrypt(JSON.stringify({ version: 1, projects: value.projects ?? {} }));
+  await persistState();
+}
+
+function assertOwnerHostProjectSourceAccess() {
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
+    throw new Error("Only the signed-in SPS Owner Host can choose or change a project's source folder.");
+  }
+}
+
+function assertHostWorkspaceSourceAccess() {
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
+    throw new Error("Only the signed-in SPS Host can manage Workspace source folders.");
+  }
+}
+
+function currentHostWorkspaceSources() {
+  return normalizeSpsWorkspaceSources(state.profile?.workspaceSources);
+}
+
+function hostWorkspaceSourceCompanyId() {
+  const companyId = String(state.profile?.companyId || state.teamAccess?.companyId || "").trim();
+  if (!companyId) throw new Error("Choose an SPS Workspace before managing Host source folders.");
+  return companyId;
+}
+
+async function loadCoreHostWorkspaceSources() {
+  const companyId = hostWorkspaceSourceCompanyId();
+  const value = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
+    ownerBootstrap: true,
+  });
+  if (!value || typeof value !== "object" || !Array.isArray(value.sources)) {
+    throw new Error("SPS Owner Host returned an invalid Workspace Source list.");
+  }
+  return { companyId, sources: value.sources };
+}
+
+async function synchronizeHostWorkspaceSources() {
+  const localSources = currentHostWorkspaceSources();
+  const { companyId, sources: coreSources } = await loadCoreHostWorkspaceSources();
+  const knownCoreSources = [...coreSources];
+  const usedCoreIds = new Set();
+  let changed = false;
+  const nextSources = [];
+
+  for (const localSource of localSources) {
+    let coreSource = knownCoreSources.find((source) => source?.id === localSource.id) ?? null;
+    if (!coreSource) {
+      coreSource = knownCoreSources.find((source) => (
+        !usedCoreIds.has(source?.id)
+        && String(source?.displayName ?? "").trim() === localSource.name
+      )) ?? null;
+    }
+    if (!coreSource) {
+      coreSource = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
+        method: "POST",
+        ownerBootstrap: true,
+        body: { displayName: localSource.name },
+      });
+      knownCoreSources.push(coreSource);
+    }
+    usedCoreIds.add(coreSource.id);
+    const synchronized = {
+      id: String(coreSource.id),
+      name: String(coreSource.displayName ?? localSource.name),
+      sourcePath: localSource.sourcePath,
+    };
+    if (
+      synchronized.id !== localSource.id
+      || synchronized.name !== localSource.name
+    ) changed = true;
+    nextSources.push(synchronized);
+  }
+
+  // A transferred Owner Vault can contain Core Source handles before this
+  // computer has chosen its corresponding local folders. Keep those handles
+  // visible but never invent a path on behalf of the Host.
+  for (const coreSource of knownCoreSources) {
+    if (!coreSource?.id || usedCoreIds.has(coreSource.id)) continue;
+    nextSources.push({
+      id: String(coreSource.id),
+      name: String(coreSource.displayName ?? "Workspace Source"),
+      sourcePath: "",
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    state.profile.workspaceSources = nextSources;
+    await persistState();
+  }
+  return {
+    sources: nextSources,
+    privateTeamAccessEnabled: isTeamAccessEnabled(),
+  };
+}
+
+async function listHostWorkspaceSources() {
+  assertHostWorkspaceSourceAccess();
+  return await synchronizeHostWorkspaceSources();
+}
+
+async function chooseHostWorkspaceSource() {
+  assertHostWorkspaceSourceAccess();
+  const selection = await dialog.showOpenDialog(workspaceWindow ?? mainWindow ?? undefined, {
+    title: "Choose a source folder on this SPS Host",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return await listHostWorkspaceSources();
+  const sourcePath = await requireSpsWorkspaceDirectory(selection.filePaths[0]);
+  const companyId = hostWorkspaceSourceCompanyId();
+  const created = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
+    method: "POST",
+    ownerBootstrap: true,
+    body: { displayName: path.basename(sourcePath) || "Source" },
+  });
+  if (!created?.id || !created?.displayName) {
+    throw new Error("SPS Owner Host did not create a Workspace Source handle.");
+  }
+  const source = {
+    id: String(created.id),
+    name: String(created.displayName),
+    sourcePath,
+  };
+  state.profile.workspaceSources = addSpsWorkspaceSource(currentHostWorkspaceSources(), source);
+  await persistState();
+  return await listHostWorkspaceSources();
+}
+
+async function renameHostWorkspaceSource(sourceId, name) {
+  assertHostWorkspaceSourceAccess();
+  const companyId = hostWorkspaceSourceCompanyId();
+  const updated = await ownerHostApi(
+    `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(String(sourceId ?? ""))}`,
+    { method: "PATCH", ownerBootstrap: true, body: { displayName: name } },
+  );
+  state.profile.workspaceSources = renameSpsWorkspaceSource(
+    currentHostWorkspaceSources(),
+    sourceId,
+    String(updated?.displayName ?? name),
+  );
+  await persistState();
+  return await listHostWorkspaceSources();
+}
+
+async function removeHostWorkspaceSource(sourceId) {
+  assertHostWorkspaceSourceAccess();
+  const companyId = hostWorkspaceSourceCompanyId();
+  await ownerHostApi(
+    `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(String(sourceId ?? ""))}`,
+    { method: "DELETE", ownerBootstrap: true },
+  );
+  state.profile.workspaceSources = removeSpsWorkspaceSource(currentHostWorkspaceSources(), sourceId);
+  await persistState();
+  return await listHostWorkspaceSources();
+}
+
+function assertHostProjectSourceManager() {
+  assertOwnerHostProjectSourceAccess();
+  if (!isTeamAccessEnabled() || !state.teamAccess?.hostname) {
+    throw new Error("Enable private team access before sharing a project source folder with a Member Node.");
+  }
+}
+
+function ownerHostProjectSourcePath(projectId) {
+  const workspacePath = typeof state.profile?.projectWorkspaces?.[projectId] === "string"
+    ? state.profile.projectWorkspaces[projectId].trim()
+    : "";
+  if (!workspacePath) {
+    throw new Error("Choose this project's source folder on the Owner Host before granting a Member Node access.");
+  }
+  return workspacePath;
+}
+
+function normalizedProjectId(value) {
+  const projectId = String(value ?? "").trim();
+  if (!projectId) throw new Error("Project ID is required");
+  return projectId;
+}
+
+function assertHostProjectSourceCanChange(projectId) {
+  const record = currentHostProjectShareSecrets().projects[projectId];
+  const activeGrantCount = Object.keys(record?.grants ?? {}).length;
+  if (activeGrantCount > 0) {
+    throw new Error("Revoke every Member's source access before changing or clearing this Host project folder.");
+  }
+}
+
+async function listHostProjectSourcesForWorkspace() {
+  assertOwnerHostProjectSourceAccess();
+  await refreshProjects();
+  const mappings = state.profile?.projectWorkspaces ?? {};
+  return {
+    privateTeamAccessEnabled: isTeamAccessEnabled(),
+    projects: state.projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      sourcePath: typeof mappings[project.id] === "string" ? mappings[project.id] : "",
+    })),
+  };
+}
+
+async function chooseHostProjectSourceForWorkspace(projectId) {
+  assertOwnerHostProjectSourceAccess();
+  const normalizedId = normalizedProjectId(projectId);
+  await refreshProjects();
+  if (!state.projects.some((project) => project.id === normalizedId)) {
+    throw new Error("This SPS project is no longer available to the Owner Host.");
+  }
+  assertHostProjectSourceCanChange(normalizedId);
+  const selection = await dialog.showOpenDialog(workspaceWindow ?? mainWindow ?? undefined, {
+    title: "Choose source folder on this Owner Host",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return await listHostProjectSourcesForWorkspace();
+  const workspacePath = await requireSpsWorkspaceDirectory(selection.filePaths[0]);
+  state.profile.projectWorkspaces = {
+    ...(state.profile?.projectWorkspaces ?? {}),
+    [normalizedId]: workspacePath,
+  };
+  await persistState();
+  return await listHostProjectSourcesForWorkspace();
+}
+
+async function clearHostProjectSourceForWorkspace(projectId) {
+  assertOwnerHostProjectSourceAccess();
+  const normalizedId = normalizedProjectId(projectId);
+  assertHostProjectSourceCanChange(normalizedId);
+  const projectWorkspaces = { ...(state.profile?.projectWorkspaces ?? {}) };
+  delete projectWorkspaces[normalizedId];
+  state.profile.projectWorkspaces = projectWorkspaces;
+  await persistState();
+  return await listHostProjectSourcesForWorkspace();
+}
+
+async function getHostProjectShareStatus(projectId) {
+  assertHostProjectSourceManager();
+  const value = await ownerHostApi(`/projects/${encodeURIComponent(projectId)}/sps-host-share`, {
+    ownerBootstrap: true,
+  });
+  if (!value || typeof value !== "object" || !Array.isArray(value.nodes)) {
+    throw new Error("SPS Owner Host returned an invalid project source access status.");
+  }
+  return value;
+}
+
+async function grantHostProjectSourceToNode(projectId, nodeId) {
+  assertHostProjectSourceManager();
+  const sourcePath = ownerHostProjectSourcePath(projectId);
+  const status = await getHostProjectShareStatus(projectId);
+  const target = status.nodes.find((node) => node?.id === nodeId) ?? null;
+  if (!target || target.status !== "active" || !target.keyVerifiedAt || !target.transportPublicKey) {
+    throw new Error("Choose an active SPS Member Node with a current transport key before granting project source access.");
+  }
+  const secrets = currentHostProjectShareSecrets();
+  const existing = secrets.projects[projectId] && typeof secrets.projects[projectId] === "object"
+    ? secrets.projects[projectId]
+    : null;
+  const shareName = existing?.shareName ?? spsHostProjectShareName(projectId);
+  const sharePath = spsHostProjectSharePath(state.teamAccess.hostname, shareName);
+  if (status.share?.sharePath && String(status.share.sharePath).toLowerCase() !== sharePath.toLowerCase()) {
+    throw new Error("This project is already linked to another SPS Host share. Reconfigure it from the original Owner Host before granting more access.");
+  }
+  const grants = existing?.grants && typeof existing.grants === "object" ? { ...existing.grants } : {};
+  const credential = grants[nodeId] && typeof grants[nodeId] === "object"
+    ? grants[nodeId]
+    : createSpsHostProjectShareCredential(nodeId);
+  await updateSpsHostProjectShareWindowsAccess({
+    sourcePath,
+    shareName,
+    accountName: credential.username,
+    password: credential.password,
+    action: "grant",
+  }, { temporaryRoot: app.getPath("temp") });
+  secrets.projects[projectId] = {
+    shareName,
+    sharePath,
+    sourcePath,
+    grants: { ...grants, [nodeId]: credential },
+  };
+  // Persist the local credential before contacting Core. If the network call
+  // fails, the Owner can safely retry without creating an orphaned password.
+  await saveHostProjectShareSecrets(secrets);
+  if (!status.share) {
+    await ownerHostApi(`/projects/${encodeURIComponent(projectId)}/sps-host-share`, {
+      method: "PUT",
+      ownerBootstrap: true,
+      body: { sharePath },
+    });
+  }
+  const envelope = sealSpsHostProjectShareCredential({
+    sharePath,
+    hostAccountName: process.env.COMPUTERNAME?.trim() || os.hostname(),
+    transportPublicKey: target.transportPublicKey,
+    username: credential.username,
+    password: credential.password,
+  });
+  await ownerHostApi(`/projects/${encodeURIComponent(projectId)}/sps-host-share/nodes/${encodeURIComponent(nodeId)}`, {
+    method: "PUT",
+    ownerBootstrap: true,
+    body: { credentialAlgorithm: SPS_HOST_SHARE_CREDENTIAL_ALGORITHM, credentialEnvelope: envelope },
+  });
+  return { node: { id: target.id, displayName: target.displayName }, sharePath };
+}
+
+async function revokeHostProjectSourceFromNode(projectId, nodeId) {
+  assertHostProjectSourceManager();
+  const sourcePath = ownerHostProjectSourcePath(projectId);
+  const status = await getHostProjectShareStatus(projectId);
+  if (!status.share) throw new Error("This project does not have an SPS Host source share.");
+  // Revoke in Core first. A queued or running Agent then loses its lease even
+  // if Windows needs a moment to close the SMB account locally.
+  await ownerHostApi(`/projects/${encodeURIComponent(projectId)}/sps-host-share/nodes/${encodeURIComponent(nodeId)}`, {
+    method: "DELETE",
+    ownerBootstrap: true,
+  });
+  const secrets = currentHostProjectShareSecrets();
+  const record = secrets.projects[projectId];
+  const credential = record?.grants?.[nodeId] ?? null;
+  if (!credential?.username) {
+    throw new Error("SPS revoked the Node in Core, but this Owner Host no longer has its local Windows share credential. Disable that local SPS share account manually before regranting.");
+  }
+  await updateSpsHostProjectShareWindowsAccess({
+    sourcePath,
+    shareName: record.shareName,
+    accountName: credential.username,
+    password: credential.password ?? "",
+    action: "revoke",
+  }, { temporaryRoot: app.getPath("temp") });
+  const nextGrants = { ...record.grants };
+  delete nextGrants[nodeId];
+  secrets.projects[projectId] = { ...record, grants: nextGrants };
+  await saveHostProjectShareSecrets(secrets);
+  return { nodeId, revoked: true };
+}
+
+async function showHostProjectSourceManager(projectId) {
+  const status = await getHostProjectShareStatus(projectId);
+  const memberState = classifyHostProjectSourceMembers(status.nodes, {
+    ownerNodeId: state.nodeId,
+    ownerDisplayName: state.profile?.displayName,
+  });
+  const members = memberState.ready.slice(0, 8);
+  if (members.length === 0) {
+    const dialogContent = unavailableHostProjectSourceMemberDialog(memberState);
+    await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
+      type: "info",
+      title: "Project source access",
+      ...dialogContent,
+    });
+    return null;
+  }
+  const buttons = members.map((node) => (
+    node.sourceAccess === "granted" ? `Revoke ${node.displayName}` : `Grant ${node.displayName}`
+  ));
+  buttons.push("Close");
+  const choice = await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
+    type: "question",
+    title: "Project source access",
+    message: "Choose a Member Node for this Host project's source folder.",
+    detail: "SPS grants the Node a Windows share credential encrypted to that computer. Tasks still also require the normal Node, Agent, and Runner grants.",
+    buttons,
+    cancelId: buttons.length - 1,
+  });
+  const target = members[choice.response] ?? null;
+  if (!target) return null;
+  const result = target.sourceAccess === "granted"
+    ? await revokeHostProjectSourceFromNode(projectId, target.id)
+    : await grantHostProjectSourceToNode(projectId, target.id);
+  await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
+    type: "info",
+    title: "Project source access updated",
+    message: target.sourceAccess === "granted"
+      ? `${target.displayName} can no longer run Tasks in this Host source folder.`
+      : `${target.displayName} can now run approved Tasks in this Host source folder.`,
+    detail: target.sourceAccess === "granted" ? "The Node's Windows share account was disabled." : `Managed path: ${result.sharePath}`,
+  });
+  return result;
+}
+
 function ownerVaultRoot() {
   return path.join(app.getPath("userData"), "owner-vault");
 }
 
+function ownerAgentRuntimePacksRoot() {
+  return spsAgentRuntimePacksRoot(app.getPath("userData"));
+}
+
 function ownerHostTeamEnvironment() {
-  if (!state.teamAccess?.enabled) return {};
-  const credentials = currentTeamCredentials();
-  if (!credentials) {
-    throw new Error("Private team access credentials are unavailable in Windows secure storage.");
-  }
-  return {
-    SPS_AUTH_SECRET: credentials.authSecret,
-    // The Core's signed Agent-run protocol has a separate secret input from
-    // browser authentication. Keep both in the same encrypted Owner Vault
-    // record so a private-team switch cannot leave Task execution unsigned.
-    PAPERCLIP_AGENT_JWT_SECRET: credentials.authSecret,
-    SPS_AUTH_IDENTITY_ENABLED: "true",
-    SPS_IDENTITY_ISSUER: configuredDesktopIdentityUrl(),
-    SPS_IDENTITY_AUDIENCE: "sps-core",
-    SPS_IDENTITY_JWKS_URL: `${configuredDesktopIdentityUrl()}/.well-known/jwks.json`,
-    SPS_AUTH_GOOGLE_ONLY: "false",
-    // The request reaches Core from the local Tailscale Serve proxy. Core may
-    // therefore trust only loopback forwarding headers, never arbitrary LAN.
-    TRUST_PROXY: "loopback",
-  };
+  const credentials = state.teamAccess?.enabled ? currentTeamCredentials() : null;
+  return spsOwnerHostRuntimeEnvironment({
+    identityUrl: configuredDesktopIdentityUrl(),
+    teamAccessEnabled: Boolean(state.teamAccess?.enabled),
+    authSecret: credentials?.authSecret,
+  });
 }
 
 function isTeamAccessEnabled() {
@@ -770,9 +1321,11 @@ async function synchronizeReadyTeamWorkplane() {
   lastTeamWorkplaneSyncAttempt = { url: ownerHostUrl, at: Date.now() };
   teamWorkplaneSyncPromise = (async () => {
     try {
-      const sessionCookie = isTeamAccessEnabled()
-        ? await establishSpsIdentityCoreSession(ownerHostUrl)
-        : null;
+      // The Owner Host is authenticated even before private-team access is
+      // enabled. Bundled plugins therefore need the same SPS Identity session
+      // as every other Host request; otherwise their first config read is
+      // rejected and the sidebar can expose a route for an absent plugin.
+      const sessionCookie = await establishSpsIdentityCoreSession(ownerHostUrl);
       await synchronizeSpsTeamWorkplaneConfig({
         ownerHostUrl,
         desktopAccessToken: ownerHostDesktopAccessToken,
@@ -809,6 +1362,7 @@ async function refreshOwnerRuntimeStatus() {
     };
     void synchronizeReadyTeamWorkplane();
   }
+  agentRuntimePacks = await listSpsAgentRuntimePacks({ root: ownerAgentRuntimePacksRoot() });
   return ownerHostStatus;
 }
 
@@ -831,13 +1385,14 @@ async function ensureOwnerHostManager() {
     ? await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot })
     : null;
   pluginRuntimeStatus = await inspectSpsPluginRuntime();
+  agentRuntimePacks = await listSpsAgentRuntimePacks({ root: ownerAgentRuntimePacksRoot() });
   const url = spsOwnerHostUrl(ownerHost.config);
   if (ownerHostManager && ownerHostStatus.url === url && (!defaultMemoryEnabled || defaultMemoryManager)) {
     return { ...ownerHost, defaultMemory, url };
   }
 
   // The Owner Host, rather than the Agent-facing plugin, verifies the official
-  // Registry. An offline refresh leaves the last trusted snapshot in place so
+  // Registry. An unavailable Registry refresh leaves the last trusted snapshot in place so
   // startup and the rest of SPS do not depend on marketplace availability.
   if (pluginDiscoveryEnabled) {
     try {
@@ -921,6 +1476,12 @@ async function ensureOwnerHostManager() {
         packagedNodeCommand: process.execPath,
         configPath: ownerHost.layout.configPath,
         environment: {
+          ...spsAgentRuntimePackEnvironment({
+            root: ownerAgentRuntimePacksRoot(),
+            nodeCommand: materializedRuntime
+              ? spsOwnerHostBundledNodePath(materializedRuntime)
+              : process.execPath,
+          }),
           PAPERCLIP_HOME: ownerHost.layout.root,
           PAPERCLIP_DB_BACKUP_DIR: ownerHost.layout.backupDir,
           PAPERCLIP_STORAGE_LOCAL_DIR: ownerHost.layout.storageDir,
@@ -935,15 +1496,30 @@ async function ensureOwnerHostManager() {
           // evaluated against the app that owns this Owner Host.
           PAPERCLIP_HOST_VERSION: app.getVersion(),
           SPS_BASIC_MODE: "true",
-          SPS_WORKPLANE_MODE: "true",
-          SPS_WORKPLANE_ROOM_ORIGIN_PREFIXES: [
-            "plugin:local.room-chat:operation:agent-room",
-            "plugin:local.room-chat:agent-room-provisioning",
-            "plugin:local.room-chat:project-room-provisioning",
-          ].join(","),
-          SPS_WORKPLANE_DEFAULT_PROJECT_TAB: "plugin:local.room-chat:project-workplane",
+          // Fresh Hosts render the plugin-first Core surface. The legacy Room
+          // Workplane keeps its own UI only when explicitly bundled.
+          SPS_CORE_BASELINE_MODE: roomWorkplaneBundled ? "false" : "true",
+          // The neutral Desktop starts with Plugin Discovery only. Do not
+          // render the Rooms-first shell until the Team Workplane is actually
+          // bundled for this Host, otherwise its navigation points at a
+          // plugin route that does not exist.
+          SPS_WORKPLANE_MODE: roomWorkplaneBundled ? "true" : "false",
+          ...(roomWorkplaneBundled
+            ? {
+              SPS_WORKPLANE_ROOM_ORIGIN_PREFIXES: [
+                "plugin:local.room-chat:operation:agent-room",
+                "plugin:local.room-chat:agent-room-provisioning",
+                "plugin:local.room-chat:project-room-provisioning",
+              ].join(","),
+              SPS_WORKPLANE_DEFAULT_PROJECT_TAB: "plugin:local.room-chat:project-workplane",
+            }
+            : {}),
           SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
           ...(pluginDiscoveryEnabled ? { SPS_PLUGIN_DISCOVERY_CATALOG_PATH: discoveryCatalog.catalogPath } : {}),
+          // Keep the neutral Core free of a preselected Workplane. If this
+          // Owner already chose the first-party Room plugin, still refresh it
+          // from the current Desktop bundle on every app update.
+          SPS_BUNDLED_PLUGIN_REFRESH_PATHS: roomPluginPath,
           PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
           // The Room Worker can run without the optional Memory provider, but
           // it still needs the Owner Host address for its own tool calls.
@@ -990,6 +1566,7 @@ async function activateOwnerHostProfile() {
     displayName: currentDesktopAccount()?.name ?? `${os.hostname()} Owner Host`,
     defaultWorkspacePath: "",
     projectWorkspaces: {},
+    workspaceSources: [],
   };
   state.ownerHostOwnerSubject = account.subject;
   state.legacyOwnerHostAdoptionPending = false;
@@ -1034,7 +1611,10 @@ async function startOwnerHost({ activate = false } = {}) {
   // app update or after bundled extensions were toggled. Bind it whenever the
   // Owner Host becomes healthy; absent plugins are a harmless no-op.
   await synchronizeReadyTeamWorkplane();
-  if (activate && ownerHostIsReady()) await activateOwnerHostProfile();
+  if (activate && ownerHostIsReady()) {
+    await activateOwnerHostProfile();
+    await ensureInitialOwnerHostCompany();
+  }
   return ownerHostStatus;
 }
 
@@ -1068,7 +1648,7 @@ async function bootstrapOwnerHost() {
   }
   try {
     await startOwnerHost({ activate: false });
-    await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+    await ensureInitialOwnerHostCompany();
     await maybeOpenWorkspaceForCurrentAccount();
   } catch (error) {
     ownerHostStatus = {
@@ -1086,30 +1666,37 @@ async function bootstrapOwnerHost() {
 async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = false } = {}) {
   await requireReadyOwnerHost();
   if (ownerBootstrap && (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost())) {
-    throw new Error("Only this SPS Owner Host can repair its private team membership.");
+    throw new Error("Only this SPS Owner Host can perform this local Host action.");
   }
   const accessToken = currentBoardToken();
   const ownerHostOrigin = requireSpsOwnerHostOrigin(ownerHostStatus.url);
   const headers = body === undefined
     ? { accept: "application/json", origin: ownerHostOrigin }
     : { accept: "application/json", "content-type": "application/json", origin: ownerHostOrigin };
-  // Private team Hosts require the same protected Board session as their
-  // remote address. Local-only bootstrap still works without this header.
+  // A signed-in SPS Identity account is required for every Host request,
+  // including a loopback-only Host. The board token remains an optional
+  // compatibility credential for established connections.
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
   if (isOwnerHostProfile()) headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
   if (ownerBootstrap) headers[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER] = ownerHostDesktopAccessToken;
-  if (state.teamAccess?.enabled) {
+  if (isOwnerHostProfile()) {
     const identitySession = await establishSpsIdentityCoreSession(requireSpsOwnerHostOrigin(ownerHostStatus.url));
     if (!identitySession) {
-      throw new Error("This private SPS Owner Host did not accept the SPS Identity session.");
+      throw new Error("This SPS Owner Host did not accept the signed-in SPS Identity session.");
     }
     headers.cookie = `sps_identity_session=${encodeURIComponent(identitySession)}`;
   }
-  const response = await fetch(`${ownerHostOrigin}/api${pathname}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(`${ownerHostOrigin}/api${pathname}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: spsRequestTimeoutSignal(),
+    });
+  } catch (error) {
+    throw spsRequestError(error, "SPS Owner Host request timed out. Reopen SPS Desktop and try again.");
+  }
   const text = await response.text();
   let data = null;
   try {
@@ -1197,6 +1784,7 @@ async function stageRegistryPluginFromFilePicker() {
     },
     registerStage: async (body) => await ownerHostApi("/plugins/registry/stages", {
       method: "POST",
+      ownerBootstrap: true,
       body,
     }),
   });
@@ -1226,6 +1814,7 @@ async function stageRegistryPluginFromFilePicker() {
 
   const enabled = await ownerHostApi(`/plugins/registry/stages/${encodeURIComponent(staged.stage.stageId)}/enable`, {
     method: "POST",
+    ownerBootstrap: true,
     body: {},
   });
   await dialog.showMessageBox(mainWindow ?? undefined, {
@@ -1344,6 +1933,7 @@ async function stageDesktopRegistryRelease({ sourceId, pluginId, version } = {})
       source: acquired.source,
       registerStage: async (body) => await ownerHostApi("/plugins/registry/stages", {
         method: "POST",
+        ownerBootstrap: true,
         body,
       }),
     });
@@ -1359,13 +1949,14 @@ async function enableDesktopRegistryStage(stageId) {
   if (typeof stageId !== "string" || stageId.length === 0) throw new Error("Registry stage id is required.");
   return await ownerHostApi(`/plugins/registry/stages/${encodeURIComponent(stageId)}/enable`, {
     method: "POST",
+    ownerBootstrap: true,
     body: {},
   });
 }
 
 async function listDesktopRegistryStages() {
   assertRegistryOwner();
-  const stages = await ownerHostApi("/plugins/registry/stages");
+  const stages = await ownerHostApi("/plugins/registry/stages", { ownerBootstrap: true });
   if (!Array.isArray(stages)) throw new Error("Owner Host returned an invalid Registry stage list.");
   return stages.map((stage) => ({
     stageId: stage.stageId,
@@ -1390,7 +1981,7 @@ async function showRegistryPluginStages() {
   if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
     throw new Error("Only the signed-in SPS Owner can review Registry plugins.");
   }
-  const stages = await ownerHostApi("/plugins/registry/stages");
+  const stages = await ownerHostApi("/plugins/registry/stages", { ownerBootstrap: true });
   const detail = stages.length === 0
     ? "No Registry packages are staged on this Owner Host."
     : stages.map((stage) => `${stage.pluginId} ${stage.version} - ${stage.status}`).join("\n");
@@ -1412,7 +2003,11 @@ async function exportOwnerVaultTransfer() {
     properties: ["openDirectory", "createDirectory"],
   });
   if (selection.canceled || !selection.filePaths[0]) return null;
-  const backup = await ownerHostApi("/instance/database-backups", { method: "POST", body: {} });
+  const backup = await ownerHostApi("/instance/database-backups", {
+    method: "POST",
+    ownerBootstrap: true,
+    body: {},
+  });
   const exported = await exportSpsOwnerVaultTransfer({
     vaultRoot: ownerVaultRoot(),
     backupFile: backup?.backupFile,
@@ -1469,6 +2064,81 @@ async function refreshOwnerHostCompanies() {
   return ownerHostCompanies;
 }
 
+function initialOwnerHostCompanyName() {
+  const accountName = String(currentDesktopAccount()?.name ?? "").trim();
+  return accountName ? `${accountName} Workspace` : "SPS Workspace";
+}
+
+async function recoverInitialOwnerHostMemberships(recoverableCompanies) {
+  // A pre-authenticated SPS Vault can already contain companies created by an
+  // older Desktop build. Inspecting that local Vault requires both Desktop
+  // launch proofs; accepting the short-lived invitation still uses the real
+  // signed-in SPS Identity session. This prevents duplicate companies during
+  // the pre-identity -> authenticated migration.
+  const companies = Array.isArray(recoverableCompanies)
+    ? normalizeCompanyList(recoverableCompanies)
+    : normalizeCompanyList(await ownerHostApi("/companies", { ownerBootstrap: true }));
+  for (const company of companies) {
+    const invitation = await ownerHostApi(`/companies/${encodeURIComponent(company.id)}/invites`, {
+      method: "POST",
+      ownerBootstrap: true,
+      body: {
+        allowedJoinTypes: "human",
+        humanRole: "owner",
+        expiresInMinutes: 15,
+        agentMessage: "SPS Desktop local Host membership recovery.",
+      },
+    });
+    if (typeof invitation?.token !== "string") {
+      throw new Error(`SPS Owner Host could not recover access to ${company.name}.`);
+    }
+    const accepted = await ownerHostApi(`/invites/${encodeURIComponent(invitation.token)}/accept`, {
+      method: "POST",
+      body: { requestType: "human" },
+    });
+    if (accepted?.status !== "approved") {
+      throw new Error(`SPS Identity did not approve recovered access to ${company.name}.`);
+    }
+  }
+  return companies;
+}
+
+async function ensureInitialOwnerHostCompany() {
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) return [];
+
+  // This protected local read is also the durable Core-admin bootstrap for
+  // the signed-in Host. It is safe to repeat and never replaces a real admin
+  // belonging to another SPS account.
+  const vaultCompanies = normalizeCompanyList(await ownerHostApi("/companies", {
+    ownerBootstrap: true,
+  }));
+  let companies = await refreshOwnerHostCompanies();
+  if (companies.length === 0) {
+    await recoverInitialOwnerHostMemberships(vaultCompanies);
+    companies = await refreshOwnerHostCompanies();
+  }
+  if (companies.length === 0) {
+    // The two local Desktop proofs plus the real SPS session are required by
+    // Core before a first company can be created. The resulting membership
+    // belongs to the signed-in Host, never to a local placeholder identity.
+    const created = await ownerHostApi("/companies", {
+      method: "POST",
+      body: { name: initialOwnerHostCompanyName() },
+      ownerBootstrap: true,
+    });
+    companies = normalizeCompanyList([created]);
+    ownerHostCompanies = companies;
+  }
+
+  const selectedCompanyId = state.profile?.companyId;
+  if (state.profile && !companies.some((company) => company.id === selectedCompanyId)) {
+    state.profile.companyId = companies[0]?.id ?? "";
+  }
+  state.companies = companies.map((company) => ({ ...company }));
+  await persistState();
+  return companies;
+}
+
 async function restartOwnerHostForConfiguration() {
   closeWorkspaceWindow();
   if (ownerHostManager) await ownerHostManager.stop({ force: true });
@@ -1514,19 +2184,6 @@ async function enablePrivateTeamAccess(input) {
   }
   const localConfig = await ensureSpsOwnerHostConfig({ vaultRoot: ownerVaultRoot() });
   const previousConfig = localConfig.config;
-  const invitation = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/invites`, {
-    method: "POST",
-    body: {
-      allowedJoinTypes: "human",
-      humanRole: "owner",
-      expiresInMinutes: 60,
-      agentMessage: "Initial Owner access for this SPS private team Host.",
-    },
-  });
-  if (typeof invitation?.token !== "string") {
-    throw new Error("SPS Owner Host did not return an Owner invitation.");
-  }
-
   const credentials = {
     authSecret: randomBytes(48).toString("base64url"),
   };
@@ -1547,7 +2204,7 @@ async function enablePrivateTeamAccess(input) {
   let servedOwnerHostUrl = null;
   // Persist credentials before the Core changes mode. If Windows restarts in
   // the middle of the hand-off, the Owner Host can still start securely and
-  // the owner can explicitly return to local-only mode instead of losing the
+  // the owner can explicitly return to authenticated loopback mode instead of losing the
   // credentials required to recover it.
   await persistState();
   try {
@@ -1561,10 +2218,12 @@ async function enablePrivateTeamAccess(input) {
     if (!tailscale.serve || !tailscale.tailnet) {
       throw new Error("Tailscale Serve did not confirm the SPS private team route.");
     }
-    const accepted = await acceptSpsIdentityInvite(nextTeamAccess.url, invitation.token);
-    if (accepted?.status !== "approved") {
-      throw new Error("SPS Owner Host did not grant the Owner's SPS account access.");
-    }
+    // Most Hosts already own the selected company through the local bootstrap.
+    // Verify that membership over the private URL first; the recovery helper
+    // creates and accepts a narrowly scoped Owner invite only when it is truly
+    // missing. This avoids treating Core's correct "already a member" conflict
+    // as a failed team activation.
+    await ensurePrivateTeamOwnerMembership();
   } catch (error) {
     if (servedOwnerHostUrl) {
       await disableSpsTailscaleServe({
@@ -1594,7 +2253,7 @@ async function enablePrivateTeamAccess(input) {
   await activateOwnerHostProfile();
   return {
     teamAccess: { ...nextTeamAccess },
-    initialOwnerInvite: { accepted: true, expiresAt: invitation.expiresAt ?? null },
+    initialOwnerInvite: { accepted: true, expiresAt: null },
     identityIssuer: configuredDesktopIdentityUrl(),
   };
 }
@@ -1606,6 +2265,7 @@ async function createMemberInvite() {
   const membership = await ensurePrivateTeamOwnerMembership();
   const invitation = await ownerHostApi(`/companies/${encodeURIComponent(state.teamAccess.companyId)}/invites`, {
     method: "POST",
+    ownerBootstrap: true,
     body: {
       allowedJoinTypes: "human",
       humanRole: "operator",
@@ -1637,6 +2297,7 @@ async function listMemberInvites() {
   await ensurePrivateTeamOwnerMembership();
   const response = await ownerHostApi(
     `/companies/${encodeURIComponent(state.teamAccess.companyId)}/invites?state=active&limit=50`,
+    { ownerBootstrap: true },
   );
   const invites = Array.isArray(response?.invites) ? response.invites : [];
   return invites
@@ -1662,7 +2323,11 @@ async function revokeMemberInvite(input) {
   if (!activeInvites.some((invite) => invite.id === inviteId)) {
     throw new Error("That member invitation is no longer active or was not created by SPS Desktop.");
   }
-  const revoked = await ownerHostApi(`/invites/${encodeURIComponent(inviteId)}/revoke`, { method: "POST", body: {} });
+  const revoked = await ownerHostApi(`/invites/${encodeURIComponent(inviteId)}/revoke`, {
+    method: "POST",
+    ownerBootstrap: true,
+    body: {},
+  });
   return { id: inviteId, state: revoked?.revokedAt ? "revoked" : "unknown" };
 }
 
@@ -1701,6 +2366,7 @@ async function saveRemoteProfile(input) {
     displayName: displayName.slice(0, 120),
     defaultWorkspacePath: String(input?.defaultWorkspacePath ?? "").trim(),
     projectWorkspaces: connectionScopeChanged ? {} : state.profile?.projectWorkspaces ?? {},
+    workspaceSources: connectionScopeChanged ? [] : state.profile?.workspaceSources ?? [],
   };
   await persistState();
   if (companyId && (currentBoardToken() || isSpsIdentityRemoteProfile(state.profile))) {
@@ -1719,10 +2385,17 @@ async function acceptInviteCode(input) {
   }
   const pasted = String(input?.code ?? "").trim();
   const routed = parseSpsRoutedInviteCode(pasted);
-  if (routed) {
-    const accepted = await acceptSpsIdentityInvite(routed.hub, routed.code);
+  const explicitHub = input?.hub ? requireSpsHubOrigin(input.hub) : null;
+  const hubUrl = routed?.hub ?? explicitHub ?? state.profile?.hubUrl ?? null;
+  const inviteCode = routed?.code ?? pasted;
+  if (!hubUrl) {
+    throw new Error("Paste the full SPS2 invitation code from the Owner. Short SPS codes work only after this computer already knows the team address.");
+  }
+
+  if (routed || explicitHub) {
+    const accepted = await acceptSpsIdentityInvite(hubUrl, inviteCode);
     await saveRemoteProfile({
-      hubUrl: routed.hub,
+      hubUrl,
       companyId: "",
       authMode: accepted ? "sps-identity" : "legacy",
       displayName: state.profile?.displayName ?? "",
@@ -1730,23 +2403,25 @@ async function acceptInviteCode(input) {
     });
     if (accepted) {
       await refreshSpsIdentityTeamContext();
-      return { hub: routed.hub, status: accepted.status ?? "approved", direct: true };
+      // A direct Desktop acceptance has already established membership. Open
+      // the workspace now so the normal Member Node registration lifecycle
+      // runs instead of leaving the user on the setup screen.
+      await maybeOpenWorkspaceForCurrentAccount();
+      return { hub: hubUrl, status: accepted.status ?? "approved", direct: true };
     }
-    await shell.openExternal(buildInviteUrl(routed.hub, routed.code));
-    return routed;
+    await shell.openExternal(buildInviteUrl(hubUrl, inviteCode));
+    return { hub: hubUrl };
   }
-  if (!state.profile?.hubUrl) {
-    throw new Error("Paste the full SPS2 invitation code from the Owner. Short SPS codes work only after this computer already knows the team address.");
-  }
-  const accepted = await acceptSpsIdentityInvite(state.profile.hubUrl, pasted);
+  const accepted = await acceptSpsIdentityInvite(hubUrl, inviteCode);
   if (accepted) {
-    await saveRemoteProfile({ ...state.profile, authMode: "sps-identity" });
+    await saveRemoteProfile({ ...state.profile, hubUrl, authMode: "sps-identity" });
     await refreshSpsIdentityTeamContext();
-    return { hub: state.profile.hubUrl, status: accepted.status ?? "approved", direct: true };
+    await maybeOpenWorkspaceForCurrentAccount();
+    return { hub: hubUrl, status: accepted.status ?? "approved", direct: true };
   }
-  const url = buildInviteUrl(state.profile.hubUrl, pasted);
+  const url = buildInviteUrl(hubUrl, inviteCode);
   await shell.openExternal(url);
-  return { hub: state.profile.hubUrl };
+  return { hub: hubUrl };
 }
 
 async function disablePrivateTeamAccess() {
@@ -1761,7 +2436,7 @@ async function disablePrivateTeamAccess() {
   state.encryptedTeamCredentials = null;
   await updateSpsOwnerHostConfig({
     vaultRoot: ownerVaultRoot(),
-    update: (config) => configureSpsOwnerHostLocalOnly(config),
+    update: (config) => configureSpsOwnerHostAuthenticatedLocal(config),
   });
   await restartOwnerHostForConfiguration();
   await activateOwnerHostProfile();
@@ -1778,7 +2453,24 @@ function normalizeProjectList(value) {
 
 async function refreshProjects() {
   if (isOwnerHostProfile()) {
-    state.projects = [];
+    // The Owner Host is not a Member Node, but it still needs the same
+    // project list to choose the one source folder each project exposes.
+    if (!state.profile?.companyId && !state.teamAccess?.companyId && ownerHostCompanies.length === 0) {
+      await refreshOwnerHostCompanies();
+    }
+    const companyId = state.profile?.companyId
+      || state.teamAccess?.companyId
+      || ownerHostCompanies[0]?.id
+      || null;
+    if (companyId && state.profile && !state.profile.companyId) {
+      // Private Owner Hosts already persist the company selected while team
+      // access was enabled. Reuse it for Host-only folder management rather
+      // than requiring a second, unrelated company picker.
+      state.profile.companyId = companyId;
+    }
+    state.projects = companyId
+      ? normalizeProjectList(await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/projects`))
+      : [];
     await persistState();
     return state.projects;
   }
@@ -1836,6 +2528,21 @@ function nodeWasRevoked(error) {
     && error.message === "This SPS Node has been revoked";
 }
 
+async function clearRemovedMemberConnection() {
+  stopNodeScheduling();
+  await cancelSpsNodeCommands("SPS Host removed this computer's Member access, so its local command stopped.");
+  state.identity = null;
+  state.nodeId = null;
+  state.nodeStatus = "revoked";
+  state.profile = null;
+  state.companies = [];
+  nodeRuntimeStatus.heartbeatError = "The SPS Host removed this computer's access. The team connection has been cleared.";
+  nodeRuntimeStatus.commandPollError = "Ask the SPS Host for a new Desktop invitation to reconnect.";
+  closeWorkspaceWindow();
+  await persistState();
+  await openSetup();
+}
+
 function workspaceHubUrl() {
   if (!state.profile?.hubUrl) return null;
   return isOwnerHostProfile()
@@ -1849,7 +2556,14 @@ function isCurrentWorkspaceApiUrl(url) {
 
 async function openSetup() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  setupMode = true;
   rendererReadyForJoinLinks = false;
+  // Returning from Workspace is the normal way an Owner changes source
+  // folders. Refresh here so a project created during the same session is
+  // visible without making the Owner restart the Desktop app.
+  if (isOwnerHostProfile() && ownerHostStatus.state === "running") {
+    await refreshProjects().catch(() => {});
+  }
   await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
 
@@ -1959,14 +2673,15 @@ async function openWorkspace() {
   }
   const hubOrigin = workspaceHubUrl();
   if (!hubOrigin) throw new Error("Save an SPS team connection first");
-  // The local Owner Host is protected by the launch-scoped Desktop header.
-  // Central Identity sessions are for remote/private team access only.
-  const usesIdentitySession = isOwnerHostProfile()
-    ? false
-    : await establishSpsIdentityCoreSession(hubOrigin);
-  if (!isOwnerHostProfile() && !currentBoardToken() && !usesIdentitySession) {
-    throw new Error("This SPS Server still requires its existing browser sign-in. Complete its server access step first.");
+  setupMode = false;
+  // Every SPS Desktop Host and Member has a signed-in SPS Identity account.
+  // The Desktop-only header protects the loopback transport as an additional
+  // proof, while the Core session identifies the actual user.
+  const usesIdentitySession = await establishSpsIdentityCoreSession(hubOrigin);
+  if (!currentBoardToken() && !usesIdentitySession) {
+    throw new Error("SPS could not establish this Desktop account's Workspace session. Sign in to SPS Desktop again and retry.");
   }
+  await ensureJoinedDesktopNode();
   if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
     if (workspaceWindow.isMinimized()) workspaceWindow.restore();
     workspaceWindow.show();
@@ -2036,6 +2751,63 @@ function canCreateMemberInvite() {
   );
 }
 
+function canRegisterCurrentDesktopNode() {
+  return Boolean(
+    currentDesktopAccount()
+    && !isOwnerHostProfile()
+    && state.profile?.companyId,
+  );
+}
+
+async function registerCurrentDesktopNode() {
+  if (!canRegisterCurrentDesktopNode()) {
+    throw new Error("Join an SPS team and sign in before registering this computer.");
+  }
+  if (state.nodeStatus === "active") {
+    await dialog.showMessageBox(mainWindow ?? workspaceWindow ?? undefined, {
+      type: "info",
+      title: "SPS Node is ready",
+      message: "This computer is already approved for SPS Node work.",
+    });
+    return null;
+  }
+  if (state.nodeStatus === "pending") {
+    await dialog.showMessageBox(mainWindow ?? workspaceWindow ?? undefined, {
+      type: "info",
+      title: "Waiting for Owner approval",
+      message: "This computer has already requested SPS Node access. An Owner or Admin must approve it in Company settings > Nodes.",
+    });
+    return null;
+  }
+
+  try {
+    const result = await connectNode();
+    createApplicationMenu();
+    refreshTrayMenu();
+    await dialog.showMessageBox(mainWindow ?? workspaceWindow ?? undefined, {
+      type: "info",
+      title: "SPS Node registration requested",
+      message: "This computer is waiting for Owner approval.",
+      detail: "After approval, the Owner can grant this computer to selected Agents. No CLI command can run before both steps are complete.",
+    });
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "SPS could not register this computer.";
+    await dialog.showMessageBox(mainWindow ?? workspaceWindow ?? undefined, {
+      type: "error",
+      title: "SPS Node registration failed",
+      message,
+    });
+    throw error;
+  }
+}
+
+function runNodeRegistrationFromTray() {
+  void registerCurrentDesktopNode().catch(() => {
+    // registerCurrentDesktopNode displays the safe, user-facing failure.
+  });
+}
+
 async function showMemberInvite() {
   if (!canCreateMemberInvite()) {
     throw new Error("Enable private team access before creating a teammate invitation.");
@@ -2064,6 +2836,12 @@ function configureWorkspaceRequestAuth() {
     })) {
       requestHeaders[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
     }
+    if (isOwnerHostProfile() && isSpsDesktopTechnicalHostRequest({
+      url: details.url,
+      workspaceOrigin,
+    })) {
+      requestHeaders[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER] = ownerHostDesktopAccessToken;
+    }
     const accessToken = currentBoardToken();
     if (accessToken && isCurrentWorkspaceApiUrl(details.url)) {
       requestHeaders.Authorization = `Bearer ${accessToken}`;
@@ -2090,6 +2868,7 @@ function createApplicationMenu() {
         { label: accountLabel, enabled: false },
         { type: "separator" },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
+        { label: "Connect this computer as an SPS Node...", visible: canRegisterCurrentDesktopNode(), click: () => run(registerCurrentDesktopNode) },
         { label: "Create teammate invitation...", visible: canCreateMemberInvite(), click: () => run(showMemberInvite) },
         { label: "Check for SPS Desktop updates...", click: () => run(checkForDesktopBetaUpdate) },
         {
@@ -2135,6 +2914,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
+    { label: "Connect this computer as an SPS Node...", visible: canRegisterCurrentDesktopNode(), click: () => { void runNodeRegistrationFromTray(); } },
     { label: "Create teammate invitation...", visible: canCreateMemberInvite(), click: () => { void showMemberInvite(); } },
     { label: "Check for SPS Desktop updates...", click: () => { void checkForDesktopBetaUpdate(); } },
     {
@@ -2207,6 +2987,7 @@ function publicStatus() {
         displayName: state.profile.displayName,
         defaultWorkspacePath: state.profile.defaultWorkspacePath,
         projectWorkspaces: { ...(state.profile.projectWorkspaces ?? {}) },
+        workspaceSources: normalizeSpsWorkspaceSources(state.profile.workspaceSources),
       }
       : null,
     hasIdentity: Boolean(state.identity),
@@ -2229,6 +3010,7 @@ function publicStatus() {
       workspaceConfigured: Boolean(state.profile?.defaultWorkspacePath),
       launchAtLogin: launchAtLoginEnabled,
     },
+    setupMode,
     nodeConnection: state.nodeId ? { ...nodeRuntimeStatus } : null,
     ownerHost: {
       state: ownerHostStatus.state,
@@ -2246,6 +3028,13 @@ function publicStatus() {
       pluginRuntime: { ...pluginRuntimeStatus },
       legacyAdoptionPending: Boolean(state.legacyOwnerHostAdoptionPending),
     },
+    agentRuntimePacks: agentRuntimePacks.map((pack) => ({
+      id: pack.id,
+      label: pack.label,
+      version: pack.version,
+      commands: [...pack.commands],
+      complete: pack.complete,
+    })),
     teamAccess: state.teamAccess
       ? {
         enabled: Boolean(state.teamAccess.enabled),
@@ -2305,6 +3094,7 @@ async function connectNode() {
     appVersion: app.getVersion(),
     capabilities,
     runners,
+    transportPublicKey: identity.transportPublicKeyPem,
     ...access,
   });
   const verified = await sendSpsNodeHeartbeat({
@@ -2314,11 +3104,42 @@ async function connectNode() {
     ...access,
   });
   state.nodeId = node.id;
+  state.transportKeyPublishedAt = new Date().toISOString();
   await applyNodeStatus(verified.status ?? node.status, { persist: false });
   nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
   await persistState();
   scheduleHeartbeat({ immediate: false });
   return { node, verified, capabilities, runners };
+}
+
+async function ensureJoinedDesktopNode() {
+  // Team membership may request a Node registration, but it never authorizes
+  // command execution. An Owner still approves the pending Node and grants it
+  // to individual Agents before this computer can run any work.
+  if (!shouldEnsureJoinedDesktopNode({
+    profile: state.profile,
+    signedIn: Boolean(currentDesktopAccount()),
+    nodeId: state.nodeId,
+    nodeStatus: state.nodeStatus,
+    hasTransportIdentity: Boolean(
+      state.identity?.transportPublicKeyPem
+        && state.identity?.encryptedTransportPrivateKey,
+    ),
+    hasPublishedTransportKey: Boolean(state.transportKeyPublishedAt),
+  })) {
+    return null;
+  }
+
+  try {
+    return await connectNode();
+  } catch (error) {
+    // A transient Hub or local CLI scan failure must not block a teammate from
+    // opening the shared Workspace. Registration is retried on the next start.
+    nodeRuntimeStatus.heartbeatError = error instanceof Error
+      ? `This computer could not register its SPS Node: ${error.message}`
+      : "This computer could not register its SPS Node.";
+    return null;
+  }
 }
 
 async function disconnectCurrentNode() {
@@ -2365,6 +3186,10 @@ async function sendNodeHeartbeat() {
     await applyNodeStatus(node.status);
     return node;
   } catch (error) {
+    if (isSpsTechnicalMemberAccessRemoved(error)) {
+      await clearRemovedMemberConnection();
+      return null;
+    }
     if (nodeWasRevoked(error)) {
       // Revocation retires this computer's old signing key. A later
       // connection creates a fresh pending Node for owner approval.
@@ -2395,25 +3220,42 @@ async function pollNodeCommands() {
   let claimedCommand = false;
   try {
     const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
-    const command = await claimSpsNodeCommand({
-      hubUrl: state.profile.hubUrl,
-      nodeId: state.nodeId,
-      identity: currentIdentity(),
-      ...access,
+    const nextWork = await claimNextSpsNodeWork({
+      claimAgentCommand: async () => await claimSpsNodeCommand({
+        hubUrl: state.profile.hubUrl,
+        nodeId: state.nodeId,
+        identity: currentIdentity(),
+        ...access,
+      }),
+      claimPluginRun: async () => await claimSpsPluginNodeRun({
+        hubUrl: state.profile.hubUrl,
+        nodeId: state.nodeId,
+        identity: currentIdentity(),
+        ...access,
+      }),
     });
     nodeRuntimeStatus.lastCommandPollAt = new Date().toISOString();
     nodeRuntimeStatus.commandPollError = null;
-    if (!command) return;
+    if (!nextWork) return;
     claimedCommand = true;
     await executeSpsNodeCommand({
-      command,
+      command: nextWork.command,
       hubUrl: state.profile.hubUrl,
       nodeId: state.nodeId,
       identity: currentIdentity(),
       ...access,
       profile: state.profile,
+      ...executionTransportForSpsNodeWork(nextWork.kind, {
+        appendCommandEvent: appendSpsPluginNodeRunEvent,
+        checkCommandLease: checkSpsPluginNodeRunLease,
+        completeCommand: completeSpsPluginNodeRun,
+      }),
     });
   } catch (error) {
+    if (isSpsTechnicalMemberAccessRemoved(error)) {
+      await clearRemovedMemberConnection();
+      return;
+    }
     nodeRuntimeStatus.commandPollError = claimedCommand
       ? safeNodeCommandFailure(error)
       : "Could not poll the SPS team Host for commands. Check the team address, network, and Desktop sign-in.";
@@ -2431,14 +3273,50 @@ function scheduleCommandPolling() {
   void pollNodeCommands();
 }
 
+function deliverPendingJoinToRenderer() {
+  if (!pendingJoin || !mainWindow || !rendererReadyForJoinLinks || mainWindow.isDestroyed()) return false;
+  const join = pendingJoin;
+  const error = pendingJoinError;
+  pendingJoin = null;
+  pendingJoinError = null;
+  mainWindow.webContents.send("desktop:join-link", error ? { ...join, error } : join);
+  return true;
+}
+
+async function acceptDesktopJoinLink(join) {
+  if (!currentDesktopAccount() || isOwnerHostProfile()) {
+    return false;
+  }
+  try {
+    const accepted = await acceptInviteCode({ code: join.code, hub: join.hub });
+    if (accepted?.direct !== true) {
+      recordDesktopJoinAttempt("failed", "SPS could not complete this invitation in Desktop.");
+      await persistState();
+      deliverPendingJoinToRenderer();
+      return false;
+    }
+    pendingJoin = null;
+    recordDesktopJoinAttempt("succeeded");
+    await persistState();
+    await maybeOpenWorkspaceForCurrentAccount();
+    return true;
+  } catch (error) {
+    // Preserve the invitation for the setup screen when the direct request
+    // cannot complete, such as when a user must finish sign-in first.
+    pendingJoinError = error instanceof Error ? error.message : "SPS could not accept this invitation.";
+    recordDesktopJoinAttempt("failed", pendingJoinError);
+    await persistState();
+    deliverPendingJoinToRenderer();
+    return false;
+  }
+}
+
 function sendJoinToRenderer(value) {
   const join = parseSpsJoinUri(value);
   if (!join) return false;
   pendingJoin = join;
-  if (mainWindow && rendererReadyForJoinLinks && !mainWindow.isDestroyed()) {
-    pendingJoin = null;
-    mainWindow.webContents.send("desktop:join-link", join);
-  }
+  pendingJoinError = null;
+  void acceptDesktopJoinLink(join);
   return true;
 }
 
@@ -2540,7 +3418,7 @@ function registerIpc() {
       throw new Error("This SPS Owner Host belongs to a different SPS account. Join it with an invitation instead.");
     }
     if (isTeamAccessEnabled()) {
-      throw new Error("This Owner Host is already a private team Host. Finish SPS sign-in for its private address, or return it to local-only mode first.");
+      throw new Error("This Owner Host is already a private team Host. Finish SPS sign-in for its private address, or return it to authenticated loopback mode first.");
     }
     const wasRemoteProfile = Boolean(state.profile && !isOwnerHostProfile());
     if (wasRemoteProfile) await disconnectCurrentNode();
@@ -2563,6 +3441,20 @@ function registerIpc() {
       teamAccess: state.teamAccess ? { ...state.teamAccess } : null,
     };
   });
+  ipcMain.handle("desktop:install-agent-runtime-pack", async () => {
+    assertRegistryOwner();
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: "Install SPS Agent Runtime Pack",
+      properties: ["openDirectory"],
+    });
+    if (selection.canceled || selection.filePaths.length !== 1) return publicStatus();
+    await installSpsAgentRuntimePack({
+      sourceRoot: selection.filePaths[0],
+      root: ownerAgentRuntimePacksRoot(),
+    });
+    agentRuntimePacks = await listSpsAgentRuntimePacks({ root: ownerAgentRuntimePacksRoot() });
+    return publicStatus();
+  });
   ipcMain.handle("desktop:enable-private-team-access", async (_event, input) => await enablePrivateTeamAccess(input));
   ipcMain.handle("desktop:disable-private-team-access", disablePrivateTeamAccess);
   ipcMain.handle("desktop:check-updates", async () => {
@@ -2579,9 +3471,18 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:ready-for-join-link", () => {
     rendererReadyForJoinLinks = true;
+    if (!pendingJoin) return null;
+    // Before SPS account sign-in, retain the full routed invitation in the
+    // main process. It will resume automatically after identity succeeds.
+    if (!currentDesktopAccount() || isOwnerHostProfile()) return null;
     const join = pendingJoin;
-    pendingJoin = null;
-    return join;
+    if (pendingJoinError) {
+      pendingJoin = null;
+      const error = pendingJoinError;
+      pendingJoinError = null;
+      return error ? { ...join, error } : join;
+    }
+    return null;
   });
   ipcMain.handle("desktop:save-profile", async (_event, input) => await saveRemoteProfile(input));
   ipcMain.handle("desktop:open-invite", async (_event, input) => {
@@ -2605,11 +3506,20 @@ function registerIpc() {
   ipcMain.handle("desktop:inspect-owner-vault-transfer", inspectOwnerVaultTransfer);
   ipcMain.handle("desktop:open-workspace", openWorkspace);
   ipcMain.handle("desktop:open-setup", openSetup);
+  ipcMain.handle("desktop:save-default-workspace", async (_event, input) => {
+    if (!isOwnerHostProfile()) throw new Error("Only the Owner Host can choose SPS project folders");
+    if (!state.profile) throw new Error("Save an SPS team connection before choosing a local workspace folder");
+    state.profile.defaultWorkspacePath = await requireSpsWorkspaceDirectory(input?.workspacePath) ?? "";
+    await persistState();
+    return publicStatus();
+  });
   ipcMain.handle("desktop:save-project-workspace", async (_event, input) => {
+    if (!isOwnerHostProfile()) throw new Error("Only the Owner Host can choose SPS project folders");
     if (!state.profile) throw new Error("Save an SPS team connection before mapping a project workspace");
-    const projectId = String(input.projectId ?? "").trim();
+    const projectId = normalizedProjectId(input?.projectId);
     const workspacePath = await requireSpsWorkspaceDirectory(input.workspacePath);
-    if (!projectId) throw new Error("Project ID is required");
+    const currentPath = state.profile.projectWorkspaces?.[projectId] ?? "";
+    if (currentPath !== workspacePath) assertHostProjectSourceCanChange(projectId);
     const projectWorkspaces = { ...(state.profile.projectWorkspaces ?? {}) };
     if (workspacePath) projectWorkspaces[projectId] = workspacePath;
     else delete projectWorkspaces[projectId];
@@ -2618,11 +3528,66 @@ function registerIpc() {
     return publicStatus();
   });
   ipcMain.handle("desktop:choose-project-workspace", async () => {
+    if (!isOwnerHostProfile()) throw new Error("Only the Owner Host can choose SPS project folders");
     const selection = await dialog.showOpenDialog(mainWindow ?? undefined, {
       title: "Choose local SPS project folder",
       properties: ["openDirectory", "createDirectory"],
     });
     return selection.canceled ? null : selection.filePaths[0] ?? null;
+  });
+  ipcMain.handle("desktop:manage-host-project-source", async (_event, input) => {
+    if (!isOwnerHostProfile()) throw new Error("Only the Owner Host can manage project source access");
+    const projectId = String(input?.projectId ?? "").trim();
+    if (!projectId) throw new Error("Project ID is required");
+    return await showHostProjectSourceManager(projectId);
+  });
+  ipcMain.handle("desktop:workspace-host-project-sources", async (event) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Project source management is available only inside the local Owner Host workspace.");
+    }
+    return await listHostProjectSourcesForWorkspace();
+  });
+  ipcMain.handle("desktop:workspace-choose-host-project-source", async (event, input) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Project source management is available only inside the local Owner Host workspace.");
+    }
+    return await chooseHostProjectSourceForWorkspace(input?.projectId);
+  });
+  ipcMain.handle("desktop:workspace-clear-host-project-source", async (event, input) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Project source management is available only inside the local Owner Host workspace.");
+    }
+    return await clearHostProjectSourceForWorkspace(input?.projectId);
+  });
+  ipcMain.handle("desktop:workspace-manage-host-project-source", async (event, input) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Project source management is available only inside the local Owner Host workspace.");
+    }
+    return await showHostProjectSourceManager(normalizedProjectId(input?.projectId));
+  });
+  ipcMain.handle("desktop:workspace-host-workspace-sources", async (event) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Workspace source management is available only inside the local SPS Host workspace.");
+    }
+    return await listHostWorkspaceSources();
+  });
+  ipcMain.handle("desktop:workspace-choose-host-workspace-source", async (event) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Workspace source management is available only inside the local SPS Host workspace.");
+    }
+    return await chooseHostWorkspaceSource();
+  });
+  ipcMain.handle("desktop:workspace-rename-host-workspace-source", async (event, input) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Workspace source management is available only inside the local SPS Host workspace.");
+    }
+    return await renameHostWorkspaceSource(input?.sourceId, input?.name);
+  });
+  ipcMain.handle("desktop:workspace-remove-host-workspace-source", async (event, input) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Workspace source management is available only inside the local SPS Host workspace.");
+    }
+    return await removeHostWorkspaceSource(input?.sourceId);
   });
   ipcMain.handle("desktop:refresh-projects", async () => {
     await refreshProjects();
@@ -2651,7 +3616,7 @@ function registerIpc() {
             ? "selected"
             : "choose";
       } catch {
-        // The SPS Identity login remains valid even if the Owner Host is offline.
+        // The SPS Identity login remains valid while the Owner Host is temporarily unavailable.
       }
       await maybeOpenWorkspaceForCurrentAccount();
       return { ...publicStatus(), auth: { status: "approved", provider: "sps-identity", companyAccess } };
@@ -2674,7 +3639,7 @@ function registerIpc() {
             ? "selected"
             : "choose";
       } catch {
-        // The SPS Identity login remains valid even if the Owner Host is offline.
+        // The SPS Identity login remains valid while the Owner Host is temporarily unavailable.
       }
       await maybeOpenWorkspaceForCurrentAccount();
       return { ...publicStatus(), auth: { status: "approved", provider: "sps-identity", companyAccess } };
@@ -2781,7 +3746,11 @@ async function createWindow({ show = true } = {}) {
   await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
 
-if (!app.requestSingleInstanceLock()) {
+// Production SPS Desktop stays single-instance. Isolated Electron E2E runs
+// opt out so they never redirect to, or mutate, a person's live Desktop.
+const allowsIsolatedE2eInstance = process.env.SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE === "1";
+
+if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
@@ -2802,7 +3771,18 @@ if (!app.requestSingleInstanceLock()) {
     // Read Windows startup registration once after the first window is ready.
     // It must not run on the frequent status IPC path.
     setTimeout(refreshLaunchAtLoginStatus, 0);
-    void bootstrapOwnerHost();
+    void bootstrapOwnerHost().finally(() => {
+      // A returning Member already has a signed-in account and an accepted
+      // team connection. Reopen its Workspace on launch so the Node refreshes
+      // its heartbeat and any newly introduced local identity material (such
+      // as the project-source transport key) without a second user click.
+      // Owner Host startup keeps its existing, separately guarded path.
+      if (isOwnerHostProfile()) return;
+      void maybeOpenWorkspaceForCurrentAccount().catch((error) => {
+        desktopAccountError = safeDesktopAccountError(error);
+        sendDesktopAccountStatus();
+      });
+    });
     const initialJoinArg = findSpsJoinUriArg(process.argv);
     if (initialJoinArg) sendJoinToRenderer(initialJoinArg);
     scheduleHeartbeat();

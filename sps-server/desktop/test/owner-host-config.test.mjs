@@ -1,9 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
-  configureSpsOwnerHostLocalOnly,
+  configureSpsOwnerHostAuthenticatedLocal,
   configureSpsOwnerHostPrivateTeamAccess,
   createSpsOwnerHostConfig,
+  ensureSpsOwnerHostConfig,
   findSpsOwnerHostPorts,
   ownerHostVaultLayout,
   spsOwnerHostUrl,
@@ -17,7 +21,7 @@ test("creates a self-contained Owner Vault config", () => {
     now: new Date("2026-07-19T00:00:00.000Z"),
   });
 
-  assert.equal(config.server.deploymentMode, "local_trusted");
+  assert.equal(config.server.deploymentMode, "authenticated");
   assert.equal(config.server.host, "127.0.0.1");
   assert.equal(config.database.embeddedPostgresDataDir, "C:\\SPS Vault\\database");
   assert.equal(config.storage.localDisk.baseDir, "C:\\SPS Vault\\storage");
@@ -47,6 +51,31 @@ test("keeps all Owner Host data inside its vault layout", () => {
   }
 });
 
+test("upgrades an existing local-trusted Owner Vault without moving its data", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-owner-host-config-"));
+  try {
+    const vaultRoot = path.join(root, "vault");
+    const oldConfig = createSpsOwnerHostConfig({
+      vaultRoot,
+      serverPort: 31_310,
+      databasePort: 54_339,
+    });
+    oldConfig.server.deploymentMode = "local_trusted";
+    await mkdir(vaultRoot, { recursive: true });
+    await writeFile(path.join(vaultRoot, "config.json"), JSON.stringify(oldConfig), "utf8");
+
+    const result = await ensureSpsOwnerHostConfig({ vaultRoot });
+
+    assert.equal(result.created, false);
+    assert.equal(result.upgraded, true);
+    assert.equal(result.config.server.deploymentMode, "authenticated");
+    assert.equal(result.config.server.port, 31_310);
+    assert.equal(result.config.database.embeddedPostgresPort, 54_339);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("switches the Owner Host to authenticated private Tailnet access without opening its Core port", () => {
   const base = createSpsOwnerHostConfig({
     vaultRoot: "C:/SPS Vault",
@@ -67,5 +96,5 @@ test("switches the Owner Host to authenticated private Tailnet access without op
     publicBaseUrl: "https://main-computer.tail1725c2.ts.net",
     disableSignUp: false,
   });
-  assert.equal(configureSpsOwnerHostLocalOnly(team).server.deploymentMode, "local_trusted");
+  assert.equal(configureSpsOwnerHostAuthenticatedLocal(team).server.deploymentMode, "authenticated");
 });

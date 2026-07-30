@@ -31,4 +31,6 @@ test("keeps the unsigned Desktop candidate inside Actions and outside the update
   assert.match(workflow, /npm run package:candidate:win/);
   assert.match(workflow, /actions\/upload-artifact@v4/);
   assert.match(workflow, /sps-release-manifest\.json/);
+  assert.match(workflow, /SPS-Agent-Runtime-Pack-\*\.zip/);
+  assert.match(workflow, /sps-agent-runtime-packs\.json/);
 });

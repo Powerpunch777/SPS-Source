@@ -10,6 +10,10 @@ body { min-width: 0; margin: 0; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .58; }
+.runtime-pack-list { display: grid; gap: 8px; min-height: 22px; color: #aeb8cc; font-size: 13px; }
+.runtime-pack-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid #303746; border-radius: 5px; background: #171d28; }
+.runtime-pack-row strong { color: #e8edf6; font-size: 13px; }
+.runtime-pack-row span { color: #9fb2d0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 
 .onboarding-shell { width: min(100% - 48px, 700px); margin: 0 auto; padding: 22px 0 54px; }
 .brand-bar { display: flex; align-items: center; justify-content: space-between; min-height: 36px; }
@@ -73,6 +77,22 @@ input:focus, select:focus { border-color: #71717a; box-shadow: 0 0 0 3px rgba(16
 
 .workspace-screen { margin-top: 112px; }
 .workspace-actions { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.local-folders-screen { margin-top: 58px; }
+.local-folders-screen .screen-copy { text-align: left; }
+.local-folders-screen .screen-copy p:last-child { margin-left: 0; }
+.local-folders-screen .configuration-form { display: grid; gap: 10px; }
+.local-folders-screen .configuration-form .input-row { align-items: center; }
+.inline-action { justify-self: start; padding: 2px 0; }
+.local-folders-actions { justify-content: flex-start; margin-top: 18px; }
+.project-folder-list { display: grid; gap: 8px; }
+.project-folder-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(210px, 1.5fr) auto; align-items: center; gap: 14px; padding: 11px 0; border-top: 1px solid #303033; }
+.project-folder-row:first-child { border-top: 0; padding-top: 0; }
+.project-folder-row > div:first-child { min-width: 0; display: grid; gap: 4px; }
+.project-folder-row strong { color: #f4f4f5; font-size: 13px; }
+.project-folder-row span, .empty-project-folders { overflow: hidden; color: #8b8b93; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.project-folder-path { min-width: 0; width: 100%; }
+.project-folder-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.compact-action { min-height: 34px; padding: 6px 10px; font-size: 12px; }
 .notice { min-height: 20px; margin: 30px auto 0; color: #a1a1aa; text-align: center; font-size: 13px; }
 .notice.error { color: #fca5a5; }
 body.pending .screen:not(.account-screen) { pointer-events: none; }
@@ -85,4 +105,5 @@ body.pending .account-screen > :not(#cancel-sps-account) { pointer-events: none;
   .choice-grid { grid-template-columns: 1fr; }
   .choice-card { min-height: 154px; }
   .input-row { align-items: stretch; flex-direction: column; }
+  .project-folder-row { grid-template-columns: 1fr; align-items: flex-start; }
 }

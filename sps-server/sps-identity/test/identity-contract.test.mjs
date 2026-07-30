@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createSign } from "node:crypto";
 import test from "node:test";
-import { createSpsIdentityWorker, isLoopbackRedirectUri, verifyGoogleIdToken } from "../src/worker.mjs";
+import {
+  createSpsIdentityWorker,
+  isLoopbackRedirectUri,
+  SPS_DESKTOP_SIGN_IN_TTL_MS,
+  verifyGoogleIdToken,
+} from "../src/worker.mjs";
+
+test("keeps the central SPS Desktop sign-in request valid for fifteen minutes", () => {
+  assert.equal(SPS_DESKTOP_SIGN_IN_TTL_MS, 15 * 60 * 1000);
+});
 
 test("accepts only SPS Desktop loopback callbacks", () => {
   assert.equal(isLoopbackRedirectUri("http://127.0.0.1:43129/oauth2/callback"), true);

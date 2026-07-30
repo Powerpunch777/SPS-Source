@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import os from "node:os";
@@ -24,7 +24,7 @@ const [runtimeManifest, releaseBaseline] = await Promise.all([
   readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8").then(JSON.parse),
 ]);
 if (
-  runtimeManifest.format < 7
+  runtimeManifest.format < 8
   || runtimeManifest.releaseBaseline?.desktopVersion !== releaseBaseline.desktopVersion
   || runtimeManifest.releaseBaseline?.core?.revision !== releaseBaseline.core?.revision
 ) {
@@ -70,6 +70,9 @@ const port = await findAvailablePort();
 const databasePort = await findAvailablePort();
 const memoryPort = await findAvailablePort();
 const memoryToken = "sps-owner-host-smoke-memory-token";
+const desktopAccessToken = "sps-owner-host-smoke-desktop-access-token";
+const ownerHostOrigin = `http://127.0.0.1:${port}`;
+const desktopAccessHeaders = { "x-sps-desktop-access": desktopAccessToken };
 const config = {
   $meta: { version: 1, updatedAt: new Date().toISOString(), source: "onboard" },
   database: {
@@ -79,6 +82,10 @@ const config = {
   },
   logging: { mode: "file", logDir: path.join(temporaryRoot, "logs") },
   server: {
+    // This harness verifies the packaged Core's legacy plugin-registry
+    // compatibility surface without requiring a real SPS Identity account.
+    // SPS Desktop never writes this mode for a user's Owner Host; production
+    // Host Vaults are always created and migrated as authenticated.
     deploymentMode: "local_trusted",
     exposure: "private",
     bind: "loopback",
@@ -121,6 +128,16 @@ async function waitForHealth(ownerHost) {
   throw new Error("The packaged SPS Owner Host did not become healthy within 360 seconds.");
 }
 
+function ownerHostRequest(pathname, options = {}) {
+  return fetch(`${ownerHostOrigin}${pathname}`, {
+    ...options,
+    headers: {
+      ...desktopAccessHeaders,
+      ...(options.headers ?? {}),
+    },
+  });
+}
+
 async function waitForMemoryHealth() {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
@@ -139,15 +156,42 @@ async function waitForMemoryHealth() {
 }
 
 async function assertStaticWorkspaceUi() {
-  const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(5_000) });
+  const response = await ownerHostRequest("/", { signal: AbortSignal.timeout(5_000) });
   const body = await response.text();
   if (!response.ok || !response.headers.get("content-type")?.includes("text/html") || !body.includes("<title>SPS</title>")) {
     throw new Error("The packaged SPS Owner Host did not serve its branded static Workspace UI.");
   }
 }
 
+async function assertDesktopOnlyBoundary() {
+  const browserUi = await fetch(`${ownerHostOrigin}/`, { signal: AbortSignal.timeout(5_000) });
+  if (browserUi.status !== 403) {
+    throw new Error("The packaged SPS Owner Host served its Workspace to a direct loopback browser request.");
+  }
+
+  const browserApi = await fetch(`${ownerHostOrigin}/api/plugins`, { signal: AbortSignal.timeout(5_000) });
+  const browserPayload = await browserApi.json().catch(() => null);
+  if (browserApi.status !== 403 || browserPayload?.code !== "desktop_access_required") {
+    throw new Error("The packaged SPS Owner Host did not reject a direct loopback API request.");
+  }
+}
+
+async function assertBaselineTeamAccessUi() {
+  const assetsDirectory = path.join(executionRuntimeRoot, "ui-dist", "assets");
+  const assetNames = await readdir(assetsDirectory);
+  const scripts = await Promise.all(
+    assetNames
+      .filter((name) => name.endsWith(".js"))
+      .map((name) => readFile(path.join(assetsDirectory, name), "utf8")),
+  );
+
+  if (!scripts.some((script) => script.includes("Team access"))) {
+    throw new Error("The packaged SPS Owner Host is missing the baseline Team access Workspace route.");
+  }
+}
+
 async function assertDefaultMemoryPlugin() {
-  const response = await fetch(`http://127.0.0.1:${port}/api/plugins`, { signal: AbortSignal.timeout(5_000) });
+  const response = await ownerHostRequest("/api/plugins", { signal: AbortSignal.timeout(5_000) });
   if (!response.ok) throw new Error(`Could not inspect bundled plugins (${response.status}).`);
   const plugins = await response.json();
   const memory = Array.isArray(plugins)
@@ -164,7 +208,7 @@ async function assertDefaultMemoryPlugin() {
 }
 
 async function assertPluginDiscoveryPlugin() {
-  const response = await fetch(`http://127.0.0.1:${port}/api/plugins`, { signal: AbortSignal.timeout(5_000) });
+  const response = await ownerHostRequest("/api/plugins", { signal: AbortSignal.timeout(5_000) });
   if (!response.ok) throw new Error(`Could not inspect bundled plugins (${response.status}).`);
   const plugins = await response.json();
   const discovery = Array.isArray(plugins)
@@ -176,17 +220,107 @@ async function assertPluginDiscoveryPlugin() {
   if (discovery.manifestJson?.companyActivation?.defaultEnabled !== true) {
     throw new Error("SPS Plugin Discovery must start enabled for a new Company.");
   }
+  if (
+    discovery.manifestJson?.sps?.contractVersion !== "2.0"
+    || !Array.isArray(discovery.manifestJson?.sps?.primitives)
+    || discovery.manifestJson.sps.primitives.length !== 0
+  ) {
+    throw new Error("SPS Plugin Discovery must declare the neutral Extension Profile 2.0 contract.");
+  }
   const toolNames = Array.isArray(discovery.manifestJson?.tools)
     ? discovery.manifestJson.tools.map((tool) => tool?.name).sort()
     : [];
   if (toolNames.join(",") !== "draft-sps-extension,search-sps-extensions") {
     throw new Error("SPS Plugin Discovery did not expose its expected Agent tools in the packaged Owner Host.");
   }
+  try {
+    await Promise.all([
+      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "ui-v0.3.0", "index.js")),
+      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "conversation.js")),
+    ]);
+  } catch {
+    throw new Error("SPS Plugin Discovery conversation assets were not bundled with the packaged Owner Host.");
+  }
   return discovery;
 }
 
+async function assertPluginDiscoveryBridge() {
+  const workspace = await ownerHostJson("/api/companies", {
+    name: "Discovery Bridge Smoke",
+    description: "Disposable packaged Owner Host Discovery bridge verification.",
+  });
+  const companyId = typeof workspace?.id === "string" ? workspace.id : "";
+  if (!companyId) throw new Error("Could not create a disposable Workspace for the Discovery bridge smoke.");
+
+  const activations = await ownerHostJson(`/api/plugins/companies/${companyId}`);
+  const activationByKey = new Map(
+    Array.isArray(activations?.plugins)
+      ? activations.plugins.map((plugin) => [plugin?.pluginKey, plugin?.activation])
+      : [],
+  );
+  const discoveryActivation = activationByKey.get("sps.plugin-discovery");
+  const memoryActivation = activationByKey.get("sps.default-memory");
+  const roomsActivation = activationByKey.get("local.room-chat");
+  if (
+    discoveryActivation?.enabled !== true
+    || discoveryActivation?.defaultEnabled !== true
+    || memoryActivation?.enabled !== false
+    || memoryActivation?.defaultEnabled !== false
+    || roomsActivation?.enabled !== false
+    || roomsActivation?.defaultEnabled !== false
+  ) {
+    throw new Error("The packaged SPS Baseline did not keep only Plugin Discovery enabled for a new Workspace.");
+  }
+
+  const legacyBuiltIns = await ownerHostRequest(`/api/companies/${companyId}/built-in-agents`, {
+    signal: AbortSignal.timeout(5_000),
+  });
+  const legacyBuiltInsPayload = await legacyBuiltIns.json().catch(() => null);
+  if (
+    legacyBuiltIns.status !== 404
+    || !String(legacyBuiltInsPayload?.error ?? "").includes("Built-in agents are not enabled")
+  ) {
+    throw new Error("The packaged SPS Baseline left the legacy built-in-agent API available.");
+  }
+
+  const view = await ownerHostJson("/api/plugins/sps.plugin-discovery/bridge/data", {
+    key: "discovery-workspace",
+    companyId,
+    params: {},
+  });
+  if (
+    view?.data?.hasCatalog !== true
+    || !Array.isArray(view?.data?.assistants)
+    || view.data.assistants.length !== 0
+    || view.data.selectedAssistantId !== null
+    || !Array.isArray(view.data.transcript)
+    || view.data.transcript.length !== 0
+  ) {
+    throw new Error(`The packaged Plugin Discovery worker did not return its empty-Workspace view through the UI bridge: ${JSON.stringify(view?.data ?? null)}`);
+  }
+
+  const send = await ownerHostRequest("/api/plugins/sps.plugin-discovery/bridge/action", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      key: "discovery-send",
+      companyId,
+      params: { prompt: "Find a suitable SPS extension." },
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const sendPayload = await send.json().catch(() => null);
+  if (
+    send.status !== 502
+    || sendPayload?.code !== "WORKER_ERROR"
+    || !String(sendPayload?.message ?? "").includes("Select an available Assistant")
+  ) {
+    throw new Error("Plugin Discovery did not require an Initial Assistant before sending a conversation message.");
+  }
+}
+
 async function assertRoomsPlugin() {
-  const response = await fetch(`http://127.0.0.1:${port}/api/plugins`, { signal: AbortSignal.timeout(5_000) });
+  const response = await ownerHostRequest("/api/plugins", { signal: AbortSignal.timeout(5_000) });
   if (!response.ok) throw new Error(`Could not inspect bundled plugins (${response.status}).`);
   const plugins = await response.json();
   const rooms = Array.isArray(plugins)
@@ -263,7 +397,7 @@ async function writeRegistrySmokePackage(
 }
 
 async function ownerHostJson(pathname, body) {
-  const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+  const response = await ownerHostRequest(pathname, {
     method: body === undefined ? "GET" : "POST",
     headers: body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -319,7 +453,7 @@ async function assertRegistryLifecycle() {
     ...incompatible,
     source: { ...source, releaseLocator: "runtime-smoke/1.0.2" },
   });
-  const incompatibleEnable = await fetch(`http://127.0.0.1:${port}/api/plugins/registry/stages/${encodeURIComponent(incompatibleStage.stageId)}/enable`, {
+  const incompatibleEnable = await ownerHostRequest(`/api/plugins/registry/stages/${encodeURIComponent(incompatibleStage.stageId)}/enable`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: "{}",
@@ -502,9 +636,17 @@ const child = spawn(
         path.join(executionRuntimeRoot, "sps-room-chat"),
       ].join(path.delimiter),
       SPS_PLUGIN_DISCOVERY_CATALOG_PATH: discoveryCatalogPath,
+      // Exercise the same neutral, plugin-first Core profile that SPS
+      // Desktop supplies for a newly created Owner Host.
+      SPS_BASIC_MODE: "true",
+      SPS_CORE_BASELINE_MODE: "true",
+      SPS_WORKPLANE_MODE: "false",
       SPS_ROOM_API_URL: `http://127.0.0.1:${port}`,
       SPS_MEMORY_SIDECAR_URL: `http://127.0.0.1:${memoryPort}`,
       SPS_MEMORY_SIDECAR_TOKEN: memoryToken,
+      SPS_DESKTOP_ACCESS_TOKEN: desktopAccessToken,
+      PAPERCLIP_AGENT_RUNTIME_PACKS_DIR: path.join(executionRuntimeRoot, "..", "missing-agent-runtime-packs"),
+      SPS_OWNER_HOST_NODE: nodeBinary,
     },
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -519,14 +661,17 @@ let passed = false;
 try {
   await waitForMemoryHealth();
   const health = await waitForHealth(child);
+  await assertDesktopOnlyBoundary();
   await assertStaticWorkspaceUi();
+  await assertBaselineTeamAccessUi();
   await assertDefaultMemoryPlugin();
   await assertPluginDiscoveryPlugin();
+  await assertPluginDiscoveryBridge();
   await assertRoomsPlugin();
   await assertRegistryLifecycle();
   await assertRegistryAuthoringDesktopFlow();
   passed = true;
-  console.log(`Packaged SPS Owner Host, bundled SPS plugins, and Registry author/publish/install/update/rollback smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
+  console.log(`Packaged SPS Owner Host, baseline Team access UI, bundled SPS plugins, and Registry author/publish/install/update/rollback smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
 } finally {
   await stopChildTree(child);
   await stopChildTree(memoryChild);

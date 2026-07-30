@@ -25,8 +25,11 @@ test("lets an Owner enable team access and share a complete SPS2 invitation", as
   assert.match(main, /async function enablePrivateTeamAccess\([\s\S]*?state\.teamAccess = \{ \.\.\.nextTeamAccess, phase: "active" \};[\s\S]*?await activateOwnerHostProfile\(\);/);
   assert.match(main, /async function ensurePrivateTeamOwnerMembership\(\)[\s\S]*?SPS Desktop Owner membership recovery\.[\s\S]*?acceptSpsIdentityInvite\(state\.teamAccess\.url, recoveryInvitation\.token\)/);
   assert.match(main, /const membership = await ensurePrivateTeamOwnerMembership\(\);[\s\S]*?membershipRecovered: membership\.recovered/);
+  assert.match(main, /async function createMemberInvite\(\)[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /async function listMemberInvites\(\)[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /async function revokeMemberInvite\(input\)[\s\S]*?ownerBootstrap: true/);
   assert.match(main, /membership\.recovered && workspaceWindow[\s\S]*?reloadIgnoringCache\(\)/);
-  assert.match(main, /const accepted = await acceptSpsIdentityInvite\(nextTeamAccess\.url, invitation\.token\)/);
+  assert.match(main, /Verify that membership over the private URL first[\s\S]*?await ensurePrivateTeamOwnerMembership\(\);/);
   assert.match(main, /void synchronizeReadyTeamWorkplane\(\);/);
   assert.match(
     renderer,

@@ -3,6 +3,7 @@ import path from "node:path";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import manifest from "./manifest.js";
 import { draftSpsExtension, searchSpsDiscoveryCatalog } from "./catalog-tools.js";
+import { createDiscoveryConversationService } from "./conversation.js";
 
 function catalogPath() {
   const configured = String(process.env.SPS_PLUGIN_DISCOVERY_CATALOG_PATH || "").trim();
@@ -11,12 +12,12 @@ function catalogPath() {
 
 async function loadCatalog() {
   const filePath = catalogPath();
-  if (!filePath) throw new Error("The SPS Official Registry catalog has not been prepared on this Owner Host.");
+  if (!filePath) throw new Error("The SPS Official Registry catalog has not been prepared on this Host.");
   let catalog;
   try {
     catalog = JSON.parse(await readFile(filePath, "utf8"));
   } catch {
-    throw new Error("The verified SPS Official Registry catalog is unavailable. Open Settings > Plugins later or check the Owner Host connection.");
+    throw new Error("The verified SPS Official Registry catalog is unavailable. Open Settings > Plugins later or check the Host connection.");
   }
   if (catalog?.schemaVersion !== 1 || !Array.isArray(catalog.releases)) {
     throw new Error("The verified SPS Official Registry catalog is invalid.");
@@ -51,6 +52,7 @@ const declarations = new Map(manifest.tools.map((tool) => [tool.name, tool]));
 
 const plugin = definePlugin({
   async setup(ctx) {
+    const conversation = createDiscoveryConversationService(ctx, { hasCatalog: () => Boolean(catalogPath()) });
     ctx.tools.register("search-sps-extensions", declarations.get("search-sps-extensions"), safeTool(ctx, "search-sps-extensions", async (params) => {
       const result = searchSpsDiscoveryCatalog(await loadCatalog(), params);
       return { content: contentForRecommendations(result), data: result };
@@ -58,10 +60,16 @@ const plugin = definePlugin({
     ctx.tools.register("draft-sps-extension", declarations.get("draft-sps-extension"), safeTool(ctx, "draft-sps-extension", async (params) => {
       const draft = draftSpsExtension(params);
       return {
-        content: "Prepared an SPS extension draft. No files, packages, plugin lifecycle state, or Company structure were changed.",
+        content: "Prepared an SPS extension draft. No files, packages, plugin lifecycle state, or Workspace structure were changed.",
         data: draft,
       };
     }));
+
+    ctx.data.register("discovery-workspace", (params) => conversation.workspaceView(params));
+
+    ctx.actions.register("discovery-select-assistant", (params) => conversation.selectAssistant(params));
+
+    ctx.actions.register("discovery-send", (params) => conversation.send(params));
   },
 
   async onHealth() {

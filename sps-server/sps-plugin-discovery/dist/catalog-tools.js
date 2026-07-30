@@ -1,11 +1,41 @@
 const MAX_RESULTS = 12;
-const FEATURE_CAPABILITIES = Object.freeze({
-  tools: ["agent.tools.register"],
-  surface: ["ui.detailTab.register"],
-  automation: ["events.subscribe", "jobs.schedule"],
-  integration: ["api.routes.register", "http.outbound"],
-  local_folder: ["local.folders"],
+
+const FEATURE_DECLARATIONS = Object.freeze({
+  tools: {
+    capabilities: ["agent.tools.register"],
+    primitives: [],
+  },
+  surface: {
+    capabilities: ["ui.page.register", "ui.sidebar.register"],
+    primitives: [],
+  },
+  automation: {
+    capabilities: ["events.subscribe", "jobs.schedule"],
+    primitives: [],
+  },
+  integration: {
+    capabilities: ["api.routes.register", "http.outbound"],
+    primitives: [],
+  },
+  workspace_source: {
+    capabilities: ["sps.workspaceSources.read"],
+    primitives: ["workspace.sources.metadata", "workspace.sources.route"],
+  },
+  runtime_execution: {
+    capabilities: ["sps.runtimes.read", "sps.runs.dispatch", "sps.runs.read"],
+    primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe"],
+  },
+  artifacts: {
+    capabilities: ["sps.artifacts.write"],
+    primitives: ["artifacts.write"],
+  },
+  secrets: {
+    capabilities: ["secrets.read-ref"],
+    primitives: ["secrets.use"],
+  },
 });
+
+const FEATURE_ALIASES = Object.freeze({ local_folder: "workspace_source" });
 
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -97,9 +127,13 @@ export function draftSpsExtension(input = {}) {
   if (!goal) throw new Error("A plugin goal is required before an extension can be drafted.");
   const displayName = asString(request.displayName, "SPS Extension Draft");
   const requestedFeatures = Array.isArray(request.features)
-    ? [...new Set(request.features.map((item) => asString(item)).filter((item) => Object.hasOwn(FEATURE_CAPABILITIES, item)))]
+    ? [...new Set(request.features
+      .map((item) => asString(item))
+      .map((item) => FEATURE_ALIASES[item] ?? item)
+      .filter((item) => Object.hasOwn(FEATURE_DECLARATIONS, item)))]
     : [];
-  const capabilities = [...new Set(requestedFeatures.flatMap((feature) => FEATURE_CAPABILITIES[feature]))];
+  const capabilities = [...new Set(requestedFeatures.flatMap((feature) => FEATURE_DECLARATIONS[feature].capabilities))];
+  const primitives = [...new Set(requestedFeatures.flatMap((feature) => FEATURE_DECLARATIONS[feature].primitives))];
   const extensionKind = requestedFeatures.includes("tools")
     ? "tool_provider"
     : requestedFeatures.includes("surface")
@@ -111,9 +145,18 @@ export function draftSpsExtension(input = {}) {
     draftOnly: true,
     plugin: {
       id: pluginId,
+      apiVersion: 1,
+      version: "0.1.0",
       displayName,
+      description: goal.slice(0, 500),
+      author: "Plugin author",
+      categories: ["automation"],
       features: requestedFeatures,
       capabilities,
+      sps: {
+        contractVersion: "2.0",
+        primitives,
+      },
       ...(extensionKind ? {
         agentPlatform: {
           contractVersion: "1.0",

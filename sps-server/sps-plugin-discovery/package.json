@@ -1,6 +1,6 @@
 {
   "name": "sps-plugin-discovery",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Bundled SPS Plugin Discovery and Builder tool provider.",
@@ -9,6 +9,7 @@
     "worker": "./dist/worker.js"
   },
   "scripts": {
-    "check": "node --test ./test/catalog-tools.test.mjs && node ./scripts/verify-manifest.mjs"
+    "build": "node ./scripts/build.mjs",
+    "check": "npm run build && node --test ./test/*.test.mjs && node ./scripts/verify-manifest.mjs"
   }
 }

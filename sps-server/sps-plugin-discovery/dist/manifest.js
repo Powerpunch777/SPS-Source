@@ -14,7 +14,7 @@ const searchExtensionsTool = {
 const draftExtensionTool = {
   name: "draft-sps-extension",
   displayName: "Draft SPS Extension",
-  description: "Prepare a neutral SPS extension brief and manifest outline. This does not create files, install a package, activate a plugin, or change the Company.",
+  description: "Prepare a neutral SPS extension brief and manifest outline. This does not create files, install a package, activate a plugin, or change the Workspace.",
   parametersSchema: {
     type: "object",
     properties: {
@@ -23,8 +23,11 @@ const draftExtensionTool = {
       pluginId: { type: "string", description: "Optional stable plugin ID. A draft ID is proposed when omitted." },
       features: {
         type: "array",
-        items: { type: "string" },
-        description: "Optional implementation surfaces chosen by the Agent: tools, surface, automation, integration, local_folder.",
+        items: {
+          type: "string",
+          enum: ["tools", "surface", "automation", "integration", "workspace_source", "runtime_execution", "artifacts", "secrets"],
+        },
+        description: "Optional workflow-neutral implementation surfaces chosen by the Agent.",
       },
     },
     required: ["goal"],
@@ -34,18 +37,53 @@ const draftExtensionTool = {
 export default {
   id: "sps.plugin-discovery",
   apiVersion: 1,
-  version: "0.1.0",
+  version: "0.3.0",
   displayName: "Plugin Discovery & Builder",
-  description: "First-company assistant tools for verified SPS extension discovery and non-destructive extension drafting.",
+  description: "A conversational starting point for verified SPS extension discovery and non-destructive extension drafting.",
   author: "SPS",
-  categories: ["automation"],
-  capabilities: ["agent.tools.register"],
+  categories: ["automation", "ui"],
+  capabilities: [
+    "agent.tools.register",
+    "agents.read",
+    "agent.sessions.create",
+    "agent.sessions.list",
+    "agent.sessions.send",
+    "agent.sessions.close",
+    "registry.catalog.read",
+    "plugin.state.read",
+    "plugin.state.write",
+    "ui.page.register",
+    "ui.sidebar.register",
+  ],
   companyActivation: { defaultEnabled: true },
   agentPlatform: {
     contractVersion: "1.0",
     kind: "tool_provider",
     profileKey: "sps-plugin-discovery",
   },
-  entrypoints: { worker: "./dist/worker.js" },
+  sps: {
+    contractVersion: "2.0",
+    primitives: [],
+  },
+  entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui-v0.3.0" },
+  ui: {
+    slots: [
+      {
+        type: "page",
+        id: "plugin-discovery-page",
+        routePath: "discover",
+        displayName: "Discover",
+        exportName: "PluginDiscoveryPage",
+        order: 1,
+      },
+      {
+        type: "sidebar",
+        id: "plugin-discovery-sidebar",
+        displayName: "Discover",
+        exportName: "PluginDiscoverySidebar",
+        order: 1,
+      },
+    ],
+  },
   tools: [searchExtensionsTool, draftExtensionTool],
 };

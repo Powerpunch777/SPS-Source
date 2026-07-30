@@ -145,14 +145,14 @@ export async function disableSpsTailscaleServe({ hostname, ownerHostUrl, ...opti
   if (isEmptySpsTailscaleServeStatus(current)) return { removed: false, serve: current };
   if (!hasSpsTailscaleServeHandler({ status: current, hostname, ownerHostUrl })) {
     throw new Error(
-      "SPS will not remove this Tailscale Serve setup because its root handler changed after SPS created it. Remove the SPS root handler manually before returning this Owner Host to local-only mode.",
+      "SPS will not remove this Tailscale Serve setup because its root handler changed after SPS created it. Remove the SPS root handler manually before returning this Owner Host to authenticated loopback mode.",
     );
   }
   const invocation = buildSpsTailscaleServeDisableInvocation();
   await execute(invocation.command, invocation.args, options);
   const after = await inspectSpsTailscaleServe(options);
   if (hasSpsTailscaleServeHandler({ status: after, hostname, ownerHostUrl })) {
-    throw new Error("Tailscale kept the SPS root handler after removal. Resolve it in Tailscale Serve before returning to local-only mode.");
+    throw new Error("Tailscale kept the SPS root handler after removal. Resolve it in Tailscale Serve before returning to authenticated loopback mode.");
   }
   return { removed: true, serve: after };
 }

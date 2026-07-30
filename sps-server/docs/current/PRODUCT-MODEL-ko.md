@@ -1,108 +1,62 @@
-# SPS Product Model
+# SPS 제품 모델
 
-최종 갱신: 2026-07-28
+최종 갱신: 2026-07-30
 
-## 한 문장
+## 한 문장 정의
 
-SPS는 Agent, 실행기, 플러그인을 조합해 개인과 팀이 자기만의 AI 작업환경을 만드는 Desktop-first 플랫폼이다.
+SPS는 개인과 소규모 팀이 자신의 Windows 컴퓨터를 Host로 사용해, 원하는 AI 작업 환경을 플러그인으로 구성하는 Desktop-first 플랫폼이다.
 
-## 새 Company의 시작
+## 사용 흐름
 
 ```text
 SPS Desktop 로그인
-  -> 서버 만들기 또는 서버 참여
-  -> 새 서버라면 빈 Company 생성
-  -> Agent 한 명 연결 및 실행 확인 (필수)
-  -> Plugin Discovery & Builder 활성화
-  -> Company Workspace 열기
+  -> Host 만들기 또는 기존 Host에 참가
+  -> Workspace 선택 또는 생성
+  -> Node에서 공개할 Runtime 선택
+  -> 등록한 Initial Assistant를 통해 Discovery와 대화
+  -> 설정 > 플러그인에서 원하는 작업 환경을 명시적으로 활성화
 ```
 
-SPS Desktop은 설치본 하나만 제공한다. 로그인 뒤 `서버 만들기`를 선택한 컴퓨터는 Host가 되고,
-`서버 참여`를 선택한 컴퓨터는 Member Node로 연결된다. Host와 Member는 다른 설치본이나 다른
-업데이트 채널을 사용하지 않는다.
+처음에는 특정 회사 구조, 역할, 프로젝트 보드가 나타나지 않는다. 사용자가 게임 개발, 웹 개발, 앱 개발, 연구, 개인 자동화처럼 원하는 방식을 설명하면 Discovery & Builder 플러그인이 공식 Catalog 검색 또는 플러그인 초안 작성을 돕는다.
 
-새 Company에는 Project, 역할 조직, Room/Task, 권한 정책, Memory 전략이 기본 생성되지 않는다. 처음에는 Company 컨테이너, 연결한 Agent 한 명, `Plugin Discovery & Builder`, `Settings > Plugins`만 준비된다.
+## Core가 보장하는 것
 
-첫 Agent는 특정 모델이나 제공자를 강제하지 않는다. Codex CLI, Agy CLI, 로컬 AI, API Backend 등 연결 가능한 실행기를 사용할 수 있다.
+- SPS Identity와 Desktop 로그인
+- Host의 수명주기, 암호화된 Vault, 백업/복원, 업데이트, 진단
+- Windows와 Tailscale 기반의 Host/Member 연결
+- Member, Node, Node 상태, Runtime 공개 정보
+- Host가 선택한 Workspace Source와 Node별 암호화된 접근 route
+- 일반 Run, Artifact, Event, Job, Log, Secret handle
+- 플러그인의 서명 검증, 호환성 검사, stage, 활성화/비활성화/삭제, 데이터 격리
 
-## Host Owner와 하위 역할
+## Core가 결정하지 않는 것
 
-서버를 만든 계정은 Core의 유일한 `Host Owner`다. Host Owner는 Host 데이터, device pairing,
-Owner Vault, 서버 이전·삭제처럼 플랫폼 자체를 유지하는 기술적 책임을 가진다. 이 책임은 플러그인이
-없어도 존재하며, 다른 사용자에게 일반 업무 권한으로 위임되지 않는다.
+- Task와 Room의 존재 및 관계
+- AI 역할, 상하 관계, 작업 배정과 완료 판단
+- 장기기억의 수집, compact, 요약, 보존 정책
+- 프로젝트의 종류와 파일 구조
+- 업무상 승인과 검토 규칙
 
-사람의 업무 역할은 플러그인이 만든다. 기본 Access Control 플러그인은 Host Owner 아래에
-Viewer, Operator, Admin 같은 하위 역할을 제공할 수 있고, 다른 플러그인은 다른 역할 모델을
-제공할 수 있다. 어떤 플러그인 역할도 Host Owner의 Host 데이터와 서버 소유권을 우회할 수 없다.
+이 항목들은 플러그인이 결정한다. 예를 들어 팀 작업 플러그인은 Lead/Worker/Review 역할과 Task Room을 만들 수 있고, 메모리 플러그인은 프로젝트별 journal과 recall 정책을 제공할 수 있다.
 
-## Core와 플러그인의 경계
+## 파일과 실행의 경계
 
-SPS Core는 플러그인을 만들고 실행하고 유지하기 위한 공통 기반이다.
+Host만 자신의 로컬 폴더를 Workspace Source로 등록한다. Core에는 Source의 ID와 상태, 팀 공유에 필요한 route만 보관하며, 실제 Host 파일 경로는 Desktop의 로컬 Vault에만 남긴다.
 
-| Core가 제공하는 것 | 플러그인이 정하는 것 |
-| --- | --- |
-| Desktop/Host, backup, update | 사람 역할과 접근 정책 |
-| 로그인 identity와 device identity | Room, Task, Lead/Worker 같은 업무 모델 |
-| Company, Agent, Backend, Node, Runner registry | Project 화면, 상태, 보고·검토 흐름 |
-| Thread, Run, Artifact, event, Store primitive | 게임·앱·웹·플러그인 개발 분야 |
-| extension runtime, SDK, diagnostics | Memory 수집·검색·요약·승인 전략 |
-| `Settings > Plugins`, Catalog, lifecycle 기록 | Connector와 외부 도구의 업무 규칙 |
+Member는 자신의 폴더를 대신 지정할 수 없다. 플러그인이 Source를 사용하기로 정하고 Core의 기술적 route를 얻은 경우에만, Host가 허용한 Source 안에서 작업한다. Node마다 CLI 계정, API key, 로컬 모델, 인증 정보는 계속 해당 컴퓨터에 남는다.
 
-Core는 사람 권한을 보유하지 않는다. 다만 플러그인 manifest에 선언되지 않은 데이터 API, UI surface, job, Connector, 파일·Node API에는 접근할 수 없도록 기술적으로 격리한다. 이 격리 계약은 사람의 업무 권한 정책과 다르다.
+## 플러그인과 업데이트
 
-## Plugin Discovery & Builder
+SPS는 Extension Profile과 Plugin API를 공개한다. 플러그인은 지원하는 Desktop 버전과 Profile, 사용하는 Core primitive를 선언한다. Desktop은 호환되지 않는 플러그인을 실행 전에 차단한다.
 
-Owner Host에 기본으로 로드되는 tool provider다. 연결한 Agent에게 다음 기능을 제공한다.
+현재 Desktop은 기존 호환 Profile `1.0`과 workflow-neutral Profile `2.0`을 함께 지원한다. Core 업데이트가 곧바로 모든 플러그인을 망가뜨리지 않도록, 호환 Profile을 일정 기간 병행 지원하고 retire 시점에만 명확히 차단한다.
 
-- 사용자 목표와 Company 상태를 대화로 이해
-- Catalog에서 플러그인과 Development Pack 검색·비교·추천
-- 없는 기능의 플러그인 설계, manifest와 capability, 검증 계획 초안 작성
-- 공식 Registry의 검증된 공개 metadata만 읽고, 로컬에 신뢰된 Catalog snapshot만 사용
+## 첫 출시의 범위
 
-Discovery의 두 tool은 검색과 설계 초안만 제공한다. 파일 생성, package 설치, 활성화, 업데이트, 제거, Company 변경을 호출하지 않는다. Agent는 대화 맥락에 따라 다른 사용 가능한 도구를 사용할지 판단할 수 있지만, 추천 항목을 선택하는 UI는 설치, 활성화, 업데이트 같은 side effect를 자동으로 호출하지 않는다.
+- Windows 10/11 x64
+- Desktop 앱 중심 사용
+- Tailscale 기반 Host/Member 연결
+- SPS Official Registry와 로컬 개발 플러그인
+- Plugin Discovery & Builder 기본 제공
 
-현재 Core의 번들 plugin lifecycle은 Owner Host 단위다. 따라서 Discovery도 같은 Host의 Company에 공통으로 보인다. Company별 기본 활성화·비활성화는 Core가 Company-scoped plugin lifecycle을 제공할 때 구현한다.
-
-## Settings > Plugins와 Catalog
-
-Marketplace는 별도 플러그인이 아니라 Core의 `Settings > Plugins` 안에 있는 Catalog 탐색 영역이다. 이 화면에서 활성 플러그인, Catalog source, 패키지 설명·제작자·버전·호환성·라이선스·manifest, 설치·활성화·비활성화·업데이트·롤백·제거 기록을 확인한다.
-
-첫 출시에서는 SPS가 서명한 공식 Registry와 사용자가 자신의 컴퓨터에서 제작한 local development
-package만 사용한다. 제3자 Registry, 공개 커뮤니티 공유, 판매, 결제, 세금, 환불, 평점은 출시 범위가 아니다.
-
-## 협업과 선택형 확장
-
-협업이 필요해지면 다음 플러그인을 필요한 조합으로 추가한다.
-
-| 확장 | 책임 |
-| --- | --- |
-| Access Control | 사람 역할, 사용자 -> Agent/Project 접근, Node 운영 정책 |
-| Team Workplane | Room, Task, Lead/Worker, 보고·검토 흐름 |
-| Memory Provider | 기억 수집, 검색, 요약, 승인 후보 |
-| Connector | MCP, OAuth, HTTP API, CLI, 외부 도구 연결 |
-| Development Pack | 게임·앱·웹별 Agent 템플릿, 도구, 문서, 작업 방식 |
-
-SPS 기본 Access Control 플러그인은 Viewer(읽기), Operator(허용된 Agent와 자신의 외부 도구), Admin(대부분의 팀 운영 설정)을 제공하는 것을 목표로 한다. Host Owner는 이 플러그인의 역할이 아니라 Core의 기술적 서버 소유자다. 다른 Access 플러그인은 다른 하위 역할 모델을 제공할 수 있다.
-
-## 지원 범위와 데이터 위치
-
-첫 출시는 Windows 10/11 x64 Desktop만 공식 지원한다. 서로 다른 컴퓨터의 Host와 Member Node 연결은
-Tailscale을 필수 전제로 한다. Host PC는 이전 로그인 상태와 로컬 데이터를 사용해 단독 작업을 계속할
-수 있지만, 새 로그인, 초대, 원격 Node 연결에는 네트워크 연결이 필요하다.
-
-Company, 실행 기록, Artifact, Memory index, plugin configuration, project source mapping은 Host PC에
-저장한다. SPS Identity는 로그인과 초대·연결 보조를 맡지만 Company 작업 데이터를 보관하는 중앙 저장소가
-아니다. Host Owner는 암호화된 수동 backup을 내보내 새 Host 또는 복구 환경에 restore할 수 있다.
-
-## 제품 상태와 제외 범위
-
-| 범위 | 상태 |
-| --- | --- |
-| Desktop Host, Agent registry, Node/Runner, 실행 기록 | 구현·검증 진행 중 |
-| 플러그인 manifest, 상태, worker, UI slot, Registry 검사 | 구현되어 있으나 SPS SDK로 정리 중 |
-| Plugin Discovery & Builder 검색·초안 tool provider | 구현·패키지 런타임 smoke 검증 완료 |
-| Company별 plugin lifecycle | Core 설계 대기 |
-| Access Control, Workplane, Memory Provider | 목표 또는 선택형 확장 |
-| 공개 커뮤니티 Marketplace와 판매·정산 | 제품 방향만 정의, 출시 범위 아님 |
-
-SPS Core는 특정 AI 제공자, 특정 모델, 특정 회사 조직, 특정 개발 분야, 자동 플러그인 설치를 강제하지 않는다.
+공개 커뮤니티 Registry, Marketplace, 결제, macOS/Linux, Tailscale 외 전송 방식은 안정화 이후 단계다.

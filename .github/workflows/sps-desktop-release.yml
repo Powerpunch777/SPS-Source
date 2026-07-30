@@ -117,5 +117,7 @@ jobs:
           $installer = "dist\SPS-Desktop-Setup-$($manifest.version).exe"
           $blockmap = "$installer.blockmap"
           gh release create $tag --repo $releaseRepo --target main --title "SPS Desktop $($manifest.version)" --draft --notes "Signed Windows stable release. See sps-release-manifest.json for the exact Desktop, Core, Extension Profile, and artifact hashes."
-          gh release upload $tag --repo $releaseRepo $installer $blockmap "dist\latest.yml" "dist\sps-release-manifest.json"
+          $runtimePacks = @(Get-ChildItem -LiteralPath "dist" -Filter "SPS-Agent-Runtime-Pack-*.zip" -File | ForEach-Object FullName)
+          $releaseAssets = @($installer, $blockmap, "dist\latest.yml", "dist\sps-release-manifest.json", "dist\sps-agent-runtime-packs.json") + $runtimePacks
+          gh release upload $tag --repo $releaseRepo @releaseAssets
           gh release edit $tag --repo $releaseRepo --draft=false --prerelease=false --latest

@@ -67,5 +67,7 @@ jobs:
             sps-server/desktop/dist/SPS-Desktop-Setup-*.exe.blockmap
             sps-server/desktop/dist/latest.yml
             sps-server/desktop/dist/sps-release-manifest.json
+            sps-server/desktop/dist/SPS-Agent-Runtime-Pack-*.zip
+            sps-server/desktop/dist/sps-agent-runtime-packs.json
           if-no-files-found: error
           retention-days: 14

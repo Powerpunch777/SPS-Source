@@ -22,8 +22,9 @@ semantics to Core.
   action by itself.
 - Core owns the technical safety boundary. A plugin owns the meaning of roles,
   approvals, and workflow rules.
-- Host Owner is the only Core-level server owner. Plugin-defined access-control
-  plugins may define Viewer, Operator, Admin, or any other work role.
+- The SPS Host is the only Core-level technical authority for invitations,
+  Nodes, and Host-local Sources. Core does not expose workflow roles.
+  Plugin-defined access-control plugins may define any work role.
 - Windows Desktop is the first supported product surface. Host and Member use
   one installer; the chosen connection flow determines the runtime role.
 
@@ -65,10 +66,11 @@ prove the whole path with repeatable tests.
 
 ### 1. Extension Profile
 
-Extension Profile v1.1 will publish the stable manifest, capability, data
-scope, lifecycle, compatibility, and deprecation rules. It will describe the
-public SPS contract only; legacy Paperclip bridge fields remain compatibility
-details and are not recommended for new plugins.
+Extension Profile v2.0 now publishes the workflow-neutral Source, Runtime,
+Run, Artifact, and Secret primitives. Profile 1.0 remains a temporary bridge
+for older packages. New plugins use Profile 2.0; legacy Paperclip bridge
+fields remain implementation compatibility details and are not part of the
+public authoring contract.
 
 ### 2. Plugin Data and Migrations
 
@@ -133,7 +135,7 @@ continues without this interruption.
 
 ### Phase B: Stable Authoring Contract
 
-1. Publish Extension Profile v1.1 and SDK types.
+1. Publish Extension Profile v2.0 and SDK types.
 2. Freeze capability names, data scopes, lifecycle states, and compatibility
    behavior.
 3. Add deprecation and Core/Desktop upgrade policy.
@@ -166,7 +168,7 @@ ship a package without modifying SPS Core.
 
 ### Phase E: Product-Level Verification
 
-1. Run Core, SDK, Desktop, and packaged Owner Host tests.
+1. Run Core, SDK, Desktop, and packaged SPS Host tests.
 2. Test a real Host and Member Desktop pair: sign-in, invite, approval, node
    registration, project-source mapping, Agent execution, revocation, and
    restart recovery.
@@ -182,8 +184,11 @@ ship a package without modifying SPS Core.
 - Core does not silently install, activate, update, or remove a plugin.
 - Core does not make plugin roles or work approvals universal product rules.
 
-## Implementation Order Now
+## Current Implementation Order
 
-Work starts with Phase A. The first code change is migration-plan inspection
-and upgrade gating. It is the narrowest change that protects persistent plugin
-data while preserving normal low-risk updates.
+The compatibility, staged-update, Profile 2.0, generic Source, Runtime, Run,
+Artifact, and Discovery baseline are implemented. The next release gate is
+not another workflow feature: it is direct packaged-app verification of the
+Host/Member path, Source routing, generic plugin run, recovery, update, and
+every baseline Core control. Optional workflow reference plugins follow only
+after that gate is closed.

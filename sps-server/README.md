@@ -22,6 +22,10 @@ Plugins own:
 - Room, Task, Lead/Worker, and review workflows
 - memory strategies, external tools, and domain-specific development Packs
 
+Provider-specific Agent runtimes are optional Desktop packs, not implicit Core
+payloads. See [Agent Runtime Packs](docs/current/AGENT-RUNTIME-PACKS.md) for
+the Host-selected Codex/Claude delivery and verification flow.
+
 ## Source Map
 
 ```text

@@ -2,15 +2,33 @@ import { createHash, randomBytes as nodeRandomBytes } from "node:crypto";
 import { createServer } from "node:http";
 
 const DEFAULT_SPS_IDENTITY_URL = "https://auth.redongames.com";
+const DEFAULT_IDENTITY_REQUEST_TIMEOUT_MS = 15_000;
+export const DEFAULT_SPS_DESKTOP_SIGN_IN_TIMEOUT_MS = 15 * 60 * 1000;
 
 function value(input) {
   return typeof input === "string" ? input.trim() : "";
+}
+
+export function isExpiredSpsDesktopRefreshToken(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /(?:refresh[\s_-]*token).*(?:invalid|expired)|(?:invalid|expired).*(?:refresh[\s_-]*token)/i.test(message);
 }
 
 function requiredText(input, message) {
   const normalized = value(input);
   if (!normalized) throw new Error(message);
   return normalized;
+}
+
+function requestTimeoutSignal(timeoutMs = DEFAULT_IDENTITY_REQUEST_TIMEOUT_MS) {
+  return typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
+}
+
+function identityRequestFailure(error) {
+  if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+    return new Error("SPS Identity request timed out. Check your connection and try again.");
+  }
+  return error;
 }
 
 function localCallbackPage({ success }) {
@@ -77,12 +95,18 @@ function normalizeIdentityTokenPayload(payload) {
   };
 }
 
-async function requestIdentityToken({ fetchImpl, identityUrl, path, body }) {
-  const response = await fetchImpl(new URL(path, `${configuredSpsIdentityUrl(identityUrl)}/`), {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify(body),
-  });
+async function requestIdentityToken({ fetchImpl, identityUrl, path, body, timeoutMs = DEFAULT_IDENTITY_REQUEST_TIMEOUT_MS }) {
+  let response;
+  try {
+    response = await fetchImpl(new URL(path, `${configuredSpsIdentityUrl(identityUrl)}/`), {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(body),
+      signal: requestTimeoutSignal(timeoutMs),
+    });
+  } catch (error) {
+    throw identityRequestFailure(error);
+  }
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const reason = value(payload?.error);
@@ -91,12 +115,13 @@ async function requestIdentityToken({ fetchImpl, identityUrl, path, body }) {
   return normalizeIdentityTokenPayload(payload);
 }
 
-export async function refreshSpsDesktopIdentity({ identityUrl, refreshToken, fetchImpl = fetch, deviceId }) {
+export async function refreshSpsDesktopIdentity({ identityUrl, refreshToken, fetchImpl = fetch, deviceId, timeoutMs }) {
   const account = await requestIdentityToken({
     fetchImpl,
     identityUrl,
     path: "/v1/desktop/refresh",
     body: { refresh_token: requiredText(refreshToken, "SPS refresh token is missing."), device_id: requiredText(deviceId, "SPS Desktop device ID is missing.") },
+    timeoutMs,
   });
   return { ...account, deviceId };
 }
@@ -107,6 +132,7 @@ export async function revokeSpsDesktopIdentity({ identityUrl, refreshToken, fetc
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }),
+    signal: requestTimeoutSignal(),
   }).catch(() => undefined);
 }
 
@@ -116,7 +142,10 @@ export async function startSpsDesktopIdentitySignIn({
   openExternal,
   fetchImpl = fetch,
   randomBytes = nodeRandomBytes,
-  timeoutMs = 5 * 60 * 1000,
+  // A browser sign-in can involve a password manager, MFA, or account switching.
+  // Keep the loopback callback alive long enough for a human to finish it, while
+  // retaining the visible cancel action in Desktop.
+  timeoutMs = DEFAULT_SPS_DESKTOP_SIGN_IN_TIMEOUT_MS,
 } = {}) {
   if (typeof openExternal !== "function") throw new Error("SPS Desktop cannot open the SPS sign-in browser.");
   const normalizedIdentityUrl = configuredSpsIdentityUrl(identityUrl);

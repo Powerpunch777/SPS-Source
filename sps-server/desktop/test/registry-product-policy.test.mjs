@@ -19,3 +19,14 @@ test("keeps first-release Registry UI and IPC limited to Official plus local dev
   assert.doesNotMatch(renderer, /source-kind|trustedRootKeyId|trustedRootPublicKey/);
   assert.match(main, /currently accepts only Owner-selected local development Registries/);
 });
+
+test("uses the narrow Host proof for native Registry and Vault actions", async () => {
+  const main = await readFile(path.join(desktopRoot, "src", "main.mjs"), "utf8");
+
+  assert.match(main, /async function stageRegistryPluginFromFilePicker\(\)[\s\S]*?\/plugins\/registry\/stages[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /async function stageDesktopRegistryRelease[\s\S]*?\/plugins\/registry\/stages[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /async function enableDesktopRegistryStage[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /async function listDesktopRegistryStages[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /async function showRegistryPluginStages[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /async function exportOwnerVaultTransfer[\s\S]*?\/instance\/database-backups[\s\S]*?ownerBootstrap: true/);
+});

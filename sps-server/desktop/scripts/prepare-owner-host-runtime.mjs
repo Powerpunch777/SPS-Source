@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,8 @@ const workspaceRoot = path.resolve(desktopRoot, "..", "..");
 const coreRoot = path.resolve(process.env.SPS_HOST_CORE_ROOT || path.join(workspaceRoot, "external", "sps-core"));
 const defaultRuntimeRoot = path.join(desktopRoot, ".owner-host-runtime");
 const runtimeRoot = path.resolve(process.env.SPS_DESKTOP_RUNTIME_OUTPUT?.trim() || defaultRuntimeRoot);
+const defaultAgentRuntimePacksRoot = path.join(desktopRoot, ".agent-runtime-packs");
+const agentRuntimePacksRoot = path.resolve(process.env.SPS_DESKTOP_AGENT_RUNTIME_PACKS_OUTPUT?.trim() || defaultAgentRuntimePacksRoot);
 const releaseBaselinePath = path.join(runtimeRoot, "sps-release-baseline.json");
 
 function assertDesktopBuildPath(target) {
@@ -18,6 +20,155 @@ function assertDesktopBuildPath(target) {
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`Refusing to modify a path outside SPS Desktop: ${target}`);
   }
+}
+
+function nodeModulesPackagePath(nodeModulesRoot, packageName) {
+  return path.join(nodeModulesRoot, ...packageName.split("/"));
+}
+
+async function pathExists(entry) {
+  try {
+    await access(entry);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function copyRuntimePackageClosure({ sourceNodeModules, targetNodeModules, packageNames }) {
+  const queue = packageNames.map((name) => ({ name, required: true }));
+  const visited = new Set();
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (!next || visited.has(next.name)) continue;
+    visited.add(next.name);
+    const source = nodeModulesPackagePath(sourceNodeModules, next.name);
+    if (!await pathExists(source)) {
+      if (next.required) throw new Error(`Agent Runtime pack dependency is missing: ${next.name}`);
+      continue;
+    }
+    const manifestPath = path.join(source, "package.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const target = nodeModulesPackagePath(targetNodeModules, next.name);
+    await mkdir(path.dirname(target), { recursive: true });
+    await cp(source, target, { recursive: true, dereference: true });
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+      queue.push({ name: dependency, required: true });
+    }
+    for (const dependency of Object.keys(manifest.optionalDependencies ?? {})) {
+      queue.push({ name: dependency, required: false });
+    }
+  }
+}
+
+async function writeAgentRuntimePackWrapper({ packRoot, command, entry }) {
+  const binRoot = path.join(packRoot, "bin");
+  await mkdir(binRoot, { recursive: true });
+  if (process.platform === "win32") {
+    const wrapperPath = path.join(binRoot, `${command}.cmd`);
+    const relativeEntry = entry.split("/").join("\\");
+    await writeFile(wrapperPath, [
+      "@echo off",
+      "setlocal",
+      "if not defined SPS_OWNER_HOST_NODE (",
+      "  echo SPS_OWNER_HOST_NODE is not configured. >&2",
+      "  exit /b 1",
+      ")",
+      `\"%SPS_OWNER_HOST_NODE%\" \"%~dp0..\\${relativeEntry}\" %*`,
+      "",
+    ].join("\r\n"), "utf8");
+    return "bin/" + command + ".cmd";
+  }
+  const wrapperPath = path.join(binRoot, command);
+  await writeFile(wrapperPath, [
+    "#!/usr/bin/env sh",
+    "if [ -z \"${SPS_OWNER_HOST_NODE:-}\" ]; then",
+    "  echo 'SPS_OWNER_HOST_NODE is not configured.' >&2",
+    "  exit 1",
+    "fi",
+    `exec \"$SPS_OWNER_HOST_NODE\" \"$(dirname \"$0\")/../${entry}\" \"$@\"`,
+    "",
+  ].join("\n"), "utf8");
+  await chmod(wrapperPath, 0o755);
+  return `bin/${command}`;
+}
+
+const SPS_AGENT_RUNTIME_PACKS = [
+  {
+    id: "codex-acp",
+    label: "Codex ACP",
+    command: "codex-acp",
+    entry: "node_modules/@agentclientprotocol/codex-acp/dist/index.js",
+    packages: ["@agentclientprotocol/codex-acp"],
+  },
+  {
+    id: "claude-acp",
+    label: "Claude ACP",
+    command: "claude-agent-acp",
+    entry: "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    packages: ["@agentclientprotocol/claude-agent-acp"],
+  },
+];
+
+async function prepareAgentRuntimePacks(runtimeRoot, packRoot) {
+  assertDesktopBuildPath(packRoot);
+  const sourceNodeModules = path.join(runtimeRoot, "node_modules");
+  const version = process.env.npm_package_version || "development";
+  await rm(packRoot, { recursive: true, force: true });
+  const prepared = [];
+  for (const definition of SPS_AGENT_RUNTIME_PACKS) {
+    const targetRoot = path.join(packRoot, definition.id, version);
+    await copyRuntimePackageClosure({
+      sourceNodeModules,
+      targetNodeModules: path.join(targetRoot, "node_modules"),
+      packageNames: definition.packages,
+    });
+    const command = await writeAgentRuntimePackWrapper({
+      packRoot: targetRoot,
+      command: definition.command,
+      entry: definition.entry,
+    });
+    await writeFile(path.join(targetRoot, "sps-agent-runtime-pack.json"), `${JSON.stringify({
+      format: 1,
+      id: definition.id,
+      label: definition.label,
+      version,
+      platform: process.platform,
+      arch: process.arch,
+      commands: { [definition.command]: command },
+      createdAt: new Date().toISOString(),
+    }, null, 2)}\n`, "utf8");
+    prepared.push({ id: definition.id, version, command: definition.command });
+  }
+
+  // The Core keeps adapter contracts, but vendor ACP bridges and their native
+  // provider binaries belong to explicit packs. Remove both packages and stale
+  // npm shims so an absent pack is reported as unavailable rather than failing
+  // halfway through an Agent turn.
+  for (const packageName of [
+    "@agentclientprotocol/codex-acp",
+    "@agentclientprotocol/claude-agent-acp",
+    "@agentclientprotocol/sdk",
+    "@openai/codex",
+    "@openai/codex-win32-x64",
+    "@openai/codex-win32-arm64",
+    "@anthropic-ai/claude-agent-sdk",
+    "@anthropic-ai/claude-agent-sdk-win32-x64",
+    "@anthropic-ai/claude-agent-sdk-win32-arm64",
+  ]) {
+    await rm(nodeModulesPackagePath(sourceNodeModules, packageName), { recursive: true, force: true });
+  }
+  for (const command of ["codex-acp", "claude-agent-acp"]) {
+    for (const suffix of ["", ".cmd", ".ps1"]) {
+      await rm(path.join(sourceNodeModules, ".bin", `${command}${suffix}`), { force: true });
+    }
+  }
+  await writeFile(path.join(packRoot, "sps-agent-runtime-packs.json"), `${JSON.stringify({
+    format: 1,
+    desktopVersion: version,
+    packs: prepared,
+  }, null, 2)}\n`, "utf8");
+  return prepared;
 }
 
 function run(command, args, cwd, { shell = false, environment = {} } = {}) {
@@ -97,18 +248,41 @@ async function requireFile(entry, message) {
 
 async function buildOwnerHostCoreArtifacts() {
   const dbTsconfig = path.join(coreRoot, "packages", "db", "tsconfig.json");
+  const dbPackageRoot = path.join(coreRoot, "packages", "db");
+  const sharedTsconfig = path.join(coreRoot, "packages", "shared", "tsconfig.json");
+  const adapterUtilsTsconfig = path.join(coreRoot, "packages", "adapter-utils", "tsconfig.json");
+  const codexAdapterTsconfig = path.join(coreRoot, "packages", "adapters", "codex-local", "tsconfig.json");
+  const claudeAdapterTsconfig = path.join(coreRoot, "packages", "adapters", "claude-local", "tsconfig.json");
   const serverTsconfig = path.join(coreRoot, "server", "tsconfig.json");
   const prepareServerUiDist = path.join(coreRoot, "scripts", "prepare-server-ui-dist.mjs");
   const tscCli = path.join(coreRoot, "node_modules", "typescript", "bin", "tsc");
   await requireFile(tscCli, "SPS Owner Host requires the Core TypeScript compiler. Run pnpm install in external/sps-core first.");
   await requireFile(dbTsconfig, "SPS Owner Host database TypeScript config is missing.");
+  await requireFile(sharedTsconfig, "SPS Owner Host shared-contract TypeScript config is missing.");
+  await requireFile(adapterUtilsTsconfig, "SPS Owner Host adapter utility TypeScript config is missing.");
+  await requireFile(codexAdapterTsconfig, "SPS Owner Host Codex adapter TypeScript config is missing.");
+  await requireFile(claudeAdapterTsconfig, "SPS Owner Host Claude adapter TypeScript config is missing.");
   await requireFile(serverTsconfig, "SPS Owner Host server TypeScript config is missing.");
   await requireFile(prepareServerUiDist, "SPS Owner Host UI packaging script is missing.");
 
   // pnpm deploy packages built output, not the workspace TypeScript sources.
-  // Rebuild the two runtime packages here so a Desktop release cannot ship
-  // stale database/server code after a Core update.
-  await run(process.execPath, [tscCli, "-p", dbTsconfig], coreRoot);
+  // Rebuild every runtime package in dependency order. pnpm deploy copies
+  // built output, so compiling only the server can otherwise package stale
+  // shared contract exports beside a freshly compiled server.
+  // The DB package build copies SQL migrations into dist/migrations. A plain
+  // TypeScript compile leaves that directory stale, which can make a Desktop
+  // update run newer routes against an older on-disk schema.
+  const pnpm = await resolvePnpmInvocation();
+  await run(
+    pnpm.command,
+    [...pnpm.prefixArgs, "--dir", dbPackageRoot, "run", "build"],
+    coreRoot,
+    { shell: pnpm.shell, environment: pnpm.environment },
+  );
+  await run(process.execPath, [tscCli, "-p", sharedTsconfig], coreRoot);
+  await run(process.execPath, [tscCli, "-p", adapterUtilsTsconfig], coreRoot);
+  await run(process.execPath, [tscCli, "-p", codexAdapterTsconfig], coreRoot);
+  await run(process.execPath, [tscCli, "-p", claudeAdapterTsconfig], coreRoot);
   await run(process.execPath, [tscCli, "-p", serverTsconfig], coreRoot);
   await run(process.execPath, [prepareServerUiDist], coreRoot);
 }
@@ -243,6 +417,7 @@ await writeOwnerHostBootstrap(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
 await copyBundledSpsPluginRuntime(runtimeRoot);
 const bundledNode = await copyBundledSpsNodeRuntime(runtimeRoot);
+const agentRuntimePacks = await prepareAgentRuntimePacks(runtimeRoot, agentRuntimePacksRoot);
 const releaseBaseline = await writeSpsReleaseBaseline({
   outputPath: releaseBaselinePath,
   workspaceRoot,
@@ -253,12 +428,13 @@ const releaseBaseline = await writeSpsReleaseBaseline({
 await writeFile(
   path.join(runtimeRoot, "sps-owner-host-runtime.json"),
   `${JSON.stringify({
-    format: 7,
+    format: 8,
     entry: "dist/index.js",
     loader: "node-esm",
     vendorDirectory: "node_modules",
     nodeRuntime: bundledNode,
     bundledDefaultMemory: true,
+    agentRuntimePacks,
     version: process.env.npm_package_version || "development",
     releaseBaseline,
     createdAt: new Date().toISOString(),

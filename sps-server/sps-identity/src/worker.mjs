@@ -4,7 +4,11 @@ const GOOGLE_JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ISSUERS = new Set(["https://accounts.google.com", "accounts.google.com"]);
 const GOOGLE_SCOPES = "openid email profile";
 const AUTHORIZATION_CODE_TTL_MS = 5 * 60 * 1000;
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+// This covers the human Google sign-in round trip. It must stay aligned with
+// SPS Desktop's loopback callback timeout so a slow account switch or MFA
+// cannot leave Desktop waiting for an authorization request that the service
+// has already discarded.
+export const SPS_DESKTOP_SIGN_IN_TTL_MS = 15 * 60 * 1000;
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -302,7 +306,7 @@ async function authorize(request, env) {
   const googleNonce = randomUrlValue(30);
   await env.DB.prepare(
     "INSERT INTO oauth_states (id, desktop_redirect_uri, desktop_state, desktop_code_challenge, google_code_verifier, google_nonce, device_id, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(stateId, redirectUri, state, desktopChallenge, googleVerifier, googleNonce, deviceId, Date.now() + OAUTH_STATE_TTL_MS).run();
+  ).bind(stateId, redirectUri, state, desktopChallenge, googleVerifier, googleNonce, deviceId, Date.now() + SPS_DESKTOP_SIGN_IN_TTL_MS).run();
   const googleUrl = new URL(GOOGLE_AUTHORIZATION_ENDPOINT);
   googleUrl.search = new URLSearchParams({
     client_id: requireEnv(env, "GOOGLE_CLIENT_ID"),

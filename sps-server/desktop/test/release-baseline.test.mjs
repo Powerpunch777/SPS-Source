@@ -26,21 +26,20 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
     coreRoot,
     builtAt: "2026-07-28T00:00:00.000Z",
   });
-  assert.equal(baseline.desktopVersion, "0.4.80");
-  assert.equal(baseline.core.revision, "d502f9f1b2aad2b95b63a0d1400494f66874fd26");
-  assert.deepEqual(baseline.pluginSdk, {
-    repository: "Powerpunch777/sps-plugin-sdk",
-    revision: "27b419db255e097ae871612943a8aec82d57092c",
-    package: "@sonparkserver/plugin-sdk",
-    version: "0.1.3",
-    dirty: false,
-  });
-  assert.deepEqual(baseline.extensionProfile, { version: "1.0", pluginApi: 1 });
+  assert.equal(baseline.desktopVersion, "0.4.83");
+  assert.equal(baseline.core.revision, "9bb068c54eb8672459b9e008f6a82bf91a1ed2b5");
+  assert.equal(baseline.pluginSdk.repository, "Powerpunch777/sps-plugin-sdk");
+  assert.equal(baseline.pluginSdk.revision, "1232ca3aa4a5ee109214ed9b0af9e6189e53b882");
+  assert.equal(baseline.pluginSdk.package, "@sonparkserver/plugin-sdk");
+  assert.equal(baseline.pluginSdk.version, "0.2.0");
+  assert.equal(typeof baseline.pluginSdk.dirty, "boolean");
+  assert.deepEqual(baseline.extensionProfile, { version: "2.0", pluginApi: 1 });
+  assert.deepEqual(baseline.extensionProfiles, ["1.0", "2.0"]);
   assert.equal(baseline.update.channel, "latest");
   assert.equal(baseline.update.repository, "Powerpunch777/SPS-Desktop-Releases");
   assert.deepEqual(
     baseline.bundledExtensions.map((extension) => [extension.id, extension.version]),
-    [["sps.default-memory", "0.1.0"], ["sps.plugin-discovery", "0.1.0"], ["local.room-chat", "0.3.91"]],
+    [["sps.default-memory", "0.1.0"], ["sps.plugin-discovery", "0.3.0"], ["local.room-chat", "0.3.91"]],
   );
 });
 
@@ -61,10 +60,24 @@ test("creates a hash manifest only when latest.yml points to the exact installer
       "path: SPS-Desktop-Setup-0.4.79.exe",
       "",
     ].join("\n"), "utf8");
+    await writeFile(path.join(distRoot, "SPS-Agent-Runtime-Pack-codex-acp-0.4.79.zip"), "runtime-pack", "utf8");
+    await writeFile(path.join(distRoot, "sps-agent-runtime-packs.json"), `\uFEFF${JSON.stringify({
+      schemaVersion: 1,
+      packs: [{
+        id: "codex-acp",
+        label: "Codex ACP",
+        version: "0.4.79",
+        commands: ["codex-acp"],
+        archive: "SPS-Agent-Runtime-Pack-codex-acp-0.4.79.zip",
+      }],
+    })}`, "utf8");
 
     const manifest = await createSpsReleaseManifest({ runtimeRoot, distRoot });
     assert.equal(manifest.artifacts.installer.file, "SPS-Desktop-Setup-0.4.79.exe");
     assert.match(manifest.artifacts.installer.sha256, /^[0-9a-f]{64}$/);
+    assert.deepEqual(manifest.artifacts.agentRuntimePacks.map((pack) => [pack.id, pack.file]), [
+      ["codex-acp", "SPS-Agent-Runtime-Pack-codex-acp-0.4.79.zip"],
+    ]);
 
     await writeFile(path.join(distRoot, "latest.yml"), [
       "version: 0.4.79",

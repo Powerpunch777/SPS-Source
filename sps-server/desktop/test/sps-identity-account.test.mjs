@@ -3,9 +3,16 @@ import test from "node:test";
 import {
   buildSpsIdentityAuthorizationUrl,
   createSpsIdentityPkce,
+  DEFAULT_SPS_DESKTOP_SIGN_IN_TIMEOUT_MS,
+  isExpiredSpsDesktopRefreshToken,
   isSpsIdentityUrl,
+  refreshSpsDesktopIdentity,
   startSpsDesktopIdentitySignIn,
 } from "../src/sps-identity-account.mjs";
+
+test("keeps the human Desktop sign-in callback alive for fifteen minutes", () => {
+  assert.equal(DEFAULT_SPS_DESKTOP_SIGN_IN_TIMEOUT_MS, 15 * 60 * 1000);
+});
 
 test("builds a central SPS Identity authorization request with Desktop PKCE", () => {
   const pkce = createSpsIdentityPkce((size) => Buffer.alloc(size, 4));
@@ -26,6 +33,11 @@ test("permits HTTPS identity services and loopback-only HTTP for development", (
   assert.equal(isSpsIdentityUrl("https://auth.redongames.com"), true);
   assert.equal(isSpsIdentityUrl("http://127.0.0.1:8787"), true);
   assert.equal(isSpsIdentityUrl("http://example.com"), false);
+});
+
+test("recognizes an expired SPS Desktop refresh token without treating unrelated failures as sign-out", () => {
+  assert.equal(isExpiredSpsDesktopRefreshToken(new Error("SPS sign-in could not finish: SPS refresh token is invalid or expired.")), true);
+  assert.equal(isExpiredSpsDesktopRefreshToken(new Error("SPS Identity is temporarily unavailable.")), false);
 });
 
 test("exchanges a one-time SPS code with its PKCE verifier", async () => {
@@ -55,4 +67,20 @@ test("exchanges a one-time SPS code with its PKCE verifier", async () => {
   assert.equal(requestBody.code, "sps-code");
   assert.equal(requestBody.device_id, "desktop-device-1234");
   assert.match(requestBody.code_verifier, /^[A-Za-z0-9_-]+$/);
+});
+
+test("bounds a stalled SPS Identity refresh request", async () => {
+  await assert.rejects(
+    refreshSpsDesktopIdentity({
+      identityUrl: "https://auth.redongames.com",
+      refreshToken: "refresh-token",
+      deviceId: "desktop-device-1234",
+      timeoutMs: 1,
+      fetchImpl: async (_url, options) => {
+        assert.ok(options.signal instanceof AbortSignal);
+        throw new DOMException("timed out", "TimeoutError");
+      },
+    }),
+    /SPS Identity request timed out/,
+  );
 });

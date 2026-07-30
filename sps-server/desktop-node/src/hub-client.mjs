@@ -2,10 +2,11 @@ import { createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
 import { normalizeHubUrl } from "./protocol.mjs";
 
 export class SpsHubRequestError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null) {
     super(message);
     this.name = "SpsHubRequestError";
     this.status = status;
+    this.code = typeof code === "string" && code.trim() ? code.trim() : null;
   }
 }
 
@@ -33,13 +34,21 @@ export async function probeSpsHub({
     throw new SpsHubRequestError(
       response.status,
       data?.error ?? `SPS Hub health check failed with ${response.status}`,
+      data?.code,
     );
   }
   return data;
 }
 
 async function requestJson(fetchImpl, url, method, body, accessToken, sessionCookie) {
-  const headers = { "content-type": "application/json" };
+  // Desktop Node requests run in Electron's main process, not a browser. Add
+  // the Hub's own Origin explicitly so authenticated mutation guards can
+  // distinguish this signed-in Desktop request from an untrusted cross-site
+  // request.
+  const headers = {
+    "content-type": "application/json",
+    origin: new URL(url).origin,
+  };
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
   if (sessionCookie) headers.cookie = `sps_identity_session=${encodeURIComponent(sessionCookie)}`;
   const response = await fetchImpl(url, {
@@ -53,6 +62,7 @@ async function requestJson(fetchImpl, url, method, body, accessToken, sessionCoo
     throw new SpsHubRequestError(
       response.status,
       data?.error ?? `SPS Hub request failed with ${response.status}`,
+      data?.code,
     );
   }
   return data;
@@ -167,6 +177,7 @@ export async function registerSpsNode({
   appVersion,
   capabilities,
   runners,
+  transportPublicKey,
   accessToken,
   sessionCookie,
 }) {
@@ -182,6 +193,7 @@ export async function registerSpsNode({
       appVersion,
       capabilities,
       ...(runners ? { runners } : {}),
+      ...(transportPublicKey ? { transportPublicKey } : {}),
     },
     accessToken,
     sessionCookie,
@@ -238,6 +250,34 @@ export async function claimSpsNodeCommand({
   return signedNodeRequestJson({ fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie, method: "POST", path, payload: {} });
 }
 
+export async function claimSpsPluginNodeRun({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/plugin-runs/claim-next`;
+  return signedNodeRequestJson({ fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie, method: "POST", path, payload: {} });
+}
+
+export async function claimSpsWorkspaceSourceRoute({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  sourceId,
+  identity,
+  accessToken,
+  sessionCookie,
+}) {
+  if (typeof sourceId !== "string" || !sourceId.trim()) {
+    throw new Error("SPS Workspace Source route claims require a Source id");
+  }
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/workspace-sources/${encodeURIComponent(sourceId)}/claim-route`;
+  return signedNodeRequestJson({ fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie, method: "POST", path, payload: {} });
+}
+
 export async function appendSpsNodeCommandEvent({
   fetchImpl = fetch,
   hubUrl,
@@ -251,6 +291,32 @@ export async function appendSpsNodeCommandEvent({
   body,
 }) {
   const path = `/sps-nodes/${encodeURIComponent(nodeId)}/commands/${encodeURIComponent(commandId)}/events`;
+  return signedNodeRequestJson({
+    fetchImpl,
+    hubUrl,
+    nodeId,
+    identity,
+    accessToken,
+    sessionCookie,
+    method: "POST",
+    path,
+    payload: { sequence, stream, body },
+  });
+}
+
+export async function appendSpsPluginNodeRunEvent({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+  commandId,
+  sequence,
+  stream,
+  body,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/plugin-runs/${encodeURIComponent(commandId)}/events`;
   return signedNodeRequestJson({
     fetchImpl,
     hubUrl,
@@ -287,6 +353,29 @@ export async function checkSpsNodeCommandLease({
   });
 }
 
+export async function checkSpsPluginNodeRunLease({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+  commandId,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/plugin-runs/${encodeURIComponent(commandId)}/lease`;
+  return signedNodeRequestJson({
+    fetchImpl,
+    hubUrl,
+    nodeId,
+    identity,
+    accessToken,
+    sessionCookie,
+    method: "POST",
+    path,
+    payload: {},
+  });
+}
+
 export async function completeSpsNodeCommand({
   fetchImpl = fetch,
   hubUrl,
@@ -298,6 +387,30 @@ export async function completeSpsNodeCommand({
   completion,
 }) {
   const path = `/sps-nodes/${encodeURIComponent(nodeId)}/commands/${encodeURIComponent(commandId)}/complete`;
+  return signedNodeRequestJson({
+    fetchImpl,
+    hubUrl,
+    nodeId,
+    identity,
+    accessToken,
+    sessionCookie,
+    method: "POST",
+    path,
+    payload: completion,
+  });
+}
+
+export async function completeSpsPluginNodeRun({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+  commandId,
+  completion,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/plugin-runs/${encodeURIComponent(commandId)}/complete`;
   return signedNodeRequestJson({
     fetchImpl,
     hubUrl,

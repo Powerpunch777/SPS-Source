@@ -1,23 +1,30 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.80",
+  "version": "0.4.83",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
   "type": "module",
   "scripts": {
+    "sync:desktop-node": "node scripts/sync-local-desktop-node.mjs",
+    "prestart": "npm run sync:desktop-node",
     "start": "electron .",
+    "pretest": "npm run sync:desktop-node",
     "test": "node --test test/*.test.mjs",
-    "prepare:owner-host-runtime": "node scripts/prepare-owner-host-runtime.mjs",
+    "test:e2e:bootstrap": "npm run sync:desktop-node && node scripts/smoke-isolated-desktop-ui.mjs",
+    "prepare:owner-host-runtime": "npm run sync:desktop-node && node scripts/prepare-owner-host-runtime.mjs",
     "smoke:owner-host-runtime": "node scripts/smoke-packaged-owner-host-runtime.mjs",
-    "package:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis && node scripts/create-release-manifest.mjs",
-    "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish never && node scripts/create-release-manifest.mjs",
-    "package:candidate:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --publish never && node scripts/create-release-manifest.mjs"
+    "stage:agent-runtime-packs": "node scripts/stage-agent-runtime-packs.mjs",
+    "archive:agent-runtime-packs": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/archive-agent-runtime-packs.ps1",
+    "verify:packaged-owner-host-runtime": "node scripts/verify-packaged-owner-host-runtime.mjs",
+    "package:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && node scripts/create-release-manifest.mjs",
+    "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish never && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && node scripts/create-release-manifest.mjs",
+    "package:candidate:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --publish never && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && node scripts/create-release-manifest.mjs"
   },
   "dependencies": {
-    "@sps/desktop-node": "file:../desktop-node",
     "@sonparkserver/plugin-sdk": "file:../../external/sps-plugin-sdk",
+    "@sps/desktop-node": "file:../desktop-node",
     "electron-updater": "6.8.9"
   },
   "devDependencies": {
@@ -38,18 +45,11 @@
     "extraResources": [
       {
         "from": ".owner-host-runtime",
-        "to": "sps-owner-host-runtime",
-        "filter": [
-          "**/*",
-          "!node_modules/**"
-        ]
+        "to": "sps-owner-host-runtime"
       },
       {
         "from": ".owner-host-runtime/node_modules",
-        "to": "sps-owner-host-runtime/node_modules",
-        "filter": [
-          "**/*"
-        ]
+        "to": "sps-owner-host-runtime/node_modules"
       }
     ],
     "icon": "assets/sps-logo.png",

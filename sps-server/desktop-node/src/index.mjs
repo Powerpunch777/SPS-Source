@@ -8,8 +8,15 @@ export {
   resolveSpsNodeInvocation,
   resolveSpsNodeCodexHome,
   resolveSpsNodeWorkspace,
+  isSpsHostSharedWorkspacePath,
 } from "./command-runner.mjs";
-export { createNodeIdentity, createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
+export { createNodeIdentity, createNodeTransportIdentity, createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
+export {
+  decryptSpsHostProjectShareCredential,
+  decryptSpsWorkspaceSourceCredential,
+  openSpsHostProjectShare,
+  openSpsWorkspaceSourceRoute,
+} from "./host-project-share.mjs";
 export {
   cancelSpsDesktopAuth,
   getSpsDesktopAccount,
@@ -21,9 +28,14 @@ export {
   registerSpsNode,
   sendSpsNodeHeartbeat,
   claimSpsNodeCommand,
+  claimSpsPluginNodeRun,
+  claimSpsWorkspaceSourceRoute,
   appendSpsNodeCommandEvent,
+  appendSpsPluginNodeRunEvent,
   checkSpsNodeCommandLease,
+  checkSpsPluginNodeRunLease,
   completeSpsNodeCommand,
+  completeSpsPluginNodeRun,
   disconnectSpsNode,
   startSpsDesktopAuth,
 } from "./hub-client.mjs";

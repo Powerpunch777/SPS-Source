@@ -1,17 +1,21 @@
 # SPS Current Product Documents
 
 Current compatibility contract: [PLUGIN-COMPATIBILITY-AND-UPDATES.md](PLUGIN-COMPATIBILITY-AND-UPDATES.md).
+Workflow-neutral runtime contract: [CORE-PLUGIN-RUNTIME-CONTRACT.md](CORE-PLUGIN-RUNTIME-CONTRACT.md).
+Implementation completion audit: [CORE-COMPLETION-AUDIT.md](CORE-COMPLETION-AUDIT.md).
 
 이 폴더만 SPS의 현재 제품 결정을 설명한다. 루트의 과거 구현 로그, Paperclip 호환 기록,
 특정 게임 프로젝트 기록은 제품 계약이 아니다.
 
 | 문서 | 내용 |
 | --- | --- |
-| [PRODUCT-MODEL-ko.md](PRODUCT-MODEL-ko.md) | 제품 범위, 첫 Company, Core/Plugin 경계, 협업 확장 모델 |
+| [PRODUCT-MODEL-ko.md](PRODUCT-MODEL-ko.md) | 제품 범위, 첫 Workspace, Core/Plugin 경계, 협업 확장 모델 |
+| [WORKSPACE-PLUGIN-ACTIVATION.md](WORKSPACE-PLUGIN-ACTIVATION.md) | Host 설치 상태와 Workspace별 플러그인 활성화의 분리 |
 | [PLUGIN-DEVELOPER-PLATFORM-ko.md](PLUGIN-DEVELOPER-PLATFORM-ko.md) | 플러그인 제작자가 Core에서 받는 SDK와 개발 도구 |
 | [PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md](PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md) | 위험도 기반 업데이트, 데이터 마이그레이션, SDK 표준화 구현 계획 |
 | [ROADMAP.md](ROADMAP.md) | 제품 기반을 완성하기 위한 단계별 구현 계획·수용 기준·릴리스 게이트 |
 | [RELEASE-BASELINE-ko.md](RELEASE-BASELINE-ko.md) | 현재 Desktop/Core/Profile 지원 조합과 배포·롤백 상태 |
+| [CORE-COMPLETION-AUDIT.md](CORE-COMPLETION-AUDIT.md) | 현재 Core 구현의 자동 검증 결과와 베타 전 사람 확인 게이트 |
 
 ## 문서 원칙
 

@@ -1,39 +1,63 @@
-# SPS 릴리스 기준선
+# SPS Desktop 출시 기준
 
-최종 갱신: 2026-07-29
+최종 갱신: 2026-07-30
 
-이 문서는 SPS Desktop 개발 후보와 SPS Core, 공개 Plugin SDK의 정확한 조합을 기록한다.
-기계가 검사하는 기준값은 `sps-server/release/support-matrix.json`이다.
+이 문서는 SPS Desktop과 SPS Core의 현재 개발 후보를 설명한다. 정확한
+기계 판정 기준은 [`../../release/support-matrix.json`](../../release/support-matrix.json)에
+있다.
 
-## 현재 기준
+## 현재 후보
 
-| Desktop | 상태 | SPS Core | Extension Profile | Plugin API | 배포 경로 |
-| --- | --- | --- | --- | --- | --- |
-| 0.4.49 | 기존 공개 파일 | 기록 미완성 | 기록 미완성 | 기록 미완성 | `SPS-Desktop-Releases` |
-| 0.4.80 | 개발 후보, 미배포 | `d502f9f1b2aad2b95b63a0d1400494f66874fd26` | 1.0 | 1 | 비공개 Actions artifact만 허용 |
+| 항목 | 상태 |
+| --- | --- |
+| SPS Desktop | `0.4.82` 개발 후보, 아직 코드 서명 전 |
+| SPS Core | `d502f9f1b2aad2b95b63a0d1400494f66874fd26` 기준 |
+| Plugin API | `1` |
+| Extension Profile | `2.0` 기본, `1.0` 호환 경로 유지 |
+| 지원 운영체제 | Windows 10/11 x64 |
+| 팀 연결 | Tailscale 기반 Host/Member 연결 |
 
-`0.4.80`은 아직 정식 릴리스가 아니다. 소스와 Core 작업 트리가 깨끗하고 아래 검증을 모두 통과한 새 버전만 첫 stable 기준선으로 승격한다.
+## 기본 동작
 
-## 지원 조합
+1. SPS는 Desktop 앱 중심 제품이다. Owner Host의 일반 브라우저 요청은
+   차단되고 Desktop만 짧은 수명의 로컬 증명을 사용한다.
+2. 새 Workspace에는 Task, Room, 역할, 승인 규칙, 기억 전략, 기본 AI가
+   강제되지 않는다. 필요한 작업 방식은 플러그인이 제공한다.
+3. 기본 활성 플러그인은 `Plugin Discovery & Builder`다. 사용자가 초기
+   Assistant를 등록하면 그 Assistant가 플러그인 검색 또는 제작 초안을
+   도울 수 있지만, 플러그인을 자동 설치하거나 활성화하지는 않는다.
+4. `SPS Default Memory`와 Room Workplane은 번들에 포함되지만 새
+   Workspace에서 자동 활성화되지 않는다.
 
-- Windows 10/11 x64
-- Host와 Member는 같은 SPS Desktop 설치 파일을 사용
-- 원격 연결은 Tailscale을 사용
-- 공식 자동 업데이트는 `latest` 채널만 사용
-- 설치 파일과 업데이트 메타데이터는 `Powerpunch777/SPS-Desktop-Releases`에서만 제공
-- SPS Extension Profile 1.0, Plugin API 1
-- 번들 확장: SPS Default Memory 0.1.0, Plugin Discovery & Builder 0.1.0, SPS Team Workplane 0.3.91
+## 설치와 Agent Runtime
 
-## 릴리스 전 검증
+기본 설치 파일은 `SPS-Desktop-Setup-0.4.82.exe`이며 크기는
+225,047,800 bytes(약 214.6 MB)다. 이전 0.4.81 후보의 약 360 MB보다
+40.4% 작다.
 
-1. support matrix가 Desktop package, Core gitlink, 실제 Core checkout, 번들 확장 버전과 일치한다.
-2. Desktop, Desktop Node, Plugin Platform 테스트와 Host 런타임 smoke test가 통과한다.
-3. Windows 설치 파일 코드 서명이 유효하다.
-4. `latest.yml`, 설치 파일, blockmap, release manifest의 버전과 SHA-256이 일치한다.
-5. 기존 버전과 같은 번호의 release는 다시 게시하지 않고 patch 버전을 올린다.
+Codex ACP와 Claude ACP는 기본 설치에 포함하지 않는다. 릴리스에는 각각
+별도 ZIP과 SHA-256 카탈로그가 제공되며, Host가 필요한 팩을 내려받아
+압축을 푼 뒤 Desktop 설정에서 직접 추가한다. 자세한 절차는
+[AGENT-RUNTIME-PACKS.md](AGENT-RUNTIME-PACKS.md)를 따른다.
 
-개발 candidate workflow는 GitHub Actions artifact만 만들며 공식 업데이트 저장소에는 게시하지 않는다.
+## 현재 검증
 
-## 롤백 원칙
+- SPS Desktop 자동 테스트 184/184 통과
+- 패키지 내부 Owner Host 런타임 검증 통과
+- 팩이 없는 기본 Owner Host smoke 통과
+- `win-unpacked`와 실제 임시 설치본의 격리 로그인 화면 smoke 통과
+- 임시 Windows 설치 성공: 112초
+- 릴리스 매니페스트에 설치 파일, blockmap, Codex/Claude 팩의 해시 기록
 
-Owner Vault의 데이터베이스 백업은 보존한다. 데이터베이스 schema를 이전 버전으로 자동 복원하는 기능은 아직 정식 지원하지 않는다. 첫 stable 공개 전에는 호환 가능한 restore 경로 또는 forward-fix 전략을 실제 설치본으로 검증해야 한다.
+## 출시 전 필수 작업
+
+1. 실제 베타 노트북에서 0.4.82 설치 시간과 첫 실행을 다시 확인한다.
+2. 두 컴퓨터에서 Host 생성, 초대, Member 참여, Node 승인, 프로젝트
+   소스 연결, 재시작, Member 제거까지 수동으로 확인한다.
+3. 공식 코드 서명 인증서로 설치 파일을 서명하고 Authenticode 검증을
+   통과시킨다.
+4. 설치 파일, blockmap, `latest.yml`, 릴리스 매니페스트, 런타임 팩 ZIP,
+   팩 카탈로그를 같은 버전의 불변 릴리스로 공개한다.
+
+이 후보는 개발 및 통제된 베타 검증용이다. 위 조건을 충족하기 전에는
+공개 정식 배포본으로 취급하지 않는다.

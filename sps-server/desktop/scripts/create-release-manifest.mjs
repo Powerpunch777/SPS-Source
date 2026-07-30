@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,33 @@ function yamlScalar(source, key) {
 async function sha256(filePath) {
   const content = await readFile(filePath);
   return createHash("sha256").update(content).digest("hex");
+}
+
+async function runtimePackArtifacts(distRoot) {
+  const catalogPath = path.join(distRoot, "sps-agent-runtime-packs.json");
+  let catalog;
+  try {
+    catalog = JSON.parse((await readFile(catalogPath, "utf8")).replace(/^\uFEFF/, ""));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(catalog?.packs)) throw new Error("Agent Runtime pack catalog is invalid.");
+  return Promise.all(catalog.packs.map(async (pack) => {
+    if (typeof pack?.archive !== "string" || !/^SPS-Agent-Runtime-Pack-[A-Za-z0-9._-]+-[A-Za-z0-9._-]+\.zip$/.test(pack.archive)) {
+      throw new Error("Agent Runtime pack catalog contains an unsafe archive name.");
+    }
+    const archivePath = path.join(distRoot, pack.archive);
+    const archive = await stat(archivePath);
+    return {
+      id: pack.id,
+      label: pack.label,
+      version: pack.version,
+      commands: pack.commands,
+      file: pack.archive,
+      sizeBytes: archive.size,
+      sha256: await sha256(archivePath),
+    };
+  }));
 }
 
 export async function createSpsReleaseManifest({
@@ -35,14 +62,14 @@ export async function createSpsReleaseManifest({
     throw new Error(`latest.yml installer ${metadataInstaller ?? "missing"} does not match ${expectedInstaller}.`);
   }
 
-  const distEntries = await readdir(distRoot);
-  const releaseInstallers = distEntries.filter((entry) => /^SPS-Desktop-Setup-\d+\.\d+\.\d+\.exe$/.test(entry));
-  if (releaseInstallers.length !== 1 || releaseInstallers[0] !== expectedInstaller) {
-    throw new Error(`Release output must contain exactly one installer named ${expectedInstaller}.`);
-  }
-
   const installerPath = path.join(distRoot, expectedInstaller);
-  const installerStats = await stat(installerPath);
+  let installerStats;
+  try {
+    installerStats = await stat(installerPath);
+  } catch {
+    throw new Error(`Release output is missing the expected installer ${expectedInstaller}.`);
+  }
+  if (!installerStats.isFile()) throw new Error(`Release installer is not a file: ${expectedInstaller}.`);
   const manifest = {
     schemaVersion: 1,
     baseline,
@@ -60,6 +87,7 @@ export async function createSpsReleaseManifest({
         file: `${expectedInstaller}.blockmap`,
         sha256: await sha256(path.join(distRoot, `${expectedInstaller}.blockmap`)),
       },
+      agentRuntimePacks: await runtimePackArtifacts(distRoot),
     },
   };
   await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

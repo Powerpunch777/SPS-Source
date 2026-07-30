@@ -16,12 +16,10 @@ test("keeps the unified SPS Desktop release on its explicit stable update channe
     {
       from: ".owner-host-runtime",
       to: "sps-owner-host-runtime",
-      filter: ["**/*", "!node_modules/**"],
     },
     {
       from: ".owner-host-runtime/node_modules",
       to: "sps-owner-host-runtime/node_modules",
-      filter: ["**/*"],
     },
   ]);
 
@@ -37,6 +35,15 @@ test("keeps the unified SPS Desktop release on its explicit stable update channe
     perMachine: false,
     deleteAppDataOnUninstall: false,
   });
+  assert.match(manifest.scripts["package:win"], /verify:packaged-owner-host-runtime/);
+  assert.match(manifest.scripts["package:win"], /stage:agent-runtime-packs/);
+  assert.match(manifest.scripts["package:win"], /archive:agent-runtime-packs/);
+  assert.match(manifest.scripts["release:win"], /verify:packaged-owner-host-runtime/);
+  assert.match(manifest.scripts["release:win"], /stage:agent-runtime-packs/);
+  assert.match(manifest.scripts["release:win"], /archive:agent-runtime-packs/);
+  assert.match(manifest.scripts["package:candidate:win"], /verify:packaged-owner-host-runtime/);
+  assert.match(manifest.scripts["package:candidate:win"], /stage:agent-runtime-packs/);
+  assert.match(manifest.scripts["package:candidate:win"], /archive:agent-runtime-packs/);
 });
 
 test("release workflow requires the official Desktop release publishing token", async () => {
@@ -55,6 +62,8 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(workflow, /SPS_REQUIRE_CLEAN_RELEASE:\s*"1"/);
   assert.match(workflow, /SPS_RELEASE_STATUS:\s*"stable"/);
   assert.match(workflow, /sps-release-manifest\.json/);
+  assert.match(workflow, /SPS-Agent-Runtime-Pack-\*\.zip/);
+  assert.match(workflow, /sps-agent-runtime-packs\.json/);
   assert.match(workflow, /Get-AuthenticodeSignature/);
   assert.match(workflow, /gh release create \$tag --repo \$releaseRepo --target main/);
   assert.match(workflow, /gh release edit \$tag --repo \$releaseRepo --draft=false --prerelease=false --latest/);
