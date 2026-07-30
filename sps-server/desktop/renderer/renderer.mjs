@@ -81,7 +81,10 @@ function renderServerChoice(status) {
 
 function renderOwnerServer(status) {
   const desktopAccount = account(status);
-  const visible = desktopAccount.signedIn === true && isOwnerHost(status) && ownerHostReady(status);
+  // Server controls now live in the Owner Host Workspace at
+  // Settings > SPS Server. Keep this setup-window section hidden so a Host
+  // never has two competing server-management surfaces.
+  const visible = false;
   show($("#owner-server-screen"), visible);
   if (!visible) return;
 

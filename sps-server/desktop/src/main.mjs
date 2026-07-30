@@ -3342,6 +3342,61 @@ function sendJoinToRenderer(value) {
 }
 
 function registerIpc() {
+  function assertLocalOwnerWorkspace(event, action) {
+    if (
+      !isOwnerHostProfile()
+      || !workspaceWindow
+      || workspaceWindow.isDestroyed()
+      || event.sender.id !== workspaceWindow.webContents.id
+    ) {
+      throw new Error(`${action} is available only inside the local Owner Host Workspace.`);
+    }
+  }
+
+  async function installAgentRuntimePackFromWorkspace(parentWindow) {
+    assertRegistryOwner();
+    const selection = await dialog.showOpenDialog(parentWindow ?? mainWindow ?? undefined, {
+      title: "Install SPS Agent Runtime Pack",
+      properties: ["openDirectory"],
+    });
+    if (selection.canceled || selection.filePaths.length !== 1) return publicStatus();
+    await installSpsAgentRuntimePack({
+      sourceRoot: selection.filePaths[0],
+      root: ownerAgentRuntimePacksRoot(),
+    });
+    agentRuntimePacks = await listSpsAgentRuntimePacks({ root: ownerAgentRuntimePacksRoot() });
+    return publicStatus();
+  }
+
+  async function workspaceServerSettings(event) {
+    assertLocalOwnerWorkspace(event, "SPS Server settings");
+    await refreshOwnerRuntimeStatus();
+    await refreshOwnerHostCompanies();
+    const status = publicStatus();
+    return {
+      desktopAccount: {
+        signedIn: status.desktopAccount.signedIn,
+        name: status.desktopAccount.name,
+        email: status.desktopAccount.email,
+      },
+      ownerHost: {
+        state: status.ownerHost.state,
+        url: status.ownerHost.url,
+        lastError: status.ownerHost.lastError,
+      },
+      teamAccess: status.teamAccess
+        ? {
+          enabled: status.teamAccess.enabled,
+          url: status.teamAccess.url,
+          companyId: status.teamAccess.companyId,
+          configuredAt: status.teamAccess.configuredAt,
+        }
+        : null,
+      ownerHostCompanies: status.ownerHostCompanies,
+      agentRuntimePacks: status.agentRuntimePacks,
+    };
+  }
+
   ipcMain.handle("desktop:status", async () => {
     await refreshOwnerRuntimeStatus();
     return publicStatus();
@@ -3366,25 +3421,45 @@ function registerIpc() {
       : { signedIn: false, name: null, email: null, picture: null };
   });
   ipcMain.handle("desktop:workspace-sign-out", async (event) => {
-    if (
-      !isOwnerHostProfile()
-      || !workspaceWindow
-      || workspaceWindow.isDestroyed()
-      || event.sender.id !== workspaceWindow.webContents.id
-    ) {
-      throw new Error("SPS Desktop sign-out is available only in the local Owner Host Workspace.");
-    }
+    assertLocalOwnerWorkspace(event, "SPS Desktop sign-out");
     return await signOutDesktopAccount();
   });
-  ipcMain.handle("desktop:workspace-open-plugin-registries", async (event) => {
-    if (
-      !isOwnerHostProfile()
-      || !workspaceWindow
-      || workspaceWindow.isDestroyed()
-      || event.sender.id !== workspaceWindow.webContents.id
-    ) {
-      throw new Error("Plugin Registry management is available only in the local Owner Host Workspace.");
+  ipcMain.handle("desktop:workspace-server-settings", async (event) => await workspaceServerSettings(event));
+  ipcMain.handle("desktop:workspace-enable-private-team-access", async (event, input) => {
+    assertLocalOwnerWorkspace(event, "Private team access");
+    const companyId = String(input?.companyId ?? "").trim();
+    if (!companyId) throw new Error("Choose an SPS Workspace before enabling private team access.");
+    const companies = await refreshOwnerHostCompanies();
+    if (!companies.some((company) => company.id === companyId)) {
+      throw new Error("The selected Workspace is not managed by this local SPS Host.");
     }
+    await enablePrivateTeamAccess({ companyId });
+    return await workspaceServerSettings(event);
+  });
+  ipcMain.handle("desktop:workspace-disable-private-team-access", async (event) => {
+    assertLocalOwnerWorkspace(event, "Private team access");
+    await disablePrivateTeamAccess();
+    return await workspaceServerSettings(event);
+  });
+  ipcMain.handle("desktop:workspace-install-agent-runtime-pack", async (event) => {
+    assertLocalOwnerWorkspace(event, "Agent runtime pack installation");
+    await installAgentRuntimePackFromWorkspace(workspaceWindow);
+    return await workspaceServerSettings(event);
+  });
+  ipcMain.handle("desktop:workspace-create-member-invite", async (event) => {
+    assertLocalOwnerWorkspace(event, "Member invitations");
+    return await createMemberInvite();
+  });
+  ipcMain.handle("desktop:workspace-list-member-invites", async (event) => {
+    assertLocalOwnerWorkspace(event, "Member invitations");
+    return await listMemberInvites();
+  });
+  ipcMain.handle("desktop:workspace-revoke-member-invite", async (event, input) => {
+    assertLocalOwnerWorkspace(event, "Member invitations");
+    return await revokeMemberInvite(input);
+  });
+  ipcMain.handle("desktop:workspace-open-plugin-registries", async (event) => {
+    assertLocalOwnerWorkspace(event, "Plugin Registry management");
     await showRegistryWindow();
     return { opened: true };
   });
@@ -3463,18 +3538,7 @@ function registerIpc() {
     };
   });
   ipcMain.handle("desktop:install-agent-runtime-pack", async () => {
-    assertRegistryOwner();
-    const selection = await dialog.showOpenDialog(mainWindow, {
-      title: "Install SPS Agent Runtime Pack",
-      properties: ["openDirectory"],
-    });
-    if (selection.canceled || selection.filePaths.length !== 1) return publicStatus();
-    await installSpsAgentRuntimePack({
-      sourceRoot: selection.filePaths[0],
-      root: ownerAgentRuntimePacksRoot(),
-    });
-    agentRuntimePacks = await listSpsAgentRuntimePacks({ root: ownerAgentRuntimePacksRoot() });
-    return publicStatus();
+    return await installAgentRuntimePackFromWorkspace(mainWindow);
   });
   ipcMain.handle("desktop:enable-private-team-access", async (_event, input) => await enablePrivateTeamAccess(input));
   ipcMain.handle("desktop:disable-private-team-access", disablePrivateTeamAccess);

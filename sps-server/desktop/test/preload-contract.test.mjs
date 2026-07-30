@@ -41,6 +41,11 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(workspacePreload, /contextBridge\.exposeInMainWorld\("spsDesktopWorkspace"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-account"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-server-settings"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-enable-private-team-access"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-create-member-invite"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-list-member-invites"/);
+  assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-revoke-member-invite"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-open-plugin-registries"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-host-project-sources"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-choose-host-project-source"/);
@@ -48,6 +53,8 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-manage-host-project-source"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-account"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
+  assert.match(main, /ipcMain\.handle\("desktop:workspace-server-settings"/);
+  assert.match(main, /ipcMain\.handle\("desktop:workspace-enable-private-team-access"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-open-plugin-registries"[\s\S]*?Plugin Registry management[\s\S]*?showRegistryWindow\(\)/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-host-project-sources"[\s\S]*?event\.sender\.id !== workspaceWindow\.webContents\.id/);
   assert.match(main, /async function chooseHostProjectSourceForWorkspace\(projectId\)/);
