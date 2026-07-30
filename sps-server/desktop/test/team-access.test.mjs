@@ -6,9 +6,11 @@ import {
   disableSpsTailscaleServe,
   enableSpsTailscaleServe,
   hasSpsTailscaleServeHandler,
+  hasSpsTailscaleLoopbackRootHandler,
   isEmptySpsTailscaleServeStatus,
   normalizeSpsTailnetHostname,
   parseSpsTailscaleServeStatus,
+  reconcileSpsTailscaleServe,
   parseSpsTailscaleStatus,
   spsTailnetPublicUrl,
 } from "../src/team-access.mjs";
@@ -73,7 +75,46 @@ test("recognizes only the exact SPS-owned HTTPS root handler", () => {
     hostname: "main-computer.tail1725c2.ts.net",
     ownerHostUrl: "http://127.0.0.1:31311",
   }), false);
+  assert.equal(hasSpsTailscaleLoopbackRootHandler({
+    status: owned,
+    hostname: "main-computer.tail1725c2.ts.net",
+  }), true);
   assert.throws(() => parseSpsTailscaleServeStatus("not-json"));
+});
+
+test("repairs only a stale SPS loopback root handler", async () => {
+  const hostname = "main-computer.tail1725c2.ts.net";
+  const ownerHostUrl = "http://127.0.0.1:31310";
+  let serve = {
+    TCP: { "443": { HTTPS: true } },
+    Web: { [`${hostname}:443`]: { Handlers: { "/": { Proxy: "http://127.0.0.1:31311" } } } },
+  };
+  const commands = [];
+  const execFileImpl = (_command, args, _options, callback) => {
+    commands.push(args);
+    if (args.join(" ") === "serve status --json") {
+      callback(null, JSON.stringify(serve), "");
+      return;
+    }
+    if (args.join(" ") === "serve --https=443 --bg http://127.0.0.1:31310") {
+      serve = {
+        TCP: { "443": { HTTPS: true } },
+        Web: { [`${hostname}:443`]: { Handlers: { "/": { Proxy: ownerHostUrl } } } },
+      };
+      callback(null, "", "");
+      return;
+    }
+    callback(new Error(`Unexpected command: ${args.join(" ")}`), "", "");
+  };
+
+  const repaired = await reconcileSpsTailscaleServe({ hostname, ownerHostUrl, execFileImpl });
+  assert.equal(repaired.changed, true);
+  assert.equal(hasSpsTailscaleServeHandler({ status: repaired.serve, hostname, ownerHostUrl }), true);
+  assert.deepEqual(commands, [
+    ["serve", "status", "--json"],
+    ["serve", "--https=443", "--bg", "http://127.0.0.1:31310"],
+    ["serve", "status", "--json"],
+  ]);
 });
 
 test("creates and removes only a confirmed SPS Serve route", async () => {

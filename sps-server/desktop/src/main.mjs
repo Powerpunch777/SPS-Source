@@ -122,6 +122,7 @@ import {
   disableSpsTailscaleServe,
   enableSpsTailscaleServe,
   inspectSpsTailscale,
+  reconcileSpsTailscaleServe,
   spsTailnetPublicUrl,
 } from "./team-access.mjs";
 import {
@@ -1633,6 +1634,21 @@ async function startOwnerHost({ activate = false } = {}) {
   // app update or after bundled extensions were toggled. Bind it whenever the
   // Owner Host becomes healthy; absent plugins are a harmless no-op.
   await synchronizeReadyTeamWorkplane();
+  if (isTeamAccessEnabled() && state.teamAccess?.hostname && ownerHostStatus.url) {
+    try {
+      await reconcileSpsTailscaleServe({
+        hostname: state.teamAccess.hostname,
+        ownerHostUrl: requireSpsOwnerHostOrigin(ownerHostStatus.url),
+      });
+    } catch (error) {
+      // Keep the local Host usable when Tailscale itself is temporarily
+      // unavailable. Team actions perform the same narrow repair before use.
+      ownerHostStatus = {
+        ...ownerHostStatus,
+        lastError: error instanceof Error ? error.message : "SPS private team route needs attention.",
+      };
+    }
+  }
   if (activate && ownerHostIsReady()) {
     await activateOwnerHostProfile();
     await ensureInitialOwnerHostCompany();
@@ -1747,6 +1763,12 @@ async function ensurePrivateTeamOwnerMembership() {
   if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
     throw new Error("Sign in with this SPS Owner Host account before managing its team.");
   }
+
+  await requireReadyOwnerHost();
+  await reconcileSpsTailscaleServe({
+    hostname: state.teamAccess.hostname,
+    ownerHostUrl: requireSpsOwnerHostOrigin(ownerHostStatus.url),
+  });
 
   const companyId = state.teamAccess.companyId;
   const accessibleCompanies = await listCurrentOwnerIdentityCompanies();

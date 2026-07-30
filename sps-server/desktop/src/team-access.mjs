@@ -95,6 +95,26 @@ export function hasSpsTailscaleServeHandler({ status, hostname, ownerHostUrl }) 
   });
 }
 
+function isLoopbackHttpProxy(value) {
+  try {
+    const target = new URL(value);
+    return target.protocol === "http:" && ["127.0.0.1", "localhost", "::1", "[::1]"].includes(target.hostname);
+  } catch {
+    return false;
+  }
+}
+
+// A port can legitimately change when a local Owner Host recovers after an
+// interrupted update. Treat only the existing SPS hostname + loopback root
+// handler as ours; other Tailscale Serve configurations stay untouched.
+export function hasSpsTailscaleLoopbackRootHandler({ status, hostname }) {
+  const normalizedHostname = normalizeSpsTailnetHostname(hostname);
+  const web = parseSpsTailscaleServeStatus(status).Web;
+  if (!web || typeof web !== "object" || Array.isArray(web)) return false;
+  const proxy = web[`${normalizedHostname}:443`]?.Handlers?.["/"]?.Proxy;
+  return typeof proxy === "string" && isLoopbackHttpProxy(proxy);
+}
+
 function execute(command, args, { execFileImpl = execFile } = {}) {
   return new Promise((resolve, reject) => {
     execFileImpl(command, args, { windowsHide: true, timeout: 15_000, maxBuffer: 512 * 1024 }, (error, stdout, stderr) => {
@@ -138,6 +158,26 @@ export async function enableSpsTailscaleServe({ ownerHostUrl, ...options }) {
     tailnet,
     serve,
   };
+}
+
+export async function reconcileSpsTailscaleServe({ hostname, ownerHostUrl, ...options }) {
+  const before = await inspectSpsTailscaleServe(options);
+  if (hasSpsTailscaleServeHandler({ status: before, hostname, ownerHostUrl })) {
+    return { changed: false, serve: before };
+  }
+  if (!isEmptySpsTailscaleServeStatus(before) && !hasSpsTailscaleLoopbackRootHandler({ status: before, hostname })) {
+    throw new Error(
+      "SPS will not replace this Tailscale Serve setup because its root handler is no longer the SPS loopback route.",
+    );
+  }
+
+  const invocation = buildSpsTailscaleServeInvocation({ ownerHostUrl });
+  await execute(invocation.command, invocation.args, options);
+  const serve = await inspectSpsTailscaleServe(options);
+  if (!hasSpsTailscaleServeHandler({ status: serve, hostname, ownerHostUrl })) {
+    throw new Error("Tailscale did not confirm the repaired SPS HTTPS route.");
+  }
+  return { changed: true, serve };
 }
 
 export async function disableSpsTailscaleServe({ hostname, ownerHostUrl, ...options }) {
