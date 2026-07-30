@@ -4,6 +4,7 @@ let latestStatus = null;
 let ownerHostRecoveryTimer = null;
 let memberInviteCode = null;
 let pendingJoinHub = null;
+let workspaceOpenError = null;
 const OWNER_HOST_RECOVERY_INTERVAL_MS = 2_000;
 
 function account(status) {
@@ -144,15 +145,29 @@ function renderWorkspace(status) {
   const hasProfile = Boolean(status?.profile) && account(status).signedIn === true;
   const local = isOwnerHost(status);
   const ready = local ? ownerHostReady(status) : Boolean(status.signedIn);
-  const visible = hasProfile && !ready;
+  const showingLocalFolders = local && ready && status?.setupMode === true;
+  // The main window can be reopened from the tray while its Workspace is
+  // already running. Keep a recovery screen visible in that state.
+  const visible = hasProfile && !showingLocalFolders;
   show($("#workspace-screen"), visible);
   if (!visible) return;
   const complete = $("#complete-server-access");
   const check = $("#check-server-access");
+  const openWorkspace = $("#open-workspace-retry");
   $("#workspace-eyebrow").textContent = local ? "THIS COMPUTER'S SPS SERVER" : "SPS SERVER";
   if (local && !ready) {
     $("#workspace-title").textContent = "SPS Server를 시작하는 중";
     $("#workspace-detail").textContent = status?.ownerHost?.lastError ?? "Owner Vault와 기본 서비스가 준비되면 Workspace를 자동으로 엽니다.";
+    show(openWorkspace, false);
+    show(complete, false);
+    show(check, false);
+    return;
+  }
+  if (ready) {
+    $("#workspace-title").textContent = "SPS Workspace is ready";
+    $("#workspace-detail").textContent = workspaceOpenError
+      ?? "Your SPS Server is running. Open the Workspace to continue.";
+    show(openWorkspace, true);
     show(complete, false);
     show(check, false);
     return;
@@ -160,6 +175,7 @@ function renderWorkspace(status) {
   if (!local && !status.signedIn) {
     $("#workspace-title").textContent = "서버 접근을 확인하세요";
     $("#workspace-detail").textContent = "브라우저에서 초대를 수락한 같은 SPS 계정으로 이 SPS Server 접근을 확인합니다.";
+    show(openWorkspace, false);
     show(complete, true);
     show(check, Boolean(status.pendingAuth));
   }
@@ -244,7 +260,14 @@ async function refreshStatus() {
     && status?.profile
     && (isOwnerHost(status) ? ownerHostReady(status) : Boolean(status.signedIn));
   if (workspaceReady && status?.setupMode !== true) {
-    await window.spsDesktop.openWorkspace();
+    try {
+      await window.spsDesktop.openWorkspace();
+      workspaceOpenError = null;
+    } catch (error) {
+      workspaceOpenError = error instanceof Error ? error.message : "SPS Workspace could not open.";
+      render(status);
+      setNotice(workspaceOpenError, true);
+    }
   }
 }
 
@@ -307,6 +330,11 @@ $("#copy-member-invite").addEventListener("click", () => run(async () => {
 }));
 
 $("#owner-open-workspace").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.openWorkspace();
+}));
+
+$("#open-workspace-retry").addEventListener("click", () => run(async () => {
+  workspaceOpenError = null;
   await window.spsDesktop.openWorkspace();
 }));
 
@@ -382,7 +410,7 @@ $("#open-workspace-from-folders").addEventListener("click", () => run(async () =
 
 window.spsDesktop.onDesktopAccountChanged((status) => {
   render(status);
-  if (account(status).signedIn) {
+  if (account(status).signedIn && !status?.profile) {
     setNotice("SPS 계정 확인이 완료되었습니다. 이 컴퓨터에서 서버를 만들지, 기존 서버에 참여할지 선택하세요.");
   } else if (account(status).lastAttempt?.status === "failed") {
     setNotice(account(status).lastAttempt.error ?? "SPS sign-in did not finish.", true);
