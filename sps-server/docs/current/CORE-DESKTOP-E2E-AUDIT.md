@@ -3,7 +3,7 @@
 Status: engineering baseline passed; physical two-computer and full visible-control
 acceptance remain release gates.
 
-Desktop under test: SPS Desktop 0.4.82 (Windows)
+Desktop under test: SPS Desktop 0.4.83 (Windows)
 
 ## Objective
 
@@ -47,7 +47,7 @@ The concise two-computer execution steps are maintained in
 | ID | Severity | Area | Finding | Status |
 | --- | --- | --- | --- | --- |
 | CORE-001 | P0 | Desktop update | A 0.4.80 installation downloaded and offered stale 0.4.49 on launch. The stale package could downgrade the app at quit. | Fixed in source; unit and packaged-app retest passed. |
-| CORE-002 | P1 | Installer delivery | The earlier 0.4.80 candidate command emitted a small web-installer stub instead of a self-contained installer, so it did not replace the installed app. | Fixed for the current 0.4.82 local candidate: a self-contained common installer, unpacked-runtime verification, isolated Electron sign-in, and Owner Host smoke all pass. Official signed-release delivery remains a release gate. |
+| CORE-002 | P1 | Installer delivery | The earlier 0.4.80 candidate command emitted a small web-installer stub instead of a self-contained installer, so it did not replace the installed app. | Fixed for the current 0.4.83 local candidate: a self-contained common installer, unpacked-runtime verification, isolated Electron sign-in, and Owner Host smoke all pass. Official signed-release delivery remains a release gate. |
 | CORE-003 | P1 | Core boundary | Legacy compatibility routes and storage still contain Paperclip-era names. | Mitigated in the baseline surface: the Core route map exposes Workspace, Host settings, Assistants, Sources, Nodes, Team access, Plugins, and plugin pages only. Legacy routes remain an internal migration bridge and must not re-enter baseline navigation. |
 | CORE-004 | P2 | Desktop shell | The native title duplicated the company name on Server settings. | Fixed; title composition now deduplicates the company segment. |
 | CORE-005 | P2 | Identity UX | Company switcher exposes `Sign out` while account menu exposes `SPS Desktop sign out`. The intended scope is not clear in the UI. | Open; execute both paths with a QA identity and clarify or consolidate. |
@@ -117,7 +117,7 @@ tests will use the QA company.
 | CORE-TEAM-001 | Baseline Team access component: create/revoke human invitation and copy complete Desktop link | pass (automated contract) | The component test confirms that Core never displays workflow role choices and that the copied invite contains both `hub` and one-time code. Direct packaged-app check remains a release gate. |
 | CORE-NODE-002 | Generic plugin run through a Host Source route | pass (automated contract) | Desktop Node test opens a signed Host Source route for the selected run, streams output through the generic plugin queue, completes the lifecycle, and cleans up the route. |
 | CORE-BOOT-001 | Launch an isolated source Desktop and a fresh `win-unpacked` candidate | pass | Both actual Electron apps rendered the SPS sign-in screen. The candidate contained the neutral Workspace/plugin wording and no missing `desktop-node` export. |
-| CORE-BOOT-002 | Rebuild and launch the current `0.4.82` Windows candidate | pass | The `win-unpacked` executable opened the isolated SPS sign-in renderer and passed resource verification, static Workspace UI, empty Workspace/Initial Assistant gating, baseline Team access, bundled plugins, and Registry lifecycle smoke tests. The newer audited source was also rebuilt into an Owner Host runtime and passed its live smoke; it still needs a new immutable installer version. |
+| CORE-BOOT-002 | Rebuild and launch the current `0.4.83` Windows candidate | pass | The `win-unpacked` executable opened the isolated SPS sign-in renderer and passed resource verification, static Workspace UI, empty Workspace/Initial Assistant gating, baseline Team access, bundled plugins, and Registry lifecycle smoke tests. The same immutable candidate was rebuilt into an Owner Host runtime and passed its live smoke. |
 
 ## Current Automated Baseline
 
@@ -125,7 +125,7 @@ tests will use the QA company.
 | --- | --- |
 | SPS Desktop | 184/184 pass |
 | SPS Desktop Node | 33/33 pass |
-| Packaged `0.4.82` candidate | pass: empty Workspace, Discovery catalog availability, Initial Assistant gating, closed legacy built-in-agent routes, native Host proof coverage, resource verification, isolated Electron sign-in, and Owner Host smoke all pass. |
+| Packaged `0.4.83` candidate | pass: empty Workspace, Discovery catalog availability, Initial Assistant gating, closed legacy built-in-agent routes, native Host proof coverage, resource verification, isolated Electron sign-in, and Owner Host smoke all pass. |
 | Public Plugin SDK | 62/62 pass, including Extension Profile 2.0, signed releases, Registry safety, package extraction, CLI authoring, and static publication template |
 | Core Extension Profile schema | 20/20 pass |
 | Core Plugin SDK Host contract | 18/18 pass |

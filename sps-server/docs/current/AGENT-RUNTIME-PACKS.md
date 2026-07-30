@@ -16,12 +16,12 @@ paying the cost of unrelated providers.
 
 ## Current Packs
 
-| Pack | Command exposed to Core | 0.4.82 archive size | Use case |
+| Pack | Command exposed to Core | 0.4.83 archive size | Use case |
 | --- | --- | ---: | --- |
 | `codex-acp` | `codex-acp` | about 150 MB | Codex ACP execution lane |
 | `claude-acp` | `claude-agent-acp` | about 79 MB | Claude ACP execution lane |
 
-The base `0.4.82` installer is about 214.6 MB. The prior self-contained
+The base `0.4.83` installer is about 214.6 MB. The prior self-contained
 `0.4.81` installer was about 360 MB because Codex and Claude runtime assets
 were included for every installation.
 
@@ -53,7 +53,7 @@ Core uses the product-neutral environment variable
   "format": 1,
   "id": "codex-acp",
   "label": "Codex ACP",
-  "version": "0.4.82",
+  "version": "0.4.83",
   "commands": {
     "codex-acp": "bin/codex-acp.cmd"
   }

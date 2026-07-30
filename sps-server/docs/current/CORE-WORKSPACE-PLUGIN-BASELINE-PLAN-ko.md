@@ -109,7 +109,7 @@ Workspace Source는 Host가 고른 로컬 폴더를 나타내는 **이름 있는
 - Core Plugin SDK Host 계약: `18/18`
 - Plugin Discovery & Builder: 빌드, manifest 검증, 대화 및 초안 도구 테스트 통과
 - Core UI: TypeScript 검사와 Workspace switcher, 초기 Assistant, Runtime 상세, Host 전용 Nodes를 포함한 집중 회귀 `40/40` 통과
-- Windows 배포 후보: 기존 `0.4.82` 설치본 검증과 현재 소스에서 재조립한 Owner Host 런타임 스모크 통과
+- Windows 배포 후보: `0.4.83` 설치본, Owner Host 런타임 스모크, 격리된 Electron 로그인 스모크 통과
 - Core 기술 경계: Authorization, Company access, Team invite, Node, Workspace Source, Plugin database/route authorization, baseline built-in 차단, legacy instance-admin 무효화를 포함한 서버 회귀 `182/182` 통과
 
 자동 검증은 계약 회귀를 막는 기준이다. 일부 역사적 Core 테스트는 전역 환경값을 공유하므로 한 프로세스 병렬 전체 실행 대신 독립 경계 묶음으로 순차 실행한다. 이 자동 검증은 실제 Electron 앱에서 Host와 Member가 같은 흐름을 통과했다는 증거를 대신하지 않으며, 아래 직접 E2E가 끝나기 전에는 베타 Core 완료로 표시하지 않는다.
