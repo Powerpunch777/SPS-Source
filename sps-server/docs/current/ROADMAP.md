@@ -2,7 +2,7 @@
 
 최종 갱신: 2026-07-30
 
-현재 제품 정의는 [PRODUCT-MODEL-ko.md](PRODUCT-MODEL-ko.md)이며, 자세한 구현
+현재 제품 정의는 [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md)이며, 자세한 구현
 순서는 [CORE-WORKSPACE-PLUGIN-BASELINE-PLAN-ko.md](CORE-WORKSPACE-PLUGIN-BASELINE-PLAN-ko.md)를 따른다.
 이 로드맵은 특정 AI 회사 구조를 Core 기능으로 만들지 않는다는 원칙 아래 진행된다.
 

@@ -9,7 +9,7 @@
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",
-      "revision": "1232ca3aa4a5ee109214ed9b0af9e6189e53b882",
+      "revision": "2612278028d62e2b55b5bf44909cd8707bb1678d",
       "package": "@sonparkserver/plugin-sdk",
       "version": "0.2.0"
     },

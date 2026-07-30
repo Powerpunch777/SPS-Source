@@ -1,63 +1,56 @@
-# SPS Desktop 출시 기준
+# SPS Desktop 배포 기준
 
 최종 갱신: 2026-07-30
 
-이 문서는 SPS Desktop과 SPS Core의 현재 개발 후보를 설명한다. 정확한
-기계 판정 기준은 [`../../release/support-matrix.json`](../../release/support-matrix.json)에
-있다.
+현재 개발 후보의 기계 판독 기준은
+[`../../release/support-matrix.json`](../../release/support-matrix.json)이다.
+이 문서는 사람이 이해하기 위한 배포 정책 요약이다.
 
-## 현재 후보
+## 현재 채널
 
-| 항목 | 상태 |
+| 채널 | 버전 | 용도 | 자동 업데이트 | 서명 |
+| --- | --- | --- | --- | --- |
+| Official release | `0.4.86` | 제한된 실제 베타 사용 | 지원 | 서명된 릴리스만 허용 |
+| Preview | `0.4.90-preview.1` | 설치와 첫 실행 확인 | 미지원 | 개발 후보, 현재 미서명 |
+| Local candidate | `0.4.90` | 개발·패키지·회귀 검증 | 해당 없음 | 개발 환경 기준 |
+
+Official release는 `Powerpunch777/SPS-Desktop-Releases`에만 게시한다.
+이 저장소의 `latest.yml`, 설치 파일, blockmap은 반드시 같은 서명 빌드에서 함께
+생성되어야 한다.
+
+Preview는 `Powerpunch777/SPS-Desktop-Preview`에 별도로 게시한다. Preview에는
+자동 업데이트 메타데이터를 넣지 않으며, 실제 작업 또는 유일한 프로젝트 데이터로
+사용하지 않는다.
+
+## 현재 기술 기준
+
+| 항목 | 기준 |
 | --- | --- |
-| SPS Desktop | `0.4.84` 개발 후보, 아직 코드 서명 전 |
-| SPS Core | `c05b1a202a26216f4d7ca6237b323a89862089c9` 기준 |
+| SPS Core | `release/support-matrix.json`에 고정된 revision |
 | Plugin API | `1` |
-| Extension Profile | `2.0` 기본, `1.0` 호환 경로 유지 |
-| 지원 운영체제 | Windows 10/11 x64 |
-| 팀 연결 | Tailscale 기반 Host/Member 연결 |
+| Extension Profile | 기본 `2.0`, 기존 패키지용 `1.0` 호환 경로 유지 |
+| 운영체제 | Windows 10/11 x64 |
+| 원격 연결 | Tailscale |
 
-## 기본 동작
+## 설치와 삭제
 
-1. SPS는 Desktop 앱 중심 제품이다. Owner Host의 일반 브라우저 요청은
-   차단되고 Desktop만 짧은 수명의 로컬 증명을 사용한다.
-2. 새 Workspace에는 Task, Room, 역할, 승인 규칙, 기억 전략, 기본 AI가
-   강제되지 않는다. 필요한 작업 방식은 플러그인이 제공한다.
-3. 기본 활성 플러그인은 `Plugin Discovery & Builder`다. 사용자가 초기
-   Assistant를 등록하면 그 Assistant가 플러그인 검색 또는 제작 초안을
-   도울 수 있지만, 플러그인을 자동 설치하거나 활성화하지는 않는다.
-4. `SPS Default Memory`와 Room Workplane은 번들에 포함되지만 새
-   Workspace에서 자동 활성화되지 않는다.
+- 설치 전에는 설치 파일의 게시 위치와 SHA-256을 확인한다.
+- 일반적인 앱 제거는 Desktop 실행 파일을 지우지만 Owner Vault를 자동 삭제하지
+  않는다. 그래도 설치 전에는 Host가 Vault 백업을 만들어야 한다.
+- 앱을 다시 설치하면 남아 있는 Vault를 사용해 기존 Host 정보를 다시 읽을 수
+  있다. 로그인 세션, CLI 로그인, Tailscale 연결 상태는 별도 확인이 필요하다.
+- 완전한 데이터 삭제와 Member 제거는 별도 제품 기능과 기록 보존 정책에 따라
+  수행한다. 앱 제거만으로 프로젝트 폴더나 Host 외부 Source는 지워지지 않는다.
 
-## 설치와 Agent Runtime
+## 정식 배포 전 필수 게이트
 
-기본 설치 파일은 `SPS-Desktop-Setup-0.4.84.exe`이며 크기는
-225,047,800 bytes(약 214.6 MB)다. 이전 0.4.81 후보의 약 360 MB보다
-40.4% 작다.
+1. 두 대의 실제 Windows 컴퓨터에서 Host/Member 가입, Node 승인, Source 접근,
+   재시작과 철회를 확인한다.
+2. 업데이트 전후의 플러그인 호환성과 롤백을 확인한다.
+3. 코드 서명 인증서로 설치 파일을 서명하고 Authenticode 검증을 통과한다.
+4. 설치 파일, blockmap, `latest.yml`, 런타임 팩, 릴리스 노트를 같은 버전으로
+   게시한다.
+5. 실제 사람이 Desktop의 로그인, 로딩, 오류, 취소, 복구 화면을 점검한다.
 
-Codex ACP와 Claude ACP는 기본 설치에 포함하지 않는다. 릴리스에는 각각
-별도 ZIP과 SHA-256 카탈로그가 제공되며, Host가 필요한 팩을 내려받아
-압축을 푼 뒤 Desktop 설정에서 직접 추가한다. 자세한 절차는
-[AGENT-RUNTIME-PACKS.md](AGENT-RUNTIME-PACKS.md)를 따른다.
-
-## 현재 검증
-
-- SPS Desktop 자동 테스트 184/184 통과
-- 패키지 내부 Owner Host 런타임 검증 통과
-- 팩이 없는 기본 Owner Host smoke 통과
-- `win-unpacked`와 실제 임시 설치본의 격리 로그인 화면 smoke 통과
-- 임시 Windows 설치 성공: 112초
-- 릴리스 매니페스트에 설치 파일, blockmap, Codex/Claude 팩의 해시 기록
-
-## 출시 전 필수 작업
-
-1. 실제 베타 노트북에서 0.4.84 설치 시간과 첫 실행을 다시 확인한다.
-2. 두 컴퓨터에서 Host 생성, 초대, Member 참여, Node 승인, 프로젝트
-   소스 연결, 재시작, Member 제거까지 수동으로 확인한다.
-3. 공식 코드 서명 인증서로 설치 파일을 서명하고 Authenticode 검증을
-   통과시킨다.
-4. 설치 파일, blockmap, `latest.yml`, 릴리스 매니페스트, 런타임 팩 ZIP,
-   팩 카탈로그를 같은 버전의 불변 릴리스로 공개한다.
-
-이 후보는 개발 및 통제된 베타 검증용이다. 위 조건을 충족하기 전에는
-공개 정식 배포본으로 취급하지 않는다.
+자세한 Preview 운영 규칙은
+[RELEASE-AND-PREVIEW-POLICY-ko.md](RELEASE-AND-PREVIEW-POLICY-ko.md)를 따른다.

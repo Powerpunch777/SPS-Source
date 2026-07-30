@@ -7,6 +7,8 @@ SPS is moving from a Paperclip-compatible implementation to a product model wher
 ## Current Contract
 
 Read [docs/current/README.md](docs/current/README.md) before changing product behavior.
+The current product decision record is
+[docs/current/PRODUCT-ARCHITECTURE-ko.md](docs/current/PRODUCT-ARCHITECTURE-ko.md).
 
 Core owns:
 

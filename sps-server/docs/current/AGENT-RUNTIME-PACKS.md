@@ -1,5 +1,11 @@
 # SPS Agent Runtime Packs
 
+> Historical measurement note: the archive sizes and example release metadata
+> below were recorded for the `0.4.84` packaging audit. The current candidate
+> version and supported Profile combination are defined by
+> `../../release/support-matrix.json`; regenerate these measurements when a new
+> runtime-pack release is published.
+
 ## Purpose
 
 SPS Desktop ships one common Windows application. Its Owner Host contains the
