@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "candidate": {
     "status": "development-candidate",
-    "desktopVersion": "0.4.84",
+    "desktopVersion": "0.4.85",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
-      "revision": "c05b1a202a26216f4d7ca6237b323a89862089c9"
+      "revision": "95665eb49996cd0e9c13e2da817326dfffe0f2a3"
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",
