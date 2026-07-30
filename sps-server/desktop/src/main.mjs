@@ -1537,10 +1537,11 @@ async function ensureOwnerHostManager() {
             : {}),
           SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
           ...(pluginDiscoveryEnabled ? { SPS_PLUGIN_DISCOVERY_CATALOG_PATH: discoveryCatalog.catalogPath } : {}),
-          // Keep the neutral Core free of a preselected Workplane. If this
-          // Owner already chose the first-party Room plugin, still refresh it
-          // from the current Desktop bundle on every app update.
-          SPS_BUNDLED_PLUGIN_REFRESH_PATHS: roomPluginPath,
+          // Keep the neutral Core free of a preselected workflow or memory
+          // strategy. Refresh any already-installed first-party optional
+          // package so an earlier Desktop path cannot leave a stale error in
+          // the Plugin Manager after an app update.
+          SPS_BUNDLED_PLUGIN_REFRESH_PATHS: [memoryPluginPath, roomPluginPath].join(path.delimiter),
           PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
           // The Room Worker can run without the optional Memory provider, but
           // it still needs the Owner Host address for its own tool calls.
