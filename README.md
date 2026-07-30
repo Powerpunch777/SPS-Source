@@ -1,4 +1,8 @@
-# SPS
+# SPS Source
+
+This is the private product source repository for SPS. The public product
+overview, downloads, and feedback routes live at
+[Powerpunch777/SPS](https://github.com/Powerpunch777/SPS).
 
 SPS is a Desktop-first platform for building AI work environments from plugins.
 

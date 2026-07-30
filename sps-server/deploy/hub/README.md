@@ -27,8 +27,8 @@ Prepare the following before deployment:
 4. A clone of the SPS repository with its pinned Core source:
 
 ```powershell
-git clone --recurse-submodules https://github.com/Powerpunch777/SPS.git
-Set-Location SPS
+git clone --recurse-submodules https://github.com/Powerpunch777/SPS-Source.git
+Set-Location SPS-Source
 ```
 
 If the repository was already cloned, fetch the pinned Core source with:
