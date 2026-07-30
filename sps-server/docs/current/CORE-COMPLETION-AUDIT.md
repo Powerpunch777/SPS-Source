@@ -17,8 +17,8 @@ computers and official Windows code signing remain separate release gates.
 The machine-readable candidate is
 [`../../release/support-matrix.json`](../../release/support-matrix.json):
 
-- SPS Desktop `0.4.83`;
-- SPS Core `9bb068c54eb8672459b9e008f6a82bf91a1ed2b5`;
+- SPS Desktop `0.4.84`;
+- SPS Core `c05b1a202a26216f4d7ca6237b323a89862089c9`;
 - Plugin API `1`;
 - Extension Profile `2.0` as the current contract, with `1.0` retained as a
   temporary compatibility bridge; and
@@ -150,16 +150,16 @@ Initial Assistant exists.
 | --- | --- | --- |
 | Two-computer human acceptance | Browser/OAuth, Tailscale routing, Windows permissions, and physical restart behavior must be judged in the installed app. | Host creates invite; distinct Member signs in, joins, gets Node approval, runs a grant-backed route, survives both restarts, and is revoked. |
 | Full visible-control pass | Automated coverage cannot judge clarity of disabled, error, loading, cancellation, and recovery UI. | The complete checklist in [CORE-DESKTOP-E2E-AUDIT.md](CORE-DESKTOP-E2E-AUDIT.md) is exercised in a disposable Workspace. |
-| First-install performance | The `0.4.83` common installer is 225,047,842 bytes (about 214.6 MB), 40.4% smaller than the prior 360 MB candidate. Codex and Claude remain explicit 150 MB and 79 MB ZIP packs. The predecessor `0.4.82` completed a clean temporary Windows install in 112 seconds and passed isolated sign-in smoke. | Repeat the same first-install measurement on the physical beta laptop with `0.4.83` before public release; hardware and disk conditions still matter. |
-| Signed release | Current `0.4.83` installer is intentionally unsigned. | Build with the official code-signing certificate, validate Authenticode, publish matching installer, blockmap, runtime-pack archives, catalog, and release metadata. |
-| Fresh installer artifact | The local `0.4.83` installer is frozen from the audited source revision, with verified block map, release manifest with pack hashes, unpacked-runtime verifier, isolated Electron sign-in smoke, and Owner Host smoke. The clean temporary installation evidence remains from the equivalent `0.4.82` pack layout. | Repeat the clean physical-laptop installation with `0.4.83`, sign, and publish matching immutable metadata. |
+| First-install performance | The `0.4.84` common installer is 225,048,348 bytes (about 214.6 MB), 40.4% smaller than the prior 360 MB candidate. Codex and Claude remain explicit 150 MB and 79 MB ZIP packs. The predecessor `0.4.82` completed a clean temporary Windows install in 112 seconds and passed isolated sign-in smoke. | Repeat the same first-install measurement on the physical beta laptop with `0.4.84` before public release; hardware and disk conditions still matter. |
+| Signed release | Current `0.4.84` installer is intentionally unsigned. | Build with the official code-signing certificate, validate Authenticode, publish matching installer, blockmap, runtime-pack archives, catalog, and release metadata. |
+| Fresh installer artifact | The local `0.4.84` installer is frozen from the audited source revision, with verified block map, release manifest with pack hashes, unpacked-runtime verifier, isolated Electron sign-in smoke, and Owner Host smoke. The clean temporary installation evidence remains from the equivalent `0.4.82` pack layout. | Repeat the clean physical-laptop installation with `0.4.84`, sign, and publish matching immutable metadata. |
 | SDK checkout hygiene | Two local checkouts of `Powerpunch777/sps-plugin-sdk` currently exist. The Core submodule points to `external/sps-plugin-sdk`, which is the candidate source of truth. | Merge or discard the other dirty checkout deliberately before the next SDK release; do not delete it while its uncommitted changes remain unreviewed. |
 
 ## Conclusion
 
 The intended Core boundary is implemented and has repeatable automated and
 reconstructed-runtime evidence. The last immutable local installer candidate
-is `0.4.83`, with a 214.6 MB common installer and two separately hashed Agent
+is `0.4.84`, with a 214.6 MB common installer and two separately hashed Agent
 Runtime pack archives. The audited source is newer than that installer and
 must receive a new committed version before distribution. The runtime-pack
 implementation is documented in [AGENT-RUNTIME-PACKS.md](AGENT-RUNTIME-PACKS.md).

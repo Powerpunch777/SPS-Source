@@ -1,7 +1,7 @@
 # SPS Desktop 베타 수동 검증 런북
 
 최종 갱신: 2026-07-30
-대상: SPS Desktop `0.4.83` (Windows, 개발 후보, 코드 서명 전)
+대상: SPS Desktop `0.4.84` (Windows, 개발 후보, 코드 서명 전)
 
 이 검증은 자동 테스트를 대체하지 않는다. 실제 앱에서 Google 로그인,
 Tailscale 연결, Host/Member 경계, Windows 재시작과 복구를 확인하기 위한
@@ -12,7 +12,7 @@ Tailscale 연결, Host/Member 경계, Windows 재시작과 복구를 확인하�
 - Windows 10/11 Host 1대와 Member 1대
 - 서로 다른 SPS Identity/Google 계정
 - 두 컴퓨터의 Tailscale 로그인과 MagicDNS 확인
-- 같은 `SPS-Desktop-Setup-0.4.83.exe` 설치본
+- 같은 `SPS-Desktop-Setup-0.4.84.exe` 설치본
 - Host가 선택할 수 있는 빈 테스트 폴더 1개
 - 필요하다면 `SPS-Agent-Runtime-Pack-*.zip`과 일치하는 팩 카탈로그
 
