@@ -51,6 +51,10 @@ test("limits the Host proof to Core technical-team routes on the active Owner Ho
   }), true);
   assert.equal(isSpsDesktopTechnicalHostRequest({
     ...input,
+    url: "http://127.0.0.1:31310/api/cli-auth/me",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
     url: "http://127.0.0.1:31310/api/companies/company-1/issues",
   }), false);
   assert.equal(isSpsDesktopTechnicalHostRequest({

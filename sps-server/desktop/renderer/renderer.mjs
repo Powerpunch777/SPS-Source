@@ -380,7 +380,7 @@ $("#open-workspace-from-folders").addEventListener("click", () => run(async () =
 window.spsDesktop.onDesktopAccountChanged((status) => {
   render(status);
   if (account(status).signedIn) {
-    setNotice("SPS account is confirmed. Choose whether this computer creates or joins an SPS Server.");
+    setNotice("SPS 계정 확인이 완료되었습니다. 이 컴퓨터에서 서버를 만들지, 기존 서버에 참여할지 선택하세요.");
   } else if (account(status).lastAttempt?.status === "failed") {
     setNotice(account(status).lastAttempt.error ?? "SPS sign-in did not finish.", true);
   }

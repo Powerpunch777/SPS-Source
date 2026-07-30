@@ -45,6 +45,10 @@ export function isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin }) {
       /^\/api\/instance\/(?:settings|environments|database-backups)(?:\/|$)/,
       /^\/api\/environments(?:\/|$)/,
       /^\/api\/environment-custom-image-setup-sessions(?:\/|$)/,
+      // The Sidebar uses this response to decide whether the current Desktop
+      // is the physical Host. It is read-only but must carry the second proof
+      // or a signed-in Host is indistinguishable from a Member.
+      /^\/api\/cli-auth\/me$/,
       /^\/api\/admin(?:\/|$)/,
       /^\/api\/plugins(?:\/|$)/,
       /^\/api\/sps-nodes\/[^/]+(?:\/|$)/,
