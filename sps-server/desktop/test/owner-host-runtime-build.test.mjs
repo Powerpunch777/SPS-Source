@@ -117,9 +117,11 @@ test("packages the managed Windows PostgreSQL Unicode-path compatibility patch",
   );
 });
 
-test("uses normal installer compression from the Desktop build contract", async () => {
+test("uses a fast-extract ZIP payload for the Desktop installer", async () => {
   const packageManifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
   assert.equal(packageManifest.build.compression, "normal");
+  assert.equal(packageManifest.build.nsis.useZip, true);
+  assert.equal(packageManifest.build.nsis.differentialPackage, false);
 });
 
 test("smoke test proves the packaged Owner Host remains Desktop-only while serving its Workspace UI", async () => {

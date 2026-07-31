@@ -20,8 +20,10 @@ Tailscale 연결, Host/Member 경계, Windows 재시작과 복구를 확인하�
 
 1. 각 컴퓨터에서 설치 파일을 실행한다.
 2. 설치 시간과 설치 후 앱이 열리는 시간을 기록한다.
-3. SPS Desktop을 열어 Google 로그인을 완료한다.
-4. Host 컴퓨터에서는 **Create server**, Member 컴퓨터에서는 아직 서버에
+3. 설치는 해당 컴퓨터의 로그인된 사용자가 직접 실행한다. SSH, 서비스 세션,
+   예약 작업으로 실행한 GUI 설치 결과는 사용자 설치 증거로 인정하지 않는다.
+4. SPS Desktop을 열어 Google 로그인을 완료한다.
+5. Host 컴퓨터에서는 **Create server**, Member 컴퓨터에서는 아직 서버에
    참여하지 않은 상태를 확인한다.
 
 통과 기준:

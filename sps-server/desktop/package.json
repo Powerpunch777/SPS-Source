@@ -75,7 +75,9 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "useZip": true,
+      "differentialPackage": false
     }
   }
 }

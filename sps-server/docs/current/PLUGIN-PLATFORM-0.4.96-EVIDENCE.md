@@ -11,8 +11,8 @@ acceptance remains open.
 | --- | --- |
 | Desktop | `0.4.96` |
 | Installer | `SPS-Desktop-Setup-0.4.96.exe` |
-| Installer size | `252542926` bytes |
-| Installer SHA-256 | `65526cdd65deed58833829513c69efa6bd18b3862f568334007a3dbecb7519e6` |
+| Installer size | `337426309` bytes |
+| Installer SHA-256 | `f1a0944a82f29fa79cfc41339b4140865640bc7ad8e25e68b28822b878ec2f2f` |
 | Core revision | `6e1f60c54c24058ceb168a446d42532305ccd099` |
 | Public Plugin SDK | `0.11.0` |
 | SDK revision | `f24d9b236a8bdaee9441f37694b7e4298aa7e6c2` |
@@ -48,6 +48,9 @@ candidate.
 - New plugin UI uses `@sonparkserver/plugin-sdk/ui/bridge`; Core rewrites that
   public bridge at runtime and retains the old UI specifier only as a legacy
   compatibility alias.
+- The Windows installer uses a Deflate ZIP application payload for predictable
+  extraction time and keeps differential release metadata in SPS's explicit
+  `write-update-metadata` step.
 - The installer is an unsigned development candidate. Public release still
   requires the official signing workflow.
 
@@ -70,8 +73,13 @@ The same final `win-unpacked` candidate passed:
 ## Remaining phase 8 gate
 
 The automated packaged-app evidence uses isolated instances on one Windows PC.
-Before private beta acceptance is closed, install this exact candidate on a
-separate Host and Member computer and execute
+The exact installer completed a real interactive-user installation on the Host
+development PC in about `97` seconds. A remote SSH or scheduled-task launch is
+not accepted as physical GUI evidence because it can run outside the user's
+interactive Windows desktop.
+
+Before private beta acceptance is closed, complete a direct interactive-user
+installation on the separate Member computer and execute
 `BETA-ACCEPTANCE-RUNBOOK-ko.md`. Record invitation, Node approval, allowed
 Runtime, Host Source access, removal and grant revocation, restart recovery,
 and update behavior. This physical gate is intentionally not inferred from
