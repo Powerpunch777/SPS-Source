@@ -394,7 +394,7 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
 | 작업 묶음 | Core 책임 | Plugin 책임 | 완료 증거 |
 | --- | --- | --- | --- |
 | 7A. 일반 Marketplace | Catalog snapshot, 검색·상세 API, `Settings > Plugins` UI | 없음 | AI 어댑터 없이 검색·상세 조회 E2E |
-| 7B. Marketplace Assistant | 대화 UI·세션·adapter 선택·read-only tool broker | 없음 | 서로 다른 adapter 회귀, lifecycle 호출 0회 |
+| 7B. Marketplace Assistant | 대화 UI·세션·adapter 선택·read-only tool broker | 없음 | 실제 Desktop 두 turn, Provider session 재사용, lifecycle 호출 0회 |
 | 7C. Plugin Builder | 공개 SDK, 외부 프로젝트·Preview·Diagnostics 기반 | Builder가 제작 workflow와 도구 제공 | 외부 폴더에서 생성·검사·Preview·package |
 | 7D. Host 수동 생명주기 | 상세 검토, install·enable·update·rollback·remove | Builder는 package까지만 생성 | Host가 직접 누른 경우에만 상태 변경 |
 | 7E. 패키지 통합 | Desktop 환경변수·Catalog 갱신·보안·복구 | 번들 Builder 패키지 | 설치본 smoke와 실제 Electron 조작 |
@@ -479,16 +479,19 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
   검색·상세 API, 회사 접근 검증, 공개 필드 정규화를 구현했다.
 - 7A UI: `Settings > Plugins`의 Installed/Marketplace 분리, AI 없는 검색·상세
   화면을 구현하고 집중 회귀를 통과했다.
-- 7B 구현: 공개 SDK `0.10.0`에 `searchCatalog`, `getCatalogPlugin`만 남기고
+- 7B 구현: 공개 SDK `0.10.1`에 `searchCatalog`, `getCatalogPlugin`만 남기고
   lifecycle proposal 계약을 제거했다. 사용자별 transcript와 Provider session,
   `agent:invoke`, Core Tool Bridge, ACP MCP 주입, Agent 선택·대화 UI를 구현했다.
-  집중 회귀와 production UI build는 통과했으며 실제 Desktop Agent 대화와
+  실제 SPS Desktop `0.4.96`에서 동일 대화의 두 turn을 실행해 Provider session ID
+  재사용, read-only 검색·상세 응답, 플러그인 상태 무변경, lifecycle 호출 0회를
+  확인했다. Adapter codec이 SPS 지문 메타데이터를 제거해 session을 교체하던 결함도
+  persisted envelope 기준 freshness 판정으로 수정하고 119개 집중 회귀를 통과했다.
   외부 Node의 MCP runtime pack 검증은 남아 있다.
 - 7C 기반: 기존 Discovery 패키지에서 project 생성, authoring step, build 검사,
   Preview 도구를 분리할 준비를 완료했다. 최종 Builder 패키지 분리는 남아 있다.
 - 7D: 기존 Core Host 수동 Registry 생명주기를 재사용하며 Assistant와 Builder에는
   생명주기 도구를 노출하지 않는 회귀를 추가해야 한다.
-- 7E: SDK `0.10.0`, Core·Builder 정확한 revision, Catalog 환경변수를 Desktop
+- 7E: SDK `0.10.1`, Core·Builder 정확한 revision, Catalog 환경변수를 Desktop
   release baseline에 고정하고 설치본 Electron E2E를 통과해야 한다.
 
 ### 7단계 구현 체크리스트
@@ -502,7 +505,7 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
 - [x] Plugin Dispatcher와 분리된 Core Tool Bridge
 - [x] Adapter 외부 도구 capability와 두 read-only tool 주입 경로
 - [x] Assistant 응답 polling·오류 표시와 transcript/Provider session 분리 보존
-- [ ] 실제 Desktop에서 Agent 두 turn, Provider session 재사용, lifecycle 호출 0회 검증
+- [x] 실제 Desktop에서 Agent 두 turn, Provider session 재사용, lifecycle 호출 0회 검증
 - [ ] 외부 SPS Node 실행용 Marketplace MCP runtime pack 패키징 검증
 - [ ] Discovery 검색 UI 제거와 독립 Plugin Builder 패키지 전환
 - [ ] Builder 외부 프로젝트·증거 원장·Preview·package E2E
