@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Local SPS plugin wrapper for the Workplane Memory Sidecar.",
-  "paperclipPlugin": {
+  "spsPlugin": {
     "manifest": "./dist/manifest.js"
   },
   "scripts": {

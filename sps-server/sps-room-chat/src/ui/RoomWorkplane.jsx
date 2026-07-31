@@ -1436,3 +1436,39 @@ export function ProjectWorkplaneLink({ context }) {
   const navigation = useHostNavigation();
   return <a className="rw-room" {...navigation.linkProps(`/agent-rooms?project=${encodeURIComponent(context.entityId)}`)}>Team Rooms</a>;
 }
+
+export function TeamWorkplaneDashboardWidget({ data, loading, error }) {
+  const navigation = useHostNavigation();
+  const style = { display: "grid", gap: 10, minHeight: 112, color: "var(--foreground, #172033)", font: "14px/1.45 system-ui, sans-serif" };
+  if (loading) return <div style={style}>Loading Team Workplane...</div>;
+  if (error) return <div style={style}>Team Workplane status is unavailable: {error.message}</div>;
+  const latest = data?.latestReport;
+  return <div style={style}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", color: "var(--muted-foreground, #667085)", fontSize: 13 }}>
+      <span>{data?.projectCount ?? 0} projects</span>
+      <span>{data?.roomCount ?? 0} Rooms</span>
+      <span>{data?.activeTaskCount ?? 0} active work items</span>
+      <span>{data?.reportCount ?? 0} Room reports waiting</span>
+    </div>
+    <div>
+      <strong style={{ display: "block", fontSize: 15 }}>{latest ? `${latest.identifier}: ${latest.title}` : "No Room reports waiting"}</strong>
+      <span style={{ color: "var(--muted-foreground, #667085)", fontSize: 13 }}>{latest ? `${latest.projectName ? `${latest.projectName} / ` : ""}${latest.status}` : "Open a Team Room to start a conversation or inspect project work."}</span>
+    </div>
+    <button
+      type="button"
+      onClick={() => navigation.navigate("/agent-rooms")}
+      style={{
+        justifySelf: "start",
+        border: "1px solid #1f5eb8",
+        borderRadius: 7,
+        background: "#2563bf",
+        color: "#fff",
+        padding: "8px 11px",
+        font: "650 13px/1.2 system-ui, sans-serif",
+        cursor: "pointer"
+      }}
+    >
+      Open Team Rooms
+    </button>
+  </div>;
+}

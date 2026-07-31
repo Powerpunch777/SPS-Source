@@ -6,6 +6,7 @@ const preloadPath = new URL("../src/preload.cjs", import.meta.url);
 const mainPath = new URL("../src/main.mjs", import.meta.url);
 const workspacePreloadPath = new URL("../src/workspace-preload.cjs", import.meta.url);
 const registryPreloadPath = new URL("../src/registry-preload.cjs", import.meta.url);
+const previewPreloadPath = new URL("../src/plugin-preview-preload.cjs", import.meta.url);
 const registryHtmlPath = new URL("../renderer/registry.html", import.meta.url);
 const officialExtensionsPreloadPath = new URL("../src/official-extensions-preload.cjs", import.meta.url);
 const officialExtensionsHtmlPath = new URL("../renderer/official-extensions.html", import.meta.url);
@@ -160,9 +161,32 @@ test("keeps the Registry window on a narrow Owner-only preload bridge", async ()
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-add-source"/);
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-stage-release"/);
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-list-stages"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-list-projects"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-run-gates"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-apply-candidate"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-reload-ui"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-restart-worker"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-preview-state"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-update-preview-environment"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-list-preview-diagnostics"/);
+  assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-clear-preview-diagnostics"/);
+  assert.match(main, /ipcMain\.handle\("desktop:developer-reload-ui"/);
+  assert.match(main, /ipcMain\.handle\("desktop:developer-restart-worker"/);
+  assert.match(main, /ipcMain\.handle\("desktop:developer-preview-state"/);
+  assert.match(main, /ipcMain\.handle\("desktop:developer-update-preview-environment"/);
+  assert.match(main, /\/plugins\/\$\{encodeURIComponent\(pluginId\)\}\/worker\/restart/);
+  assert.match(main, /assertRegistryWindowEvent\(event\)/);
   assert.doesNotMatch(registryPreload, /nodeIntegration|require\("node:/);
   assert.match(registryHtml, /default-src 'self'; style-src 'self'; script-src 'self'/);
   assert.match(registryHtml, /Review queue/);
+});
+
+test("keeps the Preview fixture bridge separate from Registry and Workspace privileges", async () => {
+  const previewPreload = await readFile(previewPreloadPath, "utf8");
+  assert.match(previewPreload, /require\("electron"\)/);
+  assert.match(previewPreload, /ipcRenderer\.sendSync\("desktop:plugin-preview-fixture"\)/);
+  assert.match(previewPreload, /contextBridge\.exposeInMainWorld\("__SPS_PLUGIN_PREVIEW_FIXTURE_V1__"/);
+  assert.doesNotMatch(previewPreload, /invoke|send\(|nodeIntegration|require\("node:/);
 });
 
 test("keeps Official Extensions discovery separate from Owner-only Registry installation review", async () => {

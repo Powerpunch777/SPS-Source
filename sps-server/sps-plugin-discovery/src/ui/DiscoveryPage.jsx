@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   usePluginAction,
   usePluginData,
+  useHostNavigation,
   usePluginStream,
   usePluginToast,
 } from "@paperclipai/plugin-sdk/ui";
@@ -46,7 +47,60 @@ function roleLabel(role) {
   return role === "assistant" ? "Assistant" : role === "system" ? "System" : "You";
 }
 
+function dashboardStyles() {
+  return {
+    display: "grid",
+    gap: "10px",
+    minHeight: "112px",
+    color: "var(--foreground, #172033)",
+    font: "14px/1.45 system-ui, sans-serif",
+  };
+}
+
+export function PluginDiscoveryDashboardWidget({ data, loading, error }) {
+  const navigation = useHostNavigation();
+  if (loading) return <div style={dashboardStyles()}>Loading Discovery...</div>;
+  if (error) return <div style={dashboardStyles()}>Discovery status is unavailable: {error.message}</div>;
+
+  const assistant = data?.assistant ?? null;
+  const summary = assistant
+    ? `${assistant.name}${assistant.title ? `, ${assistant.title}` : ""}`
+    : "No Assistant selected";
+  const detail = assistant
+    ? `${assistant.status} / ${data?.conversationStarted ? `${data?.messageCount ?? 0} messages in this conversation` : "ready to start a conversation"}`
+    : data?.assistantCount > 0
+      ? "Choose an Assistant to start a Discovery conversation."
+      : "Add an Assistant before starting a Discovery conversation.";
+
+  return (
+    <div style={dashboardStyles()}>
+      <div>
+        <strong style={{ display: "block", fontSize: "15px" }}>{summary}</strong>
+        <span style={{ color: "var(--muted-foreground, #667085)", fontSize: "13px" }}>{detail}</span>
+      </div>
+      <button
+        className="sps-discovery-button"
+        type="button"
+        onClick={() => navigation.navigate("/discover")}
+        style={{
+          justifySelf: "start",
+          border: "1px solid #1f5eb8",
+          borderRadius: "7px",
+          background: "#2563bf",
+          color: "#fff",
+          padding: "8px 11px",
+          font: "650 13px/1.2 system-ui, sans-serif",
+          cursor: "pointer",
+        }}
+      >
+        Open Discovery
+      </button>
+    </div>
+  );
+}
+
 export function PluginDiscoveryPage({ context }) {
+  const navigation = useHostNavigation();
   const toast = usePluginToast();
   const { data, loading, error, refresh } = usePluginData("discovery-workspace", { companyId: context.companyId });
   const selectAssistant = usePluginAction("discovery-select-assistant");

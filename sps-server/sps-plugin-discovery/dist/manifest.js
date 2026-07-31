@@ -37,7 +37,7 @@ const draftExtensionTool = {
 export default {
   id: "sps.plugin-discovery",
   apiVersion: 1,
-  version: "0.3.1",
+  version: "0.3.3",
   displayName: "Plugin Discovery & Builder",
   description: "A conversational starting point for verified SPS extension discovery and non-destructive extension drafting.",
   author: "SPS",
@@ -52,7 +52,9 @@ export default {
     "registry.catalog.read",
     "plugin.state.read",
     "plugin.state.write",
-    "instance.settings.register",
+    "ui.page.register",
+    "ui.workspaceShell.provide",
+    "ui.dashboard.contribute",
   ],
   companyActivation: { defaultEnabled: true },
   agentPlatform: {
@@ -64,16 +66,55 @@ export default {
     contractVersion: "2.0",
     primitives: [],
   },
-  entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui-v0.3.1" },
+  entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui-v0.3.3" },
   ui: {
     slots: [
       {
-        type: "companySettingsPage",
-        id: "plugin-discovery-settings-page",
+        type: "page",
+        id: "plugin-discovery-page",
         routePath: "discover",
         displayName: "Discovery & Builder",
         exportName: "PluginDiscoveryPage",
         order: 1,
+      },
+    ],
+    // The Host must explicitly select this Shell. Enabling the plugin alone
+    // never changes the Workspace navigation or dashboard layout.
+    workspaceShell: {
+      id: "plugin-discovery-shell",
+      displayName: "Plugin Discovery Workspace",
+      defaultRoute: "/discover",
+      navigation: [
+        {
+          id: "plugin-discovery",
+          displayName: "Discovery & Builder",
+          target: "/discover",
+          order: 10,
+        },
+      ],
+      dashboardPreset: [
+        {
+          widgetId: "discovery-status",
+          size: "medium",
+          order: 10,
+        },
+      ],
+      emptyWorkspaceAction: {
+        displayName: "Open Discovery & Builder",
+        target: "/discover",
+      },
+    },
+    dashboardWidgets: [
+      {
+        id: "discovery-status",
+        displayName: "Plugin Discovery",
+        description: "The selected Discovery Assistant and conversation starting point.",
+        exportName: "PluginDiscoveryDashboardWidget",
+        sizes: ["small", "medium"],
+        defaultSize: "medium",
+        defaultOrder: 10,
+        dataAction: "discovery-dashboard",
+        navigationTarget: "/discover",
       },
     ],
   },

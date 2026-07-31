@@ -76,7 +76,7 @@ Workspace Source는 Host가 고른 로컬 폴더를 나타내는 **이름 있는
 
 완료:
 
-- Core 기본 화면에서 Paperclip의 Tasks, Projects, Inbox, Agents, Experimental 기본 메뉴를 숨김
+- Core 기본 화면에서 Paperclip의 Tasks, Projects, Inbox, Agents, Experimental 기본 메뉴를 숨김. 향후 Inbox와 Dashboard는 Paperclip 업무 의미를 제거한 범용 Core 표면으로 새로 구현하며, 세부 계약은 [`WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md`](./WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md)를 따른다.
 - Extension Profile `2.0` SDK와 `1.0`/`2.0` Desktop 호환성
 - Profile `2.0` primitive와 실제 Core capability의 정적 일치 검증
 - Workspace Source DB 모델, Host 전용 API, 선택적 transport route, Node별 암호화 grant
@@ -96,6 +96,7 @@ Workspace Source는 Host가 고른 로컬 폴더를 나타내는 **이름 있는
 
 진행 중:
 
+- Workspace Shell Provider, 범용 Dashboard widget, 범용 Inbox envelope/action 계약 구현
 - 실제 앱에서 Team 초대 생성/복사/취소, Member 제거, Source 선택/공유와 generic plugin run을 연속 조작하는 최종 E2E
 - Host Vault 백업/복구, 설치본 교체와 자동 업데이트의 최종 배포 후보 검증
 - 모든 Core 화면의 empty/loading/failure 상태와 가시 버튼 목록에 대한 최종 직접 조작 감사

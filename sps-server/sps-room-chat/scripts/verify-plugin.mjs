@@ -21,6 +21,13 @@ assert.ok(manifest.default.capabilities.includes("companies.read"));
 assert.ok(manifest.default.capabilities.includes("project.workspaces.read"));
 assert.ok(manifest.default.capabilities.includes("ui.page.register"));
 assert.ok(manifest.default.capabilities.includes("ui.sidebar.register"));
+assert.ok(manifest.default.capabilities.includes("ui.dashboard.contribute"));
+assert.ok(manifest.default.capabilities.includes("inbox.items.publish"));
+assert.ok(manifest.default.ui.dashboardWidgets?.some((widget) => (
+  widget.id === "team-workplane-status"
+  && widget.dataAction === "team-workplane-dashboard"
+  && widget.exportName === "TeamWorkplaneDashboardWidget"
+)));
 assert.ok(manifest.default.ui.slots.some((slot) => slot.id === "project-tasks" && slot.routePath === "tasks"));
 assert.ok(!manifest.default.ui.slots.some((slot) => slot.id === "project-tasks-sidebar"));
 assert.ok(manifest.default.ui.slots.some((slot) => (
@@ -84,6 +91,8 @@ assert.match(worker, /PROVISIONED_AGENT_ROOM_ORIGIN/);
 assert.match(worker, /loadAgentInstructions/);
 assert.match(worker, /handleProjectTasksView/);
 assert.match(worker, /project-tasks-view/);
+assert.match(worker, /handleTeamWorkplaneDashboard/);
+assert.match(worker, /publishTaskOwnerReportInbox/);
 assert.match(worker, /Update Room Workspace binding/);
 assert.match(worker, /ROOM_JOB_ENTITY_TYPE/);
 assert.match(worker, /reconcileInterruptedRoomJobs/);

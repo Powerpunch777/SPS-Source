@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+
+const desktopRoot = path.resolve(import.meta.dirname, "..");
+const harnessPath = path.join(desktopRoot, "scripts", "smoke-plugin-preview-desktop.mjs");
+const packagePath = path.join(desktopRoot, "package.json");
+
+test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence contract", async () => {
+  const [harness, packageJson] = await Promise.all([readFile(harnessPath, "utf8"), readFile(packagePath, "utf8")]);
+  const manifest = JSON.parse(packageJson);
+  assert.equal(manifest.scripts["test:e2e:plugin-preview"], "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs");
+  assert.match(harness, /SPS_DESKTOP_E2E_BINARY/);
+  assert.match(harness, /sourceElectron/);
+  assert.match(harness, /mockIdentity/);
+  assert.match(harness, /openPluginRegistries/);
+  assert.match(harness, /window\.spsRegistry\.connectDeveloperProject/);
+  assert.match(harness, /window\.spsRegistry\.runDeveloperGates/);
+  assert.match(harness, /window\.spsRegistry\.applyDeveloperCandidate/);
+  assert.match(harness, /isolated Preview CDP target/);
+  assert.match(harness, /__SPS_PLUGIN_PREVIEW_FIXTURE_V1__/);
+  assert.match(harness, /updatePreviewEnvironment/);
+  assert.match(harness, /Page\.crash/);
+  assert.match(harness, /PREVIEW_RENDERER_GONE/);
+  assert.match(harness, /listPreviewDiagnostics/);
+  assert.match(harness, /waitFixture/);
+  assert.match(harness, /workspaceTarget/);
+  assert.match(harness, /stopTree/);
+  assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
+});

@@ -48,6 +48,24 @@ function safeTool(ctx, name, handler) {
   };
 }
 
+async function dashboardView(conversation, params) {
+  const workspace = await conversation.workspaceView(params);
+  const assistant = workspace.assistants.find((entry) => entry.id === workspace.selectedAssistantId) ?? null;
+  return {
+    assistant: assistant
+      ? {
+        id: assistant.id,
+        name: assistant.name,
+        title: assistant.title ?? null,
+        status: assistant.status,
+      }
+      : null,
+    assistantCount: workspace.assistants.length,
+    conversationStarted: workspace.transcript.length > 0,
+    messageCount: workspace.transcript.length,
+  };
+}
+
 const declarations = new Map(manifest.tools.map((tool) => [tool.name, tool]));
 
 const plugin = definePlugin({
@@ -66,6 +84,7 @@ const plugin = definePlugin({
     }));
 
     ctx.data.register("discovery-workspace", (params) => conversation.workspaceView(params));
+    ctx.data.register("discovery-dashboard", (params) => dashboardView(conversation, params));
 
     ctx.actions.register("discovery-select-assistant", (params) => conversation.selectAssistant(params));
 

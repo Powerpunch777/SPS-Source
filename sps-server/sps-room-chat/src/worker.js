@@ -5346,6 +5346,37 @@ async function handleProjectWorkplaneView(ctx, params) {
   };
 }
 
+async function handleTeamWorkplaneDashboard(ctx, params) {
+  const companyId = textParam(params, "companyId");
+  if (!companyId) throw new Error("companyId is required.");
+  const [projects, issues] = await Promise.all([
+    ctx.projects.list({ companyId, limit: 200 }),
+    ctx.issues.list({ companyId, limit: 500 })
+  ]);
+  const projectNames = new Map(projects.map((project) => [project.id, project.name ?? project.slug ?? project.id]));
+  const rooms = issues.filter((issue) => isAgentRoom(issue) && !TERMINAL_STATUSES.has(issue.status));
+  const tasks = issues.filter((issue) => issue.parentId && !isLongLivedRoom(issue) && issue.status !== "cancelled");
+  const activeTasks = tasks.filter((issue) => ACTIVE_TASK_STATUSES.has(issue.status));
+  const roomReports = tasks
+    .filter((issue) => TASK_OWNER_REPORT_STATUSES.has(issue.status))
+    .sort((left, right) => new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime());
+  const latestReport = roomReports[0] ?? null;
+  return {
+    projectCount: projects.length,
+    roomCount: rooms.length,
+    taskCount: tasks.length,
+    activeTaskCount: activeTasks.length,
+    reportCount: roomReports.length,
+    latestReport: latestReport ? {
+      id: latestReport.id,
+      identifier: latestReport.identifier ?? latestReport.id,
+      title: latestReport.title,
+      status: latestReport.status,
+      projectName: projectNames.get(latestReport.projectId) ?? null
+    } : null
+  };
+}
+
 async function handleProjectTasksView(ctx, params) {
   const companyId = textParam(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
@@ -5715,6 +5746,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
         await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Agy quota retry Room Job");
         job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment.id ?? null, payload: { ...asRecord(job.payload), quotaRetryAt: null } });
         emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
+        await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
         return job;
       }
       const { client, threadId, roomRuntime, workingDirectory, agyContext } = await openThread(ctx, runtime, state, companyId, issue, agent);
@@ -5771,6 +5803,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
       await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Codex app-server Room Job");
       job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment.id ?? null });
       emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
+      await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
       return job;
     }
     const { session, workingDirectory } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
@@ -5814,6 +5847,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
     await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Room Job");
     job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment.id ?? null });
     emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
+    await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
   } catch (error) {
     await activity?.flush();
     if (state && issue && isProviderQuotaError(error)) {
@@ -7126,7 +7160,72 @@ async function recordManualTaskOwnerReview(ctx, { companyId, eventId, task, task
     format: "markdown",
     changeSummary: "Publish manual Task owner review notice"
   });
+  await publishTaskOwnerReportInbox(ctx, {
+    companyId,
+    task,
+    ownerRoom,
+    reportCommentId: report.comment.id,
+    reportFingerprint: report.fingerprint,
+    roomReportCommentId: ownerComment?.id ?? null
+  });
   return { ok: true, taskId: task.id, ownerRoomIssueId: ownerRoom.id };
+}
+
+async function publishTaskOwnerReportInbox(ctx, input) {
+  if (!ctx.inbox?.publish || !input?.task || !input?.ownerRoom) return { skipped: true, reason: "inbox_unavailable" };
+  const task = input.task;
+  const reportCommentId = textParam(input, "reportCommentId");
+  if (!reportCommentId) return { skipped: true, reason: "report_comment_missing" };
+  const isBlocker = task.status === "blocked";
+  const projectQuery = task.projectId
+    ? `?project=${encodeURIComponent(task.projectId)}&room=${encodeURIComponent(input.ownerRoom.id)}`
+    : `?room=${encodeURIComponent(input.ownerRoom.id)}`;
+  const externalId = `team-workplane:room-report:${task.id}:${reportCommentId}`;
+  try {
+    const result = await ctx.inbox.publish({
+      companyId: input.companyId,
+      externalId,
+      category: "workflow-report",
+      severity: isBlocker ? "warning" : "info",
+      title: isBlocker ? `Work blocker reported: ${task.title}` : `Work report ready: ${task.title}`,
+      summary: isBlocker
+        ? `${task.identifier ?? task.id} has a reported blocker in its owning Room.`
+        : `${task.identifier ?? task.id} has a reported result ready for the owning Room.`,
+      navigationTarget: `/agent-rooms${projectQuery}`,
+      opaqueReference: {
+        taskIssueId: task.id,
+        ownerRoomIssueId: input.ownerRoom.id,
+        reportCommentId,
+        reportFingerprint: textParam(input, "reportFingerprint") || null,
+        roomReportCommentId: textParam(input, "roomReportCommentId") || null
+      }
+    });
+    return { ok: true, ...result };
+  } catch (error) {
+    // Inbox is a secondary summary surface. Its failure must not undo the
+    // durable Room report or alter the Team Workplane's task disposition.
+    ctx.logger?.warn?.("Task owner Room report Inbox publish failed.", {
+      companyId: input.companyId,
+      taskIssueId: task.id,
+      ownerRoomIssueId: input.ownerRoom.id,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return { ok: false, reason: "inbox_publish_failed" };
+  }
+}
+
+async function publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom, job }) {
+  if (job?.kind !== "task_owner_report" || !job?.taskIssueId) return { skipped: true, reason: "not_task_owner_report" };
+  const task = await ctx.issues.get(job.taskIssueId, companyId);
+  if (!task) return { skipped: true, reason: "task_missing" };
+  return publishTaskOwnerReportInbox(ctx, {
+    companyId,
+    task,
+    ownerRoom,
+    reportCommentId: textParam(asRecord(job.payload), "reportCommentId"),
+    reportFingerprint: textParam(asRecord(job.payload), "reportFingerprint"),
+    roomReportCommentId: job.resultCommentId ?? null
+  });
 }
 
 function taskOwnerReportPrompt(task, taskState, comments) {
@@ -7302,7 +7401,7 @@ async function runAutomaticTaskOwnerReport(ctx, { companyId, eventId, taskIssueI
     taskIssueId: task.id,
     kind: "task_owner_report",
     sourceCommentId: null,
-    payload: { message: taskOwnerReportPrompt(task, taskState, comments), eventId, taskStatus: task.status, reportCommentId }
+    payload: { message: taskOwnerReportPrompt(task, taskState, comments), eventId, taskStatus: task.status, reportCommentId, reportFingerprint }
   });
   ownerState.pendingTurn = { kind: job.kind, jobId: job.id, sourceCommentId: null, startedAt: now() };
   beginRoomActivity(ownerState, job.kind, job.id, null);
@@ -8496,6 +8595,7 @@ const plugin = definePlugin({
     ctx.data.register("task-room-view", (params) => handleTaskRoomView(ctx, params));
     ctx.data.register("project-workplane-view", (params) => handleProjectWorkplaneView(ctx, params));
     ctx.data.register("project-tasks-view", (params) => handleProjectTasksView(ctx, params));
+    ctx.data.register("team-workplane-dashboard", (params) => handleTeamWorkplaneDashboard(ctx, params));
     ctx.data.register("codex-accounts-view", (params) => handleCodexAccountsView(ctx, params));
     ctx.data.register("organization-settings-view", (params) => handleOrganizationSettingsView(ctx, params));
     ctx.actions.register("room-bootstrap", (params, actionCtx) => handleRoomBootstrap(ctx, params, actionCtx));
@@ -8634,6 +8734,7 @@ function setActiveRoomJobForTest(issueId, promise) {
 
 export { agentInstructions, agentInstructionsFingerprint, agentRoomAgentId, agentRoomRuntime, agentSessionContextMatches, appendCheckpoint, appendNativeCompactionOutsideInvocation, applyCodexAccountToAdapterConfig, applyNativeSessionActivityEvent, attachmentIdsParam, buildAgyRoomPrompt, buildRoomOperatingBrief, cancelResolvedTaskOwnerQuotaRetry, cancelResolvedTaskWorkerQuotaRetry, chooseDefaultWorkspace, chooseTaskWorkspace, cleanupRoomAttachmentCache, codexAccountLabel, codexClientKey, configuredEnvironment, configuredEnvironmentValue, defaultWorkspaceKindForAgent, enforceUtf8Text, ensureNativeRoomSession, excludeWorkspaceRoomAttachments, fetchRoomMemory, getCodexClient, getRuntimeConfig, handleCodexAccountSelect, handleCodexAccountsView, handleCodexServerRequest, handleOrganizationAgentPolicySave, handleOrganizationSettingsView, handleProjectTasksView, handleProjectWorkplaneView, handleRoomBootstrap, handleRoomCompact, handleRoomCompactJob, handleRoomSend, handleRoomSendJob, handleRoomTaskSummary, handleRoomView, handleRoomWorkspaceView, handleTaskOwnerFeedback, handleTaskOwnerFeedbackJob, handleTaskOwnerReportReconcile, handleTaskRoomView, handleTaskStatusUpdated, isAgentRoom, isCodexImageAttachment, isLongLivedRoom, isProviderQuotaError, isProviderQuotaRun, isRoomProviderQuotaRetryJob, isRoomUserComment, isWorkerOnlyRoomAgent, listIssueAttachmentsDirect, listIssueRunsDirect, listRoomJobs, loadAgentInstructions, loadRoomState, loadRoomWorkState, localCodexAccounts, mergeRoomAttachments, mergeRoomWorkState, mostRecentComments, nativeCompactionEventId, nativeSessionResultText, newRoomState, newRoomWorkState, nextProviderQuotaRetryAt, normalizeCodexHome, normalizeRoomWorkState, parseAgyFallbackEnvelope, parseState, prepareCodexRoomTurn, prepareNativeRoomTurn, proposeRoomMemory, providerQuotaRetryAtFromError, providerQuotaRetryState, provisionProjectAgentRooms, provisionAllProjectAgentRooms, queueProjectRoomProvision, queueRoomDocumentWrite, reconcileAllProjectAgentRooms, reconcileInterruptedRoomJobs, reconcileProviderQuotaRetries, reconcileProviderQuotaTask, reconcileRoomProviderQuotaRetries, reconcileTaskOwnerReportBoundaries, recordNativeCodexCompaction, repairUtf8Mojibake, resolveCodexHomeForAgent, resolveRoomAttachments, retryRoomDocumentWrite, roomAttachmentCommentBlock, roomAttachmentName, roomAttachmentWorkspaceRoot, roomHasActiveWork, roomRole, roomRuntimeDisabledResult, roomRuntimeWithRoomSafety, roomThreadIdForCodexRuntime, roomTools, roomTurnText, roomUserCommentBody, roomWorkplaneBoundary, runAgyRoomFallback, runQueuedRoomJobs, saveRoomState, saveRoomStateOutsideInvocation, saveRoomWorkState, scheduleRoomProviderQuotaRetry, searchRoomMemory, serializeState, setActiveRoomJobForTest, setActiveThreadContextForTest, setAgyClientFactoryForTest, setCodexClientForTest, stageRoomAttachments, startNativeAgentSessionTurn, startRoomTurn, syncAgentRoomTitles, taskOwnerReportPrompt, taskOwnerRoomResultVisibilityOutsideInvocation, taskStatusTransition, updateAgentAdapterConfigDirect, updateRoomWorkStateOutsideInvocation, validateRoomRetrySource, workspaceGitChanges, workspaceGitExcludePath, workspaceKindForProjectWorkspace, workspaceLocalPath };
 export { activeRoomProcessBlocksOwnerReport, isSubstantiveTaskBoundaryReport, reconcileTaskOwnerNotificationStateForJob, taskBoundaryReportKind };
+export { handleTeamWorkplaneDashboard, publishTaskOwnerReportInbox };
 export { collaborationReadinessFromConfig, handleOrganizationCollaborationReadiness, handleOrganizationSettingsAccess, readCollaborationReadiness, requireAgentConfigurationAction };
 export { handleWorkspaceProfileAccess, handleWorkspaceProfileCreateWorkspace, handleWorkspaceProfileSave, loadProjectWorkspaceProfile, normalizeWorkspaceProfile, profileWorkspace, saveProjectWorkspaceProfile };
 export { reconcileRoomMemoryLifecycle };

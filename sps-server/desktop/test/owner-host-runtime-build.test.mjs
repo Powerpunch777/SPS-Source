@@ -29,6 +29,9 @@ test("builds and bundles the static Core Workspace UI with the Owner Host runtim
   assert.match(buildScript, /codex-acp/);
   assert.match(buildScript, /claude-acp/);
   assert.match(buildScript, /sps-agent-runtime-pack\.json/);
+  assert.match(buildScript, /copyBundledSpsPluginDeveloperKit/);
+  assert.match(buildScript, /@sonparkserver", "plugin-sdk", "cli", "sps-plugin\.mjs/);
+  assert.match(buildScript, /pluginDeveloperKit/);
 });
 
 test("uses a cross-platform DB migration copy step for Windows Desktop builds", async () => {

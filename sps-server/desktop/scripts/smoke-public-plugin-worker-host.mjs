@@ -63,7 +63,7 @@ try {
     entrypointPath: workerPath,
     manifest: { id: "sps.public-worker-host-conformance", apiVersion: 1 },
     config: {},
-    instanceInfo: { instanceId: "packaged-owner-host-conformance", hostVersion: "0.4.94" },
+    instanceInfo: { instanceId: "packaged-owner-host-conformance", hostVersion: "0.4.95" },
     apiVersion: 1,
     autoRestart: false,
     hostHandlers: {

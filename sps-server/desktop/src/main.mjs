@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { spawn as spawnChildProcess } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -112,6 +113,36 @@ import {
   removeRegistrySource,
   SPS_OFFICIAL_REGISTRY_SOURCE,
 } from "./registry-source-catalog.mjs";
+import {
+  connectDeveloperProject,
+  loadDeveloperProjects,
+  promoteDeveloperCandidate,
+  publicDeveloperProject,
+  publicDeveloperProjectState,
+  recordDeveloperCandidate,
+  removeDeveloperProject,
+  rollbackDeveloperProject,
+} from "./developer-project-store.mjs";
+import {
+  createDeveloperCommandEnvironment,
+  runSpsDeveloperCommand,
+} from "./developer-command-runner.mjs";
+import {
+  createDeveloperCandidateFromGateReports,
+  inspectDeveloperSourceTuple,
+  stageDeveloperCandidate,
+} from "./developer-build-pipeline.mjs";
+import {
+  cleanupPluginPreview,
+  createPluginPreviewRuntime,
+  ensurePluginPreviewFixture,
+  updatePluginPreviewFixture,
+} from "./plugin-preview-runtime.mjs";
+import {
+  appendPluginPreviewDiagnostic,
+  clearPluginPreviewDiagnostics,
+  listPluginPreviewDiagnostics,
+} from "./plugin-preview-diagnostics.mjs";
 import { assessSpsPluginCompatibility } from "./plugin-compatibility.mjs";
 import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
@@ -152,6 +183,10 @@ const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
 let mainWindow = null;
 let workspaceWindow = null;
 let registryWindow = null;
+let pluginPreviewWindow = null;
+let pluginPreviewRuntime = null;
+let pluginPreviewClosing = false;
+const activeDeveloperProjectOperations = new Set();
 let officialExtensionsWindow = null;
 let state = emptyState();
 let pendingAuth = null;
@@ -1876,6 +1911,13 @@ function assertRegistryOwner() {
   }
 }
 
+function assertRegistryWindowEvent(event) {
+  if (!registryWindow || registryWindow.isDestroyed() || event.sender.id !== registryWindow.webContents.id) {
+    throw new Error("Plugin Registry requests must come from the SPS Plugin Registry window.");
+  }
+  assertRegistryOwner();
+}
+
 function registrySourceView(source) {
   return {
     id: source.id,
@@ -2019,6 +2061,786 @@ async function removeDesktopRegistrySource(sourceId) {
   assertRegistryOwner();
   const saved = await removeRegistrySource({ vaultRoot: ownerVaultRoot(), sourceId });
   return saved.sources.map(registrySourceView);
+}
+
+async function developerProjectRecord(projectId) {
+  if (typeof projectId !== "string" || projectId.length === 0) throw new Error("Developer project id is required.");
+  const state = await loadDeveloperProjects({ vaultRoot: ownerVaultRoot() });
+  const project = state.projects.find((entry) => entry.id === projectId);
+  if (!project) throw new Error("Developer project was not found.");
+  return project;
+}
+
+async function withDeveloperProjectOperation(projectId, operation) {
+  if (activeDeveloperProjectOperations.has(projectId)) {
+    throw new Error("This developer project already has an operation in progress.");
+  }
+  activeDeveloperProjectOperations.add(projectId);
+  try {
+    return await operation();
+  } finally {
+    activeDeveloperProjectOperations.delete(projectId);
+  }
+}
+
+async function recordDesktopPluginPreviewDiagnostic({
+  projectId,
+  buildId,
+  pluginId,
+  phase,
+  level = "info",
+  code,
+  message,
+}) {
+  try {
+    return await appendPluginPreviewDiagnostic({
+      ownerVault: ownerVaultRoot(),
+      event: {
+        projectId,
+        buildId,
+        ...(pluginId ? { pluginId } : {}),
+        phase,
+        level,
+        code,
+        message,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.warn("SPS plugin Preview diagnostic could not be persisted:", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
+async function listDesktopPluginPreviewDiagnostics(input = {}) {
+  assertRegistryOwner();
+  try {
+    const events = await listPluginPreviewDiagnostics({
+      ownerVault: ownerVaultRoot(),
+      filters: {
+        ...(input?.projectId ? { projectId: input.projectId } : {}),
+        ...(input?.buildId ? { buildId: input.buildId } : {}),
+        limit: input?.limit ?? 40,
+      },
+    });
+    return { events, warning: null };
+  } catch {
+    return {
+      events: [],
+      warning: "Saved Preview diagnostics are unavailable. Clear the diagnostic ledger or restart SPS before relying on this evidence.",
+    };
+  }
+}
+
+async function clearDesktopPluginPreviewDiagnostics() {
+  assertRegistryOwner();
+  return await clearPluginPreviewDiagnostics({ ownerVault: ownerVaultRoot() });
+}
+
+async function resolveDesktopDeveloperKit() {
+  if (!app.isPackaged) {
+    const cliPath = path.join(__dirname, "..", "node_modules", "@sonparkserver", "plugin-sdk", "cli", "sps-plugin.mjs");
+    if (!existsSync(cliPath)) throw new Error("SPS Plugin SDK CLI is not installed for Desktop development.");
+    return {
+      nodeCommand: process.execPath,
+      sdkCliPath: cliPath,
+      environment: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    };
+  }
+
+  const sourceRuntimeRoot = path.join(process.resourcesPath, "sps-owner-host-runtime");
+  const targetRuntimeRoot = path.join(app.getPath("userData"), "owner-host-runtime", app.getVersion());
+  const runtimeRoot = await materializeSpsOwnerHostRuntime({
+    sourceRuntimeRoot,
+    targetRuntimeRoot,
+    runInPlace: true,
+  });
+  if (!runtimeRoot) throw new Error("SPS Owner Host runtime is unavailable.");
+  const nodeCommand = spsOwnerHostBundledNodePath(runtimeRoot);
+  const sdkCliPath = path.join(
+    runtimeRoot,
+    "developer-kit",
+    "node_modules",
+    "@sonparkserver",
+    "plugin-sdk",
+    "cli",
+    "sps-plugin.mjs",
+  );
+  if (!existsSync(nodeCommand) || !existsSync(sdkCliPath)) {
+    throw new Error("SPS Plugin Developer Kit is missing from this Desktop installation.");
+  }
+  return { nodeCommand, sdkCliPath, environment: process.env };
+}
+
+async function listDesktopDeveloperProjects() {
+  assertRegistryOwner();
+  return publicDeveloperProjectState(await loadDeveloperProjects({ vaultRoot: ownerVaultRoot() })).projects;
+}
+
+async function chooseDesktopDeveloperProjectFolder() {
+  assertRegistryOwner();
+  const selection = await dialog.showOpenDialog(registryWindow ?? mainWindow ?? undefined, {
+    title: "Choose an SPS plugin project folder",
+    properties: ["openDirectory"],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return null;
+  return {
+    sourcePath: selection.filePaths[0],
+    sourceLabel: path.basename(selection.filePaths[0]),
+  };
+}
+
+async function connectDesktopDeveloperProject(input) {
+  assertRegistryOwner();
+  const project = await connectDeveloperProject({
+    vaultRoot: ownerVaultRoot(),
+    sourcePath: input?.sourcePath,
+    displayName: input?.displayName,
+    sourceLabel: input?.sourceLabel,
+  });
+  return publicDeveloperProject(project);
+}
+
+async function inspectDesktopDeveloperProject(projectId) {
+  assertRegistryOwner();
+  const project = await developerProjectRecord(projectId);
+  const tuple = await inspectDeveloperSourceTuple(project.sourcePath, { allowMissingOutputs: true });
+  return {
+    project: publicDeveloperProject(project),
+    current: tuple,
+    changedSinceCandidate: !project.candidate
+      || project.candidate.sourceFingerprint !== tuple.sourceFingerprint
+      || project.candidate.outputFingerprint !== tuple.outputFingerprint,
+    changedSinceLastKnownGood: !project.lastKnownGood
+      || project.lastKnownGood.sourceFingerprint !== tuple.sourceFingerprint
+      || project.lastKnownGood.outputFingerprint !== tuple.outputFingerprint,
+  };
+}
+
+async function runDesktopDeveloperGates(projectId) {
+  assertRegistryOwner();
+  await requireReadyOwnerHost();
+  return await withDeveloperProjectOperation(projectId, async () => {
+    const project = await developerProjectRecord(projectId);
+    const runtime = await resolveDesktopDeveloperKit();
+    const reports = [];
+    for (const command of ["build", "validate", "test"]) {
+      reports.push(await runSpsDeveloperCommand({
+        command,
+        sourceDirectory: project.sourcePath,
+        nodeCommand: runtime.nodeCommand,
+        sdkCliPath: runtime.sdkCliPath,
+        environment: runtime.environment,
+      }));
+    }
+    const candidate = createDeveloperCandidateFromGateReports(reports);
+    const saved = await recordDeveloperCandidate({
+      vaultRoot: ownerVaultRoot(),
+      projectId,
+      candidate,
+    });
+    return {
+      project: publicDeveloperProject(saved),
+      reports: reports.map((report) => ({
+        command: report.command,
+        success: report.success,
+        durationMs: report.durationMs,
+        diagnostics: report.result.diagnostics,
+      })),
+    };
+  });
+}
+
+async function pluginPreviewApi(preview, pathname, { method = "GET", body } = {}) {
+  const headers = {
+    accept: "application/json",
+    origin: preview.url,
+    [SPS_DESKTOP_ACCESS_HEADER]: preview.accessToken,
+    [SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER]: preview.accessToken,
+  };
+  if (body !== undefined) headers["content-type"] = "application/json";
+  let response;
+  try {
+    response = await fetch(`${preview.url}/api${pathname}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (error) {
+    throw spsRequestError(error, "The isolated plugin Preview did not respond in time.");
+  }
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // Preview diagnostics never expose an untrusted HTML response.
+  }
+  if (!response.ok) {
+    throw new Error(data?.error || `Plugin Preview request failed with ${response.status}.`);
+  }
+  return data;
+}
+
+async function resolveDesktopPluginPreviewRuntime(preview) {
+  const sourceRuntimeRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "sps-owner-host-runtime")
+    : path.join(__dirname, "..", ".owner-host-runtime");
+  const targetRuntimeRoot = path.join(app.getPath("userData"), "owner-host-runtime", app.getVersion());
+  const materializedRuntime = await materializeSpsOwnerHostRuntime({
+    sourceRuntimeRoot,
+    targetRuntimeRoot,
+    runInPlace: app.isPackaged,
+  });
+  const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
+  return await resolveSpsOwnerHostRuntime({
+    packagedRuntimeRoots: app.isPackaged && materializedRuntime ? [materializedRuntime] : [],
+    coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
+    packagedNodeCommand: process.execPath,
+    configPath: preview.configPath,
+    instanceId: `sps-preview-${preview.buildId.slice(6)}`,
+    environment: {
+      PAPERCLIP_HOME: preview.previewVault,
+      PAPERCLIP_DB_BACKUP_DIR: preview.config.database.backup.dir,
+      PAPERCLIP_STORAGE_LOCAL_DIR: preview.config.storage.localDisk.baseDir,
+      PAPERCLIP_SECRETS_MASTER_KEY_FILE: preview.config.secrets.localEncrypted.keyFilePath,
+      PAPERCLIP_PROJECTS_ROOT: path.join(preview.previewVault, "projects"),
+      PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
+      PAPERCLIP_HOST_VERSION: app.getVersion(),
+      PAPERCLIP_TELEMETRY_DISABLED: "1",
+      SPS_BASIC_MODE: "true",
+      SPS_CORE_BASELINE_MODE: "true",
+      SPS_WORKPLANE_MODE: "false",
+      SPS_BUNDLED_PLUGIN_PATHS: "",
+      SPS_BUNDLED_PLUGIN_REFRESH_PATHS: "",
+      PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
+      PAPERCLIP_AGENT_RUNTIME_PACKS_DIR: path.join(preview.previewVault, "agent-runtime-packs"),
+      SPS_DESKTOP_PLUGIN_RUNTIME: "preview",
+      ...spsDesktopAccessEnvironment(preview.accessToken),
+    },
+  });
+}
+
+async function startDesktopPluginPreview({ projectId, buildId }) {
+  await stopDesktopPluginPreview({ removeData: false, closeWindow: true });
+  const fixtureState = await ensurePluginPreviewFixture({
+    ownerVault: ownerVaultRoot(),
+    buildId,
+  });
+  const preview = await createPluginPreviewRuntime({
+    ownerVault: ownerVaultRoot(),
+    buildId,
+    resolveRuntime: resolveDesktopPluginPreviewRuntime,
+    fetchImpl: fetch,
+    spawn: spawnChildProcess,
+    baseEnvironment: createDeveloperCommandEnvironment(process.env),
+  });
+  const status = await preview.manager.start();
+  if (status.state === "running-existing" || status.owned !== true) {
+    await preview.manager.stop({ force: false }).catch(() => {});
+    await recordDesktopPluginPreviewDiagnostic({
+      projectId,
+      buildId,
+      phase: "runtime",
+      level: "error",
+      code: "PREVIEW_RUNTIME_FOREIGN_PROCESS",
+      message: "SPS rejected a Preview port owned by another process.",
+    });
+    throw new Error(
+      "The isolated Preview port is already owned by another process. Close the stale Preview or restart SPS before retrying.",
+    );
+  }
+  if (status.state !== "running") {
+    await preview.manager.stop({ force: true }).catch(() => {});
+    await recordDesktopPluginPreviewDiagnostic({
+      projectId,
+      buildId,
+      phase: "runtime",
+      level: "error",
+      code: "PREVIEW_RUNTIME_START_FAILED",
+      message: status.lastError || "The isolated plugin Preview could not start.",
+    });
+    throw new Error(status.lastError || "The isolated plugin Preview could not start.");
+  }
+  pluginPreviewRuntime = { ...preview, projectId, fixture: fixtureState.fixture };
+  await recordDesktopPluginPreviewDiagnostic({
+    projectId,
+    buildId,
+    phase: "runtime",
+    code: "PREVIEW_RUNTIME_STARTED",
+    message: "The isolated plugin Preview runtime started.",
+  });
+  return pluginPreviewRuntime;
+}
+
+async function ensurePluginPreviewWorkspace(preview, project) {
+  const existing = await pluginPreviewApi(preview, "/companies");
+  if (Array.isArray(existing) && existing.length > 0) {
+    await recordDesktopPluginPreviewDiagnostic({
+      projectId: preview.projectId,
+      buildId: preview.buildId,
+      phase: "workspace",
+      code: "PREVIEW_WORKSPACE_READY",
+      message: "The existing isolated Preview Workspace is ready.",
+    });
+    return existing[0];
+  }
+  const workspace = await pluginPreviewApi(preview, "/companies", {
+    method: "POST",
+    body: {
+      name: `Preview - ${project.displayName}`.slice(0, 120),
+      description: "Isolated SPS plugin development Workspace.",
+    },
+  });
+  await recordDesktopPluginPreviewDiagnostic({
+    projectId: preview.projectId,
+    buildId: preview.buildId,
+    phase: "workspace",
+    code: "PREVIEW_WORKSPACE_CREATED",
+    message: "A new isolated Preview Workspace was created.",
+  });
+  return workspace;
+}
+
+async function stopDesktopPluginPreview({ removeData = false, closeWindow = true } = {}) {
+  const runtime = pluginPreviewRuntime;
+  const window = pluginPreviewWindow;
+  const stopped = runtime?.manager
+    ? await runtime.manager.stop({ force: false }).catch(() => null)
+    : null;
+  if (removeData && runtime && stopped?.state !== "stopped") {
+    throw new Error(
+      "SPS kept the Preview data because its isolated process did not stop completely.",
+    );
+  }
+  pluginPreviewRuntime = null;
+  if (closeWindow && window && !window.isDestroyed()) {
+    pluginPreviewClosing = true;
+    pluginPreviewWindow = null;
+    window.destroy();
+    pluginPreviewClosing = false;
+  }
+  if (removeData && runtime?.buildId) {
+    await cleanupPluginPreview({
+      ownerVault: ownerVaultRoot(),
+      buildId: runtime.buildId,
+    });
+    await recordDesktopPluginPreviewDiagnostic({
+      projectId: runtime.projectId,
+      buildId: runtime.buildId,
+      phase: "cleanup",
+      code: "PREVIEW_DATA_REMOVED",
+      message: "The isolated Preview data was removed after its process stopped.",
+    });
+  } else if (runtime?.buildId) {
+    await recordDesktopPluginPreviewDiagnostic({
+      projectId: runtime.projectId,
+      buildId: runtime.buildId,
+      phase: "cleanup",
+      code: "PREVIEW_RUNTIME_STOPPED",
+      message: "The isolated Preview runtime stopped and its data was kept.",
+    });
+  }
+}
+
+async function confirmPluginPreviewClose(window) {
+  if (pluginPreviewClosing || window.isDestroyed()) return;
+  const result = await dialog.showMessageBox(window, {
+    type: "question",
+    title: "Close plugin Preview",
+    message: "Close this isolated Preview?",
+    detail: "Keeping its data makes the exact build faster to reproduce. Deleting removes only this Preview database and temporary Workspace.",
+    buttons: ["Keep preview data", "Delete preview data", "Cancel"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  });
+  if (result.response === 2) return;
+  try {
+    await stopDesktopPluginPreview({ removeData: result.response === 1, closeWindow: true });
+  } catch (error) {
+    await dialog.showMessageBox(window, {
+      type: "warning",
+      title: "Preview data was kept",
+      message: "SPS could not safely delete this Preview.",
+      detail: error instanceof Error ? error.message : String(error),
+      buttons: ["OK"],
+      defaultId: 0,
+      noLink: true,
+    });
+  }
+}
+
+async function showPluginPreviewWindow(preview) {
+  if (pluginPreviewWindow && !pluginPreviewWindow.isDestroyed()) {
+    pluginPreviewWindow.show();
+    pluginPreviewWindow.focus();
+    return;
+  }
+  const partition = `sps-plugin-preview-${preview.buildId}`;
+  const previewSession = session.fromPartition(partition, { cache: false });
+  previewSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const requestHeaders = { ...details.requestHeaders };
+    try {
+      if (new URL(details.url).origin === preview.url) {
+        requestHeaders[SPS_DESKTOP_ACCESS_HEADER] = preview.accessToken;
+        requestHeaders[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER] = preview.accessToken;
+      }
+    } catch {
+      // Navigation policy below rejects malformed and external destinations.
+    }
+    callback({ requestHeaders });
+  });
+  const window = new BrowserWindow({
+    width: preview.fixture?.viewport === "mobile" ? 430 : 1280,
+    height: preview.fixture?.viewport === "mobile" ? 800 : 840,
+    minWidth: preview.fixture?.viewport === "mobile" ? 360 : 900,
+    minHeight: 640,
+    show: false,
+    title: "SPS Plugin Preview",
+    icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
+    webPreferences: {
+      ...createSpsWorkspaceWindowPreferences(),
+      partition,
+      preload: path.join(__dirname, "plugin-preview-preload.cjs"),
+    },
+  });
+  pluginPreviewWindow = window;
+  configureWorkspaceNavigation(window, preview.url);
+  window.once("ready-to-show", () => window.show());
+  window.on("close", (event) => {
+    if (isQuitting || pluginPreviewClosing) return;
+    event.preventDefault();
+    void confirmPluginPreviewClose(window);
+  });
+  window.on("closed", () => {
+    if (pluginPreviewWindow === window) pluginPreviewWindow = null;
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+    if (!isMainFrame) return;
+    void recordDesktopPluginPreviewDiagnostic({
+      projectId: preview.projectId,
+      buildId: preview.buildId,
+      phase: "renderer",
+      level: "error",
+      code: "PREVIEW_RENDERER_LOAD_FAILED",
+      message: `Preview renderer load failed (${errorCode}): ${errorDescription || validatedUrl || "unknown error"}.`,
+    });
+  });
+  window.webContents.on("did-finish-load", () => {
+    void recordDesktopPluginPreviewDiagnostic({
+      projectId: preview.projectId,
+      buildId: preview.buildId,
+      phase: "renderer",
+      code: "PREVIEW_RENDERER_READY",
+      message: "The isolated Preview renderer loaded successfully.",
+    });
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    void recordDesktopPluginPreviewDiagnostic({
+      projectId: preview.projectId,
+      buildId: preview.buildId,
+      phase: "renderer",
+      level: "error",
+      code: "PREVIEW_RENDERER_GONE",
+      message: `Preview renderer exited: ${details?.reason || "unknown reason"}.`,
+    });
+  });
+  window.on("unresponsive", () => {
+    void recordDesktopPluginPreviewDiagnostic({
+      projectId: preview.projectId,
+      buildId: preview.buildId,
+      phase: "renderer",
+      level: "warn",
+      code: "PREVIEW_RENDERER_UNRESPONSIVE",
+      message: "The isolated Preview renderer became unresponsive.",
+    });
+  });
+  await window.loadURL(`${preview.url}/`);
+}
+
+function publicDesktopPluginPreviewState() {
+  const runtime = pluginPreviewRuntime;
+  if (!runtime) return { active: false };
+  return {
+    active: true,
+    projectId: runtime.projectId,
+    buildId: runtime.buildId,
+    fixture: runtime.fixture,
+    windowOpen: Boolean(pluginPreviewWindow && !pluginPreviewWindow.isDestroyed()),
+  };
+}
+
+async function updateDesktopPluginPreviewEnvironment(input) {
+  assertRegistryOwner();
+  const runtime = pluginPreviewRuntime;
+  if (!runtime || runtime.projectId !== input?.projectId) {
+    throw new Error("Open this developer project's isolated Preview before changing its environment.");
+  }
+  const updated = await updatePluginPreviewFixture({
+    ownerVault: ownerVaultRoot(),
+    buildId: runtime.buildId,
+    fixture: input?.fixture,
+  });
+  runtime.fixture = updated.fixture;
+  await recordDesktopPluginPreviewDiagnostic({
+    projectId: runtime.projectId,
+    buildId: runtime.buildId,
+    phase: "fixture",
+    code: "PREVIEW_FIXTURE_UPDATED",
+    message: `Preview fixture changed to ${updated.fixture.role}, ${updated.fixture.viewport}, ${updated.fixture.uiState}.`,
+  });
+  if (pluginPreviewWindow && !pluginPreviewWindow.isDestroyed()) {
+    const mobile = updated.fixture.viewport === "mobile";
+    pluginPreviewWindow.setMinimumSize(mobile ? 360 : 900, 640);
+    pluginPreviewWindow.setSize(mobile ? 430 : 1280, mobile ? 800 : 840);
+    pluginPreviewWindow.webContents.reloadIgnoringCache();
+  }
+  return publicDesktopPluginPreviewState();
+}
+
+async function applyDesktopDeveloperCandidate(projectId) {
+  assertRegistryOwner();
+  return await withDeveloperProjectOperation(projectId, async () => {
+    const project = await developerProjectRecord(projectId);
+    if (!project.candidate) throw new Error("Run the development gates before applying this project.");
+    const buildId = `build-${randomUUID()}`;
+    const preview = await startDesktopPluginPreview({ projectId, buildId });
+    try {
+      await ensurePluginPreviewWorkspace(preview, project);
+      const staged = await stageDeveloperCandidate({
+        vaultRoot: ownerVaultRoot(),
+        projectId,
+        sourceDirectory: project.sourcePath,
+        candidate: project.candidate,
+        stageArchive: async ({ archivePath, source }) => await stageSpsPluginArchive({
+          vaultRoot: preview.previewVault,
+          archivePath,
+          source,
+          registerStage: async (body) => await pluginPreviewApi(preview, "/plugins/registry/stages", {
+            method: "POST",
+            body,
+          }),
+        }),
+      });
+      if (!staged.staged || !staged.stage) {
+        throw new Error(staged.errors?.join("\n") || "Development build could not be staged.");
+      }
+      await recordDesktopPluginPreviewDiagnostic({
+        projectId,
+        buildId,
+        pluginId: staged.stage.pluginId,
+        phase: "stage",
+        code: "PREVIEW_PACKAGE_STAGED",
+        message: "The verified development package was staged inside the isolated Preview.",
+      });
+      const enabled = await pluginPreviewApi(
+        preview,
+        `/plugins/registry/stages/${encodeURIComponent(staged.stage.stageId)}/enable`,
+        { method: "POST", body: {} },
+      );
+      if (enabled.plugin?.status !== "ready") {
+        throw new Error("The development build did not become ready inside the isolated Preview.");
+      }
+      await recordDesktopPluginPreviewDiagnostic({
+        projectId,
+        buildId,
+        pluginId: staged.stage.pluginId,
+        phase: "activation",
+        code: "PREVIEW_PLUGIN_READY",
+        message: "The development plugin became ready inside the isolated Preview.",
+      });
+      await showPluginPreviewWindow(preview);
+      const lastKnownGood = await promoteDeveloperCandidate({
+        vaultRoot: ownerVaultRoot(),
+        projectId,
+        buildId,
+        deployment: {
+          stageId: staged.stage.stageId,
+          pluginId: staged.stage.pluginId,
+          version: staged.stage.version,
+          artifactSha256: staged.artifact.sha256,
+          archiveRelativePath: staged.developmentArchiveRelativePath,
+        },
+      });
+      return {
+        applied: true,
+        isolated: true,
+        stage: staged.stage,
+        plugin: enabled.plugin,
+        lastKnownGood,
+        project: publicDeveloperProject(await developerProjectRecord(projectId)),
+      };
+    } catch (error) {
+      await recordDesktopPluginPreviewDiagnostic({
+        projectId,
+        buildId,
+        phase: "activation",
+        level: "error",
+        code: "PREVIEW_CANDIDATE_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      await stopDesktopPluginPreview({ removeData: true, closeWindow: true });
+      throw error;
+    }
+  });
+}
+
+async function rollbackDesktopDeveloperProject(projectId) {
+  assertRegistryOwner();
+  return await withDeveloperProjectOperation(projectId, async () => {
+    const project = await developerProjectRecord(projectId);
+    const build = await rollbackDeveloperProject({ vaultRoot: ownerVaultRoot(), projectId });
+    const preview = await startDesktopPluginPreview({ projectId, buildId: build.buildId });
+    try {
+      await ensurePluginPreviewWorkspace(preview, project);
+      const plugins = await pluginPreviewApi(preview, "/plugins");
+      let plugin = Array.isArray(plugins)
+        ? plugins.find((entry) => entry?.manifestJson?.id === build.deployment.pluginId)
+        : null;
+      if (plugin?.status !== "ready" || plugin?.version !== build.deployment.version) {
+        const stages = await pluginPreviewApi(preview, "/plugins/registry/stages");
+        let stage = Array.isArray(stages)
+          ? stages.find((entry) => entry?.artifactSha256 === build.deployment.artifactSha256)
+          : null;
+        if (!stage) {
+          const archivePath = path.resolve(ownerVaultRoot(), build.deployment.archiveRelativePath);
+          const buildsRoot = path.resolve(ownerVaultRoot(), "developer-mode", "builds");
+          const relative = path.relative(buildsRoot, archivePath);
+          if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+            throw new Error("The last known good development archive is outside the Owner Vault.");
+          }
+          const archiveStats = await fs.lstat(archivePath);
+          if (!archiveStats.isFile() || archiveStats.isSymbolicLink()) {
+            throw new Error("The last known good development archive is unavailable.");
+          }
+          const staged = await stageSpsPluginArchive({
+            vaultRoot: preview.previewVault,
+            archivePath,
+            source: {
+              registryId: "sps.desktop.development",
+              kind: "local",
+              releaseLocator: `preview/${build.buildId}.spsplugin`,
+            },
+            registerStage: async (body) => await pluginPreviewApi(preview, "/plugins/registry/stages", {
+              method: "POST",
+              body,
+            }),
+          });
+          if (!staged.staged || !staged.stage) {
+            throw new Error(staged.errors?.join("\n") || "The last known good build could not be restored.");
+          }
+          stage = staged.stage;
+        }
+        const enabled = await pluginPreviewApi(
+          preview,
+          `/plugins/registry/stages/${encodeURIComponent(stage.stageId)}/enable`,
+          { method: "POST", body: {} },
+        );
+        plugin = enabled.plugin;
+      }
+      if (plugin?.status !== "ready") {
+        throw new Error("The last known good development build did not become ready in Preview.");
+      }
+      await recordDesktopPluginPreviewDiagnostic({
+        projectId,
+        buildId: build.buildId,
+        pluginId: build.deployment.pluginId,
+        phase: "activation",
+        code: "PREVIEW_LAST_GOOD_READY",
+        message: "The last known good plugin build became ready inside the isolated Preview.",
+      });
+      await showPluginPreviewWindow(preview);
+      return {
+        restored: true,
+        isolated: true,
+        build,
+        plugin,
+        project: publicDeveloperProject(await developerProjectRecord(projectId)),
+      };
+    } catch (error) {
+      await recordDesktopPluginPreviewDiagnostic({
+        projectId,
+        buildId: build.buildId,
+        pluginId: build.deployment.pluginId,
+        phase: "activation",
+        level: "error",
+        code: "PREVIEW_LAST_GOOD_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      await stopDesktopPluginPreview({ removeData: false, closeWindow: true });
+      throw error;
+    }
+  });
+}
+
+async function reloadDesktopDeveloperUi(projectId) {
+  assertRegistryOwner();
+  const project = await developerProjectRecord(projectId);
+  if (!project.lastKnownGood) {
+    throw new Error("Apply a verified development build before reloading its UI.");
+  }
+  if (
+    !pluginPreviewRuntime
+    || pluginPreviewRuntime.buildId !== project.lastKnownGood.buildId
+    || !pluginPreviewWindow
+    || pluginPreviewWindow.isDestroyed()
+  ) {
+    throw new Error("Open this project's last known good Preview before reloading its UI.");
+  }
+  pluginPreviewWindow.webContents.reloadIgnoringCache();
+  return {
+    reloaded: true,
+    pluginId: project.lastKnownGood.deployment.pluginId,
+  };
+}
+
+async function restartDesktopDeveloperWorker(projectId) {
+  assertRegistryOwner();
+  const project = await developerProjectRecord(projectId);
+  const pluginId = project.lastKnownGood?.deployment.pluginId;
+  if (!pluginId) {
+    throw new Error("Apply a verified development build before restarting its worker.");
+  }
+  if (!pluginPreviewRuntime || pluginPreviewRuntime.buildId !== project.lastKnownGood.buildId) {
+    throw new Error("Open this project's last known good Preview before restarting its worker.");
+  }
+  try {
+    const result = await pluginPreviewApi(pluginPreviewRuntime, `/plugins/${encodeURIComponent(pluginId)}/worker/restart`, {
+      method: "POST",
+      body: {},
+    });
+    await recordDesktopPluginPreviewDiagnostic({
+      projectId,
+      buildId: pluginPreviewRuntime.buildId,
+      pluginId,
+      phase: "worker",
+      code: "PREVIEW_WORKER_RESTARTED",
+      message: "The isolated Preview plugin worker restarted.",
+    });
+    return result;
+  } catch (error) {
+    await recordDesktopPluginPreviewDiagnostic({
+      projectId,
+      buildId: pluginPreviewRuntime.buildId,
+      pluginId,
+      phase: "worker",
+      level: "error",
+      code: "PREVIEW_WORKER_RESTART_FAILED",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+async function removeDesktopDeveloperProject(projectId) {
+  assertRegistryOwner();
+  if (activeDeveloperProjectOperations.has(projectId)) {
+    throw new Error("Wait for the active developer project operation to finish before disconnecting it.");
+  }
+  const removed = await removeDeveloperProject({ vaultRoot: ownerVaultRoot(), projectId });
+  return publicDeveloperProject(removed);
 }
 
 async function showRegistryPluginStages() {
@@ -3365,6 +4187,18 @@ function sendJoinToRenderer(value) {
 }
 
 function registerIpc() {
+  ipcMain.on("desktop:plugin-preview-fixture", (event) => {
+    const ownsPreview = Boolean(
+      pluginPreviewWindow
+      && !pluginPreviewWindow.isDestroyed()
+      && event.sender.id === pluginPreviewWindow.webContents.id
+      && pluginPreviewRuntime?.fixture,
+    );
+    event.returnValue = ownsPreview
+      ? JSON.parse(JSON.stringify(pluginPreviewRuntime.fixture))
+      : null;
+  });
+
   function assertLocalOwnerWorkspace(event, action) {
     if (
       !isOwnerHostProfile()
@@ -3500,14 +4334,95 @@ function registerIpc() {
     await showRegistryWindow({ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE.id });
     return { opened: true };
   });
-  ipcMain.handle("desktop:registry-list-sources", async () => await listRegistrySources());
-  ipcMain.handle("desktop:registry-choose-local-source", async () => await chooseDesktopLocalRegistryFolder());
-  ipcMain.handle("desktop:registry-add-source", async (_event, input) => await addDesktopRegistrySource(input));
-  ipcMain.handle("desktop:registry-remove-source", async (_event, input) => await removeDesktopRegistrySource(input?.sourceId));
-  ipcMain.handle("desktop:registry-inspect-source", async (_event, input) => await inspectDesktopRegistrySource(input?.sourceId));
-  ipcMain.handle("desktop:registry-stage-release", async (_event, input) => await stageDesktopRegistryRelease(input));
-  ipcMain.handle("desktop:registry-enable-stage", async (_event, input) => await enableDesktopRegistryStage(input?.stageId));
-  ipcMain.handle("desktop:registry-list-stages", async () => await listDesktopRegistryStages());
+  ipcMain.handle("desktop:registry-list-sources", async (event) => {
+    assertRegistryWindowEvent(event);
+    return await listRegistrySources();
+  });
+  ipcMain.handle("desktop:registry-choose-local-source", async (event) => {
+    assertRegistryWindowEvent(event);
+    return await chooseDesktopLocalRegistryFolder();
+  });
+  ipcMain.handle("desktop:registry-add-source", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await addDesktopRegistrySource(input);
+  });
+  ipcMain.handle("desktop:registry-remove-source", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await removeDesktopRegistrySource(input?.sourceId);
+  });
+  ipcMain.handle("desktop:registry-inspect-source", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await inspectDesktopRegistrySource(input?.sourceId);
+  });
+  ipcMain.handle("desktop:registry-stage-release", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await stageDesktopRegistryRelease(input);
+  });
+  ipcMain.handle("desktop:registry-enable-stage", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await enableDesktopRegistryStage(input?.stageId);
+  });
+  ipcMain.handle("desktop:registry-list-stages", async (event) => {
+    assertRegistryWindowEvent(event);
+    return await listDesktopRegistryStages();
+  });
+  ipcMain.handle("desktop:developer-list-projects", async (event) => {
+    assertRegistryWindowEvent(event);
+    return await listDesktopDeveloperProjects();
+  });
+  ipcMain.handle("desktop:developer-choose-project-folder", async (event) => {
+    assertRegistryWindowEvent(event);
+    return await chooseDesktopDeveloperProjectFolder();
+  });
+  ipcMain.handle("desktop:developer-connect-project", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await connectDesktopDeveloperProject(input);
+  });
+  ipcMain.handle("desktop:developer-inspect-project", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await inspectDesktopDeveloperProject(input?.projectId);
+  });
+  ipcMain.handle("desktop:developer-run-gates", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await runDesktopDeveloperGates(input?.projectId);
+  });
+  ipcMain.handle("desktop:developer-apply-candidate", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await applyDesktopDeveloperCandidate(input?.projectId);
+  });
+  ipcMain.handle("desktop:developer-rollback-project", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await rollbackDesktopDeveloperProject(input?.projectId);
+  });
+  ipcMain.handle("desktop:developer-reload-ui", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await reloadDesktopDeveloperUi(input?.projectId);
+  });
+  ipcMain.handle("desktop:developer-restart-worker", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await restartDesktopDeveloperWorker(input?.projectId);
+  });
+  ipcMain.handle("desktop:developer-list-preview-diagnostics", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await listDesktopPluginPreviewDiagnostics(input);
+  });
+  ipcMain.handle("desktop:developer-clear-preview-diagnostics", async (event) => {
+    assertRegistryWindowEvent(event);
+    return await clearDesktopPluginPreviewDiagnostics();
+  });
+  ipcMain.handle("desktop:developer-preview-state", async (event) => {
+    assertRegistryWindowEvent(event);
+    assertRegistryOwner();
+    return publicDesktopPluginPreviewState();
+  });
+  ipcMain.handle("desktop:developer-update-preview-environment", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await updateDesktopPluginPreviewEnvironment(input);
+  });
+  ipcMain.handle("desktop:developer-remove-project", async (event, input) => {
+    assertRegistryWindowEvent(event);
+    return await removeDesktopDeveloperProject(input?.projectId);
+  });
   ipcMain.handle("desktop:start-sps-account", async () => await startDesktopAccountSignIn());
   ipcMain.handle("desktop:sign-out-sps-account", async () => await signOutDesktopAccount());
   ipcMain.handle("desktop:create-owner-server", async () => {
@@ -3919,7 +4834,9 @@ async function stopDesktopRuntimeGracefully() {
   await Promise.allSettled([
     defaultMemoryManager?.stop({ force: false }),
     ownerHostManager?.stop({ force: false }),
+    pluginPreviewRuntime?.manager?.stop({ force: false }),
   ]);
+  pluginPreviewRuntime = null;
 }
 
 app.on("before-quit", (event) => {

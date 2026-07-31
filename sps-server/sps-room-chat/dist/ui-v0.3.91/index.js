@@ -1771,6 +1771,58 @@ function ProjectWorkplaneLink({ context }) {
   const navigation = useHostNavigation();
   return /* @__PURE__ */ jsx("a", { className: "rw-room", ...navigation.linkProps(`/agent-rooms?project=${encodeURIComponent(context.entityId)}`), children: "Team Rooms" });
 }
+function TeamWorkplaneDashboardWidget({ data, loading, error }) {
+  const navigation = useHostNavigation();
+  const style = { display: "grid", gap: 10, minHeight: 112, color: "var(--foreground, #172033)", font: "14px/1.45 system-ui, sans-serif" };
+  if (loading) return /* @__PURE__ */ jsx("div", { style, children: "Loading Team Workplane..." });
+  if (error) return /* @__PURE__ */ jsxs("div", { style, children: [
+    "Team Workplane status is unavailable: ",
+    error.message
+  ] });
+  const latest = data?.latestReport;
+  return /* @__PURE__ */ jsxs("div", { style, children: [
+    /* @__PURE__ */ jsxs("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px 14px", color: "var(--muted-foreground, #667085)", fontSize: 13 }, children: [
+      /* @__PURE__ */ jsxs("span", { children: [
+        data?.projectCount ?? 0,
+        " projects"
+      ] }),
+      /* @__PURE__ */ jsxs("span", { children: [
+        data?.roomCount ?? 0,
+        " Rooms"
+      ] }),
+      /* @__PURE__ */ jsxs("span", { children: [
+        data?.activeTaskCount ?? 0,
+        " active work items"
+      ] }),
+      /* @__PURE__ */ jsxs("span", { children: [
+        data?.reportCount ?? 0,
+        " Room reports waiting"
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { children: [
+      /* @__PURE__ */ jsx("strong", { style: { display: "block", fontSize: 15 }, children: latest ? `${latest.identifier}: ${latest.title}` : "No Room reports waiting" }),
+      /* @__PURE__ */ jsx("span", { style: { color: "var(--muted-foreground, #667085)", fontSize: 13 }, children: latest ? `${latest.projectName ? `${latest.projectName} / ` : ""}${latest.status}` : "Open a Team Room to start a conversation or inspect project work." })
+    ] }),
+    /* @__PURE__ */ jsx(
+      "button",
+      {
+        type: "button",
+        onClick: () => navigation.navigate("/agent-rooms"),
+        style: {
+          justifySelf: "start",
+          border: "1px solid #1f5eb8",
+          borderRadius: 7,
+          background: "#2563bf",
+          color: "#fff",
+          padding: "8px 11px",
+          font: "650 13px/1.2 system-ui, sans-serif",
+          cursor: "pointer"
+        },
+        children: "Open Team Rooms"
+      }
+    )
+  ] });
+}
 export {
   AgentRoomsPage,
   CodexAccountsPage,
@@ -1781,5 +1833,6 @@ export {
   ProjectTasksProjectLink,
   ProjectWorkplaneLink,
   ProjectWorkplaneTab,
-  RoomChatTab
+  RoomChatTab,
+  TeamWorkplaneDashboardWidget
 };

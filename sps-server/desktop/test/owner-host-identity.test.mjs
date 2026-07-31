@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  allowsSpsDesktopE2ELoopbackIdentity,
   spsOwnerHostIdentityEnvironment,
   spsOwnerHostRuntimeEnvironment,
 } from "../src/owner-host-identity.mjs";
@@ -19,6 +20,31 @@ test("enables the SPS Identity bridge for every Owner Host", () => {
   });
   assert.equal(local.SPS_AUTH_IDENTITY_ENABLED, "true");
   assert.equal(local.SPS_AUTH_SECRET, undefined);
+});
+
+test("allows loopback HTTP Identity only for an explicit isolated Desktop E2E", () => {
+  const none = {};
+  const singleFlag = { SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1" };
+  const isolated = {
+    SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
+    SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1",
+  };
+
+  assert.equal(allowsSpsDesktopE2ELoopbackIdentity(none), false);
+  assert.equal(allowsSpsDesktopE2ELoopbackIdentity(singleFlag), false);
+  assert.equal(allowsSpsDesktopE2ELoopbackIdentity(isolated), true);
+  assert.throws(
+    () => spsOwnerHostIdentityEnvironment("http://127.0.0.1:43100", none),
+    /requires an HTTPS SPS Identity URL/,
+  );
+  assert.throws(
+    () => spsOwnerHostIdentityEnvironment("http://identity.example.test", isolated),
+    /requires an HTTPS SPS Identity URL/,
+  );
+  assert.equal(
+    spsOwnerHostIdentityEnvironment("http://127.0.0.1:43100/", isolated).SPS_IDENTITY_ISSUER,
+    "http://127.0.0.1:43100",
+  );
 });
 
 test("adds private-team runtime credentials only when team access is enabled", () => {

@@ -26,11 +26,14 @@ test("Plugin Discovery is a neutral, valid SPS tool provider", () => {
     "registry.catalog.read",
     "plugin.state.read",
     "plugin.state.write",
-    "instance.settings.register",
+    "ui.page.register",
+    "ui.workspaceShell.provide",
+    "ui.dashboard.contribute",
   ]);
-  assert.equal(manifest.ui?.slots?.find((slot) => slot.type === "companySettingsPage")?.routePath, "discover");
+  assert.equal(manifest.ui?.slots?.find((slot) => slot.type === "page")?.routePath, "discover");
+  assert.equal(manifest.ui?.slots?.some((slot) => slot.type === "companySettingsPage"), false);
   assert.equal(manifest.ui?.slots?.some((slot) => slot.type === "sidebar"), false);
-  assert.equal(manifest.entrypoints.ui, "./dist/ui-v0.3.1");
+  assert.equal(manifest.entrypoints.ui, "./dist/ui-v0.3.3");
   assert.deepEqual(manifest.tools.map((tool) => tool.name), ["search-sps-extensions", "draft-sps-extension"]);
 });
 
@@ -50,8 +53,9 @@ test("Desktop packages Plugin Discovery and gives it only a catalog snapshot pat
   assert.match(smoke, /keep only Plugin Discovery enabled for a new Workspace/);
   assert.match(smoke, /legacy built-in-agent API available/);
   assert.match(smoke, /SPS_CORE_BASELINE_MODE: "true"/);
+  assert.match(smoke, /ui-v0\.3\.3/);
   assert.match(smoke, /conversation assets were not bundled/);
-  assert.match(await readFile(path.join(serverRoot, "sps-plugin-discovery", "dist", "ui-v0.3.1", "index.js"), "utf8"), /PluginDiscoveryPage/);
+  assert.match(await readFile(path.join(serverRoot, "sps-plugin-discovery", "dist", "ui-v0.3.3", "index.js"), "utf8"), /PluginDiscoveryPage/);
   assert.match(await readFile(path.join(serverRoot, "sps-plugin-discovery", "dist", "conversation.js"), "utf8"), /createDiscoveryConversationService/);
   assert.match(await readFile(path.join(serverRoot, "sps-plugin-discovery", "package.json"), "utf8"), /sps-plugin-discovery/);
 });

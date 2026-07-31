@@ -60,6 +60,14 @@ async function fileExists(entry, fsApi) {
   }
 }
 
+function resolveOwnerHostInstanceId(value) {
+  const instanceId = value ?? "sps-desktop-owner";
+  if (typeof instanceId !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(instanceId)) {
+    throw new Error("SPS Owner Host instanceId must be 1-64 ASCII letters, digits, dots, underscores, or hyphens.");
+  }
+  return instanceId;
+}
+
 async function removeDirectoryWithRetry(target, { fsApi, delay, attempts = 20 } = {}) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -212,9 +220,11 @@ export async function resolveSpsOwnerHostRuntime({
   nodeCommand = "node",
   packagedNodeCommand = process.execPath,
   configPath = null,
+  instanceId,
   environment = {},
   fsApi = fs,
 } = {}) {
+  const resolvedInstanceId = resolveOwnerHostInstanceId(instanceId);
   const packagedRoots = Array.isArray(packagedRuntimeRoots) ? packagedRuntimeRoots.filter(Boolean) : [];
   for (const runtimeRoot of packagedRoots) {
     const entry = path.join(runtimeRoot, "dist", "index.js");
@@ -234,6 +244,7 @@ export async function resolveSpsOwnerHostRuntime({
         ...(hasBundledNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
         ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
         ...environment,
+        PAPERCLIP_INSTANCE_ID: resolvedInstanceId,
       },
       kind: "packaged-owner-runtime",
     };
@@ -252,7 +263,7 @@ export async function resolveSpsOwnerHostRuntime({
         "--import", pathToFileURL(tsx.loader).href,
         entry,
         "run",
-        "--instance", "sps-desktop-owner",
+        "--instance", resolvedInstanceId,
         ...(configPath ? ["--config", configPath] : []),
       ],
       cwd: coreRoot,
@@ -268,6 +279,7 @@ export function createSpsOwnerHostManager({
   resolveRuntime = async () => null,
   spawn = spawnChildProcess,
   fetchImpl = fetch,
+  baseEnvironment = process.env,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   // First launch has to initialize Embedded PostgreSQL and can take several
   // minutes while Windows inspects its native runtime files.
@@ -289,6 +301,7 @@ export function createSpsOwnerHostManager({
       lastError = null;
       return {
         state: ownedChild ? "running" : "running-existing",
+        owned: Boolean(ownedChild),
         url,
         health,
         startedAt,
@@ -296,9 +309,9 @@ export function createSpsOwnerHostManager({
       };
     }
     if (ownedChild && ownedChild.exitCode == null) {
-      return { state: "starting", url, health: null, startedAt, lastError };
+      return { state: "starting", owned: true, url, health: null, startedAt, lastError };
     }
-    return { state: "stopped", url, health: null, startedAt: null, lastError };
+    return { state: "stopped", owned: false, url, health: null, startedAt: null, lastError };
   }
 
   async function start() {
@@ -316,7 +329,7 @@ export function createSpsOwnerHostManager({
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
         env: {
-          ...process.env,
+          ...baseEnvironment,
           ...runtime.environment,
           PAPERCLIP_TELEMETRY_DISABLED: "1",
         },

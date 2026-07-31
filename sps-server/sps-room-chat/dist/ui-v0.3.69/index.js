@@ -151,7 +151,7 @@ var STYLES = `
   .rw-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr) 280px; height: min(760px, calc(100dvh - 150px)); min-height: 540px; overflow: hidden; border: 1px solid var(--border, #d8dee9); background: var(--background, #fff); }
   .rw-rooms, .rw-context { min-width: 0; min-height: 0; background: var(--muted, #f7f8fa); overscroll-behavior: contain; }
   .rw-rooms { border-right: 1px solid var(--border, #d8dee9); overflow: auto; }
-  .rw-context { border-left: 1px solid var(--border, #d8dee9); display: flex; flex-direction: column; overflow: hidden; }
+  .rw-context { border-left: 1px solid var(--border, #d8dee9); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
   .rw-main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; overflow: hidden; background: var(--background, #fff); }
   .rw-header { min-height: 58px; padding: 12px 16px; border-bottom: 1px solid var(--border, #d8dee9); display: flex; justify-content: space-between; gap: 12px; align-items: center; }
   .rw-title { font-size: 15px; font-weight: 700; margin: 0; }
@@ -203,13 +203,22 @@ var STYLES = `
   .rw-attachment-chip button { border: 0; padding: 0 1px; color: var(--muted-foreground, #667085); background: transparent; cursor: pointer; font: inherit; font-size: 15px; line-height: 1; }
   .rw-attachment-chip img { width: 24px; height: 24px; object-fit: cover; border-radius: 3px; background: #fff; }
   .rw-message-attachments { margin-top: 8px; }
+  .rw-context-header { padding: 12px; border-bottom: 1px solid var(--border, #d8dee9); background: var(--background, #fff); }
+  .rw-context-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .rw-context-heading strong { font-size: 13px; }
+  .rw-context-heading span { color: var(--muted-foreground, #667085); font-size: 11px; }
+  .rw-context-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .rw-context-tab { min-width: 0; border: 1px solid transparent; border-radius: 5px; padding: 6px 4px; background: transparent; color: var(--muted-foreground, #667085); cursor: pointer; font: 600 11px/1.2 system-ui, sans-serif; white-space: nowrap; }
+  .rw-context-tab:hover { background: var(--muted, #f7f8fa); color: var(--foreground, #172033); }
+  .rw-context-tab.active { border-color: var(--border, #cfd7e3); background: var(--accent, #eaf2ff); color: var(--foreground, #172033); }
+  .rw-context-body { min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .rw-context-panel { min-height: 100%; padding: 14px; }
   .rw-context-files { display: grid; gap: 6px; }
   .rw-context-files .rw-attachment-chip { width: 100%; }
-  .rw-context-focus { flex: 0 1 210px; overflow: auto; }
-  .rw-context-tasks { flex: 0 1 170px; overflow: auto; }
-  .rw-context-changes-section { display: flex; flex: 1 1 180px; flex-direction: column; min-height: 150px; overflow: hidden; }
-  .rw-context-changes { min-height: 0; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: 4px; }
-  .rw-context-session { flex: 0 0 auto; max-height: 156px; overflow: auto; }
+  .rw-context-task-list { display: grid; gap: 2px; }
+  .rw-context-changes { min-height: 0; overflow: hidden; }
+  .rw-context-empty { margin: 0; color: var(--muted-foreground, #667085); font-size: 12px; line-height: 1.5; }
+  .rw-context-session { margin-top: 18px; border-top: 1px solid var(--border, #d8dee9); padding-top: 12px; }
   .rw-context-session summary { cursor: pointer; color: var(--muted-foreground, #667085); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
   .wp-routing { margin-top: 16px; border-top: 1px solid var(--border, #d8dee9); border-bottom: 1px solid var(--border, #d8dee9); padding: 12px 0; }
   .wp-routing summary { cursor: pointer; font-weight: 700; }
@@ -224,8 +233,7 @@ var STYLES = `
   .rw-file-preview-body { min-height: 240px; overflow: auto; padding: 18px; background: var(--muted, #f7f8fa); }
   .rw-file-preview-image { display: block; max-width: 100%; max-height: calc(100dvh - 150px); margin: 0 auto; object-fit: contain; image-rendering: pixelated; background: repeating-conic-gradient(#eef2f7 0 25%, #fff 0 50%) 50% / 16px 16px; }
   .rw-file-preview-text { min-height: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--foreground, #172033); }
-  .rw-context-section { padding: 14px; border-bottom: 1px solid var(--border, #d8dee9); }
-  .rw-context-section h3 { font-size: 12px; margin: 0 0 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, #667085); }
+  .rw-context-panel h3 { font-size: 12px; margin: 0 0 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, #667085); }
   .rw-task { display: block; text-decoration: none; color: inherit; padding: 8px 0; border-top: 1px solid var(--border, #e3e8f0); }
   .rw-task:first-of-type { border-top: 0; }
   .rw-task-title { font-size: 13px; font-weight: 600; }
@@ -481,6 +489,7 @@ function fileNodes(workspaces) {
   })));
 }
 function RoomContext({ data, navigation }) {
+  const [activeTab, setActiveTab] = useState("work");
   const state = data?.state || {};
   const workState = data?.workState || {};
   const activity = state.runtime?.activity || {};
@@ -490,73 +499,88 @@ function RoomContext({ data, navigation }) {
   const latestOutcome = workState.latestOutcome || null;
   const nextCandidate = workState.nextCandidate || null;
   const waitingFor = workState.waitingFor || { kind: "none" };
+  const tabs = [
+    { id: "work", label: "\uC791\uC5C5" },
+    { id: "tasks", label: `Tasks${tasks.length ? ` ${tasks.length}` : ""}` },
+    { id: "changes", label: `\uBCC0\uACBD ${data?.changedFileCount || nodes.length || ""}`.trim() },
+    { id: "files", label: `\uD30C\uC77C${attachments.length ? ` ${attachments.length}` : ""}` }
+  ];
   return /* @__PURE__ */ jsxs("aside", { className: "rw-context", children: [
-    /* @__PURE__ */ jsxs("section", { className: "rw-context-section rw-context-focus", children: [
-      /* @__PURE__ */ jsx("h3", { children: "Focus" }),
-      /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
-        /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "Objective" }),
-        workState.objective || "Not established yet"
+    /* @__PURE__ */ jsxs("header", { className: "rw-context-header", children: [
+      /* @__PURE__ */ jsxs("div", { className: "rw-context-heading", children: [
+        /* @__PURE__ */ jsx("strong", { children: "Room \uCEE8\uD14D\uC2A4\uD2B8" }),
+        /* @__PURE__ */ jsx("span", { children: activity.status === "working" ? "\uC791\uC5C5 \uC911" : "\uC800\uC7A5\uB428" })
       ] }),
-      /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
-        /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "Phase" }),
-        workState.phase || "Not established yet"
-      ] }),
-      /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
-        /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "Latest outcome" }),
-        latestOutcome ? `${latestOutcome.identifier || latestOutcome.taskId || "Outcome"}${latestOutcome.status ? ` \xB7 ${latestOutcome.status}` : ""}${latestOutcome.summary ? ` \xB7 ${latestOutcome.summary}` : ""}` : "Not recorded yet"
-      ] }),
-      nextCandidate?.summary ? /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
-        /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "Next candidate" }),
-        nextCandidate.summary
-      ] }) : null,
-      waitingFor.kind && waitingFor.kind !== "none" ? /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
-        /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "Waiting for" }),
-        waitingFor.kind,
-        waitingFor.detail ? ` \xB7 ${waitingFor.detail}` : ""
-      ] }) : null,
-      (workState.planReferences || []).length ? /* @__PURE__ */ jsx("ul", { className: "rw-focus-sources", children: workState.planReferences.map((reference) => /* @__PURE__ */ jsx("li", { children: reference }, reference)) }) : null
+      /* @__PURE__ */ jsx("div", { className: "rw-context-tabs", role: "tablist", "aria-label": "Room context", children: tabs.map((tab) => /* @__PURE__ */ jsx("button", { type: "button", role: "tab", "aria-selected": activeTab === tab.id, className: `rw-context-tab ${activeTab === tab.id ? "active" : ""}`, onClick: () => setActiveTab(tab.id), children: tab.label }, tab.id)) })
     ] }),
-    /* @__PURE__ */ jsxs("section", { className: "rw-context-section rw-context-tasks", children: [
-      /* @__PURE__ */ jsx("h3", { children: "Tasks" }),
-      tasks.length ? tasks.map((task) => /* @__PURE__ */ jsxs("a", { className: "rw-task", ...navigation.linkProps(taskHref(navigation, task)), children: [
-        /* @__PURE__ */ jsx("div", { className: "rw-task-title", children: task.title }),
-        /* @__PURE__ */ jsxs("div", { className: "rw-task-meta", children: [
-          task.identifier,
-          " \xB7 ",
-          task.status,
-          " \xB7 ",
-          task.assigneeAgent?.name || "Unassigned"
+    /* @__PURE__ */ jsxs("div", { className: "rw-context-body", children: [
+      activeTab === "work" ? /* @__PURE__ */ jsxs("section", { className: "rw-context-panel", children: [
+        /* @__PURE__ */ jsx("h3", { children: "\uD604\uC7AC \uC791\uC5C5" }),
+        /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
+          /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "\uBAA9\uD45C" }),
+          workState.objective || "\uC544\uC9C1 \uC124\uC815\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4."
+        ] }),
+        /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
+          /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "\uB2E8\uACC4" }),
+          workState.phase || "\uC544\uC9C1 \uC124\uC815\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4."
+        ] }),
+        /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
+          /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "\uCD5C\uADFC \uACB0\uACFC" }),
+          latestOutcome ? `${latestOutcome.identifier || latestOutcome.taskId || "\uACB0\uACFC"}${latestOutcome.status ? ` \xB7 ${latestOutcome.status}` : ""}${latestOutcome.summary ? ` \xB7 ${latestOutcome.summary}` : ""}` : "\uC544\uC9C1 \uAE30\uB85D\uB41C \uACB0\uACFC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4."
+        ] }),
+        nextCandidate?.summary ? /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
+          /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "\uB2E4\uC74C \uD6C4\uBCF4" }),
+          nextCandidate.summary
+        ] }) : null,
+        waitingFor.kind && waitingFor.kind !== "none" ? /* @__PURE__ */ jsxs("p", { className: "rw-focus-value", children: [
+          /* @__PURE__ */ jsx("span", { className: "rw-focus-label", children: "\uB300\uAE30 \uC911" }),
+          waitingFor.kind,
+          waitingFor.detail ? ` \xB7 ${waitingFor.detail}` : ""
+        ] }) : null,
+        (workState.planReferences || []).length ? /* @__PURE__ */ jsx("ul", { className: "rw-focus-sources", children: workState.planReferences.map((reference) => /* @__PURE__ */ jsx("li", { children: reference }, reference)) }) : null,
+        /* @__PURE__ */ jsxs("details", { className: "rw-context-session", children: [
+          /* @__PURE__ */ jsx("summary", { children: "\uC138\uC158 \uC0C1\uC138" }),
+          /* @__PURE__ */ jsxs("dl", { className: "rw-key-value", children: [
+            /* @__PURE__ */ jsx("dt", { children: "Runtime" }),
+            /* @__PURE__ */ jsx("dd", { children: data?.runtime?.enabled ? data?.runtime?.kind === "agy_print" ? "Agy" : "Codex" : "Disabled" }),
+            /* @__PURE__ */ jsx("dt", { children: "Model" }),
+            /* @__PURE__ */ jsx("dd", { children: data?.runtime?.model || "Default" }),
+            /* @__PURE__ */ jsx("dt", { children: "Reasoning" }),
+            /* @__PURE__ */ jsx("dd", { children: data?.runtime?.reasoningEffort || "Model default" }),
+            /* @__PURE__ */ jsx("dt", { children: "Workspace" }),
+            /* @__PURE__ */ jsx("dd", { children: state.workspace?.name || "Not bound" }),
+            /* @__PURE__ */ jsx("dt", { children: "Conversation" }),
+            /* @__PURE__ */ jsx("dd", { children: state.runtime?.codexThreadId || state.runtime?.agentSessionId || data?.runtime?.kind === "agy_print" ? "Resumable" : "Not started" }),
+            /* @__PURE__ */ jsx("dt", { children: "Activity" }),
+            /* @__PURE__ */ jsx("dd", { children: activity.status || "idle" }),
+            /* @__PURE__ */ jsx("dt", { children: "Checkpoint" }),
+            /* @__PURE__ */ jsx("dd", { children: state.checkpoint?.version || 0 }),
+            /* @__PURE__ */ jsx("dt", { children: "Auto compact" }),
+            /* @__PURE__ */ jsx("dd", { children: data?.runtime?.kind === "codex_app_server" ? "Native Codex" : "Adapter managed" })
+          ] })
         ] })
-      ] }, task.id)) : /* @__PURE__ */ jsx("div", { className: "rw-muted", children: "\uC774 Room\uC5D0\uC11C \uC0DD\uC131\uB41C \uC2E4\uD589 Task\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." })
-    ] }),
-    /* @__PURE__ */ jsxs("section", { className: "rw-context-section rw-context-changes-section", children: [
-      /* @__PURE__ */ jsx("h3", { children: "Changes" }),
-      /* @__PURE__ */ jsx("div", { className: "rw-context-changes", children: /* @__PURE__ */ jsx(FileTree, { nodes, wrapLabels: true, emptyState: { title: "No workspace changes" } }) })
-    ] }),
-    attachments.length ? /* @__PURE__ */ jsxs("section", { className: "rw-context-section", children: [
-      /* @__PURE__ */ jsx("h3", { children: "Room files" }),
-      /* @__PURE__ */ jsx(AttachmentList, { attachments, className: "rw-context-files" })
-    ] }) : null,
-    /* @__PURE__ */ jsxs("details", { className: "rw-context-section rw-context-session", children: [
-      /* @__PURE__ */ jsx("summary", { children: "Session details" }),
-      /* @__PURE__ */ jsxs("dl", { className: "rw-key-value", children: [
-        /* @__PURE__ */ jsx("dt", { children: "Runtime" }),
-        /* @__PURE__ */ jsx("dd", { children: data?.runtime?.enabled ? data?.runtime?.kind === "agy_print" ? "Agy" : "Codex" : "Disabled" }),
-        /* @__PURE__ */ jsx("dt", { children: "Model" }),
-        /* @__PURE__ */ jsx("dd", { children: data?.runtime?.model || "Default" }),
-        /* @__PURE__ */ jsx("dt", { children: "Reasoning" }),
-        /* @__PURE__ */ jsx("dd", { children: data?.runtime?.reasoningEffort || "Model default" }),
-        /* @__PURE__ */ jsx("dt", { children: "Workspace" }),
-        /* @__PURE__ */ jsx("dd", { children: state.workspace?.name || "Not bound" }),
-        /* @__PURE__ */ jsx("dt", { children: "Conversation" }),
-        /* @__PURE__ */ jsx("dd", { children: state.runtime?.codexThreadId || state.runtime?.agentSessionId || data?.runtime?.kind === "agy_print" ? "Resumable" : "Not started" }),
-        /* @__PURE__ */ jsx("dt", { children: "Activity" }),
-        /* @__PURE__ */ jsx("dd", { children: activity.status || "idle" }),
-        /* @__PURE__ */ jsx("dt", { children: "Checkpoint" }),
-        /* @__PURE__ */ jsx("dd", { children: state.checkpoint?.version || 0 }),
-        /* @__PURE__ */ jsx("dt", { children: "Auto compact" }),
-        /* @__PURE__ */ jsx("dd", { children: data?.runtime?.kind === "codex_app_server" ? "Native Codex" : "Adapter managed" })
-      ] })
+      ] }) : null,
+      activeTab === "tasks" ? /* @__PURE__ */ jsxs("section", { className: "rw-context-panel", children: [
+        /* @__PURE__ */ jsx("h3", { children: "\uC774 Room\uC758 Tasks" }),
+        tasks.length ? /* @__PURE__ */ jsx("div", { className: "rw-context-task-list", children: tasks.map((task) => /* @__PURE__ */ jsxs("a", { className: "rw-task", ...navigation.linkProps(taskHref(navigation, task)), children: [
+          /* @__PURE__ */ jsx("div", { className: "rw-task-title", children: task.title }),
+          /* @__PURE__ */ jsxs("div", { className: "rw-task-meta", children: [
+            task.identifier,
+            " \xB7 ",
+            task.status,
+            " \xB7 ",
+            task.assigneeAgent?.name || "Unassigned"
+          ] })
+        ] }, task.id)) }) : /* @__PURE__ */ jsx("p", { className: "rw-context-empty", children: "\uC774 Room\uC5D0\uC11C \uC0DD\uC131\uB41C \uC2E4\uD589 Task\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." })
+      ] }) : null,
+      activeTab === "changes" ? /* @__PURE__ */ jsxs("section", { className: "rw-context-panel", children: [
+        /* @__PURE__ */ jsx("h3", { children: "\uC791\uC5C5 \uD3F4\uB354 \uBCC0\uACBD\uC0AC\uD56D" }),
+        /* @__PURE__ */ jsx("div", { className: "rw-context-changes", children: /* @__PURE__ */ jsx(FileTree, { nodes, wrapLabels: true, emptyState: { title: "No workspace changes" } }) })
+      ] }) : null,
+      activeTab === "files" ? /* @__PURE__ */ jsxs("section", { className: "rw-context-panel", children: [
+        /* @__PURE__ */ jsx("h3", { children: "Room \uD30C\uC77C" }),
+        attachments.length ? /* @__PURE__ */ jsx(AttachmentList, { attachments, className: "rw-context-files" }) : /* @__PURE__ */ jsx("p", { className: "rw-context-empty", children: "\uC774 Room\uC5D0 \uCCA8\uBD80\uB41C \uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." })
+      ] }) : null
     ] })
   ] });
 }

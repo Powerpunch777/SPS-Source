@@ -14,6 +14,7 @@ export default {
     "ui.page.register",
     "ui.sidebar.register",
     "ui.detailTab.register",
+    "ui.dashboard.contribute",
     "host.local_api.access",
     "issues.read",
     "issues.create",
@@ -36,6 +37,7 @@ export default {
     "jobs.schedule",
     "plugin.state.read",
     "plugin.state.write",
+    "inbox.items.publish",
     "instance.settings.register"
   ],
   companyActivation: { defaultEnabled: false },
@@ -57,6 +59,19 @@ export default {
     ui: "./dist/ui-v__SPS_ROOM_PLUGIN_VERSION__"
   },
   ui: {
+    dashboardWidgets: [
+      {
+        id: "team-workplane-status",
+        displayName: "Team Workplane",
+        description: "A compact summary of project Rooms, finite work, and reports waiting in a Room.",
+        exportName: "TeamWorkplaneDashboardWidget",
+        sizes: ["small", "medium"],
+        defaultSize: "medium",
+        defaultOrder: 30,
+        dataAction: "team-workplane-dashboard",
+        navigationTarget: "/agent-rooms"
+      }
+    ],
     slots: [
       {
         type: "page",

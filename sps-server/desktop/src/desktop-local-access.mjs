@@ -40,6 +40,7 @@ export function isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin }) {
       /^\/api\/companies\/[^/]+$/,
       /^\/api\/companies\/[^/]+\/(?:invites|sps-members|sps-nodes)(?:\/|$)/,
       /^\/api\/companies\/[^/]+\/sps-workspace-sources(?:\/|$)/,
+      /^\/api\/companies\/[^/]+\/workspace-shell(?:\/|$)/,
       /^\/api\/companies\/[^/]+\/environments(?:\/|$)/,
       /^\/api\/invites\/[^/]+\/revoke$/,
       /^\/api\/instance\/(?:settings|environments|database-backups)(?:\/|$)/,

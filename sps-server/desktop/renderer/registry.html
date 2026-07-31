@@ -13,6 +13,58 @@
         <div class="brand"><img src="../assets/sps-logo.png" alt="" /><span>SPS Plugin Sources &amp; Review</span></div>
         <p>Owner tool for the signed SPS Official Registry, local development packages, and explicit installation review. Staging never runs plugin code.</p>
       </header>
+      <section class="developer-panel" aria-label="Plugin Developer Mode">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">Developer Mode</p>
+            <h1>Local Development Registry</h1>
+            <p>Connect an external plugin project. SPS tracks changes and applies only builds that pass build, validation, and lifecycle tests.</p>
+          </div>
+          <button id="refresh-developer-projects" class="icon-button" type="button" title="Refresh developer projects">Refresh</button>
+        </div>
+        <form id="developer-project-form" class="developer-project-form">
+          <label>Plugin project<input id="developer-source-path" readonly placeholder="Choose an external plugin project folder" /></label>
+          <label>Display name<input id="developer-display-name" maxlength="120" placeholder="My SPS Plugin" /></label>
+          <button id="choose-developer-folder" class="secondary" type="button">Choose folder</button>
+          <button class="primary" type="submit">Connect project</button>
+        </form>
+        <div id="developer-project-list" class="developer-project-list" aria-live="polite">
+          <p class="empty-state">Loading connected developer projects...</p>
+        </div>
+        <section class="preview-environment" aria-labelledby="preview-environment-title">
+          <div class="preview-environment-heading">
+            <div>
+              <h2 id="preview-environment-title">Preview environment</h2>
+              <p id="preview-environment-status">Open an isolated Preview to test plugin UI states.</p>
+            </div>
+            <button id="refresh-preview-environment" class="secondary" type="button">Refresh</button>
+          </div>
+          <form id="preview-environment-form">
+            <label>Role<select id="preview-role"><option value="host">Host</option><option value="member">Member</option></select></label>
+            <label>Viewport<select id="preview-viewport"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label>
+            <label>UI state<select id="preview-ui-state"><option value="live">Live</option><option value="empty">Empty</option><option value="loading">Loading</option><option value="error">Error</option></select></label>
+            <div class="preview-fixture-toggles" aria-label="Preview fixtures">
+              <label><input id="preview-node" type="checkbox" /> Node</label>
+              <label><input id="preview-runtime" type="checkbox" /> Runtime</label>
+              <label><input id="preview-source" type="checkbox" /> Source</label>
+            </div>
+            <button id="apply-preview-environment" class="primary" type="submit">Apply &amp; reload Preview</button>
+          </form>
+        </section>
+        <details class="preview-diagnostics">
+          <summary>Recent Preview diagnostics</summary>
+          <div class="preview-diagnostics-toolbar">
+            <p>Safe lifecycle events from isolated plugin Previews. SPS removes credentials and local paths before saving them.</p>
+            <div>
+              <button id="refresh-preview-diagnostics" class="secondary" type="button">Refresh</button>
+              <button id="clear-preview-diagnostics" class="secondary danger" type="button">Clear</button>
+            </div>
+          </div>
+          <div id="preview-diagnostics-list" class="preview-diagnostics-list" aria-live="polite">
+            <p class="empty-state">Open a Preview to collect diagnostics.</p>
+          </div>
+        </details>
+      </section>
       <section class="registry-grid" aria-label="Plugin Registry management">
         <aside class="sources-panel">
           <div class="panel-heading"><h1>Trusted sources</h1><button id="refresh-sources" class="icon-button" type="button" title="Refresh sources">Refresh</button></div>

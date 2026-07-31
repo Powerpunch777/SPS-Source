@@ -6,6 +6,9 @@
 순서는 [CORE-WORKSPACE-PLUGIN-BASELINE-PLAN-ko.md](CORE-WORKSPACE-PLUGIN-BASELINE-PLAN-ko.md)를 따른다.
 이 로드맵은 특정 AI 회사 구조를 Core 기능으로 만들지 않는다는 원칙 아래 진행된다.
 
+플러그인 제작 기반의 세부 구현 순서와 완료 Gate는
+[PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md](PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md)를 따른다.
+
 ## 0단계: 기존 제품을 기준 구조에 맞추기 — 완료
 
 - Company 중심 기본 UI를 Workspace 용어로 바꾸되, 기존 저장소는 일시적인
@@ -56,6 +59,9 @@
 
 ## 4단계: 베타 준비 — 다음 단계
 
+- Core가 범용 Workspace Shell, Dashboard, Inbox를 제공하고 플러그인이 위젯,
+  보고, 행동, 탐색 구성을 제공하는 계약을 구현한다. 상세 기준은
+  [WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md](WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md)를 따른다.
 - Host와 Member의 패키지된 Desktop 사용성과 안정성을 전체 점검한다.
 - 업데이트 호환성, 플러그인 마이그레이션 검토, 백업/복원, 삭제, Node/Source 철회,
   네트워크 중단 후 재시도와 진단을 시험한다. SPS 1차 버전은 오프라인 제품 모드를

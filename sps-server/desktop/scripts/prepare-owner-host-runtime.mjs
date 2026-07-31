@@ -351,6 +351,23 @@ async function copyBundledSpsPluginRuntime(runtimeRoot) {
   await cp(sidecarSource, sidecarTarget);
 }
 
+async function copyBundledSpsPluginDeveloperKit(runtimeRoot) {
+  const sourceNodeModules = path.join(desktopRoot, "node_modules");
+  const targetNodeModules = path.join(runtimeRoot, "developer-kit", "node_modules");
+  await requireFile(
+    path.join(sourceNodeModules, "@sonparkserver", "plugin-sdk", "cli", "sps-plugin.mjs"),
+    "SPS Plugin SDK is missing. Install SPS Desktop dependencies before packaging.",
+  );
+  await copyRuntimePackageClosure({
+    sourceNodeModules,
+    targetNodeModules,
+    packageNames: ["@sonparkserver/plugin-sdk"],
+  });
+  return {
+    cli: "developer-kit/node_modules/@sonparkserver/plugin-sdk/cli/sps-plugin.mjs",
+  };
+}
+
 async function writeOwnerHostBootstrap(runtimeRoot) {
   const bootstrapPath = path.join(runtimeRoot, "sps-owner-host-bootstrap.mjs");
   const source = [
@@ -416,6 +433,7 @@ await cp(serverUiDist, path.join(runtimeRoot, "ui-dist"), { recursive: true });
 await writeOwnerHostBootstrap(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
 await copyBundledSpsPluginRuntime(runtimeRoot);
+const pluginDeveloperKit = await copyBundledSpsPluginDeveloperKit(runtimeRoot);
 const bundledNode = await copyBundledSpsNodeRuntime(runtimeRoot);
 const agentRuntimePacks = await prepareAgentRuntimePacks(runtimeRoot, agentRuntimePacksRoot);
 const releaseBaseline = await writeSpsReleaseBaseline({
@@ -434,6 +452,7 @@ await writeFile(
     vendorDirectory: "node_modules",
     nodeRuntime: bundledNode,
     bundledDefaultMemory: true,
+    pluginDeveloperKit,
     agentRuntimePacks,
     version: process.env.npm_package_version || "development",
     releaseBaseline,

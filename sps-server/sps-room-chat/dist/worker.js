@@ -4517,6 +4517,11 @@ var PLUGIN_CAPABILITIES = [
   "project.workspaces.read",
   "project.workspaces.write",
   "execution.workspaces.read",
+  "sps.workspaceSources.read",
+  "sps.runtimes.read",
+  "sps.executionGrants.read",
+  "sps.runs.read",
+  "sps.artifacts.read",
   "issues.read",
   "issue.relations.read",
   "issue.subtree.read",
@@ -4581,10 +4586,16 @@ var PLUGIN_CAPABILITIES = [
   "webhooks.receive",
   "api.routes.register",
   "http.outbound",
+  // Read the Host-provided verified plugin registry catalog. The catalog is
+  // public metadata; this does not grant package lifecycle control.
+  "registry.catalog.read",
   "host.local_api.access",
   "secrets.read-ref",
   "environment.drivers.register",
   "local.folders",
+  "sps.executionGrants.write",
+  "sps.runs.dispatch",
+  "sps.artifacts.write",
   // Agent Tools
   "agent.tools.register",
   "agent.tools.dynamic.register",
@@ -4597,7 +4608,13 @@ var PLUGIN_CAPABILITIES = [
   "ui.detailTab.register",
   "ui.dashboardWidget.register",
   "ui.commentAnnotation.register",
-  "ui.action.register"
+  "ui.action.register",
+  // SPS workspace surfaces
+  "ui.workspaceShell.provide",
+  "ui.dashboard.contribute",
+  "inbox.items.publish",
+  "inbox.items.update",
+  "inbox.actions.register"
 ];
 var PLUGIN_MEMORY_SCOPES = [
   "company",
@@ -4833,7 +4850,10 @@ var agentPlatformExtensionKindSchema = external_exports.enum([
   "workplane",
   "store_provider",
   "backend_provider",
-  "surface"
+  "surface",
+  // A tool provider can assist an Agent without selecting a work model,
+  // storage strategy, backend, or UI surface for the Company.
+  "tool_provider"
 ]);
 var agentPlatformThreadSchema = external_exports.object({
   id: external_exports.string().min(1),
@@ -8968,6 +8988,16 @@ var spsNodeRunnerAvailabilityStatusSchema = external_exports.enum([
 ]);
 var spsNodeRunnerCredentialStatusSchema = external_exports.enum(["ready", "auth_required", "unknown"]);
 var spsNodeRunnerAvailabilitySourceSchema = external_exports.enum(["node_probe", "adapter", "manual"]);
+var spsNodeExecutableRuntimeKindSchema = external_exports.enum([
+  "claude_cli",
+  "codex_cli",
+  "agy_cli",
+  "gemini_cli",
+  "opencode_cli",
+  "pi_cli",
+  "ollama",
+  "lm_studio"
+]);
 var spsNodeRunnerAvailabilitySchema = external_exports.object({
   status: spsNodeRunnerAvailabilityStatusSchema,
   observedAt: external_exports.string().datetime({ offset: true }),
@@ -9041,6 +9071,25 @@ var upsertSpsHostProjectShareSchema = external_exports.object({
   sharePath: external_exports.string().trim().min(5).max(1024)
 });
 var grantSpsHostProjectShareNodeSchema = external_exports.object({
+  credentialAlgorithm: external_exports.enum(["rsa-oaep-sha256", "rsa-oaep-sha256+a256gcm"]),
+  credentialEnvelope: external_exports.string().trim().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(128).max(32768)
+});
+
+// ../../external/sps-core/packages/shared/src/validators/sps-workspace-sources.ts
+var spsWorkspaceSourceNameSchema = external_exports.string().trim().min(1).max(96);
+var spsWorkspaceSourceSharePathSchema = external_exports.string().trim().min(5).max(1024);
+var createSpsWorkspaceSourceSchema = external_exports.object({
+  displayName: spsWorkspaceSourceNameSchema
+});
+var updateSpsWorkspaceSourceSchema = external_exports.object({
+  displayName: spsWorkspaceSourceNameSchema.optional(),
+  status: external_exports.enum(["active", "paused"]).optional(),
+  // This is a Host-managed network route, never the Host's local folder path.
+  sharePath: spsWorkspaceSourceSharePathSchema.nullable().optional()
+}).refine((value) => value.displayName !== void 0 || value.status !== void 0 || value.sharePath !== void 0, {
+  message: "Provide a Workspace Source display name, status, or route."
+});
+var grantSpsWorkspaceSourceNodeSchema = external_exports.object({
   credentialAlgorithm: external_exports.enum(["rsa-oaep-sha256", "rsa-oaep-sha256+a256gcm"]),
   credentialEnvelope: external_exports.string().trim().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(128).max(32768)
 });
@@ -9317,6 +9366,73 @@ var pluginUiSlotDeclarationSchema = external_exports.object({
     });
   }
 });
+var pluginDashboardWidgetSizeSchema = external_exports.enum(["small", "medium", "large", "full"]);
+var pluginWorkspaceTargetSchema = external_exports.string().min(1).max(500).refine(
+  (value) => value.startsWith("/") && !value.startsWith("//") && !value.includes(".."),
+  { message: "target must be a safe absolute SPS route" }
+);
+var pluginWorkspaceShellDeclarationSchema = external_exports.object({
+  id: external_exports.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/),
+  displayName: external_exports.string().min(1).max(100),
+  defaultRoute: pluginWorkspaceTargetSchema.optional(),
+  navigation: external_exports.array(external_exports.object({
+    id: external_exports.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/),
+    displayName: external_exports.string().min(1).max(100),
+    target: pluginWorkspaceTargetSchema,
+    order: external_exports.number().int().optional()
+  })).max(50).optional(),
+  dashboardPreset: external_exports.array(external_exports.object({
+    pluginKey: external_exports.string().min(1).max(150).optional(),
+    widgetId: external_exports.string().min(1).max(150),
+    size: pluginDashboardWidgetSizeSchema,
+    order: external_exports.number().int()
+  })).max(100).optional(),
+  emptyWorkspaceAction: external_exports.object({
+    displayName: external_exports.string().min(1).max(100),
+    target: pluginWorkspaceTargetSchema
+  }).optional()
+}).superRefine((value, ctx) => {
+  const ids = value.navigation?.map((item) => item.id) ?? [];
+  if (new Set(ids).size !== ids.length) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "Workspace Shell navigation ids must be unique",
+      path: ["navigation"]
+    });
+  }
+});
+var pluginDashboardWidgetDeclarationSchema = external_exports.object({
+  id: external_exports.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/),
+  displayName: external_exports.string().min(1).max(100),
+  description: external_exports.string().max(500).optional(),
+  exportName: external_exports.string().min(1).max(150),
+  sizes: external_exports.array(pluginDashboardWidgetSizeSchema).min(1),
+  defaultSize: pluginDashboardWidgetSizeSchema,
+  defaultOrder: external_exports.number().int(),
+  dataAction: external_exports.string().min(1).max(150),
+  navigationTarget: pluginWorkspaceTargetSchema.optional()
+}).superRefine((value, ctx) => {
+  if (!value.sizes.includes(value.defaultSize)) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "defaultSize must be included in sizes",
+      path: ["defaultSize"]
+    });
+  }
+  if (new Set(value.sizes).size !== value.sizes.length) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "Dashboard widget sizes must be unique",
+      path: ["sizes"]
+    });
+  }
+});
+var pluginInboxActionDeclarationSchema = external_exports.object({
+  id: external_exports.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/),
+  displayName: external_exports.string().min(1).max(100),
+  action: external_exports.string().min(1).max(150),
+  destructive: external_exports.boolean().optional()
+});
 var entityScopedLauncherPlacementZones = [
   "detailTab",
   "taskDetailView",
@@ -9553,6 +9669,54 @@ var pluginAgentPlatformDeclarationSchema = external_exports.object({
     });
   }
 });
+var SPS_CORE_PRIMITIVES = [
+  "workspace.sources.metadata",
+  "workspace.sources.route",
+  "runtimes.list",
+  "runtimes.dispatch",
+  "runs.observe",
+  "artifacts.write",
+  "secrets.use"
+];
+var SPS_CORE_PRIMITIVE_CAPABILITIES = {
+  "workspace.sources.metadata": ["sps.workspaceSources.read"],
+  "workspace.sources.route": ["sps.workspaceSources.read"],
+  "runtimes.list": ["sps.runtimes.read"],
+  "runtimes.dispatch": ["sps.runs.dispatch"],
+  "runs.observe": ["sps.runs.read"],
+  "artifacts.write": ["sps.artifacts.write"],
+  "secrets.use": ["secrets.read-ref"]
+};
+var pluginSpsCoreDeclarationSchema = external_exports.object({
+  contractVersion: external_exports.string().min(1).regex(
+    /^2\.\d+(?:\.\d+)?$/,
+    "SPS Core contractVersion must use a compatible 2.x version such as 2.0"
+  ),
+  primitives: external_exports.array(external_exports.enum(SPS_CORE_PRIMITIVES)).max(SPS_CORE_PRIMITIVES.length).default([])
+}).superRefine((value, ctx) => {
+  const duplicates = value.primitives.filter((primitive, index) => value.primitives.indexOf(primitive) !== index);
+  if (duplicates.length > 0) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: `Duplicate SPS Core primitives: ${[...new Set(duplicates)].join(", ")}`,
+      path: ["primitives"]
+    });
+  }
+  if (value.primitives.includes("workspace.sources.route") && !value.primitives.includes("workspace.sources.metadata")) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "workspace.sources.route requires workspace.sources.metadata",
+      path: ["primitives"]
+    });
+  }
+  if (value.primitives.includes("runtimes.dispatch") && !value.primitives.includes("runtimes.list")) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "runtimes.dispatch requires runtimes.list",
+      path: ["primitives"]
+    });
+  }
+});
 var pluginManifestV1Schema = external_exports.object({
   id: external_exports.string().min(1).regex(
     /^[a-z0-9][a-z0-9._-]*$/,
@@ -9585,6 +9749,9 @@ var pluginManifestV1Schema = external_exports.object({
   webhooks: external_exports.array(pluginWebhookDeclarationSchema).optional(),
   tools: external_exports.array(pluginToolDeclarationSchema).optional(),
   agentToolAccess: external_exports.enum(["company_default", "explicit_grant"]).optional(),
+  companyActivation: external_exports.object({
+    defaultEnabled: external_exports.boolean().optional()
+  }).optional(),
   database: pluginDatabaseDeclarationSchema.optional(),
   apiRoutes: external_exports.array(pluginApiRouteDeclarationSchema).optional(),
   environmentDrivers: external_exports.array(pluginEnvironmentDriverDeclarationSchema).optional(),
@@ -9596,18 +9763,42 @@ var pluginManifestV1Schema = external_exports.object({
   objectReferences: external_exports.array(pluginObjectReferenceProviderDeclarationSchema).optional(),
   memoryProvider: pluginMemoryProviderDeclarationSchema.optional(),
   agentPlatform: pluginAgentPlatformDeclarationSchema.optional(),
+  sps: pluginSpsCoreDeclarationSchema.optional(),
   launchers: external_exports.array(pluginLauncherDeclarationSchema).optional(),
   ui: external_exports.object({
     slots: external_exports.array(pluginUiSlotDeclarationSchema).min(1).optional(),
-    launchers: external_exports.array(pluginLauncherDeclarationSchema).optional()
+    launchers: external_exports.array(pluginLauncherDeclarationSchema).optional(),
+    workspaceShell: pluginWorkspaceShellDeclarationSchema.optional(),
+    dashboardWidgets: external_exports.array(pluginDashboardWidgetDeclarationSchema).min(1).max(100).optional()
+  }).optional(),
+  inbox: external_exports.object({
+    actions: external_exports.array(pluginInboxActionDeclarationSchema).min(1).max(100).optional()
   }).optional()
 }).superRefine((manifest, ctx) => {
   const hasUiSlots = (manifest.ui?.slots?.length ?? 0) > 0;
   const hasUiLaunchers = (manifest.ui?.launchers?.length ?? 0) > 0;
-  if ((hasUiSlots || hasUiLaunchers) && !manifest.entrypoints.ui) {
+  const hasWorkspaceShell = Boolean(manifest.ui?.workspaceShell);
+  const hasDashboardWidgets = (manifest.ui?.dashboardWidgets?.length ?? 0) > 0;
+  const dashboardWidgetIds = manifest.ui?.dashboardWidgets?.map((widget) => widget.id) ?? [];
+  if (new Set(dashboardWidgetIds).size !== dashboardWidgetIds.length) {
     ctx.addIssue({
       code: external_exports.ZodIssueCode.custom,
-      message: "entrypoints.ui is required when ui.slots or ui.launchers are declared",
+      message: "Dashboard widget ids must be unique",
+      path: ["ui", "dashboardWidgets"]
+    });
+  }
+  const inboxActionIds = manifest.inbox?.actions?.map((action) => action.id) ?? [];
+  if (new Set(inboxActionIds).size !== inboxActionIds.length) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "Inbox action ids must be unique",
+      path: ["inbox", "actions"]
+    });
+  }
+  if ((hasUiSlots || hasUiLaunchers || hasWorkspaceShell || hasDashboardWidgets) && !manifest.entrypoints.ui) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "entrypoints.ui is required when UI contributions are declared",
       path: ["entrypoints", "ui"]
     });
   }
@@ -9617,6 +9808,40 @@ var pluginManifestV1Schema = external_exports.object({
       message: "minimumHostVersion and minimumPaperclipVersion must match when both are declared",
       path: ["minimumHostVersion"]
     });
+  }
+  if (hasWorkspaceShell && !manifest.capabilities.includes("ui.workspaceShell.provide")) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "Capability 'ui.workspaceShell.provide' is required when ui.workspaceShell is declared",
+      path: ["capabilities"]
+    });
+  }
+  if (hasDashboardWidgets && !manifest.capabilities.includes("ui.dashboard.contribute")) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "Capability 'ui.dashboard.contribute' is required when ui.dashboardWidgets are declared",
+      path: ["capabilities"]
+    });
+  }
+  if ((manifest.inbox?.actions?.length ?? 0) > 0 && !manifest.capabilities.includes("inbox.actions.register")) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "Capability 'inbox.actions.register' is required when inbox.actions are declared",
+      path: ["capabilities"]
+    });
+  }
+  if (manifest.sps) {
+    for (const primitive of manifest.sps.primitives) {
+      for (const capability of SPS_CORE_PRIMITIVE_CAPABILITIES[primitive]) {
+        if (!manifest.capabilities.includes(capability)) {
+          ctx.addIssue({
+            code: external_exports.ZodIssueCode.custom,
+            message: `SPS Core primitive '${primitive}' requires capability '${capability}'`,
+            path: ["capabilities"]
+          });
+        }
+      }
+    }
   }
   if (manifest.tools && manifest.tools.length > 0) {
     if (!manifest.capabilities.includes("agent.tools.register")) {
@@ -10564,6 +10789,67 @@ function startWorkerRpcHost(options) {
     }
   }
   function buildContext() {
+    const spsTransport = Object.freeze({
+      request(operation, input) {
+        switch (operation) {
+          case "sps.workspaceSources.list":
+          case "sps.runtimes.list":
+          case "sps.executionGrants.list":
+          case "sps.executionGrants.upsert":
+          case "sps.executionGrants.revoke":
+          case "sps.runs.dispatch":
+          case "sps.runs.get":
+          case "sps.runs.listEvents":
+          case "sps.artifacts.publish":
+          case "sps.artifacts.list":
+            return callHost(operation, input);
+          default:
+            return Promise.reject(new Error(`Unsupported SPS Runtime operation: ${String(operation)}`));
+        }
+      }
+    });
+    const sps = {
+      workspaceSources: {
+        async list(companyId) {
+          return spsTransport.request("sps.workspaceSources.list", { companyId });
+        }
+      },
+      runtimes: {
+        async list(companyId, options2 = {}) {
+          return spsTransport.request("sps.runtimes.list", { companyId, nodeId: options2.nodeId });
+        }
+      },
+      executionGrants: {
+        async list(companyId, options2 = {}) {
+          return spsTransport.request("sps.executionGrants.list", { companyId, subjectKey: options2.subjectKey, includeRevoked: options2.includeRevoked });
+        },
+        async upsert(input) {
+          return spsTransport.request("sps.executionGrants.upsert", input);
+        },
+        async revoke(companyId, grantId) {
+          return spsTransport.request("sps.executionGrants.revoke", { companyId, grantId });
+        }
+      },
+      runs: {
+        async dispatch(input) {
+          return spsTransport.request("sps.runs.dispatch", input);
+        },
+        async get(companyId, runId) {
+          return spsTransport.request("sps.runs.get", { companyId, runId });
+        },
+        async listEvents(companyId, runId, options2 = {}) {
+          return spsTransport.request("sps.runs.listEvents", { companyId, runId, afterSequence: options2.afterSequence });
+        }
+      },
+      artifacts: {
+        async publish(input) {
+          return spsTransport.request("sps.artifacts.publish", input);
+        },
+        async list(companyId, options2 = {}) {
+          return spsTransport.request("sps.artifacts.list", { companyId, subjectKey: options2.subjectKey, runId: options2.runId, limit: options2.limit });
+        }
+      }
+    };
     const context = {
       get manifest() {
         if (!manifest)
@@ -10618,6 +10904,8 @@ function startWorkerRpcHost(options) {
           return callHost("localFolders.deleteFile", { companyId, folderKey, relativePath });
         }
       },
+      sps,
+      spsTransport,
       events: {
         on(name, filterOrFn, maybeFn) {
           let registration;
@@ -10749,6 +11037,19 @@ function startWorkerRpcHost(options) {
             namespace: input.namespace,
             stateKey: input.stateKey
           });
+        }
+      },
+      inbox: {
+        async publish(input) {
+          const result = await callHost("inbox.publish", input);
+          return { id: result.id, externalId: result.externalId };
+        },
+        async update(input) {
+          const result = await callHost("inbox.update", input);
+          return { id: result.id, externalId: result.externalId };
+        },
+        async withdraw(input) {
+          await callHost("inbox.withdraw", input);
         }
       },
       entities: {
@@ -11883,6 +12184,7 @@ var manifest_default = {
     "ui.page.register",
     "ui.sidebar.register",
     "ui.detailTab.register",
+    "ui.dashboard.contribute",
     "host.local_api.access",
     "issues.read",
     "issues.create",
@@ -11905,8 +12207,10 @@ var manifest_default = {
     "jobs.schedule",
     "plugin.state.read",
     "plugin.state.write",
+    "inbox.items.publish",
     "instance.settings.register"
   ],
+  companyActivation: { defaultEnabled: false },
   agentPlatform: {
     contractVersion: SPS_TEAM_WORKPLANE_PROFILE.contractVersion,
     kind: SPS_TEAM_WORKPLANE_PROFILE.kind,
@@ -11925,6 +12229,19 @@ var manifest_default = {
     ui: "./dist/ui-v0.3.91"
   },
   ui: {
+    dashboardWidgets: [
+      {
+        id: "team-workplane-status",
+        displayName: "Team Workplane",
+        description: "A compact summary of project Rooms, finite work, and reports waiting in a Room.",
+        exportName: "TeamWorkplaneDashboardWidget",
+        sizes: ["small", "medium"],
+        defaultSize: "medium",
+        defaultOrder: 30,
+        dataAction: "team-workplane-dashboard",
+        navigationTarget: "/agent-rooms"
+      }
+    ],
     slots: [
       {
         type: "page",
@@ -17309,6 +17626,34 @@ async function handleProjectWorkplaneView(ctx, params) {
     taskCount
   };
 }
+async function handleTeamWorkplaneDashboard(ctx, params) {
+  const companyId = textParam(params, "companyId");
+  if (!companyId) throw new Error("companyId is required.");
+  const [projects, issues] = await Promise.all([
+    ctx.projects.list({ companyId, limit: 200 }),
+    ctx.issues.list({ companyId, limit: 500 })
+  ]);
+  const projectNames = new Map(projects.map((project) => [project.id, project.name ?? project.slug ?? project.id]));
+  const rooms = issues.filter((issue) => isAgentRoom(issue) && !TERMINAL_STATUSES.has(issue.status));
+  const tasks = issues.filter((issue) => issue.parentId && !isLongLivedRoom(issue) && issue.status !== "cancelled");
+  const activeTasks = tasks.filter((issue) => ACTIVE_TASK_STATUSES.has(issue.status));
+  const roomReports = tasks.filter((issue) => TASK_OWNER_REPORT_STATUSES.has(issue.status)).sort((left, right) => new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime());
+  const latestReport = roomReports[0] ?? null;
+  return {
+    projectCount: projects.length,
+    roomCount: rooms.length,
+    taskCount: tasks.length,
+    activeTaskCount: activeTasks.length,
+    reportCount: roomReports.length,
+    latestReport: latestReport ? {
+      id: latestReport.id,
+      identifier: latestReport.identifier ?? latestReport.id,
+      title: latestReport.title,
+      status: latestReport.status,
+      projectName: projectNames.get(latestReport.projectId) ?? null
+    } : null
+  };
+}
 async function handleProjectTasksView(ctx, params) {
   const companyId = textParam(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
@@ -17630,6 +17975,7 @@ ${durableRoomJobResultText(job, turn2)}`, companyId);
         await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Agy quota retry Room Job");
         job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment3.id ?? null, payload: { ...asRecord3(job.payload), quotaRetryAt: null } });
         emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
+        await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
         return job;
       }
       const { client, threadId, roomRuntime, workingDirectory: workingDirectory2, agyContext } = await openThread(ctx, runtime, state, companyId, issue, agent);
@@ -17685,6 +18031,7 @@ ${durableRoomJobResultText(job, turn)}`, companyId);
       await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Codex app-server Room Job");
       job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment2.id ?? null });
       emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
+      await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
       return job;
     }
     const { session, workingDirectory } = await ensureNativeRoomSession(ctx, companyId, issue, agent, state);
@@ -17729,6 +18076,7 @@ ${assistantMessage}`, companyId);
     await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Room Job");
     job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment.id ?? null });
     emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
+    await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
   } catch (error) {
     await activity?.flush();
     if (state && issue && isProviderQuotaError(error)) {
@@ -18367,7 +18715,64 @@ async function recordManualTaskOwnerReview(ctx, { companyId, eventId, task, task
     format: "markdown",
     changeSummary: "Publish manual Task owner review notice"
   });
+  await publishTaskOwnerReportInbox(ctx, {
+    companyId,
+    task,
+    ownerRoom,
+    reportCommentId: report.comment.id,
+    reportFingerprint: report.fingerprint,
+    roomReportCommentId: ownerComment?.id ?? null
+  });
   return { ok: true, taskId: task.id, ownerRoomIssueId: ownerRoom.id };
+}
+async function publishTaskOwnerReportInbox(ctx, input) {
+  if (!ctx.inbox?.publish || !input?.task || !input?.ownerRoom) return { skipped: true, reason: "inbox_unavailable" };
+  const task = input.task;
+  const reportCommentId = textParam(input, "reportCommentId");
+  if (!reportCommentId) return { skipped: true, reason: "report_comment_missing" };
+  const isBlocker = task.status === "blocked";
+  const projectQuery = task.projectId ? `?project=${encodeURIComponent(task.projectId)}&room=${encodeURIComponent(input.ownerRoom.id)}` : `?room=${encodeURIComponent(input.ownerRoom.id)}`;
+  const externalId = `team-workplane:room-report:${task.id}:${reportCommentId}`;
+  try {
+    const result = await ctx.inbox.publish({
+      companyId: input.companyId,
+      externalId,
+      category: "workflow-report",
+      severity: isBlocker ? "warning" : "info",
+      title: isBlocker ? `Work blocker reported: ${task.title}` : `Work report ready: ${task.title}`,
+      summary: isBlocker ? `${task.identifier ?? task.id} has a reported blocker in its owning Room.` : `${task.identifier ?? task.id} has a reported result ready for the owning Room.`,
+      navigationTarget: `/agent-rooms${projectQuery}`,
+      opaqueReference: {
+        taskIssueId: task.id,
+        ownerRoomIssueId: input.ownerRoom.id,
+        reportCommentId,
+        reportFingerprint: textParam(input, "reportFingerprint") || null,
+        roomReportCommentId: textParam(input, "roomReportCommentId") || null
+      }
+    });
+    return { ok: true, ...result };
+  } catch (error) {
+    ctx.logger?.warn?.("Task owner Room report Inbox publish failed.", {
+      companyId: input.companyId,
+      taskIssueId: task.id,
+      ownerRoomIssueId: input.ownerRoom.id,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return { ok: false, reason: "inbox_publish_failed" };
+  }
+}
+async function publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom, job }) {
+  if (job?.kind !== "task_owner_report" || !job?.taskIssueId) return { skipped: true, reason: "not_task_owner_report" };
+  const task = await ctx.issues.get(job.taskIssueId, companyId);
+  if (!task) return { skipped: true, reason: "task_missing" };
+  return publishTaskOwnerReportInbox(ctx, {
+    companyId,
+    task,
+    ownerRoom,
+    reportCommentId: textParam(asRecord3(job.payload), "reportCommentId"),
+    reportFingerprint: textParam(asRecord3(job.payload), "reportFingerprint"),
+    roomReportCommentId: job.resultCommentId ?? null
+  });
 }
 function taskOwnerReportPrompt(task, taskState, comments) {
   const recentComments = mostRecentComments(comments, 16).map((comment) => trimRoomContext(comment?.body, 1800)).filter(Boolean).join("\n\n---\n\n");
@@ -18478,7 +18883,7 @@ async function runAutomaticTaskOwnerReport(ctx, { companyId, eventId, taskIssueI
     taskIssueId: task.id,
     kind: "task_owner_report",
     sourceCommentId: null,
-    payload: { message: taskOwnerReportPrompt(task, taskState, comments), eventId, taskStatus: task.status, reportCommentId }
+    payload: { message: taskOwnerReportPrompt(task, taskState, comments), eventId, taskStatus: task.status, reportCommentId, reportFingerprint }
   });
   ownerState.pendingTurn = { kind: job.kind, jobId: job.id, sourceCommentId: null, startedAt: now() };
   beginRoomActivity(ownerState, job.kind, job.id, null);
@@ -19565,6 +19970,7 @@ var plugin = definePlugin({
     ctx.data.register("task-room-view", (params) => handleTaskRoomView(ctx, params));
     ctx.data.register("project-workplane-view", (params) => handleProjectWorkplaneView(ctx, params));
     ctx.data.register("project-tasks-view", (params) => handleProjectTasksView(ctx, params));
+    ctx.data.register("team-workplane-dashboard", (params) => handleTeamWorkplaneDashboard(ctx, params));
     ctx.data.register("codex-accounts-view", (params) => handleCodexAccountsView(ctx, params));
     ctx.data.register("organization-settings-view", (params) => handleOrganizationSettingsView(ctx, params));
     ctx.actions.register("room-bootstrap", (params, actionCtx) => handleRoomBootstrap(ctx, params, actionCtx));
@@ -19752,6 +20158,7 @@ export {
   handleTaskOwnerReportReconcile,
   handleTaskRoomView,
   handleTaskStatusUpdated,
+  handleTeamWorkplaneDashboard,
   handleWorkspaceProfileAccess,
   handleWorkspaceProfileCreateWorkspace,
   handleWorkspaceProfileSave,
@@ -19793,6 +20200,7 @@ export {
   providerQuotaRetryState,
   provisionAllProjectAgentRooms,
   provisionProjectAgentRooms,
+  publishTaskOwnerReportInbox,
   queueProjectRoomProvision,
   queueRoomDocumentWrite,
   readCollaborationReadiness,

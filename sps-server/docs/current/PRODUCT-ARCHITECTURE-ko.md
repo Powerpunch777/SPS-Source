@@ -29,6 +29,9 @@ application is the client.
   Workspace-scoped activation, update, rollback, and isolated plugin data.
 - Generic plugin surfaces: navigation contribution, settings contribution,
   tools, jobs, and future detached Preview windows.
+- Generic Workspace Shell, Dashboard, and Inbox surfaces. Core owns their
+  technical lifecycle and safety; plugins own workflow widgets, reports,
+  actions, roles, and approval meaning.
 
 `Host` and `Member` are technical connection roles only. Core does not define
 business hierarchy, approvals, or who should lead a project.
@@ -45,6 +48,13 @@ This boundary lets one company use a game-production Workplane while another
 company uses an app-development or OpenHands-like workflow without changing
 SPS Core.
 
+The detailed Shell, Dashboard, and Inbox boundary is defined in
+[WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md](WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md).
+One Workspace may select one active Shell Provider, while multiple enabled
+plugins may contribute widgets and Inbox items. Plugin management, recovery,
+updates, diagnostics, and data transfer remain reachable through Core and
+cannot be disabled by a Shell Provider.
+
 ## Navigation Rule
 
 Plugin management has one home: **Settings > Plugins**. SPS must not expose a
@@ -58,9 +68,10 @@ Settings > Plugins contains:
 - Personal plugin staging, technical checks, and activation.
 - Plugin-specific settings and the entry point for Plugin Discovery & Builder.
 
-`Plugin Discovery & Builder`도 Workspace 왼쪽 메뉴가 아니라
-**Settings > Plugins > Discovery & Builder**에서 연다. Workspace Home은
-플러그인의 설치 상태나 관리 목록을 중복해서 보여주지 않는다.
+`Plugin Discovery & Builder`는 plugin-management 화면이 아니라 활성 플러그인이
+제공하는 실제 작업 화면이다. 따라서 활성 상태에서는 Workspace navigation에
+`Discovery & Builder`를 표시할 수 있다. 설치, 업데이트, 활성화, 비활성화,
+삭제와 Registry 관리는 계속 **Settings > Plugins**에서만 수행한다.
 
 An enabled plugin may still contribute its *actual work surface* to the
 Workspace. For example, a Team Workplane may show Rooms or Tasks. That is not
@@ -75,12 +86,17 @@ plugin.
 3. `Plugin Discovery & Builder` is the only default-enabled extension.
 4. The user registers one Initial Assistant from an available CLI, local AI,
    or API runtime.
-5. The user opens **Settings > Plugins > Discovery & Builder** and talks to
-   that Assistant about the environment they want to use.
+5. The user opens the enabled **Discovery & Builder** Workspace page and talks
+   to that Assistant about the environment they want to use.
 6. The Assistant can search the catalog, recommend options, or help author a
-   new plugin. It does not silently install, enable, update, disable, or
-   remove a plugin.
-7. The Host makes lifecycle choices in Settings > Plugins.
+   new plugin. Search, selection, and recommendation do not imply a lifecycle
+   action.
+7. When the user explicitly asks for installation or activation, the Assistant
+   may prepare a typed lifecycle proposal. Core shows the exact package,
+   Workspace, capability, migration, and risk review to the Host before any
+   change is applied.
+8. The Host makes the final lifecycle choice through the Core confirmation
+   surface.
 
 ## Plugin Discovery & Builder
 
@@ -185,8 +201,8 @@ Implemented foundation:
 
 Still required before the first complete product release:
 
-1. Consolidate plugin management into Settings > Plugins and remove the
-   duplicate management entry.
+1. Implement the generic Workspace Shell Provider, Dashboard widget, and
+   Inbox contribution contracts without restoring Paperclip workflow rules.
 2. Add generic isolated Plugin Preview windows.
 3. Extend Plugin Discovery & Builder into the conversational authoring and
    personal-plugin test flow described above.

@@ -1,10 +1,10 @@
 # SPS Core 플러그인 제작 기반 완성 계획
 
-상태: 구현 중 (1단계 완료, 2단계 진행 예정)
+상태: 구현 중 (1~4단계 완료, 5단계 진행)
 
 최종 갱신: 2026-07-31
 
-기준 설치본: SPS Desktop `0.4.94`
+기준 설치본: SPS Desktop `0.4.95`
 
 ## 목적
 
@@ -41,7 +41,7 @@ Core는 기술 기반과 안전 경계를 제공하고 플러그인은 작업 �
 
 ## 현재 기준 상태
 
-| 영역 | 0.4.94 상태 | 이 계획의 목표 |
+| 영역 | 0.4.95 상태 | 이 계획의 목표 |
 | --- | --- | --- |
 | 패키지 생명주기 | 구현 | 위험 검토, migration, rollback 흐름을 개발자 도구와 통합 |
 | Workspace별 활성화 | 구현 | Shell 선택과 contribution 상태까지 Workspace별 분리 |
@@ -49,10 +49,10 @@ Core는 기술 기반과 안전 경계를 제공하고 플러그인은 작업 �
 | Worker·Tool·Event·Job | 구현 | Workspace Job과 일관된 진단 추가 |
 | Source·Runtime·Run·Artifact | 구현 | 공개 SDK와 Test Kit에서 직접 사용 가능하게 고정 |
 | Connector·MCP | 기반 구현 | scoped handle, 상태, 테스트 fixture 표준화 |
-| 공개 SDK | 패키징·Registry 중심 구현 | Runtime·UI·Test API까지 Core checkout 없이 제공 |
-| Developer Mode | 부분적인 Local Registry만 존재 | 폴더 연결, reload, 오류 복구, 개발 Workspace 제공 |
-| Plugin Preview | 미구현 | 별도 격리 Preview 창 제공 |
-| Diagnostics | 로그와 개별 화면에 분산 | 통합 개발자 진단 화면 제공 |
+| 공개 SDK | Runtime·UI·Worker·Registry·Developer Build·Preview fixture 계약 구현 | Test Kit와 이전 SDK 호환 회귀 확장 |
+| Developer Mode | 외부 폴더 연결, 3-gate build, staging, LKG, rollback 구현 | 실제 reference plugin 반복 검증 |
+| Plugin Preview | 격리 Vault·DB·Workspace·별도 창·fixture·Preview 진단과 패키지 E2E 구현 | Diagnostics·Test Kit의 통합 진단 계약으로 연결 |
+| Diagnostics | Preview lifecycle의 안전한 통합 기록 구현 | 전체 plugin runtime·Connector·MCP 진단 통합 |
 | Plugin dependency | 표준 계약 불완전 | 필수·선택·버전·충돌 계약 제공 |
 | Discovery 검색·초안 | 구현 | 프로젝트 생성부터 Preview와 lifecycle proposal까지 연결 |
 
@@ -176,6 +176,21 @@ tool, job, event, storage, Source, Runtime, Run, Artifact를 사용할 수 있�
 - Shell 플러그인 비활성화·삭제·오류 시 즉시 Neutral Core Shell 복구
 - 플러그인이 Recovery navigation 또는 Core API를 숨기거나 우회하지 못함
 
+### 현재 구현 상태
+
+- Core `2158bb50e53b5c09761856f80aed83e1d800d416`에서 Native capability,
+  manifest 검증, Workspace별 Shell 선택, Neutral fallback, Dashboard 배치,
+  Inbox 저장·읽음·보관·검색·action 재검증과 개발 플러그인 원자적 upgrade·rollback을 구현했다.
+- 공개 SDK `71d39163e04323f42db70e22a2c1c21b29a708b3`에서 Core checkout 없이
+  사용하는 Runtime·UI·Worker·Registry·Developer Build·Preview fixture 계약을 제공한다.
+- Plugin Discovery & Builder `0.3.3`과 SPS Team Workplane `0.3.91`을 서로 다른
+  reference contribution으로 연결했다.
+- SPS Desktop `0.4.95` 설치 후보에서 로그인부터 Provider 비활성화 fallback까지
+  실제 UI와 API를 함께 조작하는 격리 E2E를 통과했다.
+- Core plugin upgrade 집중 회귀 73개와 Desktop 전체 회귀 237개를 통과했으며,
+  실제 패키지 Core Preview smoke에서 production Workspace sentinel이 유지됨을 확인했다.
+- 1~4단계 완료 조건을 충족했다. 현재 구현 기준선은 5단계 Diagnostics와 Test Kit다.
+
 ## 3단계. Developer Mode와 Local Development Registry
 
 ### 목표
@@ -199,6 +214,16 @@ tool, job, event, storage, Source, Runtime, Run, Artifact를 사용할 수 있�
 - Host가 development build의 출처와 위험을 항상 확인 가능
 - SPS 재시작 후 연결된 개발 프로젝트와 마지막 정상 build 복구
 
+### 현재 구현 상태
+
+- 외부 프로젝트의 canonical path와 source/output SHA-256을 Owner Vault에 저장하며
+  renderer에는 실제 경로를 노출하지 않는다.
+- SDK CLI의 build, validate, test가 동일한 source/output tuple에 성공한 경우에만
+  immutable `.spsplugin` 후보를 만든다.
+- 후보는 production Workspace가 아닌 격리 Preview에만 stage·activate하고,
+  Preview UI 로드 성공 뒤에만 Last Known Good로 승격한다.
+- 실패한 후보는 기존 정상 build를 바꾸지 않으며, 마지막 정상 archive로 rollback할 수 있다.
+
 ## 4단계. Plugin Preview와 격리 개발 Workspace
 
 ### 목표
@@ -220,7 +245,8 @@ Plugin Preview 창
 
 ### 작업
 
-1. Core가 plugin ID, build ID, preview Workspace를 받는 detached window API를 제공한다.
+1. Core는 plugin ID, build ID, preview Workspace의 headless runtime 계약을 제공하고
+   Desktop이 별도 격리 창의 생명주기를 소유한다.
 2. Preview 전용 DB namespace와 임시 Workspace를 만든다.
 3. production Source, secret, Node grant는 기본적으로 전달하지 않는다.
 4. Test fixture로 Host, Member, Node, Runtime, Source 상태를 주입한다.
@@ -234,6 +260,25 @@ Plugin Preview 창
 - Preview가 production Workspace와 Host 프로젝트 파일을 변경하지 않음
 - 같은 build ID로 재현 가능한 Preview 세션 생성
 - Preview renderer 실패가 메인 SPS를 종료시키지 않음
+
+### 현재 구현 상태
+
+- build별 Preview Vault, embedded DB, storage, secret key, 로그, 임시 Workspace와
+  loopback access token을 production Owner Vault 실행과 분리했다.
+- Preview 프로세스는 허용된 최소 환경변수만 받고 production secret, Source path,
+  Node grant를 상속하지 않는다.
+- 공개 SDK의 읽기 전용 fixture 계약으로 Host/Member, Node/Runtime/Source,
+  desktop/mobile, live/empty/loading/error 상태를 저장·주입한다.
+- Preview 시작, Workspace, stage, activation, renderer, worker, fixture, cleanup 이벤트를
+  최대 200개 보관하며 자격증명과 로컬 경로를 저장 전에 제거한다.
+- Keep/Delete/Cancel 종료 선택과 안전한 프로세스 종료 후 build별 데이터 삭제를 구현했다.
+- 실제 패키지 Core를 사용한 isolation·access-control·plugin activation smoke는 통과했다.
+- 최신 `0.4.95` Windows 후보 앱에서 SPS Identity 로그인, Owner Host 생성, 메인 Workspace,
+  Local Development Registry, 외부 SDK 플러그인의 build·validate·test, 격리 Preview,
+  Host/Member·desktop/mobile·live/error 전환을 실제 UI와 IPC로 검증했다.
+- Preview renderer를 독립적으로 중단한 뒤에도 메인 Workspace가 유지되고,
+  오류 진단에 자격증명과 외부 플러그인 로컬 경로가 남지 않으며 임시 프로세스와 데이터가
+  정리되는 실제 패키지 Electron E2E를 통과했다.
 
 ## 5단계. Diagnostics와 Test Kit
 

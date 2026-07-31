@@ -94,10 +94,13 @@ Core role or reporting line.
 
 The Discovery plugin owns the actual conversation, its selected Assistant,
 and its transcript. It can invoke the generic Agent Session transport and
-expose the verified catalog search and draft tools to the Assistant. It cannot
-install, enable, update, disable, or delete a plugin from the conversation.
-Those lifecycle actions, including a Company-level activation change, remain
-explicit Host review actions in Settings > Plugins.
+expose the verified catalog search and draft tools to the Assistant. Search,
+selection, recommendation, and drafting never imply a lifecycle action. When
+the user explicitly requests installation, activation, update, disable, or
+removal, the Assistant may submit a typed lifecycle proposal. Core validates
+the exact package, version, Workspace, capability delta, migration plan, and
+risk class, then requires the applicable Host confirmation before changing
+state. The Assistant cannot manufacture that confirmation or bypass Core.
 
 The catalog is exposed through the explicit `registry.catalog.read` capability.
 That capability gives an opting-in plugin only the Host-prepared path to a

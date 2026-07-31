@@ -39,6 +39,10 @@ test("limits the Host proof to Core technical-team routes on the active Owner Ho
   }), true);
   assert.equal(isSpsDesktopTechnicalHostRequest({
     ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/workspace-shell",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
     url: "http://127.0.0.1:31310/api/plugins/install",
   }), true);
   assert.equal(isSpsDesktopTechnicalHostRequest({
