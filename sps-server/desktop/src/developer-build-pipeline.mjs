@@ -6,6 +6,7 @@ import {
   fingerprintDevelopmentSource,
 } from "@sonparkserver/plugin-sdk/authoring/development-build-v1.mjs";
 import { packagePluginDirectory } from "@sonparkserver/plugin-sdk/authoring/plugin-package-v1.mjs";
+import { createSpsPluginConformanceReportV1 } from "@sonparkserver/plugin-sdk/conformance/v1.mjs";
 import { isDeveloperCandidatePromotable } from "./developer-project-store.mjs";
 
 const COMMANDS = Object.freeze(["build", "validate", "test"]);
@@ -73,6 +74,55 @@ export function createDeveloperCandidateFromGateReports(reports) {
     };
   }
   return { sourceFingerprint, outputFingerprint, outputs, gates };
+}
+
+/**
+ * Creates release-review evidence from the three deterministic Developer Mode
+ * gates. It deliberately reads only the public package identity; no path or
+ * command output becomes part of the persisted candidate.
+ */
+export async function createDeveloperConformanceEvidence({ sourceDirectory, reports, fsApi = fs } = {}) {
+  if (!Array.isArray(reports) || reports.length !== COMMANDS.length) throw new Error("Build, validate, and test reports are required.");
+  let manifest;
+  try {
+    const raw = await fsApi.readFile(path.join(path.resolve(sourceDirectory ?? ""), "sps-plugin.json"), "utf8");
+    if (Buffer.byteLength(raw, "utf8") > 64 * 1024) throw new Error("too large");
+    manifest = JSON.parse(raw);
+  } catch {
+    throw new Error("Plugin identity could not be read for conformance evidence.");
+  }
+  const pluginId = manifest?.plugin?.id;
+  const pluginVersion = manifest?.plugin?.version;
+  const diagnostics = [];
+  const checks = reports.map((report) => {
+    const command = report?.command;
+    if (!COMMANDS.includes(command)) throw new Error("Development gate reports are incomplete or duplicated.");
+    for (const [index, diagnostic] of (report.result?.diagnostics ?? []).entries()) {
+      diagnostics.push({
+        id: `desktop.${command}.${index}`,
+        origin: "desktop",
+        category: command === "validate" ? "manifest" : "worker",
+        level: report.success ? "warn" : "error",
+        code: /^[A-Z][A-Z0-9_]{1,119}$/.test(diagnostic?.code ?? "") ? diagnostic.code : `DEVELOPER_${command.toUpperCase()}_FAILED`,
+        message: typeof diagnostic?.message === "string" ? diagnostic.message : `Plugin ${command} gate reported a failure.`,
+        occurredAt: report.result?.completedAt,
+        details: { gate: command },
+      });
+    }
+    return {
+      id: `developer.${command}`,
+      status: report.success ? "passed" : "failed",
+      summary: report.success ? `Plugin ${command} gate passed.` : `Plugin ${command} gate did not pass.`,
+    };
+  });
+  return JSON.parse(JSON.stringify(createSpsPluginConformanceReportV1({
+    pluginId,
+    pluginVersion,
+    generatedAt: reports.at(-1)?.result?.completedAt,
+    checks,
+    diagnostics,
+    metadata: { evidence: "desktop-development-gates-v1" },
+  })));
 }
 
 export async function inspectDeveloperSourceTuple(sourceDirectory, {

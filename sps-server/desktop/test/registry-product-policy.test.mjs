@@ -30,3 +30,16 @@ test("uses the narrow Host proof for native Registry and Vault actions", async (
   assert.match(main, /async function showRegistryPluginStages[\s\S]*?ownerBootstrap: true/);
   assert.match(main, /async function exportOwnerVaultTransfer[\s\S]*?\/instance\/database-backups[\s\S]*?ownerBootstrap: true/);
 });
+
+test("shows canonical development diagnostics and conformance evidence in Registry", async () => {
+  const [html, renderer] = await Promise.all([
+    readFile(path.join(desktopRoot, "renderer", "registry.html"), "utf8"),
+    readFile(path.join(desktopRoot, "renderer", "registry.mjs"), "utf8"),
+  ]);
+
+  for (const category of ["manifest", "capability", "tool", "event", "job", "run", "stream", "connector", "mcp", "migration", "backup", "rollback", "visibility"]) {
+    assert.match(html, new RegExp(`<option value="${category}">`));
+  }
+  assert.match(renderer, /function developerConformanceMarkup/);
+  assert.match(renderer, /<dt>Conformance<\/dt>/);
+});

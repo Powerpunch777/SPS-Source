@@ -41,9 +41,11 @@ test("Desktop injects only a normalized per-build fixture into its isolated Prev
   assert.doesNotMatch(preload, /token|secret|password|require\("node:/i);
 });
 
-test("Desktop persists redacted Preview diagnostics without coupling renderer failure to the main Workspace", async () => {
+test("Desktop persists SDK v1-safe development diagnostics without coupling Preview failures to the main Workspace", async () => {
   const source = await readFile(mainPath, "utf8");
-  assert.match(source, /appendPluginPreviewDiagnostic/);
+  assert.match(source, /appendDeveloperDiagnostic/);
+  assert.match(source, /developerDiagnosticFromPreview/);
+  assert.match(source, /developerDiagnosticFromGate/);
   assert.match(source, /PREVIEW_RUNTIME_STARTED/);
   assert.match(source, /PREVIEW_PACKAGE_STAGED/);
   assert.match(source, /PREVIEW_PLUGIN_READY/);

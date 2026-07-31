@@ -52,16 +52,21 @@
           </form>
         </section>
         <details class="preview-diagnostics">
-          <summary>Recent Preview diagnostics</summary>
+          <summary>Development diagnostics</summary>
           <div class="preview-diagnostics-toolbar">
-            <p>Safe lifecycle events from isolated plugin Previews. SPS removes credentials and local paths before saving them.</p>
+            <p>Safe build, validation, test, and isolated Preview evidence. SPS removes credentials, local paths, and raw command output before saving it.</p>
             <div>
               <button id="refresh-preview-diagnostics" class="secondary" type="button">Refresh</button>
               <button id="clear-preview-diagnostics" class="secondary danger" type="button">Clear</button>
             </div>
           </div>
+          <div class="preview-diagnostic-filters" aria-label="Development diagnostics filters">
+            <label>Origin<select id="preview-diagnostics-origin"><option value="">All origins</option><option value="desktop">Desktop</option><option value="core">Core</option><option value="plugin">Plugin</option></select></label>
+            <label>Category<select id="preview-diagnostics-category"><option value="">All categories</option><option value="manifest">Manifest</option><option value="compatibility">Compatibility</option><option value="capability">Capability</option><option value="worker">Worker</option><option value="tool">Tool</option><option value="event">Event</option><option value="job">Job</option><option value="run">Run</option><option value="stream">Stream</option><option value="ui">UI</option><option value="connector">Connector</option><option value="mcp">MCP</option><option value="migration">Migration</option><option value="backup">Backup</option><option value="rollback">Rollback</option><option value="visibility">Visibility</option></select></label>
+            <label>Level<select id="preview-diagnostics-level"><option value="">All levels</option><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option></select></label>
+          </div>
           <div id="preview-diagnostics-list" class="preview-diagnostics-list" aria-live="polite">
-            <p class="empty-state">Open a Preview to collect diagnostics.</p>
+            <p class="empty-state">Run a development gate or open a Preview to collect diagnostics.</p>
           </div>
         </details>
       </section>

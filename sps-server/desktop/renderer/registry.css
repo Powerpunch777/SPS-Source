@@ -59,6 +59,9 @@ button { cursor: pointer; }
 .preview-diagnostics-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 12px 0 10px; }
 .preview-diagnostics-toolbar p { margin: 0; color: #8f9caf; font-size: 11px; }
 .preview-diagnostics-toolbar > div { display: flex; gap: 8px; }
+.preview-diagnostic-filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 10px; }
+.preview-diagnostic-filters label { display: grid; gap: 4px; color: #8f9caf; font-size: 10px; text-transform: uppercase; }
+.preview-diagnostic-filters select { min-height: 30px; min-width: 135px; padding: 5px 8px; border: 1px solid #3a4353; border-radius: 5px; color: #d8e2f5; background: #10131a; text-transform: none; }
 .preview-diagnostics .danger { color: #e6abb0; }
 .preview-diagnostics-list { display: grid; gap: 7px; max-height: 210px; overflow: auto; }
 .preview-diagnostic { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 9px 10px; border: 1px solid #2d3442; border-radius: 5px; background: #151a24; font-size: 11px; }
@@ -73,6 +76,7 @@ button { cursor: pointer; }
   .developer-metadata { grid-template-columns: 1fr; }
   #preview-environment-form { grid-template-columns: 1fr 1fr; }
   .preview-diagnostics-toolbar { align-items: flex-start; flex-direction: column; }
+  .preview-diagnostic-filters label { flex: 1 1 130px; }
   .preview-diagnostic { grid-template-columns: auto minmax(0, 1fr); }
   .preview-diagnostic p, .preview-diagnostic time { grid-column: 1 / -1; }
 }

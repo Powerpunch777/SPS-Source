@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { createSpsPluginConformanceReportV1 } from "@sonparkserver/plugin-sdk/conformance/v1.mjs";
 
 export const DEVELOPER_PROJECT_STORE_SCHEMA_VERSION = 1;
 export const MAX_DEVELOPER_PROJECTS = 64;
@@ -106,6 +107,7 @@ function assertPersistedCandidate(value, label = "Candidate") {
   }
   const createdAt = assertTimestamp(value.createdAt, `${label} createdAt`);
   if (!isPlainObject(value.gates)) throw new Error(`${label} gates are invalid.`);
+  const conformance = value.conformance == null ? undefined : normalizeConformanceEvidence(value.conformance);
   return {
     sourceFingerprint,
     outputFingerprint,
@@ -116,7 +118,24 @@ function assertPersistedCandidate(value, label = "Candidate") {
       validate: assertGateSummary(value.gates.validate, "Validate"),
       test: assertGateSummary(value.gates.test, "Test"),
     },
+    ...(conformance ? { conformance } : {}),
   };
+}
+
+function normalizeConformanceEvidence(value) {
+  if (!isPlainObject(value)) throw new Error("Candidate conformance evidence is invalid.");
+  try {
+    return JSON.parse(JSON.stringify(createSpsPluginConformanceReportV1({
+      pluginId: value.pluginId,
+      pluginVersion: value.pluginVersion,
+      generatedAt: value.generatedAt,
+      checks: value.checks,
+      diagnostics: value.diagnostics,
+      metadata: value.metadata,
+    })));
+  } catch {
+    throw new Error("Candidate conformance evidence is invalid.");
+  }
 }
 
 function assertPersistedLastKnownGood(value) {
@@ -283,6 +302,7 @@ function normalizeCandidateInput(value, now) {
     throw new Error("Candidate output components do not match its output fingerprint.");
   }
   if (!isPlainObject(value.gates)) throw new Error("Candidate gates are invalid.");
+  const conformance = value.conformance == null ? undefined : normalizeConformanceEvidence(value.conformance);
   return {
     sourceFingerprint,
     outputFingerprint,
@@ -293,6 +313,7 @@ function normalizeCandidateInput(value, now) {
       validate: compactGateInput(value.gates.validate, "Validate", sourceFingerprint, outputFingerprint),
       test: compactGateInput(value.gates.test, "Test", sourceFingerprint, outputFingerprint),
     },
+    ...(conformance ? { conformance } : {}),
   };
 }
 

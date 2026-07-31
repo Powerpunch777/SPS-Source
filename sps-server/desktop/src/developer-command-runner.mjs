@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { redactDeveloperDiagnosticText } from "./developer-diagnostics.mjs";
 
 const ALLOWED_COMMANDS = new Set(["build", "validate", "test"]);
 const DEVELOPMENT_BUILD_SCHEMA_VERSION = "development-build/v1";
@@ -65,7 +66,7 @@ function validateDevelopmentResult(value, expectedCommand) {
       return Object.freeze({
         code: boundedText(diagnostic.code, "diagnostic code"),
         phase: boundedText(diagnostic.phase, "diagnostic phase"),
-        message: boundedText(diagnostic.message, "diagnostic message"),
+        message: redactDeveloperDiagnosticText(boundedText(diagnostic.message, "diagnostic message")),
       });
     })),
   });

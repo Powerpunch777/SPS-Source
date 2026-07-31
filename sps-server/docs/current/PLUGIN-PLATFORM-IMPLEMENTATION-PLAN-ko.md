@@ -1,6 +1,6 @@
 # SPS Core 플러그인 제작 기반 완성 계획
 
-상태: 구현 중 (1~4단계 완료, 5단계 진행)
+상태: 구현 중 (1~5단계 완료, 6단계 진행)
 
 최종 갱신: 2026-07-31
 
@@ -52,7 +52,8 @@ Core는 기술 기반과 안전 경계를 제공하고 플러그인은 작업 �
 | 공개 SDK | Runtime·UI·Worker·Registry·Developer Build·Preview fixture 계약 구현 | Test Kit와 이전 SDK 호환 회귀 확장 |
 | Developer Mode | 외부 폴더 연결, 3-gate build, staging, LKG, rollback 구현 | 실제 reference plugin 반복 검증 |
 | Plugin Preview | 격리 Vault·DB·Workspace·별도 창·fixture·Preview 진단과 패키지 E2E 구현 | Diagnostics·Test Kit의 통합 진단 계약으로 연결 |
-| Diagnostics | Preview lifecycle의 안전한 통합 기록 구현 | 전체 plugin runtime·Connector·MCP 진단 통합 |
+| Diagnostics | 공개 v1 계약, Core 상태 snapshot, Desktop 개발 진단 원장과 UI 구현 | 실제 reference plugin 운영 진단 확장 |
+| Test Kit·Conformance | 결정적 in-memory fixture와 불변 검증 보고서 구현 | reference plugin 회귀 집합 확장 |
 | Plugin dependency | 표준 계약 불완전 | 필수·선택·버전·충돌 계약 제공 |
 | Discovery 검색·초안 | 구현 | 프로젝트 생성부터 Preview와 lifecycle proposal까지 연결 |
 
@@ -145,8 +146,8 @@ tool, job, event, storage, Source, Runtime, Run, Artifact를 사용할 수 있�
   rollback 및 공개 Worker Host conformance를 한 번에 통과했다.
 - Core의 native `spsPlugin` metadata, `ctx.spsTransport`, SPS UI bridge 계약은
   `302bb77`에 고정했다. 기존 Paperclip 이름은 compatibility alias로만 남겼다.
-- 공개 SDK 전체 테스트는 90개, Core 대상 계약 테스트는 39개 통과했다.
-  Core SDK·생성기·서버 타입 검사도 통과했다.
+- 최신 공개 SDK 전체 테스트는 126개, Core 진단·route·UI 집중 회귀는 65개
+  통과했다. Core Shared·Server·UI 타입 검사도 통과했다.
 - 1단계 완료 조건을 충족했다. 다음 구현 기준선은 2단계 Workspace Shell,
   Dashboard, Inbox contribution이다.
 
@@ -178,10 +179,10 @@ tool, job, event, storage, Source, Runtime, Run, Artifact를 사용할 수 있�
 
 ### 현재 구현 상태
 
-- Core `2158bb50e53b5c09761856f80aed83e1d800d416`에서 Native capability,
+- Core `25be48f1a9b9879b440ad3e9bc2f6bf4e03f76f1`에서 Native capability,
   manifest 검증, Workspace별 Shell 선택, Neutral fallback, Dashboard 배치,
   Inbox 저장·읽음·보관·검색·action 재검증과 개발 플러그인 원자적 upgrade·rollback을 구현했다.
-- 공개 SDK `71d39163e04323f42db70e22a2c1c21b29a708b3`에서 Core checkout 없이
+- 공개 SDK `d6ac165a0b714dfbd35b0f2958579425548875bf` (`0.6.0`)에서 Core checkout 없이
   사용하는 Runtime·UI·Worker·Registry·Developer Build·Preview fixture 계약을 제공한다.
 - Plugin Discovery & Builder `0.3.3`과 SPS Team Workplane `0.3.91`을 서로 다른
   reference contribution으로 연결했다.
@@ -189,7 +190,8 @@ tool, job, event, storage, Source, Runtime, Run, Artifact를 사용할 수 있�
   실제 UI와 API를 함께 조작하는 격리 E2E를 통과했다.
 - Core plugin upgrade 집중 회귀 73개와 Desktop 전체 회귀 237개를 통과했으며,
   실제 패키지 Core Preview smoke에서 production Workspace sentinel이 유지됨을 확인했다.
-- 1~4단계 완료 조건을 충족했다. 현재 구현 기준선은 5단계 Diagnostics와 Test Kit다.
+- 1~5단계 완료 조건을 충족했다. 현재 구현 기준선은 6단계 Workspace Job과
+  Plugin Dependency다.
 
 ## 3단계. Developer Mode와 Local Development Registry
 
@@ -311,6 +313,30 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
 - 플러그인 repo에서 SPS Desktop 없이 대부분의 계약 테스트 실행
 - 실패 원인을 개발자 콘솔이나 DB 조회 없이 Diagnostics에서 확인
 - conformance 결과를 package metadata와 release 검토에 첨부 가능
+
+### 현재 구현 상태
+
+- 공개 SDK `0.6.0`에 `diagnostics/v1`, `testing/v1`, `conformance/v1`을
+  추가했다. 플러그인 저장소는 SPS Desktop이나 Core checkout 없이 안전한 구조형
+  진단, 결정적 in-memory Host·Member·Workspace fixture, 불변 conformance
+  보고서를 사용할 수 있다.
+- SDK는 raw command 출력, 자격증명, secret, 로컬 절대 경로, accessor와 순환
+  객체를 진단·보고서에서 거부한다. 전체 공개 SDK 회귀 126개를 통과했다.
+- Core는 plugin 상태와 최근 사실을 `sps-plugin-diagnostic/v1`로 정규화하고
+  Host와 Member의 가시성을 분리한다. migration·backup·rollback 사실은 Host에게만
+  보이며, 진단 서비스·API·설정 UI 집중 회귀 65개와 Shared·Server·UI 타입 검사를
+  통과했다.
+- Desktop Developer Mode는 build·validate·test·Preview 생명주기를 같은 표준
+  원장에 기록하고 origin·category·level로 필터링한다. 후보 카드에는 conformance
+  통과 수와 상태를 표시하며, 실패한 gate는 command·stdout·stderr 없이 안전한
+  원인만 보여준다.
+- Desktop 전체 회귀 242개를 통과했다. `0.4.95` Windows 후보 앱에서 로그인,
+  Owner Host 생성, 외부 SDK 플러그인 연결과 세 gate, 격리 Preview, Host·Member,
+  desktop·mobile, live·error 전환, Preview renderer 단독 crash를 실제로 조작했다.
+  `PREVIEW_RENDERER_GONE` 진단을 프로젝트별로 조회하고 자격증명·외부 경로가
+  노출되지 않으며 메인 Workspace와 정리 절차가 유지됨을 확인했다.
+- 5단계 완료 조건을 충족했다. 다음 구현 기준선은 Workspace별 Job 격리와
+  명시적 Plugin Dependency 계약이다.
 
 ## 6단계. Workspace Job과 Plugin Dependency
 

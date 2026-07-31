@@ -129,6 +129,7 @@ import {
 } from "./developer-command-runner.mjs";
 import {
   createDeveloperCandidateFromGateReports,
+  createDeveloperConformanceEvidence,
   inspectDeveloperSourceTuple,
   stageDeveloperCandidate,
 } from "./developer-build-pipeline.mjs";
@@ -139,10 +140,12 @@ import {
   updatePluginPreviewFixture,
 } from "./plugin-preview-runtime.mjs";
 import {
-  appendPluginPreviewDiagnostic,
-  clearPluginPreviewDiagnostics,
-  listPluginPreviewDiagnostics,
-} from "./plugin-preview-diagnostics.mjs";
+  appendDeveloperDiagnostic,
+  clearDeveloperDiagnostics,
+  developerDiagnosticFromGate,
+  developerDiagnosticFromPreview,
+  listDeveloperDiagnostics,
+} from "./developer-diagnostics.mjs";
 import { assessSpsPluginCompatibility } from "./plugin-compatibility.mjs";
 import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
@@ -2093,18 +2096,17 @@ async function recordDesktopPluginPreviewDiagnostic({
   message,
 }) {
   try {
-    return await appendPluginPreviewDiagnostic({
+    return await appendDeveloperDiagnostic({
       ownerVault: ownerVaultRoot(),
-      event: {
+      event: developerDiagnosticFromPreview({
         projectId,
         buildId,
-        ...(pluginId ? { pluginId } : {}),
         phase,
         level,
         code,
         message,
-        timestamp: new Date().toISOString(),
-      },
+        ...(pluginId ? { pluginId } : {}),
+      }),
     });
   } catch (error) {
     console.warn("SPS plugin Preview diagnostic could not be persisted:", error instanceof Error ? error.message : String(error));
@@ -2115,11 +2117,14 @@ async function recordDesktopPluginPreviewDiagnostic({
 async function listDesktopPluginPreviewDiagnostics(input = {}) {
   assertRegistryOwner();
   try {
-    const events = await listPluginPreviewDiagnostics({
+    const events = await listDeveloperDiagnostics({
       ownerVault: ownerVaultRoot(),
       filters: {
         ...(input?.projectId ? { projectId: input.projectId } : {}),
         ...(input?.buildId ? { buildId: input.buildId } : {}),
+        ...(input?.origin ? { origin: input.origin } : {}),
+        ...(input?.category ? { category: input.category } : {}),
+        ...(input?.level ? { level: input.level } : {}),
         limit: input?.limit ?? 40,
       },
     });
@@ -2134,7 +2139,7 @@ async function listDesktopPluginPreviewDiagnostics(input = {}) {
 
 async function clearDesktopPluginPreviewDiagnostics() {
   assertRegistryOwner();
-  return await clearPluginPreviewDiagnostics({ ownerVault: ownerVaultRoot() });
+  return await clearDeveloperDiagnostics({ ownerVault: ownerVaultRoot() });
 }
 
 async function resolveDesktopDeveloperKit() {
@@ -2225,19 +2230,41 @@ async function runDesktopDeveloperGates(projectId) {
     const runtime = await resolveDesktopDeveloperKit();
     const reports = [];
     for (const command of ["build", "validate", "test"]) {
-      reports.push(await runSpsDeveloperCommand({
-        command,
-        sourceDirectory: project.sourcePath,
-        nodeCommand: runtime.nodeCommand,
-        sdkCliPath: runtime.sdkCliPath,
-        environment: runtime.environment,
-      }));
+      let report;
+      try {
+        report = await runSpsDeveloperCommand({
+          command,
+          sourceDirectory: project.sourcePath,
+          nodeCommand: runtime.nodeCommand,
+          sdkCliPath: runtime.sdkCliPath,
+          environment: runtime.environment,
+        });
+      } catch {
+        await appendDeveloperDiagnostic({
+          ownerVault: ownerVaultRoot(),
+          event: {
+            origin: "desktop",
+            category: command === "validate" ? "manifest" : "worker",
+            level: "error",
+            code: `DEVELOPER_${command.toUpperCase()}_UNAVAILABLE`,
+            message: `Plugin ${command} gate could not produce a safe result.`,
+            details: { projectId, gate: command },
+          },
+        });
+        throw new Error(`Plugin ${command} gate could not complete. Check Development diagnostics.`);
+      }
+      reports.push(report);
+      await appendDeveloperDiagnostic({
+        ownerVault: ownerVaultRoot(),
+        event: developerDiagnosticFromGate({ projectId, command, report }),
+      });
     }
     const candidate = createDeveloperCandidateFromGateReports(reports);
+    const conformance = await createDeveloperConformanceEvidence({ sourceDirectory: project.sourcePath, reports });
     const saved = await recordDeveloperCandidate({
       vaultRoot: ownerVaultRoot(),
       projectId,
-      candidate,
+      candidate: { ...candidate, conformance },
     });
     return {
       project: publicDeveloperProject(saved),

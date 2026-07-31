@@ -47,6 +47,14 @@ function developerGateMarkup(candidate) {
   }).join("");
 }
 
+function developerConformanceMarkup(candidate) {
+  const report = candidate?.conformance;
+  if (!report) return "Not available";
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  const passed = checks.filter((check) => check.status === "passed").length;
+  return `<span class="developer-status ${report.status === "passed" ? "passed" : "failed"}">${escapeHtml(report.status)}</span> ${passed}/${checks.length} checks`;
+}
+
 function renderDeveloperProjects() {
   const list = $("#developer-project-list");
   if (developerProjects.length === 0) {
@@ -71,6 +79,7 @@ function renderDeveloperProjects() {
         <dl class="developer-metadata">
           <div><dt>Source</dt><dd><code>${escapeHtml(shortHash(inspection?.current?.sourceFingerprint ?? project.candidate?.sourceFingerprint))}</code>${changed === true ? '<span class="changed">Changed</span>' : changed === false ? '<span class="clean">Current</span>' : ""}</dd></div>
           <div><dt>Output</dt><dd><code>${escapeHtml(shortHash(inspection?.current?.outputFingerprint ?? project.candidate?.outputFingerprint))}</code></dd></div>
+          <div><dt>Conformance</dt><dd>${developerConformanceMarkup(project.candidate)}</dd></div>
           <div><dt>Last known good</dt><dd>${lastKnownGood ? `<code>${escapeHtml(lastKnownGood.deployment.pluginId)} v${escapeHtml(lastKnownGood.deployment.version)}</code>` : "None"}</dd></div>
         </dl>
         <div class="developer-actions">
@@ -93,15 +102,15 @@ function renderPreviewDiagnostics() {
     return;
   }
   if (previewDiagnostics.length === 0) {
-    list.innerHTML = '<p class="empty-state">No Preview diagnostics have been recorded.</p>';
+    list.innerHTML = '<p class="empty-state">No Development diagnostics have been recorded.</p>';
     return;
   }
   list.innerHTML = previewDiagnostics.map((event) => `
     <article class="preview-diagnostic ${escapeHtml(event.level)}">
       <span class="preview-diagnostic-level">${escapeHtml(event.level)}</span>
-      <code>${escapeHtml(event.phase)} / ${escapeHtml(event.code)}</code>
+      <code>${escapeHtml(event.origin)} / ${escapeHtml(event.category)} / ${escapeHtml(event.code)}</code>
       <p>${escapeHtml(event.message)}</p>
-      <time datetime="${escapeHtml(event.timestamp)}">${escapeHtml(new Date(event.timestamp).toLocaleTimeString())}</time>
+      <time datetime="${escapeHtml(event.occurredAt)}">${escapeHtml(new Date(event.occurredAt).toLocaleTimeString())}</time>
     </article>
   `).join("");
 }
@@ -236,7 +245,12 @@ async function loadDeveloperProjects() {
 }
 
 async function loadPreviewDiagnostics() {
-  const result = await window.spsRegistry.listPreviewDiagnostics({ limit: 40 });
+  const result = await window.spsRegistry.listPreviewDiagnostics({
+    limit: 80,
+    origin: $("#preview-diagnostics-origin").value || undefined,
+    category: $("#preview-diagnostics-category").value || undefined,
+    level: $("#preview-diagnostics-level").value || undefined,
+  });
   previewDiagnostics = Array.isArray(result?.events) ? result.events : [];
   previewDiagnosticsWarning = result?.warning ?? null;
   renderPreviewDiagnostics();
@@ -261,6 +275,9 @@ $("#refresh-sources").addEventListener("click", () => loadSources().catch((error
 $("#refresh-stages").addEventListener("click", () => loadStages());
 $("#refresh-developer-projects").addEventListener("click", () => loadDeveloperProjects().catch((error) => setNotice(error.message, true)));
 $("#refresh-preview-diagnostics").addEventListener("click", () => loadPreviewDiagnostics().catch((error) => setNotice(error.message, true)));
+for (const control of document.querySelectorAll("#preview-diagnostics-origin, #preview-diagnostics-category, #preview-diagnostics-level")) {
+  control.addEventListener("change", () => loadPreviewDiagnostics().catch((error) => setNotice(error.message, true)));
+}
 $("#refresh-preview-environment").addEventListener("click", () => loadPreviewState().catch((error) => setNotice(error.message, true)));
 $("#preview-environment-form").addEventListener("submit", async (event) => {
   event.preventDefault();

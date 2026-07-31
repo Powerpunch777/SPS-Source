@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createSpsPluginConformanceReportV1 } from "@sonparkserver/plugin-sdk/conformance/v1.mjs";
 import {
   connectDeveloperProject,
   DEVELOPER_PROJECT_STORE_SCHEMA_VERSION,
@@ -145,6 +146,38 @@ test("keeps failed candidates separate from the last known good build", async ()
       "archiveRelativePath" in publicDeveloperProject(restored.projects[0]).lastKnownGood.deployment,
       false,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persists safe conformance evidence with the checked development candidate", async () => {
+  const { root, vaultRoot, sourceRoot } = await fixture();
+  try {
+    const project = await connect({ vaultRoot, sourcePath: sourceRoot });
+    const conformance = createSpsPluginConformanceReportV1({
+      pluginId: "local.example-plugin",
+      pluginVersion: "0.1.0",
+      generatedAt: NOW,
+      checks: [
+        { id: "developer.build", status: "passed", summary: "Plugin build gate passed." },
+        { id: "developer.validate", status: "passed", summary: "Plugin validate gate passed." },
+        { id: "developer.test", status: "passed", summary: "Plugin test gate passed." },
+      ],
+      metadata: { evidence: "desktop-development-gates-v1" },
+    });
+    await recordDeveloperCandidate({
+      vaultRoot,
+      projectId: project.id,
+      candidate: { ...candidate(), conformance },
+      now: () => NOW,
+      randomId: ids(),
+    });
+    const restored = await loadDeveloperProjects({ vaultRoot });
+    assert.equal(restored.projects[0].candidate.conformance.schemaVersion, "sps-plugin-conformance/v1");
+    assert.equal(restored.projects[0].candidate.conformance.status, "passed");
+    assert.equal(JSON.stringify(restored.projects[0].candidate.conformance).includes("sourcePath"), false);
+    assert.equal(JSON.stringify(publicDeveloperProject(restored.projects[0])).includes("sourcePath"), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
