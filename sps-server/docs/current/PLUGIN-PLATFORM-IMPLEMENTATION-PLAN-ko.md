@@ -503,7 +503,7 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
   대화와 Plugin Builder 진입 전후 lifecycle snapshot이 동일함도 확인했다. 공식
   Registry 자동 선택, 최신 릴리스 우선 표시, Host 전역 준비 상태와 Workspace별
   활성 상태 구분을 제품 UI와 회귀에 함께 반영했다.
-- 7E 완료: SDK `0.11.0`, Core `6e1f60c54c24058ceb168a446d42532305ccd099`,
+- 7E 완료: SDK `0.11.0`, Core `c4ce4bf866cac1aa2d7276f289c30b531769ada1`,
   SDK `f24d9b236a8bdaee9441f37694b7e4298aa7e6c2`, Builder `0.4.0`과 Catalog
   환경변수를 Desktop release baseline에 고정했다. Windows `0.4.96` 설치본은
   Host runtime·Marketplace MCP package smoke와 Bootstrap·Workspace Surfaces·

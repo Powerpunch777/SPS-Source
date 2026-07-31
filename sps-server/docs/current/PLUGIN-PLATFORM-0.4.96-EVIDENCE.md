@@ -14,7 +14,7 @@ acceptance remains open.
 | Installer size | `317869481` bytes |
 | Installer SHA-256 | `06da07dd6c788be57baf1f187a3214ce3c66d89b297e5242f3e972102051b487` |
 | Product source revision | `9ff2cea8f16bd9b3e567429e4986a969ad9b9024` |
-| Core revision | `6e1f60c54c24058ceb168a446d42532305ccd099` |
+| Core revision | `c4ce4bf866cac1aa2d7276f289c30b531769ada1` |
 | Public Plugin SDK | `0.11.0` |
 | SDK revision | `f24d9b236a8bdaee9441f37694b7e4298aa7e6c2` |
 | Plugin Builder | `0.4.0` |
