@@ -16,6 +16,9 @@ test("builds and bundles the static Core Workspace UI with the Owner Host runtim
   assert.match(buildScript, /packages", "shared", "tsconfig\.json/);
   assert.match(buildScript, /\[tscCli, "-p", sharedTsconfig\]/);
   assert.match(buildScript, /adapterUtilsTsconfig/);
+  assert.match(buildScript, /marketplaceMcpTsconfig/);
+  assert.match(buildScript, /packages", "mcp-server", "tsconfig\.json/);
+  assert.match(buildScript, /\[tscCli, "-p", marketplaceMcpTsconfig\]/);
   assert.match(buildScript, /codexAdapterTsconfig/);
   assert.match(buildScript, /claudeAdapterTsconfig/);
   assert.match(buildScript, /serverUiDist/);

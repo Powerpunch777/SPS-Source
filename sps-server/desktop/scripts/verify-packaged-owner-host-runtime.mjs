@@ -21,6 +21,8 @@ const requiredFiles = [
   "sps-plugin-discovery/dist/manifest.js",
   "sps-room-chat/dist/manifest.js",
   "node_modules/@paperclipai/server/package.json",
+  "node_modules/@sps/mcp-server/package.json",
+  "node_modules/@sps/mcp-server/dist/marketplace-assistant-stdio.js",
 ];
 
 const missing = [];
