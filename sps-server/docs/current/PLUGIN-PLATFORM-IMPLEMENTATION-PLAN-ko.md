@@ -1,10 +1,10 @@
 # SPS Core 플러그인 제작 기반 완성 계획
 
-상태: 구현 중 (1~5단계 완료, 6단계 진행)
+상태: 구현 중 (1~6단계 완료, 7단계 진행)
 
 최종 갱신: 2026-07-31
 
-기준 설치본: SPS Desktop `0.4.95`
+기준 설치본: SPS Desktop `0.4.96`
 
 ## 목적
 
@@ -41,12 +41,12 @@ Core는 기술 기반과 안전 경계를 제공하고 플러그인은 작업 �
 
 ## 현재 기준 상태
 
-| 영역 | 0.4.95 상태 | 이 계획의 목표 |
+| 영역 | 0.4.96 상태 | 이 계획의 목표 |
 | --- | --- | --- |
 | 패키지 생명주기 | 구현 | 위험 검토, migration, rollback 흐름을 개발자 도구와 통합 |
 | Workspace별 활성화 | 구현 | Shell 선택과 contribution 상태까지 Workspace별 분리 |
 | UI contribution | page, sidebar, settings, detail tab 구현 | Shell, Dashboard widget, Inbox 추가 |
-| Worker·Tool·Event·Job | 구현 | Workspace Job과 일관된 진단 추가 |
+| Worker·Tool·Event·Job | Workspace Job 격리·복구·취소·retry 계약 구현 | reference plugin 운영 회귀 확장 |
 | Source·Runtime·Run·Artifact | 구현 | 공개 SDK와 Test Kit에서 직접 사용 가능하게 고정 |
 | Connector·MCP | 기반 구현 | scoped handle, 상태, 테스트 fixture 표준화 |
 | 공개 SDK | Runtime·UI·Worker·Registry·Developer Build·Preview fixture 계약 구현 | Test Kit와 이전 SDK 호환 회귀 확장 |
@@ -54,7 +54,7 @@ Core는 기술 기반과 안전 경계를 제공하고 플러그인은 작업 �
 | Plugin Preview | 격리 Vault·DB·Workspace·별도 창·fixture·Preview 진단과 패키지 E2E 구현 | Diagnostics·Test Kit의 통합 진단 계약으로 연결 |
 | Diagnostics | 공개 v1 계약, Core 상태 snapshot, Desktop 개발 진단 원장과 UI 구현 | 실제 reference plugin 운영 진단 확장 |
 | Test Kit·Conformance | 결정적 in-memory fixture와 불변 검증 보고서 구현 | reference plugin 회귀 집합 확장 |
-| Plugin dependency | 표준 계약 불완전 | 필수·선택·버전·충돌 계약 제공 |
+| Plugin dependency | 필수·선택·버전·충돌·영향 검토·blocked 복구 계약 구현 | Builder lifecycle proposal과 연결 |
 | Discovery 검색·초안 | 구현 | 프로젝트 생성부터 Preview와 lifecycle proposal까지 연결 |
 
 ## Core 완성 Gate
@@ -362,6 +362,25 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
 - 비활성 Workspace에서 Job이 실행되지 않음
 - dependency가 없는 플러그인을 활성화하기 전에 명확한 설명 제공
 - dependency 변경이 자동 설치나 자동 활성화를 일으키지 않음
+
+### 현재 구현 상태
+
+- SPS Core `dc5e8d2c29912361bcce715175f0186824b757a9`에 Workspace Job과
+  `sps-plugin-dependency/v1` 계약을 반영했다.
+- 공개 SDK `0.7.1`은 `requiredDependencies`, `optionalDependencies`,
+  `conflicts`, `services`를 검증하고 기존 플러그인 ID 호환성을 유지한다.
+- 필수 dependency 손실·버전 불일치·충돌·순환은 활성화와 Workspace Job 실행을
+  차단한다. 선택 dependency 손실은 기능 저하 상태로 보고하되 실행을 막지 않는다.
+- Host 비활성화·삭제와 Workspace 비활성화는 영향 Preview의 정확한
+  `impactReviewId` 없이는 실행되지 않으며, 확인 후에도 의존 플러그인을 연쇄 변경하지
+  않는다.
+- Core 플러그인 회귀 29개 파일 275개, Desktop 전체 회귀 242개, Shared·Server 타입
+  검사를 통과했다.
+- SPS Desktop `0.4.96` Windows 설치 후보의 실제 packaged Owner Host에서 직접
+  브라우저 차단, 기본 메모리·Discovery·Room, 공개 SDK 워커, Registry
+  설치·업그레이드·롤백, dependency 영향 검토·차단·복구 E2E를 통과했다.
+- 6단계 완료 조건을 충족했다. 다음 구현 기준선은 Plugin Discovery & Builder의
+  typed authoring 도구, 외부 프로젝트, 증거 원장, Preview, lifecycle proposal 연결이다.
 
 ## 7단계. Plugin Discovery & Builder 완성
 

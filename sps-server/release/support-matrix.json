@@ -2,16 +2,16 @@
   "schemaVersion": 1,
   "candidate": {
     "status": "development-candidate",
-    "desktopVersion": "0.4.95",
+    "desktopVersion": "0.4.96",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
-      "revision": "25be48f1a9b9879b440ad3e9bc2f6bf4e03f76f1"
+      "revision": "dc5e8d2c29912361bcce715175f0186824b757a9"
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",
-      "revision": "d6ac165a0b714dfbd35b0f2958579425548875bf",
+      "revision": "5a0496e5b903077414118442fd1328e233ab2818",
       "package": "@sonparkserver/plugin-sdk",
-      "version": "0.6.0"
+      "version": "0.7.1"
     },
     "extensionProfile": {
       "version": "2.0",

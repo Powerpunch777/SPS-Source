@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.95",
+  "version": "0.4.96",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",

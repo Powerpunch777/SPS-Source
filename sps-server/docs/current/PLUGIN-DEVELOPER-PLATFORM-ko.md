@@ -48,6 +48,10 @@ Conformance Report는 테스트 결과와 안전한 Diagnostics를 묶는다. De
 Mode가 build·validate·test를 모두 통과시킨 후보에 이 보고서를 첨부하며,
 Host는 release 검토 화면에서 콘솔이나 DB를 열지 않고 근거를 확인할 수 있다.
 
+공개 SDK `0.7.1`부터 `@sonparkserver/plugin-sdk/dependency/v1`도 제공한다.
+필수·선택 의존성, 서비스 발견, 버전 범위, 충돌, 순환 관계와 변경 영향은
+설치나 활성화를 수행하지 않는 순수 분석 계약으로 검증한다.
+
 ## 제작 흐름
 
 ```text

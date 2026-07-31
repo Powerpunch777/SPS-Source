@@ -398,6 +398,64 @@ async function writeRegistrySmokePackage(
   return { packageRoot, artifactSha256: sha256(`registry-smoke-${version}`) };
 }
 
+async function writeDependencySmokePackage(pluginId, requiredDependencies = []) {
+  const version = "1.0.0";
+  const packageRoot = path.join(temporaryRoot, "registry-staging", `dependency-${pluginId}`);
+  const manifestSource = [
+    "export default {",
+    `  id: ${JSON.stringify(pluginId)},`,
+    "  apiVersion: 1,",
+    `  version: ${JSON.stringify(version)},`,
+    '  minimumHostVersion: "0.4.0",',
+    `  displayName: ${JSON.stringify(pluginId)},`,
+    '  description: "Packaged plugin dependency lifecycle smoke plugin.",',
+    '  author: "SPS",',
+    '  categories: ["automation"],',
+    '  capabilities: ["plugin.state.read"],',
+    `  requiredDependencies: ${JSON.stringify(requiredDependencies)},`,
+    '  entrypoints: { worker: "./dist/worker.js" },',
+    "};",
+    "",
+  ].join("\n");
+  const workerSource = [
+    'import { createInterface } from "node:readline";',
+    'const input = createInterface({ input: process.stdin });',
+    'function reply(id, result) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n"); }',
+    'input.on("line", (line) => {',
+    "  let request;",
+    "  try { request = JSON.parse(line); } catch { return; }",
+    '  if (!request || request.jsonrpc !== "2.0" || request.id === undefined) return;',
+    '  if (request.method === "initialize") reply(request.id, { ok: true, supportedMethods: ["health"] });',
+    '  else if (request.method === "health") reply(request.id, { status: "ok" });',
+    '  else if (request.method === "shutdown") { reply(request.id, null); input.close(); setImmediate(() => process.exit(0)); }',
+    '  else reply(request.id, null);',
+    "});",
+    "",
+  ].join("\n");
+  const capabilities = ["plugin.state.read"];
+  const staticManifest = {
+    schemaVersion: 1,
+    plugin: { id: pluginId, version, apiVersion: "1" },
+    runtime: { manifestEntry: "dist/manifest.js", manifestSha256: sha256(manifestSource) },
+    capabilities,
+    permissionsDigest: sha256(JSON.stringify(capabilities)),
+  };
+  await mkdir(path.join(packageRoot, "dist"), { recursive: true });
+  await Promise.all([
+    writeFile(path.join(packageRoot, "package.json"), `${JSON.stringify({
+      name: pluginId,
+      version,
+      private: true,
+      type: "module",
+      paperclipPlugin: { manifest: "./dist/manifest.js", worker: "./dist/worker.js" },
+    }, null, 2)}\n`, "utf8"),
+    writeFile(path.join(packageRoot, "dist", "manifest.js"), manifestSource, "utf8"),
+    writeFile(path.join(packageRoot, "dist", "worker.js"), workerSource, "utf8"),
+    writeFile(path.join(packageRoot, "sps-plugin.json"), `${JSON.stringify(staticManifest, null, 2)}\n`, "utf8"),
+  ]);
+  return { packageRoot, artifactSha256: sha256(`${pluginId}-${version}`) };
+}
+
 async function ownerHostJson(pathname, body) {
   const response = await ownerHostRequest(pathname, {
     method: body === undefined ? "GET" : "POST",
@@ -464,6 +522,72 @@ async function assertRegistryLifecycle() {
   const incompatiblePayload = await incompatibleEnable.json().catch(() => null);
   if (incompatibleEnable.ok || !String(incompatiblePayload?.error ?? "").includes("requires host version 0.5.0 or newer")) {
     throw new Error("Registry smoke did not block a plugin that requires a newer SPS Desktop.");
+  }
+}
+
+async function assertPluginDependencyLifecycle() {
+  const providerKey = "sps.dependency-provider";
+  const consumerKey = "sps.dependency-consumer";
+  const providerPackage = await writeDependencySmokePackage(providerKey);
+  const consumerPackage = await writeDependencySmokePackage(consumerKey, [{ id: providerKey, minVersion: "1.0.0" }]);
+  const source = { registryId: "sps.dependency-smoke", kind: "local", releaseLocator: "dependency-smoke" };
+
+  const providerStage = await ownerHostJson("/api/plugins/registry/stages", {
+    ...providerPackage,
+    source: { ...source, releaseLocator: `${providerKey}/1.0.0` },
+  });
+  const provider = (await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(providerStage.stageId)}/enable`, {})).plugin;
+  const consumerStage = await ownerHostJson("/api/plugins/registry/stages", {
+    ...consumerPackage,
+    source: { ...source, releaseLocator: `${consumerKey}/1.0.0` },
+  });
+  const consumer = (await ownerHostJson(`/api/plugins/registry/stages/${encodeURIComponent(consumerStage.stageId)}/enable`, {})).plugin;
+  if (provider?.status !== "ready" || consumer?.status !== "ready") {
+    throw new Error("Dependency smoke plugins did not install and activate in dependency order.");
+  }
+
+  const preview = await ownerHostJson(`/api/plugins/${encodeURIComponent(provider.id)}/dependency-impact?action=disable`);
+  if (
+    preview.report?.status !== "blocked"
+    || !preview.report?.impact?.affectedPluginIds?.includes(consumerKey)
+    || typeof preview.report?.impact?.reviewId !== "string"
+  ) {
+    throw new Error(`The packaged Host did not produce a deterministic dependency impact preview: ${JSON.stringify(preview)}`);
+  }
+
+  const blocked = await ownerHostRequest(`/api/plugins/${encodeURIComponent(provider.id)}/disable`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const blockedPayload = await blocked.json().catch(() => null);
+  if (
+    blocked.status !== 409
+    || blockedPayload?.impactReviewId !== preview.report.impact.reviewId
+    || !blockedPayload?.report?.impact?.affectedPluginIds?.includes(consumerKey)
+  ) {
+    throw new Error("The packaged Host allowed an unreviewed dependency-breaking disable.");
+  }
+
+  const disabled = await ownerHostJson(`/api/plugins/${encodeURIComponent(provider.id)}/disable`, {
+    impactReviewId: preview.report.impact.reviewId,
+  });
+  if (disabled?.status !== "disabled") {
+    throw new Error(`The packaged Host did not apply an explicitly reviewed dependency-breaking disable: ${JSON.stringify(disabled)}`);
+  }
+  const blockedGraph = await ownerHostJson(`/api/plugins/${encodeURIComponent(provider.id)}/dependency-impact?action=disable`);
+  if (
+    blockedGraph.report?.status !== "blocked"
+    || !blockedGraph.report?.blockedPluginIds?.includes(consumerKey)
+    || !blockedGraph.report?.issues?.some((issue) => issue.code === "MISSING_REQUIRED" && issue.pluginId === consumerKey)
+  ) {
+    throw new Error("The packaged Host did not mark the dependent plugin unavailable after its provider stopped.");
+  }
+
+  const restored = await ownerHostJson(`/api/plugins/${encodeURIComponent(provider.id)}/enable`, {});
+  if (restored?.status !== "ready") {
+    throw new Error("The packaged Host did not recover the dependency provider after re-enable.");
   }
 }
 
@@ -703,9 +827,10 @@ try {
   await assertRoomsPlugin();
   await assertPublicPluginWorkerHostConformance();
   await assertRegistryLifecycle();
+  await assertPluginDependencyLifecycle();
   await assertRegistryAuthoringDesktopFlow();
   passed = true;
-  console.log(`Packaged SPS Owner Host, baseline Team access UI, bundled SPS plugins, and Registry author/publish/install/update/rollback smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
+  console.log(`Packaged SPS Owner Host, baseline Team access UI, bundled SPS plugins, dependency impact review, and Registry author/publish/install/update/rollback smoke test passed on http://127.0.0.1:${port} (${health.status}).`);
 } finally {
   await stopChildTree(child);
   await stopChildTree(memoryChild);
