@@ -422,6 +422,8 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
 
 - Marketplace UI, 대화 세션, adapter 선택, Catalog query broker는 Core가 소유한다.
 - 실제 모델은 Core에 고정하지 않고 사용자가 사용할 수 있는 AI 어댑터로 실행한다.
+- 첫 릴리스에서 사용자는 허용된 Agent를 선택하고, Core는 그 Agent에 저장된 adapter와
+  계정 설정을 사용한다. 사용자가 임의 adapter config나 secret을 요청에 넣지 않는다.
 - 대화는 `사용자 + Workspace` 범위로 분리하고, 어댑터 접근 권한을 매 호출에 확인한다.
 - AI 어댑터가 없거나 한도에 도달해도 일반 검색과 상세 조회는 계속 작동한다.
 - Core는 `search_marketplace_plugins`와 `get_marketplace_plugin`만 제공한다.
@@ -435,6 +437,23 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
 - Assistant transcript에는 사용자 질문, 모델 답변, 사용한 read-only tool의 공개
   결과만 저장한다. Builder의 파일 변경, build, test, Preview 증거는 Assistant
   transcript가 아니라 Builder 프로젝트의 증거 원장에 저장한다.
+
+### Core Assistant 기술 실행 계약
+
+- 기존 `heartbeat.wakeup -> adapter.execute` 실행, Provider session, usage, timeout,
+  compact, run log를 재사용한다. 별도 AI 실행 서버를 만들지 않는다.
+- `agent_task_sessions`는 Provider session handle에만 사용하고, 사용자별 transcript는
+  별도 Core message store에 저장한다. 안정적인 task key에는 사용자 ID를 포함한다.
+- Core Tool Bridge는 Plugin Tool Dispatcher와 분리하며, 등록과 실행 양쪽에서
+  `search_marketplace_plugins`, `get_marketplace_plugin` 이외의 이름을 거부한다.
+- 공통 Adapter 계약에 외부 read-only tool declaration과 실행 callback capability를
+  추가한다. Adapter가 이 capability를 지원할 때만 Assistant Agent 후보로 표시한다.
+- 프롬프트에 `curl` 사용법만 적는 방식은 두 도구 제한을 보장하지 못하므로 제품
+  Assistant fallback으로 사용하지 않는다. 미지원 Adapter에서는 일반 검색을 안내한다.
+- 일반 Agent 관리 권한과 분리된 `agent:invoke` 판단을 추가하고, 사용자·Workspace·Agent
+  경계를 매 session 생성과 매 turn 실행에서 다시 확인한다.
+- Agent 상태, Node/Runner grant, adapter availability, quota 상태가 실행 직전에
+  유효하지 않으면 새 실행을 만들지 않고 복구 행동을 반환한다.
 
 ### Plugin Builder 계약
 
@@ -475,8 +494,10 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
 - [x] lifecycle proposal SDK·Worker·Desktop UI 제거
 - [x] AI 없는 Core Marketplace 검색·상세 기반 구현
 - [ ] 사용자에게 허용된 Agent·adapter 목록과 선택 UI
+- [ ] `agent:invoke` 권한과 사용자별 Agent 사용 경계
 - [ ] `사용자 + Workspace` Assistant session 생성·복구·종료
-- [ ] 두 read-only tool만 주입하는 adapter-neutral 실행 경로
+- [ ] Plugin Dispatcher와 분리된 Core Tool Bridge
+- [ ] Adapter 외부 도구 capability와 두 read-only tool 주입 경로
 - [ ] Assistant 응답 streaming·오류·한도·재시작 복구
 - [ ] Discovery 검색 UI 제거와 독립 Plugin Builder 패키지 전환
 - [ ] Builder 외부 프로젝트·증거 원장·Preview·package E2E
