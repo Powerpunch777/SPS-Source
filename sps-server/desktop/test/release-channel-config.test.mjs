@@ -34,7 +34,7 @@ test("keeps the unified SPS Desktop release on its explicit stable update channe
     oneClick: true,
     perMachine: false,
     deleteAppDataOnUninstall: false,
-    useZip: true,
+    useZip: false,
     differentialPackage: false,
   });
   assert.match(manifest.scripts["package:win"], /write-update-metadata/);

@@ -117,10 +117,10 @@ test("packages the managed Windows PostgreSQL Unicode-path compatibility patch",
   );
 });
 
-test("uses a fast-extract ZIP payload for the Desktop installer", async () => {
+test("uses the standard NSIS 7z payload for the Desktop installer", async () => {
   const packageManifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
   assert.equal(packageManifest.build.compression, "normal");
-  assert.equal(packageManifest.build.nsis.useZip, true);
+  assert.equal(packageManifest.build.nsis.useZip, false);
   assert.equal(packageManifest.build.nsis.differentialPackage, false);
 });
 
