@@ -479,8 +479,11 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
   검색·상세 API, 회사 접근 검증, 공개 필드 정규화를 구현했다.
 - 7A UI: `Settings > Plugins`의 Installed/Marketplace 분리, AI 없는 검색·상세
   화면을 구현하고 집중 회귀를 통과했다.
-- 7B 계약: 공개 SDK `0.10.0`에 `searchCatalog`, `getCatalogPlugin`만 남기고
-  lifecycle proposal 계약을 제거했다. Core Assistant의 adapter 실행·대화 UI는 진행 중이다.
+- 7B 구현: 공개 SDK `0.10.0`에 `searchCatalog`, `getCatalogPlugin`만 남기고
+  lifecycle proposal 계약을 제거했다. 사용자별 transcript와 Provider session,
+  `agent:invoke`, Core Tool Bridge, ACP MCP 주입, Agent 선택·대화 UI를 구현했다.
+  집중 회귀와 production UI build는 통과했으며 실제 Desktop Agent 대화와
+  외부 Node의 MCP runtime pack 검증은 남아 있다.
 - 7C 기반: 기존 Discovery 패키지에서 project 생성, authoring step, build 검사,
   Preview 도구를 분리할 준비를 완료했다. 최종 Builder 패키지 분리는 남아 있다.
 - 7D: 기존 Core Host 수동 Registry 생명주기를 재사용하며 Assistant와 Builder에는
@@ -493,12 +496,14 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
 - [x] Marketplace search/detail 데이터 계약 확정
 - [x] lifecycle proposal SDK·Worker·Desktop UI 제거
 - [x] AI 없는 Core Marketplace 검색·상세 기반 구현
-- [ ] 사용자에게 허용된 Agent·adapter 목록과 선택 UI
-- [ ] `agent:invoke` 권한과 사용자별 Agent 사용 경계
-- [ ] `사용자 + Workspace` Assistant session 생성·복구·종료
-- [ ] Plugin Dispatcher와 분리된 Core Tool Bridge
-- [ ] Adapter 외부 도구 capability와 두 read-only tool 주입 경로
-- [ ] Assistant 응답 streaming·오류·한도·재시작 복구
+- [x] 사용자에게 허용된 Agent·adapter 목록과 선택 UI
+- [x] `agent:invoke` 권한과 사용자별 Agent 사용 경계
+- [x] `사용자 + Workspace` Assistant session 생성·복구·종료
+- [x] Plugin Dispatcher와 분리된 Core Tool Bridge
+- [x] Adapter 외부 도구 capability와 두 read-only tool 주입 경로
+- [x] Assistant 응답 polling·오류 표시와 transcript/Provider session 분리 보존
+- [ ] 실제 Desktop에서 Agent 두 turn, Provider session 재사용, lifecycle 호출 0회 검증
+- [ ] 외부 SPS Node 실행용 Marketplace MCP runtime pack 패키징 검증
 - [ ] Discovery 검색 UI 제거와 독립 Plugin Builder 패키지 전환
 - [ ] Builder 외부 프로젝트·증거 원장·Preview·package E2E
 - [ ] Host 수동 생명주기 무변경/변경 회귀
