@@ -599,8 +599,7 @@ async function establishSpsIdentityCoreSession(hubOrigin) {
   // session with the same loopback Core. That protected local request needs
   // the launch-scoped Desktop token; remote Member Hubs never receive it.
   if (
-    isOwnerHostProfile()
-    && ownerHostStatus.url
+    ownerHostStatus.url
     && new URL(hubOrigin).origin === requireSpsOwnerHostOrigin(ownerHostStatus.url)
   ) {
     headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
@@ -1371,7 +1370,10 @@ function ownerHostIsReady() {
 
 async function synchronizeReadyTeamWorkplane() {
   const ownerHostUrl = ownerHostStatus.url;
-  if (!ownerHostIsReady() || !ownerHostUrl || lastTeamWorkplaneBindingUrl === ownerHostUrl) return;
+  // A new Host becomes healthy before its signed-in account is activated as
+  // the local Owner profile. Plugin configuration is company-scoped, so an
+  // earlier attempt can only produce a misleading authorization warning.
+  if (!isOwnerHostProfile() || !currentDesktopAccount() || !ownerHostIsReady() || !ownerHostUrl || lastTeamWorkplaneBindingUrl === ownerHostUrl) return;
   if (teamWorkplaneSyncPromise) return teamWorkplaneSyncPromise;
   if (
     lastTeamWorkplaneSyncAttempt?.url === ownerHostUrl
@@ -1451,18 +1453,16 @@ async function ensureOwnerHostManager() {
     return { ...ownerHost, defaultMemory, url };
   }
 
-  // The Owner Host, rather than the Agent-facing plugin, verifies the official
-  // Registry. An unavailable Registry refresh leaves the last trusted snapshot in place so
-  // startup and the rest of SPS do not depend on marketplace availability.
-  if (pluginDiscoveryEnabled) {
-    try {
-      const refreshed = await refreshSpsDiscoveryCatalog({ ownerVaultRoot: vaultRoot });
-      if (!refreshed.refreshed) {
-        console.warn("SPS Plugin Discovery catalog refresh was unavailable", refreshed.errors);
-      }
-    } catch (error) {
-      console.warn("SPS Plugin Discovery catalog refresh failed", error);
+  // Desktop verifies the official Registry for Core Marketplace regardless of
+  // optional plugin activation. An unavailable refresh leaves the last trusted
+  // snapshot in place, so startup never depends on Marketplace availability.
+  try {
+    const refreshed = await refreshSpsDiscoveryCatalog({ ownerVaultRoot: vaultRoot });
+    if (!refreshed.refreshed) {
+      console.warn("SPS Marketplace catalog refresh was unavailable", refreshed.errors);
     }
+  } catch (error) {
+    console.warn("SPS Marketplace catalog refresh failed", error);
   }
 
   const sourceRuntimeRoot = app.isPackaged
@@ -1513,13 +1513,13 @@ async function ensureOwnerHostManager() {
       const packagedMemoryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-default-memory") : null;
       const packagedDiscoveryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-plugin-discovery") : null;
       const packagedRoomPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-room-chat") : null;
-      const memoryPluginPath = packagedMemoryPluginPath && existsSync(path.join(packagedMemoryPluginPath, "package.json"))
+      const memoryPluginPath = app.isPackaged && packagedMemoryPluginPath && existsSync(path.join(packagedMemoryPluginPath, "package.json"))
         ? packagedMemoryPluginPath
         : developmentMemoryPluginPath;
-      const roomPluginPath = packagedRoomPluginPath && existsSync(path.join(packagedRoomPluginPath, "package.json"))
+      const roomPluginPath = app.isPackaged && packagedRoomPluginPath && existsSync(path.join(packagedRoomPluginPath, "package.json"))
         ? packagedRoomPluginPath
         : developmentRoomPluginPath;
-      const discoveryPluginPath = packagedDiscoveryPluginPath && existsSync(path.join(packagedDiscoveryPluginPath, "package.json"))
+      const discoveryPluginPath = app.isPackaged && packagedDiscoveryPluginPath && existsSync(path.join(packagedDiscoveryPluginPath, "package.json"))
         ? packagedDiscoveryPluginPath
         : developmentDiscoveryPluginPath;
       const bundledPluginPaths = [
@@ -1559,7 +1559,7 @@ async function ensureOwnerHostManager() {
           // Fresh Hosts render the plugin-first Core surface. The legacy Room
           // Workplane keeps its own UI only when explicitly bundled.
           SPS_CORE_BASELINE_MODE: roomWorkplaneBundled ? "false" : "true",
-          // The neutral Desktop starts with Plugin Discovery only. Do not
+          // The neutral Desktop starts with Plugin Builder only. Do not
           // render the Rooms-first shell until the Team Workplane is actually
           // bundled for this Host, otherwise its navigation points at a
           // plugin route that does not exist.
@@ -1575,7 +1575,7 @@ async function ensureOwnerHostManager() {
             }
             : {}),
           SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
-          ...(pluginDiscoveryEnabled ? { SPS_PLUGIN_DISCOVERY_CATALOG_PATH: discoveryCatalog.catalogPath } : {}),
+          SPS_MARKETPLACE_CATALOG_PATH: discoveryCatalog.catalogPath,
           // Keep the neutral Core free of a preselected workflow or memory
           // strategy. Refresh any already-installed first-party optional
           // package so an earlier Desktop path cannot leave a stale error in
@@ -1668,10 +1668,6 @@ async function startOwnerHost({ activate = false } = {}) {
     ...status,
     vaultPath: ownerHost.layout.root,
   };
-  // A previously installed SPS Team Workplane may still be active after an
-  // app update or after bundled extensions were toggled. Bind it whenever the
-  // Owner Host becomes healthy; absent plugins are a harmless no-op.
-  await synchronizeReadyTeamWorkplane();
   if (isTeamAccessEnabled() && state.teamAccess?.hostname && ownerHostStatus.url) {
     try {
       await reconcileSpsTailscaleServe({
@@ -1687,9 +1683,15 @@ async function startOwnerHost({ activate = false } = {}) {
       };
     }
   }
-  if (activate && ownerHostIsReady()) {
+  if (activate) {
+    if (!ownerHostIsReady()) {
+      throw new Error(ownerHostStatus.lastError || "SPS Owner Host did not become ready.");
+    }
     await activateOwnerHostProfile();
     await ensureInitialOwnerHostCompany();
+    // A previously installed Team Workplane is company-scoped. Bind it only
+    // after the local Owner identity and initial company are both available.
+    await synchronizeReadyTeamWorkplane();
   }
   return ownerHostStatus;
 }
@@ -1753,7 +1755,12 @@ async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = f
   // including a loopback-only Host. The board token remains an optional
   // compatibility credential for established connections.
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
-  if (isOwnerHostProfile()) headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
+  // This method can run while a newly created Host is still becoming the
+  // active profile. The launch proof authenticates the local Desktop
+  // transport, not the selected profile, so every request to the process this
+  // Desktop owns must carry it. User and Host authority are still enforced by
+  // the SPS Identity session and the separate bootstrap proof below.
+  headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
   if (ownerBootstrap) headers[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER] = ownerHostDesktopAccessToken;
   if (isOwnerHostProfile()) {
     const identitySession = await establishSpsIdentityCoreSession(requireSpsOwnerHostOrigin(ownerHostStatus.url));
@@ -4107,6 +4114,44 @@ function scheduleHeartbeat({ immediate = true } = {}) {
   if (immediate) void sendNodeHeartbeat();
 }
 
+function resolveDesktopMarketplaceMcpRuntime() {
+  const bundledRuntimeRoot = app.isPackaged
+    ? path.join(process.resourcesPath, "sps-owner-host-runtime")
+    : path.join(__dirname, "..", ".owner-host-runtime");
+  const bundledNodeCommand = spsOwnerHostBundledNodePath(bundledRuntimeRoot);
+  const bundledEntryPath = path.join(
+    bundledRuntimeRoot,
+    "node_modules",
+    "@sps",
+    "mcp-server",
+    "dist",
+    "marketplace-assistant-stdio.js",
+  );
+  if (existsSync(bundledNodeCommand) && existsSync(bundledEntryPath)) {
+    return { nodeCommand: bundledNodeCommand, entryPath: bundledEntryPath };
+  }
+
+  if (!app.isPackaged) {
+    const developmentEntryPath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "external",
+      "sps-core",
+      "packages",
+      "mcp-server",
+      "dist",
+      "marketplace-assistant-stdio.js",
+    );
+    if (existsSync(developmentEntryPath)) {
+      return { nodeCommand: process.execPath, entryPath: developmentEntryPath };
+    }
+  }
+
+  return null;
+}
+
 async function pollNodeCommands() {
   if (commandPollInFlight || !canRunSpsNodeCommands(state.nodeStatus) || !state.nodeId || !state.profile || !state.identity) return;
   commandPollInFlight = true;
@@ -4138,6 +4183,7 @@ async function pollNodeCommands() {
       identity: currentIdentity(),
       ...access,
       profile: state.profile,
+      marketplaceMcpRuntime: resolveDesktopMarketplaceMcpRuntime(),
       ...executionTransportForSpsNodeWork(nextWork.kind, {
         appendCommandEvent: appendSpsPluginNodeRunEvent,
         checkCommandLease: checkSpsPluginNodeRunLease,
@@ -4344,7 +4390,10 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:workspace-open-plugin-registries", async (event) => {
     assertLocalOwnerWorkspace(event, "Plugin Registry management");
-    await showRegistryWindow();
+    // This bridge is opened from Settings > Plugins > Marketplace, so take
+    // the Host directly to the bundled trusted source. The generic menu item
+    // still opens the source manager without preselecting a Registry.
+    await showRegistryWindow({ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE.id });
     return { opened: true };
   });
   ipcMain.handle("desktop:official-extensions-load-catalog", async (event) => {

@@ -42,15 +42,16 @@ test("runs only the exact SDK JSON command with a redacted environment", async (
       sourceDirectory: entry.source,
       nodeCommand: process.execPath,
       sdkCliPath: entry.cli,
-      environment: { PATH: "safe", OPENAI_API_KEY: "secret", SPS_AUTH_SECRET: "secret" },
+      environment: { PATH: "safe", ELECTRON_RUN_AS_NODE: "1", OPENAI_API_KEY: "secret", SPS_AUTH_SECRET: "secret" },
     });
     assert.equal(report.success, true);
     assert.equal(report.result.sourceFingerprint, "a".repeat(64));
     assert.deepEqual(createDeveloperCommandEnvironment({
       PATH: "safe",
+      ELECTRON_RUN_AS_NODE: "1",
       OPENAI_API_KEY: "secret",
       SPS_AUTH_SECRET: "secret",
-    }), { PATH: "safe" });
+    }), { ELECTRON_RUN_AS_NODE: "1", PATH: "safe" });
   } finally {
     await rm(entry.root, { recursive: true, force: true });
   }

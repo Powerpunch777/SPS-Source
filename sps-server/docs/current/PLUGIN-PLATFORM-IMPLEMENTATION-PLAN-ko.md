@@ -479,20 +479,36 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
   검색·상세 API, 회사 접근 검증, 공개 필드 정규화를 구현했다.
 - 7A UI: `Settings > Plugins`의 Installed/Marketplace 분리, AI 없는 검색·상세
   화면을 구현하고 집중 회귀를 통과했다.
-- 7B 구현: 공개 SDK `0.10.1`에 `searchCatalog`, `getCatalogPlugin`만 남기고
+- 7B 구현: 공개 SDK `0.11.0`에 `searchCatalog`, `getCatalogPlugin`만 남기고
   lifecycle proposal 계약을 제거했다. 사용자별 transcript와 Provider session,
   `agent:invoke`, Core Tool Bridge, ACP MCP 주입, Agent 선택·대화 UI를 구현했다.
   실제 SPS Desktop `0.4.96`에서 동일 대화의 두 turn을 실행해 Provider session ID
   재사용, read-only 검색·상세 응답, 플러그인 상태 무변경, lifecycle 호출 0회를
   확인했다. Adapter codec이 SPS 지문 메타데이터를 제거해 session을 교체하던 결함도
   persisted envelope 기준 freshness 판정으로 수정하고 119개 집중 회귀를 통과했다.
-  외부 Node의 MCP runtime pack 검증은 남아 있다.
-- 7C 기반: 기존 Discovery 패키지에서 project 생성, authoring step, build 검사,
-  Preview 도구를 분리할 준비를 완료했다. 최종 Builder 패키지 분리는 남아 있다.
-- 7D: 기존 Core Host 수동 Registry 생명주기를 재사용하며 Assistant와 Builder에는
-  생명주기 도구를 노출하지 않는 회귀를 추가해야 한다.
-- 7E: SDK `0.10.1`, Core·Builder 정확한 revision, Catalog 환경변수를 Desktop
-  release baseline에 고정하고 설치본 Electron E2E를 통과해야 한다.
+  공개 SDK의 UI Data Provider와 외부 Node Marketplace MCP runtime 환경 주입도
+  실제 Core Worker Host 및 패키지 smoke로 검증했다.
+- 7C 완료: 기존 내부 ID `sps.plugin-discovery`는 설치본 업그레이드 호환성을 위해
+  유지하되, 제품 기능과 UI를 독립 `Plugin Builder 0.4.0`으로 전환했다. Marketplace
+  검색·추천·생명주기 권한을 제거하고 project 생성, authoring step, build 검사,
+  격리 Preview 요청, package 증거 기록의 다섯 도구만 제공한다. Worker는 개발
+  checkout이나 설치본의 상위 `node_modules`에 의존하지 않는 자기 완결형 번들이다.
+  실제 SPS Desktop `0.4.96` 소스 Electron E2E에서 새 Owner Host 생성, Builder
+  도구 등록, 공개 SDK CLI 외부 프로젝트 생성, build·validate·test 게이트,
+  Host/Member 및 desktop/mobile/error Preview 전환, `.spsplugin` 패키징,
+  production 생명주기 무변경, Preview renderer 단독 충돌과 진단 마스킹을 확인했다.
+- 7D 완료: 실제 SPS Desktop의 새 Owner Host에서 `Settings > Plugins > Marketplace`를
+  열고 공식 Registry 최신 릴리스를 스테이징·적용한 뒤, Workspace 활성·비활성·
+  재활성, 삭제 취소, 최종 삭제를 모두 UI 클릭으로 검증했다. Marketplace Assistant
+  대화와 Plugin Builder 진입 전후 lifecycle snapshot이 동일함도 확인했다. 공식
+  Registry 자동 선택, 최신 릴리스 우선 표시, Host 전역 준비 상태와 Workspace별
+  활성 상태 구분을 제품 UI와 회귀에 함께 반영했다.
+- 7E 완료: SDK `0.11.0`, Core `6e1f60c54c24058ceb168a446d42532305ccd099`,
+  SDK `f24d9b236a8bdaee9441f37694b7e4298aa7e6c2`, Builder `0.4.0`과 Catalog
+  환경변수를 Desktop release baseline에 고정했다. Windows `0.4.96` 설치본은
+  Host runtime·Marketplace MCP package smoke와 Bootstrap·Workspace Surfaces·
+  Plugin Preview·Host lifecycle Electron E2E를 모두 통과했다. 상세 증거는
+  `PLUGIN-PLATFORM-0.4.96-EVIDENCE.md`에 기록했다.
 
 ### 7단계 구현 체크리스트
 
@@ -506,11 +522,11 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
 - [x] Adapter 외부 도구 capability와 두 read-only tool 주입 경로
 - [x] Assistant 응답 polling·오류 표시와 transcript/Provider session 분리 보존
 - [x] 실제 Desktop에서 Agent 두 turn, Provider session 재사용, lifecycle 호출 0회 검증
-- [ ] 외부 SPS Node 실행용 Marketplace MCP runtime pack 패키징 검증
-- [ ] Discovery 검색 UI 제거와 독립 Plugin Builder 패키지 전환
-- [ ] Builder 외부 프로젝트·증거 원장·Preview·package E2E
-- [ ] Host 수동 생명주기 무변경/변경 회귀
-- [ ] Windows packaged Desktop 전체 E2E와 release evidence
+- [x] 외부 SPS Node 실행용 Marketplace MCP runtime pack 패키징 검증
+- [x] Discovery 검색 UI 제거와 독립 Plugin Builder 패키지 전환
+- [x] Builder 외부 프로젝트·증거 원장·Preview·package E2E
+- [x] Host 수동 생명주기 무변경/변경 회귀
+- [x] Windows packaged Desktop 전체 E2E와 release evidence
 
 ### 완료 조건
 
@@ -552,6 +568,17 @@ Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 �
 - plugin update, migration review, rollback
 - Shell plugin crash와 Safe mode 복구
 - Member 제거, Node 철회, 재시작, Desktop update
+
+### 현재 구현 상태
+
+- 한 Windows 개발 PC의 격리된 실제 패키지 앱에서 빈 Workspace, Plugin Builder,
+  외부 SDK 프로젝트, Preview, Team Workplane Shell·Dashboard·Inbox, Marketplace
+  Assistant 무변경 계약과 Host 수동 lifecycle을 통과했다.
+- 공개 SDK `0.11.0`의 Test Kit·Worker Host conformance와 private Core 비참조
+  경계를 통과했다.
+- Host와 Member를 서로 다른 실제 Windows 컴퓨터에 설치해 초대·Node·Runtime·
+  Source·철회·재시작을 연속 검증하는 물리 베타 acceptance는 남아 있다.
+- 물리 검증 절차와 기록 항목은 `BETA-ACCEPTANCE-RUNBOOK-ko.md`를 기준으로 한다.
 
 ### 완료 조건
 

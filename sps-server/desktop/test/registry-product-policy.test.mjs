@@ -17,6 +17,7 @@ test("keeps first-release Registry UI and IPC limited to Official plus local dev
   assert.match(html, /Add local development Registry/);
   assert.doesNotMatch(html, /value="git"|value="official"|remote-source-fields|source-index-url/);
   assert.doesNotMatch(renderer, /source-kind|trustedRootKeyId|trustedRootPublicKey/);
+  assert.match(renderer, /orderedReleases[\s\S]*?localeCompare[\s\S]*?numeric: true/);
   assert.match(main, /currently accepts only Owner-selected local development Registries/);
 });
 

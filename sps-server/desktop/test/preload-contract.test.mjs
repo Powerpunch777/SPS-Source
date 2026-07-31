@@ -56,7 +56,7 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(main, /ipcMain\.handle\("desktop:workspace-sign-out"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-server-settings"/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-enable-private-team-access"/);
-  assert.match(main, /ipcMain\.handle\("desktop:workspace-open-plugin-registries"[\s\S]*?Plugin Registry management[\s\S]*?showRegistryWindow\(\)/);
+  assert.match(main, /ipcMain\.handle\("desktop:workspace-open-plugin-registries"[\s\S]*?Plugin Registry management[\s\S]*?showRegistryWindow\(\{ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE\.id \}\)/);
   assert.match(main, /ipcMain\.handle\("desktop:workspace-host-project-sources"[\s\S]*?event\.sender\.id !== workspaceWindow\.webContents\.id/);
   assert.match(main, /async function chooseHostProjectSourceForWorkspace\(projectId\)/);
   assert.match(main, /Revoke every Member's source access before changing or clearing this Host project folder/);
@@ -285,12 +285,16 @@ test("establishes an SPS Identity Workspace session for every Owner Host", async
   assert.match(main, /signedIn:[\s\S]*?isOwnerHostProfile\(\) && currentAccountOwnsOwnerHost\(\)/);
 });
 
-test("uses the Desktop-only access token while the Owner creates its private Identity session", async () => {
+test("uses the Desktop-only access token while the local Host creates its Identity session", async () => {
   const main = await readFile(mainPath, "utf8");
 
   assert.match(
     main,
-    /async function establishSpsIdentityCoreSession\(hubOrigin\)[\s\S]*?isOwnerHostProfile\(\)[\s\S]*?new URL\(hubOrigin\)\.origin === requireSpsOwnerHostOrigin\(ownerHostStatus\.url\)[\s\S]*?headers\[SPS_DESKTOP_ACCESS_HEADER\] = ownerHostDesktopAccessToken/,
+    /async function establishSpsIdentityCoreSession\(hubOrigin\)[\s\S]*?ownerHostStatus\.url[\s\S]*?new URL\(hubOrigin\)\.origin === requireSpsOwnerHostOrigin\(ownerHostStatus\.url\)[\s\S]*?headers\[SPS_DESKTOP_ACCESS_HEADER\] = ownerHostDesktopAccessToken/,
+  );
+  assert.doesNotMatch(
+    main,
+    /async function establishSpsIdentityCoreSession\(hubOrigin\)[\s\S]*?isOwnerHostProfile\(\)\s*&& ownerHostStatus\.url/,
   );
 });
 

@@ -23,6 +23,7 @@ const requiredFiles = [
   "node_modules/@paperclipai/server/package.json",
   "node_modules/@sps/mcp-server/package.json",
   "node_modules/@sps/mcp-server/dist/marketplace-assistant-stdio.js",
+  "node_modules/@embedded-postgres/windows-x64/dist/index.js",
 ];
 
 const missing = [];
@@ -40,9 +41,10 @@ if (missing.length > 0) {
   );
 }
 
-const [runtimeManifest, releaseBaseline] = await Promise.all([
+const [runtimeManifest, releaseBaseline, windowsPostgresModule] = await Promise.all([
   readFile(path.join(runtimeRoot, "sps-owner-host-runtime.json"), "utf8").then(JSON.parse),
   readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8").then(JSON.parse),
+  readFile(path.join(runtimeRoot, "node_modules", "@embedded-postgres", "windows-x64", "dist", "index.js"), "utf8"),
 ]);
 
 if (
@@ -55,6 +57,13 @@ if (
 
 if (!Array.isArray(runtimeManifest.agentRuntimePacks) || runtimeManifest.agentRuntimePacks.length < 2) {
   throw new Error("The packaged SPS Owner Host runtime is missing its explicit Agent Runtime pack contract.");
+}
+
+if (
+  runtimeManifest.windowsPostgresUnicodePathCompatibility?.version !== "18.1.0-beta.16"
+  || !windowsPostgresModule.includes("SPS_EMBEDDED_POSTGRES_BINARY_DIR")
+) {
+  throw new Error("The packaged SPS Owner Host runtime is missing Windows PostgreSQL Unicode-path compatibility.");
 }
 
 console.log(`Packaged SPS Owner Host runtime verification passed: ${runtimeRoot}`);

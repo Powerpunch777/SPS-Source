@@ -37,9 +37,16 @@ try {
   await symlink(sdkRoot, sdkLink, process.platform === "win32" ? "junction" : "dir");
   await writeFile(workerSourcePath, [
     'import { createSpsRuntimeClient } from "@sonparkserver/plugin-sdk/runtime";',
+    'import { defineSpsPlatformContract } from "@sonparkserver/plugin-sdk/platform";',
     'import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";',
     "",
     "let runtimes = null;",
+    "const platform = defineSpsPlatformContract({",
+    "  data: [{ key: \"workspace.status\", async handler(params, api) {",
+    "    const stored = await api.state.get({ scopeKind: \"company\", scopeId: params.companyId, stateKey: \"status\" });",
+    "    return { companyId: params.companyId, filter: params.filter, stored };",
+    "  } }],",
+    "});",
     "runSpsWorker(defineSpsPlugin({",
     "  async initialize({ spsTransport }) {",
     "    const sps = createSpsRuntimeClient(spsTransport);",
@@ -47,6 +54,7 @@ try {
     "  },",
     "  health() { return { status: \"ok\", runtimes }; },",
     "  shutdown() { return { status: \"stopped\" }; },",
+    "  platform,",
     "}));",
     "",
   ].join("\n"), "utf8");
@@ -72,6 +80,10 @@ try {
         assert.deepEqual(params, { companyId, nodeId });
         return [{ id: "runtime-public-conformance", nodeId, status: "ready" }];
       },
+      "state.get": async (params) => {
+        assert.deepEqual(params, { scopeKind: "company", scopeId: companyId, stateKey: "status" });
+        return { ready: true };
+      },
     },
   });
 
@@ -82,6 +94,13 @@ try {
     status: "ok",
     runtimes: [{ id: "runtime-public-conformance", nodeId, status: "ready" }],
   });
+  const data = await manager.call("sps.public-worker-host-conformance", "getData", {
+    key: "workspace.status",
+    companyId,
+    params: { filter: "active" },
+    renderEnvironment: { surface: "desktop" },
+  });
+  assert.deepEqual(data, { companyId, filter: "active", stored: { ready: true } });
 
   const exited = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Public SDK Worker did not exit after Host shutdown.")), 5_000);

@@ -21,6 +21,7 @@ assert.ok(manifest.default.capabilities.includes("companies.read"));
 assert.ok(manifest.default.capabilities.includes("project.workspaces.read"));
 assert.ok(manifest.default.capabilities.includes("ui.page.register"));
 assert.ok(manifest.default.capabilities.includes("ui.sidebar.register"));
+assert.ok(manifest.default.capabilities.includes("ui.workspaceShell.provide"));
 assert.ok(manifest.default.capabilities.includes("ui.dashboard.contribute"));
 assert.ok(manifest.default.capabilities.includes("inbox.items.publish"));
 assert.ok(manifest.default.ui.dashboardWidgets?.some((widget) => (
@@ -28,6 +29,19 @@ assert.ok(manifest.default.ui.dashboardWidgets?.some((widget) => (
   && widget.dataAction === "team-workplane-dashboard"
   && widget.exportName === "TeamWorkplaneDashboardWidget"
 )));
+assert.deepEqual(manifest.default.ui.workspaceShell, {
+  id: "team-workplane",
+  displayName: "Team Workplane",
+  defaultRoute: "/agent-rooms",
+  navigation: [
+    { id: "team-rooms", displayName: "Team Rooms", target: "/agent-rooms", order: 10 },
+    { id: "project-tasks", displayName: "Tasks", target: "/tasks", order: 20 },
+  ],
+  dashboardPreset: [
+    { widgetId: "team-workplane-status", size: "medium", order: 10 },
+  ],
+  emptyWorkspaceAction: { displayName: "Open Team Rooms", target: "/agent-rooms" },
+});
 assert.ok(manifest.default.ui.slots.some((slot) => slot.id === "project-tasks" && slot.routePath === "tasks"));
 assert.ok(!manifest.default.ui.slots.some((slot) => slot.id === "project-tasks-sidebar"));
 assert.ok(manifest.default.ui.slots.some((slot) => (

@@ -402,7 +402,7 @@ try {
   );
   assert.ok(neutral.route.includes(`/${companyPrefix}/dashboard`), `Neutral Workspace route was unexpected: ${neutral.route}`);
 
-  // A fresh SPS Host intentionally starts with Discovery only. Install the
+  // A fresh SPS Host intentionally starts with Plugin Builder only. Install the
   // packaged reference Workplane through the real Host API so this flow also
   // verifies optional local-package installation without changing that default.
   const packagedTeamWorkplanePath = path.join(
@@ -421,36 +421,21 @@ try {
 
   const installed = await api(workspaceCdp, `/api/plugins/companies/${company.id}`);
   const plugins = installed?.plugins ?? [];
-  const discovery = plugins.find((plugin) => /discovery/i.test(`${plugin.pluginKey} ${plugin.displayName}`));
+  const builder = plugins.find((plugin) => plugin.pluginKey === "sps.plugin-discovery" || /plugin builder/i.test(`${plugin.pluginKey} ${plugin.displayName}`));
   const teamWorkplane = plugins.find((plugin) => /room-chat|team workplane/i.test(`${plugin.pluginKey} ${plugin.displayName}`));
-  assert.ok(discovery?.id, `Bundled Plugin Discovery is unavailable: ${JSON.stringify(plugins)}`);
+  assert.ok(builder?.id, `Bundled Plugin Builder is unavailable: ${JSON.stringify(plugins)}`);
   assert.ok(teamWorkplane?.id, `Bundled Team Workplane is unavailable: ${JSON.stringify(plugins)}`);
 
-  await api(workspaceCdp, `/api/plugins/${discovery.id}/companies/${company.id}/activation`, {
+  await api(workspaceCdp, `/api/plugins/${builder.id}/companies/${company.id}/activation`, {
     method: "PUT",
     body: { enabled: true },
   });
-  const providers = await api(workspaceCdp, `/api/companies/${company.id}/workspace-shell/providers`);
-  const discoveryProvider = providers.find((provider) => provider.pluginId === discovery.id);
-  if (!discoveryProvider?.shell?.id) {
-    const discoveryRuntime = await api(workspaceCdp, `/api/plugins/${discovery.id}/dashboard`);
-    const discoveryLogs = await api(workspaceCdp, `/api/plugins/${discovery.id}/logs?limit=50`);
-    throw new Error(
-      `Plugin Discovery did not expose a Workspace Shell: providers=${JSON.stringify(providers)} `
-      + `plugin=${JSON.stringify(discovery)} runtime=${JSON.stringify(discoveryRuntime)} logs=${JSON.stringify(discoveryLogs)}`,
-    );
-  }
-  await api(workspaceCdp, `/api/companies/${company.id}/workspace-shell`, {
-    method: "PUT",
-    body: { pluginId: discovery.id, shellId: discoveryProvider.shell.id },
-  });
-
-  await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/`)})`);
-  await waitForPage(workspaceCdp, (page) => page.route.includes("/discover") && page.body.includes("Plugin Discovery"), "the selected Plugin Discovery default route");
-  await navigateByDomLink(workspaceCdp, "/dashboard", "Dashboard navigation");
-  await waitForPage(workspaceCdp, (page) => page.body.includes("Plugin Discovery"), "the Plugin Discovery Dashboard widget");
-  const discoveryDashboard = await api(workspaceCdp, `/api/companies/${company.id}/workspace-dashboard`);
-  assert.ok(discoveryDashboard.widgets?.some((widget) => widget.pluginId === discovery.id), "Plugin Discovery Dashboard widget was not registered.");
+  await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/builder`)})`);
+  await waitForPage(
+    workspaceCdp,
+    (page) => page.route.includes("/builder") && page.body.includes("Plugin Builder") && page.body.includes("Authoring projects"),
+    "the Plugin Builder project surface",
+  );
 
   await api(workspaceCdp, `/api/plugins/${teamWorkplane.id}/companies/${company.id}/activation`, {
     method: "PUT",
@@ -472,7 +457,22 @@ try {
       })}`,
     );
   }
-  await workspaceCdp.evaluate("location.reload()");
+  let providers = [];
+  let teamProvider = null;
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    providers = await api(workspaceCdp, `/api/companies/${company.id}/workspace-shell/providers`);
+    teamProvider = providers.find((provider) => provider.pluginId === teamWorkplane.id) ?? null;
+    if (teamProvider?.shell?.id) break;
+    await delay(250);
+  }
+  if (!teamProvider?.shell?.id) {
+    throw new Error(`Team Workplane did not expose a Workspace Shell: ${JSON.stringify(providers)}`);
+  }
+  await api(workspaceCdp, `/api/companies/${company.id}/workspace-shell`, {
+    method: "PUT",
+    body: { pluginId: teamWorkplane.id, shellId: teamProvider.shell.id },
+  });
+  await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/dashboard`)})`);
   const teamWidgetPage = await waitForPage(
     workspaceCdp,
     (page) => page.body.includes("Team Workplane"),
@@ -489,7 +489,7 @@ try {
   await waitForPage(workspaceCdp, (page) => page.body.includes("Inbox") && page.body.includes("Plugin reports"), "the Workspace Inbox screen");
   await api(workspaceCdp, `/api/companies/${company.id}/workspace-inbox`);
 
-  await api(workspaceCdp, `/api/plugins/${discovery.id}/companies/${company.id}/activation`, {
+  await api(workspaceCdp, `/api/plugins/${teamWorkplane.id}/companies/${company.id}/activation`, {
     method: "PUT",
     body: { enabled: false },
   });

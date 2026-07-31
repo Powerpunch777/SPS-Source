@@ -4484,6 +4484,7 @@ var JOIN_REQUEST_STATUSES = ["pending_approval", "approved", "rejected"];
 var PERMISSION_KEYS = [
   "agents:create",
   "agents:configure",
+  "agents:invoke",
   "agents:suggest-changes",
   "skills:create",
   "skills:suggest-changes",
@@ -8015,14 +8016,19 @@ var skillTestAgentKeyScopeSchema = external_exports.object({
   kind: external_exports.literal("skill_test"),
   issueId: external_exports.string().uuid()
 }).strict();
+var marketplaceAssistantAgentKeyScopeSchema = external_exports.object({
+  kind: external_exports.literal("marketplace_assistant"),
+  sessionId: external_exports.string().uuid()
+}).strict();
 var agentApiKeyScopeSchema = external_exports.union([
   standardAgentKeyScopeSchema,
   taskBridgeAgentKeyScopeSchema,
-  skillTestAgentKeyScopeSchema
+  skillTestAgentKeyScopeSchema,
+  marketplaceAssistantAgentKeyScopeSchema
 ]);
 var createAgentKeySchema = external_exports.object({
   name: external_exports.string().min(1).default("default"),
-  scope: agentApiKeyScopeSchema.optional().default({ kind: "standard" })
+  scope: external_exports.union([standardAgentKeyScopeSchema, taskBridgeAgentKeyScopeSchema]).optional().default({ kind: "standard" })
 });
 var agentMineInboxQuerySchema = external_exports.object({
   userId: external_exports.string().trim().min(1),
@@ -9103,6 +9109,58 @@ var jsonSchemaSchema = external_exports.record(external_exports.string(), extern
   { message: "Must be a valid JSON Schema object (requires at least a 'type', '$ref', or composition keyword)" }
 );
 var CRON_FIELD_PATTERN = /^(\*(?:\/[0-9]+)?|[0-9]+(?:-[0-9]+)?(?:\/[0-9]+)?)(?:,(\*(?:\/[0-9]+)?|[0-9]+(?:-[0-9]+)?(?:\/[0-9]+)?))*$/;
+var PLUGIN_DEPENDENCY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
+var PLUGIN_SERVICE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{1,127}$/;
+var SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+function compareDependencyVersions(left, right) {
+  const parse = (value) => {
+    const match = SEMVER_PATTERN.exec(value);
+    return { numbers: [match[1], match[2], match[3]], prerelease: match[4]?.split(".") ?? [] };
+  };
+  const compareNumber = (a2, b2) => a2.length === b2.length ? a2 === b2 ? 0 : a2 < b2 ? -1 : 1 : a2.length < b2.length ? -1 : 1;
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < 3; index += 1) {
+    const result = compareNumber(a.numbers[index], b.numbers[index]);
+    if (result !== 0) return result;
+  }
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) return a.prerelease.length === b.prerelease.length ? 0 : a.prerelease.length === 0 ? 1 : -1;
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    const leftPart = a.prerelease[index];
+    const rightPart = b.prerelease[index];
+    if (leftPart === void 0) return -1;
+    if (rightPart === void 0) return 1;
+    if (leftPart === rightPart) continue;
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) return compareNumber(leftPart, rightPart);
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
+}
+var pluginDependencyRangeSchema = external_exports.object({
+  id: external_exports.string().regex(PLUGIN_DEPENDENCY_ID_PATTERN),
+  minVersion: external_exports.string().regex(SEMVER_PATTERN).optional(),
+  maxVersion: external_exports.string().regex(SEMVER_PATTERN).optional()
+}).superRefine((value, ctx) => {
+  if (value.minVersion && value.maxVersion && compareDependencyVersions(value.minVersion, value.maxVersion) > 0) {
+    ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "minVersion must not exceed maxVersion" });
+  }
+});
+var pluginOptionalDependencySchema = external_exports.object({
+  id: external_exports.string().regex(PLUGIN_DEPENDENCY_ID_PATTERN).optional(),
+  service: external_exports.string().regex(PLUGIN_SERVICE_ID_PATTERN).optional(),
+  minVersion: external_exports.string().regex(SEMVER_PATTERN).optional(),
+  maxVersion: external_exports.string().regex(SEMVER_PATTERN).optional()
+}).superRefine((value, ctx) => {
+  if (value.id === void 0 === (value.service === void 0)) {
+    ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Optional dependencies must declare exactly one of id or service" });
+  }
+  if (value.minVersion && value.maxVersion && compareDependencyVersions(value.minVersion, value.maxVersion) > 0) {
+    ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "minVersion must not exceed maxVersion" });
+  }
+});
 function isValidCronExpression(expression) {
   const trimmed = expression.trim();
   if (!trimmed) return false;
@@ -9117,7 +9175,8 @@ var pluginJobDeclarationSchema = external_exports.object({
   schedule: external_exports.string().refine(
     (val) => isValidCronExpression(val),
     { message: "schedule must be a valid 5-field cron expression (e.g. '*/15 * * * *')" }
-  ).optional()
+  ).optional(),
+  scope: external_exports.enum(["workspace", "host"]).optional()
 });
 var pluginWebhookDeclarationSchema = external_exports.object({
   endpointKey: external_exports.string().min(1),
@@ -9752,6 +9811,10 @@ var pluginManifestV1Schema = external_exports.object({
   companyActivation: external_exports.object({
     defaultEnabled: external_exports.boolean().optional()
   }).optional(),
+  requiredDependencies: external_exports.array(pluginDependencyRangeSchema).max(100).optional(),
+  optionalDependencies: external_exports.array(pluginOptionalDependencySchema).max(100).optional(),
+  conflicts: external_exports.array(pluginDependencyRangeSchema).max(100).optional(),
+  services: external_exports.array(external_exports.object({ id: external_exports.string().regex(PLUGIN_SERVICE_ID_PATTERN) })).max(100).optional(),
   database: pluginDatabaseDeclarationSchema.optional(),
   apiRoutes: external_exports.array(pluginApiRouteDeclarationSchema).optional(),
   environmentDrivers: external_exports.array(pluginEnvironmentDriverDeclarationSchema).optional(),
@@ -9775,6 +9838,19 @@ var pluginManifestV1Schema = external_exports.object({
     actions: external_exports.array(pluginInboxActionDeclarationSchema).min(1).max(100).optional()
   }).optional()
 }).superRefine((manifest, ctx) => {
+  const requiredIds = manifest.requiredDependencies?.map((dependency) => dependency.id) ?? [];
+  const conflictIds = manifest.conflicts?.map((conflict) => conflict.id) ?? [];
+  for (const [field, ids] of [["requiredDependencies", requiredIds], ["conflicts", conflictIds]]) {
+    if (new Set(ids).size !== ids.length) ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: `${field} ids must be unique`, path: [field] });
+    if (ids.includes(manifest.id)) ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: `${field} cannot reference the declaring plugin`, path: [field] });
+  }
+  if (requiredIds.some((id) => conflictIds.includes(id))) {
+    ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "A plugin cannot both require and conflict with the same plugin", path: ["conflicts"] });
+  }
+  const optionalKeys = manifest.optionalDependencies?.map((dependency) => dependency.id ? `plugin:${dependency.id}` : `service:${dependency.service}`) ?? [];
+  if (new Set(optionalKeys).size !== optionalKeys.length) ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "optionalDependencies must be unique", path: ["optionalDependencies"] });
+  const serviceIds = manifest.services?.map((service) => service.id) ?? [];
+  if (new Set(serviceIds).size !== serviceIds.length) ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "services ids must be unique", path: ["services"] });
   const hasUiSlots = (manifest.ui?.slots?.length ?? 0) > 0;
   const hasUiLaunchers = (manifest.ui?.launchers?.length ?? 0) > 0;
   const hasWorkspaceShell = Boolean(manifest.ui?.workspaceShell);
@@ -12184,6 +12260,7 @@ var manifest_default = {
     "ui.page.register",
     "ui.sidebar.register",
     "ui.detailTab.register",
+    "ui.workspaceShell.provide",
     "ui.dashboard.contribute",
     "host.local_api.access",
     "issues.read",
@@ -12229,6 +12306,36 @@ var manifest_default = {
     ui: "./dist/ui-v0.3.91"
   },
   ui: {
+    workspaceShell: {
+      id: "team-workplane",
+      displayName: "Team Workplane",
+      defaultRoute: "/agent-rooms",
+      navigation: [
+        {
+          id: "team-rooms",
+          displayName: "Team Rooms",
+          target: "/agent-rooms",
+          order: 10
+        },
+        {
+          id: "project-tasks",
+          displayName: "Tasks",
+          target: "/tasks",
+          order: 20
+        }
+      ],
+      dashboardPreset: [
+        {
+          widgetId: "team-workplane-status",
+          size: "medium",
+          order: 10
+        }
+      ],
+      emptyWorkspaceAction: {
+        displayName: "Open Team Rooms",
+        target: "/agent-rooms"
+      }
+    },
     dashboardWidgets: [
       {
         id: "team-workplane-status",

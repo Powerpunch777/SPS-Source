@@ -1,7 +1,7 @@
 # SPS Core Desktop E2E Audit
 
 > Historical evidence note: this audit records the `0.4.84` packaging pass.
-> The current development candidate is `0.4.90`; use
+> The current development candidate is `0.4.96`; use
 > `BETA-ACCEPTANCE-RUNBOOK-ko.md` and `release/support-matrix.json` for the
 > next physical acceptance run.
 

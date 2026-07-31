@@ -14,6 +14,7 @@ export default {
     "ui.page.register",
     "ui.sidebar.register",
     "ui.detailTab.register",
+    "ui.workspaceShell.provide",
     "ui.dashboard.contribute",
     "host.local_api.access",
     "issues.read",
@@ -59,6 +60,36 @@ export default {
     ui: "./dist/ui-v__SPS_ROOM_PLUGIN_VERSION__"
   },
   ui: {
+    workspaceShell: {
+      id: "team-workplane",
+      displayName: "Team Workplane",
+      defaultRoute: "/agent-rooms",
+      navigation: [
+        {
+          id: "team-rooms",
+          displayName: "Team Rooms",
+          target: "/agent-rooms",
+          order: 10
+        },
+        {
+          id: "project-tasks",
+          displayName: "Tasks",
+          target: "/tasks",
+          order: 20
+        }
+      ],
+      dashboardPreset: [
+        {
+          widgetId: "team-workplane-status",
+          size: "medium",
+          order: 10
+        }
+      ],
+      emptyWorkspaceAction: {
+        displayName: "Open Team Rooms",
+        target: "/agent-rooms"
+      }
+    },
     dashboardWidgets: [
       {
         id: "team-workplane-status",

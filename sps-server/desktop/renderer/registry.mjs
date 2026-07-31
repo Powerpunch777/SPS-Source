@@ -161,7 +161,10 @@ function renderReleases(report) {
     list.innerHTML = '<p class="empty-state">This Registry has no verified releases.</p>';
     return;
   }
-  list.innerHTML = report.releases.map((release) => {
+  const orderedReleases = [...report.releases].sort((left, right) =>
+    String(right.version).localeCompare(String(left.version), undefined, { numeric: true, sensitivity: "base" }),
+  );
+  list.innerHTML = orderedReleases.map((release) => {
     const documentation = release.catalog?.documentationUrl
       ? `<a class="documentation-link" href="${escapeHtml(release.catalog.documentationUrl)}" target="_blank" rel="noreferrer">Open documentation</a>`
       : "";

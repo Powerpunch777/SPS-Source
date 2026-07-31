@@ -341,7 +341,6 @@ $("#open-workspace-retry").addEventListener("click", () => run(async () => {
 $("#create-owner-server").addEventListener("click", () => run(async () => {
   setNotice("이 컴퓨터에 SPS Server와 Owner Vault를 준비하고 있습니다.");
   await window.spsDesktop.createOwnerServer();
-  await window.spsDesktop.openWorkspace();
 }));
 
 $("#show-join-server").addEventListener("click", () => {

@@ -317,6 +317,38 @@ async function normalizeWorkspacePackageExports(runtimeRoot) {
   }
 }
 
+async function installWindowsPostgresUnicodePathCompatibility(runtimeRoot) {
+  if (process.platform !== "win32") return null;
+  const packageRoot = path.join(runtimeRoot, "node_modules", "@embedded-postgres", "windows-x64");
+  const packageManifestPath = path.join(packageRoot, "package.json");
+  const packageManifest = JSON.parse(await readFile(packageManifestPath, "utf8"));
+  if (packageManifest.version !== "18.1.0-beta.16") {
+    throw new Error(
+      `Unsupported @embedded-postgres/windows-x64 version ${packageManifest.version}. Review the SPS Unicode-path compatibility module before packaging.`,
+    );
+  }
+  const modulePath = path.join(packageRoot, "dist", "index.js");
+  const source = [
+    "import path from 'path';",
+    "import { fileURLToPath } from 'url';",
+    "const __dirname = path.dirname(fileURLToPath(import.meta.url));",
+    "const configuredBinDir = process.env.SPS_EMBEDDED_POSTGRES_BINARY_DIR;",
+    "const binDir = configuredBinDir && path.isAbsolute(configuredBinDir)",
+    "  ? configuredBinDir",
+    "  : path.resolve(__dirname, '..', 'native', 'bin');",
+    "export const pg_ctl = path.join(binDir, 'pg_ctl.exe');",
+    "export const initdb = path.join(binDir, 'initdb.exe');",
+    "export const postgres = path.join(binDir, 'postgres.exe');",
+    "",
+  ].join("\n");
+  await writeFile(modulePath, source, "utf8");
+  return {
+    package: "@embedded-postgres/windows-x64",
+    version: packageManifest.version,
+    module: "node_modules/@embedded-postgres/windows-x64/dist/index.js",
+  };
+}
+
 const SPS_BUNDLED_OWNER_HOST_PLUGINS = [
   "sps-default-memory",
   "sps-plugin-discovery",
@@ -430,6 +462,7 @@ await run(
 );
 
 await normalizeWorkspacePackageExports(runtimeRoot);
+const windowsPostgresUnicodePathCompatibility = await installWindowsPostgresUnicodePathCompatibility(runtimeRoot);
 const serverUiDist = path.join(coreRoot, "server", "ui-dist");
 await requireFile(path.join(serverUiDist, "index.html"), "SPS Owner Host static UI is missing after the Core build.");
 await cp(serverUiDist, path.join(runtimeRoot, "ui-dist"), { recursive: true });
@@ -457,6 +490,7 @@ await writeFile(
     bundledDefaultMemory: true,
     pluginDeveloperKit,
     agentRuntimePacks,
+    windowsPostgresUnicodePathCompatibility,
     version: process.env.npm_package_version || "development",
     releaseBaseline,
     createdAt: new Date().toISOString(),

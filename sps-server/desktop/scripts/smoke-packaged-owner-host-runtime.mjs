@@ -209,50 +209,59 @@ async function assertDefaultMemoryPlugin() {
   return memory;
 }
 
-async function assertPluginDiscoveryPlugin() {
+async function assertPluginBuilderPlugin() {
   const response = await ownerHostRequest("/api/plugins", { signal: AbortSignal.timeout(5_000) });
   if (!response.ok) throw new Error(`Could not inspect bundled plugins (${response.status}).`);
   const plugins = await response.json();
-  const discovery = Array.isArray(plugins)
+  const builder = Array.isArray(plugins)
     ? plugins.find((plugin) => plugin?.manifestJson?.id === "sps.plugin-discovery")
     : null;
-  if (!discovery || discovery.status !== "ready") {
-    throw new Error("SPS Plugin Discovery was not installed and ready in the packaged Owner Host.");
+  if (!builder || builder.status !== "ready") {
+    throw new Error("SPS Plugin Builder was not installed and ready in the packaged Owner Host.");
   }
-  if (discovery.manifestJson?.companyActivation?.defaultEnabled !== true) {
-    throw new Error("SPS Plugin Discovery must start enabled for a new Company.");
+  if (builder.manifestJson?.companyActivation?.defaultEnabled !== true) {
+    throw new Error("SPS Plugin Builder must start enabled for a new Company.");
   }
   if (
-    discovery.manifestJson?.sps?.contractVersion !== "2.0"
-    || !Array.isArray(discovery.manifestJson?.sps?.primitives)
-    || discovery.manifestJson.sps.primitives.length !== 0
+    builder.manifestJson?.sps?.contractVersion !== "2.0"
+    || !Array.isArray(builder.manifestJson?.sps?.primitives)
+    || builder.manifestJson.sps.primitives.length !== 0
   ) {
-    throw new Error("SPS Plugin Discovery must declare the neutral Extension Profile 2.0 contract.");
+    throw new Error("SPS Plugin Builder must declare the neutral Extension Profile 2.0 contract.");
   }
-  const toolNames = Array.isArray(discovery.manifestJson?.tools)
-    ? discovery.manifestJson.tools.map((tool) => tool?.name).sort()
+  const toolNames = Array.isArray(builder.manifestJson?.tools)
+    ? builder.manifestJson.tools.map((tool) => tool?.name).sort()
     : [];
-  if (toolNames.join(",") !== "draft-sps-extension,search-sps-extensions") {
-    throw new Error("SPS Plugin Discovery did not expose its expected Agent tools in the packaged Owner Host.");
+  if (toolNames.join(",") !== [
+    "create-sps-plugin-package",
+    "create-sps-plugin-project",
+    "inspect-sps-plugin-build",
+    "open-sps-plugin-preview",
+    "run-sps-authoring-step",
+  ].join(",")) {
+    throw new Error("SPS Plugin Builder did not expose its expected Agent tools in the packaged Owner Host.");
+  }
+  if (builder.manifestJson?.capabilities?.some((capability) => capability === "registry.catalog.read" || capability.startsWith("plugin.lifecycle."))) {
+    throw new Error("SPS Plugin Builder exposed Marketplace or plugin lifecycle authority.");
   }
   try {
     await Promise.all([
-      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "ui-v0.3.3", "index.js")),
-      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "conversation.js")),
+      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "ui-v0.4.0", "index.js")),
+      access(path.join(executionRuntimeRoot, "sps-plugin-discovery", "dist", "authoring.js")),
     ]);
   } catch {
-    throw new Error("SPS Plugin Discovery conversation assets were not bundled with the packaged Owner Host.");
+    throw new Error("SPS Plugin Builder authoring assets were not bundled with the packaged Owner Host.");
   }
-  return discovery;
+  return builder;
 }
 
-async function assertPluginDiscoveryBridge() {
+async function assertPluginBuilderBridge() {
   const workspace = await ownerHostJson("/api/companies", {
-    name: "Discovery Bridge Smoke",
-    description: "Disposable packaged Owner Host Discovery bridge verification.",
+    name: "Plugin Builder Bridge Smoke",
+    description: "Disposable packaged Owner Host Plugin Builder bridge verification.",
   });
   const companyId = typeof workspace?.id === "string" ? workspace.id : "";
-  if (!companyId) throw new Error("Could not create a disposable Workspace for the Discovery bridge smoke.");
+  if (!companyId) throw new Error("Could not create a disposable Workspace for the Plugin Builder bridge smoke.");
 
   const activations = await ownerHostJson(`/api/plugins/companies/${companyId}`);
   const activationByKey = new Map(
@@ -260,18 +269,18 @@ async function assertPluginDiscoveryBridge() {
       ? activations.plugins.map((plugin) => [plugin?.pluginKey, plugin?.activation])
       : [],
   );
-  const discoveryActivation = activationByKey.get("sps.plugin-discovery");
+  const builderActivation = activationByKey.get("sps.plugin-discovery");
   const memoryActivation = activationByKey.get("sps.default-memory");
   const roomsActivation = activationByKey.get("local.room-chat");
   if (
-    discoveryActivation?.enabled !== true
-    || discoveryActivation?.defaultEnabled !== true
+    builderActivation?.enabled !== true
+    || builderActivation?.defaultEnabled !== true
     || memoryActivation?.enabled !== false
     || memoryActivation?.defaultEnabled !== false
     || roomsActivation?.enabled !== false
     || roomsActivation?.defaultEnabled !== false
   ) {
-    throw new Error("The packaged SPS Baseline did not keep only Plugin Discovery enabled for a new Workspace.");
+    throw new Error("The packaged SPS Baseline did not keep only Plugin Builder enabled for a new Workspace.");
   }
 
   const legacyBuiltIns = await ownerHostRequest(`/api/companies/${companyId}/built-in-agents`, {
@@ -286,38 +295,17 @@ async function assertPluginDiscoveryBridge() {
   }
 
   const view = await ownerHostJson("/api/plugins/sps.plugin-discovery/bridge/data", {
-    key: "discovery-workspace",
+    key: "plugin-builder-workspace",
     companyId,
     params: {},
   });
   if (
-    view?.data?.hasCatalog !== true
-    || !Array.isArray(view?.data?.assistants)
-    || view.data.assistants.length !== 0
-    || view.data.selectedAssistantId !== null
-    || !Array.isArray(view.data.transcript)
-    || view.data.transcript.length !== 0
+    !Array.isArray(view?.data?.authoringSessions)
+    || view.data.authoringSessions.length !== 0
+    || view.data.authoringSessionCount !== 0
+    || view.data.activeAuthoringSession !== null
   ) {
-    throw new Error(`The packaged Plugin Discovery worker did not return its empty-Workspace view through the UI bridge: ${JSON.stringify(view?.data ?? null)}`);
-  }
-
-  const send = await ownerHostRequest("/api/plugins/sps.plugin-discovery/bridge/action", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      key: "discovery-send",
-      companyId,
-      params: { prompt: "Find a suitable SPS extension." },
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  const sendPayload = await send.json().catch(() => null);
-  if (
-    send.status !== 502
-    || sendPayload?.code !== "WORKER_ERROR"
-    || !String(sendPayload?.message ?? "").includes("Select an available Assistant")
-  ) {
-    throw new Error("Plugin Discovery did not require an Initial Assistant before sending a conversation message.");
+    throw new Error(`The packaged Plugin Builder worker did not return its empty-Workspace view through the UI bridge: ${JSON.stringify(view?.data ?? null)}`);
   }
 }
 
@@ -748,9 +736,9 @@ await mkdir(temporaryRoot, { recursive: true });
 await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 await mkdir(path.dirname(memoryConfigPath), { recursive: true });
 await writeFile(memoryConfigPath, `${JSON.stringify(memoryConfig, null, 2)}\n`, "utf8");
-const discoveryCatalogPath = path.join(temporaryRoot, "plugin-discovery", "official-catalog.json");
-await mkdir(path.dirname(discoveryCatalogPath), { recursive: true });
-await writeFile(discoveryCatalogPath, `${JSON.stringify({
+const marketplaceCatalogPath = path.join(temporaryRoot, "marketplace", "official-catalog.json");
+await mkdir(path.dirname(marketplaceCatalogPath), { recursive: true });
+await writeFile(marketplaceCatalogPath, `${JSON.stringify({
   schemaVersion: 1,
   source: { id: "io.sps.official", displayName: "SPS Official Registry" },
   refreshedAt: new Date().toISOString(),
@@ -792,7 +780,7 @@ const child = spawn(
         path.join(executionRuntimeRoot, "sps-plugin-discovery"),
         path.join(executionRuntimeRoot, "sps-room-chat"),
       ].join(path.delimiter),
-      SPS_PLUGIN_DISCOVERY_CATALOG_PATH: discoveryCatalogPath,
+      SPS_MARKETPLACE_CATALOG_PATH: marketplaceCatalogPath,
       // Exercise the same neutral, plugin-first Core profile that SPS
       // Desktop supplies for a newly created Owner Host.
       SPS_BASIC_MODE: "true",
@@ -822,8 +810,8 @@ try {
   await assertStaticWorkspaceUi();
   await assertBaselineTeamAccessUi();
   await assertDefaultMemoryPlugin();
-  await assertPluginDiscoveryPlugin();
-  await assertPluginDiscoveryBridge();
+  await assertPluginBuilderPlugin();
+  await assertPluginBuilderBridge();
   await assertRoomsPlugin();
   await assertPublicPluginWorkerHostConformance();
   await assertRegistryLifecycle();

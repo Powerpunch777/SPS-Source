@@ -95,6 +95,10 @@ export function createDeveloperCommandEnvironment(environment = process.env) {
     "ALLUSERSPROFILE",
     "APPDATA",
     "COMSPEC",
+    // Source Desktop uses Electron's executable as its pinned Node runtime.
+    // This fixed, non-secret flag is required for that executable to run the
+    // SDK CLI instead of launching another Desktop process.
+    "ELECTRON_RUN_AS_NODE",
     "HOME",
     "HOMEDRIVE",
     "HOMEPATH",

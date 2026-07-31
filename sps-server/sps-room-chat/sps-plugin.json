@@ -7,12 +7,13 @@
   },
   "runtime": {
     "manifestEntry": "dist/manifest.js",
-    "manifestSha256": "ce4b824615670a6c3511f4d7d72954486cf5e464474871db75096e2fb389cc83"
+    "manifestSha256": "67962d99094d57364140386f75e155870419500b6d7b6475b061896361d5b6a3"
   },
   "capabilities": [
     "ui.page.register",
     "ui.sidebar.register",
     "ui.detailTab.register",
+    "ui.workspaceShell.provide",
     "ui.dashboard.contribute",
     "host.local_api.access",
     "issues.read",
@@ -39,5 +40,5 @@
     "inbox.items.publish",
     "instance.settings.register"
   ],
-  "permissionsDigest": "d52ab066f80dd27f79bdc25cfd6a9d1d5f88af84dfc0fac0cd7ddc956ae2e315"
+  "permissionsDigest": "00a5f9dad67284df4d421f5de455cadcd9f5a6f1e3cef1e31a2c8904e935d71d"
 }

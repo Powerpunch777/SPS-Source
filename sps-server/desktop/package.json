@@ -15,15 +15,18 @@
     "test:e2e:bootstrap": "npm run sync:desktop-node && node scripts/smoke-isolated-desktop-ui.mjs",
     "test:e2e:workspace-surfaces": "npm run sync:desktop-node && node scripts/smoke-workspace-surfaces-desktop.mjs",
     "test:e2e:plugin-preview": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs",
+    "test:e2e:host-plugin-lifecycle": "npm run sync:desktop-node && node scripts/smoke-host-plugin-lifecycle-desktop.mjs",
     "prepare:owner-host-runtime": "npm run sync:desktop-node && node scripts/prepare-owner-host-runtime.mjs",
     "smoke:owner-host-runtime": "node scripts/smoke-packaged-owner-host-runtime.mjs",
+    "smoke:marketplace-mcp-runtime": "node scripts/smoke-packaged-marketplace-mcp-runtime.mjs",
+    "smoke:packaged-marketplace-mcp-runtime": "node scripts/smoke-packaged-marketplace-mcp-runtime.mjs --packaged",
     "smoke:plugin-preview-runtime": "node scripts/smoke-plugin-preview-runtime.mjs",
     "stage:agent-runtime-packs": "node scripts/stage-agent-runtime-packs.mjs",
     "archive:agent-runtime-packs": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/archive-agent-runtime-packs.ps1",
     "verify:packaged-owner-host-runtime": "node scripts/verify-packaged-owner-host-runtime.mjs",
-    "package:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && node scripts/create-release-manifest.mjs",
-    "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish never && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && node scripts/create-release-manifest.mjs",
-    "package:candidate:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --publish never && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && node scripts/create-release-manifest.mjs"
+    "package:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && npm run smoke:packaged-marketplace-mcp-runtime && node scripts/create-release-manifest.mjs",
+    "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish never && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && npm run smoke:packaged-marketplace-mcp-runtime && node scripts/create-release-manifest.mjs",
+    "package:candidate:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --publish never && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && npm run smoke:packaged-marketplace-mcp-runtime && node scripts/create-release-manifest.mjs"
   },
   "dependencies": {
     "@sonparkserver/plugin-sdk": "file:../../external/sps-plugin-sdk",
