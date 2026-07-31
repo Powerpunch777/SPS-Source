@@ -389,6 +389,19 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
 
 ## 7단계. Core Marketplace Assistant와 Plugin Builder 완성
 
+### 7단계 실행 순서
+
+| 작업 묶음 | Core 책임 | Plugin 책임 | 완료 증거 |
+| --- | --- | --- | --- |
+| 7A. 일반 Marketplace | Catalog snapshot, 검색·상세 API, `Settings > Plugins` UI | 없음 | AI 어댑터 없이 검색·상세 조회 E2E |
+| 7B. Marketplace Assistant | 대화 UI·세션·adapter 선택·read-only tool broker | 없음 | 서로 다른 adapter 회귀, lifecycle 호출 0회 |
+| 7C. Plugin Builder | 공개 SDK, 외부 프로젝트·Preview·Diagnostics 기반 | Builder가 제작 workflow와 도구 제공 | 외부 폴더에서 생성·검사·Preview·package |
+| 7D. Host 수동 생명주기 | 상세 검토, install·enable·update·rollback·remove | Builder는 package까지만 생성 | Host가 직접 누른 경우에만 상태 변경 |
+| 7E. 패키지 통합 | Desktop 환경변수·Catalog 갱신·보안·복구 | 번들 Builder 패키지 | 설치본 smoke와 실제 Electron 조작 |
+
+7A부터 순서대로 통과한다. 7B가 7D의 lifecycle API를 호출하거나, 7C가
+Marketplace Assistant의 대화 세션을 재사용하는 식으로 책임을 합치지 않는다.
+
 ### 최종 사용자 흐름
 
 1. 사용자가 `Settings > Plugins > Marketplace`를 연다.
@@ -419,6 +432,9 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
 - AI에는 install, enable, update, disable, remove API나 typed tool을 제공하지 않는다.
 - Host 수동 설치는 기존 Registry staging, 정적 검증, capability·migration 검토,
   rollback 계약을 그대로 사용한다.
+- Assistant transcript에는 사용자 질문, 모델 답변, 사용한 read-only tool의 공개
+  결과만 저장한다. Builder의 파일 변경, build, test, Preview 증거는 Assistant
+  transcript가 아니라 Builder 프로젝트의 증거 원장에 저장한다.
 
 ### Plugin Builder 계약
 
@@ -435,8 +451,37 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
 - Core Marketplace에 읽기 전용 search/detail API와 AI adapter dispatch를 추가한다.
 - 일반 검색 UI와 Assistant 대화 UI가 같은 필터·상세 모델을 사용하게 한다.
 - draft-only manifest 결과를 실제 plugin project 생성 흐름과 연결한다.
-- Assistant session과 transcript를 유지하면서 file changes, run, test를 연결한다.
-- Preview와 Diagnostics 결과를 같은 대화에 참조 가능하게 한다.
+- Builder session과 append-only 증거 원장을 유지하면서 file changes, run, test를 연결한다.
+- Preview와 Diagnostics 결과를 Builder 작업 화면에서 같은 build ID로 참조하게 한다.
+
+### 현재 구현 상태
+
+- 7A 백엔드: Desktop이 생성하는 검증된 Marketplace Catalog snapshot과 일치하는
+  검색·상세 API, 회사 접근 검증, 공개 필드 정규화를 구현했다.
+- 7A UI: `Settings > Plugins`의 Installed/Marketplace 분리, AI 없는 검색·상세
+  화면을 구현하고 집중 회귀를 통과했다.
+- 7B 계약: 공개 SDK `0.10.0`에 `searchCatalog`, `getCatalogPlugin`만 남기고
+  lifecycle proposal 계약을 제거했다. Core Assistant의 adapter 실행·대화 UI는 진행 중이다.
+- 7C 기반: 기존 Discovery 패키지에서 project 생성, authoring step, build 검사,
+  Preview 도구를 분리할 준비를 완료했다. 최종 Builder 패키지 분리는 남아 있다.
+- 7D: 기존 Core Host 수동 Registry 생명주기를 재사용하며 Assistant와 Builder에는
+  생명주기 도구를 노출하지 않는 회귀를 추가해야 한다.
+- 7E: SDK `0.10.0`, Core·Builder 정확한 revision, Catalog 환경변수를 Desktop
+  release baseline에 고정하고 설치본 Electron E2E를 통과해야 한다.
+
+### 7단계 구현 체크리스트
+
+- [x] Marketplace search/detail 데이터 계약 확정
+- [x] lifecycle proposal SDK·Worker·Desktop UI 제거
+- [x] AI 없는 Core Marketplace 검색·상세 기반 구현
+- [ ] 사용자에게 허용된 Agent·adapter 목록과 선택 UI
+- [ ] `사용자 + Workspace` Assistant session 생성·복구·종료
+- [ ] 두 read-only tool만 주입하는 adapter-neutral 실행 경로
+- [ ] Assistant 응답 streaming·오류·한도·재시작 복구
+- [ ] Discovery 검색 UI 제거와 독립 Plugin Builder 패키지 전환
+- [ ] Builder 외부 프로젝트·증거 원장·Preview·package E2E
+- [ ] Host 수동 생명주기 무변경/변경 회귀
+- [ ] Windows packaged Desktop 전체 E2E와 release evidence
 
 ### 완료 조건
 
