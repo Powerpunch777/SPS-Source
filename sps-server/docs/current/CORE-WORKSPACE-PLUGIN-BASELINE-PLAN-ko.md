@@ -1,6 +1,6 @@
 # SPS Core와 플러그인 기준 구현 계획
 
-최종 갱신: 2026-07-30
+최종 갱신: 2026-07-31
 
 ## 목표
 
@@ -23,12 +23,14 @@ SPS는 특정 AI 회사 구조나 개발 방식이 아니라, 여러 방식의 A
 
 ## 기본 Workspace
 
-새 Workspace에는 **Plugin Discovery & Builder**만 기본 활성화된다.
-Workspace는 처음에 Assistant 없이 시작하며, 사용자가 기존 CLI, 로컬 AI,
-API Connector 중 하나를 골라 Initial Assistant를 등록한 뒤에 Discovery
-대화를 시작할 수 있다.
+새 Workspace에는 필수 workflow 플러그인이 없다. Core의 **Marketplace**는 항상
+사용할 수 있고 AI 없이도 검색과 상세 조회가 작동한다. 자연어 비교·추천은 사용자가
+접근 가능한 AI 어댑터를 Marketplace Assistant에 선택했을 때만 활성화된다.
 
-Discovery Assistant는 검색, 추천, 초안 작성만 한다. 플러그인의 설치, 활성화, 업데이트, 비활성화, 삭제는 항상 `설정 > 플러그인`에서 사용자가 명시적으로 수행한다.
+`Plugin Builder`는 별도 번들 플러그인이다. 필요한 Workspace에서 Host가
+활성화하며, 외부 프로젝트 제작·검사·Preview·package까지만 담당한다.
+Marketplace Assistant와 Builder에는 lifecycle 도구가 없다. 플러그인의 설치,
+활성화, 업데이트, 비활성화, 삭제는 항상 `설정 > 플러그인`에서 Host가 직접 수행한다.
 
 ## Host, Member, Node, Runtime
 
@@ -83,10 +85,7 @@ Workspace Source는 Host가 고른 로컬 폴더를 나타내는 **이름 있는
 - Desktop의 Host 로컬 폴더 매핑과 Core Source 핸들 동기화
 - 플러그인 주체, Node, Runtime, Source를 연결하는 workflow-neutral execution grant
 - grant 기반 `workspace.sources.route`, Runtime dispatch, run event 관찰, plugin 격리 artifact 기록
-- 기본 Plugin Discovery & Builder 번들, 공식 Catalog의 읽기 전용 검색/초안 도구
-- 역할과 보고선을 만들지 않는 초기 Assistant 등록 화면과 Discovery 소유 대화/기록
-- 기존 Agent 대시보드를 노출하지 않고 Runtime 구성만 제공하는 Core Assistant 상세 화면
-- 새 Workspace에 사용 가능한 Assistant가 없을 때 초기 Assistant 등록을 먼저 요구하는 Core 경로
+- 현재 번들 Discovery의 공식 Catalog 읽기 전용 검색과 제작 초안 기반
 - 실제 Google 계정 두 개를 사용한 Host 생성, Member 참가, Node 승인, 재시작 복구
 - 플러그인 stage, 서명, 호환성, 활성화/비활성화/삭제와 release baseline 검증
 - 최신 Windows `win-unpacked` 후보의 실제 Electron 로그인 화면과 번들 Owner Host 런타임 스모크
@@ -96,6 +95,9 @@ Workspace Source는 Host가 고른 로컬 폴더를 나타내는 **이름 있는
 
 진행 중:
 
+- Discovery 검색 UI를 Core Marketplace로 옮기고 adapter-backed Assistant를 추가
+- Discovery의 제작 기능을 별도 Plugin Builder로 분리
+- AI lifecycle proposal 계약과 Desktop 검토 패널 제거
 - Workspace Shell Provider, 범용 Dashboard widget, 범용 Inbox envelope/action 계약 구현
 - 실제 앱에서 Team 초대 생성/복사/취소, Member 제거, Source 선택/공유와 generic plugin run을 연속 조작하는 최종 E2E
 - Host Vault 백업/복구, 설치본 교체와 자동 업데이트의 최종 배포 후보 검증
@@ -108,7 +110,7 @@ Workspace Source는 Host가 고른 로컬 폴더를 나타내는 **이름 있는
 - 공개 Plugin SDK 전체: `62/62`
 - Core Extension Profile 스키마: `20/20`
 - Core Plugin SDK Host 계약: `18/18`
-- Plugin Discovery & Builder: 빌드, manifest 검증, 대화 및 초안 도구 테스트 통과
+- 기존 Plugin Discovery & Builder: 빌드, manifest 검증, 대화 및 초안 도구 테스트 통과. Core Marketplace와 Plugin Builder 분리 후 재검증 필요
 - Core UI: TypeScript 검사와 Workspace switcher, 초기 Assistant, Runtime 상세, Host 전용 Nodes를 포함한 집중 회귀 `40/40` 통과
 - Windows 배포 후보: `0.4.90` 설치본, Owner Host 런타임 스모크, 격리된 Electron 로그인 스모크 통과
 - Core 기술 경계: Authorization, Company access, Team invite, Node, Workspace Source, Plugin database/route authorization, baseline built-in 차단, legacy instance-admin 무효화를 포함한 서버 회귀 `182/182` 통과

@@ -85,28 +85,29 @@ Desktop currently accepts Extension Profile 1.0 and 2.0. Profile 1.0 is a
 temporary compatibility bridge for older Paperclip-derived packages. New
 workflow-neutral plugins should use Profile 2.0 and this contract.
 
-## First Workspace Discovery
+## Core Marketplace and Plugin Builder
 
-SPS starts a new Workspace with `Plugin Discovery & Builder` enabled and no
-workplane. The user registers one Initial Assistant runtime through the Core
-setup surface. That setup creates a generic runtime-backed assistant with no
-Core role or reporting line.
+SPS starts a new Workspace without a mandatory workflow plugin. Core owns the
+Marketplace search, plugin detail, and Marketplace Assistant surfaces under
+Settings > Plugins.
 
-The Discovery plugin owns the actual conversation, its selected Assistant,
-and its transcript. It can invoke the generic Agent Session transport and
-expose the verified catalog search and draft tools to the Assistant. Search,
-selection, recommendation, and drafting never imply a lifecycle action. When
-the user explicitly requests installation, activation, update, disable, or
-removal, the Assistant may submit a typed lifecycle proposal. Core validates
-the exact package, version, Workspace, capability delta, migration plan, and
-risk class, then requires the applicable Host confirmation before changing
-state. The Assistant cannot manufacture that confirmation or bypass Core.
+Ordinary catalog search does not require AI. For conversational comparison and
+recommendation, Core dispatches the turn through an AI adapter the current user
+is authorized to use. The Assistant session is scoped to the user and Workspace.
+Core exposes only `search_marketplace_plugins` and `get_marketplace_plugin` to
+that Assistant. Results contain normalized catalog metadata and an internal
+detail id, never a raw package path, credential, signing key, or download URL.
 
-The catalog is exposed through the explicit `registry.catalog.read` capability.
-That capability gives an opting-in plugin only the Host-prepared path to a
-verified public catalog snapshot. It does not grant package lifecycle control,
-Host-local Source access, provider credentials, database access, or arbitrary
-environment variables.
+The Marketplace Assistant has no install, activation, update, disable, remove,
+Registry stage, or lifecycle-proposal tool. Only the physical Host can change
+plugin lifecycle state through Settings > Plugins and the existing Host proof.
+
+`Plugin Builder` is a separate bundled plugin. It may create an external plugin
+project, run SDK validation and tests, open an isolated Preview, and produce a
+package or Local Registry release. It does not perform lifecycle actions. The
+catalog snapshot capability remains available to other opting-in plugins only
+as read-only verified metadata and grants no package, Source, secret, database,
+or environment authority.
 
 ## Technical Team Access
 

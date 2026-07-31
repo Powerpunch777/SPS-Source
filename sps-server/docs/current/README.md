@@ -24,7 +24,8 @@
   [`sps-plugin-sdk`](https://github.com/Powerpunch777/sps-plugin-sdk).
 - [PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md](PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md):
   staged Core completion plan for the public Runtime SDK, Developer Mode,
-  Preview, Diagnostics, Discovery & Builder, and reference-plugin E2E.
+  Preview, Diagnostics, Core Marketplace Assistant, Plugin Builder, and
+  reference-plugin E2E.
 - [WORKSPACE-PLUGIN-ACTIVATION.md](WORKSPACE-PLUGIN-ACTIVATION.md):
   Host installation versus Workspace activation.
 - [AGENT-RUNTIME-PACKS.md](AGENT-RUNTIME-PACKS.md): optional runtime-pack

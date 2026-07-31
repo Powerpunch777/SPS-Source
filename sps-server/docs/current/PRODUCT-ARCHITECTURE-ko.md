@@ -1,6 +1,6 @@
 # SPS Product Architecture
 
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 ## Purpose
 
@@ -32,6 +32,9 @@ application is the client.
 - Generic Workspace Shell, Dashboard, and Inbox surfaces. Core owns their
   technical lifecycle and safety; plugins own workflow widgets, reports,
   actions, roles, and approval meaning.
+- Marketplace search, plugin details, and the Marketplace Assistant surface.
+  Core dispatches Assistant turns through a user-authorized AI adapter and
+  exposes only read-only catalog tools.
 
 `Host` and `Member` are technical connection roles only. Core does not define
 business hierarchy, approvals, or who should lead a project.
@@ -66,12 +69,13 @@ Settings > Plugins contains:
 - Installed plugins, Workspace activation, disable, update, and rollback.
 - Local Development Registry management.
 - Personal plugin staging, technical checks, and activation.
-- Plugin-specific settings and the entry point for Plugin Discovery & Builder.
+- Plugin-specific settings and the Marketplace Assistant.
 
-`Plugin Discovery & Builder`는 plugin-management 화면이 아니라 활성 플러그인이
-제공하는 실제 작업 화면이다. 따라서 활성 상태에서는 Workspace navigation에
-`Discovery & Builder`를 표시할 수 있다. 설치, 업데이트, 활성화, 비활성화,
-삭제와 Registry 관리는 계속 **Settings > Plugins**에서만 수행한다.
+`Plugin Builder`는 plugin-management 화면이 아니라 활성 플러그인이 제공하는
+실제 제작 화면이다. 따라서 활성 상태에서는 Workspace navigation에 `Plugin
+Builder`를 표시할 수 있다. 검색과 상세 조회는 Core Marketplace가 담당하고,
+설치, 업데이트, 활성화, 비활성화, 삭제와 Registry 관리는 계속
+**Settings > Plugins**에서만 수행한다.
 
 An enabled plugin may still contribute its *actual work surface* to the
 Workspace. For example, a Team Workplane may show Rooms or Tasks. That is not
@@ -83,25 +87,24 @@ plugin.
 1. The user signs in to SPS Desktop and creates or joins a Host.
 2. A new Workspace begins neutral, with no hidden Paperclip company structure
    and no mandatory workflow plugin.
-3. `Plugin Discovery & Builder` is the only default-enabled extension.
-4. The user registers one Initial Assistant from an available CLI, local AI,
-   or API runtime.
-5. The user opens the enabled **Discovery & Builder** Workspace page and talks
-   to that Assistant about the environment they want to use.
-6. The Assistant can search the catalog, recommend options, or help author a
-   new plugin. Search, selection, and recommendation do not imply a lifecycle
-   action.
-7. When the user explicitly asks for installation or activation, the Assistant
-   may prepare a typed lifecycle proposal. Core shows the exact package,
-   Workspace, capability, migration, and risk review to the Host before any
-   change is applied.
-8. The Host makes the final lifecycle choice through the Core confirmation
-   surface.
+3. Core Marketplace is available without enabling a workflow plugin.
+4. Keyword, category, compatibility, and verification filters work without an
+   AI adapter.
+5. For conversational recommendations, the user selects an AI adapter they are
+   allowed to use. Core owns the Marketplace Assistant session and its two
+   read-only search/detail tools.
+6. Search, selection, recommendation, and detail inspection never imply a
+   lifecycle action and the Assistant receives no lifecycle tool.
+7. The Host opens the Core plugin detail page and performs installation,
+   activation, update, disable, or removal manually.
+8. If no suitable plugin exists, the Host may enable the bundled Plugin Builder
+   and create a plugin in a separate project folder.
 
-## Plugin Discovery & Builder
+## Plugin Builder
 
-Plugin Discovery & Builder is a default product plugin, not a Core workflow
-rule. It is the first reference implementation of the authoring platform.
+Plugin Builder is a bundled product plugin, not a Core workflow rule. It is the
+first reference implementation of the authoring platform and remains separate
+from Core Marketplace search.
 
 The user works in the existing SPS window:
 
@@ -120,9 +123,10 @@ The result is shown in a separate **Plugin Preview** window:
   plugins.
 - Closing Preview never closes SPS or deletes the plugin project.
 
-Core should provide the generic detached-window and isolated-execution
-capability. Discovery & Builder chooses to use it; another authoring plugin
-may use the same capability differently.
+Core provides the generic detached-window and isolated-execution capability.
+Plugin Builder chooses to use it; another authoring plugin may use the same
+capability differently. Builder can create a package and Local Registry release
+but cannot install, enable, update, disable, or remove a plugin.
 
 ## Personal Plugin Path
 
@@ -150,6 +154,9 @@ Phase 1 provides:
 
 - Search, detail pages, capability declarations, compatibility requirements,
   release notes, and verified publisher information.
+- A Core-owned Marketplace Assistant that uses a user-authorized AI adapter.
+  Without an adapter, ordinary search and details remain available.
+- Read-only `search_marketplace_plugins` and `get_marketplace_plugin` tools.
 - Explicit Host installation, Workspace activation, update, disable, and
   rollback.
 - Registry refresh independent of a Desktop update. A newly verified plugin
@@ -197,18 +204,16 @@ Implemented foundation:
 - Windows Desktop Host, Owner Vault, technical Host/Member/Node path,
   Workspace Sources, generic runtime execution, plugin package lifecycle,
   compatibility checks, local development Registry support, Official Registry
-  contract, Default Memory provider, and automatic Desktop-update mechanism.
+  contract, Workspace Shell, Dashboard, Inbox, isolated Plugin Preview,
+  Diagnostics, Test Kit, Default Memory provider, and automatic Desktop-update
+  mechanism.
 
 Still required before the first complete product release:
 
-1. Implement the generic Workspace Shell Provider, Dashboard widget, and
-   Inbox contribution contracts without restoring Paperclip workflow rules.
-2. Add generic isolated Plugin Preview windows.
-3. Extend Plugin Discovery & Builder into the conversational authoring and
-   personal-plugin test flow described above.
-4. Implement Owner Vault Import/restore.
-5. Build the Official Marketplace Phase 1 user interface.
-6. Complete direct, two-computer Host/Member acceptance tests and publish a
+1. Implement Core Marketplace search, details, and adapter-backed Assistant.
+2. Extend Plugin Builder into the authoring and personal-plugin test flow.
+3. Implement Owner Vault Import/restore.
+4. Complete direct, two-computer Host/Member acceptance tests and publish a
    signed Windows release to validate real automatic updates.
 
 ## Non-Goals for the First Release

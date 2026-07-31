@@ -1,6 +1,6 @@
 # SPS 제품 모델
 
-최종 갱신: 2026-07-30
+최종 갱신: 2026-07-31
 
 SPS는 개인과 소규모 팀이 자신의 컴퓨터, 프로젝트 폴더, AI 런타임을 바탕으로
 AI 작업 환경을 구성하는 Windows Desktop 제품이다. 처음부터 특정 회사 조직도,
@@ -10,21 +10,24 @@ Task 보드, Room, 역할, 메모리 방식을 강제하지 않는다.
 
 1. 사용자는 SPS Desktop에서 Host를 만들거나 기존 Host에 참여한다.
 2. 새 Workspace는 중립 상태로 시작한다.
-3. 기본 활성화된 `Plugin Discovery & Builder`와 Initial Assistant를 통해 원하는
-   개발 방식이나 업무 흐름을 설명한다.
-4. Assistant는 플러그인을 찾거나 초안을 만드는 데 도움을 줄 수 있다.
+3. Core Marketplace에서 AI 없이 플러그인을 검색하거나, 자신에게 허용된 AI
+   어댑터를 Marketplace Assistant에 연결해 비교·추천을 받는다.
+4. 적합한 플러그인이 없으면 별도 `Plugin Builder`를 활성화해 새 플러그인을
+   제작·검사·Preview할 수 있다.
 5. 실제 설치, 활성화, 업데이트, 비활성화는 Host가 **설정 > 플러그인**에서
    명시적으로 결정한다.
 
-Assistant의 추천이나 대화만으로 플러그인이 자동 설치되거나 활성화되지는 않는다.
+Marketplace Assistant와 Plugin Builder에는 lifecycle 도구가 없다. 추천이나
+대화만으로 플러그인이 설치되거나 활성화되지는 않는다.
 
 ## 제품의 두 층
 
 ### SPS Core
 
 Core는 Desktop, Host/Member/Node 연결, Workspace Source, AI Runtime,
-실행 기록, Artifact, 보안 저장소, 백업, 업데이트, 진단, 플러그인 수명주기처럼
-여러 작업 방식에서 공통으로 필요한 기술 기반을 제공한다.
+실행 기록, Artifact, 보안 저장소, 백업, 업데이트, 진단, 플러그인 수명주기,
+Marketplace 검색과 adapter-backed Assistant처럼 여러 작업 방식에서 공통으로
+필요한 기술 기반을 제공한다.
 
 ### Plugin
 

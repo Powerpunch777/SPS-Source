@@ -8,8 +8,9 @@
 
 ## 목적
 
-SPS Core를 외부 개발자와 Plugin Discovery & Builder가 실제 플러그인을 설계,
-제작, 시험, 패키징, 검토, 활성화할 수 있는 안정적인 플랫폼으로 완성한다.
+SPS Core를 외부 개발자와 Plugin Builder가 실제 플러그인을 설계, 제작, 시험,
+패키징하고, Host가 검토·설치·활성화할 수 있는 안정적인 플랫폼으로 완성한다.
+Marketplace 검색과 Marketplace Assistant는 Core 기본 기능으로 제공한다.
 
 Core의 모든 제품 기능이 끝날 때까지 플러그인 제작을 미루는 것이 목표가 아니다.
 플러그인이 의존하는 공개 계약을 먼저 안정화하고, reference plugin을 함께
@@ -22,14 +23,14 @@ Core는 기술 기반과 안전 경계를 제공하고 플러그인은 작업 �
 
 1. Core는 특정 조직도, 프로젝트 방식, Task, Room, 역할, 승인, 기억 정책을
    기본값으로 강요하지 않는다.
-2. 새 Workspace에는 Plugin Discovery & Builder만 기본 활성화되고 Initial
-   Assistant 한 명을 먼저 등록한다.
+2. Marketplace와 Marketplace Assistant는 Core 기본 기능이다. Plugin Builder는
+   제작이 필요할 때 Host가 활성화하는 별도 번들 플러그인이다.
 3. 설치, 활성화, 업데이트, 비활성화, 삭제는 위험도에 맞는 Core 검토 절차를
    통과한다.
 4. 검색이나 추천은 설치를 의미하지 않는다.
-5. 사용자가 AI에게 설치 또는 활성화를 명시적으로 요청하면 AI는 lifecycle
-   proposal을 만들 수 있다. 실제 변경은 Core가 Host에게 대상, 버전, capability,
-   migration, 위험도를 보여주고 확인받은 뒤 실행한다.
+5. Marketplace Assistant와 Plugin Builder에는 설치, 활성화, 업데이트, 비활성화,
+   삭제 도구를 제공하지 않는다. 실제 변경은 Host가 `Settings > Plugins`에서
+   직접 실행한다.
 6. 자연어 요청의 의미를 키워드 Controller나 하드코딩된 문장으로 분류하지 않는다.
    AI가 판단하고 typed tool을 선택하며, Core는 요청된 기술 동작만 검증한다.
 7. 한 Workspace는 하나의 Workspace Shell Provider를 선택할 수 있고, 여러 활성
@@ -37,7 +38,10 @@ Core는 기술 기반과 안전 경계를 제공하고 플러그인은 작업 �
 8. 플러그인은 Core의 Plugins, Safe mode, Diagnostics, Update, Export/Import,
    Host settings 경로를 숨기거나 비활성화할 수 없다.
 9. 플러그인 프로젝트는 SPS 설치 폴더가 아닌 별도 폴더 또는 Git 저장소에 둔다.
-10. Host와 Member는 같은 Windows 설치본을 사용한다.
+10. Marketplace Assistant의 UI, 대화 생명주기, 읽기 전용 도구 broker는 Core가
+    소유하고, 실제 추론은 사용자가 접근할 수 있는 AI 어댑터가 담당한다.
+11. AI 어댑터가 없어도 일반 Marketplace 검색과 상세 조회는 항상 작동한다.
+12. Host와 Member는 같은 Windows 설치본을 사용한다.
 
 ## 현재 기준 상태
 
@@ -54,8 +58,9 @@ Core는 기술 기반과 안전 경계를 제공하고 플러그인은 작업 �
 | Plugin Preview | 격리 Vault·DB·Workspace·별도 창·fixture·Preview 진단과 패키지 E2E 구현 | Diagnostics·Test Kit의 통합 진단 계약으로 연결 |
 | Diagnostics | 공개 v1 계약, Core 상태 snapshot, Desktop 개발 진단 원장과 UI 구현 | 실제 reference plugin 운영 진단 확장 |
 | Test Kit·Conformance | 결정적 in-memory fixture와 불변 검증 보고서 구현 | reference plugin 회귀 집합 확장 |
-| Plugin dependency | 필수·선택·버전·충돌·영향 검토·blocked 복구 계약 구현 | Builder lifecycle proposal과 연결 |
-| Discovery 검색·초안 | 구현 | 프로젝트 생성부터 Preview와 lifecycle proposal까지 연결 |
+| Plugin dependency | 필수·선택·버전·충돌·영향 검토·blocked 복구 계약 구현 | Host 수동 설치 상세와 Builder 검사에 연결 |
+| Marketplace 검색 | 검증된 Catalog snapshot 검색 구현 | Core 검색·상세 조회·Assistant 도구로 승격 |
+| Plugin Builder | 초안·개발 기반 구현 중 | 외부 프로젝트 생성부터 Preview·package까지 연결 |
 
 ## Core 완성 Gate
 
@@ -379,72 +384,94 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
 - SPS Desktop `0.4.96` Windows 설치 후보의 실제 packaged Owner Host에서 직접
   브라우저 차단, 기본 메모리·Discovery·Room, 공개 SDK 워커, Registry
   설치·업그레이드·롤백, dependency 영향 검토·차단·복구 E2E를 통과했다.
-- 6단계 완료 조건을 충족했다. 다음 구현 기준선은 Plugin Discovery & Builder의
-  typed authoring 도구, 외부 프로젝트, 증거 원장, Preview, lifecycle proposal 연결이다.
+- 6단계 완료 조건을 충족했다. 다음 구현 기준선은 Core Marketplace Assistant의
+  읽기 전용 도구와 Plugin Builder의 외부 프로젝트, 증거 원장, Preview 연결이다.
 
-## 7단계. Plugin Discovery & Builder 완성
+## 7단계. Core Marketplace Assistant와 Plugin Builder 완성
 
 ### 최종 사용자 흐름
 
-1. 새 Workspace에서 Initial Assistant를 등록한다.
-2. 사용자가 원하는 작업 환경을 자연어로 설명한다.
-3. AI가 Official Registry와 허용된 Catalog를 검색한다.
-4. 적합한 플러그인이 있으면 비교와 추천을 제공한다.
-5. 없거나 사용자가 새 제작을 요청하면 별도 프로젝트 폴더를 만든다.
-6. AI가 SDK로 manifest, worker, UI, tests를 작성한다.
-7. 메인 SPS에서 변경 파일, 로그, 테스트 결과를 보여준다.
-8. Plugin Preview에서 실제 결과를 확인한다.
-9. 검증을 통과하면 `.spsplugin`과 Local Registry release를 만든다.
-10. 사용자가 명시적으로 설치·활성화를 요청하면 AI가 lifecycle proposal을 만든다.
-11. Core가 대상 Workspace, 버전, capability, migration, 위험도를 보여준다.
-12. Host가 확인하면 Core가 stage, 설치, 활성화를 수행한다.
+1. 사용자가 `Settings > Plugins > Marketplace`를 연다.
+2. AI 없이 키워드·카테고리·호환성·검증 상태로 검색할 수 있다.
+3. 자연어 추천이 필요하면 자신에게 허용된 AI 어댑터를 선택한다.
+4. Marketplace Assistant가 Core의 읽기 전용 검색·상세 조회 도구를 사용한다.
+5. Assistant가 후보를 비교하고 추천 이유와 필요한 capability를 설명한다.
+6. 사용자가 결과에서 Core 플러그인 상세 화면을 연다.
+7. 설치하려면 Host가 상세 화면에서 `Install & Enable`을 직접 누른다.
+8. 적합한 플러그인이 없고 새 제작이 필요하면 Plugin Builder를 연다.
+9. Builder가 별도 프로젝트 폴더에서 SDK로 manifest, worker, UI, tests를 작성한다.
+10. 메인 SPS에서 변경 파일, 로그, 테스트 결과를 보여준다.
+11. Plugin Preview에서 실제 결과를 확인한다.
+12. 검증을 통과하면 `.spsplugin`과 Local Registry release를 만든다.
+13. 제작 결과도 `Settings > Plugins`에서 Host가 직접 설치·활성화한다.
 
-### 의도 처리 규칙
+### Core Marketplace Assistant 계약
 
-- 검색 결과 선택, 비교, 추천, 상세 보기만으로 lifecycle action을 실행하지 않는다.
-- `설치해줘`, `이 Workspace에서 켜줘`, `업데이트해줘` 같은 의미 판단은 AI가 한다.
-- Core는 문장 키워드를 해석하지 않고 AI가 호출한 typed lifecycle proposal을 검증한다.
-- proposal은 대상 package, version, Workspace, operation을 명시해야 한다.
-- capability 증가, migration, secret, 외부 비용이 있으면 추가 검토를 요구한다.
-- AI는 Host 확인 결과를 대신 만들거나 확인 UI를 우회할 수 없다.
+- Marketplace UI, 대화 세션, adapter 선택, Catalog query broker는 Core가 소유한다.
+- 실제 모델은 Core에 고정하지 않고 사용자가 사용할 수 있는 AI 어댑터로 실행한다.
+- 대화는 `사용자 + Workspace` 범위로 분리하고, 어댑터 접근 권한을 매 호출에 확인한다.
+- AI 어댑터가 없거나 한도에 도달해도 일반 검색과 상세 조회는 계속 작동한다.
+- Core는 `search_marketplace_plugins`와 `get_marketplace_plugin`만 제공한다.
+- 검색 결과는 Core가 정규화한 식별자, 버전, 제작자, 검증 상태, 호환성,
+  capability, dependency, 가격 정책, 내부 상세 ID로 제한한다.
+- raw package 경로, 다운로드 URL, secret, Registry 서명 키는 AI에게 전달하지 않는다.
+- 검색·비교·추천·상세 조회는 어떤 Plugin lifecycle 상태도 변경하지 않는다.
+- AI에는 install, enable, update, disable, remove API나 typed tool을 제공하지 않는다.
+- Host 수동 설치는 기존 Registry staging, 정적 검증, capability·migration 검토,
+  rollback 계약을 그대로 사용한다.
+
+### Plugin Builder 계약
+
+- Plugin Builder는 Marketplace Assistant와 분리된 번들 플러그인이다.
+- 제작 전용 typed tool은 project 생성, authoring step, build 검사, Preview로 제한한다.
+- Builder는 별도 프로젝트 폴더와 append-only 증거 원장을 사용한다.
+- Builder는 package와 Local Registry release를 만들 수 있지만 설치하지 않는다.
+- 제작 AI는 사용자에게 허용된 Agent·Runtime을 사용하며 모델에 종속되지 않는다.
 
 ### 현재 구현에서 변경할 부분
 
-- `never installs`로 고정된 Tool 설명을 `추천은 lifecycle action이 아니다`로 바꾼다.
-- 검색·초안 Tool과 lifecycle proposal Tool을 분리한다.
+- Plugin Discovery에서 Catalog 검색과 대화 UI를 Core Marketplace로 이동한다.
+- 기존 `createLifecycleProposal` 공개 SDK 계약, Worker tool, Desktop 검토 패널을 제거한다.
+- Core Marketplace에 읽기 전용 search/detail API와 AI adapter dispatch를 추가한다.
+- 일반 검색 UI와 Assistant 대화 UI가 같은 필터·상세 모델을 사용하게 한다.
 - draft-only manifest 결과를 실제 plugin project 생성 흐름과 연결한다.
 - Assistant session과 transcript를 유지하면서 file changes, run, test를 연결한다.
 - Preview와 Diagnostics 결과를 같은 대화에 참조 가능하게 한다.
 
 ### 완료 조건
 
-- 추천만 요청하면 Workspace에 변화가 없음
+- AI 없이 Marketplace 검색과 상세 조회 가능
+- 어댑터별 Assistant 대화가 격리되고 허용되지 않은 어댑터는 선택 불가
+- 추천만 요청하면 Workspace와 Plugin lifecycle에 변화가 없음
+- Assistant 실행 중 설치·활성화 Core API 호출이 0회임을 테스트로 증명
 - 제작 요청으로 외부 plugin project와 재현 가능한 build 생성
 - Preview 검증 전 production 활성화 불가
-- 명시적인 설치 요청과 Host 확인이 모두 있어야 lifecycle 변경
-- AI provider를 바꿔도 같은 typed tool 계약으로 동작
+- Host가 설정 화면에서 직접 누른 경우에만 lifecycle 변경
+- AI 어댑터를 바꿔도 같은 read-only Marketplace tool 계약으로 동작
 
 ## 8단계. Reference Plugin과 실제 E2E
 
 ### 필수 reference plugin
 
-1. Plugin Discovery & Builder
-   - 검색, 제작, Preview, lifecycle proposal의 전체 reference
-2. SPS Team Workplane
+1. Plugin Builder
+   - 외부 프로젝트 제작, 검사, Preview, package의 전체 reference
+2. Core Marketplace Assistant fixture
+   - 일반 검색, AI 어댑터 dispatch, read-only 도구, 무변경 증거
+3. SPS Team Workplane
    - Shell Provider, Rooms, Tasks, Dashboard widget, Inbox report, Workspace Job
-3. SPS Default Memory
+4. SPS Default Memory
    - 교체 가능한 provider, lifecycle, backup, 상태 widget
-4. 최소 Access Control example
+5. 최소 Access Control example
    - Core Host·Member와 분리된 plugin 업무 역할·권한 reference
 
 게임, 웹, 앱 플러그인은 이 Gate가 끝난 뒤 starter pack으로 추가한다.
 
 ### E2E 시나리오
 
-- 빈 Workspace와 Initial Assistant
-- Catalog 검색만 하고 종료
+- 빈 Workspace와 Core Marketplace 일반 검색
+- 서로 다른 AI 어댑터로 검색·비교하고 lifecycle 무변경 확인
 - 새 plugin project 생성, 코드 작성, test, Preview
-- package 생성, capability 검토, Host 설치와 Workspace 활성화
+- package 생성 후 Host가 설정 화면에서 직접 설치·활성화
 - Host와 Member의 서로 다른 권한·Node·Runtime
 - Dashboard와 Inbox contribution
 - Worker 완료 보고와 action 재검증
@@ -490,7 +517,8 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
   -> Plugin Preview
   -> Diagnostics / Test Kit
   -> Workspace Job / Dependency
-  -> Discovery & Builder 완성
+  -> Core Marketplace Assistant
+  -> Plugin Builder 완성
   -> Reference Plugin E2E
   -> 비공개 Beta
 ```
@@ -510,7 +538,6 @@ Diagnostics는 raw secret, CLI credential, Host 실제 경로를 노출하지 �
 - Host·Member·Node·Runtime·Source 경계가 실제 두 컴퓨터에서 유지된다.
 - 플러그인 실패가 SPS 설정과 복구 경로를 막지 않는다.
 - 검색·추천과 설치·활성화가 명확히 분리된다.
-- 명시적인 AI 요청은 lifecycle proposal로 이어질 수 있지만 Host 확인을 우회하지
-  않는다.
-- Team Workplane, Default Memory, Discovery & Builder reference가 Core 수정 없이
+- AI는 lifecycle 도구를 받지 않으며 Host의 수동 설정 동작만 lifecycle을 변경한다.
+- Team Workplane, Default Memory, Plugin Builder reference가 Core 수정 없이
   동작한다.
