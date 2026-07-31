@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { materializeSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
-const packagedRuntimeRoot = path.join(
+const desktopVersion = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8")).version;
+const packagedRuntimeRoot = path.join(desktopRoot, "dist", ".verified-owner-host-runtime", desktopVersion);
+const packagedRuntimePackageRoot = path.join(
   desktopRoot,
   "dist",
   "win-unpacked",
   "resources",
-  "sps-owner-host-runtime",
+  "sps-owner-host-runtime-package",
 );
 const runtimeRoot = path.resolve(
   process.env.SPS_MARKETPLACE_MCP_RUNTIME_ROOT
@@ -19,6 +22,12 @@ const runtimeRoot = path.resolve(
       ? packagedRuntimeRoot
       : path.join(desktopRoot, ".owner-host-runtime")),
 );
+if (process.argv.includes("--packaged") && !process.env.SPS_MARKETPLACE_MCP_RUNTIME_ROOT) {
+  await materializeSpsOwnerHostRuntimePackage({
+    packageRoot: packagedRuntimePackageRoot,
+    targetRuntimeRoot: runtimeRoot,
+  });
+}
 const nodeCommand = path.join(runtimeRoot, "bin", process.platform === "win32" ? "node.exe" : "node");
 const entryPath = path.join(
   runtimeRoot,

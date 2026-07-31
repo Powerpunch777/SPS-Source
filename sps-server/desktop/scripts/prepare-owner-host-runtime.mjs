@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { writeSpsReleaseBaseline } from "./release-baseline.mjs";
+import { createSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -11,6 +12,7 @@ const workspaceRoot = path.resolve(desktopRoot, "..", "..");
 const coreRoot = path.resolve(process.env.SPS_HOST_CORE_ROOT || path.join(workspaceRoot, "external", "sps-core"));
 const defaultRuntimeRoot = path.join(desktopRoot, ".owner-host-runtime");
 const runtimeRoot = path.resolve(process.env.SPS_DESKTOP_RUNTIME_OUTPUT?.trim() || defaultRuntimeRoot);
+const runtimePackageRoot = path.join(desktopRoot, ".owner-host-runtime-package");
 const defaultAgentRuntimePacksRoot = path.join(desktopRoot, ".agent-runtime-packs");
 const agentRuntimePacksRoot = path.resolve(process.env.SPS_DESKTOP_AGENT_RUNTIME_PACKS_OUTPUT?.trim() || defaultAgentRuntimePacksRoot);
 const releaseBaselinePath = path.join(runtimeRoot, "sps-release-baseline.json");
@@ -499,3 +501,6 @@ await writeFile(
 );
 
 console.log(`Prepared SPS Owner Host runtime: ${runtimeRoot}`);
+assertDesktopBuildPath(runtimePackageRoot);
+const runtimePackage = await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot: runtimePackageRoot });
+console.log(`Prepared SPS Owner Host runtime archive: ${path.join(runtimePackageRoot, runtimePackage.archive.file)}`);

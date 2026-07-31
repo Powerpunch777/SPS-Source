@@ -247,7 +247,7 @@ try {
   await waitPage(setup, (page) => page.text.includes("Create") || page.text.includes("Server"), "Owner Host choice");
   await setup.evaluate("document.querySelector('#create-owner-server')?.click()");
 
-  workspaceTarget = await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", 160_000);
+  workspaceTarget = await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", 240_000);
   workspace = await cdpFor(workspaceTarget);
   await waitPage(workspace, (page) => page.text.includes("Workspace") || page.text.includes("Dashboard"), "Workspace UI", 90_000);
   const companies = await workspaceApi(workspace, "/api/companies");

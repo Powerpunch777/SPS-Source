@@ -35,6 +35,25 @@ test("builds and bundles the static Core Workspace UI with the Owner Host runtim
   assert.match(buildScript, /copyBundledSpsPluginDeveloperKit/);
   assert.match(buildScript, /@sonparkserver", "plugin-sdk", "cli", "sps-plugin\.mjs/);
   assert.match(buildScript, /pluginDeveloperKit/);
+  assert.match(buildScript, /createSpsOwnerHostRuntimePackage/);
+  assert.match(buildScript, /runtimePackageRoot/);
+});
+
+test("ships one verified Owner Host runtime archive instead of expanded runtime files", async () => {
+  const packageManifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
+  const verifierScript = await readFile(
+    path.join(desktopDirectory, "scripts", "verify-packaged-owner-host-runtime.mjs"),
+    "utf8",
+  );
+
+  assert.deepEqual(packageManifest.build.extraResources, [{
+    from: ".owner-host-runtime-package",
+    to: "sps-owner-host-runtime-package",
+  }]);
+  assert.doesNotMatch(JSON.stringify(packageManifest.build.extraResources), /"\.owner-host-runtime"/);
+  assert.match(verifierScript, /materializeSpsOwnerHostRuntimePackage/);
+  assert.match(verifierScript, /sps-owner-host-runtime-package/);
+  assert.match(verifierScript, /\.verified-owner-host-runtime/);
 });
 
 test("keeps the Marketplace MCP stdio runtime in the Owner Host package contract", async () => {

@@ -1,13 +1,17 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { materializeSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
-const runtimeRoot = path.resolve(
-  process.env.SPS_PACKAGED_OWNER_HOST_RUNTIME_ROOT
-    || path.join(desktopRoot, "dist", "win-unpacked", "resources", "sps-owner-host-runtime"),
-);
+const desktopVersion = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8")).version;
+const packageRoot = path.join(desktopRoot, "dist", "win-unpacked", "resources", "sps-owner-host-runtime-package");
+const runtimeRoot = path.resolve(process.env.SPS_PACKAGED_OWNER_HOST_RUNTIME_ROOT
+  || path.join(desktopRoot, "dist", ".verified-owner-host-runtime", desktopVersion));
+if (!process.env.SPS_PACKAGED_OWNER_HOST_RUNTIME_ROOT) {
+  await materializeSpsOwnerHostRuntimePackage({ packageRoot, targetRuntimeRoot: runtimeRoot });
+}
 
 const requiredFiles = [
   "sps-owner-host-runtime.json",

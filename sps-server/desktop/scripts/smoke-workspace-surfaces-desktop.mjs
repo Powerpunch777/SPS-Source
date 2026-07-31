@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { mkdtemp, rm, access } from "node:fs/promises";
+import { mkdtemp, rm, access, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { once } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
+const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+const desktopVersion = JSON.parse(await readFile(path.join(scriptDirectory, "..", "package.json"), "utf8")).version;
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
+const hostReadyTimeoutMs = Number(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS || 240_000);
+const keepE2eData = process.env.SPS_DESKTOP_E2E_KEEP_DATA === "1";
 
 if (process.platform !== "win32") {
   throw new Error("Workspace Surfaces Desktop E2E currently targets the Windows release.");
@@ -64,8 +69,8 @@ async function stopProcessTree(child) {
   await Promise.race([once(child, "exit").catch(() => undefined), delay(8_000)]);
 }
 
-async function stopPackagedRuntimeOrphans() {
-  const runtimeSuffix = "sps-server/desktop/dist/win-unpacked/resources/sps-owner-host-runtime";
+async function stopPackagedRuntimeOrphans(userDataDirectory) {
+  const runtimeSuffix = path.join(userDataDirectory, "owner-host-runtime").replaceAll("\\", "/");
   const script = [
     `$suffix = ${JSON.stringify(runtimeSuffix)}`,
     "$targets = Get-CimInstance Win32_Process | Where-Object {",
@@ -322,6 +327,7 @@ async function navigateByDomLink(cdp, suffix, label) {
 const mockIdentity = createMockIdentityServer();
 const debugPort = await findAvailablePort();
 const userDataDirectory = await mkdtemp(path.join(os.tmpdir(), "sps-workspace-surfaces-e2e-"));
+if (keepE2eData) console.log(`Preserving SPS Workspace E2E data at: ${userDataDirectory}`);
 let child = null;
 let setupCdp = null;
 let workspaceCdp = null;
@@ -368,7 +374,7 @@ try {
     child,
     (target) => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""),
     "the authenticated SPS Workspace BrowserWindow",
-    150_000,
+    hostReadyTimeoutMs,
   );
   workspaceCdp = await openCdp(workspaceTarget);
   await waitForPage(workspaceCdp, (page) => page.body.includes("Workspace") || page.body.includes("Dashboard"), "the Workspace Core UI", 90_000);
@@ -406,9 +412,9 @@ try {
   // packaged reference Workplane through the real Host API so this flow also
   // verifies optional local-package installation without changing that default.
   const packagedTeamWorkplanePath = path.join(
-    path.dirname(packagedBinary),
-    "resources",
-    "sps-owner-host-runtime",
+    userDataDirectory,
+    "owner-host-runtime",
+    desktopVersion,
     "sps-room-chat",
   );
   await api(workspaceCdp, "/api/plugins/install", {
@@ -519,9 +525,11 @@ try {
   await workspaceCdp?.close().catch(() => undefined);
   await setupCdp?.close().catch(() => undefined);
   await stopProcessTree(child);
-  await stopPackagedRuntimeOrphans();
+  await stopPackagedRuntimeOrphans(userDataDirectory);
   await mockIdentity.close().catch(() => undefined);
-  await removeTemporaryDirectory(userDataDirectory).catch((error) => {
-    console.warn(`Could not remove isolated SPS Desktop E2E data: ${errorText(error)}`);
-  });
+  if (!keepE2eData) {
+    await removeTemporaryDirectory(userDataDirectory).catch((error) => {
+      console.warn(`Could not remove isolated SPS Desktop E2E data: ${errorText(error)}`);
+    });
+  }
 }

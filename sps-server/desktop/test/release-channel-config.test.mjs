@@ -14,12 +14,8 @@ test("keeps the unified SPS Desktop release on its explicit stable update channe
   assert.equal(manifest.build.artifactName, "SPS-Desktop-Setup-${version}.${ext}");
   assert.deepEqual(manifest.build.extraResources, [
     {
-      from: ".owner-host-runtime",
-      to: "sps-owner-host-runtime",
-    },
-    {
-      from: ".owner-host-runtime/node_modules",
-      to: "sps-owner-host-runtime/node_modules",
+      from: ".owner-host-runtime-package",
+      to: "sps-owner-host-runtime-package",
     },
   ]);
 

@@ -69,6 +69,7 @@ import {
   resolveSpsOwnerHostRuntime,
   spsOwnerHostBundledNodePath,
 } from "./owner-host.mjs";
+import { materializeSpsOwnerHostRuntimePackage } from "./owner-host-runtime-package.mjs";
 import {
   configureSpsOwnerHostAuthenticatedLocal,
   configureSpsOwnerHostPrivateTeamAccess,
@@ -228,6 +229,7 @@ let updateStatus = {
   message: "Desktop update service is starting.",
 };
 let ownerHostManager = null;
+let ownerHostRuntimePromise = null;
 let defaultMemoryManager = null;
 let defaultMemoryStatus = disabledSpsExtensionStatus();
 let ownerHostStatus = {
@@ -1343,6 +1345,34 @@ function ownerVaultRoot() {
   return path.join(app.getPath("userData"), "owner-vault");
 }
 
+async function materializeCurrentSpsOwnerHostRuntime() {
+  if (ownerHostRuntimePromise) return ownerHostRuntimePromise;
+  ownerHostRuntimePromise = (async () => {
+    const targetRuntimeRoot = path.join(app.getPath("userData"), "owner-host-runtime", app.getVersion());
+    if (app.isPackaged) {
+      const packageRoot = path.join(process.resourcesPath, "sps-owner-host-runtime-package");
+      if (existsSync(path.join(packageRoot, "sps-owner-host-runtime-package.json"))) {
+        return await materializeSpsOwnerHostRuntimePackage({ packageRoot, targetRuntimeRoot });
+      }
+      // Keep in-place update compatibility with pre-archive Desktop packages.
+      return await materializeSpsOwnerHostRuntime({
+        sourceRuntimeRoot: path.join(process.resourcesPath, "sps-owner-host-runtime"),
+        targetRuntimeRoot,
+        runInPlace: true,
+      });
+    }
+    return await materializeSpsOwnerHostRuntime({
+      sourceRuntimeRoot: path.join(__dirname, "..", ".owner-host-runtime"),
+      targetRuntimeRoot,
+      runInPlace: false,
+    });
+  })().catch((error) => {
+    ownerHostRuntimePromise = null;
+    throw error;
+  });
+  return ownerHostRuntimePromise;
+}
+
 function ownerAgentRuntimePacksRoot() {
   return spsAgentRuntimePacksRoot(app.getPath("userData"));
 }
@@ -1465,10 +1495,6 @@ async function ensureOwnerHostManager() {
     console.warn("SPS Marketplace catalog refresh failed", error);
   }
 
-  const sourceRuntimeRoot = app.isPackaged
-    ? path.join(process.resourcesPath, "sps-owner-host-runtime")
-    : path.join(__dirname, "..", ".owner-host-runtime");
-  const targetRuntimeRoot = path.join(app.getPath("userData"), "owner-host-runtime", app.getVersion());
   const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
   const developmentMemorySidecarEntry = path.resolve(__dirname, "..", "..", "memory-sidecar", "memory-sidecar.mjs");
   const developmentMemoryPluginPath = path.resolve(__dirname, "..", "..", "sps-default-memory");
@@ -1481,22 +1507,14 @@ async function ensureOwnerHostManager() {
       configPath: defaultMemory.layout.configPath,
       nodeCommand: process.execPath,
       resolveEntry: async () => {
-        const materializedRuntime = await materializeSpsOwnerHostRuntime({
-          sourceRuntimeRoot,
-          targetRuntimeRoot,
-          runInPlace: app.isPackaged,
-        });
+        const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
         const packagedEntry = materializedRuntime
           ? path.join(materializedRuntime, "memory-sidecar", "memory-sidecar.mjs")
           : null;
         return packagedEntry && existsSync(packagedEntry) ? packagedEntry : developmentMemorySidecarEntry;
       },
       resolveNodeCommand: async () => {
-        const materializedRuntime = await materializeSpsOwnerHostRuntime({
-          sourceRuntimeRoot,
-          targetRuntimeRoot,
-          runInPlace: app.isPackaged,
-        });
+        const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
         const bundledNode = materializedRuntime ? spsOwnerHostBundledNodePath(materializedRuntime) : null;
         return bundledNode && existsSync(bundledNode) ? bundledNode : process.execPath;
       },
@@ -1505,11 +1523,7 @@ async function ensureOwnerHostManager() {
   ownerHostManager = createSpsOwnerHostManager({
     url,
     resolveRuntime: async () => {
-      const materializedRuntime = await materializeSpsOwnerHostRuntime({
-        sourceRuntimeRoot,
-        targetRuntimeRoot,
-        runInPlace: app.isPackaged,
-      });
+      const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
       const packagedMemoryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-default-memory") : null;
       const packagedDiscoveryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-plugin-discovery") : null;
       const packagedRoomPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-room-chat") : null;
@@ -2160,13 +2174,7 @@ async function resolveDesktopDeveloperKit() {
     };
   }
 
-  const sourceRuntimeRoot = path.join(process.resourcesPath, "sps-owner-host-runtime");
-  const targetRuntimeRoot = path.join(app.getPath("userData"), "owner-host-runtime", app.getVersion());
-  const runtimeRoot = await materializeSpsOwnerHostRuntime({
-    sourceRuntimeRoot,
-    targetRuntimeRoot,
-    runInPlace: true,
-  });
+  const runtimeRoot = await materializeCurrentSpsOwnerHostRuntime();
   if (!runtimeRoot) throw new Error("SPS Owner Host runtime is unavailable.");
   const nodeCommand = spsOwnerHostBundledNodePath(runtimeRoot);
   const sdkCliPath = path.join(
@@ -2318,15 +2326,7 @@ async function pluginPreviewApi(preview, pathname, { method = "GET", body } = {}
 }
 
 async function resolveDesktopPluginPreviewRuntime(preview) {
-  const sourceRuntimeRoot = app.isPackaged
-    ? path.join(process.resourcesPath, "sps-owner-host-runtime")
-    : path.join(__dirname, "..", ".owner-host-runtime");
-  const targetRuntimeRoot = path.join(app.getPath("userData"), "owner-host-runtime", app.getVersion());
-  const materializedRuntime = await materializeSpsOwnerHostRuntime({
-    sourceRuntimeRoot,
-    targetRuntimeRoot,
-    runInPlace: app.isPackaged,
-  });
+  const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
   const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
   return await resolveSpsOwnerHostRuntime({
     packagedRuntimeRoots: app.isPackaged && materializedRuntime ? [materializedRuntime] : [],
@@ -4114,9 +4114,9 @@ function scheduleHeartbeat({ immediate = true } = {}) {
   if (immediate) void sendNodeHeartbeat();
 }
 
-function resolveDesktopMarketplaceMcpRuntime() {
+async function resolveDesktopMarketplaceMcpRuntime() {
   const bundledRuntimeRoot = app.isPackaged
-    ? path.join(process.resourcesPath, "sps-owner-host-runtime")
+    ? await materializeCurrentSpsOwnerHostRuntime()
     : path.join(__dirname, "..", ".owner-host-runtime");
   const bundledNodeCommand = spsOwnerHostBundledNodePath(bundledRuntimeRoot);
   const bundledEntryPath = path.join(
@@ -4183,7 +4183,7 @@ async function pollNodeCommands() {
       identity: currentIdentity(),
       ...access,
       profile: state.profile,
-      marketplaceMcpRuntime: resolveDesktopMarketplaceMcpRuntime(),
+      marketplaceMcpRuntime: await resolveDesktopMarketplaceMcpRuntime(),
       ...executionTransportForSpsNodeWork(nextWork.kind, {
         appendCommandEvent: appendSpsPluginNodeRunEvent,
         checkCommandLease: checkSpsPluginNodeRunLease,

@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.97",
+  "version": "0.4.98",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
@@ -31,7 +31,8 @@
   "dependencies": {
     "@sonparkserver/plugin-sdk": "file:../../external/sps-plugin-sdk",
     "@sps/desktop-node": "file:../desktop-node",
-    "electron-updater": "6.8.9"
+    "electron-updater": "6.8.9",
+    "tar": "7.5.20"
   },
   "devDependencies": {
     "electron": "^43.1.1",
@@ -50,12 +51,8 @@
     ],
     "extraResources": [
       {
-        "from": ".owner-host-runtime",
-        "to": "sps-owner-host-runtime"
-      },
-      {
-        "from": ".owner-host-runtime/node_modules",
-        "to": "sps-owner-host-runtime/node_modules"
+        "from": ".owner-host-runtime-package",
+        "to": "sps-owner-host-runtime-package"
       }
     ],
     "icon": "assets/sps-logo.png",

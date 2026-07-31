@@ -263,7 +263,7 @@ try {
   await waitPage(setup, (current) => /Create|Server/.test(current.text), "Owner Host choice");
   await clickText(setup, ["#create-owner-server", "Create Owner Host", "Create Server", "Create"], "Create Owner Host");
 
-  workspace = await cdpFor(await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", 160000));
+  workspace = await cdpFor(await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", 240000));
   await waitPage(workspace, (current) => /Workspace|Dashboard/.test(current.text), "Workspace UI", 90000);
   const companies = await api(workspace, "/api/companies");
   company = Array.isArray(companies) ? companies[0] : null;
@@ -332,6 +332,12 @@ try {
     await clickText(workspace, "Open secure install review", "Workspace secure install review");
     registry = await cdpFor(await waitTarget(debugPort, child, (entry) => entry.title?.startsWith("SPS Plugin Sources"), "Plugin Registry UI"));
     await waitPage(registry, (current) => /Registry|Plugin sources|review/i.test(current.text), "Plugin Registry screen");
+    await waitPage(
+      registry,
+      () => registry.evaluate(`Boolean(document.querySelector('.stage-release:not([disabled])'))`),
+      "verified Registry release",
+      90_000,
+    );
     await clickText(registry, "Stage for review", "Registry stage release");
     await waitPage(registry, () => registry.evaluate(`Boolean(document.querySelector('.enable-stage:not([disabled])'))`), "Registry staged release");
     await clickText(registry, ["Apply this exact reviewed plugin version", "Enable reviewed version", "Apply this verified version"], "Registry install/enable review", { exact: false });
