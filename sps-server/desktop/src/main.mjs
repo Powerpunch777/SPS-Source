@@ -72,6 +72,7 @@ import {
 } from "./desktop-local-access.mjs";
 import {
   createSpsOwnerHostManager,
+  materializeStableSpsOwnerHostNode,
   materializeSpsOwnerHostRuntime,
   resolveSpsOwnerHostRuntime,
   spsOwnerHostBundledNodePath,
@@ -1767,6 +1768,12 @@ async function ensureOwnerHostManager() {
     url,
     resolveRuntime: async () => {
       const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
+      const stableNodeCommand = app.isPackaged && materializedRuntime
+        ? await materializeStableSpsOwnerHostNode({
+          runtimeRoot: materializedRuntime,
+          stableRoot: path.join(app.getPath("userData"), "owner-host-node"),
+        }).catch(() => null)
+        : null;
       const packagedMemoryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-default-memory") : null;
       const packagedDiscoveryPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-plugin-discovery") : null;
       const packagedRoomPluginPath = materializedRuntime ? path.join(materializedRuntime, "sps-room-chat") : null;
@@ -1791,6 +1798,7 @@ async function ensureOwnerHostManager() {
         packagedRuntimeRoots: app.isPackaged && materializedRuntime ? [materializedRuntime] : [],
         coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
         packagedNodeCommand: process.execPath,
+        stableNodeCommand,
         configPath: ownerHost.layout.configPath,
         environment: {
           ...spsAgentRuntimePackEnvironment({
@@ -2570,11 +2578,18 @@ async function pluginPreviewApi(preview, pathname, { method = "GET", body } = {}
 
 async function resolveDesktopPluginPreviewRuntime(preview) {
   const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
+  const stableNodeCommand = app.isPackaged && materializedRuntime
+    ? await materializeStableSpsOwnerHostNode({
+      runtimeRoot: materializedRuntime,
+      stableRoot: path.join(app.getPath("userData"), "owner-host-node"),
+    }).catch(() => null)
+    : null;
   const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
   return await resolveSpsOwnerHostRuntime({
     packagedRuntimeRoots: app.isPackaged && materializedRuntime ? [materializedRuntime] : [],
     coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
     packagedNodeCommand: process.execPath,
+    stableNodeCommand,
     configPath: preview.configPath,
     instanceId: `sps-preview-${preview.buildId.slice(6)}`,
     environment: {

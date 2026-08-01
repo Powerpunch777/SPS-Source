@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   createSpsOwnerHostManager,
+  materializeStableSpsOwnerHostNode,
   materializeSpsOwnerHostRuntime,
   resolveSpsOwnerHostRuntime,
   spsOwnerHostBundledNodePath,
@@ -145,6 +146,44 @@ test("prefers the bundled Node runtime for packaged Owner Host dependencies", as
     PAPERCLIP_CONFIG: "C:/SPS Vault/config.json",
     PAPERCLIP_INSTANCE_ID: "sps-desktop-owner",
   });
+});
+
+test("uses one stable packaged Node path across Desktop updates", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-node-"));
+  const runtimeRoot = path.join(temporaryRoot, "runtime-0.4.106");
+  const stableRoot = path.join(temporaryRoot, "stable");
+  try {
+    await fs.mkdir(path.join(runtimeRoot, "bin"), { recursive: true });
+    await fs.mkdir(path.join(runtimeRoot, "dist"), { recursive: true });
+    await fs.writeFile(path.join(runtimeRoot, "dist", "index.js"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(runtimeRoot, "sps-owner-host-bootstrap.mjs"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(runtimeRoot, "bin", "node.exe"), "node-v1", "utf8");
+
+    const first = await materializeStableSpsOwnerHostNode({ runtimeRoot, stableRoot, platform: "win32" });
+    const second = await materializeStableSpsOwnerHostNode({ runtimeRoot, stableRoot, platform: "win32" });
+    assert.equal(first, path.join(stableRoot, "node.exe"));
+    assert.equal(second, first);
+    assert.equal(await fs.readFile(first, "utf8"), "node-v1");
+
+    await fs.writeFile(first, "tampered", "utf8");
+    const repaired = await materializeStableSpsOwnerHostNode({ runtimeRoot, stableRoot, platform: "win32" });
+    assert.equal(repaired, first);
+    assert.equal(await fs.readFile(repaired, "utf8"), "node-v1");
+
+    await fs.writeFile(path.join(runtimeRoot, "bin", "node.exe"), "node-v2", "utf8");
+    const refreshed = await materializeStableSpsOwnerHostNode({ runtimeRoot, stableRoot, platform: "win32" });
+    assert.equal(refreshed, first);
+    assert.equal(await fs.readFile(refreshed, "utf8"), "node-v2");
+
+    const runtime = await resolveSpsOwnerHostRuntime({
+      packagedRuntimeRoots: [runtimeRoot],
+      stableNodeCommand: refreshed,
+    });
+    assert.equal(runtime.command, refreshed);
+    assert.equal(runtime.environment.ELECTRON_RUN_AS_NODE, undefined);
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test("uses a distinct validated instance identity for an isolated preview runtime", async () => {

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn as spawnChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 function asMessage(error) {
@@ -121,6 +122,53 @@ export function spsOwnerHostBundledNodePath(runtimeRoot, platform = process.plat
   return path.join(runtimeRoot, "bin", platform === "win32" ? "node.exe" : "node");
 }
 
+async function fileSha256(filePath, fsApi) {
+  const contents = await fsApi.readFile(filePath);
+  return createHash("sha256").update(contents).digest("hex");
+}
+
+export async function materializeStableSpsOwnerHostNode({
+  runtimeRoot,
+  stableRoot,
+  platform = process.platform,
+  fsApi = fs,
+} = {}) {
+  if (!runtimeRoot || !stableRoot) return null;
+  const source = spsOwnerHostBundledNodePath(runtimeRoot, platform);
+  if (!(await fileExists(source, fsApi))) return null;
+
+  const executableName = platform === "win32" ? "node.exe" : "node";
+  const target = path.join(stableRoot, executableName);
+  const metadataPath = path.join(stableRoot, "node-source.json");
+  const sourceSha256 = await fileSha256(source, fsApi);
+  try {
+    const metadata = JSON.parse(await fsApi.readFile(metadataPath, "utf8"));
+    if (
+      metadata?.sha256 === sourceSha256
+      && await fileExists(target, fsApi)
+      && await fileSha256(target, fsApi) === sourceSha256
+    ) return target;
+  } catch {
+    // Missing or stale metadata is repaired from the verified packaged runtime.
+  }
+
+  await fsApi.mkdir(stableRoot, { recursive: true });
+  const temporaryTarget = path.join(stableRoot, `${executableName}.tmp-${process.pid}-${Date.now()}`);
+  const temporaryMetadata = `${metadataPath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fsApi.copyFile(source, temporaryTarget);
+    await fsApi.rm(target, { force: true });
+    await fsApi.rename(temporaryTarget, target);
+    await fsApi.writeFile(temporaryMetadata, `${JSON.stringify({ format: 1, sha256: sourceSha256 })}\n`, "utf8");
+    await fsApi.rm(metadataPath, { force: true });
+    await fsApi.rename(temporaryMetadata, metadataPath);
+    return target;
+  } finally {
+    await fsApi.rm(temporaryTarget, { force: true }).catch(() => undefined);
+    await fsApi.rm(temporaryMetadata, { force: true }).catch(() => undefined);
+  }
+}
+
 export async function materializeSpsOwnerHostRuntime({
   sourceRuntimeRoot,
   targetRuntimeRoot,
@@ -219,6 +267,7 @@ export async function resolveSpsOwnerHostRuntime({
   coreRoots,
   nodeCommand = "node",
   packagedNodeCommand = process.execPath,
+  stableNodeCommand = null,
   configPath = null,
   instanceId,
   environment = {},
@@ -232,8 +281,9 @@ export async function resolveSpsOwnerHostRuntime({
     if (!(await fileExists(entry, fsApi)) || !(await fileExists(bootstrap, fsApi))) continue;
     const bundledNodeCommand = spsOwnerHostBundledNodePath(runtimeRoot);
     const hasBundledNode = await fileExists(bundledNodeCommand, fsApi);
+    const hasStableNode = stableNodeCommand ? await fileExists(stableNodeCommand, fsApi) : false;
     return {
-      command: hasBundledNode ? bundledNodeCommand : packagedNodeCommand,
+      command: hasStableNode ? stableNodeCommand : hasBundledNode ? bundledNodeCommand : packagedNodeCommand,
       args: [
         "sps-owner-host-bootstrap.mjs",
       ],
@@ -241,7 +291,7 @@ export async function resolveSpsOwnerHostRuntime({
       environment: {
         // Older Desktop packages used Electron as Node. Keep that fallback so
         // an existing runtime can still be opened during an in-place update.
-        ...(hasBundledNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
+        ...(hasStableNode || hasBundledNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
         ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
         ...environment,
         PAPERCLIP_INSTANCE_ID: resolvedInstanceId,
