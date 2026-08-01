@@ -22,7 +22,7 @@ Dashboard와 Inbox는 Paperclip에서 검증된 **레이아웃, 목록, 검색, 
 3. Core는 Inbox envelope, 사용자별 read/archive 상태, action dispatch와 감사 흔적을 소유한다.
 4. Core의 복구 메뉴는 고정이며, 플러그인이 숨기거나 대체할 수 없다.
 5. Plugin은 업무 의미, 업무 데이터, 업무 행동, 업무별 권한 판단을 소유한다.
-6. Shell은 Host가 Workspace별로 명시적으로 선택한다. 자동 선택이나 플러그인 활성화에 따른 자동 전환은 금지한다.
+6. 장기적으로 Workflow Plugin은 Plugins 화면에서 Workspace별 Primary Workflow로 선택한다. 자동 선택이나 플러그인 활성화에 따른 자동 전환은 금지한다.
 7. Shell Provider가 비활성화, 제거, 호환 불가 또는 로드 실패 상태가 되면 즉시 Neutral Core Shell로 돌아간다.
 8. Dashboard와 Inbox에 항목이 보인다는 사실만으로 권한이 부여되지는 않는다. 실행 시점마다 플러그인과 Core 계약을 다시 검증한다.
 
@@ -59,7 +59,7 @@ Workspace의 기본 진입점과 탐색 구성을 제안하는 플러그인 역�
 
 | 영역 | Core가 소유 | Plugin이 소유 |
 | --- | --- | --- |
-| Shell | Provider 선택, Workspace별 저장, Neutral fallback, 충돌 방지, 복구 경로 | 기본 진입 제안, 탐색 그룹과 항목 제안, Dashboard 기본 preset |
+| Shell | Provider 계약, Workspace별 저장, Neutral fallback, 충돌 방지, 복구 경로 | Workflow Plugin의 기본 진입 제안, 탐색 그룹과 항목 제안, Dashboard 기본 preset |
 | Dashboard | 그리드, 배치 저장, 위젯 생명주기, 로딩/오류 격리, 반응형 레이아웃 | 위젯 내용, 업무 상태 해석, 조회와 이동 행동 |
 | Inbox | envelope 저장, 사용자별 read/archive, 정렬/검색/필터 primitive, action dispatch와 감사 | 보고 생성 기준, 업무 의미, 원본 데이터, action의 업무 권한 판단 |
 | Navigation | 공통 Sidebar, Dashboard, Inbox, Host 복구 및 관리 경로 | 플러그인 작업 페이지와 탐색 제안 |
@@ -85,7 +85,7 @@ Workspace의 기본 진입점과 탐색 구성을 제안하는 플러그인 역�
 ### 선택과 fallback
 
 - Workspace마다 활성 Shell Provider는 최대 하나다.
-- Host만 `Settings > Workspace appearance`에서 Provider를 선택하거나 Neutral Shell로 되돌릴 수 있다.
+- 장기적으로 Host는 `Settings > Plugins`에서 Workflow Plugin을 Primary Workflow로 선택하거나 Neutral Shell로 되돌릴 수 있다.
 - Provider의 활성화, 비활성화, 설치, 업데이트, 제거는 선택 상태를 자동 변경하지 않는다.
 - 선택된 Provider가 사용할 수 없으면 Core는 선택값을 안전하게 해석해 Neutral Core Shell을 표시한다.
 - 같은 Host라도 Workspace마다 다른 Provider를 선택할 수 있다.
@@ -217,7 +217,7 @@ SPS는 다음 구현 자산을 재사용한다.
 2. Neutral Core Shell과 고정 복구 메뉴를 구현한다.
 3. Dashboard 그리드, contribution loader, 오류 격리, 사용자 배치 저장을 구현한다.
 4. Inbox 저장소, API, read/archive, action dispatch와 감사 기록을 구현한다.
-5. Workspace별 Shell 선택 UI와 fallback을 구현한다.
+5. Workspace별 Shell 선택 UI와 fallback을 구현한다. (후속 전환에서는 독립 Appearance UI가 아니라 Plugins 화면의 Primary Workflow 선택으로 제공한다.)
 6. Plugin Discovery & Builder에서 위 계약을 사용하는 reference plugin을 검증한다.
 7. SPS Team Workplane에 reference Dashboard Widget과 Inbox publisher를 추가한다.
 8. 플러그인 충돌, 비활성화, 제거, rollback, Member 접근, Safe mode를 Desktop E2E로 검증한다.
