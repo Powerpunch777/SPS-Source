@@ -61,7 +61,7 @@ async function stopTree(child) {
 
 async function stopTemporaryPostgres(targetRoot) {
   const command = [
-    "$needle = ($env:SPS_E2E_ROOT -replace '\\\\', '/')",
+    "$needle = ($env:SPS_E2E_ROOT -replace '\\\\', '/');",
     "Get-CimInstance Win32_Process |",
     "  Where-Object { $_.Name -eq 'postgres.exe' -and (($_.CommandLine -replace '\\\\', '/') -like \"*$needle*\") } |",
     "  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
@@ -465,9 +465,10 @@ try {
   step("CDP sessions closed");
   await cleanupTimeout(stopTree(child), "Desktop process tree").catch((error) => console.warn(errorText(error)));
   step("Desktop process tree stopped");
-  await cleanupTimeout(stopTemporaryPostgres(temporaryRoot), "temporary PostgreSQL processes")
-    .catch((error) => console.warn(errorText(error)));
-  step("temporary PostgreSQL processes stopped");
+  const postgresStopped = await cleanupTimeout(stopTemporaryPostgres(temporaryRoot), "temporary PostgreSQL processes")
+    .then(() => true)
+    .catch((error) => { console.warn(errorText(error)); return false; });
+  step(postgresStopped ? "temporary PostgreSQL processes stopped" : "temporary PostgreSQL process cleanup could not be confirmed");
   await cleanupTimeout(identity.close(), "mock Identity server").catch((error) => console.warn(errorText(error)));
   step("mock Identity server closed");
   await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
