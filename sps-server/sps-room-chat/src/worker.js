@@ -8586,6 +8586,24 @@ async function reconcileInterruptedRoomJobs(ctx) {
   return summary;
 }
 
+function workplaneReconciliationHasActivity(input) {
+  const roomMemorySummary = asRecord(input?.roomMemorySummary);
+  const interruptedRoomJobSummary = asRecord(input?.interruptedRoomJobSummary);
+  const ownerSummary = asRecord(input?.ownerSummary);
+  const queuedRoomJobSummary = asRecord(input?.queuedRoomJobSummary);
+  return Number(roomMemorySummary.checkpointsPublished || 0) > 0
+    || Number(roomMemorySummary.compactionsPublished || 0) > 0
+    || Number(roomMemorySummary.failed || 0) > 0
+    || Number(interruptedRoomJobSummary.reconciled || 0) > 0
+    || Number(interruptedRoomJobSummary.retired || 0) > 0
+    || Number(interruptedRoomJobSummary.failed || 0) > 0
+    || Number(ownerSummary.scheduled || 0) > 0
+    || Number(ownerSummary.failed || 0) > 0
+    || Number(queuedRoomJobSummary.started || 0) > 0
+    || Number(queuedRoomJobSummary.completed || 0) > 0
+    || Number(queuedRoomJobSummary.failed || 0) > 0;
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     pluginCtx = ctx;
@@ -8617,16 +8635,23 @@ const plugin = definePlugin({
       const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
       const queuedRoomJobSummary = await runQueuedRoomJobs(ctx);
-      ctx.logger?.info?.("Workplane reconciliation completed.", {
-        runId: job.runId,
-        trigger: job.trigger,
-        roomSummary,
+      if (workplaneReconciliationHasActivity({
         roomMemorySummary,
         interruptedRoomJobSummary,
         ownerSummary,
-        queuedRoomJobSummary,
-        quotaRetryPolicy: "manual_only"
-      });
+        queuedRoomJobSummary
+      })) {
+        ctx.logger?.info?.("Workplane reconciliation completed.", {
+          runId: job.runId,
+          trigger: job.trigger,
+          roomSummary,
+          roomMemorySummary,
+          interruptedRoomJobSummary,
+          ownerSummary,
+          queuedRoomJobSummary,
+          quotaRetryPolicy: "manual_only"
+        });
+      }
     });
     ctx.events.on("project.created", async (event) => {
       if (!event.companyId || !event.entityId) return;
@@ -8738,5 +8763,6 @@ export { handleTeamWorkplaneDashboard, publishTaskOwnerReportInbox };
 export { collaborationReadinessFromConfig, handleOrganizationCollaborationReadiness, handleOrganizationSettingsAccess, readCollaborationReadiness, requireAgentConfigurationAction };
 export { handleWorkspaceProfileAccess, handleWorkspaceProfileCreateWorkspace, handleWorkspaceProfileSave, loadProjectWorkspaceProfile, normalizeWorkspaceProfile, profileWorkspace, saveProjectWorkspaceProfile };
 export { reconcileRoomMemoryLifecycle };
+export { workplaneReconciliationHasActivity };
 export default plugin;
 if (!ROOM_CHAT_TEST_MODE) runWorker(plugin, import.meta.url);

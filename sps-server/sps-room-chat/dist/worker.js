@@ -20068,6 +20068,13 @@ async function reconcileInterruptedRoomJobs(ctx) {
   }
   return summary;
 }
+function workplaneReconciliationHasActivity(input) {
+  const roomMemorySummary = asRecord3(input?.roomMemorySummary);
+  const interruptedRoomJobSummary = asRecord3(input?.interruptedRoomJobSummary);
+  const ownerSummary = asRecord3(input?.ownerSummary);
+  const queuedRoomJobSummary = asRecord3(input?.queuedRoomJobSummary);
+  return Number(roomMemorySummary.checkpointsPublished || 0) > 0 || Number(roomMemorySummary.compactionsPublished || 0) > 0 || Number(roomMemorySummary.failed || 0) > 0 || Number(interruptedRoomJobSummary.reconciled || 0) > 0 || Number(interruptedRoomJobSummary.retired || 0) > 0 || Number(interruptedRoomJobSummary.failed || 0) > 0 || Number(ownerSummary.scheduled || 0) > 0 || Number(ownerSummary.failed || 0) > 0 || Number(queuedRoomJobSummary.started || 0) > 0 || Number(queuedRoomJobSummary.completed || 0) > 0 || Number(queuedRoomJobSummary.failed || 0) > 0;
+}
 var plugin = definePlugin({
   async setup(ctx) {
     pluginCtx = ctx;
@@ -20099,16 +20106,23 @@ var plugin = definePlugin({
       const interruptedRoomJobSummary = await reconcileInterruptedRoomJobs(ctx);
       const ownerSummary = await reconcileTaskOwnerReportBoundaries(ctx, { runId: `job:${job.runId}` });
       const queuedRoomJobSummary = await runQueuedRoomJobs(ctx);
-      ctx.logger?.info?.("Workplane reconciliation completed.", {
-        runId: job.runId,
-        trigger: job.trigger,
-        roomSummary,
+      if (workplaneReconciliationHasActivity({
         roomMemorySummary,
         interruptedRoomJobSummary,
         ownerSummary,
-        queuedRoomJobSummary,
-        quotaRetryPolicy: "manual_only"
-      });
+        queuedRoomJobSummary
+      })) {
+        ctx.logger?.info?.("Workplane reconciliation completed.", {
+          runId: job.runId,
+          trigger: job.trigger,
+          roomSummary,
+          roomMemorySummary,
+          interruptedRoomJobSummary,
+          ownerSummary,
+          queuedRoomJobSummary,
+          quotaRetryPolicy: "manual_only"
+        });
+      }
     });
     ctx.events.on("project.created", async (event) => {
       if (!event.companyId || !event.entityId) return;
@@ -20361,6 +20375,7 @@ export {
   updateAgentAdapterConfigDirect,
   updateRoomWorkStateOutsideInvocation,
   validateRoomRetrySource,
+  workplaneReconciliationHasActivity,
   workspaceGitChanges,
   workspaceGitExcludePath,
   workspaceKindForProjectWorkspace,
