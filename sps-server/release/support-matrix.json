@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "candidate": {
     "status": "development-candidate",
-    "desktopVersion": "0.4.101",
+    "desktopVersion": "0.4.104",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
       "revision": "8339edd1ee6cb479a757c303039e123b5e0680cf"
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",
-      "revision": "f24d9b236a8bdaee9441f37694b7e4298aa7e6c2",
+      "revision": "7a4089155d89974ca4baca998b5f878a07bf2928",
       "package": "@sonparkserver/plugin-sdk",
       "version": "0.11.0"
     },

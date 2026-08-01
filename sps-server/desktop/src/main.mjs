@@ -43,7 +43,11 @@ import {
 } from "./invite.mjs";
 import { resolveSpsNodeDisplayName } from "./node-display-name.mjs";
 import { withSpsDesktopRefreshLock } from "./desktop-refresh-lock.mjs";
-import { shouldEnsureJoinedDesktopNode } from "./member-node-registration.mjs";
+import {
+  canRunSpsNodeCommands,
+  normalizeSpsNodeStatus,
+  shouldRefreshJoinedDesktopNode,
+} from "./node-activation.mjs";
 import { isSpsTechnicalMemberAccessRemoved } from "./member-access.mjs";
 import { emptyState, loadState, saveState } from "./state.mjs";
 import {
@@ -57,7 +61,6 @@ import {
   removeSpsWorkspaceSource,
   renameSpsWorkspaceSource,
 } from "./workspace-sources.mjs";
-import { canRunSpsNodeCommands, normalizeSpsNodeStatus } from "./node-activation.mjs";
 import { createSpsUpdateService, resolveSpsDesktopUpdatePolicy } from "./update-service.mjs";
 import {
   createSpsDesktopAccessToken,
@@ -4255,7 +4258,7 @@ async function ensureJoinedDesktopNode() {
   // Team membership may request a Node registration, but it never authorizes
   // command execution. An Owner still approves the pending Node and grants it
   // to individual Agents before this computer can run any work.
-  if (!shouldEnsureJoinedDesktopNode({
+  if (!shouldRefreshJoinedDesktopNode({
     profile: state.profile,
     signedIn: Boolean(currentDesktopAccount()),
     nodeId: state.nodeId,

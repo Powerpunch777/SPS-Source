@@ -239,7 +239,7 @@ export async function updateSpsHostProjectShareWindowsAccess(input, options = {}
   try {
     const elevatedScript = [
       "$ErrorActionPreference = 'Stop'",
-      `$result = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','${escapePowerShellSingleQuoted(workerPath)}','-ConfigPath','${escapePowerShellSingleQuoted(configPath)}')`,
+      `try { $result = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','${escapePowerShellSingleQuoted(workerPath)}','-ConfigPath','${escapePowerShellSingleQuoted(configPath)}') } catch { if ($_.Exception.HResult -eq -2147023673) { [Console]::Error.WriteLine('SPS elevation was cancelled.'); exit 1223 }; throw }`,
       "exit $result.ExitCode",
     ].join("; ");
     const run = options.runPowerShell ?? runPowerShell;

@@ -1,124 +1,105 @@
 # SPS Core와 플러그인 기준 구현 계획
 
-최종 갱신: 2026-07-31
+최종 갱신: 2026-08-01
+기준 후보: SPS Desktop `0.4.104`, SPS Core `8339edd1ee6cb479a757c303039e123b5e0680cf`,
+Plugin SDK `0.11.0` (`f24d9b236a8bdaee9441f37694b7e4298aa7e6c2`)
 
-## 목표
+## 목적
 
-SPS는 특정 AI 회사 구조나 개발 방식이 아니라, 여러 방식의 AI 작업 환경을 플러그인으로 구성할 수 있는 Windows Desktop-first 플랫폼이다. Core는 기술 기반을 제공하고, Room, Task, 역할, 메모리, 승인 절차와 프로젝트 방식은 플러그인이 정의한다.
+SPS Core는 특정 회사 조직이나 Paperclip의 업무 방식을 강제하지 않는 Windows
+Desktop-first 기반이다. Host, Member, Node, Runtime, Workspace Source, plugin
+lifecycle, 보안 경계와 기록을 제공한다. Room, Task, Lead/Worker, 승인, 보고,
+장기기억과 프로젝트 방식은 플러그인이 정의한다.
 
-기존 Paperclip의 데이터와 호환 경로는 마이그레이션을 위해 남을 수 있다. 그러나 새 SPS 기본 화면과 공개 SDK는 Paperclip의 Company, Issue, Agent, Room, Task 모델을 전제로 삼지 않는다.
+## 경계
 
-## 확정된 제품 경계
-
-| 구분 | Core | 플러그인 |
+| 영역 | Core | 플러그인 |
 | --- | --- | --- |
 | 작업 방식 | 정의하지 않음 | Room, Task, 역할, 보고, 승인, 메모리 |
-| 컴퓨터 | Host, Member, Node, Tailscale, Desktop 수명주기 | 특정 작업에 어떤 Node와 Runtime을 쓸지 결정 |
-| AI 실행 | Runtime 발견, Node 상태, 실행 기록과 기술적 경계 | Agent/Worker/봇의 의미와 실행 규칙 |
-| 파일 | Host가 선택한 Workspace Source, 암호화된 Node route | Source를 프로젝트나 작업 범위에 연결하는 규칙 |
-| 플러그인 | 서명, 호환성, stage, 활성화, 비활성화, 삭제, 로그 | 고유 데이터, UI, 도구, 자동화, 정책 |
-| 보안 | Secret handle, Node credential 격리, 위험한 기술 동작의 확인 기반 | 승인 주체와 업무상 승인 기준 |
+| 컴퓨터 | Host, Member, Node, Tailscale, Desktop 수명주기 | 어떤 Node와 Runtime을 쓸지 결정 |
+| AI 실행 | Runtime 발견, Node 상태, run 기록, 기술적 grant | Agent/Worker 의미와 작업 규칙 |
+| 파일 | Host가 고른 Source와 암호화 route | Source를 프로젝트/작업 범위에 연결 |
+| 플러그인 | 서명, 호환성, stage, Host lifecycle, 로그 | 데이터, UI, 도구, 자동화, 업무 정책 |
+| 보안 | secret handle, Node credential 격리, 위험 기술 동작 확인 | 업무상 승인 주체와 승인 기준 |
 
-`Host`는 물리적인 SPS 서버 컴퓨터를 뜻한다. 직무나 조직상 소유권을 뜻하지 않는다. 플러그인은 필요하면 Lead, Worker, Reviewer 같은 역할을 독립적으로 만든다.
+Host는 물리적인 SPS 서버 컴퓨터다. 조직의 상사 역할을 뜻하지 않는다. 플러그인은
+필요에 따라 Lead, Worker, Reviewer 같은 업무 역할을 자체적으로 만든다.
 
 ## 기본 Workspace
 
-새 Workspace에는 필수 workflow 플러그인이 없다. Core의 **Marketplace**는 항상
-사용할 수 있고 AI 없이도 검색과 상세 조회가 작동한다. 자연어 비교·추천은 사용자가
-접근 가능한 AI 어댑터를 Marketplace Assistant에 선택했을 때만 활성화된다.
-
-`Plugin Builder`는 별도 번들 플러그인이다. 필요한 Workspace에서 Host가
-활성화하며, 외부 프로젝트 제작·검사·Preview·package까지만 담당한다.
-Marketplace Assistant와 Builder에는 lifecycle 도구가 없다. 플러그인의 설치,
-활성화, 업데이트, 비활성화, 삭제는 항상 `설정 > 플러그인`에서 Host가 직접 수행한다.
+기본 Core는 Room, Task, Project, Inbox, 역할 또는 메모리 정책을 자동으로 만들지
+않는다. Marketplace와 Marketplace Assistant는 검색·상세 조회·추천만 담당한다.
+Plugin Builder는 제작, 검사, Preview, package까지만 담당한다. 두 기능 모두
+설치·활성화·업데이트·비활성화·삭제를 실행하지 않으며, Host가 `설정 > 플러그인`에서
+수동으로 lifecycle을 결정한다.
 
 ## Host, Member, Node, Runtime
 
 - Host 하나는 여러 Workspace를 가질 수 있다.
-- Member는 Workspace에 참가한 SPS 계정이다.
-- Node는 Member가 사용하는 Desktop 컴퓨터다. Member 하나가 여러 Node를 가질 수 있다.
-- Runtime은 Node 소유자가 SPS에 공개하기로 선택한 CLI, 로컬 모델, API 또는 Connector다.
-- API 키, 로그인 토큰, CLI 홈 폴더, 로컬 경로는 해당 Node 밖으로 나가지 않는다.
-- Host는 Node를 확인하거나 철회할 수 있다. Member를 제거하면 Node, Runtime 공개, 관련 grant는 즉시 철회되지만 과거 작업 기록은 보존한다.
+- Member는 Workspace에 참가한 SPS 계정이고, 한 Member는 여러 Node를 가질 수 있다.
+- Node는 Member 컴퓨터의 Desktop 실행 단위다.
+- Runtime은 Node 소유자가 공개하기로 선택한 CLI, 로컬 AI, API 또는 Connector다.
+- API 키, CLI home, 로컬 경로와 자격증명은 Node 밖으로 전송하지 않는다.
+- Host는 Node와 grant를 승인·철회한다. Member 제거 시 관련 Node, Runtime 공개,
+  Source/execution grant를 철회하되 과거 기록은 보존한다.
 
-첫 출시 대상은 Windows 10/11 x64이며 팀 연결에는 Tailscale을 사용한다. 일반 브라우저 직접 접근은 제품 사용 경로가 아니며, Desktop이 local Host를 열고 보호한다.
+첫 출시 플랫폼은 Windows 10/11 x64이며 팀 연결은 Tailscale을 사용한다. 일반
+브라우저는 제품 사용 경로가 아니며 Host Workspace는 Desktop bridge로 보호한다.
 
 ## Workspace Source
 
-Workspace Source는 Host가 고른 로컬 폴더를 나타내는 **이름 있는 불투명 핸들**이다.
+Source는 Host가 고른 로컬 폴더를 나타내는 불투명한 이름 있는 핸들이다.
 
-1. Host가 Desktop에서 로컬 폴더를 선택한다.
-2. Core는 Source ID, 표시 이름, 상태만 관리한다. Host의 실제 로컬 경로는 Host Desktop에만 저장된다.
-3. Host가 팀 공유를 필요로 할 때만 Tailscale Windows share route를 연결한다.
-4. Node grant에는 대상 Node의 공개키로 암호화한 접근 credential만 저장한다. Core는 이 credential을 복호화하지 못한다.
-5. 플러그인은 Source ID만 참조하고, 프로젝트 또는 작업별 세부 범위는 자체 규칙으로 정한다.
+1. Host만 Desktop 폴더 선택으로 Source를 만든다.
+2. Core는 Source ID, 이름, 상태를 관리하고 실제 경로는 Host Desktop에만 둔다.
+3. Host가 필요할 때만 승인된 Member Node에 transport route를 만든다.
+4. Node grant에는 대상 Node 공개키로 암호화된 접근 자격증명만 저장한다.
+5. 플러그인은 Source ID를 사용하며 세부 폴더 정책은 플러그인이 결정한다.
 
-따라서 Guest/Member는 자기 컴퓨터의 폴더를 Workspace Source로 지정하거나 Host의 경로를 바꾸지 못한다. Host Vault를 옮겼을 때 Source 핸들이 먼저 복원되어도, 새 Host가 명시적으로 로컬 폴더를 선택하기 전에는 경로가 없는 상태로 남는다.
+Member는 Host 경로나 자기 컴퓨터 폴더를 임의로 Source로 지정할 수 없다. Host Vault를
+복원했더라도 새 Host가 로컬 폴더를 다시 선택하기 전에는 Source를 사용할 수 없다.
 
-## 플러그인 표준
+## 표준 플러그인 계약
 
-공개 SDK는 Extension Profile을 사용한다.
+- Profile `1.0`: 기존 Paperclip 호환 번들용
+- Profile `2.0`: SPS의 작업 방식 중립 계약이며 신규 개발의 기본값
 
-- Profile `1.0`: 기존 Paperclip 호환 플러그인을 위한 이전 계약
-- Profile `2.0`: SPS의 작업 방식 중립 계약
-
-새 플러그인의 기본 계약은 Profile `2.0`이며, Desktop은 기존 번들을 위해 두 Profile을 병행 지원한다. Profile `2.0`의 public primitive vocabulary는 다음과 같다.
-
-- `workspace.sources.metadata`
-- `workspace.sources.route`
-- `runtimes.list`
-- `runtimes.dispatch`
-- `runs.observe`
-- `artifacts.write`
-- `secrets.use`
-
-플러그인은 필요한 primitive를 선언하지만, 선언 자체가 권한을 부여하지는 않는다. Core는 설치 전 정적 manifest, 호환성, capability를 검증하고, 실제 Source route나 Runtime 실행은 활성 상태와 해당 Node의 기술적 준비 상태를 다시 확인한다.
+주요 primitive는 `workspace.sources.metadata`, `workspace.sources.route`,
+`runtimes.list`, `runtimes.dispatch`, `runs.observe`, `artifacts.write`,
+`secrets.use`다. 선언만으로 권한이 부여되지 않으며 Core가 manifest, 호환성,
+활성 상태, Node 준비 상태와 실행 grant를 매번 검증한다.
 
 ## 현재 구현 상태
 
-완료:
+통과한 범위:
 
-- Core 기본 화면에서 Paperclip의 Tasks, Projects, Inbox, Agents, Experimental 기본 메뉴를 숨김. 향후 Inbox와 Dashboard는 Paperclip 업무 의미를 제거한 범용 Core 표면으로 새로 구현하며, 세부 계약은 [`WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md`](./WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md)를 따른다.
-- Extension Profile `2.0` SDK와 `1.0`/`2.0` Desktop 호환성
-- Profile `2.0` primitive와 실제 Core capability의 정적 일치 검증
-- Workspace Source DB 모델, Host 전용 API, 선택적 transport route, Node별 암호화 grant
-- Desktop의 Host 로컬 폴더 매핑과 Core Source 핸들 동기화
-- 플러그인 주체, Node, Runtime, Source를 연결하는 workflow-neutral execution grant
-- grant 기반 `workspace.sources.route`, Runtime dispatch, run event 관찰, plugin 격리 artifact 기록
-- 현재 번들 Discovery의 공식 Catalog 읽기 전용 검색과 제작 초안 기반
-- 실제 Google 계정 두 개를 사용한 Host 생성, Member 참가, Node 승인, 재시작 복구
-- 플러그인 stage, 서명, 호환성, 활성화/비활성화/삭제와 release baseline 검증
-- 최신 Windows `win-unpacked` 후보의 실제 Electron 로그인 화면과 번들 Owner Host 런타임 스모크
-- Baseline 모드에서 remote legacy instance-admin이 직접 Plugin 또는 legacy access-admin API를 호출해도 통과하지 못하도록, 공통 Core 기술 관리 경계를 물리적 Host 증명으로 통일
-- 원격 세션·Board API Key·내부 권한 서비스가 이전 `instance_admin` DB 행을 다시 권한으로 쓰지 않도록 Baseline에서 일괄 무효화하고, Electron의 loopback 2단계 증명은 Host 기술 API에만 전달
-- Owner Host 런타임의 일반 파일과 `node_modules`를 독립 패키지 리소스로 검증하고, 배포 메타데이터 생성 전에 완전성 검사를 실행
+- Profile 2.0 SDK와 1.0/2.0 Desktop 호환성
+- Source, Runtime, execution grant, Run, Artifact 계약과 Host 보안 경계
+- Marketplace 검색/상세 및 Builder의 build·validate·test·pack·Preview 흐름
+- packaged bootstrap, Workspace, Plugin Preview, Host plugin lifecycle
+- Desktop `261/261` (exit 0), desktop-node `39/39`, 공개 Plugin SDK `146/146`
+- `0.4.104` 패키징 및 Host/main과 Member/laptop 설치
+- Installer SHA256 `B58E7EAE15884D4E9B052ED3A15A9B43B340CB83DCAE1EE0D1A71261C974C2C1`, size `255265752`
+- 양쪽 app.asar SHA256 `2ECC983D650BBBB51798762A1A4AAFB6B8096AE5073C251CD33FB7C66E34EFEC`
+- 브라우저 직접 접근 차단과 Desktop-only Host 기술 API
 
-진행 중:
+아직 완료로 표시하지 않는 범위:
 
-- Discovery 검색 UI를 Core Marketplace로 옮기고 adapter-backed Assistant를 추가
-- Discovery의 제작 기능을 별도 Plugin Builder로 분리
-- AI lifecycle proposal 계약과 Desktop 검토 패널 제거
-- Workspace Shell Provider, 범용 Dashboard widget, 범용 Inbox envelope/action 계약 구현
-- 실제 앱에서 Team 초대 생성/복사/취소, Member 제거, Source 선택/공유와 generic plugin run을 연속 조작하는 최종 E2E
-- Host Vault 백업/복구, 설치본 교체와 자동 업데이트의 최종 배포 후보 검증
-- 모든 Core 화면의 empty/loading/failure 상태와 가시 버튼 목록에 대한 최종 직접 조작 감사
+- Host Source → laptop Agy CLI 물리 실행 E2E: run `e0286388-cf8d-4acb-9890-40d8fce1edab`
+- Source 철회 후 거부(run `e5bec7a5-9324-4479-aea2-834d4dca5730`), 원본 해시 불변, 양쪽 재시작 후 복구
+- 모든 visible control의 직접 조작 감사와 공개 릴리스 서명/배포 게이트
 
-## 현재 자동 검증 기준
+## 1~8단계 완료 판정
 
-- SPS Desktop Node: `33/33`
-- SPS Desktop: `184/184`
-- 공개 Plugin SDK 전체: `62/62`
-- Core Extension Profile 스키마: `20/20`
-- Core Plugin SDK Host 계약: `18/18`
-- 기존 Plugin Discovery & Builder: 빌드, manifest 검증, 대화 및 초안 도구 테스트 통과. Core Marketplace와 Plugin Builder 분리 후 재검증 필요
-- Core UI: TypeScript 검사와 Workspace switcher, 초기 Assistant, Runtime 상세, Host 전용 Nodes를 포함한 집중 회귀 `40/40` 통과
-- Windows 배포 후보: `0.4.90` 설치본, Owner Host 런타임 스모크, 격리된 Electron 로그인 스모크 통과
-- Core 기술 경계: Authorization, Company access, Team invite, Node, Workspace Source, Plugin database/route authorization, baseline built-in 차단, legacy instance-admin 무효화를 포함한 서버 회귀 `182/182` 통과
+1. 공개 SDK와 계약 고정: 자동 검증 통과.
+2. Workspace Shell·Dashboard·Inbox 기반: packaged Workspace 검증 통과. 업무 의미는 플러그인에 둔다.
+3. Developer Mode·Local Registry: build/validate/test/pack·Preview 검증 통과.
+4. Plugin Preview 격리: production과 분리된 Preview와 cleanup 검증 통과.
+5. Diagnostics·Test Kit: SDK와 Desktop 회귀에 포함되어 통과.
+6. Job·Dependency lifecycle: packaged Host plugin lifecycle 검증 통과.
+7. Marketplace Assistant·Builder: 검색/추천과 제작·Preview 계약 검증 통과. lifecycle은 수동 Host 경계로 유지.
+8. 두 컴퓨터 reference E2E: **완료**. Host Source를 `Z:\\`로 마운트하고
+   `SPS_WORKSPACE_PATH=Z:\\`를 사용한 실제 파일 편집, 철회 후 거부, 재시작 후 복구를 확인했다.
 
-자동 검증은 계약 회귀를 막는 기준이다. 일부 역사적 Core 테스트는 전역 환경값을 공유하므로 한 프로세스 병렬 전체 실행 대신 독립 경계 묶음으로 순차 실행한다. 이 자동 검증은 실제 Electron 앱에서 Host와 Member가 같은 흐름을 통과했다는 증거를 대신하지 않으며, 아래 직접 E2E가 끝나기 전에는 베타 Core 완료로 표시하지 않는다.
-
-수동 E2E 실행 순서는 [`BETA-ACCEPTANCE-RUNBOOK-ko.md`](./BETA-ACCEPTANCE-RUNBOOK-ko.md)에 유지한다.
-
-## 완료 기준
-
-베타 기준 Core는 새 Workspace에서 특정 업무 모델을 강요하지 않고, Host가 Windows Desktop에서 서버를 만들거나 참가하고, Runtime과 Source를 안전하게 공개하며, 공식/로컬 개발 플러그인을 독립적으로 관리할 수 있어야 한다. 이후 게임, 웹, 앱, 팀 작업, 메모리 제공자는 모두 선택 플러그인으로 제공한다.
+따라서 현재 제품은 “Core와 플러그인 플랫폼의 자동·패키징·물리 E2E 기준 통과”
+상태다. 남은 항목은 베타 사용성 점검과 공개 릴리스 서명·배포 게이트다.

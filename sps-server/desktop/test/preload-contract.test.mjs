@@ -304,6 +304,14 @@ test("uses the Desktop-only access token while the local Host creates its Identi
   );
 });
 
+test("refreshes Member Node metadata when reopening Workspace", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  assert.match(main, /import \{[\s\S]*?shouldRefreshJoinedDesktopNode,[\s\S]*?\} from "\.\/node-activation\.mjs";/);
+  assert.match(main, /async function ensureJoinedDesktopNode\(\)[\s\S]*?shouldRefreshJoinedDesktopNode\([\s\S]*?return await connectNode\(\)/);
+  assert.match(main, /appVersion: app\.getVersion\(\),[\s\S]*?capabilities,[\s\S]*?runners,[\s\S]*?transportPublicKey: identity\.transportPublicKeyPem/);
+});
+
 test("marks Desktop-owned Core mutations with their exact trusted origin", async () => {
   const main = await readFile(mainPath, "utf8");
 

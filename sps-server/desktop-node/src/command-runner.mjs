@@ -462,7 +462,13 @@ export async function executeSpsNodeCommand({
         identity?.transportPrivateKeyPem ?? null,
         { expectedSharePath: command.cwdHint ?? null },
       );
-      const workspace = await resolveWorkspace(command, profile);
+      const workspace = hostProjectShareSession?.workspacePath
+        ? path.resolve(hostProjectShareSession.workspacePath)
+        : await resolveWorkspace(command, profile);
+      const workspaceInfo = await fs.stat(workspace).catch(() => null);
+      if (!workspaceInfo?.isDirectory()) {
+        throw new Error(`Configured workspace is not a directory: ${workspace}`);
+      }
       throwIfCommandCancelled(activeRun, cancellationGeneration);
       // The Hub process may be bound to localhost on its own computer. A member
       // Node must use the Hub URL it connected to, never that host-local address.
@@ -472,6 +478,7 @@ export async function executeSpsNodeCommand({
           buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
         ),
         PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
+        SPS_WORKSPACE_PATH: workspace,
       };
       if (command.runtimeKind === "codex_cli") {
         environment.CODEX_HOME = await resolveSpsNodeCodexHome(command, hostEnvironment);

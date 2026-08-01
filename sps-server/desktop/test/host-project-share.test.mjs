@@ -94,6 +94,7 @@ test("runs the Windows Host share worker through UAC without exposing its passwo
     assert.equal(result.shareName, "SPS_project");
     assert.equal(calls.length, 1);
     assert.equal(JSON.stringify(calls[0]).includes(password), false);
+    assert.match(calls[0].join(" "), /SPS elevation was cancelled/);
     const tempEntries = await fs.readdir(temporaryRoot);
     assert.deepEqual(tempEntries, ["source"]);
   } finally {

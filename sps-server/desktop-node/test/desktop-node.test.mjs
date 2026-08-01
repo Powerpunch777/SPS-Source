@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildSpsWindowsSmbMappingRequest,
+  formatSpsWindowsNetUseError,
   buildHeartbeatMessage,
   buildSignedRequestMessage,
   assertSpsNodeCommandRuntime,
@@ -325,6 +327,61 @@ test("accepts only a Host-issued Windows UNC path for a Member project command",
   assert.equal(resolved, hostShare);
 });
 
+test("formats Windows Host Source connection failures without leaking localized output", () => {
+  assert.equal(
+    formatSpsWindowsNetUseError(Buffer.from("System error 86 has occurred.")),
+    "Windows rejected the SPS Host Source credential (system error 86). Ask the Host to revoke and grant Source access again.",
+  );
+  assert.equal(
+    formatSpsWindowsNetUseError(Buffer.from("System error 1219 has occurred.")),
+    "Windows already has a connection to this SPS Host with different credentials (system error 1219). Close that connection and retry.",
+  );
+  assert.equal(
+    formatSpsWindowsNetUseError(Buffer.from("unclassified localized output")),
+    "Windows could not connect the SPS Host project share.",
+  );
+});
+
+test("keeps the Host Source password out of the Windows process arguments", () => {
+  const password = "sps-secret-password-1234";
+  const request = buildSpsWindowsSmbMappingRequest([
+    "use",
+    "\\\\main-computer.tailnet.ts.net\\SPS_source",
+    "/user:main-computer\\spsws_node",
+    "*",
+  ], password);
+  assert.equal(request.action, "map");
+  assert.equal(request.localPath, "");
+  assert.equal(Buffer.from(request.password, "base64").toString("utf8"), password);
+  assert.equal(JSON.stringify([
+    "powershell.exe",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+  ]).includes(password), false);
+  assert.deepEqual(
+    buildSpsWindowsSmbMappingRequest(["use", "\\\\main-computer\\SPS_source", "/delete", "/y"]),
+    {
+      action: "remove",
+      sharePath: Buffer.from("\\\\main-computer\\SPS_source", "utf8").toString("base64"),
+      localPath: "",
+      username: "",
+      password: "",
+    },
+  );
+  assert.equal(
+    Buffer.from(buildSpsWindowsSmbMappingRequest([
+      "use",
+      "\\\\main-computer\\SPS_source",
+      "/local:Z:",
+      "/delete",
+      "/y",
+    ]).localPath, "base64").toString("utf8"),
+    "Z:",
+  );
+});
+
 test("opens a Host project share only from a Node-sealed credential and removes it after the command", async () => {
   const identity = createNodeIdentity();
   const sharePath = "\\\\sps-host.tailnet.ts.net\\SPS_Project_1";
@@ -352,9 +409,13 @@ test("opens a Host project share only from a Node-sealed credential and removes 
   }, identity.transportPrivateKeyPem, {
     platform: "win32",
     expectedSharePath: sharePath,
-    runNetUse: async (args, stdin) => { calls.push({ args, stdin }); },
+    runNetUse: async (args, stdin) => {
+      calls.push({ args, stdin });
+      return args.includes("/delete") ? null : { localPath: "Z:\\" };
+    },
   });
   assert.equal(mounted.sharePath, sharePath);
+  assert.equal(mounted.workspacePath, "Z:\\");
   assert.deepEqual(calls[0], {
     args: ["use", sharePath, "/user:SPS-HOST\\spsws_node_1", "*"],
     stdin: password,
@@ -362,7 +423,7 @@ test("opens a Host project share only from a Node-sealed credential and removes 
   assert.equal(JSON.stringify(calls[0].args).includes(password), false);
   await mounted.close();
   assert.deepEqual(calls[1], {
-    args: ["use", sharePath, "/delete", "/y"],
+    args: ["use", sharePath, "/local:Z:", "/delete", "/y"],
     stdin: undefined,
   });
 });
@@ -388,7 +449,10 @@ test("opens a hybrid Host project-share envelope that exceeds direct RSA payload
   }, identity.transportPrivateKeyPem, {
     platform: "win32",
     expectedSharePath: sharePath,
-    runNetUse: async (args, stdin) => { calls.push({ args, stdin }); },
+    runNetUse: async (args, stdin) => {
+      calls.push({ args, stdin });
+      return args.includes("/delete") ? null : { localPath: "Y:\\" };
+    },
   });
   assert.deepEqual(calls[0], {
     args: ["use", sharePath, "/user:MAIN-COMPUTER\\spsws_b6bc1dc2d7e748", "*"],
@@ -508,16 +572,12 @@ test("executes a plugin-owned run through the Host Source route and plugin queue
     },
     openWorkspaceSourceRoute: async (route) => {
       assert.equal(route.sourceId, "source-1");
-      return { close: async () => { routeClosed = true; } };
+      return { workspacePath: process.cwd(), close: async () => { routeClosed = true; } };
     },
-    resolveWorkspace: async (command, profile) => {
-      assert.equal(command.workspaceSourceId, "source-1");
-      assert.equal(profile.connectionKind, "remote");
-      return process.cwd();
-    },
+    resolveWorkspace: async () => { throw new Error("mapped Source must bypass the UNC resolver"); },
     resolveInvocation: async () => ({
       executable: process.execPath,
-      args: ["-e", "process.stdout.write('plugin run output\\n')"],
+      args: ["-e", "process.stdout.write(process.env.SPS_WORKSPACE_PATH + '\\n')"],
     }),
     checkCommandLease: async () => ({ active: true, status: "running" }),
     appendCommandEvent: async (input) => { events.push(input); },
@@ -528,7 +588,7 @@ test("executes a plugin-owned run through the Host Source route and plugin queue
   assert.equal(result.workspace, process.cwd());
   assert.equal(sourceClaims.length, 1);
   assert.equal(sourceClaims[0].sourceId, "source-1");
-  assert.equal(events.map((event) => event.body).join(""), "plugin run output\n");
+  assert.equal(events.map((event) => event.body).join(""), `${process.cwd()}\n`);
   assert.equal(completions.length, 1);
   assert.equal(completions[0].commandId, "plugin-run-1");
   assert.equal(completions[0].completion.status, "succeeded");

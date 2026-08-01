@@ -15,6 +15,8 @@ export { createNodeIdentity, createNodeTransportIdentity, createSignedHeartbeat,
 export {
   decryptSpsHostProjectShareCredential,
   decryptSpsWorkspaceSourceCredential,
+  buildSpsWindowsSmbMappingRequest,
+  formatSpsWindowsNetUseError,
   openSpsHostProjectShare,
   openSpsWorkspaceSourceRoute,
 } from "./host-project-share.mjs";

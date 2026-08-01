@@ -90,23 +90,132 @@ export function decryptSpsWorkspaceSourceCredential(workspaceAccess, transportPr
   };
 }
 
+export function formatSpsWindowsNetUseError(stderr) {
+  const detail = Buffer.isBuffer(stderr) ? stderr.toString("latin1") : String(stderr ?? "");
+  const errorCode = detail.match(/\b(5|53|67|86|1219|1326)\b/)?.[1] ?? null;
+  switch (errorCode) {
+    case "5":
+      return "Windows denied access to the SPS Host Source (system error 5).";
+    case "53":
+      return "Windows could not reach the SPS Host network path (system error 53).";
+    case "67":
+      return "Windows could not find the SPS Host Source share (system error 67).";
+    case "86":
+    case "1326":
+      return `Windows rejected the SPS Host Source credential (system error ${errorCode}). Ask the Host to revoke and grant Source access again.`;
+    case "1219":
+      return "Windows already has a connection to this SPS Host with different credentials (system error 1219). Close that connection and retry.";
+    default:
+      return "Windows could not connect the SPS Host project share.";
+  }
+}
+
+const SPS_WINDOWS_SMB_MAPPING_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$inputData = [Console]::In.ReadToEnd() | ConvertFrom-Json
+function Decode-SpsUtf8([string]$Value) {
+  [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+}
+$sharePath = Decode-SpsUtf8 ([string]$inputData.sharePath)
+if ([string]$inputData.action -eq 'remove') {
+  $localPath = Decode-SpsUtf8 ([string]$inputData.localPath)
+  if ($localPath) {
+    Remove-SmbMapping -LocalPath $localPath -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+  } else {
+    Remove-SmbMapping -RemotePath $sharePath -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+  }
+  exit 0
+}
+$username = Decode-SpsUtf8 ([string]$inputData.username)
+$password = Decode-SpsUtf8 ([string]$inputData.password)
+try {
+  $usedDriveNames = @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | ForEach-Object { $_.Name.ToUpperInvariant() })
+  $usedLocalPaths = @(Get-SmbMapping -ErrorAction SilentlyContinue | ForEach-Object { ([string]$_.LocalPath).ToUpperInvariant() })
+  foreach ($code in 90..68) {
+    $candidate = ([char]$code).ToString() + ':'
+    if ($usedDriveNames -contains $candidate.Substring(0, 1) -or $usedLocalPaths -contains $candidate) { continue }
+    New-SmbMapping -LocalPath $candidate -RemotePath $sharePath -UserName $username -Password $password -Persistent $false -ErrorAction Stop | Out-Null
+    [Console]::Out.WriteLine((@{ localPath = $candidate + '\' } | ConvertTo-Json -Compress))
+    exit 0
+  }
+  throw 'No free drive letter is available for the SPS Host Source.'
+} catch {
+  $nativeCode = [Runtime.InteropServices.Marshal]::GetHRForException($_.Exception) -band 0xffff
+  [Console]::Error.WriteLine("SPS_SMB_ERROR:$nativeCode")
+  exit 1
+}
+`;
+
+function encodeSpsWindowsSmbField(value) {
+  return Buffer.from(String(value ?? ""), "utf8").toString("base64");
+}
+
+export function buildSpsWindowsSmbMappingRequest(args, password = null) {
+  const sharePath = String(args?.[1] ?? "").trim();
+  if (!sharePath.startsWith("\\\\")) throw new Error("SPS Host Source share path is invalid.");
+  if (args.includes("/delete")) {
+    const localPath = String(args.find((entry) => String(entry).startsWith("/local:")) ?? "").slice(7);
+    return {
+      action: "remove",
+      sharePath: encodeSpsWindowsSmbField(sharePath),
+      localPath: encodeSpsWindowsSmbField(localPath),
+      username: "",
+      password: "",
+    };
+  }
+  const username = String(args.find((entry) => String(entry).startsWith("/user:")) ?? "").slice(6);
+  if (!username || password == null) throw new Error("SPS Host Source credential is incomplete.");
+  return {
+    action: "map",
+    sharePath: encodeSpsWindowsSmbField(sharePath),
+    localPath: "",
+    username: encodeSpsWindowsSmbField(username),
+    password: encodeSpsWindowsSmbField(password),
+  };
+}
+
 function runWindowsNetUse(args, password = null) {
   return new Promise((resolve, reject) => {
-    const child = spawn("net.exe", args, {
+    let request;
+    try {
+      request = buildSpsWindowsSmbMappingRequest(args, password);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const child = spawn("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      SPS_WINDOWS_SMB_MAPPING_SCRIPT,
+    ], {
       windowsHide: true,
-      stdio: [password == null ? "ignore" : "pipe", "ignore", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
-    let stderr = "";
+    const stdout = [];
+    const stderr = [];
+    child.stdout?.on("data", (chunk) => {
+      stdout.push(Buffer.from(chunk));
+    });
     child.stderr?.on("data", (chunk) => {
-      stderr = `${stderr}${chunk.toString("utf8")}`.slice(-2_000);
+      stderr.push(Buffer.from(chunk));
     });
     child.once("error", (error) => reject(error));
     child.once("close", (code) => {
-      if (code === 0) return resolve();
-      const detail = stderr.replace(/\s+/g, " ").trim();
-      reject(new Error(detail ? `Windows could not connect the SPS Host project share (${detail}).` : "Windows could not connect the SPS Host project share."));
+      if (code === 0) {
+        const output = Buffer.concat(stdout).toString("utf8").trim();
+        if (!output) return resolve(null);
+        try {
+          return resolve(JSON.parse(output));
+        } catch {
+          return reject(new Error("Windows returned an invalid SPS Host Source mapping result."));
+        }
+      }
+      reject(new Error(formatSpsWindowsNetUseError(Buffer.concat(stderr).subarray(-2_000))));
     });
-    if (password != null) child.stdin?.end(`${password}\r\n`);
+    child.stdin?.end(JSON.stringify(request));
   });
 }
 
@@ -124,14 +233,19 @@ export async function openSpsWorkspaceSourceRoute(workspaceAccess, transportPriv
   const runNetUse = options.runNetUse ?? runWindowsNetUse;
   // `*` keeps the password out of the process argument list. It is sent only
   // over net.exe's stdin and is never copied into the Agent CLI environment.
-  await runNetUse(["use", credential.sharePath, `/user:${credential.username}`, "*"], credential.password);
+  const mapping = await runNetUse(["use", credential.sharePath, `/user:${credential.username}`, "*"], credential.password);
+  const workspacePath = typeof mapping?.localPath === "string" ? mapping.localPath.trim() : "";
+  if (!/^[A-Za-z]:\\$/.test(workspacePath)) {
+    throw new Error("Windows did not provide a local drive for the SPS Host Source.");
+  }
   let closed = false;
   return {
     sharePath: credential.sharePath,
+    workspacePath,
     async close() {
       if (closed) return;
       closed = true;
-      await runNetUse(["use", credential.sharePath, "/delete", "/y"]).catch(() => undefined);
+      await runNetUse(["use", credential.sharePath, `/local:${workspacePath.slice(0, 2)}`, "/delete", "/y"]).catch(() => undefined);
     },
   };
 }
