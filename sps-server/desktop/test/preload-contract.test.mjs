@@ -41,6 +41,7 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:export-owner-vault-transfer"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-owner-vault-transfer"/);
   assert.match(workspacePreload, /contextBridge\.exposeInMainWorld\("spsDesktopWorkspace"/);
+  assert.match(workspacePreload, /manageHostWorkspaceSource: \(input\) => ipcRenderer\.invoke\("desktop:workspace-manage-host-workspace-source", input\)/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-account"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-sign-out"/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-server-settings"/);

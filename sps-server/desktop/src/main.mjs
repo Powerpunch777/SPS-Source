@@ -28,7 +28,11 @@ import {
   SpsHubRequestError,
   startSpsDesktopAuth,
 } from "@sps/desktop-node";
-import { claimNextSpsNodeWork, executionTransportForSpsNodeWork } from "./node-command-poller.mjs";
+import {
+  claimNextSpsNodeWork,
+  executionTransportForSpsNodeWork,
+  spsNodeWorkRequiresMarketplaceMcp,
+} from "./node-command-poller.mjs";
 import {
   buildInviteUrl,
   createSpsRoutedInviteCode,
@@ -995,12 +999,16 @@ async function loadCoreHostWorkspaceSources() {
   if (!value || typeof value !== "object" || !Array.isArray(value.sources)) {
     throw new Error("SPS Owner Host returned an invalid Workspace Source list.");
   }
-  return { companyId, sources: value.sources };
+  return {
+    companyId,
+    sources: value.sources,
+    nodes: Array.isArray(value.nodes) ? value.nodes : [],
+  };
 }
 
 async function synchronizeHostWorkspaceSources() {
   const localSources = currentHostWorkspaceSources();
-  const { companyId, sources: coreSources } = await loadCoreHostWorkspaceSources();
+  const { companyId, sources: coreSources, nodes } = await loadCoreHostWorkspaceSources();
   const knownCoreSources = [...coreSources];
   const usedCoreIds = new Set();
   let changed = false;
@@ -1053,7 +1061,26 @@ async function synchronizeHostWorkspaceSources() {
     await persistState();
   }
   return {
-    sources: nextSources,
+    sources: nextSources.map((source) => {
+      const coreSource = coreSources.find((candidate) => candidate?.id === source.id) ?? null;
+      const grants = new Map(
+        (Array.isArray(coreSource?.nodeGrants) ? coreSource.nodeGrants : [])
+          .map((grant) => [grant?.nodeId, grant?.status]),
+      );
+      return {
+        ...source,
+        routeStatus: coreSource?.routeStatus === "ready" ? "ready" : "unavailable",
+        memberNodes: nodes
+          .filter((node) => node?.id && node.id !== state.nodeId)
+          .map((node) => ({
+            id: String(node.id),
+            displayName: String(node.displayName ?? "Member Node"),
+            status: String(node.status ?? "unknown"),
+            keyVerified: Boolean(node.keyVerifiedAt && node.transportPublicKey),
+            sourceAccess: grants.get(node.id) === "granted" ? "granted" : "not_granted",
+          })),
+      };
+    }),
     privateTeamAccessEnabled: isTeamAccessEnabled(),
   };
 }
@@ -1108,6 +1135,10 @@ async function renameHostWorkspaceSource(sourceId, name) {
 
 async function removeHostWorkspaceSource(sourceId) {
   assertHostWorkspaceSourceAccess();
+  const protectedRecord = currentHostProjectShareSecrets().projects[String(sourceId ?? "")];
+  if (protectedRecord && Object.keys(protectedRecord.grants ?? {}).length > 0) {
+    throw new Error("Revoke every Member Node before removing this Workspace Source.");
+  }
   const companyId = hostWorkspaceSourceCompanyId();
   await ownerHostApi(
     `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(String(sourceId ?? ""))}`,
@@ -1116,6 +1147,154 @@ async function removeHostWorkspaceSource(sourceId) {
   state.profile.workspaceSources = removeSpsWorkspaceSource(currentHostWorkspaceSources(), sourceId);
   await persistState();
   return await listHostWorkspaceSources();
+}
+
+function assertHostWorkspaceSourceManager() {
+  assertHostWorkspaceSourceAccess();
+  if (!isTeamAccessEnabled() || !state.teamAccess?.hostname) {
+    throw new Error("Enable private team access before sharing a Workspace Source with a Member Node.");
+  }
+}
+
+function hostWorkspaceSourcePath(sourceId) {
+  const normalizedId = String(sourceId ?? "").trim();
+  const source = currentHostWorkspaceSources().find((candidate) => candidate.id === normalizedId) ?? null;
+  if (!source?.sourcePath) {
+    throw new Error("Choose this Workspace Source folder on the SPS Host before granting a Member Node access.");
+  }
+  return source.sourcePath;
+}
+
+async function workspaceSourceStatus(sourceId) {
+  assertHostWorkspaceSourceManager();
+  const normalizedId = String(sourceId ?? "").trim();
+  if (!normalizedId) throw new Error("Workspace Source ID is required.");
+  const snapshot = await loadCoreHostWorkspaceSources();
+  const source = snapshot.sources.find((candidate) => candidate?.id === normalizedId) ?? null;
+  if (!source) throw new Error("This Workspace Source is no longer available on the SPS Host.");
+  return { companyId: snapshot.companyId, source, nodes: snapshot.nodes };
+}
+
+async function grantHostWorkspaceSourceToNode(sourceId, nodeId) {
+  const sourcePath = hostWorkspaceSourcePath(sourceId);
+  const status = await workspaceSourceStatus(sourceId);
+  const target = status.nodes.find((node) => node?.id === nodeId) ?? null;
+  if (!target || target.status !== "active" || !target.keyVerifiedAt || !target.transportPublicKey) {
+    throw new Error("Choose an active Member Node with a verified transport key before granting Workspace Source access.");
+  }
+  const secrets = currentHostProjectShareSecrets();
+  const existing = secrets.projects[sourceId] && typeof secrets.projects[sourceId] === "object"
+    ? secrets.projects[sourceId]
+    : null;
+  const shareName = existing?.shareName ?? spsHostProjectShareName(sourceId);
+  const sharePath = spsHostProjectSharePath(state.teamAccess.hostname, shareName);
+  const grants = existing?.grants && typeof existing.grants === "object" ? { ...existing.grants } : {};
+  const credential = grants[nodeId] && typeof grants[nodeId] === "object"
+    ? grants[nodeId]
+    : createSpsHostProjectShareCredential(nodeId);
+  await updateSpsHostProjectShareWindowsAccess({
+    sourcePath,
+    shareName,
+    accountName: credential.username,
+    password: credential.password,
+    action: "grant",
+  }, { temporaryRoot: app.getPath("temp") });
+  secrets.projects[sourceId] = {
+    shareName,
+    sharePath,
+    sourcePath,
+    grants: { ...grants, [nodeId]: credential },
+  };
+  await saveHostProjectShareSecrets(secrets);
+  await ownerHostApi(
+    `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}`,
+    { method: "PATCH", ownerBootstrap: true, body: { sharePath } },
+  );
+  const envelope = sealSpsHostProjectShareCredential({
+    sharePath,
+    hostAccountName: process.env.COMPUTERNAME?.trim() || os.hostname(),
+    transportPublicKey: target.transportPublicKey,
+    username: credential.username,
+    password: credential.password,
+  });
+  await ownerHostApi(
+    `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}/nodes/${encodeURIComponent(nodeId)}`,
+    {
+      method: "PUT",
+      ownerBootstrap: true,
+      body: { credentialAlgorithm: SPS_HOST_SHARE_CREDENTIAL_ALGORITHM, credentialEnvelope: envelope },
+    },
+  );
+  return { node: { id: target.id, displayName: target.displayName }, sharePath };
+}
+
+async function revokeHostWorkspaceSourceFromNode(sourceId, nodeId) {
+  const sourcePath = hostWorkspaceSourcePath(sourceId);
+  const status = await workspaceSourceStatus(sourceId);
+  await ownerHostApi(
+    `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}/nodes/${encodeURIComponent(nodeId)}`,
+    { method: "DELETE", ownerBootstrap: true },
+  );
+  const secrets = currentHostProjectShareSecrets();
+  const record = secrets.projects[sourceId];
+  const credential = record?.grants?.[nodeId] ?? null;
+  if (!credential?.username) {
+    throw new Error("SPS revoked the Node in Core, but this Host no longer has its local Source credential. Disable that local SPS share account manually before regranting.");
+  }
+  await updateSpsHostProjectShareWindowsAccess({
+    sourcePath,
+    shareName: record.shareName,
+    accountName: credential.username,
+    password: credential.password ?? "",
+    action: "revoke",
+  }, { temporaryRoot: app.getPath("temp") });
+  const nextGrants = { ...record.grants };
+  delete nextGrants[nodeId];
+  secrets.projects[sourceId] = { ...record, grants: nextGrants };
+  await saveHostProjectShareSecrets(secrets);
+  return { nodeId, revoked: true };
+}
+
+async function showHostWorkspaceSourceManager(sourceId) {
+  const snapshot = await listHostWorkspaceSources();
+  const source = snapshot.sources.find((candidate) => candidate.id === sourceId) ?? null;
+  if (!source) throw new Error("This Workspace Source is no longer available on the SPS Host.");
+  const members = source.memberNodes.filter((node) => node.status === "active" && node.keyVerified).slice(0, 8);
+  if (members.length === 0) {
+    await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
+      type: "info",
+      title: "Workspace Source access",
+      message: "No active Member Node is ready for Source access.",
+      detail: "Ask the Member to connect SPS Desktop, then approve its Node before returning here.",
+    });
+    return null;
+  }
+  const buttons = members.map((node) => (
+    node.sourceAccess === "granted" ? `Revoke ${node.displayName}` : `Grant ${node.displayName}`
+  ));
+  buttons.push("Close");
+  const choice = await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
+    type: "question",
+    title: "Workspace Source access",
+    message: `Choose a Member Node for ${source.name}.`,
+    detail: "SPS encrypts a Windows share credential to that computer. A plugin must still select this Source and an approved Runtime for each execution grant.",
+    buttons,
+    cancelId: buttons.length - 1,
+  });
+  const target = members[choice.response] ?? null;
+  if (!target) return null;
+  const result = target.sourceAccess === "granted"
+    ? await revokeHostWorkspaceSourceFromNode(sourceId, target.id)
+    : await grantHostWorkspaceSourceToNode(sourceId, target.id);
+  await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
+    type: "info",
+    title: "Workspace Source access updated",
+    message: target.sourceAccess === "granted"
+      ? `${target.displayName} can no longer use this Workspace Source.`
+      : `${target.displayName} can now use this Workspace Source through approved plugin runs.`,
+    detail: target.sourceAccess === "granted" ? "The Node's Windows share account was disabled." : `Managed route: ${result.sharePath}`,
+  });
+  return result;
 }
 
 function assertHostProjectSourceManager() {
@@ -4182,7 +4361,9 @@ async function pollNodeCommands() {
       identity: currentIdentity(),
       ...access,
       profile: state.profile,
-      marketplaceMcpRuntime: await resolveDesktopMarketplaceMcpRuntime(),
+      marketplaceMcpRuntime: spsNodeWorkRequiresMarketplaceMcp(nextWork)
+        ? await resolveDesktopMarketplaceMcpRuntime()
+        : null,
       ...executionTransportForSpsNodeWork(nextWork.kind, {
         appendCommandEvent: appendSpsPluginNodeRunEvent,
         checkCommandLease: checkSpsPluginNodeRunLease,
@@ -4686,6 +4867,14 @@ function registerIpc() {
       throw new Error("Workspace source management is available only inside the local SPS Host workspace.");
     }
     return await removeHostWorkspaceSource(input?.sourceId);
+  });
+  ipcMain.handle("desktop:workspace-manage-host-workspace-source", async (event, input) => {
+    if (!workspaceWindow || workspaceWindow.isDestroyed() || event.sender.id !== workspaceWindow.webContents.id) {
+      throw new Error("Workspace source management is available only inside the local SPS Host workspace.");
+    }
+    const sourceId = String(input?.sourceId ?? "").trim();
+    if (!sourceId) throw new Error("Workspace Source ID is required.");
+    return await showHostWorkspaceSourceManager(sourceId);
   });
   ipcMain.handle("desktop:refresh-projects", async () => {
     await refreshProjects();

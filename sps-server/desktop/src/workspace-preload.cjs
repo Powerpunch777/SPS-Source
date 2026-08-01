@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld("spsDesktopWorkspace", {
   chooseHostWorkspaceSource: () => ipcRenderer.invoke("desktop:workspace-choose-host-workspace-source"),
   renameHostWorkspaceSource: (input) => ipcRenderer.invoke("desktop:workspace-rename-host-workspace-source", input),
   removeHostWorkspaceSource: (input) => ipcRenderer.invoke("desktop:workspace-remove-host-workspace-source", input),
+  manageHostWorkspaceSource: (input) => ipcRenderer.invoke("desktop:workspace-manage-host-workspace-source", input),
 });
