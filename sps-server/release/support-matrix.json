@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "candidate": {
     "status": "development-candidate",
-    "desktopVersion": "0.4.100",
+    "desktopVersion": "0.4.101",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
       "revision": "8339edd1ee6cb479a757c303039e123b5e0680cf"

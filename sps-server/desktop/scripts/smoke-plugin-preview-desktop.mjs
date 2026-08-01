@@ -26,6 +26,10 @@ const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 const base64Url = (value) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
 const errorText = (error) => error instanceof Error ? error.message : String(error);
 const step = (message) => console.log(`[preview-e2e] ${message}`);
+const cleanupTimeout = (promise, label, milliseconds = 15_000) => Promise.race([
+  promise,
+  delay(milliseconds).then(() => { throw new Error(`${label} cleanup timed out after ${milliseconds}ms.`); }),
+]);
 
 async function freePort() {
   return await new Promise((resolve, reject) => {
@@ -48,8 +52,25 @@ async function removeRetry(target) {
 
 async function stopTree(child) {
   if (!child?.pid || child.exitCode !== null) return;
-  await execFileAsync("taskkill", ["/pid", String(child.pid), "/T", "/F"]).catch(() => undefined);
+  await execFileAsync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+    timeout: 15_000,
+    windowsHide: true,
+  }).catch(() => undefined);
   await Promise.race([once(child, "exit").catch(() => undefined), delay(10_000)]);
+}
+
+async function stopTemporaryPostgres(targetRoot) {
+  const command = [
+    "$needle = ($env:SPS_E2E_ROOT -replace '\\\\', '/')",
+    "Get-CimInstance Win32_Process |",
+    "  Where-Object { $_.Name -eq 'postgres.exe' -and (($_.CommandLine -replace '\\\\', '/') -like \"*$needle*\") } |",
+    "  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+  ].join(" ");
+  await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+    env: { ...process.env, SPS_E2E_ROOT: targetRoot },
+    timeout: 15_000,
+    windowsHide: true,
+  });
 }
 
 function mockIdentity() {
@@ -437,10 +458,20 @@ try {
   throw new Error(`${errorText(error)}\n${notes.join("\n")}\n${output.trim()}`);
 } finally {
   step("cleaning isolated E2E processes and data");
-  await Promise.all([setup, workspace, registry, preview].filter(Boolean).map((cdp) => cdp.close().catch(() => undefined)));
-  await stopTree(child);
-  await identity.close().catch(() => undefined);
-  await removeRetry(temporaryRoot).catch((error) => console.warn(`Could not remove Preview Desktop E2E temp data: ${errorText(error)}`));
+  await cleanupTimeout(
+    Promise.all([setup, workspace, registry, preview].filter(Boolean).map((cdp) => cdp.close().catch(() => undefined))),
+    "CDP sessions",
+  ).catch((error) => console.warn(errorText(error)));
+  step("CDP sessions closed");
+  await cleanupTimeout(stopTree(child), "Desktop process tree").catch((error) => console.warn(errorText(error)));
+  step("Desktop process tree stopped");
+  await cleanupTimeout(stopTemporaryPostgres(temporaryRoot), "temporary PostgreSQL processes")
+    .catch((error) => console.warn(errorText(error)));
+  step("temporary PostgreSQL processes stopped");
+  await cleanupTimeout(identity.close(), "mock Identity server").catch((error) => console.warn(errorText(error)));
+  step("mock Identity server closed");
+  await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
+    .catch((error) => console.warn(`Could not remove Preview Desktop E2E temp data: ${errorText(error)}`));
   step("cleanup complete");
 }
 

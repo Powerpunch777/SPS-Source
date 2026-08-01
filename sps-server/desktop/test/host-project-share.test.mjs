@@ -60,6 +60,18 @@ test("keeps generated Windows project-share accounts within the local-user limit
   assert.ok(credential.username.length <= 20);
 });
 
+test("isolates Windows share accounts by Source and Node", () => {
+  const random = () => Buffer.alloc(30, 9);
+  const first = createSpsHostProjectShareCredential("node-123", random, "source-a");
+  const same = createSpsHostProjectShareCredential("node-123", random, "source-a");
+  const secondSource = createSpsHostProjectShareCredential("node-123", random, "source-b");
+  const secondNode = createSpsHostProjectShareCredential("node-456", random, "source-a");
+  assert.equal(first.username, same.username);
+  assert.notEqual(first.username, secondSource.username);
+  assert.notEqual(first.username, secondNode.username);
+  assert.ok(first.username.length <= 20);
+});
+
 test("runs the Windows Host share worker through UAC without exposing its password in arguments", async () => {
   const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-host-share-test-"));
   const sourcePath = path.join(temporaryRoot, "source");
@@ -84,6 +96,30 @@ test("runs the Windows Host share worker through UAC without exposing its passwo
     assert.equal(JSON.stringify(calls[0]).includes(password), false);
     const tempEntries = await fs.readdir(temporaryRoot);
     assert.deepEqual(tempEntries, ["source"]);
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("can remove a stale Host share after its source folder is gone", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-host-share-remove-test-"));
+  try {
+    const calls = [];
+    const result = await updateSpsHostProjectShareWindowsAccess({
+      sourcePath: path.join(temporaryRoot, "missing-source"),
+      shareName: "SPS_stale_source",
+      accountName: "",
+      password: "",
+      action: "remove",
+    }, {
+      platform: "win32",
+      temporaryRoot,
+      random: () => Buffer.alloc(16, 4),
+      runPowerShell: async (args) => { calls.push(args); },
+    });
+    assert.equal(result.action, "remove");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(await fs.readdir(temporaryRoot), []);
   } finally {
     await fs.rm(temporaryRoot, { recursive: true, force: true });
   }

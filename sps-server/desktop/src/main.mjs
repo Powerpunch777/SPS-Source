@@ -1135,13 +1135,26 @@ async function renameHostWorkspaceSource(sourceId, name) {
 
 async function removeHostWorkspaceSource(sourceId) {
   assertHostWorkspaceSourceAccess();
-  const protectedRecord = currentHostProjectShareSecrets().projects[String(sourceId ?? "")];
+  const normalizedSourceId = String(sourceId ?? "");
+  const secrets = currentHostProjectShareSecrets();
+  const protectedRecord = secrets.projects[normalizedSourceId];
   if (protectedRecord && Object.keys(protectedRecord.grants ?? {}).length > 0) {
     throw new Error("Revoke every Member Node before removing this Workspace Source.");
   }
+  if (protectedRecord?.shareName && protectedRecord?.sourcePath) {
+    await updateSpsHostProjectShareWindowsAccess({
+      sourcePath: protectedRecord.sourcePath,
+      shareName: protectedRecord.shareName,
+      accountName: "",
+      password: "",
+      action: "remove",
+    }, { temporaryRoot: app.getPath("temp") });
+    delete secrets.projects[normalizedSourceId];
+    await saveHostProjectShareSecrets(secrets);
+  }
   const companyId = hostWorkspaceSourceCompanyId();
   await ownerHostApi(
-    `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(String(sourceId ?? ""))}`,
+    `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(normalizedSourceId)}`,
     { method: "DELETE", ownerBootstrap: true },
   );
   state.profile.workspaceSources = removeSpsWorkspaceSource(currentHostWorkspaceSources(), sourceId);
@@ -1191,7 +1204,7 @@ async function grantHostWorkspaceSourceToNode(sourceId, nodeId) {
   const grants = existing?.grants && typeof existing.grants === "object" ? { ...existing.grants } : {};
   const credential = grants[nodeId] && typeof grants[nodeId] === "object"
     ? grants[nodeId]
-    : createSpsHostProjectShareCredential(nodeId);
+    : createSpsHostProjectShareCredential(nodeId, undefined, sourceId);
   await updateSpsHostProjectShareWindowsAccess({
     sourcePath,
     shareName,
@@ -1206,40 +1219,67 @@ async function grantHostWorkspaceSourceToNode(sourceId, nodeId) {
     grants: { ...grants, [nodeId]: credential },
   };
   await saveHostProjectShareSecrets(secrets);
-  await ownerHostApi(
-    `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}`,
-    { method: "PATCH", ownerBootstrap: true, body: { sharePath } },
-  );
-  const envelope = sealSpsHostProjectShareCredential({
-    sharePath,
-    hostAccountName: process.env.COMPUTERNAME?.trim() || os.hostname(),
-    transportPublicKey: target.transportPublicKey,
-    username: credential.username,
-    password: credential.password,
-  });
-  await ownerHostApi(
-    `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}/nodes/${encodeURIComponent(nodeId)}`,
-    {
-      method: "PUT",
-      ownerBootstrap: true,
-      body: { credentialAlgorithm: SPS_HOST_SHARE_CREDENTIAL_ALGORITHM, credentialEnvelope: envelope },
-    },
-  );
+  try {
+    await ownerHostApi(
+      `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}`,
+      { method: "PATCH", ownerBootstrap: true, body: { sharePath } },
+    );
+    const envelope = sealSpsHostProjectShareCredential({
+      sharePath,
+      hostAccountName: process.env.COMPUTERNAME?.trim() || os.hostname(),
+      transportPublicKey: target.transportPublicKey,
+      username: credential.username,
+      password: credential.password,
+    });
+    await ownerHostApi(
+      `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}/nodes/${encodeURIComponent(nodeId)}`,
+      {
+        method: "PUT",
+        ownerBootstrap: true,
+        body: { credentialAlgorithm: SPS_HOST_SHARE_CREDENTIAL_ALGORITHM, credentialEnvelope: envelope },
+      },
+    );
+  } catch (error) {
+    const cleanupErrors = [];
+    await updateSpsHostProjectShareWindowsAccess({
+      sourcePath,
+      shareName,
+      accountName: credential.username,
+      password: credential.password,
+      action: "revoke",
+    }, { temporaryRoot: app.getPath("temp") }).catch((cleanupError) => cleanupErrors.push(cleanupError));
+    if (Object.keys(grants).length === 0) {
+      await updateSpsHostProjectShareWindowsAccess({
+        sourcePath,
+        shareName,
+        accountName: "",
+        password: "",
+        action: "remove",
+      }, { temporaryRoot: app.getPath("temp") }).catch((cleanupError) => cleanupErrors.push(cleanupError));
+      await ownerHostApi(
+        `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}`,
+        { method: "PATCH", ownerBootstrap: true, body: { sharePath: null } },
+      ).catch((cleanupError) => cleanupErrors.push(cleanupError));
+    }
+    if (existing) secrets.projects[sourceId] = existing;
+    else delete secrets.projects[sourceId];
+    await saveHostProjectShareSecrets(secrets).catch((cleanupError) => cleanupErrors.push(cleanupError));
+    if (cleanupErrors.length > 0) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)} SPS could not fully roll back the failed Workspace Source grant: ${cleanupErrors.map((cleanupError) => cleanupError instanceof Error ? cleanupError.message : String(cleanupError)).join("; ")}`);
+    }
+    throw error;
+  }
   return { node: { id: target.id, displayName: target.displayName }, sharePath };
 }
 
 async function revokeHostWorkspaceSourceFromNode(sourceId, nodeId) {
   const sourcePath = hostWorkspaceSourcePath(sourceId);
   const status = await workspaceSourceStatus(sourceId);
-  await ownerHostApi(
-    `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}/nodes/${encodeURIComponent(nodeId)}`,
-    { method: "DELETE", ownerBootstrap: true },
-  );
   const secrets = currentHostProjectShareSecrets();
   const record = secrets.projects[sourceId];
   const credential = record?.grants?.[nodeId] ?? null;
   if (!credential?.username) {
-    throw new Error("SPS revoked the Node in Core, but this Host no longer has its local Source credential. Disable that local SPS share account manually before regranting.");
+    throw new Error("This Host no longer has the local credential required to revoke the Workspace Source safely. Remove the stale SPS share account manually before regranting.");
   }
   await updateSpsHostProjectShareWindowsAccess({
     sourcePath,
@@ -1248,9 +1288,30 @@ async function revokeHostWorkspaceSourceFromNode(sourceId, nodeId) {
     password: credential.password ?? "",
     action: "revoke",
   }, { temporaryRoot: app.getPath("temp") });
+  // Remove the local Windows credential first. If the Core request fails,
+  // direct SMB access is already closed and a later retry can reconcile it.
+  await ownerHostApi(
+    `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}/nodes/${encodeURIComponent(nodeId)}`,
+    { method: "DELETE", ownerBootstrap: true },
+  );
   const nextGrants = { ...record.grants };
   delete nextGrants[nodeId];
-  secrets.projects[sourceId] = { ...record, grants: nextGrants };
+  if (Object.keys(nextGrants).length === 0) {
+    await updateSpsHostProjectShareWindowsAccess({
+      sourcePath,
+      shareName: record.shareName,
+      accountName: "",
+      password: "",
+      action: "remove",
+    }, { temporaryRoot: app.getPath("temp") });
+    await ownerHostApi(
+      `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}`,
+      { method: "PATCH", ownerBootstrap: true, body: { sharePath: null } },
+    );
+    delete secrets.projects[sourceId];
+  } else {
+    secrets.projects[sourceId] = { ...record, grants: nextGrants };
+  }
   await saveHostProjectShareSecrets(secrets);
   return { nodeId, revoked: true };
 }
@@ -1292,7 +1353,7 @@ async function showHostWorkspaceSourceManager(sourceId) {
     message: target.sourceAccess === "granted"
       ? `${target.displayName} can no longer use this Workspace Source.`
       : `${target.displayName} can now use this Workspace Source through approved plugin runs.`,
-    detail: target.sourceAccess === "granted" ? "The Node's Windows share account was disabled." : `Managed route: ${result.sharePath}`,
+    detail: target.sourceAccess === "granted" ? "The Node's Windows share account was removed." : `Managed route: ${result.sharePath}`,
   });
   return result;
 }

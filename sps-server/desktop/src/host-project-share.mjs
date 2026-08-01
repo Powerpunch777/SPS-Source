@@ -1,4 +1,4 @@
-import { constants, createCipheriv, publicEncrypt, randomBytes } from "node:crypto";
+import { constants, createCipheriv, createHash, publicEncrypt, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,9 +34,13 @@ export function spsHostProjectSharePath(hostname, shareName) {
   return `\\\\${normalizedHostname}\\${shareName}`;
 }
 
-export function createSpsHostProjectShareCredential(nodeId, random = randomBytes) {
+export function createSpsHostProjectShareCredential(nodeId, random = randomBytes, sourceId = "") {
   const nodeSuffixLength = 20 - LOCAL_ACCOUNT_PREFIX.length;
-  const nodeSuffix = String(nodeId ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, nodeSuffixLength).toLowerCase();
+  const normalizedNodeId = String(nodeId ?? "").trim();
+  const normalizedSourceId = String(sourceId ?? "").trim();
+  const nodeSuffix = normalizedSourceId
+    ? createHash("sha256").update(`${normalizedSourceId}:${normalizedNodeId}`).digest("hex").slice(0, nodeSuffixLength)
+    : normalizedNodeId.replace(/[^A-Za-z0-9]/g, "").slice(0, nodeSuffixLength).toLowerCase();
   if (!nodeSuffix) throw new Error("Choose a valid SPS Member Node before granting project source access.");
   const username = `${LOCAL_ACCOUNT_PREFIX}${nodeSuffix}`;
   if (!SAFE_LOCAL_ACCOUNT.test(username)) throw new Error("SPS generated an invalid Windows project-share account name.");
@@ -111,10 +115,10 @@ trap {
   Write-SpsHostShareResult $false $reason
   exit 1
 }
-if (-not (Test-Path -LiteralPath $sourcePath -PathType Container)) { throw 'SPS project source folder no longer exists.' }
 if ($shareName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$') { throw 'Invalid SPS project share name.' }
-if ($accountName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw 'Invalid SPS project share account.' }
-$qualifiedAccount = "$env:COMPUTERNAME\$accountName"
+if ($action -ne 'remove' -and -not (Test-Path -LiteralPath $sourcePath -PathType Container)) { throw 'SPS project source folder no longer exists.' }
+if ($action -ne 'remove' -and $accountName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw 'Invalid SPS project share account.' }
+$qualifiedAccount = if ([string]::IsNullOrWhiteSpace($accountName)) { '' } else { "$env:COMPUTERNAME\$accountName" }
 if ($action -eq 'grant') {
   $secure = ConvertTo-SecureString $password -AsPlainText -Force
   $localUser = Get-LocalUser -Name $accountName -ErrorAction SilentlyContinue
@@ -149,9 +153,27 @@ if ($action -eq 'revoke') {
     Revoke-SmbShareAccess -Name $shareName -AccountName $qualifiedAccount -Force -ErrorAction SilentlyContinue | Out-Null
   }
   & icacls.exe $sourcePath /remove:g $qualifiedAccount /t /c | Out-Null
-  Disable-LocalUser -Name $accountName -ErrorAction SilentlyContinue
+  Remove-LocalUser -Name $accountName -ErrorAction SilentlyContinue
   Write-SpsHostShareResult $true ''
   [pscustomobject]@{ action = 'revoke'; shareName = $shareName; accountName = $accountName } | ConvertTo-Json -Compress
+  exit 0
+}
+if ($action -eq 'remove') {
+  $share = Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue
+  if ($null -ne $share) {
+    if ([System.IO.Path]::GetFullPath([string]$share.Path) -ne $sourcePath) {
+      throw 'An existing Windows share has the SPS share name but points to a different folder.'
+    }
+    Remove-SmbShare -Name $shareName -Force
+  }
+  if (-not [string]::IsNullOrWhiteSpace($accountName)) {
+    if (Test-Path -LiteralPath $sourcePath -PathType Container) {
+      & icacls.exe $sourcePath /remove:g $qualifiedAccount /t /c | Out-Null
+    }
+    Remove-LocalUser -Name $accountName -ErrorAction SilentlyContinue
+  }
+  Write-SpsHostShareResult $true ''
+  [pscustomobject]@{ action = 'remove'; shareName = $shareName; accountName = $accountName } | ConvertTo-Json -Compress
   exit 0
 }
 throw 'Invalid SPS Host project share action.'
@@ -186,12 +208,13 @@ export async function updateSpsHostProjectShareWindowsAccess(input, options = {}
   const shareName = String(input?.shareName ?? "").trim();
   const accountName = String(input?.accountName ?? "").trim();
   const password = String(input?.password ?? "");
-  const action = input?.action === "revoke" ? "revoke" : "grant";
-  if (!rawSourcePath || !sourcePath || !SAFE_SHARE_NAME.test(shareName) || !SAFE_LOCAL_ACCOUNT.test(accountName) || (action === "grant" && password.length < 16)) {
+  const action = input?.action === "revoke" ? "revoke" : input?.action === "remove" ? "remove" : "grant";
+  const validAccount = action === "remove" ? (!accountName || SAFE_LOCAL_ACCOUNT.test(accountName)) : SAFE_LOCAL_ACCOUNT.test(accountName);
+  if (!rawSourcePath || !sourcePath || !SAFE_SHARE_NAME.test(shareName) || !validAccount || (action === "grant" && password.length < 16)) {
     throw new Error("SPS Host project source access request is incomplete.");
   }
   const sourceInfo = await (options.stat ?? fs.stat)(sourcePath).catch(() => null);
-  if (!sourceInfo?.isDirectory()) throw new Error("The selected SPS project source folder is not available on this Owner Host.");
+  if (action !== "remove" && !sourceInfo?.isDirectory()) throw new Error("The selected SPS project source folder is not available on this Owner Host.");
 
   const random = options.random ?? randomBytes;
   const temporaryRoot = options.temporaryRoot ?? os.tmpdir();
