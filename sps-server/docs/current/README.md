@@ -6,6 +6,7 @@
 | --- | --- |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
 | Workspace Shell Provider, generic Dashboard, and generic Inbox contract | [WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md](WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md) |
+| Codex/Cursor references, OpenDesign prototype, and the staged Desktop UI refresh | [SPS-UI-DESIGN-REFRESH-PLAN-ko.md](SPS-UI-DESIGN-REFRESH-PLAN-ko.md) |
 | Install SPS Desktop, sign in, create or join a Host, and choose a workflow | [GETTING-STARTED-ko.md](GETTING-STARTED-ko.md) |
 | Stable releases, installation-test previews, automatic updates, and uninstall behavior | [RELEASE-AND-PREVIEW-POLICY-ko.md](RELEASE-AND-PREVIEW-POLICY-ko.md) |
 | Export scope, retained data, recovery limits, and Host transfer preparation | [DATA-AND-RECOVERY-ko.md](DATA-AND-RECOVERY-ko.md) |
