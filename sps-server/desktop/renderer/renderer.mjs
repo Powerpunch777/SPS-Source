@@ -351,12 +351,14 @@ $("#show-join-server").addEventListener("click", () => {
 
 $("#join-server-form").addEventListener("submit", (event) => run(async () => {
   event.preventDefault();
-  await window.spsDesktop.joinServer({
+  const result = await window.spsDesktop.joinServer({
     code: $("#invite-code").value,
     hub: pendingJoinHub ?? undefined,
   });
   pendingJoinHub = null;
-  setNotice("브라우저에서 초대를 수락한 뒤 이 창에서 서버 접근을 계속하세요.");
+  setNotice(result?.direct
+    ? "Invitation accepted. This computer is waiting for Host Node approval."
+    : "Complete the invitation in your browser, then return here to continue.");
 }));
 
 $("#complete-server-access").addEventListener("click", () => run(async () => {

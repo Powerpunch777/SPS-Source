@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const preloadPath = new URL("../src/preload.cjs", import.meta.url);
 const mainPath = new URL("../src/main.mjs", import.meta.url);
+const rendererPath = new URL("../renderer/renderer.mjs", import.meta.url);
 const workspacePreloadPath = new URL("../src/workspace-preload.cjs", import.meta.url);
 const registryPreloadPath = new URL("../src/registry-preload.cjs", import.meta.url);
 const previewPreloadPath = new URL("../src/plugin-preview-preload.cjs", import.meta.url);
@@ -133,9 +134,13 @@ test("accepts a signed-in desktop invitation without relying on setup-screen tim
 });
 
 test("opens the Member workspace after direct invitation acceptance", async () => {
-  const main = await readFile(mainPath, "utf8");
+  const [main, renderer] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(rendererPath, "utf8"),
+  ]);
 
   assert.match(main, /async function acceptInviteCode\(input\) \{[\s\S]*?await refreshSpsIdentityTeamContext\(\);[\s\S]*?await maybeOpenWorkspaceForCurrentAccount\(\);[\s\S]*?direct: true/);
+  assert.match(renderer, /const result = await window\.spsDesktop\.joinServer\([\s\S]*?result\?\.direct[\s\S]*?Invitation accepted\. This computer is waiting for Host Node approval\./);
 });
 
 test("normalizes the readable SPS code before direct invite acceptance", async () => {

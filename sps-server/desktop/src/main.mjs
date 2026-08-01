@@ -3170,7 +3170,7 @@ async function createMemberInvite() {
       allowedJoinTypes: "human",
       humanRole: "operator",
       expiresInMinutes: 24 * 60,
-      agentMessage: "SPS Desktop member invitation.",
+      agentMessage: null,
     },
   });
   if (typeof invitation?.token !== "string") {
@@ -3203,7 +3203,6 @@ async function listMemberInvites() {
   return invites
     .filter((invite) => (
       invite
-      && invite.inviteMessage === "SPS Desktop member invitation."
       && invite.allowedJoinTypes === "human"
       && invite.humanRole === "operator"
       && typeof invite.id === "string"

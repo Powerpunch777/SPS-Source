@@ -30,7 +30,10 @@ test("moves private team access and SPS2 invitations into Host Workspace setting
   assert.match(main, /ipcMain\.handle\("desktop:workspace-create-member-invite"/);
   assert.match(main, /async function enablePrivateTeamAccess\([\s\S]*?state\.teamAccess = \{ \.\.\.nextTeamAccess, phase: "active" \};[\s\S]*?await activateOwnerHostProfile\(\);/);
   assert.match(main, /async function createMemberInvite\(\)[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /allowedJoinTypes: "human",[\s\S]*?humanRole: "operator",[\s\S]*?agentMessage: null/);
+  assert.doesNotMatch(main, /agentMessage: "SPS Desktop member invitation\."/);
   assert.match(main, /async function listMemberInvites\(\)[\s\S]*?ownerBootstrap: true/);
+  assert.match(main, /invite\.allowedJoinTypes === "human"[\s\S]*?invite\.humanRole === "operator"/);
   assert.match(main, /async function revokeMemberInvite\(input\)[\s\S]*?ownerBootstrap: true/);
   assert.match(renderer, /const workspaceReady = account\(status\)\.signedIn[\s\S]*?isOwnerHost\(status\) \? ownerHostReady\(status\) : Boolean\(status\.signedIn\)[\s\S]*?await window\.spsDesktop\.openWorkspace\(\)/);
 });
