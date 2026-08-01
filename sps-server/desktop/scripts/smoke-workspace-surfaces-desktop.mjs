@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { mkdtemp, rm, access, readFile } from "node:fs/promises";
+import { mkdtemp, rm, access, readFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { once } from "node:events";
@@ -14,8 +14,9 @@ const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopVersion = JSON.parse(await readFile(path.join(scriptDirectory, "..", "package.json"), "utf8")).version;
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
-const hostReadyTimeoutMs = Number(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS || 240_000);
+const hostReadyTimeoutMs = Number(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS || 360_000);
 const keepE2eData = process.env.SPS_DESKTOP_E2E_KEEP_DATA === "1";
+const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
 
 if (process.platform !== "win32") {
   throw new Error("Workspace Surfaces Desktop E2E currently targets the Windows release.");
@@ -324,6 +325,16 @@ async function navigateByDomLink(cdp, suffix, label) {
   await click(cdp, selector, label);
 }
 
+async function captureScreenshot(cdp, outputPath) {
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  const result = await cdp.command("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+    captureBeyondViewport: false,
+  });
+  await writeFile(outputPath, Buffer.from(result.data, "base64"));
+}
+
 const mockIdentity = createMockIdentityServer();
 const debugPort = await findAvailablePort();
 const userDataDirectory = await mkdtemp(path.join(os.tmpdir(), "sps-workspace-surfaces-e2e-"));
@@ -491,6 +502,18 @@ try {
   );
   const teamDashboard = await api(workspaceCdp, `/api/companies/${company.id}/workspace-dashboard`);
   assert.ok(teamDashboard.widgets?.some((widget) => widget.pluginId === teamWorkplane.id), "Team Workplane Dashboard widget was not registered.");
+
+  await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/company/settings/instance/plugins`)})`);
+  await waitForPage(
+    workspaceCdp,
+    (page) => page.body.includes("Core Platform") && page.body.includes("Installed plugins remain plugin-owned surfaces"),
+    "the Core Plugins management surface",
+  );
+  if (screenshotPath) {
+    await captureScreenshot(workspaceCdp, screenshotPath);
+    console.log(`Saved SPS Workspace screenshot: ${screenshotPath}`);
+  }
+
   await navigateByDomLink(workspaceCdp, "/inbox", "Inbox navigation");
   await waitForPage(workspaceCdp, (page) => page.body.includes("Inbox") && page.body.includes("Plugin reports"), "the Workspace Inbox screen");
   await api(workspaceCdp, `/api/companies/${company.id}/workspace-inbox`);
