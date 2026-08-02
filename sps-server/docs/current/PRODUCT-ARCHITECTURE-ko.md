@@ -71,11 +71,12 @@ Settings > Plugins contains:
 - Personal plugin staging, technical checks, and activation.
 - Plugin-specific settings and the Marketplace Assistant.
 
-`Plugin Builder`는 plugin-management 화면이 아니라 활성 플러그인이 제공하는
+`Plugin Builder`는 plugin-management 화면이 아니라 번들 플러그인이 제공하는
 실제 제작 화면이다. 따라서 활성 상태에서는 Workspace navigation에 `Plugin
 Builder`를 표시할 수 있다. 검색과 상세 조회는 Core Marketplace가 담당하고,
 설치, 업데이트, 활성화, 비활성화, 삭제와 Registry 관리는 계속
-**Settings > Plugins**에서만 수행한다.
+**Settings > Plugins**에서만 수행한다. Builder의 제작 화면이 보인다고 해서
+플러그인이 설치되거나 활성화되는 것은 아니다.
 
 An enabled plugin may still contribute its *actual work surface* to the
 Workspace. For example, a Team Workplane may show Rooms or Tasks. That is not
@@ -104,7 +105,9 @@ plugin.
 
 Plugin Builder is a bundled product plugin, not a Core workflow rule. It is the
 first reference implementation of the authoring platform and remains separate
-from Core Marketplace search.
+from Core Marketplace search. The bundled plugin is enabled for a new Workspace
+as the initial discovery/authoring tool; it does not become a general workflow
+or a hidden Core rule.
 
 The user works in the existing SPS window:
 
@@ -125,8 +128,12 @@ The result is shown in a separate **Plugin Preview** window:
 
 Core provides the generic detached-window and isolated-execution capability.
 Plugin Builder chooses to use it; another authoring plugin may use the same
-capability differently. Builder can create a package and Local Registry release
-but cannot install, enable, update, disable, or remove a plugin.
+capability differently. The current Builder foundation records append-only
+authoring evidence, inspects build/test evidence, opens an isolated Preview,
+and creates a candidate `.spsplugin` package for a Local Development Registry.
+It cannot install, enable, update, disable, or remove a plugin. Public upload,
+publisher review, signing into the Official Registry, and community discovery
+remain future productization work rather than completed Builder features.
 
 ## Personal Plugin Path
 
@@ -162,6 +169,21 @@ Phase 1 provides:
 - Registry refresh independent of a Desktop update. A newly verified plugin
   can appear after catalog refresh.
 - Compatibility blocking when a plugin needs a newer SPS Desktop/Core version.
+
+### Implementation status
+
+Core Marketplace search and plugin details are implemented by the SPS
+Marketplace route/service and are covered by Core route/service tests and the
+packaged Marketplace MCP smoke test. The Core-owned Marketplace Assistant is
+also implemented: it uses the selected user-authorized AI adapter and exposes
+only the read-only catalog tools above. The Assistant can search, compare, and
+recommend; it cannot install or change plugin state.
+
+The remaining Marketplace work is candidate-specific acceptance and registry
+productization: verify the complete search/detail/Assistant flow against the
+release tuple, refresh and compatibility behavior, and publish the evidence.
+This is validation and release work, not implementation of the Marketplace
+feature itself.
 
 Phase 1 does not provide public self-service uploads, payment, sales,
 ratings, refunds, or a community marketplace. A future Developer Portal may
@@ -217,8 +239,14 @@ Implemented foundation:
 
 Still required before the first complete product release:
 
-1. Implement Core Marketplace search, details, and adapter-backed Assistant.
-2. Extend Plugin Builder into the authoring and personal-plugin test flow.
+1. Run the Marketplace search/detail/Assistant acceptance flow against the
+   exact release tuple and publish its evidence. The feature implementation is
+   already present; this item is candidate verification and release gating.
+2. Run the complete Plugin Builder authoring -> build evidence -> isolated
+   Preview -> package -> explicit Host Local Registry review flow against the
+   exact release tuple. The authoring foundation is present; public submission,
+   publisher review, Official Registry signing, and community marketplace
+   lifecycle are intentionally outside Phase 1.
 3. Complete a physical fresh-machine Host restore acceptance test with a real
    transfer bundle and publish the evidence.
 4. Complete direct, two-computer Host/Member acceptance tests and publish a

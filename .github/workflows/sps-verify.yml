@@ -163,6 +163,21 @@ jobs:
             sps-server/desktop/package-lock.json
             external/sps-plugin-sdk/package-lock.json
 
+      - name: Install pinned pnpm for SPS Core runtime packaging
+        run: npm install --global pnpm@11.9.0
+
+      - name: Install SPS Core dependencies for Desktop runtime packaging
+        working-directory: external/sps-core
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SPS Core package prerequisites for Desktop E2E
+        working-directory: external/sps-core
+        run: |
+          pnpm --filter @paperclipai/plugin-sdk run build
+          pnpm --filter "@paperclipai/adapter-*" run build
+          pnpm --filter @paperclipai/hermes-paperclip-adapter run build
+          pnpm --filter paperclipai run build
+
       - name: Install SPS Desktop dependencies
         working-directory: sps-server/desktop
         run: npm ci
@@ -170,6 +185,50 @@ jobs:
       - name: Test SPS Desktop invite and update flow
         working-directory: sps-server/desktop
         run: npm test
+
+      - name: Run isolated Desktop bootstrap E2E
+        working-directory: sps-server/desktop
+        run: npm run test:e2e:bootstrap
+
+      - name: Prepare Owner Host runtime for Desktop E2E
+        working-directory: sps-server/desktop
+        run: npm run prepare:owner-host-runtime
+
+      - name: Build unpacked Windows Desktop for E2E
+        working-directory: sps-server/desktop
+        run: npx electron-builder --win dir --publish never
+
+      - name: Add E2E update provider configuration
+        working-directory: sps-server/desktop
+        shell: pwsh
+        run: |
+          @"
+          owner: Powerpunch777
+          repo: SPS-Desktop-Releases
+          provider: github
+          releaseType: release
+          channel: latest
+          updaterCacheDirName: '@spsdesktop-updater'
+          "@ | Set-Content -LiteralPath 'dist/win-unpacked/resources/app-update.yml' -Encoding utf8NoBOM
+
+      - name: Run packaged Desktop workspace surfaces E2E
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: npm run test:e2e:workspace-surfaces
+
+      - name: Run packaged Desktop plugin preview E2E
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+        run: npm run test:e2e:plugin-preview
+
+      - name: Run packaged Desktop Host plugin lifecycle E2E
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+        run: npm run test:e2e:host-plugin-lifecycle
 
       - name: Test SPS node signing, command lease, and capability flow
         working-directory: sps-server/desktop-node

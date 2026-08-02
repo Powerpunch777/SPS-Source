@@ -2,63 +2,102 @@
 
 최종 갱신: 2026-08-02
 
-현재 개발 후보의 기계 판독 기준은
+기계가 읽는 후보 기준은
 [`../../release/support-matrix.json`](../../release/support-matrix.json)이며,
-사람이 읽는 정확한 후보 목록은 여기에서 자동 생성되는
-[`CURRENT-CANDIDATE.md`](CURRENT-CANDIDATE.md)이다.
-이 문서는 사람이 이해하기 위한 배포 정책 요약이다.
-이 문서 자체는 현재 후보의 두 컴퓨터 물리 인수 완료를 주장하지 않는다.
+사람이 확인하는 현재 후보 표는 자동 생성 문서인
+[`CURRENT-CANDIDATE.md`](CURRENT-CANDIDATE.md)다.
 
-## 현재 채널
+이 문서는 배포 정책을 설명한다. 문서에 테스트 결과를 적었다는 이유만으로
+개발 후보가 stable 릴리스가 되지는 않는다.
 
-| 채널 | 버전 기준 | 용도 | 자동 업데이트 | 서명 |
-| --- | --- | --- | --- | --- |
-| Official release | 릴리스 저장소의 최신 서명 버전 | 제한된 실제 베타 사용 | 지원 | 서명된 릴리스만 허용 |
-| Preview | 별도 Preview 태그 | 설치와 첫 실행 확인 | 미지원 | 개발 후보, 미서명 가능 |
-| Local candidate | `CURRENT-CANDIDATE.md` | 개발·패키지·회귀 검증 | 해당 없음 | 개발 환경 기준 |
+## 현재 후보
 
-Official release는 `Powerpunch777/SPS-Desktop-Releases`에만 게시한다.
-이 저장소의 `latest.yml`, 설치 파일, blockmap은 반드시 같은 서명 빌드에서 함께
-생성되어야 한다.
-
-Preview는 `Powerpunch777/SPS-Desktop-Preview`에 별도로 게시한다. Preview에는
-자동 업데이트 메타데이터를 넣지 않으며, 실제 작업 또는 유일한 프로젝트 데이터로
-사용하지 않는다.
-
-## 현재 기술 기준
-
-| 항목 | 기준 |
+| 항목 | 값 |
 | --- | --- |
-| SPS Core | `release/support-matrix.json`에 고정된 revision |
+| 상태 | `development-candidate` |
+| SPS Desktop | `0.4.111` |
+| SPS Core | `d4f28188ce4b11eed09c1b3ed7c0dcbf4e911632` |
+| Plugin SDK | `@sonparkserver/plugin-sdk@0.11.0` |
 | Plugin API | `1` |
-| Extension Profile | 기본 `2.0`, 기존 패키지용 `1.0` 호환 경로 유지 |
+| Extension Profile | `1.0`, `2.0` |
 | 운영체제 | Windows 10/11 x64 |
 | 원격 연결 | Tailscale |
 
-## 설치와 삭제
+정확한 SDK revision과 번들 플러그인 버전은 `CURRENT-CANDIDATE.md`를 따른다.
 
-- 설치 전에는 설치 파일의 게시 위치와 SHA-256을 확인한다.
-- 일반적인 앱 제거는 Desktop 실행 파일을 지우지만 Owner Vault를 자동 삭제하지
-  않는다. 그래도 설치 전에는 Host가 Vault 백업을 만들어야 한다.
-- 앱을 다시 설치하면 남아 있는 Vault를 사용해 기존 Host 정보를 다시 읽을 수
-  있다. 로그인 세션, CLI 로그인, Tailscale 연결 상태는 별도 확인이 필요하다.
-- 완전한 데이터 삭제와 Member 제거는 별도 제품 기능과 기록 보존 정책에 따라
-  수행한다. 앱 제거만으로 프로젝트 폴더나 Host 외부 Source는 지워지지 않는다.
+## 배포 채널
 
-## 정식 배포 전 필수 게이트
+| 채널 | 용도 | 자동 업데이트 | 요구사항 |
+| --- | --- | --- | --- |
+| Stable | 제한된 실제 사용자 배포 | 사용 | 전체 자동 게이트, 같은 후보의 물리 2대 증거, 유효한 Windows 코드 서명 |
+| Preview | 설치와 첫 실행 검증 | 사용 안 함 | 개발 후보 표시, 별도 Preview 저장소, 실제 작업 데이터 사용 금지 |
+| Local candidate | 개발·패키징·E2E | 사용 안 함 | 로컬 검증 전용, 공개 배포 증거로 승격하지 않음 |
 
-1. 두 대의 실제 Windows 컴퓨터에서 Host/Member 가입, Node 승인, Source 접근,
-   재시작과 철회를 확인한다.
-2. 업데이트 전후의 플러그인 호환성과 롤백을 확인한다.
-3. 코드 서명 인증서로 설치 파일을 서명하고 Authenticode 검증을 통과한다.
-4. 설치 파일, blockmap, `latest.yml`, 런타임 팩, 릴리스 노트를 같은 버전으로
-   게시한다.
-5. 실제 사람이 Desktop의 로그인, 로딩, 오류, 취소, 복구 화면을 점검한다.
+Stable은 `Powerpunch777/SPS-Desktop-Releases`에만 게시한다. 설치 파일,
+blockmap, `latest.yml`, 릴리스 manifest와 Agent Runtime Pack 목록은 동일한
+빌드에서 생성되어야 하며 기존 태그의 파일을 덮어쓰지 않는다.
 
-과거 후보에서 수집한 물리 테스트 증거는 해당 후보에만 적용한다. 현재 후보의
-Desktop 버전과 Core·SDK revision이 모두 일치하지 않으면 정식 배포 증거로
-승격하지 않는다. 현재 후보에 대한 새 물리 인수 증거는 이 문서에 기록하지
-않는다.
+## Stable 승격 게이트
 
-자세한 Preview 운영 규칙은
-[RELEASE-AND-PREVIEW-POLICY-ko.md](RELEASE-AND-PREVIEW-POLICY-ko.md)를 따른다.
+### 1. 자동 검증
+
+재사용 워크플로 `.github/workflows/sps-verify.yml`이 모두 통과해야 한다.
+
+- SPS Core 타입 검사, 인증·Node·Marketplace 경계, UI production build
+- Public Plugin SDK와 모든 번들 플러그인 검사
+- SPS Desktop과 Desktop Node 테스트
+- 실제 Electron을 실행하는 네 Windows E2E
+  - 첫 실행 및 로그인 화면
+  - 패키지된 Workspace surface
+  - 격리 Plugin Preview
+  - Host 플러그인 설치·활성화·비활성화·제거 생명주기
+
+릴리스 workflow는 이 재사용 검증 job이 끝나기 전에는 서명·게시 job을
+시작할 수 없다.
+
+### 2. 같은 후보의 물리 2대 증거
+
+자동 테스트와 별도로 Host와 Member 두 실제 Windows 컴퓨터에서 아래를
+확인해야 한다.
+
+- 초대와 참여
+- 원격 Agent Runtime 실행
+- Host Source 편집
+- 네트워크 단절 후 복구
+- Node와 Runtime 권한 철회
+- 빈 Host로의 복원
+
+증거의 Desktop, Core, SDK, Source revision은 게시할 후보와 정확히 같아야
+한다. 과거 후보의 물리 테스트는 새 후보에 재사용할 수 없다.
+
+### 3. 서명과 불변 게시
+
+- 코드 서명 인증서로 설치 파일을 서명한다.
+- Windows Authenticode 상태가 `Valid`인지 다시 확인한다.
+- 설치 파일의 SHA-256과 릴리스 manifest를 게시한다.
+- 설치 파일, blockmap, `latest.yml`, manifest, Runtime Pack 목록을 같은
+  버전으로 게시한다.
+- 이미 존재하는 stable 태그는 수정하지 않고 새 버전을 만든다.
+
+## 현재 0.4.111의 증거 상태
+
+2026-08-02 로컬 검증에서 Desktop 테스트 `296/296`, 후보 패키징, 그리고
+네 Electron E2E가 통과했다. 이 결과는 자동 경로가 동작한다는 개발 증거다.
+
+아직 같은 최종 Source revision을 사용한 Host/Member 물리 2대 증거와
+Windows 코드 서명 결과가 없으므로 `0.4.111`은 계속
+`development-candidate`다. GitHub Actions 실행도 계정 결제 또는 spending
+limit 문제로 runner가 시작되지 않으면 통과로 간주하지 않는다.
+
+## 설치와 데이터
+
+- 일반 제거는 SPS Desktop 실행 파일만 제거하고 Owner Vault를 자동 삭제하지
+  않는다.
+- 재설치 전 Host는 Vault export를 만들어야 한다.
+- 로그인 세션, CLI 로그인, Tailscale 상태는 Vault 복원과 별도로 다시 확인할
+  수 있다.
+- 완전 삭제와 Member 제거는 제품의 별도 삭제 정책과 감사 기록 규칙을 따른다.
+
+Preview 운영 규칙은
+[`RELEASE-AND-PREVIEW-POLICY-ko.md`](RELEASE-AND-PREVIEW-POLICY-ko.md)를
+따른다.
