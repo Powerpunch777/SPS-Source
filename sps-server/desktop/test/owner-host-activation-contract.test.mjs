@@ -23,14 +23,17 @@ test("Owner Host creation succeeds only after activation is ready", async () => 
 });
 
 test("local Owner Host transport proof does not depend on profile activation order", async () => {
-  const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
+  const [main, accountController] = await Promise.all([
+    readFile(new URL("../src/main.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/desktop-account-controller.mjs", import.meta.url), "utf8"),
+  ]);
 
   assert.match(
-    main,
-    /if \(\s*ownerHostStatus\.url\s*&& new URL\(hubOrigin\)\.origin === requireSpsOwnerHostOrigin\(ownerHostStatus\.url\)\s*\) \{\s*headers\[SPS_DESKTOP_ACCESS_HEADER\] = ownerHostDesktopAccessToken;/,
+    accountController,
+    /if \(\s*ownerHostStatus\.url\s*&& new URL\(hubOrigin\)\.origin === requireOwnerHostOrigin\(ownerHostStatus\.url\)\s*\) \{\s*headers\[desktopAccessHeader\] = getOwnerHostDesktopAccessToken\(\);/,
   );
   assert.doesNotMatch(
-    main,
+    accountController,
     /isOwnerHostProfile\(\)\s*&& ownerHostStatus\.url\s*&& new URL\(hubOrigin\)/,
   );
   assert.match(

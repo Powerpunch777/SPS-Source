@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const preloadPath = new URL("../src/preload.cjs", import.meta.url);
 const mainPath = new URL("../src/main.mjs", import.meta.url);
+const accountControllerPath = new URL("../src/desktop-account-controller.mjs", import.meta.url);
 const rendererPath = new URL("../renderer/renderer.mjs", import.meta.url);
 const workspacePreloadPath = new URL("../src/workspace-preload.cjs", import.meta.url);
 const registryPreloadPath = new URL("../src/registry-preload.cjs", import.meta.url);
@@ -145,11 +146,14 @@ test("keeps the Hub address from a desktop invitation through member join", asyn
 });
 
 test("accepts a signed-in desktop invitation without relying on setup-screen timing", async () => {
-  const main = await readFile(mainPath, "utf8");
+  const [main, accountController] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(accountControllerPath, "utf8"),
+  ]);
 
   assert.match(main, /async function acceptDesktopJoinLink\(join\) \{[\s\S]*?acceptInviteCode\(\{ code: join\.code, hub: join\.hub \}\)[\s\S]*?maybeOpenWorkspaceForCurrentAccount\(\)/);
   assert.match(main, /function sendJoinToRenderer\(value\) \{[\s\S]*?pendingJoin = join;[\s\S]*?void acceptDesktopJoinLink\(join\);/);
-  assert.match(main, /if \(pendingJoin\) \{[\s\S]*?await acceptDesktopJoinLink\(pendingJoin\);[\s\S]*?\} else \{[\s\S]*?await maybeOpenWorkspaceForCurrentAccount\(\);/);
+  assert.match(accountController, /const pendingJoin = getPendingJoin\(\);[\s\S]*?if \(pendingJoin\) await acceptDesktopJoinLink\(pendingJoin\);[\s\S]*?else await maybeOpenWorkspaceForCurrentAccount\(\);/);
   assert.match(main, /Before SPS account sign-in, retain the full routed invitation in the[\s\S]*?if \(!currentDesktopAccount\(\) \|\| isOwnerHostProfile\(\)\) return null;/);
 });
 
@@ -164,10 +168,10 @@ test("opens the Member workspace after direct invitation acceptance", async () =
 });
 
 test("normalizes the readable SPS code before direct invite acceptance", async () => {
-  const main = await readFile(mainPath, "utf8");
+  const accountController = await readFile(accountControllerPath, "utf8");
 
-  assert.match(main, /const normalizedInviteToken = normalizeSpsInviteToken\(inviteToken\);/);
-  assert.match(main, /\/api\/invites\/\$\{encodeURIComponent\(normalizedInviteToken\)\}\/accept/);
+  assert.match(accountController, /const normalizedInviteToken = normalizeInviteToken\(inviteToken\);/);
+  assert.match(accountController, /\/api\/invites\/\$\{encodeURIComponent\(normalizedInviteToken\)\}\/accept/);
 });
 
 test("keeps the Registry window on a narrow Owner-only preload bridge", async () => {
@@ -232,16 +236,14 @@ test("keeps Official Extensions discovery separate from Owner-only Registry inst
 });
 
 test("notifies the renderer when SPS Identity Desktop sign-in state changes", async () => {
-  const main = await readFile(mainPath, "utf8");
+  const [main, accountController] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(accountControllerPath, "utf8"),
+  ]);
 
-  assert.match(
-    main,
-    /async function startDesktopAccountSignIn\(\) \{[\s\S]*?startSpsDesktopIdentitySignIn\([\s\S]*?recordDesktopAccountAttempt\("succeeded"\)[\s\S]*?sendDesktopAccountStatus\(\);/,
-  );
-  assert.match(
-    main,
-    /async function signOutDesktopAccount\(\) \{[\s\S]*?await disconnectCurrentNode\(\);[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?await persistState\(\{ rememberActiveConnection: false \}\);[\s\S]*?sendDesktopAccountStatus\(\);[\s\S]*?return \{ \.\.\.publicStatus\(\), nodeDisconnect \};/,
-  );
+  assert.match(main, /createSpsDesktopAccountController\(\{[\s\S]*?onStatusChanged: sendDesktopAccountStatus/);
+  assert.match(accountController, /async function startSignIn\(\)[\s\S]*?recordAttempt\("succeeded"\)[\s\S]*?notifyStatus\(\);/);
+  assert.match(accountController, /async function signOut\(\)[\s\S]*?await disconnectCurrentNode\(\)[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?persistState\(\{ rememberActiveConnection: false \}\)[\s\S]*?notifyStatus\(\);/);
 });
 
 test("resumes a pending legacy Owner Host adoption after Desktop restarts", async () => {
@@ -267,25 +269,25 @@ test("reopens an accepted Member workspace on Desktop restart", async () => {
 });
 
 test("returns an expired Member refresh token to the SPS sign-in screen without losing its team connection", async () => {
-  const main = await readFile(mainPath, "utf8");
+  const accountController = await readFile(accountControllerPath, "utf8");
 
   assert.match(
-    main,
-    /async function ensureDesktopIdentityAccessToken\(\)[\s\S]*?isExpiredSpsDesktopRefreshToken\(error\)[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?recordDesktopAccountAttempt\("failed", "SPS sign-in expired\. Sign in again to continue\."\)[\s\S]*?persistState\(\{ rememberActiveConnection: false \}\)/,
+    accountController,
+    /async function ensureAccessToken\(\)[\s\S]*?isExpiredRefreshToken\(error\)[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?recordAttempt\("failed", "SPS sign-in expired\. Sign in again to continue\."\)[\s\S]*?persistState\(\{ rememberActiveConnection: false \}\)/,
   );
 });
 
 test("shares one in-flight Desktop token refresh across concurrent SPS requests", async () => {
-  const main = await readFile(mainPath, "utf8");
+  const accountController = await readFile(accountControllerPath, "utf8");
 
-  assert.match(main, /let desktopIdentityRefreshPromise = null;/);
+  assert.match(accountController, /let refreshPromise = null;/);
   assert.match(
-    main,
-    /if \(!desktopIdentityRefreshPromise\) \{[\s\S]*?desktopIdentityRefreshPromise = \(async \(\) => \{[\s\S]*?withSpsDesktopRefreshLock\([\s\S]*?refreshSpsDesktopIdentity\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?desktopIdentityRefreshPromise = null;/,
+    accountController,
+    /if \(!refreshPromise\) \{[\s\S]*?refreshPromise = \(async \(\) => withRefreshLock\([\s\S]*?refreshIdentity\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?refreshPromise = null;/,
   );
-  assert.match(main, /const persistedState = await loadState\(app\.getPath\("userData"\)\);/);
-  assert.match(main, /persistedAccount\?\.refreshToken && persistedAccount\.refreshToken !== account\.refreshToken/);
-  assert.match(main, /return await desktopIdentityRefreshPromise;/);
+  assert.match(accountController, /const persistedState = await loadPersistedState\(\);/);
+  assert.match(accountController, /persistedAccount\?\.refreshToken && persistedAccount\.refreshToken !== account\.refreshToken/);
+  assert.match(accountController, /return await refreshPromise;/);
 });
 
 test("keeps central OAuth secrets out of the Desktop renderer and uses SPS Identity", async () => {
@@ -311,15 +313,15 @@ test("establishes an SPS Identity Workspace session for every Owner Host", async
 });
 
 test("uses the Desktop-only access token while the local Host creates its Identity session", async () => {
-  const main = await readFile(mainPath, "utf8");
+  const accountController = await readFile(accountControllerPath, "utf8");
 
   assert.match(
-    main,
-    /async function establishSpsIdentityCoreSession\(hubOrigin\)[\s\S]*?ownerHostStatus\.url[\s\S]*?new URL\(hubOrigin\)\.origin === requireSpsOwnerHostOrigin\(ownerHostStatus\.url\)[\s\S]*?headers\[SPS_DESKTOP_ACCESS_HEADER\] = ownerHostDesktopAccessToken/,
+    accountController,
+    /async function establishCoreSession\(hubOrigin\)[\s\S]*?ownerHostStatus\.url[\s\S]*?new URL\(hubOrigin\)\.origin === requireOwnerHostOrigin\(ownerHostStatus\.url\)[\s\S]*?headers\[desktopAccessHeader\] = getOwnerHostDesktopAccessToken\(\)/,
   );
   assert.doesNotMatch(
-    main,
-    /async function establishSpsIdentityCoreSession\(hubOrigin\)[\s\S]*?isOwnerHostProfile\(\)\s*&& ownerHostStatus\.url/,
+    accountController,
+    /async function establishCoreSession\(hubOrigin\)[\s\S]*?isOwnerHostProfile/,
   );
 });
 
@@ -332,15 +334,18 @@ test("refreshes Member Node metadata when reopening Workspace", async () => {
 });
 
 test("marks Desktop-owned Core mutations with their exact trusted origin", async () => {
-  const main = await readFile(mainPath, "utf8");
+  const [main, accountController] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(accountControllerPath, "utf8"),
+  ]);
 
   assert.match(
-    main,
-    /async function establishSpsIdentityCoreSession\(hubOrigin\)[\s\S]*?origin: new URL\(hubOrigin\)\.origin/,
+    accountController,
+    /async function establishCoreSession\(hubOrigin\)[\s\S]*?origin: new URL\(hubOrigin\)\.origin/,
   );
   assert.match(
-    main,
-    /async function acceptSpsIdentityInvite\(hubUrl, inviteToken\)[\s\S]*?const origin = requireSpsHubOrigin\(hubUrl\);[\s\S]*?origin,[\s\S]*?cookie:/,
+    accountController,
+    /async function acceptIdentityInvite\(hubUrl, inviteToken\)[\s\S]*?const origin = requireHubOrigin\(hubUrl\);[\s\S]*?origin,[\s\S]*?cookie:/,
   );
   assert.match(
     main,

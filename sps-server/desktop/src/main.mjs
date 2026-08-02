@@ -62,6 +62,7 @@ import {
   renameSpsWorkspaceSource,
 } from "./workspace-sources.mjs";
 import { createSpsDesktopUpdateController } from "./desktop-update-controller.mjs";
+import { createSpsDesktopAccountController } from "./desktop-account-controller.mjs";
 import {
   createSpsDesktopAccessToken,
   isSpsDesktopTechnicalHostRequest,
@@ -209,8 +210,7 @@ const activeDeveloperProjectOperations = new Set();
 let officialExtensionsWindow = null;
 let state = emptyState();
 let pendingAuth = null;
-let pendingDesktopAccount = null;
-let desktopAccountError = null;
+let desktopAccountController = null;
 let heartbeatTimer = null;
 let commandPollTimer = null;
 let commandPollInFlight = false;
@@ -252,7 +252,6 @@ let lastTeamWorkplaneBindingUrl = null;
 let teamWorkplaneSyncPromise = null;
 let lastTeamWorkplaneSyncAttempt = null;
 const TEAM_WORKPLANE_SYNC_RETRY_MS = 30_000;
-const SPS_REQUEST_TIMEOUT_MS = 15_000;
 // This is never persisted. It separates the visible SPS Desktop Workspace from
 // a normal browser pointed at the loopback Owner Host.
 const ownerHostDesktopAccessToken = createSpsDesktopAccessToken();
@@ -377,182 +376,24 @@ function currentBoardToken() {
   return state.encryptedBoardApiToken ? decrypt(state.encryptedBoardApiToken) : null;
 }
 
-function desktopAccountFromEncryptedValue(encryptedValue) {
-  if (!encryptedValue) return null;
-  try {
-    const parsed = JSON.parse(decrypt(encryptedValue));
-    if (typeof parsed?.subject !== "string" || typeof parsed?.name !== "string") return null;
-    return {
-      subject: parsed.subject,
-      name: parsed.name,
-      email: typeof parsed.email === "string" ? parsed.email : null,
-      picture: typeof parsed.picture === "string" ? parsed.picture : null,
-      verifiedAt: typeof parsed.verifiedAt === "string" ? parsed.verifiedAt : null,
-      accessToken: typeof parsed.accessToken === "string" ? parsed.accessToken : null,
-      refreshToken: typeof parsed.refreshToken === "string" ? parsed.refreshToken : null,
-      accessTokenExpiresAt: typeof parsed.accessTokenExpiresAt === "string" ? parsed.accessTokenExpiresAt : null,
-      deviceId: typeof parsed.deviceId === "string" ? parsed.deviceId : null,
-      identityUrl: typeof parsed.identityUrl === "string" ? parsed.identityUrl : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function currentDesktopAccount() {
-  return desktopAccountFromEncryptedValue(state.encryptedDesktopAccount);
+  return desktopAccountController?.currentAccount() ?? null;
 }
 
 function currentDesktopAccountSubject() {
   return currentDesktopAccount()?.subject ?? null;
 }
 
-let desktopIdentityRefreshPromise = null;
-
 async function ensureDesktopIdentityAccessToken() {
-  const account = currentDesktopAccount();
-  if (!account?.accessToken || !account?.refreshToken || !account?.deviceId) return null;
-  const expiresAt = Date.parse(account.accessTokenExpiresAt ?? "");
-  if (Number.isFinite(expiresAt) && expiresAt > Date.now() + 2 * 60 * 1000) {
-    return account.accessToken;
-  }
-  if (!desktopIdentityRefreshPromise) {
-    desktopIdentityRefreshPromise = (async () => {
-      return await withSpsDesktopRefreshLock({
-        directory: app.getPath("userData"),
-        action: async () => {
-          // Another SPS Desktop process may have completed token rotation while
-          // this process waited for the lock. Use its replacement instead of
-          // treating the consumed token as an account-wide sign-out.
-          const persistedState = await loadState(app.getPath("userData"));
-          const persistedAccount = desktopAccountFromEncryptedValue(persistedState.encryptedDesktopAccount);
-          const currentAccount = persistedAccount?.refreshToken && persistedAccount.refreshToken !== account.refreshToken
-            ? persistedAccount
-            : account;
-          const persistedExpiry = Date.parse(currentAccount.accessTokenExpiresAt ?? "");
-          if (Number.isFinite(persistedExpiry) && persistedExpiry > Date.now() + 2 * 60 * 1000) {
-            state.encryptedDesktopAccount = persistedState.encryptedDesktopAccount;
-            return currentAccount.accessToken;
-          }
-
-          let refreshed;
-          try {
-            refreshed = await refreshSpsDesktopIdentity({
-              identityUrl: currentAccount.identityUrl || configuredDesktopIdentityUrl(),
-              refreshToken: currentAccount.refreshToken,
-              deviceId: currentAccount.deviceId,
-            });
-          } catch (error) {
-            if (isExpiredSpsDesktopRefreshToken(error)) {
-              // Keep the accepted team connection and local Node identity so a fresh
-              // sign-in can resume this computer without making the teammate join
-              // again. The stale token itself must never keep the UI looking signed in.
-              state.encryptedDesktopAccount = null;
-              state.companies = [];
-              state.projects = [];
-              pendingAuth = null;
-              stopNodeScheduling();
-              resetNodeRuntimeStatus();
-              recordDesktopAccountAttempt("failed", "SPS sign-in expired. Sign in again to continue.");
-              await persistState({ rememberActiveConnection: false });
-              sendDesktopAccountStatus();
-              throw new Error("SPS sign-in expired. Sign in again to continue.");
-            }
-            throw error;
-          }
-          state.encryptedDesktopAccount = encrypt(JSON.stringify({
-            ...currentAccount,
-            ...refreshed,
-            identityUrl: currentAccount.identityUrl || configuredDesktopIdentityUrl(),
-            verifiedAt: currentAccount.verifiedAt || new Date().toISOString(),
-          }));
-          await persistState();
-          return refreshed.accessToken;
-        }
-      });
-    })().finally(() => {
-      desktopIdentityRefreshPromise = null;
-    });
-  }
-  return await desktopIdentityRefreshPromise;
-}
-
-function spsIdentitySessionCookieValue(response) {
-  const setCookies = typeof response.headers.getSetCookie === "function"
-    ? response.headers.getSetCookie()
-    : [response.headers.get("set-cookie")].filter(Boolean);
-  for (const header of setCookies) {
-    const match = String(header).match(/(?:^|,)\s*sps_identity_session=([^;]+)/i);
-    if (match?.[1]) return decodeURIComponent(match[1]);
-  }
-  return null;
-}
-
-function spsRequestTimeoutSignal() {
-  return typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(SPS_REQUEST_TIMEOUT_MS) : undefined;
-}
-
-function spsRequestError(error, fallback) {
-  if (error?.name === "TimeoutError" || error?.name === "AbortError") return new Error(fallback);
-  return error;
+  return desktopAccountController.ensureAccessToken();
 }
 
 async function establishSpsIdentityCoreSession(hubOrigin) {
-  const accessToken = await ensureDesktopIdentityAccessToken();
-  if (!accessToken) return null;
-  const headers = {
-    authorization: `Bearer ${accessToken}`,
-    accept: "application/json",
-    origin: new URL(hubOrigin).origin,
-  };
-  // During the private-team hand-off, the Owner exchanges its SPS Identity
-  // session with the same loopback Core. That protected local request needs
-  // the launch-scoped Desktop token; remote Member Hubs never receive it.
-  if (
-    ownerHostStatus.url
-    && new URL(hubOrigin).origin === requireSpsOwnerHostOrigin(ownerHostStatus.url)
-  ) {
-    headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
-  }
-  let response;
-  try {
-    response = await fetch(new URL("/api/sps-identity/session", `${hubOrigin}/`), {
-      method: "POST",
-      headers,
-      signal: spsRequestTimeoutSignal(),
-    });
-  } catch (error) {
-    throw spsRequestError(error, "SPS sign-in session timed out. Sign in again and retry.");
-  }
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    throw new Error(payload?.error || "SPS Server could not accept the SPS Identity session.");
-  }
-  const token = spsIdentitySessionCookieValue(response);
-  if (!token) throw new Error("SPS Server did not create a secure SPS Identity session.");
-  const target = new URL(hubOrigin);
-  await session.defaultSession.cookies.set({
-    url: target.origin,
-    name: "sps_identity_session",
-    value: token,
-    httpOnly: true,
-    secure: target.protocol === "https:",
-    sameSite: "lax",
-    expirationDate: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
-  });
-  return token;
+  return desktopAccountController.establishCoreSession(hubOrigin);
 }
 
 async function clearSpsIdentityCoreSessions() {
-  const cookies = await session.defaultSession.cookies.get({ name: "sps_identity_session" });
-  await Promise.all(cookies.map(async (cookie) => {
-    const hostname = String(cookie.domain ?? "").replace(/^\./, "");
-    if (!hostname) return;
-    const protocol = cookie.secure ? "https:" : "http:";
-    const pathname = String(cookie.path ?? "/").startsWith("/") ? cookie.path : `/${cookie.path}`;
-    await session.defaultSession.cookies.remove(`${protocol}//${hostname}${pathname}`, "sps_identity_session").catch(() => undefined);
-  }));
+  return desktopAccountController.clearCoreSessions();
 }
 
 function isSpsIdentityRemoteProfile(profile = state.profile) {
@@ -589,28 +430,7 @@ async function refreshSpsIdentityTeamContext() {
 }
 
 async function acceptSpsIdentityInvite(hubUrl, inviteToken) {
-  const sessionCookie = await establishSpsIdentityCoreSession(hubUrl);
-  if (!sessionCookie) return null;
-  const normalizedInviteToken = normalizeSpsInviteToken(inviteToken);
-  if (!normalizedInviteToken) {
-    throw new Error("Enter a valid SPS invitation code.");
-  }
-  const origin = requireSpsHubOrigin(hubUrl);
-  const response = await fetch(new URL(`/api/invites/${encodeURIComponent(normalizedInviteToken)}/accept`, `${hubUrl}/`), {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      origin,
-      cookie: `sps_identity_session=${encodeURIComponent(sessionCookie)}`,
-    },
-    body: JSON.stringify({ requestType: "human" }),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(payload?.error || "SPS Server could not accept this team invitation.");
-  }
-  return payload;
+  return desktopAccountController.acceptIdentityInvite(hubUrl, inviteToken);
 }
 
 function rememberCurrentAccountConnection() {
@@ -710,14 +530,6 @@ function safeDesktopAccountError(error) {
   return message.slice(0, 360);
 }
 
-function recordDesktopAccountAttempt(status, error = null) {
-  state.desktopAccountLastAttempt = {
-    status,
-    at: new Date().toISOString(),
-    error: error ? safeDesktopAccountError(error) : null,
-  };
-}
-
 function recordDesktopJoinAttempt(status, error = null) {
   state.desktopJoinLastAttempt = {
     status,
@@ -748,99 +560,11 @@ function openSpsExternalUrl(value) {
 }
 
 async function startDesktopAccountSignIn() {
-  if (pendingDesktopAccount) return publicStatus();
-  const identityUrl = configuredDesktopIdentityUrl();
-  const deviceId = ensureDesktopDeviceId();
-  desktopAccountError = null;
-  recordDesktopAccountAttempt("pending");
-  await persistState();
-  let signIn;
-  try {
-    signIn = await startSpsDesktopIdentitySignIn({
-      identityUrl,
-      deviceId,
-      openExternal: openSpsExternalUrl,
-    });
-  } catch (error) {
-    desktopAccountError = safeDesktopAccountError(error);
-    recordDesktopAccountAttempt("failed", error);
-    await persistState();
-    sendDesktopAccountStatus();
-    throw error;
-  }
-  pendingDesktopAccount = signIn;
-  sendDesktopAccountStatus();
-  void signIn.result.then(async (account) => {
-    state.encryptedDesktopAccount = encrypt(JSON.stringify({
-      ...account,
-      identityUrl,
-      verifiedAt: new Date().toISOString(),
-    }));
-    if (pendingDesktopAccount === signIn) desktopAccountError = null;
-    restoreCurrentAccountConnection();
-    recordDesktopAccountAttempt("succeeded");
-    await persistState();
-    // The first SPS Desktop stored a fully local Owner Host but had no central
-    // account subject. Adopt only the explicitly detected legacy Host after a
-    // successful SPS Identity sign-in on the same physical computer.
-    if (state.legacyOwnerHostAdoptionPending && !state.ownerHostOwnerSubject) {
-      try {
-        await adoptLegacyOwnerHostIfNeeded();
-      } catch (error) {
-        ownerHostStatus = {
-          ...ownerHostStatus,
-          state: "stopped",
-          lastError: error instanceof Error ? error.message : "Existing SPS Owner Host could not be adopted.",
-        };
-      }
-    }
-    // A full SPS2 link can arrive before the Member has signed in. Keep that
-    // one-time invitation in the Desktop process and continue it only after
-    // the account callback succeeds; rendering a pre-login form must never
-    // consume the pending link.
-    if (pendingJoin) {
-      await acceptDesktopJoinLink(pendingJoin);
-    } else {
-      await maybeOpenWorkspaceForCurrentAccount();
-    }
-  }).catch(async (error) => {
-    if (pendingDesktopAccount === signIn) {
-      desktopAccountError = safeDesktopAccountError(error);
-    }
-    recordDesktopAccountAttempt("failed", error);
-    await persistState().catch(() => {});
-  }).finally(() => {
-    if (pendingDesktopAccount === signIn) pendingDesktopAccount = null;
-    sendDesktopAccountStatus();
-  });
-  return publicStatus();
+  return desktopAccountController.signIn();
 }
 
 async function signOutDesktopAccount() {
-  const signIn = pendingDesktopAccount;
-  pendingDesktopAccount = null;
-  signIn?.cancel();
-  desktopAccountError = null;
-  const account = currentDesktopAccount();
-  if (account?.refreshToken) {
-    await revokeSpsDesktopIdentity({
-      identityUrl: account.identityUrl || configuredDesktopIdentityUrl(),
-      refreshToken: account.refreshToken,
-    });
-  }
-  let nodeDisconnect = null;
-  if (account && state.profile) {
-    nodeDisconnect = await disconnectCurrentNode();
-    rememberCurrentAccountConnection();
-  }
-  await clearSpsIdentityCoreSessions();
-  clearActiveConnectionState();
-  state.encryptedDesktopAccount = null;
-  await persistState({ rememberActiveConnection: false });
-  await showMainWindow();
-  await openSetup();
-  sendDesktopAccountStatus();
-  return { ...publicStatus(), nodeDisconnect };
+  return desktopAccountController.signOut();
 }
 
 function currentTeamCredentials() {
@@ -4124,25 +3848,22 @@ function createTray() {
 
 function publicStatus() {
   const desktopAccount = currentDesktopAccount();
+  const accountStatus = desktopAccountController?.getStatus() ?? {
+    configured: true,
+    provider: "SPS Identity",
+    identityUrl: configuredDesktopIdentityUrl(),
+    signedIn: Boolean(desktopAccount),
+    pending: false,
+    error: null,
+    name: desktopAccount?.name ?? null,
+    email: desktopAccount?.email ?? null,
+    picture: desktopAccount?.picture ?? null,
+    verifiedAt: desktopAccount?.verifiedAt ?? null,
+    lastAttempt: state.desktopAccountLastAttempt ?? null,
+  };
   return {
     desktopAccount: {
-      configured: true,
-      provider: "SPS Identity",
-      identityUrl: configuredDesktopIdentityUrl(),
-        signedIn: Boolean(desktopAccount),
-      pending: Boolean(pendingDesktopAccount),
-      error: desktopAccountError,
-      name: desktopAccount?.name ?? null,
-      email: desktopAccount?.email ?? null,
-      picture: desktopAccount?.picture ?? null,
-      verifiedAt: desktopAccount?.verifiedAt ?? null,
-      lastAttempt: state.desktopAccountLastAttempt
-        ? {
-          status: state.desktopAccountLastAttempt.status,
-          at: state.desktopAccountLastAttempt.at,
-          error: state.desktopAccountLastAttempt.error,
-        }
-        : null,
+      ...accountStatus,
     },
     profile: state.profile
       ? {
@@ -4223,6 +3944,54 @@ function publicStatus() {
       ...desktopUpdateController.getStatus(),
     },
   };
+}
+
+function initializeDesktopAccountController() {
+  desktopAccountController = createSpsDesktopAccountController({
+    app,
+    session,
+    state,
+    encrypt,
+    decrypt,
+    persistState,
+    loadPersistedState: () => loadState(app.getPath("userData")),
+    withRefreshLock: withSpsDesktopRefreshLock,
+    refreshIdentity: refreshSpsDesktopIdentity,
+    isExpiredRefreshToken: isExpiredSpsDesktopRefreshToken,
+    configuredIdentityUrl: configuredDesktopIdentityUrl,
+    startIdentitySignIn: startSpsDesktopIdentitySignIn,
+    revokeIdentity: revokeSpsDesktopIdentity,
+    openExternal: openSpsExternalUrl,
+    ensureDesktopDeviceId,
+    desktopAccessHeader: SPS_DESKTOP_ACCESS_HEADER,
+    requireOwnerHostOrigin: requireSpsOwnerHostOrigin,
+    requireHubOrigin: requireSpsHubOrigin,
+    normalizeInviteToken: normalizeSpsInviteToken,
+    getOwnerHostStatus: () => ownerHostStatus,
+    getOwnerHostDesktopAccessToken: () => ownerHostDesktopAccessToken,
+    stopNodeScheduling,
+    resetNodeRuntimeStatus,
+    clearPendingAuth: () => { pendingAuth = null; },
+    clearActiveConnectionState,
+    disconnectCurrentNode,
+    rememberCurrentAccountConnection,
+    restoreCurrentAccountConnection,
+    adoptLegacyOwnerHostIfNeeded,
+    acceptDesktopJoinLink,
+    getPendingJoin: () => pendingJoin,
+    maybeOpenWorkspaceForCurrentAccount,
+    onLegacyOwnerHostAdoptionError: (error) => {
+      ownerHostStatus = {
+        ...ownerHostStatus,
+        state: "stopped",
+        lastError: error instanceof Error ? error.message : "Existing SPS Owner Host could not be adopted.",
+      };
+    },
+    showMainWindow,
+    openSetup,
+    publicStatus,
+    onStatusChanged: sendDesktopAccountStatus,
+  });
 }
 
 async function connectNode() {
@@ -5129,6 +4898,7 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(async () => {
     state = await loadState(app.getPath("userData"));
+    initializeDesktopAccountController();
     restoreCurrentAccountConnection();
     await persistState();
     registerIpc();
@@ -5148,7 +4918,7 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
       // Owner Host startup keeps its existing, separately guarded path.
       if (isOwnerHostProfile()) return;
       void maybeOpenWorkspaceForCurrentAccount().catch((error) => {
-        desktopAccountError = safeDesktopAccountError(error);
+        desktopAccountController.setError(error);
         sendDesktopAccountStatus();
       });
     });
