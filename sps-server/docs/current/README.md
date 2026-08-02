@@ -5,8 +5,9 @@
 | Need | Document |
 | --- | --- |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
+| Exact Desktop, Core, SDK, and bundled-extension candidate | [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md) |
+| Production dependency audit gate and expiring exceptions | [DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md) |
 | Workspace Shell Provider, generic Dashboard, and generic Inbox contract | [WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md](WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md) |
-| Codex/Cursor references, OpenDesign prototype, and the staged Desktop UI refresh | [SPS-UI-DESIGN-REFRESH-PLAN-ko.md](SPS-UI-DESIGN-REFRESH-PLAN-ko.md) |
 | Install SPS Desktop, sign in, create or join a Host, and choose a workflow | [GETTING-STARTED-ko.md](GETTING-STARTED-ko.md) |
 | Stable releases, installation-test previews, automatic updates, and uninstall behavior | [RELEASE-AND-PREVIEW-POLICY-ko.md](RELEASE-AND-PREVIEW-POLICY-ko.md) |
 | Export scope, retained data, recovery limits, and Host transfer preparation | [DATA-AND-RECOVERY-ko.md](DATA-AND-RECOVERY-ko.md) |
@@ -35,9 +36,10 @@
 ## Engineering evidence
 
 `CORE-COMPLETION-AUDIT.md`, `CORE-DESKTOP-E2E-AUDIT.md`, the baseline plan,
-and the acceptance runbook are engineering evidence and test procedures. They
-are not the product contract. When a planning or audit document conflicts with
-the current architecture, `PRODUCT-ARCHITECTURE-ko.md` and
+the UI refresh plan, and the acceptance runbook are historical engineering
+evidence or test procedures. They are not the current candidate or product
+contract. When one conflicts with the current architecture,
+`PRODUCT-ARCHITECTURE-ko.md`, `CURRENT-CANDIDATE.md`, and
 `release/support-matrix.json` take precedence.
 
 ## Documentation policy
@@ -45,7 +47,8 @@ the current architecture, `PRODUCT-ARCHITECTURE-ko.md` and
 - Update related documents in the same change when a product rule changes.
 - Mark unfinished work as `planned` or `not implemented`.
 - `release/support-matrix.json` is the machine-readable source of truth for
-  the current development candidate.
+  the current development candidate. `CURRENT-CANDIDATE.md` is generated from
+  it and is checked by automated tests.
 - A README inside a plugin directory documents that plugin only; it does not
   define an SPS-wide default workflow.
 - Use Git history or `docs/reviews` for historical evidence rather than

@@ -172,6 +172,7 @@ import {
   createSpsSetupWindowPreferences,
   createSpsWorkspaceWindowPreferences,
   isAllowedSpsWorkspaceNavigation,
+  requireSpsExternalUrl,
 } from "./window-security.mjs";
 import {
   configuredSpsIdentityUrl,
@@ -843,6 +844,10 @@ function sendDesktopAccountStatus() {
   mainWindow.webContents.send("desktop:desktop-account-changed", publicStatus());
 }
 
+function openSpsExternalUrl(value) {
+  return shell.openExternal(requireSpsExternalUrl(value));
+}
+
 async function startDesktopAccountSignIn() {
   if (pendingDesktopAccount) return publicStatus();
   const identityUrl = configuredDesktopIdentityUrl();
@@ -855,7 +860,7 @@ async function startDesktopAccountSignIn() {
     signIn = await startSpsDesktopIdentitySignIn({
       identityUrl,
       deviceId,
-      openExternal: (url) => shell.openExternal(url),
+      openExternal: openSpsExternalUrl,
     });
   } catch (error) {
     desktopAccountError = safeDesktopAccountError(error);
@@ -3566,7 +3571,7 @@ async function acceptInviteCode(input) {
       await maybeOpenWorkspaceForCurrentAccount();
       return { hub: hubUrl, status: accepted.status ?? "approved", direct: true };
     }
-    await shell.openExternal(buildInviteUrl(hubUrl, inviteCode));
+    await openSpsExternalUrl(buildInviteUrl(hubUrl, inviteCode));
     return { hub: hubUrl };
   }
   const accepted = await acceptSpsIdentityInvite(hubUrl, inviteCode);
@@ -3577,7 +3582,7 @@ async function acceptInviteCode(input) {
     return { hub: hubUrl, status: accepted.status ?? "approved", direct: true };
   }
   const url = buildInviteUrl(hubUrl, inviteCode);
-  await shell.openExternal(url);
+  await openSpsExternalUrl(url);
   return { hub: hubUrl };
 }
 
@@ -3737,10 +3742,10 @@ function configureWorkspaceNavigation(window, hubOrigin) {
   window.webContents.on("will-navigate", (event, url) => {
     if (isAllowedSpsWorkspaceNavigation(url, hubOrigin)) return;
     event.preventDefault();
-    void shell.openExternal(url);
+    void openSpsExternalUrl(url).catch(() => {});
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    void openSpsExternalUrl(url).catch(() => {});
     return { action: "deny" };
   });
 }
@@ -3769,10 +3774,10 @@ async function showRegistryWindow({ sourceId = null } = {}) {
   window.webContents.on("will-navigate", (event, url) => {
     if (url.startsWith("file:")) return;
     event.preventDefault();
-    void shell.openExternal(url);
+    void openSpsExternalUrl(url).catch(() => {});
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    void openSpsExternalUrl(url).catch(() => {});
     return { action: "deny" };
   });
   window.once("ready-to-show", () => window.show());
@@ -3806,10 +3811,10 @@ async function showOfficialExtensionsWindow() {
   window.webContents.on("will-navigate", (event, url) => {
     if (url.startsWith("file:")) return;
     event.preventDefault();
-    void shell.openExternal(url);
+    void openSpsExternalUrl(url).catch(() => {});
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    void openSpsExternalUrl(url).catch(() => {});
     return { action: "deny" };
   });
   window.once("ready-to-show", () => window.show());
@@ -4847,7 +4852,7 @@ function registerIpc() {
     if (!state.profile) throw new Error("Save an SPS team connection first");
     if (isOwnerHostProfile()) throw new Error("Create invitations after the Owner Host is configured for private or public team access.");
     const url = buildInviteUrl(state.profile.hubUrl, input.code);
-    await shell.openExternal(url);
+    await openSpsExternalUrl(url);
     return url;
   });
   ipcMain.handle("desktop:accept-invite-code", async (_event, input) => await acceptInviteCode(input));
@@ -4991,7 +4996,7 @@ function registerIpc() {
       hubUrl: state.profile.hubUrl,
       companyId: state.profile.companyId,
     });
-    if (pendingAuth.approvalUrl) await shell.openExternal(pendingAuth.approvalUrl);
+    if (pendingAuth.approvalUrl) await openSpsExternalUrl(pendingAuth.approvalUrl);
     return publicStatus();
   });
   ipcMain.handle("desktop:poll-auth", async () => {
@@ -5098,10 +5103,10 @@ async function createWindow({ show = true } = {}) {
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (url.startsWith("file:")) return;
     event.preventDefault();
-    void shell.openExternal(url);
+    void openSpsExternalUrl(url).catch(() => {});
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    void openSpsExternalUrl(url).catch(() => {});
     return { action: "deny" };
   });
   mainWindow.on("close", (event) => {

@@ -36,6 +36,7 @@ test("exports a portable Owner Vault transfer without secrets or live database f
 
     assert.equal(path.basename(exported.bundleRoot), createSpsOwnerTransferName(now));
     assert.equal(inspected.manifest.format, SPS_OWNER_TRANSFER_FORMAT);
+    assert.ok(inspected.manifest.entries.includes("storage/attachment.txt"));
     assert.equal(await fs.readFile(path.join(exported.bundleRoot, "storage", "attachment.txt"), "utf8"), "asset");
     assert.equal(await fs.readFile(path.join(exported.bundleRoot, "instances", "room.md"), "utf8"), "room");
     assert.equal(await fs.readFile(path.join(exported.bundleRoot, "memory", "data", "memory.json"), "utf8"), "memory");
@@ -59,6 +60,205 @@ test("rejects a database backup from outside the Owner Vault", async () => {
       exportSpsOwnerVaultTransfer({ vaultRoot: vault, backupFile: backup, destinationRoot: exports }),
       /created inside this Owner Vault/,
     );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a symlinked Owner Vault directory before it can be copied", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const vault = path.join(root, "owner-vault");
+    const outside = path.join(root, "outside");
+    const exports = path.join(root, "exports");
+    const backup = path.join(vault, "backups", "sps-test.sql.gz");
+    await fs.mkdir(path.dirname(backup), { recursive: true });
+    await fs.mkdir(outside);
+    await fs.mkdir(exports);
+    await fs.writeFile(backup, "database");
+    await fs.symlink(outside, path.join(vault, "storage"), "junction");
+    await assert.rejects(
+      exportSpsOwnerVaultTransfer({ vaultRoot: vault, backupFile: backup, destinationRoot: exports }),
+      /symbolic links or reparse points/,
+    );
+  } catch (error) {
+    if (error?.code === "EPERM" || error?.code === "EACCES") return;
+    throw error;
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ignores links in excluded Vault directories", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const vault = path.join(root, "owner-vault");
+    const outside = path.join(root, "outside");
+    const exports = path.join(root, "exports");
+    const backup = path.join(vault, "backups", "sps-test.sql.gz");
+    await fs.mkdir(path.dirname(backup), { recursive: true });
+    await fs.mkdir(outside);
+    await fs.mkdir(exports);
+    await fs.writeFile(backup, "database");
+    await fs.mkdir(path.join(vault, "logs"));
+    await fs.symlink(outside, path.join(vault, "logs", "external"), "junction");
+    const exported = await exportSpsOwnerVaultTransfer({ vaultRoot: vault, backupFile: backup, destinationRoot: exports });
+    assert.equal(exported.manifest.included.includes("logs"), false);
+  } catch (error) {
+    if (error?.code === "EPERM" || error?.code === "EACCES") return;
+    throw error;
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a symlink inside a transfer bundle during inspection", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const bundle = path.join(root, "bundle");
+    await fs.mkdir(path.join(bundle, "database"), { recursive: true });
+    await fs.writeFile(path.join(bundle, "database", "owner-host.sql.gz"), "database");
+    await fs.writeFile(path.join(bundle, "sps-transfer.json"), JSON.stringify({
+      format: SPS_OWNER_TRANSFER_FORMAT,
+      version: 1,
+      databaseBackup: "database/owner-host.sql.gz",
+      included: ["database/owner-host.sql.gz", "storage"],
+      entries: ["database", "database/owner-host.sql.gz", "storage"],
+    }));
+    await fs.symlink(root, path.join(bundle, "storage"), "junction");
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /symbolic links or reparse points/);
+  } catch (error) {
+    if (error?.code === "EPERM" || error?.code === "EACCES") return;
+    throw error;
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unknown, duplicate, and missing included manifest entries", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const bundle = path.join(root, "bundle");
+    await fs.mkdir(path.join(bundle, "database"), { recursive: true });
+    await fs.writeFile(path.join(bundle, "database", "owner-host.sql.gz"), "database");
+    const manifestPath = path.join(bundle, "sps-transfer.json");
+    const base = {
+      format: SPS_OWNER_TRANSFER_FORMAT,
+      version: 1,
+      databaseBackup: "database/owner-host.sql.gz",
+      entries: ["database", "database/owner-host.sql.gz"],
+    };
+    await fs.writeFile(manifestPath, JSON.stringify({ ...base, included: ["database/owner-host.sql.gz", "unknown"] }));
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /unknown included path/);
+    await fs.writeFile(manifestPath, JSON.stringify({ ...base, included: ["database/owner-host.sql.gz", 42] }));
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /invalid included manifest/);
+    await fs.writeFile(manifestPath, JSON.stringify({ ...base, included: ["database/owner-host.sql.gz", "database/owner-host.sql.gz"] }));
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /duplicate included path/);
+    await fs.writeFile(manifestPath, JSON.stringify({ ...base, included: ["storage"] }));
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /missing its database backup entry/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a transfer manifest that escapes the bundle root", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const bundle = path.join(root, "bundle");
+    await fs.mkdir(path.join(bundle, "database"), { recursive: true });
+    await fs.writeFile(path.join(bundle, "database", "owner-host.sql.gz"), "database");
+    await fs.writeFile(path.join(bundle, "sps-transfer.json"), JSON.stringify({
+      format: SPS_OWNER_TRANSFER_FORMAT,
+      version: 1,
+      databaseBackup: "../outside.sql.gz",
+      included: ["database/owner-host.sql.gz"],
+      entries: ["database", "database/owner-host.sql.gz"],
+    }));
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /invalid database backup reference/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects an included directory that is missing from the bundle", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const bundle = path.join(root, "bundle");
+    await fs.mkdir(path.join(bundle, "database"), { recursive: true });
+    await fs.writeFile(path.join(bundle, "database", "owner-host.sql.gz"), "database");
+    await fs.writeFile(path.join(bundle, "sps-transfer.json"), JSON.stringify({
+      format: SPS_OWNER_TRANSFER_FORMAT,
+      version: 1,
+      databaseBackup: "database/owner-host.sql.gz",
+      included: ["database/owner-host.sql.gz", "storage"],
+      entries: ["database", "database/owner-host.sql.gz", "storage"],
+    }));
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /missing included path: storage/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects extra files or directories not listed in the bundle manifest", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const bundle = path.join(root, "bundle");
+    await fs.mkdir(path.join(bundle, "database"), { recursive: true });
+    await fs.mkdir(path.join(bundle, "storage"), { recursive: true });
+    await fs.writeFile(path.join(bundle, "database", "owner-host.sql.gz"), "database");
+    await fs.writeFile(path.join(bundle, "storage", "attachment.txt"), "asset");
+    await fs.writeFile(path.join(bundle, "sps-transfer.json"), JSON.stringify({
+      format: SPS_OWNER_TRANSFER_FORMAT,
+      version: 1,
+      databaseBackup: "database/owner-host.sql.gz",
+      included: ["database/owner-host.sql.gz", "storage"],
+      entries: ["database", "database/owner-host.sql.gz", "storage", "storage/attachment.txt"],
+    }));
+    await fs.writeFile(path.join(bundle, "unexpected.txt"), "unexpected");
+    await fs.mkdir(path.join(bundle, "unexpected-directory"));
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /outside its allowlist/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps legacy v1 bundles readable while enforcing the path allowlist", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const bundle = path.join(root, "bundle");
+    await fs.mkdir(path.join(bundle, "database"), { recursive: true });
+    await fs.mkdir(path.join(bundle, "storage"), { recursive: true });
+    await fs.writeFile(path.join(bundle, "database", "owner-host.sql.gz"), "database");
+    await fs.writeFile(path.join(bundle, "storage", "attachment.txt"), "asset");
+    await fs.writeFile(path.join(bundle, "sps-transfer.json"), JSON.stringify({
+      format: SPS_OWNER_TRANSFER_FORMAT,
+      version: 1,
+      databaseBackup: "database/owner-host.sql.gz",
+      included: ["database/owner-host.sql.gz", "storage"],
+    }));
+
+    const inspected = await inspectSpsOwnerVaultTransfer({ bundleRoot: bundle });
+    assert.equal(inspected.manifest.entries, undefined);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects entries listed outside the allowed transfer directories", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
+  try {
+    const bundle = path.join(root, "bundle");
+    await fs.mkdir(path.join(bundle, "database"), { recursive: true });
+    await fs.writeFile(path.join(bundle, "database", "owner-host.sql.gz"), "database");
+    await fs.writeFile(path.join(bundle, "unexpected.txt"), "unexpected");
+    await fs.writeFile(path.join(bundle, "sps-transfer.json"), JSON.stringify({
+      format: SPS_OWNER_TRANSFER_FORMAT,
+      version: 1,
+      databaseBackup: "database/owner-host.sql.gz",
+      included: ["database/owner-host.sql.gz"],
+      entries: ["database", "database/owner-host.sql.gz", "unexpected.txt"],
+    }));
+    await assert.rejects(inspectSpsOwnerVaultTransfer({ bundleRoot: bundle }), /outside its allowlist/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

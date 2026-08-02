@@ -1,5 +1,8 @@
 # SPS Core Completion Audit
 
+> Historical evidence for Desktop 0.4.104. This report does not certify the
+> current candidate listed in `CURRENT-CANDIDATE.md`.
+
 Status: Core contract, packaging, installed Desktop regression, and physical
 two-computer beta gates passed; public release gates remain separate.
 Audit date: 2026-08-01

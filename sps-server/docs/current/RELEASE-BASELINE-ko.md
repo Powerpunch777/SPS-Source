@@ -1,18 +1,20 @@
 # SPS Desktop 배포 기준
 
-최종 갱신: 2026-07-30
+최종 갱신: 2026-08-02
 
 현재 개발 후보의 기계 판독 기준은
-[`../../release/support-matrix.json`](../../release/support-matrix.json)이다.
+[`../../release/support-matrix.json`](../../release/support-matrix.json)이며,
+사람이 읽는 정확한 후보 목록은 여기에서 자동 생성되는
+[`CURRENT-CANDIDATE.md`](CURRENT-CANDIDATE.md)이다.
 이 문서는 사람이 이해하기 위한 배포 정책 요약이다.
 
 ## 현재 채널
 
-| 채널 | 버전 | 용도 | 자동 업데이트 | 서명 |
+| 채널 | 버전 기준 | 용도 | 자동 업데이트 | 서명 |
 | --- | --- | --- | --- | --- |
-| Official release | `0.4.86` | 제한된 실제 베타 사용 | 지원 | 서명된 릴리스만 허용 |
-| Preview | `0.4.90-preview.1` | 설치와 첫 실행 확인 | 미지원 | 개발 후보, 현재 미서명 |
-| Local candidate | `0.4.90` | 개발·패키지·회귀 검증 | 해당 없음 | 개발 환경 기준 |
+| Official release | 릴리스 저장소의 최신 서명 버전 | 제한된 실제 베타 사용 | 지원 | 서명된 릴리스만 허용 |
+| Preview | 별도 Preview 태그 | 설치와 첫 실행 확인 | 미지원 | 개발 후보, 미서명 가능 |
+| Local candidate | `CURRENT-CANDIDATE.md` | 개발·패키지·회귀 검증 | 해당 없음 | 개발 환경 기준 |
 
 Official release는 `Powerpunch777/SPS-Desktop-Releases`에만 게시한다.
 이 저장소의 `latest.yml`, 설치 파일, blockmap은 반드시 같은 서명 빌드에서 함께
@@ -51,6 +53,10 @@ Preview는 `Powerpunch777/SPS-Desktop-Preview`에 별도로 게시한다. Previe
 4. 설치 파일, blockmap, `latest.yml`, 런타임 팩, 릴리스 노트를 같은 버전으로
    게시한다.
 5. 실제 사람이 Desktop의 로그인, 로딩, 오류, 취소, 복구 화면을 점검한다.
+
+과거 후보에서 수집한 물리 테스트 증거는 해당 후보에만 적용한다. 현재 후보의
+Desktop 버전과 Core·SDK revision이 모두 일치하지 않으면 정식 배포 증거로
+승격하지 않는다.
 
 자세한 Preview 운영 규칙은
 [RELEASE-AND-PREVIEW-POLICY-ko.md](RELEASE-AND-PREVIEW-POLICY-ko.md)를 따른다.

@@ -1,5 +1,8 @@
 # SPS Core Desktop E2E Audit
 
+> Historical evidence for Desktop 0.4.104. This report does not certify the
+> current candidate listed in `CURRENT-CANDIDATE.md`.
+
 Audit date: 2026-08-01
 Desktop under test: SPS Desktop `0.4.104` on Windows
 Status: packaged, installed, and physical two-computer Host Source E2E gates pass.

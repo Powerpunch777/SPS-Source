@@ -27,10 +27,14 @@ jobs:
           package-manager-cache: false
 
       - name: Install pinned pnpm
-        run: npm install --global pnpm@9.15.4
+        run: npm install --global pnpm@11.9.0
 
       - name: Install Core dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Enforce SPS production dependency security policy
+        working-directory: ${{ github.workspace }}/sps-server/desktop
+        run: npm run audit:release
 
       - name: Typecheck SPS Core server
         run: pnpm --filter @paperclipai/server run typecheck
@@ -75,7 +79,7 @@ jobs:
           cache-dependency-path: sps-server/sps-room-chat/package-lock.json
 
       - name: Install pinned pnpm for the SPS plugin SDK
-        run: npm install --global pnpm@9.15.4
+        run: npm install --global pnpm@11.9.0
 
       - name: Build SPS plugin SDK for the Room workplane
         working-directory: external/sps-core

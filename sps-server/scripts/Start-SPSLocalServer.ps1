@@ -108,7 +108,7 @@ try {
   try {
     # pnpm/npm may emit warnings on stderr while continuing successfully.
     $ErrorActionPreference = "Continue"
-    & npx.cmd --yes pnpm@9.15.4 run paperclipai run --instance $InstanceId --config $SPSConfigPath *>> $LogPath
+    & npx.cmd --yes pnpm@11.9.0 run paperclipai run --instance $InstanceId --config $SPSConfigPath *>> $LogPath
     $exitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorActionPreference

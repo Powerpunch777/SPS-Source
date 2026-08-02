@@ -1,7 +1,7 @@
 # SPS 플러그인 플랫폼 구현 계획
 
-최종 갱신: 2026-08-01
-기준 후보: SPS Desktop `0.4.104`
+최종 갱신: 2026-08-02
+기준 후보: historical snapshot SPS Desktop `0.4.104` (see `CURRENT-CANDIDATE.md` for the current candidate)
 상태: 1~8단계의 계약·패키징·자동 검증과 두 컴퓨터 물리 E2E 기준 통과. 공개 릴리스 게이트는 별도.
 
 ## 목표
@@ -80,10 +80,10 @@ Host가 route를 철회하면 재실행이 거부되는지 확인한다. 양쪽 
 
 ## 현재 증거
 
-- Desktop 테스트 `261/261` 통과, exit 0
+- Historical snapshot (`0.4.104`): Desktop 테스트 `261/261` 통과, exit 0
 - desktop-node 테스트 `39/39` 통과
 - 공개 Plugin SDK 테스트 `146/146` 통과
-- `0.4.104` 패키징 완료 및 Host/main, Member/laptop 설치 완료
+- Historical snapshot (`0.4.104`): 패키징 완료 및 Host/main, Member/laptop 설치 완료
 - Installer SHA256 `B58E7EAE15884D4E9B052ED3A15A9B43B340CB83DCAE1EE0D1A71261C974C2C1`, size `255265752`
 - 양쪽 app.asar SHA256 `2ECC983D650BBBB51798762A1A4AAFB6B8096AE5073C251CD33FB7C66E34EFEC`
 - packaged bootstrap, Workspace, Plugin Preview, Host plugin lifecycle 통과
