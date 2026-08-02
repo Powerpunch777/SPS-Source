@@ -44,3 +44,23 @@ test("check mode rejects a stale generated document", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("check mode accepts an equivalent CRLF document", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-candidate-doc-crlf-"));
+  try {
+    await mkdir(path.join(root, "release"), { recursive: true });
+    await mkdir(path.join(root, "docs", "current"), { recursive: true });
+    const matrix = await readFile(path.join(spsServerRoot, "release", "support-matrix.json"), "utf8");
+    await writeFile(path.join(root, "release", "support-matrix.json"), matrix, "utf8");
+    const expected = renderCurrentCandidateDocument(JSON.parse(matrix));
+    await writeFile(
+      path.join(root, "docs", "current", "CURRENT-CANDIDATE.md"),
+      expected.replace(/\n/g, "\r\n"),
+      "utf8",
+    );
+
+    await syncCurrentCandidateDocument({ spsServerRoot: root, check: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

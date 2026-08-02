@@ -10,6 +10,10 @@ function renderList(values) {
   return values.map((value) => `\`${value}\``).join(", ");
 }
 
+function normalizeLineEndings(value) {
+  return value.replace(/\r\n?/g, "\n");
+}
+
 export function renderCurrentCandidateDocument(matrix) {
   const errors = validateSpsSupportMatrix(matrix);
   if (errors.length > 0) throw new Error(errors.join("\n"));
@@ -65,7 +69,7 @@ export async function syncCurrentCandidateDocument({
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
-    if (actual !== expected) {
+    if (normalizeLineEndings(actual) !== normalizeLineEndings(expected)) {
       throw new Error("CURRENT-CANDIDATE.md is out of date. Run current-candidate-doc.mjs.");
     }
     return outputPath;
