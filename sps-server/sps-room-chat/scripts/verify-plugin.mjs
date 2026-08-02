@@ -14,6 +14,13 @@ assert.equal(manifest.default.agentPlatform?.profileKey, "sps-lead-worker");
 assert.equal(manifest.default.version, packageJson.version);
 assert.equal(manifest.default.entrypoints.ui, `./dist/ui-v${packageJson.version}`);
 assert.ok(fs.existsSync(path.join(root, manifest.default.entrypoints.ui, "index.js")));
+assert.deepEqual(
+  fs.readdirSync(path.join(root, "dist"), { withFileTypes: true })
+    .filter((entry) => entry.name.startsWith("ui-v"))
+    .map((entry) => entry.name)
+    .sort(),
+  [`ui-v${packageJson.version}`],
+);
 assert.ok(manifest.default.capabilities.includes("issue.documents.write"));
 assert.ok(manifest.default.capabilities.includes("issue.comments.create"));
 assert.ok(manifest.default.capabilities.includes("events.subscribe"));

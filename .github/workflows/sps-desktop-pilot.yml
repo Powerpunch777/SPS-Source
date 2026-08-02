@@ -7,8 +7,13 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    uses: ./.github/workflows/sps-verify.yml
+    secrets: inherit
+
   package-pilot:
     name: Package unsigned Windows pilot installer
+    needs: verify
     runs-on: windows-latest
 
     steps:

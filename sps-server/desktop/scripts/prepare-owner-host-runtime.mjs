@@ -1,7 +1,8 @@
-import { access, chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, chmod, cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { writeSpsReleaseBaseline } from "./release-baseline.mjs";
 import { createSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
 
@@ -190,6 +191,38 @@ function run(command, args, cwd, { shell = false, environment = {} } = {}) {
   });
 }
 
+async function resolveNpmInvocation() {
+  const configuredNpmCli = process.env.SPS_NPM_CLI?.trim();
+  if (configuredNpmCli) {
+    const cliPath = path.resolve(configuredNpmCli);
+    await requireFile(cliPath, "SPS_NPM_CLI does not point to an npm CLI file.");
+    return { command: process.execPath, prefixArgs: [cliPath] };
+  }
+
+  const bundledNpmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (await pathExists(bundledNpmCli)) return { command: process.execPath, prefixArgs: [bundledNpmCli] };
+  if (process.platform !== "win32") return { command: "npm", prefixArgs: [] };
+
+  const pathEntries = String(process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  for (const directory of pathEntries) {
+    const npmCli = path.join(directory, "node_modules", "npm", "bin", "npm-cli.js");
+    if (await pathExists(npmCli)) {
+      const nodeCommand = path.join(directory, process.execPath.endsWith(".exe") ? "node.exe" : "node");
+      if (await pathExists(nodeCommand)) return { command: nodeCommand, prefixArgs: [npmCli] };
+    }
+  }
+  throw new Error("Could not locate an npm runtime. Install Node.js or set SPS_NPM_CLI.");
+}
+
+async function runPackageScript(packageRoot, scriptName, npm) {
+  await run(
+    npm.command,
+    [...npm.prefixArgs, "run", scriptName],
+    packageRoot,
+    { environment: { npm_execpath: npm.prefixArgs.at(-1) ?? npm.command } },
+  );
+}
+
 async function resolvePnpmInvocation() {
   const configuredPnpmCli = process.env.SPS_PNPM_CLI?.trim();
   if (configuredPnpmCli) {
@@ -357,6 +390,151 @@ const SPS_BUNDLED_OWNER_HOST_PLUGINS = [
   "sps-room-chat",
 ];
 
+function assertContainedPath(root, target, label) {
+  const relative = path.relative(root, target);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`${label} escapes the bundled plugin root.`);
+  }
+}
+
+async function resolveContainedRegularFile(pluginRoot, reference, label) {
+  const resolvedPath = path.resolve(pluginRoot, reference);
+  assertContainedPath(pluginRoot, resolvedPath, label);
+  await requireFile(resolvedPath, `${label} is missing.`);
+  const [pluginRealPath, targetRealPath, targetStat] = await Promise.all([
+    realpath(pluginRoot),
+    realpath(resolvedPath),
+    lstat(resolvedPath),
+  ]);
+  assertContainedPath(pluginRealPath, targetRealPath, label);
+  if (!targetStat.isFile() || targetStat.isSymbolicLink()) {
+    throw new Error(`${label} must be a regular file inside the bundled plugin root.`);
+  }
+  return resolvedPath;
+}
+
+async function hashBundledPluginDist(pluginRoot) {
+  const distRoot = path.join(pluginRoot, "dist");
+  const [pluginRealPath, distRealPath, distStat] = await Promise.all([
+    realpath(pluginRoot),
+    realpath(distRoot),
+    lstat(distRoot),
+  ]);
+  assertContainedPath(pluginRealPath, distRealPath, "Bundled plugin dist");
+  if (!distStat.isDirectory() || distStat.isSymbolicLink()) {
+    throw new Error(`Bundled plugin dist must be a regular directory: ${pluginRoot}`);
+  }
+  const hash = createHash("sha256");
+  let fileCount = 0;
+  async function visit(directory) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name, "en"));
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(`Bundled plugin dist contains a symbolic link: ${entryPath}`);
+      if (entry.isDirectory()) {
+        await visit(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) throw new Error(`Bundled plugin dist contains a non-regular entry: ${entryPath}`);
+      const relative = path.relative(distRoot, entryPath).split(path.sep).join("/");
+      hash.update(relative);
+      hash.update("\0");
+      hash.update(await readFile(entryPath));
+      hash.update("\0");
+      fileCount += 1;
+    }
+  }
+  await visit(distRoot);
+  if (fileCount === 0) throw new Error(`Bundled plugin dist is empty: ${pluginRoot}`);
+  return hash.digest("hex");
+}
+
+async function verifyBundledSpsPluginManifest(pluginRoot, packageManifest, expectedExtension) {
+  if (packageManifest.name !== expectedExtension.package) {
+    throw new Error(`Bundled SPS plugin package mismatch: expected ${expectedExtension.package}, found ${packageManifest.name}.`);
+  }
+  if (String(packageManifest.version) !== String(expectedExtension.version)) {
+    throw new Error(`Bundled SPS plugin package version does not match the support matrix: ${packageManifest.name}.`);
+  }
+  const manifestReference = packageManifest.spsPlugin?.manifest;
+  if (typeof manifestReference !== "string" || !manifestReference.startsWith("./")) {
+    throw new Error(`Bundled SPS plugin has no valid spsPlugin.manifest contract: ${packageManifest.name}.`);
+  }
+  const manifestPath = await resolveContainedRegularFile(
+    pluginRoot,
+    manifestReference,
+    `Bundled SPS plugin manifest for ${packageManifest.name}`,
+  );
+  const manifestModule = await import(`${pathToFileURL(manifestPath).href}?sps-build=${Date.now()}`);
+  const manifest = manifestModule.default;
+  if (!manifest || typeof manifest !== "object") {
+    throw new Error(`Bundled SPS plugin manifest did not export an object: ${packageManifest.name}.`);
+  }
+  if (manifest.id !== expectedExtension.id) {
+    throw new Error(`Bundled SPS plugin id mismatch for ${packageManifest.name}: expected ${expectedExtension.id}, found ${manifest.id}.`);
+  }
+  if (String(manifest.version) !== String(packageManifest.version)) {
+    throw new Error(
+      `Bundled SPS plugin version mismatch for ${packageManifest.name}: `
+      + `package.json=${packageManifest.version}, dist=${manifest.version}.`,
+    );
+  }
+  const workerReference = manifest.entrypoints?.worker;
+  if (typeof workerReference !== "string" || !workerReference.startsWith("./")) {
+    throw new Error(`Bundled SPS plugin manifest has no worker entrypoint: ${packageManifest.name}.`);
+  }
+  await resolveContainedRegularFile(
+    pluginRoot,
+    workerReference,
+    `Bundled SPS plugin worker for ${packageManifest.name}`,
+  );
+  return {
+    id: manifest.id,
+    version: String(manifest.version),
+    manifest: manifestReference,
+    worker: workerReference,
+    distSha256: await hashBundledPluginDist(pluginRoot),
+  };
+}
+
+async function rebuildBundledSpsPlugins() {
+  const npm = await resolveNpmInvocation();
+  const supportMatrix = JSON.parse(await readFile(path.join(spsServerRoot, "release", "support-matrix.json"), "utf8"));
+  const bundledExtensions = supportMatrix.candidate?.bundledExtensions;
+  if (!Array.isArray(bundledExtensions)) {
+    throw new Error("The support matrix has no bundled SPS plugin contract.");
+  }
+  const expectedExtensions = new Map(
+    bundledExtensions.map((extension) => [extension.package, extension]),
+  );
+  if (
+    bundledExtensions.length !== SPS_BUNDLED_OWNER_HOST_PLUGINS.length
+    || expectedExtensions.size !== SPS_BUNDLED_OWNER_HOST_PLUGINS.length
+    || SPS_BUNDLED_OWNER_HOST_PLUGINS.some((pluginName) => !expectedExtensions.has(pluginName))
+  ) {
+    throw new Error("Bundled SPS plugin list does not match the support matrix.");
+  }
+  const rebuilt = [];
+  for (const pluginName of SPS_BUNDLED_OWNER_HOST_PLUGINS) {
+    const pluginRoot = path.join(spsServerRoot, pluginName);
+    const packageManifestPath = path.join(pluginRoot, "package.json");
+    await requireFile(packageManifestPath, `Bundled SPS plugin package manifest is missing: ${pluginName}.`);
+    const packageManifest = JSON.parse(await readFile(packageManifestPath, "utf8"));
+    const expectedExtension = expectedExtensions.get(pluginName);
+    if (!packageManifest.scripts?.check) {
+      throw new Error(`Bundled SPS plugin must declare a check script: ${packageManifest.name || pluginName}.`);
+    }
+    if (packageManifest.scripts.build) await runPackageScript(pluginRoot, "build", npm);
+    await runPackageScript(pluginRoot, "check", npm);
+    rebuilt.push({
+      name: packageManifest.name,
+      ...(await verifyBundledSpsPluginManifest(pluginRoot, packageManifest, expectedExtension)),
+    });
+  }
+  return rebuilt;
+}
+
 async function copyBundledSpsNodeRuntime(runtimeRoot) {
   // The deployed Core includes native dependencies. Run it with the same Node
   // executable that prepared those dependencies instead of Electron's bundled
@@ -369,7 +547,8 @@ async function copyBundledSpsNodeRuntime(runtimeRoot) {
   return { executableName, version: process.version };
 }
 
-async function copyBundledSpsPluginRuntime(runtimeRoot) {
+async function copyBundledSpsPluginRuntime(runtimeRoot, rebuiltPlugins) {
+  const rebuiltByName = new Map(rebuiltPlugins.map((plugin) => [plugin.name, plugin]));
   for (const pluginName of SPS_BUNDLED_OWNER_HOST_PLUGINS) {
     const pluginSource = path.join(spsServerRoot, pluginName);
     const pluginTarget = path.join(runtimeRoot, pluginName);
@@ -379,6 +558,10 @@ async function copyBundledSpsPluginRuntime(runtimeRoot) {
       recursive: true,
       filter: (entry) => !["node_modules", "package-lock.json", "scripts", "src", "tests"].includes(path.basename(entry)),
     });
+    const copiedDistSha256 = await hashBundledPluginDist(pluginTarget);
+    if (copiedDistSha256 !== rebuiltByName.get(pluginName)?.distSha256) {
+      throw new Error(`Bundled SPS plugin changed while being packaged: ${pluginName}.`);
+    }
   }
 
   const sidecarSource = path.join(spsServerRoot, "memory-sidecar", "memory-sidecar.mjs");
@@ -447,6 +630,7 @@ await requireFile(
   "SPS Core dependencies are missing. Run pnpm install in external/sps-core first.",
 );
 await buildOwnerHostCoreArtifacts();
+const rebuiltBundledPlugins = await rebuildBundledSpsPlugins();
 
 assertDesktopBuildPath(runtimeRoot);
 await rm(runtimeRoot, { recursive: true, force: true });
@@ -478,7 +662,7 @@ await cp(serverUiDist, path.join(runtimeRoot, "ui-dist"), { recursive: true });
 await writeOwnerHostBootstrap(runtimeRoot);
 await copyOwnerHostRestoreHelper(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
-await copyBundledSpsPluginRuntime(runtimeRoot);
+await copyBundledSpsPluginRuntime(runtimeRoot, rebuiltBundledPlugins);
 const pluginDeveloperKit = await copyBundledSpsPluginDeveloperKit(runtimeRoot);
 const bundledNode = await copyBundledSpsNodeRuntime(runtimeRoot);
 const agentRuntimePacks = await prepareAgentRuntimePacks(runtimeRoot, agentRuntimePacksRoot);
@@ -498,6 +682,7 @@ await writeFile(
     vendorDirectory: "node_modules",
     nodeRuntime: bundledNode,
     bundledDefaultMemory: true,
+    rebuiltBundledPlugins,
     pluginDeveloperKit,
     agentRuntimePacks,
     windowsPostgresUnicodePathCompatibility,

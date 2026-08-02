@@ -152,3 +152,27 @@ test("smoke test proves the packaged Owner Host remains Desktop-only while servi
   assert.match(smokeScript, /sps-release-baseline\.json/);
   assert.match(smokeScript, /runtimeManifest\.format < 8/);
 });
+
+test("rebuilds every bundled SPS plugin before copying its runtime", async () => {
+  const buildScript = await readFile(path.join(desktopDirectory, "scripts", "prepare-owner-host-runtime.mjs"), "utf8");
+
+  assert.match(buildScript, /const SPS_BUNDLED_OWNER_HOST_PLUGINS = \[/);
+  for (const pluginName of ["sps-default-memory", "sps-plugin-discovery", "sps-room-chat"]) {
+    assert.match(buildScript, new RegExp(`"${pluginName}"`));
+  }
+  assert.match(buildScript, /runPackageScript\(pluginRoot, "build", npm\)/);
+  assert.match(buildScript, /runPackageScript\(pluginRoot, "check", npm\)/);
+  assert.match(buildScript, /spsPlugin\?\.manifest/);
+  assert.match(buildScript, /manifest\.version\) !== String\(packageManifest\.version\)/);
+  assert.match(buildScript, /manifest\.entrypoints\?\.worker/);
+  assert.match(buildScript, /expectedExtension\.id/);
+  assert.match(buildScript, /assertContainedPath/);
+  assert.match(buildScript, /distStat\.isSymbolicLink/);
+  assert.match(buildScript, /bundledExtensions\.length !== SPS_BUNDLED_OWNER_HOST_PLUGINS\.length/);
+  assert.match(buildScript, /distSha256: await hashBundledPluginDist/);
+  assert.match(buildScript, /copiedDistSha256 !== rebuiltByName\.get\(pluginName\)\?\.distSha256/);
+  assert.match(buildScript, /rebuiltBundledPlugins/);
+  assert.match(buildScript, /pathToFileURL\(manifestPath\)/);
+  assert.match(buildScript, /shell = false/);
+  assert.doesNotMatch(buildScript, /runPackageScript[\s\S]{0,120}shell:\s*true/);
+});

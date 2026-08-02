@@ -4,6 +4,7 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -93,6 +94,33 @@ jobs:
 
       - name: Verify SPS Room durable workplane
         working-directory: sps-server/sps-room-chat
+        run: npm run check
+
+  bundled-plugins:
+    name: SPS bundled plugins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sps-server/sps-plugin-discovery/package-lock.json
+
+      - name: Verify SPS Default Memory
+        working-directory: sps-server/sps-default-memory
+        run: npm run check
+
+      - name: Install SPS Plugin Discovery dependencies
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm ci
+
+      - name: Rebuild and verify SPS Plugin Discovery
+        working-directory: sps-server/sps-plugin-discovery
         run: npm run check
 
   plugin-kit:

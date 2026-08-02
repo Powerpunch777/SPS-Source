@@ -57,9 +57,15 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(workflow, /\$expectedTag = "v\$\(\$manifest\.version\)"/);
   assert.match(workflow, /submodules: recursive/);
   assert.match(workflow, /SPS_SOURCE_READ_TOKEN/);
+  assert.match(workflow, /verify:\s*\r?\n\s*uses: \.\/\.github\/workflows\/sps-verify\.yml/);
+  assert.match(workflow, /build-sign-and-publish:\s*\r?\n\s*needs: verify/);
   assert.match(workflow, /npm run release:win/);
   assert.match(workflow, /SPS_REQUIRE_CLEAN_RELEASE:\s*"1"/);
   assert.match(workflow, /SPS_RELEASE_STATUS:\s*"stable"/);
+  assert.match(workflow, /Verify physical Host and Member release evidence/);
+  assert.match(workflow, /secrets\.SPS_PHYSICAL_RELEASE_EVIDENCE_JSON/);
+  assert.match(workflow, /SPS_PHYSICAL_EVIDENCE_PATH = \$evidencePath/);
+  assert.match(workflow, /verify-physical-release-evidence\.mjs/);
   assert.match(workflow, /sps-release-manifest\.json/);
   assert.match(workflow, /SPS-Agent-Runtime-Pack-\*\.zip/);
   assert.match(workflow, /sps-agent-runtime-packs\.json/);
@@ -68,4 +74,18 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(workflow, /gh release edit \$tag --repo \$releaseRepo --draft=false --prerelease=false --latest/);
   assert.doesNotMatch(workflow, /--clobber/);
   assert.doesNotMatch(workflow, /GH_TOKEN:\s*\$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+});
+
+test("release verification includes every bundled SPS plugin", async () => {
+  const workflow = await readFile(
+    path.join(repositoryDirectory, ".github", "workflows", "sps-verify.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /workflow_call:/);
+  assert.match(workflow, /working-directory: sps-server\/sps-default-memory/);
+  assert.match(workflow, /working-directory: sps-server\/sps-plugin-discovery/);
+  assert.match(workflow, /working-directory: sps-server\/sps-room-chat/);
+  assert.match(workflow, /working-directory: external\/sps-plugin-sdk/);
+  assert.match(workflow, /working-directory: sps-server\/desktop-node/);
 });

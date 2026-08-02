@@ -7,8 +7,13 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    uses: ./.github/workflows/sps-verify.yml
+    secrets: inherit
+
   build-and-publish-beta:
     name: Package unsigned Windows candidate
+    needs: verify
     runs-on: windows-latest
 
     steps:

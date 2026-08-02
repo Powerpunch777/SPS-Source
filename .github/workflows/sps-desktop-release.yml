@@ -9,7 +9,12 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    uses: ./.github/workflows/sps-verify.yml
+    secrets: inherit
+
   build-sign-and-publish:
+    needs: verify
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ secrets.SPS_DESKTOP_RELEASES_TOKEN }}
@@ -29,6 +34,23 @@ jobs:
           cache-dependency-path: |
             sps-server/desktop/package-lock.json
             external/sps-plugin-sdk/package-lock.json
+
+      - name: Verify physical Host and Member release evidence
+        env:
+          SPS_PHYSICAL_RELEASE_EVIDENCE_JSON: ${{ secrets.SPS_PHYSICAL_RELEASE_EVIDENCE_JSON }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SPS_PHYSICAL_RELEASE_EVIDENCE_JSON)) {
+            throw "SPS_PHYSICAL_RELEASE_EVIDENCE_JSON is required for a stable Desktop release."
+          }
+          $evidencePath = Join-Path $env:RUNNER_TEMP "sps-physical-release-evidence.json"
+          [System.IO.File]::WriteAllText(
+            $evidencePath,
+            $env:SPS_PHYSICAL_RELEASE_EVIDENCE_JSON,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          $env:SPS_PHYSICAL_EVIDENCE_PATH = $evidencePath
+          node sps-server/desktop/scripts/verify-physical-release-evidence.mjs
 
       - name: Install pinned pnpm for SPS Core
         run: npm install --global pnpm@11.9.0
