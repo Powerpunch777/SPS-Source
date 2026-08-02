@@ -61,7 +61,7 @@ import {
   removeSpsWorkspaceSource,
   renameSpsWorkspaceSource,
 } from "./workspace-sources.mjs";
-import { createSpsUpdateService, resolveSpsDesktopUpdatePolicy } from "./update-service.mjs";
+import { createSpsDesktopUpdateController } from "./desktop-update-controller.mjs";
 import {
   createSpsDesktopAccessToken,
   isSpsDesktopTechnicalHostRequest,
@@ -225,24 +225,18 @@ let isQuitting = false;
 let shutdownPromise = null;
 let shutdownComplete = false;
 const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
-let updateService = null;
-let desktopAutoUpdater = null;
-let updateInstallPromise = null;
-let lastPromptedUpdateVersion = null;
 // Status is rendered often by the setup screen. Do not synchronously ask
 // Windows for login-item settings on that hot IPC path: some Windows builds
 // can stall the call while their startup registration is being refreshed.
 let launchAtLoginEnabled = false;
-let updateStatus = {
-  state: "initializing",
-  channel: "latest",
-  trust: "official-release",
-  mandatory: false,
-  currentVersion: app.getVersion(),
-  availableVersion: null,
-  percent: null,
-  message: "Desktop update service is starting.",
-};
+const desktopUpdateController = createSpsDesktopUpdateController({
+  app,
+  dialog,
+  getMainWindow: () => mainWindow,
+  stopDesktopRuntimeGracefully,
+  setQuitting: () => { isQuitting = true; },
+  setShutdownComplete: () => { shutdownComplete = true; },
+});
 let ownerHostManager = null;
 let ownerHostRuntimePromise = null;
 let defaultMemoryManager = null;
@@ -311,112 +305,11 @@ function safeNodeCommandFailure(error) {
 }
 
 async function initializeUpdates() {
-  if (!app.isPackaged) {
-    updateStatus = {
-      state: "disabled",
-      channel: "latest",
-      trust: "official-release",
-      mandatory: false,
-      currentVersion: app.getVersion(),
-      availableVersion: null,
-      percent: null,
-      message: "Desktop updates are available only in an installed SPS release.",
-    };
-    return;
-  }
-  try {
-    const updaterModule = await import("electron-updater");
-    // electron-updater is CommonJS. Dynamic ESM import exposes it under default.
-    const autoUpdater = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater;
-    if (!autoUpdater) throw new Error("electron-updater did not expose autoUpdater");
-    desktopAutoUpdater = autoUpdater;
-    updateService = createSpsUpdateService({
-      app,
-      updater: autoUpdater,
-      policy: resolveSpsDesktopUpdatePolicy(),
-      onInstallRequested: installDownloadedDesktopUpdate,
-      onStatus: (nextStatus) => {
-        updateStatus = nextStatus;
-        if (nextStatus.state === "ready") void promptDesktopBetaUpdate(nextStatus);
-      },
-    });
-    updateStatus = updateService.getStatus();
-    updateService.start();
-  } catch {
-    updateStatus = {
-      state: "unavailable",
-      channel: "latest",
-      trust: "official-release",
-      mandatory: false,
-      currentVersion: app.getVersion(),
-      availableVersion: null,
-      percent: null,
-      message: "Desktop update service is unavailable. Your current installation remains unchanged.",
-    };
-  }
-}
-
-async function promptDesktopBetaUpdate(status = updateStatus, { force = false } = {}) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const version = status.availableVersion ?? "a newer version";
-  const promptKey = `${status.state}:${version}`;
-  if (!force && lastPromptedUpdateVersion === promptKey) return;
-  lastPromptedUpdateVersion = promptKey;
-
-  if (status.state === "ready") {
-    const result = await dialog.showMessageBox(mainWindow, {
-      type: "info",
-      title: "SPS Desktop update ready",
-      message: `SPS Desktop ${version} has been downloaded.`,
-      detail: "It will install automatically the next time SPS Desktop closes. You can also restart now.",
-      buttons: ["Restart and install", "Later"],
-      defaultId: 0,
-      cancelId: 1,
-    });
-    if (result.response === 0 && updateService) {
-      updateStatus = await updateService.install();
-    }
-  }
+  await desktopUpdateController.initialize();
 }
 
 async function checkForDesktopBetaUpdate() {
-  const status = await requireUpdateService().check();
-  updateStatus = status;
-  if (status.state === "current") {
-    await dialog.showMessageBox(mainWindow, {
-      type: "info",
-      title: "SPS Desktop update",
-      message: "This SPS Desktop installation is up to date.",
-      buttons: ["OK"],
-    });
-  } else if (status.state === "ready") {
-    await promptDesktopBetaUpdate(status, { force: true });
-  }
-  return status;
-}
-
-function requireUpdateService() {
-  if (!updateService) {
-    throw new Error("Desktop updates are unavailable in this SPS installation.");
-  }
-  return updateService;
-}
-
-async function installDownloadedDesktopUpdate() {
-  if (updateInstallPromise) return updateInstallPromise;
-  const updater = desktopAutoUpdater;
-  if (!updater) throw new Error("Desktop updates are unavailable in this SPS installation.");
-
-  updateInstallPromise = (async () => {
-    // electron-updater launches the NSIS installer before it schedules app.quit().
-    // Stop the embedded Owner Host first so the installer never races the
-    // asynchronous before-quit shutdown hook.
-    isQuitting = true;
-    await stopDesktopRuntimeGracefully().catch(() => undefined);
-    shutdownComplete = true;
-    updater.quitAndInstall();
-  })();
-  return updateInstallPromise;
+  return desktopUpdateController.check();
 }
 
 function requireEncryption() {
@@ -4327,14 +4220,7 @@ function publicStatus() {
       ? ownerHostCompanies.map((company) => ({ id: company.id, name: company.name }))
       : [],
     update: {
-      state: updateStatus.state,
-      channel: updateStatus.channel,
-      trust: updateStatus.trust,
-      mandatory: updateStatus.mandatory,
-      currentVersion: updateStatus.currentVersion,
-      availableVersion: updateStatus.availableVersion,
-      percent: updateStatus.percent,
-      message: updateStatus.message,
+      ...desktopUpdateController.getStatus(),
     },
   };
 }
@@ -4933,15 +4819,15 @@ function registerIpc() {
   ipcMain.handle("desktop:enable-private-team-access", async (_event, input) => await enablePrivateTeamAccess(input));
   ipcMain.handle("desktop:disable-private-team-access", disablePrivateTeamAccess);
   ipcMain.handle("desktop:check-updates", async () => {
-    updateStatus = await requireUpdateService().check();
+    await desktopUpdateController.check();
     return publicStatus();
   });
   ipcMain.handle("desktop:download-update", async () => {
-    updateStatus = await requireUpdateService().download();
+    await desktopUpdateController.download();
     return publicStatus();
   });
   ipcMain.handle("desktop:install-update", async () => {
-    updateStatus = await requireUpdateService().install();
+    await desktopUpdateController.install();
     return publicStatus();
   });
   ipcMain.handle("desktop:ready-for-join-link", () => {
@@ -5287,7 +5173,7 @@ async function stopDesktopRuntimeGracefully() {
   isQuitting = true;
   stopNodeScheduling();
   await cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped.");
-  updateService?.stop();
+  desktopUpdateController.stop();
   // A forced process-tree kill interrupts embedded PostgreSQL and turns every
   // normal Desktop exit into database crash recovery on the next start. Each
   // manager already escalates after its bounded graceful wait when necessary.

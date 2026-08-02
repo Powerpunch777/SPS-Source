@@ -353,5 +353,6 @@ test("shuts down the Owner Host gracefully before quitting Desktop", async () =>
 
   assert.match(main, /async function stopDesktopRuntimeGracefully\(\) \{[\s\S]*?ownerHostManager\?\.stop\(\{ force: false \}\)/);
   assert.match(main, /app\.on\("before-quit", \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?shutdownComplete = true;[\s\S]*?app\.quit\(\);/);
-  assert.match(main, /async function installDownloadedDesktopUpdate\(\) \{[\s\S]*?await stopDesktopRuntimeGracefully\(\)\.catch\(\(\) => undefined\);[\s\S]*?shutdownComplete = true;[\s\S]*?updater\.quitAndInstall\(\);/);
+  assert.match(main, /desktopUpdateController\.stop\(\);/);
+  assert.match(main, /createSpsDesktopUpdateController\(\{[\s\S]*?stopDesktopRuntimeGracefully,[\s\S]*?setQuitting:[\s\S]*?setShutdownComplete:/);
 });
