@@ -32,6 +32,9 @@
   Host installation versus Workspace activation.
 - [AGENT-RUNTIME-PACKS.md](AGENT-RUNTIME-PACKS.md): optional runtime-pack
   delivery and verification.
+- [PAPERCLIP-COMPATIBILITY-MIGRATION.md](PAPERCLIP-COMPATIBILITY-MIGRATION.md):
+  quarantine and phased removal of internal compatibility names without
+  breaking existing Vaults or plugins.
 
 ## Engineering evidence
 
