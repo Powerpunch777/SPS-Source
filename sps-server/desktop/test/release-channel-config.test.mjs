@@ -89,3 +89,18 @@ test("release verification includes every bundled SPS plugin", async () => {
   assert.match(workflow, /working-directory: external\/sps-plugin-sdk/);
   assert.match(workflow, /working-directory: sps-server\/desktop-node/);
 });
+
+test("release verification runs every Windows Desktop E2E before publishing", async () => {
+  const workflow = await readFile(
+    path.join(repositoryDirectory, ".github", "workflows", "sps-verify.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /npm run test:e2e:bootstrap/);
+  assert.match(workflow, /npm run prepare:owner-host-runtime/);
+  assert.match(workflow, /electron-builder --win dir --publish never/);
+  assert.match(workflow, /SPS_DESKTOP_E2E_BINARY:/);
+  assert.match(workflow, /npm run test:e2e:workspace-surfaces/);
+  assert.match(workflow, /npm run test:e2e:plugin-preview/);
+  assert.match(workflow, /npm run test:e2e:host-plugin-lifecycle/);
+});
