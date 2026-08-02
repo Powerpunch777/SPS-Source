@@ -40,4 +40,6 @@ test("local Owner Host transport proof does not depend on profile activation ord
     main,
     /headers\[SPS_DESKTOP_ACCESS_HEADER\] = ownerHostDesktopAccessToken;\s*if \(ownerBootstrap\)/,
   );
+  assert.match(main, /import \{ spsRequestError, spsRequestTimeoutSignal \} from "\.\/desktop-request\.mjs";/);
+  assert.match(main, /signal: spsRequestTimeoutSignal\(\)[\s\S]*?throw spsRequestError\(error, "SPS Owner Host request timed out\./);
 });

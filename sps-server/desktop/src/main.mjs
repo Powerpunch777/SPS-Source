@@ -63,6 +63,7 @@ import {
 } from "./workspace-sources.mjs";
 import { createSpsDesktopUpdateController } from "./desktop-update-controller.mjs";
 import { createSpsDesktopAccountController } from "./desktop-account-controller.mjs";
+import { spsRequestError, spsRequestTimeoutSignal } from "./desktop-request.mjs";
 import {
   createSpsDesktopAccessToken,
   isSpsDesktopTechnicalHostRequest,

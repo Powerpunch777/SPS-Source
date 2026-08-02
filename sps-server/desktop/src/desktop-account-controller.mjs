@@ -1,3 +1,5 @@
+import { spsRequestError, spsRequestTimeoutSignal } from "./desktop-request.mjs";
+
 const ACCOUNT_REFRESH_SKEW_MS = 2 * 60 * 1000;
 const ACCOUNT_SESSION_COOKIE = "sps_identity_session";
 
@@ -37,15 +39,6 @@ function readSetCookieValue(response, cookieName) {
     if (match?.[1]) return decodeURIComponent(match[1]);
   }
   return null;
-}
-
-function timeoutSignal(timeoutMs) {
-  return typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
-}
-
-function requestError(error, fallback) {
-  if (error?.name === "TimeoutError" || error?.name === "AbortError") return new Error(fallback);
-  return error;
 }
 
 export function createSpsDesktopAccountController({
@@ -211,10 +204,10 @@ export function createSpsDesktopAccountController({
       response = await fetch(new URL("/api/sps-identity/session", `${hubOrigin}/`), {
         method: "POST",
         headers,
-        signal: timeoutSignal(requestTimeoutMs),
+        signal: spsRequestTimeoutSignal(requestTimeoutMs),
       });
     } catch (error) {
-      throw requestError(error, "SPS sign-in session timed out. Sign in again and retry.");
+      throw spsRequestError(error, "SPS sign-in session timed out. Sign in again and retry.");
     }
     if (response.status === 404) return null;
     if (!response.ok) {
