@@ -1,13 +1,15 @@
 # SPS Core Completion Audit
 
-> Historical evidence for Desktop 0.4.104. This report does not certify the
-> current candidate listed in `CURRENT-CANDIDATE.md`.
+> Historical evidence for the Desktop 0.4.104 candidate snapshot. The physical
+> results below apply only to that snapshot and do not certify the current
+> candidate listed in `CURRENT-CANDIDATE.md`.
 
-Status: Core contract, packaging, installed Desktop regression, and physical
-two-computer beta gates passed; public release gates remain separate.
+Status for this historical snapshot: Core contract, packaging, installed Desktop
+regression, and physical two-computer beta gates passed; public release gates
+remain separate.
 Audit date: 2026-08-01
 
-## Candidate
+## Historical candidate snapshot
 
 - SPS Desktop `0.4.104`
 - SPS Core `8339edd1ee6cb479a757c303039e123b5e0680cf`
@@ -26,10 +28,10 @@ Audit date: 2026-08-01
 | Plugin lifecycle safety | Pass | Staging, compatibility, review, enable/disable/re-enable/uninstall and rollback coverage passed in packaged Host lifecycle. |
 | Neutral first Workspace | Pass | Packaged Workspace does not auto-create legacy workflow objects; Marketplace/Discovery behavior is search/recommendation, not automatic installation. |
 | Desktop-first boundary | Pass | Unheadered browser access is denied; Electron Desktop bridge access works. |
-| Two-computer Source execution | Pass | Run `e0286388-cf8d-4acb-9890-40d8fce1edab` edited and read the Host marker through laptop Agy CLI. |
-| Physical E2E cleanup | Pass | The temporary plugin, Source handle, Local Registry source, share account, and test files were removed after restart evidence was captured. |
+| Two-computer Source execution | Pass for this snapshot | Run `e0286388-cf8d-4acb-9890-40d8fce1edab` edited and read the Host marker through laptop Agy CLI. |
+| Physical E2E cleanup | Pass for this snapshot | The temporary plugin, Source handle, Local Registry source, share account, and test files were removed after restart evidence was captured. |
 
-## Executed evidence
+## Executed evidence for the historical snapshot
 
 | Area | Result |
 | --- | --- |
@@ -47,9 +49,9 @@ Audit date: 2026-08-01
 | Source metadata/route/grant contract | pass in automated coverage |
 | Physical Host Source -> laptop Agy CLI edit | pass; `SPS_WORKSPACE_PATH=Z:\` |
 
-## What is complete
+## What was complete in this snapshot
 
-The current evidence supports the claim that SPS Core can package and run a
+The historical evidence supports the claim that SPS Core could package and run a
 workflow-neutral Desktop, keep plugin lifecycle changes behind the Host boundary,
 provide scoped Source/Runtime/Run contracts, and run the packaged baseline on both
 the Host and Member installations. Plugin Preview is isolated and its cleanup was
@@ -66,6 +68,8 @@ The following are deliberately still release gates:
 
 ## Completion rule
 
-The physical Source run, revoke denial, and restart recovery are now recorded in
+For this historical snapshot, the physical Source run, revoke denial, and restart recovery are recorded in
 [`CORE-DESKTOP-E2E-AUDIT.md`](CORE-DESKTOP-E2E-AUDIT.md). The remaining items are
-beta usability and public-release gates, not missing Core/Source execution behavior.
+beta usability and public-release gates for that snapshot, not missing Core/Source
+execution behavior. No physical two-computer evidence for the current candidate is
+claimed by this report.

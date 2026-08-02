@@ -7,6 +7,7 @@
 사람이 읽는 정확한 후보 목록은 여기에서 자동 생성되는
 [`CURRENT-CANDIDATE.md`](CURRENT-CANDIDATE.md)이다.
 이 문서는 사람이 이해하기 위한 배포 정책 요약이다.
+이 문서 자체는 현재 후보의 두 컴퓨터 물리 인수 완료를 주장하지 않는다.
 
 ## 현재 채널
 
@@ -56,7 +57,8 @@ Preview는 `Powerpunch777/SPS-Desktop-Preview`에 별도로 게시한다. Previe
 
 과거 후보에서 수집한 물리 테스트 증거는 해당 후보에만 적용한다. 현재 후보의
 Desktop 버전과 Core·SDK revision이 모두 일치하지 않으면 정식 배포 증거로
-승격하지 않는다.
+승격하지 않는다. 현재 후보에 대한 새 물리 인수 증거는 이 문서에 기록하지
+않는다.
 
 자세한 Preview 운영 규칙은
 [RELEASE-AND-PREVIEW-POLICY-ko.md](RELEASE-AND-PREVIEW-POLICY-ko.md)를 따른다.
