@@ -3,6 +3,7 @@ import path from "node:path";
 
 export const SPS_OWNER_TRANSFER_FORMAT = "sps-owner-vault-transfer";
 export const SPS_OWNER_TRANSFER_VERSION = 1;
+export const SPS_OWNER_RESTORE_MODE = "fresh-host-only";
 
 const INCLUDED_PATHS = [
   "database/owner-host.sql.gz",
@@ -94,6 +95,55 @@ async function assertWithinRealRoot(root, candidate, fsApi, message) {
 
 export function createSpsOwnerTransferName(now = new Date()) {
   return `SPS-transfer-${transferTimestamp(now)}`;
+}
+
+async function inspectFreshVaultEntries(root, fsApi, relativeRoot = "") {
+  const entries = [];
+  for (const child of await fsApi.readdir(path.join(root, relativeRoot), { withFileTypes: true })) {
+    const relativePath = manifestPath(path.join(relativeRoot, child.name));
+    const target = path.join(root, relativePath);
+    const stat = await lstatRequired(target, fsApi, "SPS restore target contains an unreadable path.");
+    if (stat.isDirectory()) {
+      entries.push(...await inspectFreshVaultEntries(root, fsApi, relativePath));
+    } else {
+      entries.push(relativePath);
+    }
+  }
+  return entries;
+}
+
+/**
+ * Checks whether a vault is safe to receive a Host restore. Existing Host
+ * state is never merged or replaced; only an absent or bootstrap-only vault
+ * is accepted.
+ */
+export async function inspectSpsOwnerVaultRestoreTarget({ vaultRoot, fsApi = fs } = {}) {
+  if (!vaultRoot) throw new Error("SPS Owner Vault restore target is required.");
+  const root = path.resolve(vaultRoot);
+  try {
+    const stat = await fsApi.lstat(root);
+    if (stat.isSymbolicLink()) throw new Error("SPS restore refuses a symbolic-link Host Vault.");
+    if (!stat.isDirectory()) return { root, fresh: false, entries: ["<not-a-directory>"] };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { root, fresh: true, entries: [], reason: "vault-does-not-exist" };
+    throw error;
+  }
+  const entries = await inspectFreshVaultEntries(root, fsApi);
+  const dataEntries = entries.filter((entry) => entry !== "config.json");
+  return {
+    root,
+    fresh: dataEntries.length === 0,
+    entries,
+    reason: dataEntries.length === 0 ? "bootstrap-only" : "existing-host-data",
+  };
+}
+
+export async function assertSpsOwnerVaultRestoreTarget(options = {}) {
+  const inspection = await inspectSpsOwnerVaultRestoreTarget(options);
+  if (!inspection.fresh) {
+    throw new Error("SPS Host restore is allowed only into a fresh Host Vault. Existing Host data cannot be merged or replaced.");
+  }
+  return inspection;
 }
 
 async function copyDirectoryIfPresent(source, destination, fsApi, included, label) {
@@ -262,4 +312,36 @@ export async function inspectSpsOwnerVaultTransfer({ bundleRoot, fsApi = fs } = 
     throw new Error("This SPS transfer bundle contains a file or directory missing from its manifest.");
   }
   return { bundleRoot: root, manifest, databaseBackup: backupPath };
+}
+
+/**
+ * Stages a validated transfer bundle into an empty Owner Vault. Database
+ * restoration is deliberately separate: the caller must initialize the
+ * embedded database and invoke Core's restore primitive before promoting the
+ * staged vault to the live Owner Vault.
+ */
+export async function importSpsOwnerVaultTransfer({ bundleRoot, vaultRoot, fsApi = fs } = {}) {
+  const inspected = await inspectSpsOwnerVaultTransfer({ bundleRoot, fsApi });
+  await assertSpsOwnerVaultRestoreTarget({ vaultRoot, fsApi });
+
+  const root = path.resolve(vaultRoot);
+  await fsApi.mkdir(root, { recursive: true });
+  const databaseDestination = path.join(root, "backups", "owner-host.sql.gz");
+  await fsApi.mkdir(path.dirname(databaseDestination), { recursive: true });
+  await fsApi.copyFile(inspected.databaseBackup, databaseDestination);
+
+  for (const relativePath of inspected.manifest.included.filter(
+    (entry) => entry !== "database/owner-host.sql.gz",
+  )) {
+    const source = path.join(inspected.bundleRoot, relativePath);
+    const destination = path.join(root, relativePath);
+    await assertWithinRealRoot(inspected.bundleRoot, source, fsApi, "SPS transfer source escapes the bundle root.");
+    await fsApi.cp(source, destination, { recursive: true, errorOnExist: true });
+  }
+
+  return {
+    vaultRoot: root,
+    backupFile: databaseDestination,
+    manifest: inspected.manifest,
+  };
 }

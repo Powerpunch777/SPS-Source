@@ -25,6 +25,7 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:check-hub"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:start-sps-account"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:create-owner-server"/);
+  assert.match(preload, /ipcRenderer\.invoke\("desktop:restore-owner-server"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:join-server"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:connect-node"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:disconnect-node"\)/);
@@ -40,6 +41,7 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(preload, /ipcRenderer\.invoke\("desktop:revoke-member-invite"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:export-owner-vault-transfer"/);
   assert.match(preload, /ipcRenderer\.invoke\("desktop:inspect-owner-vault-transfer"/);
+  assert.match(main, /ipcMain\.handle\("desktop:restore-owner-server"/);
   assert.match(workspacePreload, /contextBridge\.exposeInMainWorld\("spsDesktopWorkspace"/);
   assert.match(workspacePreload, /manageHostWorkspaceSource: \(input\) => ipcRenderer\.invoke\("desktop:workspace-manage-host-workspace-source", input\)/);
   assert.match(workspacePreload, /ipcRenderer\.invoke\("desktop:workspace-account"/);
@@ -64,6 +66,23 @@ test("uses a sandbox-compatible CommonJS preload bridge", async () => {
   assert.match(main, /Revoke every Member's source access before changing or clearing this Host project folder/);
   assert.match(main, /Official extensions\.\.\."[\s\S]*?visible: workspaceOpen/);
   assert.match(main, /Plugin sources & review\.\.\."[\s\S]*?visible: workspaceOpen/);
+});
+
+test("offers Host restore before activation and explains the fresh-Host boundary", async () => {
+  const [onboardingHtml, onboardingRenderer, main] = await Promise.all([
+    readFile(new URL("../renderer/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../renderer/renderer.mjs", import.meta.url), "utf8"),
+    readFile(mainPath, "utf8"),
+  ]);
+
+  assert.match(onboardingHtml, /id="restore-owner-server"/);
+  assert.match(onboardingHtml, /새 Host/);
+  assert.match(onboardingRenderer, /restoreOwnerServer\(\)/);
+  assert.match(main, /SPS Host restore is allowed only on a fresh Host/);
+  assert.match(main, /state\.ownerHostOwnerSubject \|\| isOwnerHostProfile\(\)/);
+  assert.doesNotMatch(main, /state\.ownerHostOwnerSubject \|\| state\.profile/);
+  assert.match(main, /await runOwnerHostRestoreProcess\(/);
+  assert.match(main, /await startOwnerHost\(\{ activate: true \}\)/);
 });
 
 test("keeps plugins out of the SPS sign-in and server-setup screens", async () => {

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("spsDesktop", {
   startSpsAccount: () => ipcRenderer.invoke("desktop:start-sps-account"),
   signOutSpsAccount: () => ipcRenderer.invoke("desktop:sign-out-sps-account"),
   createOwnerServer: () => ipcRenderer.invoke("desktop:create-owner-server"),
+  restoreOwnerServer: () => ipcRenderer.invoke("desktop:restore-owner-server"),
   joinServer: (input) => ipcRenderer.invoke("desktop:join-server", input),
   checkHub: (input) => ipcRenderer.invoke("desktop:check-hub", input),
   useOwnerHost: () => ipcRenderer.invoke("desktop:use-owner-host"),

@@ -431,6 +431,13 @@ async function writeOwnerHostBootstrap(runtimeRoot) {
   await writeFile(bootstrapPath, source, "utf8");
 }
 
+async function copyOwnerHostRestoreHelper(runtimeRoot) {
+  const source = path.join(desktopRoot, "src", "owner-host-restore.mjs");
+  const target = path.join(runtimeRoot, "sps-owner-host-restore.mjs");
+  await requireFile(source, "SPS Owner Host restore helper is missing.");
+  await cp(source, target);
+}
+
 await requireFile(
   path.join(coreRoot, "cli", "dist", "index.js"),
   "SPS Owner Host CLI is not built. Build SPS Core before packaging SPS Desktop.",
@@ -469,6 +476,7 @@ const serverUiDist = path.join(coreRoot, "server", "ui-dist");
 await requireFile(path.join(serverUiDist, "index.html"), "SPS Owner Host static UI is missing after the Core build.");
 await cp(serverUiDist, path.join(runtimeRoot, "ui-dist"), { recursive: true });
 await writeOwnerHostBootstrap(runtimeRoot);
+await copyOwnerHostRestoreHelper(runtimeRoot);
 await run(process.execPath, ["--import", "tsx", "-e", "await import('@paperclipai/server')"], runtimeRoot);
 await copyBundledSpsPluginRuntime(runtimeRoot);
 const pluginDeveloperKit = await copyBundledSpsPluginDeveloperKit(runtimeRoot);

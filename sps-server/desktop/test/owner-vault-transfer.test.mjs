@@ -5,10 +5,39 @@ import os from "node:os";
 import path from "node:path";
 import {
   SPS_OWNER_TRANSFER_FORMAT,
+  assertSpsOwnerVaultRestoreTarget,
   createSpsOwnerTransferName,
   exportSpsOwnerVaultTransfer,
+  importSpsOwnerVaultTransfer,
+  inspectSpsOwnerVaultRestoreTarget,
   inspectSpsOwnerVaultTransfer,
 } from "../src/owner-vault-transfer.mjs";
+
+test("allows Host restore only into an absent or bootstrap-only vault", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-restore-"));
+  try {
+    const absent = path.join(root, "absent");
+    assert.equal((await inspectSpsOwnerVaultRestoreTarget({ vaultRoot: absent })).fresh, true);
+    await assertSpsOwnerVaultRestoreTarget({ vaultRoot: absent });
+
+    const bootstrap = path.join(root, "bootstrap");
+    await fs.mkdir(path.join(bootstrap, "database"), { recursive: true });
+    await fs.mkdir(path.join(bootstrap, "storage"), { recursive: true });
+    await fs.writeFile(path.join(bootstrap, "config.json"), "{}\n");
+    assert.equal((await inspectSpsOwnerVaultRestoreTarget({ vaultRoot: bootstrap })).fresh, true);
+    await assertSpsOwnerVaultRestoreTarget({ vaultRoot: bootstrap });
+
+    await fs.writeFile(path.join(bootstrap, "storage", "attachment.txt"), "existing");
+    const occupied = await inspectSpsOwnerVaultRestoreTarget({ vaultRoot: bootstrap });
+    assert.equal(occupied.fresh, false);
+    await assert.rejects(
+      assertSpsOwnerVaultRestoreTarget({ vaultRoot: bootstrap }),
+      /only into a fresh Host Vault/,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 test("exports a portable Owner Vault transfer without secrets or live database files", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
@@ -42,6 +71,38 @@ test("exports a portable Owner Vault transfer without secrets or live database f
     assert.equal(await fs.readFile(path.join(exported.bundleRoot, "memory", "data", "memory.json"), "utf8"), "memory");
     await assert.rejects(fs.access(path.join(exported.bundleRoot, "secrets", "master.key")));
     await assert.rejects(fs.access(path.join(exported.bundleRoot, "database", "live.data")));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("imports only into an empty staging vault and keeps excluded data out", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-import-"));
+  try {
+    const vault = path.join(root, "owner-vault");
+    const exports = path.join(root, "exports");
+    const target = path.join(root, "staging-vault");
+    const backup = path.join(vault, "backups", "sps-test.sql.gz");
+    await fs.mkdir(path.dirname(backup), { recursive: true });
+    await fs.mkdir(path.join(vault, "storage"), { recursive: true });
+    await fs.mkdir(exports);
+    await fs.writeFile(backup, "database");
+    await fs.writeFile(path.join(vault, "storage", "attachment.txt"), "asset");
+
+    const exported = await exportSpsOwnerVaultTransfer({
+      vaultRoot: vault,
+      backupFile: backup,
+      destinationRoot: exports,
+    });
+    const imported = await importSpsOwnerVaultTransfer({ bundleRoot: exported.bundleRoot, vaultRoot: target });
+
+    assert.equal(await fs.readFile(imported.backupFile, "utf8"), "database");
+    assert.equal(await fs.readFile(path.join(target, "storage", "attachment.txt"), "utf8"), "asset");
+    await assert.rejects(fs.access(path.join(target, "secrets")));
+    await assert.rejects(
+      importSpsOwnerVaultTransfer({ bundleRoot: exported.bundleRoot, vaultRoot: target }),
+      /only into a fresh Host Vault/,
+    );
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

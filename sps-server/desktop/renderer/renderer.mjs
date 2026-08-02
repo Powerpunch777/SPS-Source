@@ -343,6 +343,11 @@ $("#create-owner-server").addEventListener("click", () => run(async () => {
   await window.spsDesktop.createOwnerServer();
 }));
 
+$("#restore-owner-server").addEventListener("click", () => run(async () => {
+  setNotice("Transfer bundle을 검증하고 새 Owner Host에 복원합니다.");
+  await window.spsDesktop.restoreOwnerServer();
+}));
+
 $("#show-join-server").addEventListener("click", () => {
   const form = $("#join-server-form");
   form.hidden = !form.hidden;

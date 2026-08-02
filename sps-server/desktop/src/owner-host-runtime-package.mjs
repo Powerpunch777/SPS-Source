@@ -14,6 +14,7 @@ const REQUIRED_RUNTIME_FILES = [
   "sps-owner-host-runtime.json",
   "sps-release-baseline.json",
   "sps-owner-host-bootstrap.mjs",
+  "sps-owner-host-restore.mjs",
   "package.json",
   "bin/node.exe",
   "dist/index.js",

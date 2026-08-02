@@ -174,6 +174,42 @@ export function configureSpsOwnerHostAuthenticatedLocal(config, { now = new Date
   };
 }
 
+export function rebaseSpsOwnerHostConfigPaths(config, { vaultRoot, now = new Date() } = {}) {
+  if (!config || typeof config !== "object") throw new Error("SPS Owner Host config is required.");
+  if (!vaultRoot) throw new Error("SPS Owner Host vault root is required.");
+  const layout = ownerHostVaultLayout(vaultRoot);
+  return {
+    ...config,
+    $meta: nextConfigMetadata(config, now),
+    database: {
+      ...(config.database ?? {}),
+      embeddedPostgresDataDir: layout.databaseDir,
+      backup: {
+        ...(config.database?.backup ?? {}),
+        dir: layout.backupDir,
+      },
+    },
+    logging: {
+      ...(config.logging ?? {}),
+      logDir: layout.logDir,
+    },
+    storage: {
+      ...(config.storage ?? {}),
+      localDisk: {
+        ...(config.storage?.localDisk ?? {}),
+        baseDir: layout.storageDir,
+      },
+    },
+    secrets: {
+      ...(config.secrets ?? {}),
+      localEncrypted: {
+        ...(config.secrets?.localEncrypted ?? {}),
+        keyFilePath: layout.secretsPath,
+      },
+    },
+  };
+}
+
 export async function updateSpsOwnerHostConfig({ vaultRoot, update, fsApi = { mkdir, readFile, rename, writeFile } } = {}) {
   if (typeof update !== "function") throw new Error("SPS Owner Host config update function is required.");
   const layout = ownerHostVaultLayout(vaultRoot);

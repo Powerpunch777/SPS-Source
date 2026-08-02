@@ -170,7 +170,7 @@ package is signed into the Official Registry.
 
 ## Export and Import
 
-### Current Export
+### Host Transfer
 
 Only the signed-in Host can create a portable Owner Vault transfer bundle. It
 contains a fresh database backup plus SPS-managed `storage`, `instances`,
@@ -179,23 +179,30 @@ contains a fresh database backup plus SPS-managed `storage`, `instances`,
 It deliberately excludes account sessions, encryption keys, raw secrets,
 memory sidecar credentials, live database files, logs, Tailscale state, CLI
 logins, Agent credentials, and Host project folders located outside the Owner
-Vault. Host project folders are linked sources, not copied server content.
+Vault. After SQL restore, SPS also removes restored session, OAuth, API-key,
+secret-material, Node-credential, and transient execution records before the
+new Host starts.
 
-### Target Import
+Host restore is available only during fresh-Host setup. SPS validates and
+restores into a temporary Vault, promotes it only after success, and refuses
+to merge with or replace an activated Host.
 
-Import will run when creating or recovering a Host on a new computer:
+The destination Host must sign in again, reconnect CLI/API credentials,
+Tailscale and Member Nodes, reselect external Workspace Sources, and recheck
+plugin compatibility.
 
-1. Inspect the transfer manifest and stage its contents safely.
-2. Restore the database and SPS-managed Vault data.
-3. Recreate the destination Host's encryption key and require fresh SPS
-   Identity sign-in.
-4. Require the Host to reconnect CLI/API credentials, Tailscale, and Member
-   Nodes; prior live sessions are not transferred.
-5. Ask the Host to reselect external project source folders.
-6. Recheck restored plugin compatibility before any plugin is started.
+### Workspace Packages
 
-Export and transfer-bundle inspection are implemented. Full Import/restore is
-the remaining product feature.
+Each Workspace can export Core-managed Workspace metadata, Agents, Skills,
+Projects, Tasks, comments, routines, portable Git metadata, and environment
+input declarations. Import always creates a separate new Workspace. The UI
+and API both reject merge, replace, and skip strategies against an existing
+Workspace.
+
+Local source contents and credentials are never packaged. Plugin-owned opaque
+database, file, and Memory Provider data require a future standard plugin
+portability contract; until then, Host Transfer is the complete server-level
+preservation path.
 
 ## Implementation Status and Order
 
@@ -212,7 +219,8 @@ Still required before the first complete product release:
 
 1. Implement Core Marketplace search, details, and adapter-backed Assistant.
 2. Extend Plugin Builder into the authoring and personal-plugin test flow.
-3. Implement Owner Vault Import/restore.
+3. Complete a physical fresh-machine Host restore acceptance test with a real
+   transfer bundle and publish the evidence.
 4. Complete direct, two-computer Host/Member acceptance tests and publish a
    signed Windows release to validate real automatic updates.
 

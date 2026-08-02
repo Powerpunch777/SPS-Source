@@ -22,6 +22,7 @@ async function createRuntime(root) {
     writeFile(root, "sps-owner-host-runtime.json", "{\"format\":8}\n"),
     writeFile(root, "sps-release-baseline.json", "{\"desktopVersion\":\"0.4.98\"}\n"),
     writeFile(root, "sps-owner-host-bootstrap.mjs", "export {};\n"),
+    writeFile(root, "sps-owner-host-restore.mjs", "export {};\n"),
     writeFile(root, "package.json", "{\"name\":\"sps-owner-host-runtime\"}\n"),
     writeFile(root, "bin/node.exe", "node"),
     writeFile(root, "dist/index.js", "export {};\n"),
@@ -38,7 +39,7 @@ test("packages, verifies, materializes, and reuses one Owner Host runtime archiv
   try {
     await createRuntime(runtimeRoot);
     const created = await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
-    assert.equal(created.runtime.fileCount, 8);
+    assert.equal(created.runtime.fileCount, 9);
     assert.match(created.archive.sha256, /^[a-f0-9]{64}$/);
     const inspected = await readSpsOwnerHostRuntimePackage(packageRoot);
     assert.equal(inspected.manifest.archive.sha256, created.archive.sha256);

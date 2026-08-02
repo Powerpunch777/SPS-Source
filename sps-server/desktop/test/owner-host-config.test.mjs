@@ -10,6 +10,7 @@ import {
   ensureSpsOwnerHostConfig,
   findSpsOwnerHostPorts,
   ownerHostVaultLayout,
+  rebaseSpsOwnerHostConfigPaths,
   spsOwnerHostUrl,
 } from "../src/owner-host-config.mjs";
 
@@ -49,6 +50,28 @@ test("keeps all Owner Host data inside its vault layout", () => {
   for (const value of Object.values(layout)) {
     assert.match(value, /^C:\\SPS Vault/);
   }
+});
+
+test("rebases every machine-local Owner Host path after a staged restore is promoted", () => {
+  const staged = createSpsOwnerHostConfig({
+    vaultRoot: "C:/SPS staging",
+    serverPort: 31_310,
+    databasePort: 54_339,
+  });
+
+  const restored = rebaseSpsOwnerHostConfigPaths(staged, {
+    vaultRoot: "C:/SPS final",
+    now: new Date("2026-08-02T00:00:00.000Z"),
+  });
+
+  assert.equal(restored.server.port, 31_310);
+  assert.equal(restored.database.embeddedPostgresPort, 54_339);
+  assert.equal(restored.database.embeddedPostgresDataDir, "C:\\SPS final\\database");
+  assert.equal(restored.database.backup.dir, "C:\\SPS final\\backups");
+  assert.equal(restored.logging.logDir, "C:\\SPS final\\logs");
+  assert.equal(restored.storage.localDisk.baseDir, "C:\\SPS final\\storage");
+  assert.equal(restored.secrets.localEncrypted.keyFilePath, "C:\\SPS final\\secrets\\master.key");
+  assert.equal(JSON.stringify(restored).includes("SPS staging"), false);
 });
 
 test("upgrades an existing local-trusted Owner Vault without moving its data", async () => {

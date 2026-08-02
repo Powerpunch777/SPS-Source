@@ -82,6 +82,7 @@ import {
   configureSpsOwnerHostAuthenticatedLocal,
   configureSpsOwnerHostPrivateTeamAccess,
   ensureSpsOwnerHostConfig,
+  rebaseSpsOwnerHostConfigPaths,
   spsOwnerHostUrl,
   updateSpsOwnerHostConfig,
 } from "./owner-host-config.mjs";
@@ -104,7 +105,12 @@ import {
   classifyHostProjectSourceMembers,
   unavailableHostProjectSourceMemberDialog,
 } from "./host-project-source-members.mjs";
-import { exportSpsOwnerVaultTransfer, inspectSpsOwnerVaultTransfer } from "./owner-vault-transfer.mjs";
+import {
+  assertSpsOwnerVaultRestoreTarget,
+  exportSpsOwnerVaultTransfer,
+  importSpsOwnerVaultTransfer,
+  inspectSpsOwnerVaultTransfer,
+} from "./owner-vault-transfer.mjs";
 import { inspectSpsPluginRuntime } from "./plugin-runtime.mjs";
 import {
   installSpsAgentRuntimePack,
@@ -3196,9 +3202,114 @@ async function inspectOwnerVaultTransfer() {
     type: "info",
     title: "SPS transfer bundle is ready",
     message: "The transfer bundle is structurally valid.",
-    detail: `${transfer.manifest.createdAt}\n\nImport will be enabled when the destination Owner Vault is created.`,
+    detail: `${transfer.manifest.createdAt}\n\nThis bundle can be restored only from the fresh-Host setup screen.`,
   });
   return transfer;
+}
+
+function runOwnerHostRestoreProcess({ command, cwd, helperPath, configPath, backupFile, dbModulePath, embeddedPostgresModulePath, environment }) {
+  return new Promise((resolve, reject) => {
+    const child = spawnChildProcess(command, [
+      helperPath,
+      configPath,
+      backupFile,
+      dbModulePath,
+      embeddedPostgresModulePath,
+    ], {
+      cwd,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...process.env, ...environment },
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      stderr = `${stderr}${String(chunk)}`.slice(-8_000);
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (signal) reject(new Error(`SPS Host restore stopped unexpectedly (${signal}).`));
+      else if (code !== 0) reject(new Error(`SPS Host database restore failed${stderr.trim() ? `: ${stderr.trim()}` : "."}`));
+      else resolve();
+    });
+  });
+}
+
+async function restoreOwnerServerFromTransfer() {
+  const account = currentDesktopAccount();
+  if (!account) throw new Error("Sign in to SPS before restoring an SPS Server.");
+  if (ownerHostIsReady()) throw new Error("Stop the current SPS Owner Host before restoring a Server.");
+  if (state.ownerHostOwnerSubject || isOwnerHostProfile()) {
+    throw new Error("SPS Host restore is allowed only on a fresh Host that has never been activated.");
+  }
+
+  const targetRoot = ownerVaultRoot();
+  await assertSpsOwnerVaultRestoreTarget({ vaultRoot: targetRoot });
+  const selection = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    title: "Choose an SPS Server transfer folder to restore",
+    properties: ["openDirectory"],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return null;
+
+  const inspected = await inspectSpsOwnerVaultTransfer({ bundleRoot: selection.filePaths[0] });
+  const stagingRoot = path.join(app.getPath("userData"), `owner-vault.restore-${randomUUID()}`);
+  try {
+    const stagingConfig = await ensureSpsOwnerHostConfig({ vaultRoot: stagingRoot });
+    const imported = await importSpsOwnerVaultTransfer({ bundleRoot: inspected.bundleRoot, vaultRoot: stagingRoot });
+    const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
+    const materializedRuntime = app.isPackaged ? await materializeCurrentSpsOwnerHostRuntime() : null;
+    const runtime = await resolveSpsOwnerHostRuntime({
+      packagedRuntimeRoots: app.isPackaged && materializedRuntime ? [materializedRuntime] : [],
+      coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
+      packagedNodeCommand: process.execPath,
+      configPath: stagingConfig.layout.configPath,
+      environment: {},
+    });
+    if (!runtime) throw new Error("SPS Owner Host restore runtime is not available on this computer.");
+
+    const runtimeRoot = materializedRuntime ?? developmentCoreRoot;
+    const helperPath = app.isPackaged
+      ? path.join(runtimeRoot, "sps-owner-host-restore.mjs")
+      : path.join(__dirname, "owner-host-restore.mjs");
+    const dbModulePath = app.isPackaged
+      ? path.join(runtimeRoot, "node_modules", "@paperclipai", "db", "dist", "index.js")
+      : path.join(developmentCoreRoot, "packages", "db", "dist", "index.js");
+    const embeddedPostgresModulePath = app.isPackaged
+      ? path.join(runtimeRoot, "node_modules", "embedded-postgres", "dist", "index.js")
+      : path.join(developmentCoreRoot, "packages", "db", "node_modules", "embedded-postgres", "dist", "index.js");
+    await runOwnerHostRestoreProcess({
+      command: runtime.command,
+      cwd: runtime.cwd,
+      helperPath,
+      configPath: stagingConfig.layout.configPath,
+      backupFile: imported.backupFile,
+      dbModulePath,
+      embeddedPostgresModulePath,
+      environment: runtime.environment,
+    });
+
+    await updateSpsOwnerHostConfig({
+      vaultRoot: stagingRoot,
+      update: (config) => rebaseSpsOwnerHostConfigPaths(config, { vaultRoot: targetRoot }),
+    });
+
+    const finalTarget = await assertSpsOwnerVaultRestoreTarget({ vaultRoot: targetRoot });
+    if (finalTarget.reason === "bootstrap-only") {
+      await fs.rm(targetRoot, { recursive: true, force: true });
+    }
+    await fs.rename(stagingRoot, targetRoot);
+    await startOwnerHost({ activate: true });
+    await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+    await dialog.showMessageBox(mainWindow ?? undefined, {
+      type: "info",
+      title: "SPS Server restored",
+      message: "The SPS Server was restored into this fresh Owner Host.",
+      detail: "External project folders, Google/CLI sessions, API secrets, Tailscale, and Node credentials were not included. Reconnect them from SPS settings.",
+    });
+    return publicStatus();
+  } catch (error) {
+    await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function showPluginRuntimeStatus() {
@@ -4778,6 +4889,7 @@ function registerIpc() {
     await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
     return publicStatus();
   });
+  ipcMain.handle("desktop:restore-owner-server", async () => await restoreOwnerServerFromTransfer());
   ipcMain.handle("desktop:join-server", async (_event, input) => {
     if (!currentDesktopAccount()) throw new Error("Sign in to SPS before joining an SPS Server.");
     return await acceptInviteCode(input);
