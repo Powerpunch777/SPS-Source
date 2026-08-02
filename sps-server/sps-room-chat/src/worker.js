@@ -2,6 +2,38 @@ import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import manifest from "./manifest.js";
 import { CodexAppServerClient, getAgentText } from "./codex-app-server-client.js";
 import { AgyRoomClient } from "./agy-room-client.js";
+import {
+  mergeRoomWorkState,
+  newRoomState,
+  newRoomWorkState,
+  newTaskRoomState,
+  normalizeRoomWaitingFor,
+  normalizeRoomWorkState,
+  now,
+  parseState,
+  roomWorkReferences,
+  serializeState,
+  taskReviewMode,
+} from "./room-state.js";
+import {
+  chooseTaskWorkspace,
+  defaultWorkspaceKindForAgent,
+  displayTaskPath,
+  normalizeTaskAffectedPaths,
+  normalizedWorkspacePath,
+  normalizeWorkspaceProfile,
+  profileWorkspace,
+  taskTypeAllowsNoAffectedPaths,
+  workspaceBinding,
+  workspaceKindForProjectWorkspace,
+  workspaceLocalPath,
+} from "./workspace-profile.js";
+import {
+  isRoomProviderQuotaRetryJob,
+  roomJobData,
+  roomJobTitle,
+  terminalRoomJobPatchFromState,
+} from "./room-job-policy.js";
 import { WORKPLANE_CAPABILITIES, canDelegateTo, hasWorkplaneCapability, isWorkplaneWorker, resolveAgentWorkplaneIdentity } from "./organization-policy.js";
 import { listOrganizationTemplates, resolveOrganizationTemplate } from "./organization-templates.js";
 import { execFileSync } from "node:child_process";
@@ -52,17 +84,6 @@ const AGENT_ROOM_OPERATION_ORIGIN = "plugin:local.room-chat:operation:agent-room
 const ROOM_JOB_ENTITY_TYPE = "room_job";
 const WORKSPACE_PROFILE_ENTITY_TYPE = "workspace_profile";
 const WORKSPACE_PROFILE_EXTERNAL_ID = "workplane-workspace-profile-v1";
-const WORKSPACE_PROFILE_VERSION = 1;
-// These are compatibility defaults, not a closed workflow taxonomy. A Project
-// profile can replace them with its own task-type keys and workspace routes.
-const DEFAULT_TASK_TYPE_DEFINITIONS = Object.freeze([
-  Object.freeze({ id: "design", label: "Design" }),
-  Object.freeze({ id: "documentation", label: "Documentation" }),
-  Object.freeze({ id: "implementation", label: "Implementation" }),
-  Object.freeze({ id: "qa", label: "Quality assurance" }),
-  Object.freeze({ id: "art", label: "Art / assets" }),
-  Object.freeze({ id: "voice", label: "Voice / audio" })
-]);
 const TASK_TYPE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ACTIVE_ROOM_JOB_STATUSES = new Set(["queued", "starting", "working"]);
 const ROOM_ATTACHMENT_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -71,7 +92,6 @@ const ROOM_CONTEXT_RECOVERY_CHAR_LIMIT = 60000;
 const ROOM_CONTEXT_RECOVERY_ENTRY_LIMIT = 5000;
 const LOCAL_MEMORY_SIDECAR_CONFIG_URL = new URL("../../memory-sidecar/config.local.json", import.meta.url);
 const ROOM_MEMORY_SCOPES = new Set(["company", "project", "agent"]);
-const ROOM_WAITING_KINDS = new Set(["none", "user", "worker", "environment", "task_review"]);
 const ROOM_READY_STATUS = "todo";
 const TERMINAL_STATUSES = new Set(["done", "blocked", "cancelled"]);
 const ACTIVE_TASK_STATUSES = new Set(["backlog", "todo", "pending", "queued", "running", "in_progress", "in_review"]);
@@ -917,114 +937,6 @@ async function normalizeProvisionedRoleRooms(ctx, companyId, projectId, issues =
   };
 }
 
-function normalizedWorkspacePath(value) {
-  return String(value || "").trim().replace(/[\\/]+$/g, "").toLowerCase();
-}
-
-function workspaceLocalPath(workspace) {
-  return String(workspace?.cwd ?? workspace?.path ?? "").trim();
-}
-
-function displayTaskPath(value) {
-  // Markdown treats a Windows `\\r` sequence as a line break in some renderers.
-  // Task contracts are portable records, so render paths with forward slashes.
-  return String(value || "").trim().replace(/\\/g, "/");
-}
-
-function normalizeTaskAffectedPaths(paths, workspace) {
-  const workspaceRoot = displayTaskPath(workspaceLocalPath(workspace)).replace(/\/+$/g, "");
-  const comparableRoot = workspaceRoot.toLowerCase();
-  const normalized = [];
-  const invalid = [];
-
-  for (const requestedPath of paths) {
-    const raw = String(requestedPath || "").trim();
-    if (!raw) continue;
-    const portable = displayTaskPath(raw);
-    const isAbsolute = path.win32.isAbsolute(raw) || path.posix.isAbsolute(portable);
-    let relative = portable;
-
-    if (isAbsolute) {
-      const comparablePath = portable.replace(/\/+$/g, "").toLowerCase();
-      if (!comparableRoot || (comparablePath !== comparableRoot && !comparablePath.startsWith(`${comparableRoot}/`))) {
-        invalid.push({ path: portable, reason: "outside_selected_workspace" });
-        continue;
-      }
-      relative = comparablePath === comparableRoot ? "." : portable.slice(workspaceRoot.length + 1);
-    }
-
-    const segments = relative.split("/").filter(Boolean);
-    if (segments.includes("..")) {
-      invalid.push({ path: portable, reason: "parent_directory_not_allowed" });
-      continue;
-    }
-    const canonical = segments.filter((segment) => segment !== ".").join("/") || ".";
-    normalized.push(canonical);
-  }
-
-  return { paths: [...new Set(normalized)], invalid };
-}
-
-function workspaceIdMap(value, workspaceIds) {
-  const result = {};
-  for (const [key, rawWorkspaceId] of Object.entries(asRecord(value))) {
-    const workspaceId = String(rawWorkspaceId || "").trim();
-    if (key && workspaceIds.has(workspaceId)) result[key] = workspaceId;
-  }
-  return result;
-}
-
-function taskWorkspaceIdMap(value, workspaceIds) {
-  const result = {};
-  for (const [key, rawWorkspaceId] of Object.entries(asRecord(value))) {
-    const taskType = normalizedTaskTypeKey(key);
-    const workspaceId = String(rawWorkspaceId || "").trim();
-    if (taskType && workspaceIds.has(workspaceId)) result[taskType] = workspaceId;
-  }
-  return result;
-}
-
-function normalizeWorkspaceTaskTypes(value, taskWorkspaceIds, { useDefaults = true } = {}) {
-  const result = new Map();
-  const configured = Array.isArray(value) ? value : null;
-  const source = configured ?? (useDefaults ? DEFAULT_TASK_TYPE_DEFINITIONS : []);
-  for (const entry of source) {
-    const taskType = normalizedTaskTypeKey(asRecord(entry).id ?? entry);
-    if (!taskType || result.has(taskType)) continue;
-    const label = textParam(asRecord(entry), "label") || taskType;
-    result.set(taskType, { id: taskType, label: label.slice(0, 80) });
-  }
-  // Older profiles could already contain custom routing keys before the UI
-  // exposed an editor. Preserve and show those routes on the next save.
-  for (const taskType of Object.keys(asRecord(taskWorkspaceIds))) {
-    const key = normalizedTaskTypeKey(taskType);
-    if (key && !result.has(key)) result.set(key, { id: key, label: key });
-  }
-  return [...result.values()];
-}
-
-function normalizeWorkspaceProfile(value, workspaces = []) {
-  const source = asRecord(value);
-  const workspaceIds = new Set((Array.isArray(workspaces) ? workspaces : []).map((workspace) => String(workspace?.id || "")).filter(Boolean));
-  const requestedDefault = textParam(source, "defaultWorkspaceId");
-  const primaryWorkspaceId = (Array.isArray(workspaces) ? workspaces : []).find((workspace) => workspace?.isPrimary)?.id ?? null;
-  const defaultWorkspaceId = workspaceIds.has(requestedDefault)
-    ? requestedDefault
-    : (primaryWorkspaceId && workspaceIds.has(primaryWorkspaceId) ? primaryWorkspaceId : [...workspaceIds][0] ?? null);
-  const taskWorkspaceIds = taskWorkspaceIdMap(source.taskWorkspaceIds, workspaceIds);
-  return {
-    version: WORKSPACE_PROFILE_VERSION,
-    defaultWorkspaceId,
-    agentWorkspaceIds: workspaceIdMap(source.agentWorkspaceIds, workspaceIds),
-    taskWorkspaceIds,
-    taskTypes: normalizeWorkspaceTaskTypes(source.taskTypes, taskWorkspaceIds, {
-      useDefaults: !Array.isArray(source.taskTypes)
-    }),
-    updatedAt: textParam(source, "updatedAt") || null,
-    configured: Boolean(source.configured)
-  };
-}
-
 async function loadProjectWorkspaceProfile(ctx, projectId, workspaces = []) {
   const fallback = normalizeWorkspaceProfile({}, workspaces);
   if (!projectId || !ctx.entities?.list) return fallback;
@@ -1054,94 +966,6 @@ async function saveProjectWorkspaceProfile(ctx, projectId, profile, workspaces =
     data: normalized
   });
   return normalized;
-}
-
-function profileWorkspace(workspaces, profile, { agentId = "", taskType = "", requestedWorkspaceId = "" } = {}) {
-  if (!Array.isArray(workspaces) || !workspaces.length) return null;
-  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
-  // Preserve legacy routing until a Project explicitly opts into a profile.
-  // Once configured, a Lead's explicit Workspace choice overrides profile defaults.
-  if (asRecord(profile).configured !== true) return null;
-  const requested = byId.get(requestedWorkspaceId);
-  if (requested) return requested;
-  const agentWorkspaceId = textParam(asRecord(profile).agentWorkspaceIds, agentId);
-  if (agentWorkspaceId && byId.has(agentWorkspaceId)) return byId.get(agentWorkspaceId);
-  const taskWorkspaceId = textParam(asRecord(profile).taskWorkspaceIds, normalizedTaskTypeKey(taskType));
-  if (taskWorkspaceId && byId.has(taskWorkspaceId)) return byId.get(taskWorkspaceId);
-  const defaultWorkspaceId = textParam(profile, "defaultWorkspaceId");
-  return defaultWorkspaceId && byId.has(defaultWorkspaceId) ? byId.get(defaultWorkspaceId) : null;
-}
-
-function profileTaskWorkspace(workspaces, profile, { agentId = "", taskType = "", requestedWorkspaceId = "" } = {}) {
-  if (!Array.isArray(workspaces) || !workspaces.length) return null;
-  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
-  if (asRecord(profile).configured !== true) return null;
-  const requested = byId.get(requestedWorkspaceId);
-  if (requested) return requested;
-  const taskWorkspaceId = textParam(asRecord(profile).taskWorkspaceIds, normalizedTaskTypeKey(taskType));
-  return taskWorkspaceId && byId.has(taskWorkspaceId) ? byId.get(taskWorkspaceId) : null;
-}
-
-function defaultWorkspaceKindForAgent(agent) {
-  const identity = `${agent?.role || ""} ${agent?.name || ""}`.toLowerCase();
-  if (/(art|image|voice)/.test(identity)) return "asset";
-  if (/(designer|design|manager|document)/.test(identity)) return "design";
-  return "implementation";
-}
-
-function workspaceKindForProjectWorkspace(workspace) {
-  const name = String(workspace?.name || "").toLowerCase();
-  const localPath = normalizedWorkspacePath(workspaceLocalPath(workspace));
-  const pathName = localPath.split(/[\\/]/).filter(Boolean).at(-1) || "";
-  const identity = `${name} ${pathName}`;
-  if (/(implementation|unity|unreal|source|code|build|app|server|client)/.test(identity)) return "implementation";
-  if (/(asset|art|audio|voice)/.test(identity)) return "asset";
-  if (/(design|obsidian|research|reference|spec|docs?)/.test(identity)) return "design";
-  if (/(shared|common|library|knowledge)/.test(identity)) return "shared";
-  return "implementation";
-}
-
-function workspaceKindForTaskType(taskType) {
-  if (["design", "documentation"].includes(taskType)) return "design";
-  if (["art", "voice"].includes(taskType)) return "asset";
-  return "implementation";
-}
-
-function taskTypeAllowsNoAffectedPaths(taskType) {
-  // Legacy design/documentation tasks remain compatible. Custom task types
-  // still use the explicit path contract so collision checks stay meaningful.
-  return ["design", "documentation"].includes(normalizedTaskTypeKey(taskType));
-}
-
-function chooseTaskWorkspace(workspaces, taskType, requestedWorkspaceId, profile = null, assigneeAgentId = "") {
-  if (!Array.isArray(workspaces) || !workspaces.length) return null;
-  const configured = profileTaskWorkspace(workspaces, profile, { agentId: assigneeAgentId, taskType, requestedWorkspaceId });
-  if (configured) return configured;
-  const kind = workspaceKindForTaskType(taskType);
-  const requested = requestedWorkspaceId
-    ? workspaces.find((workspace) => workspace.id === requestedWorkspaceId) ?? null
-    : null;
-  const preferred = workspaces.find((workspace) => workspaceKindForProjectWorkspace(workspace) === kind) ?? null;
-  const requestedKind = requested ? workspaceKindForProjectWorkspace(requested) : null;
-  if (requested && (requestedKind === kind || (kind === "asset" && requestedKind === "implementation"))) return requested;
-  const implementationFallback = kind === "asset"
-    ? workspaces.find((workspace) => workspaceKindForProjectWorkspace(workspace) === "implementation") ?? null
-    : null;
-  return preferred
-    ?? implementationFallback
-    ?? profileWorkspace(workspaces, profile, { agentId: "", taskType: "", requestedWorkspaceId: "" })
-    ?? workspaces.find((workspace) => workspace.isPrimary)
-    ?? workspaces[0];
-}
-
-function workspaceBinding(workspace) {
-  if (!workspace?.id) return null;
-  return {
-    projectWorkspaceId: workspace.id,
-    name: String(workspace.name || "Workspace"),
-    kind: workspaceKindForProjectWorkspace(workspace),
-    boundAt: now()
-  };
 }
 
 async function listProjectWorkspaces(ctx, companyId, projectId) {
@@ -1305,221 +1129,6 @@ async function startNativeAgentSessionTurn(ctx, { sessionId, companyId, prompt, 
     }
   });
   return { runId: response.runId, completion };
-}
-
-function now() {
-  return new Date().toISOString();
-}
-
-const DURABLE_JSON_PREFIX = "paperclip-room-json:v1:";
-
-function parseState(body) {
-  if (!body || typeof body !== "string") return null;
-  const trimmed = body.trim();
-  if (trimmed.startsWith(DURABLE_JSON_PREFIX)) {
-    const encoded = trimmed.slice(DURABLE_JSON_PREFIX.length).trim();
-    if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null;
-    try {
-      return JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-    } catch {
-      return null;
-    }
-  }
-  try {
-    return JSON.parse(body);
-  } catch {
-    const match = body.match(/```json\s*([\s\S]*?)\s*```/i);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[1]);
-    } catch {
-      return null;
-    }
-  }
-}
-
-function serializeState(state) {
-  const encoded = Buffer.from(JSON.stringify(state), "utf8").toString("base64");
-  return `${DURABLE_JSON_PREFIX}${encoded}\n`;
-}
-
-function newRoomState(issue, agent, legacyWorkingDirectory = "") {
-  return {
-    version: 3,
-    kind: "agent_room",
-    roomIssueId: issue.id,
-    projectId: issue.projectId ?? null,
-    agentId: agent.id,
-    agentName: agent.name,
-    agentRole: agent.role ?? null,
-    workspace: null,
-    ...(legacyWorkingDirectory ? { workingDirectory: legacyWorkingDirectory } : {}),
-    runtime: {
-      kind: "paperclip_agent_session",
-      agentSessionId: null,
-      lastRunId: null,
-      lastError: null,
-      codexThreadId: null,
-      model: null,
-      updatedAt: null,
-      activity: { status: "idle", kind: null, turnId: null, startedAt: null, updatedAt: null, steps: [], error: null }
-    },
-    checkpoint: {
-      version: 0,
-      summary: null,
-      sourceCommentId: null,
-      createdAt: null,
-      compactedAt: null
-    },
-    pendingTurn: null
-  };
-}
-
-function roomWorkText(value, limit = 1200) {
-  const text = value === undefined || value === null ? "" : String(value).trim();
-  return text ? text.slice(0, limit) : null;
-}
-
-function roomWorkReferences(value) {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.map((entry) => roomWorkText(entry, 1000)).filter(Boolean))].slice(0, 24);
-}
-
-function normalizeRoomWorkOutcome(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const outcome = {
-    taskId: roomWorkText(value.taskId, 200),
-    identifier: roomWorkText(value.identifier, 200),
-    status: roomWorkText(value.status, 80),
-    summary: roomWorkText(value.summary, 1600),
-    sourceReferences: roomWorkReferences(value.sourceReferences)
-  };
-  return outcome.taskId || outcome.identifier || outcome.summary ? outcome : null;
-}
-
-function normalizeRoomNextCandidate(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const candidate = {
-    summary: roomWorkText(value.summary, 1600),
-    kind: roomWorkText(value.kind, 120),
-    sourceReferences: roomWorkReferences(value.sourceReferences)
-  };
-  return candidate.summary ? candidate : null;
-}
-
-function normalizeRoomWaitingFor(value) {
-  const source = asRecord(value);
-  const requestedKind = roomWorkText(source.kind, 80) || "none";
-  const kind = ROOM_WAITING_KINDS.has(requestedKind) ? requestedKind : "none";
-  return {
-    kind,
-    detail: kind === "none" ? null : roomWorkText(source.detail, 1200),
-    taskId: kind === "none" ? null : roomWorkText(source.taskId, 200)
-  };
-}
-
-function newRoomWorkState(issue) {
-  return {
-    version: 1,
-    revision: 0,
-    kind: "room_work_state",
-    roomIssueId: issue.id,
-    projectId: issue.projectId ?? null,
-    objective: null,
-    phase: null,
-    latestOutcome: null,
-    planReferences: [],
-    nextCandidate: null,
-    waitingFor: { kind: "none", detail: null, taskId: null },
-    updatedAt: null,
-    updatedBy: null
-  };
-}
-
-function normalizeRoomWorkState(value, issue) {
-  const base = newRoomWorkState(issue);
-  const source = asRecord(value);
-  if (source.kind !== "room_work_state" || source.roomIssueId !== issue.id) return base;
-  return {
-    ...base,
-    version: 1,
-    revision: Math.max(0, Number(source.revision) || 0),
-    objective: roomWorkText(source.objective, 1600),
-    phase: roomWorkText(source.phase, 300),
-    latestOutcome: normalizeRoomWorkOutcome(source.latestOutcome),
-    planReferences: roomWorkReferences(source.planReferences),
-    nextCandidate: normalizeRoomNextCandidate(source.nextCandidate),
-    waitingFor: normalizeRoomWaitingFor(source.waitingFor),
-    updatedAt: roomWorkText(source.updatedAt, 100),
-    updatedBy: Object.keys(asRecord(source.updatedBy)).length ? {
-      kind: roomWorkText(source.updatedBy.kind, 80),
-      agentId: roomWorkText(source.updatedBy.agentId, 200),
-      agentName: roomWorkText(source.updatedBy.agentName, 300)
-    } : null
-  };
-}
-
-function mergeRoomWorkState(current, patch, issue, updatedBy = {}) {
-  const source = asRecord(patch);
-  const next = normalizeRoomWorkState(current, issue);
-  const has = (key) => Object.prototype.hasOwnProperty.call(source, key);
-  if (has("objective")) next.objective = roomWorkText(source.objective, 1600);
-  if (has("phase")) next.phase = roomWorkText(source.phase, 300);
-  if (has("latestOutcome")) next.latestOutcome = normalizeRoomWorkOutcome(source.latestOutcome);
-  if (has("planReferences")) next.planReferences = roomWorkReferences(source.planReferences);
-  if (has("nextCandidate")) next.nextCandidate = normalizeRoomNextCandidate(source.nextCandidate);
-  if (has("waitingFor")) next.waitingFor = normalizeRoomWaitingFor(source.waitingFor);
-  next.revision += 1;
-  next.updatedAt = now();
-  next.updatedBy = {
-    kind: roomWorkText(updatedBy.kind, 80) || "agent",
-    agentId: roomWorkText(updatedBy.agentId, 200),
-    agentName: roomWorkText(updatedBy.agentName, 300)
-  };
-  return next;
-}
-
-function taskReviewMode(taskState) {
-  return textParam(asRecord(taskState?.review), "mode") === "manual" ? "manual" : "automatic";
-}
-
-function newTaskRoomState(issue, roomContext, input) {
-  const waitingForWorker = input.workerStatusAtCreation === "paused";
-  const reviewMode = input.reviewMode === "manual" ? "manual" : "automatic";
-  return {
-    version: 1,
-    kind: "task_room",
-    taskIssueId: issue.id,
-    projectId: issue.projectId ?? roomContext.projectId ?? null,
-    originatingRoomIssueId: roomContext.issueId,
-    owningAgentId: roomContext.agentId,
-    owningAgentName: roomContext.agentName,
-    owningAgentRole: roomContext.agentRole,
-    workerAgentId: input.assigneeAgentId,
-    taskType: input.taskType,
-    maturity: input.maturity,
-    projectWorkspaceId: input.projectWorkspaceId ?? null,
-    projectWorkspaceName: input.projectWorkspaceName ?? null,
-    declaredAffectedPaths: input.affectedPaths,
-    designReferences: input.designReferences,
-    acceptanceCriteria: input.acceptanceCriteria,
-    verification: input.verification,
-    dependencyTaskIds: input.blockedByIssueIds,
-    dispatch: {
-      status: waitingForWorker ? "waiting_for_worker" : "ready",
-      reason: waitingForWorker ? "worker_paused_before_start" : null,
-      workerStatusAtCreation: input.workerStatusAtCreation ?? null,
-      startedAt: waitingForWorker ? null : now(),
-      updatedAt: now()
-    },
-    review: {
-      required: "owning_agent",
-      mode: reviewMode,
-      status: "not_requested",
-      workerReportCommentId: null,
-      updatedAt: now()
-    }
-  };
 }
 
 function taskProtocolComment(roomContext, issue, taskState) {
@@ -2605,33 +2214,6 @@ function emitRoomEvent(ctx, companyId, issueId, event) {
   }
 }
 
-function roomJobTitle(kind) {
-  return {
-    room_message: "Room message",
-    compact_handoff: "Room compact",
-    task_owner_feedback: "Task owner feedback",
-    task_owner_report: "Task owner report"
-  }[kind] ?? "Room job";
-}
-
-function roomJobData(input) {
-  return {
-    id: input.id,
-    companyId: input.companyId,
-    roomIssueId: input.roomIssueId,
-    taskIssueId: input.taskIssueId ?? null,
-    kind: input.kind,
-    status: input.status,
-    sourceCommentId: input.sourceCommentId ?? null,
-    requestedAt: input.requestedAt,
-    startedAt: input.startedAt ?? null,
-    completedAt: input.completedAt ?? null,
-    resultCommentId: input.resultCommentId ?? null,
-    error: input.error ?? null,
-    payload: asRecord(input.payload)
-  };
-}
-
 async function createRoomJob(ctx, input) {
   const job = roomJobData({ ...input, id: randomUUID(), status: "queued", requestedAt: now() });
   if (ctx.entities?.upsert) {
@@ -2678,13 +2260,6 @@ async function listRoomJobs(ctx, issueId) {
 async function activeRoomJob(ctx, issueId) {
   const jobs = await listRoomJobs(ctx, issueId);
   return jobs.find((job) => ACTIVE_ROOM_JOB_STATUSES.has(job.status)) ?? null;
-}
-
-function isRoomProviderQuotaRetryJob(job) {
-  const payload = asRecord(job?.payload);
-  return textParam(job, "status") === "queued"
-    && textParam(payload, "retryRuntime") === "agy"
-    && Boolean(textParam(payload, "quotaRetryAt"));
 }
 
 async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state, error }) {
@@ -2915,25 +2490,6 @@ async function roomHasActiveWork(ctx, issueId, state) {
     return false;
   }
   return Boolean(processJob || persistedJob || stateBusy);
-}
-
-function terminalRoomJobPatchFromState(job, state) {
-  if (textParam(state?.pendingTurn, "jobId") === job.id) return null;
-  const activity = asRecord(state?.runtime?.activity);
-  const activityMatchesJob = textParam(activity, "jobId") === job.id;
-  const status = activityMatchesJob && ["completed", "failed"].includes(textParam(activity, "status"))
-    ? textParam(activity, "status")
-    : "interrupted";
-  return {
-    status,
-    completedAt: textParam(activity, "updatedAt") || now(),
-    resultCommentId: activityMatchesJob ? textParam(activity, "resultCommentId") || null : null,
-    error: status === "failed"
-      ? textParam(activity, "error") || "The Room Job failed after its Codex turn started."
-      : status === "interrupted"
-        ? "The Room worker restarted before this Job completed. The submitted message and Room state were preserved."
-        : null
-  };
 }
 
 async function reconcileRoomJobLedger(ctx, issueId, state, knownJobs = null) {

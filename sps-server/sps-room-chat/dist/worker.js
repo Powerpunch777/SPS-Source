@@ -487,8 +487,8 @@ function getErrorMap() {
 
 // ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path3, errorMaps, issueData } = params;
-  const fullPath = [...path3, ...issueData.path || []];
+  const { data, path: path4, errorMaps, issueData } = params;
+  const fullPath = [...path4, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -604,11 +604,11 @@ var errorUtil;
 
 // ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path3, key) {
+  constructor(parent, value, path4, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path3;
+    this._path = path4;
     this._key = key;
   }
   get path() {
@@ -9340,7 +9340,7 @@ var pluginManagedSkillDeclarationSchema = external_exports.object({
   files: external_exports.array(pluginManagedSkillFileDeclarationSchema).max(50).optional()
 }).superRefine((value, ctx) => {
   const paths = (value.files ?? []).map((file) => file.path);
-  const duplicates = paths.filter((path3, index) => paths.indexOf(path3) !== index);
+  const duplicates = paths.filter((path4, index) => paths.indexOf(path4) !== index);
   if (duplicates.length > 0) {
     ctx.addIssue({
       code: external_exports.ZodIssueCode.custom,
@@ -12890,6 +12890,463 @@ var AgyRoomClient = class {
   }
 };
 
+// src/room-state.js
+var DURABLE_JSON_PREFIX = "paperclip-room-json:v1:";
+var ROOM_WAITING_KINDS = /* @__PURE__ */ new Set([
+  "none",
+  "user",
+  "worker",
+  "environment",
+  "task_review"
+]);
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function textParam(params, key, fallback = "") {
+  const value = asRecord(params)[key];
+  return typeof value === "string" ? value.trim() : fallback;
+}
+function now() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+function parseState(body) {
+  if (!body || typeof body !== "string") return null;
+  const trimmed = body.trim();
+  if (trimmed.startsWith(DURABLE_JSON_PREFIX)) {
+    const encoded = trimmed.slice(DURABLE_JSON_PREFIX.length).trim();
+    if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null;
+    try {
+      return JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    const match = body.match(/```json\s*([\s\S]*?)\s*```/i);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[1]);
+    } catch {
+      return null;
+    }
+  }
+}
+function serializeState(state) {
+  const encoded = Buffer.from(JSON.stringify(state), "utf8").toString("base64");
+  return `${DURABLE_JSON_PREFIX}${encoded}
+`;
+}
+function newRoomState(issue, agent, legacyWorkingDirectory = "") {
+  return {
+    version: 3,
+    kind: "agent_room",
+    roomIssueId: issue.id,
+    projectId: issue.projectId ?? null,
+    agentId: agent.id,
+    agentName: agent.name,
+    agentRole: agent.role ?? null,
+    workspace: null,
+    ...legacyWorkingDirectory ? { workingDirectory: legacyWorkingDirectory } : {},
+    runtime: {
+      kind: "paperclip_agent_session",
+      agentSessionId: null,
+      lastRunId: null,
+      lastError: null,
+      codexThreadId: null,
+      model: null,
+      updatedAt: null,
+      activity: {
+        status: "idle",
+        kind: null,
+        turnId: null,
+        startedAt: null,
+        updatedAt: null,
+        steps: [],
+        error: null
+      }
+    },
+    checkpoint: {
+      version: 0,
+      summary: null,
+      sourceCommentId: null,
+      createdAt: null,
+      compactedAt: null
+    },
+    pendingTurn: null
+  };
+}
+function roomWorkText(value, limit = 1200) {
+  const text4 = value === void 0 || value === null ? "" : String(value).trim();
+  return text4 ? text4.slice(0, limit) : null;
+}
+function roomWorkReferences(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((entry) => roomWorkText(entry, 1e3)).filter(Boolean))].slice(0, 24);
+}
+function normalizeRoomWorkOutcome(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const outcome = {
+    taskId: roomWorkText(value.taskId, 200),
+    identifier: roomWorkText(value.identifier, 200),
+    status: roomWorkText(value.status, 80),
+    summary: roomWorkText(value.summary, 1600),
+    sourceReferences: roomWorkReferences(value.sourceReferences)
+  };
+  return outcome.taskId || outcome.identifier || outcome.summary ? outcome : null;
+}
+function normalizeRoomNextCandidate(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = {
+    summary: roomWorkText(value.summary, 1600),
+    kind: roomWorkText(value.kind, 120),
+    sourceReferences: roomWorkReferences(value.sourceReferences)
+  };
+  return candidate.summary ? candidate : null;
+}
+function normalizeRoomWaitingFor(value) {
+  const source = asRecord(value);
+  const requestedKind = roomWorkText(source.kind, 80) || "none";
+  const kind = ROOM_WAITING_KINDS.has(requestedKind) ? requestedKind : "none";
+  return {
+    kind,
+    detail: kind === "none" ? null : roomWorkText(source.detail, 1200),
+    taskId: kind === "none" ? null : roomWorkText(source.taskId, 200)
+  };
+}
+function newRoomWorkState(issue) {
+  return {
+    version: 1,
+    revision: 0,
+    kind: "room_work_state",
+    roomIssueId: issue.id,
+    projectId: issue.projectId ?? null,
+    objective: null,
+    phase: null,
+    latestOutcome: null,
+    planReferences: [],
+    nextCandidate: null,
+    waitingFor: { kind: "none", detail: null, taskId: null },
+    updatedAt: null,
+    updatedBy: null
+  };
+}
+function normalizeRoomWorkState(value, issue) {
+  const base = newRoomWorkState(issue);
+  const source = asRecord(value);
+  if (source.kind !== "room_work_state" || source.roomIssueId !== issue.id) return base;
+  return {
+    ...base,
+    version: 1,
+    revision: Math.max(0, Number(source.revision) || 0),
+    objective: roomWorkText(source.objective, 1600),
+    phase: roomWorkText(source.phase, 300),
+    latestOutcome: normalizeRoomWorkOutcome(source.latestOutcome),
+    planReferences: roomWorkReferences(source.planReferences),
+    nextCandidate: normalizeRoomNextCandidate(source.nextCandidate),
+    waitingFor: normalizeRoomWaitingFor(source.waitingFor),
+    updatedAt: roomWorkText(source.updatedAt, 100),
+    updatedBy: Object.keys(asRecord(source.updatedBy)).length ? {
+      kind: roomWorkText(source.updatedBy.kind, 80),
+      agentId: roomWorkText(source.updatedBy.agentId, 200),
+      agentName: roomWorkText(source.updatedBy.agentName, 300)
+    } : null
+  };
+}
+function mergeRoomWorkState(current, patch, issue, updatedBy = {}) {
+  const source = asRecord(patch);
+  const next = normalizeRoomWorkState(current, issue);
+  const has = (key) => Object.prototype.hasOwnProperty.call(source, key);
+  if (has("objective")) next.objective = roomWorkText(source.objective, 1600);
+  if (has("phase")) next.phase = roomWorkText(source.phase, 300);
+  if (has("latestOutcome")) next.latestOutcome = normalizeRoomWorkOutcome(source.latestOutcome);
+  if (has("planReferences")) next.planReferences = roomWorkReferences(source.planReferences);
+  if (has("nextCandidate")) next.nextCandidate = normalizeRoomNextCandidate(source.nextCandidate);
+  if (has("waitingFor")) next.waitingFor = normalizeRoomWaitingFor(source.waitingFor);
+  next.revision += 1;
+  next.updatedAt = now();
+  next.updatedBy = {
+    kind: roomWorkText(updatedBy.kind, 80) || "agent",
+    agentId: roomWorkText(updatedBy.agentId, 200),
+    agentName: roomWorkText(updatedBy.agentName, 300)
+  };
+  return next;
+}
+function taskReviewMode(taskState) {
+  return textParam(asRecord(taskState?.review), "mode") === "manual" ? "manual" : "automatic";
+}
+function newTaskRoomState(issue, roomContext, input) {
+  const waitingForWorker = input.workerStatusAtCreation === "paused";
+  const reviewMode = input.reviewMode === "manual" ? "manual" : "automatic";
+  return {
+    version: 1,
+    kind: "task_room",
+    taskIssueId: issue.id,
+    projectId: issue.projectId ?? roomContext.projectId ?? null,
+    originatingRoomIssueId: roomContext.issueId,
+    owningAgentId: roomContext.agentId,
+    owningAgentName: roomContext.agentName,
+    owningAgentRole: roomContext.agentRole,
+    workerAgentId: input.assigneeAgentId,
+    taskType: input.taskType,
+    maturity: input.maturity,
+    projectWorkspaceId: input.projectWorkspaceId ?? null,
+    projectWorkspaceName: input.projectWorkspaceName ?? null,
+    declaredAffectedPaths: input.affectedPaths,
+    designReferences: input.designReferences,
+    acceptanceCriteria: input.acceptanceCriteria,
+    verification: input.verification,
+    dependencyTaskIds: input.blockedByIssueIds,
+    dispatch: {
+      status: waitingForWorker ? "waiting_for_worker" : "ready",
+      reason: waitingForWorker ? "worker_paused_before_start" : null,
+      workerStatusAtCreation: input.workerStatusAtCreation ?? null,
+      startedAt: waitingForWorker ? null : now(),
+      updatedAt: now()
+    },
+    review: {
+      required: "owning_agent",
+      mode: reviewMode,
+      status: "not_requested",
+      workerReportCommentId: null,
+      updatedAt: now()
+    }
+  };
+}
+
+// src/workspace-profile.js
+import path2 from "node:path";
+var WORKSPACE_PROFILE_VERSION = 1;
+var TASK_TYPE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+var DEFAULT_TASK_TYPE_DEFINITIONS = Object.freeze([
+  Object.freeze({ id: "design", label: "Design" }),
+  Object.freeze({ id: "documentation", label: "Documentation" }),
+  Object.freeze({ id: "implementation", label: "Implementation" }),
+  Object.freeze({ id: "qa", label: "Quality assurance" }),
+  Object.freeze({ id: "art", label: "Art / assets" }),
+  Object.freeze({ id: "voice", label: "Voice / audio" })
+]);
+function asRecord2(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function textParam2(params, key, fallback = "") {
+  const value = asRecord2(params)[key];
+  return value === void 0 || value === null ? fallback : String(value).trim();
+}
+function normalizedTaskTypeKey(value, fallback = "") {
+  const key = String(value || "").trim().toLowerCase();
+  return TASK_TYPE_KEY_PATTERN.test(key) ? key : fallback;
+}
+function normalizedWorkspacePath(value) {
+  return String(value || "").trim().replace(/[\\/]+$/g, "").toLowerCase();
+}
+function workspaceLocalPath(workspace) {
+  return String(workspace?.cwd ?? workspace?.path ?? "").trim();
+}
+function displayTaskPath(value) {
+  return String(value || "").trim().replace(/\\/g, "/");
+}
+function normalizeTaskAffectedPaths(paths, workspace) {
+  const workspaceRoot = displayTaskPath(workspaceLocalPath(workspace)).replace(/\/+$/g, "");
+  const comparableRoot = workspaceRoot.toLowerCase();
+  const normalized = [];
+  const invalid = [];
+  for (const requestedPath of paths) {
+    const raw = String(requestedPath || "").trim();
+    if (!raw) continue;
+    const portable = displayTaskPath(raw);
+    const isAbsolute = path2.win32.isAbsolute(raw) || path2.posix.isAbsolute(portable);
+    let relative = portable;
+    if (isAbsolute) {
+      const comparablePath = portable.replace(/\/+$/g, "").toLowerCase();
+      if (!comparableRoot || comparablePath !== comparableRoot && !comparablePath.startsWith(`${comparableRoot}/`)) {
+        invalid.push({ path: portable, reason: "outside_selected_workspace" });
+        continue;
+      }
+      relative = comparablePath === comparableRoot ? "." : portable.slice(workspaceRoot.length + 1);
+    }
+    const segments = relative.split("/").filter(Boolean);
+    if (segments.includes("..")) {
+      invalid.push({ path: portable, reason: "parent_directory_not_allowed" });
+      continue;
+    }
+    const canonical = segments.filter((segment) => segment !== ".").join("/") || ".";
+    normalized.push(canonical);
+  }
+  return { paths: [...new Set(normalized)], invalid };
+}
+function workspaceIdMap(value, workspaceIds) {
+  const result = {};
+  for (const [key, rawWorkspaceId] of Object.entries(asRecord2(value))) {
+    const workspaceId = String(rawWorkspaceId || "").trim();
+    if (key && workspaceIds.has(workspaceId)) result[key] = workspaceId;
+  }
+  return result;
+}
+function taskWorkspaceIdMap(value, workspaceIds) {
+  const result = {};
+  for (const [key, rawWorkspaceId] of Object.entries(asRecord2(value))) {
+    const taskType = normalizedTaskTypeKey(key);
+    const workspaceId = String(rawWorkspaceId || "").trim();
+    if (taskType && workspaceIds.has(workspaceId)) result[taskType] = workspaceId;
+  }
+  return result;
+}
+function normalizeWorkspaceTaskTypes(value, taskWorkspaceIds, { useDefaults = true } = {}) {
+  const result = /* @__PURE__ */ new Map();
+  const configured = Array.isArray(value) ? value : null;
+  const source = configured ?? (useDefaults ? DEFAULT_TASK_TYPE_DEFINITIONS : []);
+  for (const entry of source) {
+    const taskType = normalizedTaskTypeKey(asRecord2(entry).id ?? entry);
+    if (!taskType || result.has(taskType)) continue;
+    const label = textParam2(asRecord2(entry), "label") || taskType;
+    result.set(taskType, { id: taskType, label: label.slice(0, 80) });
+  }
+  for (const taskType of Object.keys(asRecord2(taskWorkspaceIds))) {
+    const key = normalizedTaskTypeKey(taskType);
+    if (key && !result.has(key)) result.set(key, { id: key, label: key });
+  }
+  return [...result.values()];
+}
+function normalizeWorkspaceProfile(value, workspaces = []) {
+  const source = asRecord2(value);
+  const workspaceIds = new Set((Array.isArray(workspaces) ? workspaces : []).map((workspace) => String(workspace?.id || "")).filter(Boolean));
+  const requestedDefault = textParam2(source, "defaultWorkspaceId");
+  const primaryWorkspaceId = (Array.isArray(workspaces) ? workspaces : []).find((workspace) => workspace?.isPrimary)?.id ?? null;
+  const defaultWorkspaceId = workspaceIds.has(requestedDefault) ? requestedDefault : primaryWorkspaceId && workspaceIds.has(primaryWorkspaceId) ? primaryWorkspaceId : [...workspaceIds][0] ?? null;
+  const taskWorkspaceIds = taskWorkspaceIdMap(source.taskWorkspaceIds, workspaceIds);
+  return {
+    version: WORKSPACE_PROFILE_VERSION,
+    defaultWorkspaceId,
+    agentWorkspaceIds: workspaceIdMap(source.agentWorkspaceIds, workspaceIds),
+    taskWorkspaceIds,
+    taskTypes: normalizeWorkspaceTaskTypes(source.taskTypes, taskWorkspaceIds, {
+      useDefaults: !Array.isArray(source.taskTypes)
+    }),
+    updatedAt: textParam2(source, "updatedAt") || null,
+    configured: Boolean(source.configured)
+  };
+}
+function profileWorkspace(workspaces, profile, { agentId = "", taskType = "", requestedWorkspaceId = "" } = {}) {
+  if (!Array.isArray(workspaces) || !workspaces.length) return null;
+  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+  if (asRecord2(profile).configured !== true) return null;
+  const requested = byId.get(requestedWorkspaceId);
+  if (requested) return requested;
+  const agentWorkspaceId = textParam2(asRecord2(profile).agentWorkspaceIds, agentId);
+  if (agentWorkspaceId && byId.has(agentWorkspaceId)) return byId.get(agentWorkspaceId);
+  const taskWorkspaceId = textParam2(asRecord2(profile).taskWorkspaceIds, normalizedTaskTypeKey(taskType));
+  if (taskWorkspaceId && byId.has(taskWorkspaceId)) return byId.get(taskWorkspaceId);
+  const defaultWorkspaceId = textParam2(profile, "defaultWorkspaceId");
+  return defaultWorkspaceId && byId.has(defaultWorkspaceId) ? byId.get(defaultWorkspaceId) : null;
+}
+function profileTaskWorkspace(workspaces, profile, { taskType = "", requestedWorkspaceId = "" } = {}) {
+  if (!Array.isArray(workspaces) || !workspaces.length) return null;
+  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+  if (asRecord2(profile).configured !== true) return null;
+  const requested = byId.get(requestedWorkspaceId);
+  if (requested) return requested;
+  const taskWorkspaceId = textParam2(asRecord2(profile).taskWorkspaceIds, normalizedTaskTypeKey(taskType));
+  return taskWorkspaceId && byId.has(taskWorkspaceId) ? byId.get(taskWorkspaceId) : null;
+}
+function defaultWorkspaceKindForAgent(agent) {
+  const identity = `${agent?.role || ""} ${agent?.name || ""}`.toLowerCase();
+  if (/(art|image|voice)/.test(identity)) return "asset";
+  if (/(designer|design|manager|document)/.test(identity)) return "design";
+  return "implementation";
+}
+function workspaceKindForProjectWorkspace(workspace) {
+  const name = String(workspace?.name || "").toLowerCase();
+  const localPath = normalizedWorkspacePath(workspaceLocalPath(workspace));
+  const pathName = localPath.split(/[\\/]/).filter(Boolean).at(-1) || "";
+  const identity = `${name} ${pathName}`;
+  if (/(implementation|unity|unreal|source|code|build|app|server|client)/.test(identity)) return "implementation";
+  if (/(asset|art|audio|voice)/.test(identity)) return "asset";
+  if (/(design|obsidian|research|reference|spec|docs?)/.test(identity)) return "design";
+  if (/(shared|common|library|knowledge)/.test(identity)) return "shared";
+  return "implementation";
+}
+function workspaceKindForTaskType(taskType) {
+  if (["design", "documentation"].includes(taskType)) return "design";
+  if (["art", "voice"].includes(taskType)) return "asset";
+  return "implementation";
+}
+function taskTypeAllowsNoAffectedPaths(taskType) {
+  return ["design", "documentation"].includes(normalizedTaskTypeKey(taskType));
+}
+function chooseTaskWorkspace(workspaces, taskType, requestedWorkspaceId, profile = null, assigneeAgentId = "") {
+  if (!Array.isArray(workspaces) || !workspaces.length) return null;
+  const configured = profileTaskWorkspace(workspaces, profile, { agentId: assigneeAgentId, taskType, requestedWorkspaceId });
+  if (configured) return configured;
+  const kind = workspaceKindForTaskType(taskType);
+  const requested = requestedWorkspaceId ? workspaces.find((workspace) => workspace.id === requestedWorkspaceId) ?? null : null;
+  const preferred = workspaces.find((workspace) => workspaceKindForProjectWorkspace(workspace) === kind) ?? null;
+  const requestedKind = requested ? workspaceKindForProjectWorkspace(requested) : null;
+  if (requested && (requestedKind === kind || kind === "asset" && requestedKind === "implementation")) return requested;
+  const implementationFallback = kind === "asset" ? workspaces.find((workspace) => workspaceKindForProjectWorkspace(workspace) === "implementation") ?? null : null;
+  return preferred ?? implementationFallback ?? profileWorkspace(workspaces, profile, { agentId: "", taskType: "", requestedWorkspaceId: "" }) ?? workspaces.find((workspace) => workspace.isPrimary) ?? workspaces[0];
+}
+function workspaceBinding(workspace) {
+  if (!workspace?.id) return null;
+  return {
+    projectWorkspaceId: workspace.id,
+    name: String(workspace.name || "Workspace"),
+    kind: workspaceKindForProjectWorkspace(workspace),
+    boundAt: now()
+  };
+}
+
+// src/room-job-policy.js
+function asRecord3(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function textParam3(params, key, fallback = "") {
+  const value = asRecord3(params)[key];
+  return value === void 0 || value === null ? fallback : String(value).trim();
+}
+function roomJobTitle(kind) {
+  return {
+    room_message: "Room message",
+    compact_handoff: "Room compact",
+    task_owner_feedback: "Task owner feedback",
+    task_owner_report: "Task owner report"
+  }[kind] ?? "Room job";
+}
+function roomJobData(input) {
+  return {
+    id: input.id,
+    companyId: input.companyId,
+    roomIssueId: input.roomIssueId,
+    taskIssueId: input.taskIssueId ?? null,
+    kind: input.kind,
+    status: input.status,
+    sourceCommentId: input.sourceCommentId ?? null,
+    requestedAt: input.requestedAt,
+    startedAt: input.startedAt ?? null,
+    completedAt: input.completedAt ?? null,
+    resultCommentId: input.resultCommentId ?? null,
+    error: input.error ?? null,
+    payload: asRecord3(input.payload)
+  };
+}
+function isRoomProviderQuotaRetryJob(job) {
+  const payload = asRecord3(job?.payload);
+  return textParam3(job, "status") === "queued" && textParam3(payload, "retryRuntime") === "agy" && Boolean(textParam3(payload, "quotaRetryAt"));
+}
+function terminalRoomJobPatchFromState(job, state) {
+  if (textParam3(state?.pendingTurn, "jobId") === job.id) return null;
+  const activity = asRecord3(state?.runtime?.activity);
+  const activityMatchesJob = textParam3(activity, "jobId") === job.id;
+  const status = activityMatchesJob && ["completed", "failed"].includes(textParam3(activity, "status")) ? textParam3(activity, "status") : "interrupted";
+  return {
+    status,
+    completedAt: textParam3(activity, "updatedAt") || now(),
+    resultCommentId: activityMatchesJob ? textParam3(activity, "resultCommentId") || null : null,
+    error: status === "failed" ? textParam3(activity, "error") || "The Room Job failed after its Codex turn started." : status === "interrupted" ? "The Room worker restarted before this Job completed. The submitted message and Room state were preserved." : null
+  };
+}
+
 // src/organization-legacy-compatibility.js
 var LEGACY_LEAD_ROLE_IDS = /* @__PURE__ */ new Set(["manager", "ceo", "designer", "cto"]);
 var LEGACY_WORKER_ROLE_IDS = /* @__PURE__ */ new Set([
@@ -12908,16 +13365,16 @@ var LEGACY_WORKER_NAMES = /* @__PURE__ */ new Set([
   "voice worker",
   "document worker"
 ]);
-function asRecord(value) {
+function asRecord4(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function text(value) {
   return value === void 0 || value === null ? "" : String(value).trim();
 }
 function legacyRoleId(agent) {
-  const config = asRecord(agent?.adapterConfig);
+  const config = asRecord4(agent?.adapterConfig);
   const role = text(
-    config.managedWorkplaneRole || config.workplaneRole || asRecord(agent?.metadata).managedWorkplaneRole
+    config.managedWorkplaneRole || config.workplaneRole || asRecord4(agent?.metadata).managedWorkplaneRole
   ).toLowerCase();
   if (role) return role;
   const paperclipRole = text(agent?.role).toLowerCase();
@@ -12966,7 +13423,7 @@ var WORKPLANE_REVIEW_MODES = Object.freeze({
   AUTOMATIC: "automatic",
   MANUAL: "manual"
 });
-function asRecord2(value) {
+function asRecord5(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function text2(value) {
@@ -12991,8 +13448,8 @@ function defaultReviewMode() {
   return WORKPLANE_REVIEW_MODES.AUTOMATIC;
 }
 function resolveAgentWorkplaneIdentity(agent) {
-  const config = asRecord2(asRecord2(agent?.adapterConfig).workplane);
-  const metadataConfig = asRecord2(asRecord2(agent?.metadata).workplane);
+  const config = asRecord5(asRecord5(agent?.adapterConfig).workplane);
+  const metadataConfig = asRecord5(asRecord5(agent?.metadata).workplane);
   const source = Object.keys(config).length ? config : metadataConfig;
   const configuredKind = text2(source.kind).toLowerCase();
   const configuredRoleId = text2(source.roleId).toLowerCase();
@@ -13210,7 +13667,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID as randomUUID2 } from "node:crypto";
 import fs2 from "node:fs";
 import os from "node:os";
-import path2 from "node:path";
+import path3 from "node:path";
 var SPS_DESKTOP_ACCESS_HEADER = "X-SPS-Desktop-Access";
 var desktopOwnerHostToken = String(process.env.SPS_DESKTOP_ACCESS_TOKEN || "").trim();
 var desktopOwnerHostOrigin = (() => {
@@ -13249,16 +13706,7 @@ var AGENT_ROOM_OPERATION_ORIGIN = "plugin:local.room-chat:operation:agent-room";
 var ROOM_JOB_ENTITY_TYPE = "room_job";
 var WORKSPACE_PROFILE_ENTITY_TYPE = "workspace_profile";
 var WORKSPACE_PROFILE_EXTERNAL_ID = "workplane-workspace-profile-v1";
-var WORKSPACE_PROFILE_VERSION = 1;
-var DEFAULT_TASK_TYPE_DEFINITIONS = Object.freeze([
-  Object.freeze({ id: "design", label: "Design" }),
-  Object.freeze({ id: "documentation", label: "Documentation" }),
-  Object.freeze({ id: "implementation", label: "Implementation" }),
-  Object.freeze({ id: "qa", label: "Quality assurance" }),
-  Object.freeze({ id: "art", label: "Art / assets" }),
-  Object.freeze({ id: "voice", label: "Voice / audio" })
-]);
-var TASK_TYPE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+var TASK_TYPE_KEY_PATTERN2 = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 var ACTIVE_ROOM_JOB_STATUSES = /* @__PURE__ */ new Set(["queued", "starting", "working"]);
 var ROOM_ATTACHMENT_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1e3;
 var ROOM_CONTEXT_RECOVERY_COMMENT_LIMIT = 120;
@@ -13266,7 +13714,6 @@ var ROOM_CONTEXT_RECOVERY_CHAR_LIMIT = 6e4;
 var ROOM_CONTEXT_RECOVERY_ENTRY_LIMIT = 5e3;
 var LOCAL_MEMORY_SIDECAR_CONFIG_URL = new URL("../../memory-sidecar/config.local.json", import.meta.url);
 var ROOM_MEMORY_SCOPES = /* @__PURE__ */ new Set(["company", "project", "agent"]);
-var ROOM_WAITING_KINDS = /* @__PURE__ */ new Set(["none", "user", "worker", "environment", "task_review"]);
 var ROOM_READY_STATUS = "todo";
 var TERMINAL_STATUSES = /* @__PURE__ */ new Set(["done", "blocked", "cancelled"]);
 var ACTIVE_TASK_STATUSES = /* @__PURE__ */ new Set(["backlog", "todo", "pending", "queued", "running", "in_progress", "in_review"]);
@@ -13312,34 +13759,34 @@ var pluginCtx = null;
 var codexClients = /* @__PURE__ */ new Map();
 var testCodexClient = null;
 var testAgyClientFactory = null;
-function asRecord3(value) {
+function asRecord6(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
-function textParam(params, key, fallback = "") {
-  const value = asRecord3(params)[key];
+function textParam4(params, key, fallback = "") {
+  const value = asRecord6(params)[key];
   return value === void 0 || value === null ? fallback : String(value).trim();
 }
 function rawTextParam(params, key, fallback = "") {
-  const value = asRecord3(params)[key];
+  const value = asRecord6(params)[key];
   return value === void 0 || value === null ? fallback : String(value);
 }
 function listParam(params, key) {
-  const value = asRecord3(params)[key];
+  const value = asRecord6(params)[key];
   return Array.isArray(value) ? value.map((entry) => String(entry).trim()).filter(Boolean) : [];
 }
-function normalizedTaskTypeKey(value, fallback = "") {
+function normalizedTaskTypeKey2(value, fallback = "") {
   const key = String(value || "").trim().toLowerCase();
-  return TASK_TYPE_KEY_PATTERN.test(key) ? key : fallback;
+  return TASK_TYPE_KEY_PATTERN2.test(key) ? key : fallback;
 }
 function configuredEnvironmentValue(agent, name) {
-  const value = asRecord3(asRecord3(agent?.adapterConfig).env)[name];
+  const value = asRecord6(asRecord6(agent?.adapterConfig).env)[name];
   if (typeof value === "string") return value.trim();
-  return textParam(asRecord3(value), "value");
+  return textParam4(asRecord6(value), "value");
 }
 function configuredEnvironment(agent) {
   const env = {};
-  for (const [key, raw] of Object.entries(asRecord3(asRecord3(agent?.adapterConfig).env))) {
-    const value = typeof raw === "string" ? raw.trim() : textParam(asRecord3(raw), "value");
+  for (const [key, raw] of Object.entries(asRecord6(asRecord6(agent?.adapterConfig).env))) {
+    const value = typeof raw === "string" ? raw.trim() : textParam4(asRecord6(raw), "value");
     if (value) env[key] = value;
   }
   return env;
@@ -13348,7 +13795,7 @@ function normalizeCodexHome(value) {
   const source = String(value || "").trim();
   if (!source) return "";
   try {
-    return path2.resolve(source).replace(/[\\/]+$/, "").toLowerCase();
+    return path3.resolve(source).replace(/[\\/]+$/, "").toLowerCase();
   } catch {
     return source.replace(/[\\/]+$/, "").toLowerCase();
   }
@@ -13361,7 +13808,7 @@ function codexAccountLabel(directoryName) {
   return `${suffix.replace(/\b\w/g, (character) => character.toUpperCase())} Codex account`;
 }
 function localCodexAccounts(homeDirectory = os.homedir()) {
-  const root = path2.resolve(homeDirectory);
+  const root = path3.resolve(homeDirectory);
   let entries = [];
   try {
     entries = fs2.readdirSync(root, { withFileTypes: true });
@@ -13369,19 +13816,19 @@ function localCodexAccounts(homeDirectory = os.homedir()) {
     return [];
   }
   return entries.filter((entry) => entry.isDirectory() && (entry.name === ".codex" || entry.name.startsWith(".codex-"))).map((entry) => {
-    const accountHome = path2.join(root, entry.name);
+    const accountHome = path3.join(root, entry.name);
     return {
       id: `codex-home:${entry.name}`,
       label: codexAccountLabel(entry.name),
       directoryName: entry.name,
       home: accountHome,
-      hasAuth: fs2.existsSync(path2.join(accountHome, "auth.json"))
+      hasAuth: fs2.existsSync(path3.join(accountHome, "auth.json"))
     };
   }).filter((account) => account.hasAuth).sort((left, right) => left.directoryName === ".codex" ? -1 : right.directoryName === ".codex" ? 1 : left.label.localeCompare(right.label));
 }
 function applyCodexAccountToAdapterConfig(agent, account) {
-  const adapterConfig = asRecord3(agent?.adapterConfig);
-  const existingEnv = asRecord3(adapterConfig.env);
+  const adapterConfig = asRecord6(agent?.adapterConfig);
+  const existingEnv = asRecord6(adapterConfig.env);
   return {
     ...adapterConfig,
     codexAccount: account.directoryName,
@@ -13445,7 +13892,7 @@ function roomRuntimeWithRoomSafety(agent, runtime) {
   return { ...runtime, sandbox: "read-only", approvalPolicy: "never" };
 }
 function isRoomCliRuntimeAgent(agent) {
-  const adapterType = textParam(agent, "adapterType");
+  const adapterType = textParam4(agent, "adapterType");
   return adapterType === "codex_local" || adapterType === "antigravity_local";
 }
 function effectiveRoomMessageMode(agent, requestedMode = "agent") {
@@ -13454,7 +13901,7 @@ function effectiveRoomMessageMode(agent, requestedMode = "agent") {
 function workerRoomSandboxDirectory(companyId, issue, agent) {
   const source = [companyId, issue?.projectId, issue?.id, agent?.id].map((value) => String(value || "")).join("\0");
   const key = createHash("sha256").update(source).digest("hex").slice(0, 32);
-  const directory = path2.join(os.homedir(), ".sps", "workplane-room-sandboxes", key);
+  const directory = path3.join(os.homedir(), ".sps", "workplane-room-sandboxes", key);
   fs2.mkdirSync(directory, { recursive: true });
   return directory;
 }
@@ -13471,13 +13918,13 @@ function roomModeAllowsTool(mode, toolName) {
   ])).has(toolName);
 }
 function agentRoomRuntime(runtime, agent) {
-  const adapterConfig = asRecord3(agent?.adapterConfig);
-  if (textParam(agent, "adapterType") === "antigravity_local") {
+  const adapterConfig = asRecord6(agent?.adapterConfig);
+  if (textParam4(agent, "adapterType") === "antigravity_local") {
     return {
       kind: "agy_print",
       enabled: runtime.enableAgyRooms,
-      command: textParam(adapterConfig, "command", "agy"),
-      model: textParam(adapterConfig, "model", "auto") || "auto",
+      command: textParam4(adapterConfig, "command", "agy"),
+      model: textParam4(adapterConfig, "model", "auto") || "auto",
       sandbox: adapterConfig.sandbox === true,
       timeoutMs: Math.max(0, Number(adapterConfig.timeoutSec) || 0) * 1e3,
       extraArgs: Array.isArray(adapterConfig.extraArgs) ? adapterConfig.extraArgs : [],
@@ -13488,15 +13935,15 @@ function agentRoomRuntime(runtime, agent) {
     kind: "codex_app_server",
     enabled: runtime.enableCodexRooms,
     command: runtime.command,
-    model: textParam(adapterConfig, "model", "") || runtime.model,
-    reasoningEffort: textParam(adapterConfig, "modelReasoningEffort", textParam(adapterConfig, "reasoningEffort", "")) || null,
+    model: textParam4(adapterConfig, "model", "") || runtime.model,
+    reasoningEffort: textParam4(adapterConfig, "modelReasoningEffort", textParam4(adapterConfig, "reasoningEffort", "")) || null,
     codexHome: runtime.codexHome,
     sandbox: runtime.codexSandbox,
     approvalPolicy: runtime.codexApprovalPolicy
   };
 }
 function defaultAgyCommand() {
-  const installed = path2.join(os.homedir(), "AppData", "Local", "agy", "bin", "agy.exe");
+  const installed = path3.join(os.homedir(), "AppData", "Local", "agy", "bin", "agy.exe");
   return fs2.existsSync(installed) ? installed : "agy";
 }
 function roomRuntimeDisabledResult(agentRuntime) {
@@ -13507,21 +13954,21 @@ function roomRuntimeDisabledResult(agentRuntime) {
   };
 }
 function resolveCodexHomeForAgent(runtime, agent) {
-  const configuredAccount = textParam(asRecord3(agent?.adapterConfig), "codexAccount");
+  const configuredAccount = textParam4(asRecord6(agent?.adapterConfig), "codexAccount");
   if (/^\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(configuredAccount)) {
-    return path2.join(os.homedir(), configuredAccount);
+    return path3.join(os.homedir(), configuredAccount);
   }
-  return configuredEnvironmentValue(agent, "CODEX_HOME") || runtime.codexHome || textParam(process.env, "CODEX_HOME") || null;
+  return configuredEnvironmentValue(agent, "CODEX_HOME") || runtime.codexHome || textParam4(process.env, "CODEX_HOME") || null;
 }
 function codexClientKey(runtime, agent) {
   return JSON.stringify({ command: runtime.command, codexHome: resolveCodexHomeForAgent(runtime, agent) });
 }
 function roomThreadIdForCodexRuntime(state, runtime, agent, currentInstructionsFingerprint = agentInstructionsFingerprint(agent)) {
-  const threadId = textParam(state?.runtime, "codexThreadId") || null;
+  const threadId = textParam4(state?.runtime, "codexThreadId") || null;
   if (!threadId) return null;
-  const previousInstructionsFingerprint = textParam(state?.runtime, "instructionsFingerprint") || null;
+  const previousInstructionsFingerprint = textParam4(state?.runtime, "instructionsFingerprint") || null;
   if (!previousInstructionsFingerprint || previousInstructionsFingerprint !== currentInstructionsFingerprint) return null;
-  const previousAccountKey = textParam(state?.runtime, "codexAccountKey") || null;
+  const previousAccountKey = textParam4(state?.runtime, "codexAccountKey") || null;
   const selectedAccountKey = codexClientKey(runtime, agent);
   const hasExplicitHome = Boolean(resolveCodexHomeForAgent(runtime, agent));
   if (previousAccountKey && previousAccountKey !== selectedAccountKey) return null;
@@ -13549,10 +13996,10 @@ function roomMemoryRuntime() {
 async function fetchRoomMemory(pathname, options = {}) {
   const runtime = roomMemoryRuntime();
   const url = new URL(pathname, runtime.baseUrl);
-  for (const [key, value] of Object.entries(asRecord3(options.searchParams))) {
+  for (const [key, value] of Object.entries(asRecord6(options.searchParams))) {
     if (value !== void 0 && value !== null && String(value).trim() !== "") url.searchParams.set(key, String(value));
   }
-  const headers = { accept: "application/json", ...asRecord3(options.headers) };
+  const headers = { accept: "application/json", ...asRecord6(options.headers) };
   if (runtime.token) headers["x-sidecar-token"] = runtime.token;
   const response = await fetch(url, { method: options.method ?? "GET", headers, body: options.body });
   const body = await response.text();
@@ -13581,8 +14028,8 @@ async function searchRoomMemory(roomContext, query, requestedScopes, limit) {
   return [...itemsById.values()].sort((left, right) => Number(right.score || 0) - Number(left.score || 0)).slice(0, limit);
 }
 async function proposeRoomMemory(roomContext, input) {
-  const content = textParam(input, "content");
-  const scope = textParam(input, "scope", "project") || "project";
+  const content = textParam4(input, "content");
+  const scope = textParam4(input, "scope", "project") || "project";
   if (!content || content.length > 4e3) throw new Error("Memory candidate content must be between 1 and 4000 characters.");
   if (!(/* @__PURE__ */ new Set(["company", "project", "agent", "task", "artifact", "user"])).has(scope)) throw new Error("Invalid memory candidate scope.");
   const candidate = await fetchRoomMemory("/memory/candidates", {
@@ -13591,7 +14038,7 @@ async function proposeRoomMemory(roomContext, input) {
     body: JSON.stringify({
       content,
       scope,
-      type: textParam(input, "type", "learning") || "learning",
+      type: textParam4(input, "type", "learning") || "learning",
       tags: listParam(input, "tags").slice(0, 12),
       companyId: roomContext.companyId,
       projectId: roomContext.projectId ?? null,
@@ -13623,28 +14070,28 @@ function isLongLivedRoom(issue) {
   return isAgentRoom(issue) || isLegacyRoleRoom(issue);
 }
 function isHiredAgent(agent) {
-  const builtIn = asRecord3(asRecord3(agent?.metadata).paperclipBuiltInAgent);
+  const builtIn = asRecord6(asRecord6(agent?.metadata).paperclipBuiltInAgent);
   return Boolean(
-    agent?.id && agent?.name && agent.status !== "terminated" && !textParam(builtIn, "key")
+    agent?.id && agent?.name && agent.status !== "terminated" && !textParam4(builtIn, "key")
   );
 }
 function isTaskWorkerAgent(agent) {
   return isHiredAgent(agent) && isWorkplaneWorker(agent);
 }
 function agentWorkingDirectory(agent) {
-  return textParam(asRecord3(agent?.adapterConfig), "cwd");
+  return textParam4(asRecord6(agent?.adapterConfig), "cwd");
 }
 function agentInstructionsPath(agent) {
-  const instructionsPath = textParam(asRecord3(agent?.adapterConfig), "instructionsFilePath");
-  return instructionsPath && path2.isAbsolute(instructionsPath) ? instructionsPath : "";
+  const instructionsPath = textParam4(asRecord6(agent?.adapterConfig), "instructionsFilePath");
+  return instructionsPath && path3.isAbsolute(instructionsPath) ? instructionsPath : "";
 }
 function loadAgentInstructions(agent) {
-  const path3 = agentInstructionsPath(agent);
-  if (!path3 || !fs2.existsSync(path3)) {
+  const path4 = agentInstructionsPath(agent);
+  if (!path4 || !fs2.existsSync(path4)) {
     return "No managed Agent AGENTS.md was available. Ask the user to configure this Agent's Instructions before making policy decisions.";
   }
   try {
-    const body = fs2.readFileSync(path3, "utf8").trim();
+    const body = fs2.readFileSync(path4, "utf8").trim();
     return body || "The managed Agent AGENTS.md is empty.";
   } catch {
     return "The managed Agent AGENTS.md could not be read. Report this blocker before making policy decisions.";
@@ -13653,9 +14100,9 @@ function loadAgentInstructions(agent) {
 function agentInstructionsFingerprint(agent, instructions = loadAgentInstructions(agent)) {
   return createHash("sha256").update(JSON.stringify({
     version: 1,
-    agentId: textParam(agent, "id"),
-    agentName: textParam(agent, "name"),
-    agentRole: textParam(agent, "role"),
+    agentId: textParam4(agent, "id"),
+    agentName: textParam4(agent, "name"),
+    agentRole: textParam4(agent, "role"),
     instructions
   }), "utf8").digest("hex");
 }
@@ -13756,7 +14203,7 @@ async function reconcileRoomMemoryLifecycle(ctx) {
             stateKey: ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY
           };
           const marker = await ctx.state.get(markerScope);
-          const deliveredVersion = Number(asRecord3(marker)?.checkpointVersion ?? 0);
+          const deliveredVersion = Number(asRecord6(marker)?.checkpointVersion ?? 0);
           if (deliveredVersion >= version) continue;
           await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.checkpoint", latest);
           summary.checkpointsPublished += 1;
@@ -13814,96 +14261,6 @@ Superseded by one named Agent Room per hired Agent. Preserved for history.`.trim
   }
   return retired;
 }
-function normalizedWorkspacePath(value) {
-  return String(value || "").trim().replace(/[\\/]+$/g, "").toLowerCase();
-}
-function workspaceLocalPath(workspace) {
-  return String(workspace?.cwd ?? workspace?.path ?? "").trim();
-}
-function displayTaskPath(value) {
-  return String(value || "").trim().replace(/\\/g, "/");
-}
-function normalizeTaskAffectedPaths(paths, workspace) {
-  const workspaceRoot = displayTaskPath(workspaceLocalPath(workspace)).replace(/\/+$/g, "");
-  const comparableRoot = workspaceRoot.toLowerCase();
-  const normalized = [];
-  const invalid = [];
-  for (const requestedPath of paths) {
-    const raw = String(requestedPath || "").trim();
-    if (!raw) continue;
-    const portable = displayTaskPath(raw);
-    const isAbsolute = path2.win32.isAbsolute(raw) || path2.posix.isAbsolute(portable);
-    let relative = portable;
-    if (isAbsolute) {
-      const comparablePath = portable.replace(/\/+$/g, "").toLowerCase();
-      if (!comparableRoot || comparablePath !== comparableRoot && !comparablePath.startsWith(`${comparableRoot}/`)) {
-        invalid.push({ path: portable, reason: "outside_selected_workspace" });
-        continue;
-      }
-      relative = comparablePath === comparableRoot ? "." : portable.slice(workspaceRoot.length + 1);
-    }
-    const segments = relative.split("/").filter(Boolean);
-    if (segments.includes("..")) {
-      invalid.push({ path: portable, reason: "parent_directory_not_allowed" });
-      continue;
-    }
-    const canonical = segments.filter((segment) => segment !== ".").join("/") || ".";
-    normalized.push(canonical);
-  }
-  return { paths: [...new Set(normalized)], invalid };
-}
-function workspaceIdMap(value, workspaceIds) {
-  const result = {};
-  for (const [key, rawWorkspaceId] of Object.entries(asRecord3(value))) {
-    const workspaceId = String(rawWorkspaceId || "").trim();
-    if (key && workspaceIds.has(workspaceId)) result[key] = workspaceId;
-  }
-  return result;
-}
-function taskWorkspaceIdMap(value, workspaceIds) {
-  const result = {};
-  for (const [key, rawWorkspaceId] of Object.entries(asRecord3(value))) {
-    const taskType = normalizedTaskTypeKey(key);
-    const workspaceId = String(rawWorkspaceId || "").trim();
-    if (taskType && workspaceIds.has(workspaceId)) result[taskType] = workspaceId;
-  }
-  return result;
-}
-function normalizeWorkspaceTaskTypes(value, taskWorkspaceIds, { useDefaults = true } = {}) {
-  const result = /* @__PURE__ */ new Map();
-  const configured = Array.isArray(value) ? value : null;
-  const source = configured ?? (useDefaults ? DEFAULT_TASK_TYPE_DEFINITIONS : []);
-  for (const entry of source) {
-    const taskType = normalizedTaskTypeKey(asRecord3(entry).id ?? entry);
-    if (!taskType || result.has(taskType)) continue;
-    const label = textParam(asRecord3(entry), "label") || taskType;
-    result.set(taskType, { id: taskType, label: label.slice(0, 80) });
-  }
-  for (const taskType of Object.keys(asRecord3(taskWorkspaceIds))) {
-    const key = normalizedTaskTypeKey(taskType);
-    if (key && !result.has(key)) result.set(key, { id: key, label: key });
-  }
-  return [...result.values()];
-}
-function normalizeWorkspaceProfile(value, workspaces = []) {
-  const source = asRecord3(value);
-  const workspaceIds = new Set((Array.isArray(workspaces) ? workspaces : []).map((workspace) => String(workspace?.id || "")).filter(Boolean));
-  const requestedDefault = textParam(source, "defaultWorkspaceId");
-  const primaryWorkspaceId = (Array.isArray(workspaces) ? workspaces : []).find((workspace) => workspace?.isPrimary)?.id ?? null;
-  const defaultWorkspaceId = workspaceIds.has(requestedDefault) ? requestedDefault : primaryWorkspaceId && workspaceIds.has(primaryWorkspaceId) ? primaryWorkspaceId : [...workspaceIds][0] ?? null;
-  const taskWorkspaceIds = taskWorkspaceIdMap(source.taskWorkspaceIds, workspaceIds);
-  return {
-    version: WORKSPACE_PROFILE_VERSION,
-    defaultWorkspaceId,
-    agentWorkspaceIds: workspaceIdMap(source.agentWorkspaceIds, workspaceIds),
-    taskWorkspaceIds,
-    taskTypes: normalizeWorkspaceTaskTypes(source.taskTypes, taskWorkspaceIds, {
-      useDefaults: !Array.isArray(source.taskTypes)
-    }),
-    updatedAt: textParam(source, "updatedAt") || null,
-    configured: Boolean(source.configured)
-  };
-}
 async function loadProjectWorkspaceProfile(ctx, projectId, workspaces = []) {
   const fallback = normalizeWorkspaceProfile({}, workspaces);
   if (!projectId || !ctx.entities?.list) return fallback;
@@ -13933,74 +14290,6 @@ async function saveProjectWorkspaceProfile(ctx, projectId, profile, workspaces =
   });
   return normalized;
 }
-function profileWorkspace(workspaces, profile, { agentId = "", taskType = "", requestedWorkspaceId = "" } = {}) {
-  if (!Array.isArray(workspaces) || !workspaces.length) return null;
-  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
-  if (asRecord3(profile).configured !== true) return null;
-  const requested = byId.get(requestedWorkspaceId);
-  if (requested) return requested;
-  const agentWorkspaceId = textParam(asRecord3(profile).agentWorkspaceIds, agentId);
-  if (agentWorkspaceId && byId.has(agentWorkspaceId)) return byId.get(agentWorkspaceId);
-  const taskWorkspaceId = textParam(asRecord3(profile).taskWorkspaceIds, normalizedTaskTypeKey(taskType));
-  if (taskWorkspaceId && byId.has(taskWorkspaceId)) return byId.get(taskWorkspaceId);
-  const defaultWorkspaceId = textParam(profile, "defaultWorkspaceId");
-  return defaultWorkspaceId && byId.has(defaultWorkspaceId) ? byId.get(defaultWorkspaceId) : null;
-}
-function profileTaskWorkspace(workspaces, profile, { agentId = "", taskType = "", requestedWorkspaceId = "" } = {}) {
-  if (!Array.isArray(workspaces) || !workspaces.length) return null;
-  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
-  if (asRecord3(profile).configured !== true) return null;
-  const requested = byId.get(requestedWorkspaceId);
-  if (requested) return requested;
-  const taskWorkspaceId = textParam(asRecord3(profile).taskWorkspaceIds, normalizedTaskTypeKey(taskType));
-  return taskWorkspaceId && byId.has(taskWorkspaceId) ? byId.get(taskWorkspaceId) : null;
-}
-function defaultWorkspaceKindForAgent(agent) {
-  const identity = `${agent?.role || ""} ${agent?.name || ""}`.toLowerCase();
-  if (/(art|image|voice)/.test(identity)) return "asset";
-  if (/(designer|design|manager|document)/.test(identity)) return "design";
-  return "implementation";
-}
-function workspaceKindForProjectWorkspace(workspace) {
-  const name = String(workspace?.name || "").toLowerCase();
-  const localPath = normalizedWorkspacePath(workspaceLocalPath(workspace));
-  const pathName = localPath.split(/[\\/]/).filter(Boolean).at(-1) || "";
-  const identity = `${name} ${pathName}`;
-  if (/(implementation|unity|unreal|source|code|build|app|server|client)/.test(identity)) return "implementation";
-  if (/(asset|art|audio|voice)/.test(identity)) return "asset";
-  if (/(design|obsidian|research|reference|spec|docs?)/.test(identity)) return "design";
-  if (/(shared|common|library|knowledge)/.test(identity)) return "shared";
-  return "implementation";
-}
-function workspaceKindForTaskType(taskType) {
-  if (["design", "documentation"].includes(taskType)) return "design";
-  if (["art", "voice"].includes(taskType)) return "asset";
-  return "implementation";
-}
-function taskTypeAllowsNoAffectedPaths(taskType) {
-  return ["design", "documentation"].includes(normalizedTaskTypeKey(taskType));
-}
-function chooseTaskWorkspace(workspaces, taskType, requestedWorkspaceId, profile = null, assigneeAgentId = "") {
-  if (!Array.isArray(workspaces) || !workspaces.length) return null;
-  const configured = profileTaskWorkspace(workspaces, profile, { agentId: assigneeAgentId, taskType, requestedWorkspaceId });
-  if (configured) return configured;
-  const kind = workspaceKindForTaskType(taskType);
-  const requested = requestedWorkspaceId ? workspaces.find((workspace) => workspace.id === requestedWorkspaceId) ?? null : null;
-  const preferred = workspaces.find((workspace) => workspaceKindForProjectWorkspace(workspace) === kind) ?? null;
-  const requestedKind = requested ? workspaceKindForProjectWorkspace(requested) : null;
-  if (requested && (requestedKind === kind || kind === "asset" && requestedKind === "implementation")) return requested;
-  const implementationFallback = kind === "asset" ? workspaces.find((workspace) => workspaceKindForProjectWorkspace(workspace) === "implementation") ?? null : null;
-  return preferred ?? implementationFallback ?? profileWorkspace(workspaces, profile, { agentId: "", taskType: "", requestedWorkspaceId: "" }) ?? workspaces.find((workspace) => workspace.isPrimary) ?? workspaces[0];
-}
-function workspaceBinding(workspace) {
-  if (!workspace?.id) return null;
-  return {
-    projectWorkspaceId: workspace.id,
-    name: String(workspace.name || "Workspace"),
-    kind: workspaceKindForProjectWorkspace(workspace),
-    boundAt: now()
-  };
-}
 async function listProjectWorkspaces(ctx, companyId, projectId) {
   if (!projectId || !ctx.projects?.listWorkspaces) return null;
   return ctx.projects.listWorkspaces(projectId, companyId);
@@ -14021,7 +14310,7 @@ async function resolveRoomWorkspace(ctx, companyId, issue, agent, state) {
   const workspaces = await listProjectWorkspaces(ctx, companyId, issue.projectId);
   if (workspaces === null) return { workspace: null, workspaces: null, legacy: true };
   const profile = await loadProjectWorkspaceProfile(ctx, issue.projectId, workspaces);
-  const currentId = textParam(asRecord3(state?.workspace), "projectWorkspaceId");
+  const currentId = textParam4(asRecord6(state?.workspace), "projectWorkspaceId");
   const profileSelectedWorkspace = profileWorkspace(workspaces, profile, { agentId: agent?.id });
   const workspace = profileSelectedWorkspace ?? workspaces.find((entry) => entry.id === currentId) ?? chooseDefaultWorkspace(agent, workspaces, profile);
   return { workspace: workspace ?? null, workspaces, profile, legacy: false };
@@ -14030,7 +14319,7 @@ async function ensureRoomWorkspaceBinding(ctx, companyId, issue, agent, state) {
   const resolved = await resolveRoomWorkspace(ctx, companyId, issue, agent, state);
   if (!resolved.workspace) return { state, resolved, changed: false };
   const nextBinding = workspaceBinding(resolved.workspace);
-  const currentBinding = asRecord3(state.workspace);
+  const currentBinding = asRecord6(state.workspace);
   const changed = currentBinding.projectWorkspaceId !== nextBinding.projectWorkspaceId || currentBinding.kind !== nextBinding.kind || currentBinding.name !== nextBinding.name || Object.hasOwn(state, "workingDirectory");
   if (!changed) return { state, resolved, changed: false };
   state.workspace = nextBinding;
@@ -14051,8 +14340,8 @@ async function resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state) 
   throw new Error("The Room Workspace is unavailable. Select a registered Project Workspace before starting a Room turn.");
 }
 function agentSessionContextMatches(session, expectedContext) {
-  const context = asRecord3(session?.context);
-  return textParam(context, "projectId") === textParam(expectedContext, "projectId") && textParam(context, "projectWorkspaceId") === textParam(expectedContext, "projectWorkspaceId") && !textParam(context, "issueId");
+  const context = asRecord6(session?.context);
+  return textParam4(context, "projectId") === textParam4(expectedContext, "projectId") && textParam4(context, "projectWorkspaceId") === textParam4(expectedContext, "projectWorkspaceId") && !textParam4(context, "issueId");
 }
 async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   const binding = await ensureRoomWorkspaceBinding(ctx, companyId, issue, agent, state);
@@ -14065,7 +14354,7 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
     projectWorkspaceId: workspace.id
   };
   const sessions = await ctx.agents.sessions.list(agent.id, companyId);
-  const persistedSessionId = textParam(state.runtime, "agentSessionId");
+  const persistedSessionId = textParam4(state.runtime, "agentSessionId");
   let session = sessions.find((candidate) => candidate.sessionId === persistedSessionId) ?? null;
   if (session && !agentSessionContextMatches(session, context)) {
     await ctx.agents.sessions.close(session.sessionId, companyId);
@@ -14086,7 +14375,7 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   state.runtime.lastRunId = session.lastRunId ?? state.runtime.lastRunId ?? null;
   state.runtime.lastError = session.lastError ?? null;
   state.runtime.codexThreadId = null;
-  state.runtime.model = textParam(asRecord3(agent.adapterConfig), "model") || null;
+  state.runtime.model = textParam4(asRecord6(agent.adapterConfig), "model") || null;
   state.runtime.updatedAt = now();
   delete state.runtime.codexAccountKey;
   delete state.runtime.codexHome;
@@ -14099,19 +14388,19 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   };
 }
 function nativeSessionResultText(event) {
-  const payload = asRecord3(event?.payload);
+  const payload = asRecord6(event?.payload);
   if (event?.eventType === "error") {
-    const message = textParam(payload, "error") || textParam(payload, "errorCode") || textParam(event, "message") || "The Agent Session run failed.";
+    const message = textParam4(payload, "error") || textParam4(payload, "errorCode") || textParam4(event, "message") || "The Agent Session run failed.";
     const error = new Error(message);
-    const resultRecord2 = asRecord3(payload.resultJson);
-    error.code = textParam(payload, "errorCode") || textParam(resultRecord2, "errorCode") || null;
-    error.errorFamily = textParam(payload, "errorFamily") || textParam(resultRecord2, "errorFamily") || null;
-    error.retryNotBefore = textParam(payload, "retryNotBefore") || textParam(resultRecord2, "retryNotBefore") || null;
+    const resultRecord2 = asRecord6(payload.resultJson);
+    error.code = textParam4(payload, "errorCode") || textParam4(resultRecord2, "errorCode") || null;
+    error.errorFamily = textParam4(payload, "errorFamily") || textParam4(resultRecord2, "errorFamily") || null;
+    error.retryNotBefore = textParam4(payload, "retryNotBefore") || textParam4(resultRecord2, "retryNotBefore") || null;
     throw error;
   }
   const result = payload.resultJson;
-  const resultRecord = asRecord3(result);
-  const text4 = typeof result === "string" ? result : textParam(resultRecord, "summary") || textParam(resultRecord, "message") || textParam(resultRecord, "output");
+  const resultRecord = asRecord6(result);
+  const text4 = typeof result === "string" ? result : textParam4(resultRecord, "summary") || textParam4(resultRecord, "message") || textParam4(resultRecord, "output");
   if (!text4) throw new Error("The Agent Session completed without an assistant message.");
   return enforceUtf8Text(text4, "Agent Session output");
 }
@@ -14137,207 +14426,6 @@ async function startNativeAgentSessionTurn(ctx, { sessionId, companyId, prompt, 
   });
   return { runId: response.runId, completion };
 }
-function now() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-var DURABLE_JSON_PREFIX = "paperclip-room-json:v1:";
-function parseState(body) {
-  if (!body || typeof body !== "string") return null;
-  const trimmed = body.trim();
-  if (trimmed.startsWith(DURABLE_JSON_PREFIX)) {
-    const encoded = trimmed.slice(DURABLE_JSON_PREFIX.length).trim();
-    if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null;
-    try {
-      return JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
-    } catch {
-      return null;
-    }
-  }
-  try {
-    return JSON.parse(body);
-  } catch {
-    const match = body.match(/```json\s*([\s\S]*?)\s*```/i);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[1]);
-    } catch {
-      return null;
-    }
-  }
-}
-function serializeState(state) {
-  const encoded = Buffer.from(JSON.stringify(state), "utf8").toString("base64");
-  return `${DURABLE_JSON_PREFIX}${encoded}
-`;
-}
-function newRoomState(issue, agent, legacyWorkingDirectory = "") {
-  return {
-    version: 3,
-    kind: "agent_room",
-    roomIssueId: issue.id,
-    projectId: issue.projectId ?? null,
-    agentId: agent.id,
-    agentName: agent.name,
-    agentRole: agent.role ?? null,
-    workspace: null,
-    ...legacyWorkingDirectory ? { workingDirectory: legacyWorkingDirectory } : {},
-    runtime: {
-      kind: "paperclip_agent_session",
-      agentSessionId: null,
-      lastRunId: null,
-      lastError: null,
-      codexThreadId: null,
-      model: null,
-      updatedAt: null,
-      activity: { status: "idle", kind: null, turnId: null, startedAt: null, updatedAt: null, steps: [], error: null }
-    },
-    checkpoint: {
-      version: 0,
-      summary: null,
-      sourceCommentId: null,
-      createdAt: null,
-      compactedAt: null
-    },
-    pendingTurn: null
-  };
-}
-function roomWorkText(value, limit = 1200) {
-  const text4 = value === void 0 || value === null ? "" : String(value).trim();
-  return text4 ? text4.slice(0, limit) : null;
-}
-function roomWorkReferences(value) {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.map((entry) => roomWorkText(entry, 1e3)).filter(Boolean))].slice(0, 24);
-}
-function normalizeRoomWorkOutcome(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const outcome = {
-    taskId: roomWorkText(value.taskId, 200),
-    identifier: roomWorkText(value.identifier, 200),
-    status: roomWorkText(value.status, 80),
-    summary: roomWorkText(value.summary, 1600),
-    sourceReferences: roomWorkReferences(value.sourceReferences)
-  };
-  return outcome.taskId || outcome.identifier || outcome.summary ? outcome : null;
-}
-function normalizeRoomNextCandidate(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const candidate = {
-    summary: roomWorkText(value.summary, 1600),
-    kind: roomWorkText(value.kind, 120),
-    sourceReferences: roomWorkReferences(value.sourceReferences)
-  };
-  return candidate.summary ? candidate : null;
-}
-function normalizeRoomWaitingFor(value) {
-  const source = asRecord3(value);
-  const requestedKind = roomWorkText(source.kind, 80) || "none";
-  const kind = ROOM_WAITING_KINDS.has(requestedKind) ? requestedKind : "none";
-  return {
-    kind,
-    detail: kind === "none" ? null : roomWorkText(source.detail, 1200),
-    taskId: kind === "none" ? null : roomWorkText(source.taskId, 200)
-  };
-}
-function newRoomWorkState(issue) {
-  return {
-    version: 1,
-    revision: 0,
-    kind: "room_work_state",
-    roomIssueId: issue.id,
-    projectId: issue.projectId ?? null,
-    objective: null,
-    phase: null,
-    latestOutcome: null,
-    planReferences: [],
-    nextCandidate: null,
-    waitingFor: { kind: "none", detail: null, taskId: null },
-    updatedAt: null,
-    updatedBy: null
-  };
-}
-function normalizeRoomWorkState(value, issue) {
-  const base = newRoomWorkState(issue);
-  const source = asRecord3(value);
-  if (source.kind !== "room_work_state" || source.roomIssueId !== issue.id) return base;
-  return {
-    ...base,
-    version: 1,
-    revision: Math.max(0, Number(source.revision) || 0),
-    objective: roomWorkText(source.objective, 1600),
-    phase: roomWorkText(source.phase, 300),
-    latestOutcome: normalizeRoomWorkOutcome(source.latestOutcome),
-    planReferences: roomWorkReferences(source.planReferences),
-    nextCandidate: normalizeRoomNextCandidate(source.nextCandidate),
-    waitingFor: normalizeRoomWaitingFor(source.waitingFor),
-    updatedAt: roomWorkText(source.updatedAt, 100),
-    updatedBy: Object.keys(asRecord3(source.updatedBy)).length ? {
-      kind: roomWorkText(source.updatedBy.kind, 80),
-      agentId: roomWorkText(source.updatedBy.agentId, 200),
-      agentName: roomWorkText(source.updatedBy.agentName, 300)
-    } : null
-  };
-}
-function mergeRoomWorkState(current, patch, issue, updatedBy = {}) {
-  const source = asRecord3(patch);
-  const next = normalizeRoomWorkState(current, issue);
-  const has = (key) => Object.prototype.hasOwnProperty.call(source, key);
-  if (has("objective")) next.objective = roomWorkText(source.objective, 1600);
-  if (has("phase")) next.phase = roomWorkText(source.phase, 300);
-  if (has("latestOutcome")) next.latestOutcome = normalizeRoomWorkOutcome(source.latestOutcome);
-  if (has("planReferences")) next.planReferences = roomWorkReferences(source.planReferences);
-  if (has("nextCandidate")) next.nextCandidate = normalizeRoomNextCandidate(source.nextCandidate);
-  if (has("waitingFor")) next.waitingFor = normalizeRoomWaitingFor(source.waitingFor);
-  next.revision += 1;
-  next.updatedAt = now();
-  next.updatedBy = {
-    kind: roomWorkText(updatedBy.kind, 80) || "agent",
-    agentId: roomWorkText(updatedBy.agentId, 200),
-    agentName: roomWorkText(updatedBy.agentName, 300)
-  };
-  return next;
-}
-function taskReviewMode(taskState) {
-  return textParam(asRecord3(taskState?.review), "mode") === "manual" ? "manual" : "automatic";
-}
-function newTaskRoomState(issue, roomContext, input) {
-  const waitingForWorker = input.workerStatusAtCreation === "paused";
-  const reviewMode = input.reviewMode === "manual" ? "manual" : "automatic";
-  return {
-    version: 1,
-    kind: "task_room",
-    taskIssueId: issue.id,
-    projectId: issue.projectId ?? roomContext.projectId ?? null,
-    originatingRoomIssueId: roomContext.issueId,
-    owningAgentId: roomContext.agentId,
-    owningAgentName: roomContext.agentName,
-    owningAgentRole: roomContext.agentRole,
-    workerAgentId: input.assigneeAgentId,
-    taskType: input.taskType,
-    maturity: input.maturity,
-    projectWorkspaceId: input.projectWorkspaceId ?? null,
-    projectWorkspaceName: input.projectWorkspaceName ?? null,
-    declaredAffectedPaths: input.affectedPaths,
-    designReferences: input.designReferences,
-    acceptanceCriteria: input.acceptanceCriteria,
-    verification: input.verification,
-    dependencyTaskIds: input.blockedByIssueIds,
-    dispatch: {
-      status: waitingForWorker ? "waiting_for_worker" : "ready",
-      reason: waitingForWorker ? "worker_paused_before_start" : null,
-      workerStatusAtCreation: input.workerStatusAtCreation ?? null,
-      startedAt: waitingForWorker ? null : now(),
-      updatedAt: now()
-    },
-    review: {
-      required: "owning_agent",
-      mode: reviewMode,
-      status: "not_requested",
-      workerReportCommentId: null,
-      updatedAt: now()
-    }
-  };
-}
 function taskProtocolComment(roomContext, issue, taskState) {
   const reviewMode = taskReviewMode(taskState);
   const lines = [
@@ -14354,7 +14442,7 @@ function taskProtocolComment(roomContext, issue, taskState) {
     "- Do not search for SPS credentials or retry a submitted final report. Use only the provided Task capability and submit each final report once.",
     "",
     "Affected Paths (relative to the selected Project Workspace):",
-    ...taskState.declaredAffectedPaths.length ? taskState.declaredAffectedPaths.map((path3) => `- ${displayTaskPath(path3)}`) : ["- Not declared"],
+    ...taskState.declaredAffectedPaths.length ? taskState.declaredAffectedPaths.map((path4) => `- ${displayTaskPath(path4)}`) : ["- Not declared"],
     "",
     "Design References:",
     ...taskState.designReferences.length ? taskState.designReferences.map((reference) => `- ${reference}`) : ["- Not required for this task type"],
@@ -14376,7 +14464,7 @@ function taskDescription(input) {
     `Project Workspace: ${input.projectWorkspaceName || input.projectWorkspaceId || "Not bound"}`,
     "",
     "Affected Paths (relative to the selected Project Workspace):",
-    ...input.affectedPaths.length ? input.affectedPaths.map((path3) => `- ${displayTaskPath(path3)}`) : ["- Not declared"],
+    ...input.affectedPaths.length ? input.affectedPaths.map((path4) => `- ${displayTaskPath(path4)}`) : ["- Not declared"],
     "",
     "Design References:",
     ...input.designReferences.length ? input.designReferences.map((reference) => `- ${reference}`) : ["- Not required"],
@@ -14746,7 +14834,7 @@ async function paperclipJsonDirect(apiUrl, apiPath, { method = "GET", body, oper
     }
   }
   if (!response.ok) {
-    const detail = typeof result === "string" ? result : textParam(asRecord3(result), "error") || responseText;
+    const detail = typeof result === "string" ? result : textParam4(asRecord6(result), "error") || responseText;
     const error = new Error(`SPS ${operation} failed (HTTP ${response.status})${detail ? `: ${String(detail).slice(0, 400)}` : "."}`);
     error.status = response.status;
     throw error;
@@ -14756,7 +14844,7 @@ async function paperclipJsonDirect(apiUrl, apiPath, { method = "GET", body, oper
 function directArrayPayload(value, keys = []) {
   if (Array.isArray(value)) return value;
   for (const key of keys) {
-    if (Array.isArray(asRecord3(value)[key])) return asRecord3(value)[key];
+    if (Array.isArray(asRecord6(value)[key])) return asRecord6(value)[key];
   }
   return [];
 }
@@ -14909,11 +14997,11 @@ function enforceTaskContractText(value, label = "Task text") {
   return text4;
 }
 function roomAttachmentName(attachment) {
-  const filename = textParam(attachment, "originalFilename") || textParam(attachment, "filename");
-  return repairUtf8Mojibake(filename) || `attachment-${textParam(attachment, "id", "file")}`;
+  const filename = textParam4(attachment, "originalFilename") || textParam4(attachment, "filename");
+  return repairUtf8Mojibake(filename) || `attachment-${textParam4(attachment, "id", "file")}`;
 }
 function safeAttachmentFilename(filename) {
-  const basename = path2.basename(String(filename || "attachment"));
+  const basename = path3.basename(String(filename || "attachment"));
   const cleaned = basename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().slice(0, 120);
   return cleaned || "attachment";
 }
@@ -14921,42 +15009,42 @@ function safeAttachmentPathSegment(value) {
   return String(value || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "unknown";
 }
 function attachmentContentPath2(attachment) {
-  const contentPath = textParam(attachment, "contentPath");
-  return contentPath || `/api/attachments/${encodeURIComponent(textParam(attachment, "id"))}/content`;
+  const contentPath = textParam4(attachment, "contentPath");
+  return contentPath || `/api/attachments/${encodeURIComponent(textParam4(attachment, "id"))}/content`;
 }
 function roomAttachmentContentUrl(apiUrl, attachment) {
   return new URL(attachmentContentPath2(attachment), `${loopbackSPSApiUrl(apiUrl)}/`).toString();
 }
 function isCodexImageAttachment(attachment) {
-  const contentType = textParam(attachment, "contentType").toLowerCase();
+  const contentType = textParam4(attachment, "contentType").toLowerCase();
   if (/^image\/(png|jpe?g|webp|gif|avif|bmp)$/i.test(contentType)) return true;
   return /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(roomAttachmentName(attachment));
 }
 function roomAttachmentCacheRoot() {
   const paperclipHome = String(process.env.PAPERCLIP_HOME || "").trim();
-  return paperclipHome ? path2.join(paperclipHome, "room-attachments") : path2.join(os.homedir(), ".sps", "room-attachments");
+  return paperclipHome ? path3.join(paperclipHome, "room-attachments") : path3.join(os.homedir(), ".sps", "room-attachments");
 }
 function roomAttachmentWorkspaceRoot(workingDirectory) {
   const requestedWorkspace = String(workingDirectory || "").trim();
   if (!requestedWorkspace) {
     throw new Error("A Room Workspace is required before attached files can be prepared for an Agent.");
   }
-  const workspaceRoot = path2.resolve(requestedWorkspace);
-  const attachmentRoot = path2.resolve(workspaceRoot, ".sps", "room-attachments");
-  const relative = path2.relative(workspaceRoot, attachmentRoot);
-  if (!relative || relative === ".." || relative.startsWith(`..${path2.sep}`) || path2.isAbsolute(relative)) {
+  const workspaceRoot = path3.resolve(requestedWorkspace);
+  const attachmentRoot = path3.resolve(workspaceRoot, ".sps", "room-attachments");
+  const relative = path3.relative(workspaceRoot, attachmentRoot);
+  if (!relative || relative === ".." || relative.startsWith(`..${path3.sep}`) || path3.isAbsolute(relative)) {
     throw new Error("The Room attachment staging path must stay inside the selected Project Workspace.");
   }
   return attachmentRoot;
 }
 function workspaceGitExcludePath(workingDirectory) {
-  const dotGitPath = path2.join(workingDirectory, ".git");
+  const dotGitPath = path3.join(workingDirectory, ".git");
   if (!fs2.existsSync(dotGitPath)) return null;
   const stats = fs2.statSync(dotGitPath);
-  if (stats.isDirectory()) return path2.join(dotGitPath, "info", "exclude");
+  if (stats.isDirectory()) return path3.join(dotGitPath, "info", "exclude");
   if (!stats.isFile()) return null;
   const match = fs2.readFileSync(dotGitPath, "utf8").match(/^gitdir:\s*(.+)\s*$/im);
-  return match ? path2.join(path2.resolve(workingDirectory, match[1]), "info", "exclude") : null;
+  return match ? path3.join(path3.resolve(workingDirectory, match[1]), "info", "exclude") : null;
 }
 function excludeWorkspaceRoomAttachments(workingDirectory) {
   const excludePath = workspaceGitExcludePath(workingDirectory);
@@ -14964,7 +15052,7 @@ function excludeWorkspaceRoomAttachments(workingDirectory) {
   const rule = ".sps/room-attachments/";
   const existing = fs2.existsSync(excludePath) ? fs2.readFileSync(excludePath, "utf8") : "";
   if (existing.split(/\r?\n/).some((line) => line.trim().replace(/\\/g, "/") === rule)) return excludePath;
-  fs2.mkdirSync(path2.dirname(excludePath), { recursive: true });
+  fs2.mkdirSync(path3.dirname(excludePath), { recursive: true });
   fs2.appendFileSync(excludePath, `${existing && !existing.endsWith("\n") ? "\n" : ""}${rule}
 `, "utf8");
   return excludePath;
@@ -14974,10 +15062,10 @@ function cleanupRoomAttachmentCache(root = roomAttachmentCacheRoot(), nowMs = Da
   const removed = [];
   for (const roomEntry of fs2.readdirSync(root, { withFileTypes: true })) {
     if (!roomEntry.isDirectory()) continue;
-    const roomPath = path2.join(root, roomEntry.name);
+    const roomPath = path3.join(root, roomEntry.name);
     for (const attachmentEntry of fs2.readdirSync(roomPath, { withFileTypes: true })) {
       if (!attachmentEntry.isDirectory()) continue;
-      const attachmentPath = path2.join(roomPath, attachmentEntry.name);
+      const attachmentPath = path3.join(roomPath, attachmentEntry.name);
       const modifiedAt = fs2.statSync(attachmentPath).mtimeMs;
       if (nowMs - modifiedAt <= ROOM_ATTACHMENT_CACHE_RETENTION_MS) continue;
       fs2.rmSync(attachmentPath, { recursive: true, force: true });
@@ -14989,13 +15077,13 @@ function cleanupRoomAttachmentCache(root = roomAttachmentCacheRoot(), nowMs = Da
 }
 function attachmentSnapshot(attachment) {
   return {
-    id: textParam(attachment, "id"),
+    id: textParam4(attachment, "id"),
     originalFilename: roomAttachmentName(attachment),
-    contentType: textParam(attachment, "contentType") || "application/octet-stream",
+    contentType: textParam4(attachment, "contentType") || "application/octet-stream",
     byteSize: Number(attachment?.byteSize) || 0,
     contentPath: attachmentContentPath2(attachment),
-    openPath: textParam(attachment, "openPath") || null,
-    downloadPath: textParam(attachment, "downloadPath") || null
+    openPath: textParam4(attachment, "openPath") || null,
+    downloadPath: textParam4(attachment, "downloadPath") || null
   };
 }
 async function listIssueAttachmentsDirect(apiUrl, issueId) {
@@ -15008,7 +15096,7 @@ async function listIssueAttachmentsDirect(apiUrl, issueId) {
 async function resolveRoomAttachments(apiUrl, issueId, attachmentIds) {
   if (!attachmentIds.length) return [];
   const available = await listIssueAttachmentsDirect(apiUrl, issueId);
-  const byId = new Map(available.map((attachment) => [textParam(attachment, "id"), attachment]));
+  const byId = new Map(available.map((attachment) => [textParam4(attachment, "id"), attachment]));
   const missing = attachmentIds.filter((id) => !byId.has(id));
   if (missing.length) throw new Error("One or more selected files are no longer attached to this Room.");
   return attachmentIds.map((id) => attachmentSnapshot(byId.get(id)));
@@ -15025,17 +15113,17 @@ function mergeRoomAttachments(...groups) {
   return [...byId.values()];
 }
 async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDirectory) {
-  const workspaceRoot = path2.resolve(String(workingDirectory || "").trim());
+  const workspaceRoot = path3.resolve(String(workingDirectory || "").trim());
   const cacheRoot = roomAttachmentWorkspaceRoot(workspaceRoot);
   excludeWorkspaceRoomAttachments(workspaceRoot);
   cleanupRoomAttachmentCache(cacheRoot);
-  const roomDirectory = path2.join(cacheRoot, safeAttachmentPathSegment(roomIssueId));
+  const roomDirectory = path3.join(cacheRoot, safeAttachmentPathSegment(roomIssueId));
   const staged = [];
   for (const attachment of attachments) {
-    const attachmentId = textParam(attachment, "id");
+    const attachmentId = textParam4(attachment, "id");
     if (!attachmentId) throw new Error("An attached file did not have a SPS attachment id.");
-    const directory = path2.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
-    const localPath = path2.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
+    const directory = path3.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
+    const localPath = path3.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
     const partialPath = `${localPath}.partial`;
     const response = await fetch(roomAttachmentContentUrl(apiUrl, attachment), { headers: spsDesktopAccessHeaders() });
     if (!response.ok) throw new Error(`Could not read attached file ${roomAttachmentName(attachment)} (HTTP ${response.status}).`);
@@ -15190,9 +15278,9 @@ async function updateRoomWorkStateOutsideInvocation(roomContext, patch, changeSu
   });
 }
 function nativeCompactionEventId(message) {
-  const params = asRecord3(message?.params);
-  const threadId = textParam(params, "threadId");
-  const turnId = textParam(params, "turnId");
+  const params = asRecord6(message?.params);
+  const threadId = textParam4(params, "threadId");
+  const turnId = textParam4(params, "turnId");
   return threadId && turnId ? `${threadId}:${turnId}` : "";
 }
 async function appendNativeCompactionOutsideInvocation(apiUrl, issueId, event) {
@@ -15217,7 +15305,7 @@ async function recordNativeCodexCompaction(ctx, message) {
   const threadCompaction = message?.method === "thread/compacted";
   if (!itemCompaction && !threadCompaction) return false;
   const eventId = nativeCompactionEventId(message);
-  const threadId = textParam(asRecord3(message?.params), "threadId");
+  const threadId = textParam4(asRecord6(message?.params), "threadId");
   const context = activeThreadContexts.get(threadId);
   if (!eventId || !context || manualCodexCompactionThreads.has(threadId) || recordedNativeCompactionEvents.has(eventId)) return false;
   recordedNativeCompactionEvents.add(eventId);
@@ -15227,7 +15315,7 @@ async function recordNativeCodexCompaction(ctx, message) {
         id: eventId,
         kind: "codex_native_auto",
         threadId,
-        turnId: textParam(asRecord3(message?.params), "turnId"),
+        turnId: textParam4(asRecord6(message?.params), "turnId"),
         occurredAt: now(),
         note: "Codex compacted its internal context automatically. SPS conversation and checkpoints remain the durable Room record."
       });
@@ -15303,31 +15391,6 @@ function emitRoomEvent(ctx, companyId, issueId, event) {
     });
   }
 }
-function roomJobTitle(kind) {
-  return {
-    room_message: "Room message",
-    compact_handoff: "Room compact",
-    task_owner_feedback: "Task owner feedback",
-    task_owner_report: "Task owner report"
-  }[kind] ?? "Room job";
-}
-function roomJobData(input) {
-  return {
-    id: input.id,
-    companyId: input.companyId,
-    roomIssueId: input.roomIssueId,
-    taskIssueId: input.taskIssueId ?? null,
-    kind: input.kind,
-    status: input.status,
-    sourceCommentId: input.sourceCommentId ?? null,
-    requestedAt: input.requestedAt,
-    startedAt: input.startedAt ?? null,
-    completedAt: input.completedAt ?? null,
-    resultCommentId: input.resultCommentId ?? null,
-    error: input.error ?? null,
-    payload: asRecord3(input.payload)
-  };
-}
 async function createRoomJob(ctx, input) {
   const job = roomJobData({ ...input, id: randomUUID2(), status: "queued", requestedAt: now() });
   if (ctx.entities?.upsert) {
@@ -15366,15 +15429,11 @@ async function listRoomJobs(ctx, issueId) {
     scopeId: issueId,
     limit: 100
   });
-  return records.map((record) => roomJobData(asRecord3(record.data))).filter((job) => job.id && job.roomIssueId === issueId);
+  return records.map((record) => roomJobData(asRecord6(record.data))).filter((job) => job.id && job.roomIssueId === issueId);
 }
 async function activeRoomJob(ctx, issueId) {
   const jobs = await listRoomJobs(ctx, issueId);
   return jobs.find((job) => ACTIVE_ROOM_JOB_STATUSES.has(job.status)) ?? null;
-}
-function isRoomProviderQuotaRetryJob(job) {
-  const payload = asRecord3(job?.payload);
-  return textParam(job, "status") === "queued" && textParam(payload, "retryRuntime") === "agy" && Boolean(textParam(payload, "quotaRetryAt"));
 }
 async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state, error }) {
   if (!AUTOMATIC_PROVIDER_QUOTA_RETRY_ENABLED) {
@@ -15384,7 +15443,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
       completedAt: now(),
       error: quotaError,
       payload: {
-        ...asRecord3(job.payload),
+        ...asRecord6(job.payload),
         retryRuntime: null,
         quotaRetryAt: null,
         quotaError
@@ -15413,9 +15472,9 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
   }
   const current = Date.now();
   const retryAt = providerQuotaRetryAtFromError(error, current);
-  const priorAttempt = Math.max(0, Number(asRecord3(job.payload).quotaRetryAttempt) || 0);
+  const priorAttempt = Math.max(0, Number(asRecord6(job.payload).quotaRetryAttempt) || 0);
   const payload = {
-    ...asRecord3(job.payload),
+    ...asRecord6(job.payload),
     retryRuntime: "agy",
     quotaRetryAt: retryAt,
     quotaRetryAttempt: priorAttempt + 1,
@@ -15429,7 +15488,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
     payload
   });
   state.pendingTurn = {
-    ...asRecord3(state.pendingTurn),
+    ...asRecord6(state.pendingTurn),
     kind: queuedJob.kind,
     jobId: queuedJob.id,
     sourceCommentId: queuedJob.sourceCommentId ?? null,
@@ -15476,13 +15535,13 @@ async function launchDueRoomProviderQuotaRetry(ctx, job, current = Date.now()) {
       }
     }
   }
-  const retryAt = new Date(textParam(asRecord3(job.payload), "quotaRetryAt") || 0).getTime();
+  const retryAt = new Date(textParam4(asRecord6(job.payload), "quotaRetryAt") || 0).getTime();
   if (!Number.isFinite(retryAt) || retryAt > current) return { launched: false, reason: "not_due" };
   if (activeRoomMessageJobs.has(job.roomIssueId)) return { launched: false, reason: "room_busy" };
   const { issue, agent } = await requireRoom(ctx, job.companyId, job.roomIssueId);
   const state = await loadRoomState(ctx, job.companyId, issue, agent);
-  if (textParam(state.pendingTurn, "jobId") !== job.id) return { launched: false, reason: "pending_turn_changed" };
-  state.pendingTurn = { ...asRecord3(state.pendingTurn), startedAt: now(), retryAt: null, retryRuntime: "agy" };
+  if (textParam4(state.pendingTurn, "jobId") !== job.id) return { launched: false, reason: "pending_turn_changed" };
+  state.pendingTurn = { ...asRecord6(state.pendingTurn), startedAt: now(), retryAt: null, retryRuntime: "agy" };
   beginRoomActivity(state, job.kind, job.id, job.sourceCommentId ?? null);
   state.runtime.activity.steps.push({ id: `quota-retry-${Date.now()}`, type: "runtime", label: "Retrying queued Room turn with Agy", status: "working", updatedAt: now() });
   await saveRoomState(ctx, job.companyId, issue.id, state, "Start due Agy provider quota Room retry");
@@ -15496,7 +15555,7 @@ async function reconcileRoomProviderQuotaRetries(ctx, options = {}) {
     const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
     const summary = { scanned: 0, launched: 0, waiting: 0, failed: 0 };
     for (const record of records) {
-      const job = roomJobData(asRecord3(record.data));
+      const job = roomJobData(asRecord6(record.data));
       if (!isRoomProviderQuotaRetryJob(job)) continue;
       summary.scanned += 1;
       try {
@@ -15525,8 +15584,8 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
   const jobs = await listRoomJobs(ctx, ownerRoom.id);
   const agent = await ctx.agents.get(agentRoomAgentId(ownerRoom), companyId);
   const ownerState = await loadRoomState(ctx, companyId, ownerRoom, agent);
-  const pendingJobId = textParam(ownerState.pendingTurn, "jobId");
-  const notifiedJobId = textParam(asRecord3(taskState.ownerNotification), "jobId");
+  const pendingJobId = textParam4(ownerState.pendingTurn, "jobId");
+  const notifiedJobId = textParam4(asRecord6(taskState.ownerNotification), "jobId");
   const job = jobs.find((candidate) => candidate.kind === "task_owner_report" && candidate.taskIssueId === task.id && (isRoomProviderQuotaRetryJob(candidate) || pendingJobId && candidate.id === pendingJobId));
   const resolvedJobId = job?.id || (pendingJobId && pendingJobId === notifiedJobId ? pendingJobId : "");
   if (!resolvedJobId) return false;
@@ -15535,10 +15594,10 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
       status: "cancelled",
       completedAt: now(),
       error: `Task moved to ${task.status}; the queued owner report is no longer current.`,
-      payload: { ...asRecord3(job.payload), quotaRetryAt: null }
+      payload: { ...asRecord6(job.payload), quotaRetryAt: null }
     });
   }
-  if (textParam(ownerState.pendingTurn, "jobId") === resolvedJobId) {
+  if (textParam4(ownerState.pendingTurn, "jobId") === resolvedJobId) {
     ownerState.pendingTurn = null;
     ownerState.runtime ??= {};
     ownerState.runtime.quotaRetry = {
@@ -15552,13 +15611,13 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
     await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Release resolved Task owner report quota retry");
   }
   taskState.review = {
-    ...asRecord3(taskState.review),
+    ...asRecord6(taskState.review),
     status: "user_reviewed",
     reviewedAt: now(),
     updatedAt: now()
   };
   taskState.ownerNotification = {
-    ...asRecord3(taskState.ownerNotification),
+    ...asRecord6(taskState.ownerNotification),
     status: "completed",
     taskStatus: task.status,
     jobId: resolvedJobId,
@@ -15581,8 +15640,8 @@ async function roomHasActiveWork(ctx, issueId, state) {
   let jobs = await listRoomJobs(ctx, issueId);
   jobs = await reconcileRoomJobLedger(ctx, issueId, state, jobs);
   const persistedJob = jobs.find((job) => ACTIVE_ROOM_JOB_STATUSES.has(job.status)) ?? null;
-  const pendingKind = textParam(asRecord3(state?.pendingTurn), "kind");
-  const activityStatus = textParam(asRecord3(state?.runtime?.activity), "status");
+  const pendingKind = textParam4(asRecord6(state?.pendingTurn), "kind");
+  const activityStatus = textParam4(asRecord6(state?.runtime?.activity), "status");
   const stateBusy = Boolean(pendingKind) || ["working", "finishing"].includes(activityStatus);
   if (processJob && !persistedJob && !stateBusy) {
     if (activeRoomMessageJobs.get(issueId) === processJob) activeRoomMessageJobs.delete(issueId);
@@ -15590,18 +15649,6 @@ async function roomHasActiveWork(ctx, issueId, state) {
     return false;
   }
   return Boolean(processJob || persistedJob || stateBusy);
-}
-function terminalRoomJobPatchFromState(job, state) {
-  if (textParam(state?.pendingTurn, "jobId") === job.id) return null;
-  const activity = asRecord3(state?.runtime?.activity);
-  const activityMatchesJob = textParam(activity, "jobId") === job.id;
-  const status = activityMatchesJob && ["completed", "failed"].includes(textParam(activity, "status")) ? textParam(activity, "status") : "interrupted";
-  return {
-    status,
-    completedAt: textParam(activity, "updatedAt") || now(),
-    resultCommentId: activityMatchesJob ? textParam(activity, "resultCommentId") || null : null,
-    error: status === "failed" ? textParam(activity, "error") || "The Room Job failed after its Codex turn started." : status === "interrupted" ? "The Room worker restarted before this Job completed. The submitted message and Room state were preserved." : null
-  };
 }
 async function reconcileRoomJobLedger(ctx, issueId, state, knownJobs = null) {
   const jobs = knownJobs ?? await listRoomJobs(ctx, issueId);
@@ -15720,9 +15767,9 @@ async function prepareRoomOperatingBrief(ctx, { companyId, issue, state, agent =
   return { workState, tasks, text: buildRoomOperatingBrief(workState, tasks, roomAgent) };
 }
 function buildRoomRecoveryContext(state, comments, excludedCommentId = "") {
-  const checkpoint = asRecord3(state?.checkpoint);
+  const checkpoint = asRecord6(state?.checkpoint);
   const checkpointSummary = trimRoomContext(checkpoint.summary, 1e4);
-  const checkpointSourceId = textParam(checkpoint, "sourceCommentId");
+  const checkpointSourceId = textParam4(checkpoint, "sourceCommentId");
   const excludedId = String(excludedCommentId || "").trim();
   const ordered = mostRecentComments(comments, Number.MAX_SAFE_INTEGER).filter((comment) => comment?.id !== excludedId && String(comment?.body || "").trim());
   let candidates = ordered;
@@ -15735,7 +15782,7 @@ function buildRoomRecoveryContext(state, comments, excludedCommentId = "") {
   let used = checkpointSummary.length;
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     const comment = candidates[index];
-    const timestamp = textParam(comment, "createdAt") || "unknown time";
+    const timestamp = textParam4(comment, "createdAt") || "unknown time";
     const body = trimRoomContext(comment?.body, ROOM_CONTEXT_RECOVERY_ENTRY_LIMIT);
     const entry = `[${timestamp} | comment ${comment.id || "unknown"}]
 ${body}`;
@@ -15760,7 +15807,7 @@ ${selected.join("\n\n---\n\n") || "No earlier Room comments were available."}`,
 }
 async function prepareCodexRoomTurn(ctx, { companyId, issue, state, threadId, currentText, excludedCommentId = "" }) {
   const operating = await prepareRoomOperatingBrief(ctx, { companyId, issue, state });
-  if (textParam(state?.runtime, "contextHydratedThreadId") === threadId) {
+  if (textParam4(state?.runtime, "contextHydratedThreadId") === threadId) {
     return {
       text: `${operating.text}
 
@@ -15787,7 +15834,7 @@ ${currentText}`,
 }
 async function prepareNativeRoomTurn(ctx, { companyId, issue, state, sessionId, currentText, excludedCommentId = "" }) {
   const operating = await prepareRoomOperatingBrief(ctx, { companyId, issue, state });
-  if (textParam(state?.runtime, "contextHydratedNativeSessionId") === sessionId) {
+  if (textParam4(state?.runtime, "contextHydratedNativeSessionId") === sessionId) {
     return {
       text: `${operating.text}
 
@@ -15825,21 +15872,21 @@ function markNativeRoomContextHydrated(state, sessionId, prepared) {
   state.runtime.contextHydratedNativeThroughCommentId = prepared.latestCommentId ?? null;
 }
 async function getRuntimeConfig(ctx) {
-  const config = asRecord3(await ctx.config.get());
+  const config = asRecord6(await ctx.config.get());
   return {
     enabled: config.enableCodexRooms !== false,
     enableCodexRooms: config.enableCodexRooms !== false,
     enableAgyRooms: config.enableAgyRooms !== false,
-    command: textParam(config, "codexCommand", "codex"),
-    model: textParam(config, "codexModel", "") || null,
-    codexHome: textParam(config, "codexHome", "") || null,
-    codexSandbox: codexRoomSandbox(textParam(config, "codexRoomSandbox", "danger-full-access")),
-    codexApprovalPolicy: codexRoomApprovalPolicy(textParam(config, "codexRoomApprovalPolicy", "never")),
+    command: textParam4(config, "codexCommand", "codex"),
+    model: textParam4(config, "codexModel", "") || null,
+    codexHome: textParam4(config, "codexHome", "") || null,
+    codexSandbox: codexRoomSandbox(textParam4(config, "codexRoomSandbox", "danger-full-access")),
+    codexApprovalPolicy: codexRoomApprovalPolicy(textParam4(config, "codexRoomApprovalPolicy", "never")),
     // A provider switch is an explicit product choice, not a hidden retry.
     enableAgyQuotaFallback: config.enableAgyQuotaFallback === true,
-    agyFallbackCommand: textParam(config, "agyFallbackCommand", defaultAgyCommand()),
-    agyFallbackModel: textParam(config, "agyFallbackModel", "gemini-3.1-pro-high"),
-    agyFallbackPrintTimeout: textParam(config, "agyFallbackPrintTimeout", "2h"),
+    agyFallbackCommand: textParam4(config, "agyFallbackCommand", defaultAgyCommand()),
+    agyFallbackModel: textParam4(config, "agyFallbackModel", "gemini-3.1-pro-high"),
+    agyFallbackPrintTimeout: textParam4(config, "agyFallbackPrintTimeout", "2h"),
     agyFallbackTimeoutMs: Math.max(0, Number(config.agyFallbackTimeoutSec) || 0) * 1e3,
     // Lead and Worker policies are the authorization boundary. Task delegation
     // should work by default once those policies are explicitly configured;
@@ -15849,7 +15896,7 @@ async function getRuntimeConfig(ctx) {
     // Its process value must win over the manifest's old 3100 default; otherwise
     // Room UI can load while durable writes go to a different SPS server.
     spsApiUrl: loopbackSPSApiUrl(
-      process.env.SPS_ROOM_API_URL || textParam(config, "spsApiUrl", textParam(config, "paperclipApiUrl", "http://127.0.0.1:3100"))
+      process.env.SPS_ROOM_API_URL || textParam4(config, "spsApiUrl", textParam4(config, "paperclipApiUrl", "http://127.0.0.1:3100"))
     )
   };
 }
@@ -15858,7 +15905,7 @@ function isLoopbackHost2(host) {
 }
 function paperclipInstanceConfigPath() {
   const configured = String(process.env.PAPERCLIP_CONFIG_PATH || "").trim();
-  return configured || path2.join(os.homedir(), ".sps", "instances", "default", "config.json");
+  return configured || path3.join(os.homedir(), ".sps", "instances", "default", "config.json");
 }
 function environmentHasAuthenticationSecret(environmentPath) {
   try {
@@ -15873,13 +15920,13 @@ function environmentHasAuthenticationSecret(environmentPath) {
   }
 }
 function collaborationReadinessFromConfig(config, { hasAuthenticationSecret = false } = {}) {
-  const server = asRecord3(asRecord3(config).server);
-  const auth = asRecord3(asRecord3(config).auth);
-  const deploymentMode = textParam(server, "deploymentMode", "local_trusted");
-  const exposure = textParam(server, "exposure", "private");
-  const listenHost = textParam(server, "host", "127.0.0.1");
+  const server = asRecord6(asRecord6(config).server);
+  const auth = asRecord6(asRecord6(config).auth);
+  const deploymentMode = textParam4(server, "deploymentMode", "local_trusted");
+  const exposure = textParam4(server, "exposure", "private");
+  const listenHost = textParam4(server, "host", "127.0.0.1");
   const inferredBind = isLoopbackHost2(listenHost) ? "loopback" : (/* @__PURE__ */ new Set(["0.0.0.0", "::"])).has(listenHost) ? "lan" : "custom";
-  const bind = textParam(server, "bind", inferredBind);
+  const bind = textParam4(server, "bind", inferredBind);
   const port = Number(server.port) || 3100;
   const allowedHostnames = Array.isArray(server.allowedHostnames) ? server.allowedHostnames.map((value) => String(value || "").trim()).filter(Boolean) : [];
   const checks = [];
@@ -15911,8 +15958,8 @@ function collaborationReadinessFromConfig(config, { hasAuthenticationSecret = fa
     });
   }
   if (deploymentMode === "authenticated" && exposure === "public") {
-    const publicBaseUrl = textParam(auth, "publicBaseUrl");
-    const hasHttpsBaseUrl = textParam(auth, "baseUrlMode") === "explicit" && publicBaseUrl.startsWith("https://");
+    const publicBaseUrl = textParam4(auth, "publicBaseUrl");
+    const hasHttpsBaseUrl = textParam4(auth, "baseUrlMode") === "explicit" && publicBaseUrl.startsWith("https://");
     checks.push({
       label: "\uACF5\uAC1C URL",
       status: hasHttpsBaseUrl ? "pass" : "fail",
@@ -15948,7 +15995,7 @@ function readCollaborationReadiness() {
       };
     }
     const config = JSON.parse(fs2.readFileSync(configPath, "utf8"));
-    const environmentPath = path2.join(path2.dirname(configPath), ".env");
+    const environmentPath = path3.join(path3.dirname(configPath), ".env");
     return collaborationReadinessFromConfig(config, { hasAuthenticationSecret: environmentHasAuthenticationSecret(environmentPath) });
   } catch {
     return {
@@ -15975,10 +16022,10 @@ function errorDiagnosticText(error) {
 ${data}`;
 }
 function isProviderQuotaError(error) {
-  return textParam(error, "code") === PROVIDER_QUOTA_ERROR_CODE || textParam(error, "errorFamily") === PROVIDER_QUOTA_ERROR_CODE || PROVIDER_QUOTA_ERROR_RE.test(errorDiagnosticText(error));
+  return textParam4(error, "code") === PROVIDER_QUOTA_ERROR_CODE || textParam4(error, "errorFamily") === PROVIDER_QUOTA_ERROR_CODE || PROVIDER_QUOTA_ERROR_RE.test(errorDiagnosticText(error));
 }
 function providerQuotaRetryAtFromError(error, current = Date.now()) {
-  const requestedAt = new Date(textParam(error, "retryNotBefore") || 0).getTime();
+  const requestedAt = new Date(textParam4(error, "retryNotBefore") || 0).getTime();
   return new Date(Math.max(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS, Number.isFinite(requestedAt) ? requestedAt : 0)).toISOString();
 }
 function roomToolContext(runtime, companyId, issue, agent, mode = "agent", workspaceProfile = null) {
@@ -15997,7 +16044,7 @@ function roomToolContext(runtime, companyId, issue, agent, mode = "agent", works
     mode: roomMessageMode(mode),
     // Dynamic CLI tool calls outlive the plugin invocation. Carry the durable
     // Project routing decision into that call instead of reading plugin storage.
-    workspaceProfile: asRecord3(workspaceProfile)
+    workspaceProfile: asRecord6(workspaceProfile)
   };
 }
 function workplaneIdentityForRoomContext(roomContext) {
@@ -16006,7 +16053,7 @@ function workplaneIdentityForRoomContext(roomContext) {
     name: roomContext?.agentName,
     role: roomContext?.workplaneRole || roomContext?.agentRole,
     adapterConfig: {
-      workplane: asRecord3(roomContext?.workplanePolicy)
+      workplane: asRecord6(roomContext?.workplanePolicy)
     }
   });
 }
@@ -16029,15 +16076,15 @@ function parseAgyFallbackEnvelope(text4) {
   } catch {
     return { type: "final", message: raw };
   }
-  const record = asRecord3(value);
-  if (textParam(record, "type") === "tool_call") {
+  const record = asRecord6(value);
+  if (textParam4(record, "type") === "tool_call") {
     return {
       type: "tool_call",
-      name: textParam(record, "name"),
-      arguments: asRecord3(record.arguments)
+      name: textParam4(record, "name"),
+      arguments: asRecord6(record.arguments)
     };
   }
-  if (textParam(record, "type") === "final" && textParam(record, "message")) {
+  if (textParam4(record, "type") === "final" && textParam4(record, "message")) {
     return { type: "final", message: rawTextParam(record, "message").trim() };
   }
   return { type: "final", message: raw };
@@ -16154,7 +16201,7 @@ function codexCompletionWithAgyFallback(ctx, input) {
       model: input.runtime.agyFallbackModel || "gemini-3.1-pro-high",
       at: now()
     };
-    const activity = asRecord3(input.state.runtime.activity);
+    const activity = asRecord6(input.state.runtime.activity);
     if (Array.isArray(activity.steps)) {
       activity.steps.push({ id: `agy-fallback-${Date.now()}`, type: "runtime", label: "Codex quota reached; continuing with Agy", status: "working", updatedAt: now() });
       activity.updatedAt = now();
@@ -16227,8 +16274,8 @@ async function openThread(ctx, runtime, state, companyId, issue, agent) {
   }
   const client = await getCodexClient(ctx, roomRuntime, agent);
   state.runtime ??= {};
-  const storedThreadId = textParam(state.runtime, "codexThreadId") || null;
-  const storedInstructionsFingerprint = textParam(state.runtime, "instructionsFingerprint") || null;
+  const storedThreadId = textParam4(state.runtime, "codexThreadId") || null;
+  const storedInstructionsFingerprint = textParam4(state.runtime, "instructionsFingerprint") || null;
   const instructionsChanged = Boolean(storedThreadId) && storedInstructionsFingerprint !== instructionsFingerprint;
   if (instructionsChanged) {
     state.runtime.lastThreadRotation = {
@@ -16314,18 +16361,18 @@ async function handleWorkspaceProfileAccess(_ctx, _params, actionCtx) {
 }
 async function handleWorkspaceProfileSave(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const projectId = textParam(params, "projectId");
+  const projectId = textParam4(params, "projectId");
   if (!projectId) throw new Error("projectId is required.");
   const project = await ctx.projects.get(projectId, companyId);
   if (!project) throw new Error("Project was not found.");
   const workspaces = await listProjectWorkspaces(ctx, companyId, projectId);
   if (!Array.isArray(workspaces)) throw new Error("Project Workspace access is unavailable.");
-  const profile = await saveProjectWorkspaceProfile(ctx, projectId, asRecord3(params).profile, workspaces);
+  const profile = await saveProjectWorkspaceProfile(ctx, projectId, asRecord6(params).profile, workspaces);
   return { ok: true, profile };
 }
 async function handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const projectId = textParam(params, "projectId");
+  const projectId = textParam4(params, "projectId");
   const cwd = rawTextParam(params, "cwd").trim();
   const repoUrl = rawTextParam(params, "repoUrl").trim();
   if (!projectId) throw new Error("projectId is required.");
@@ -16339,7 +16386,7 @@ async function handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx) {
     ...cwd ? { cwd } : {},
     ...repoUrl ? { repoUrl } : {},
     sourceType: cwd ? "local_path" : "git_repo",
-    isPrimary: asRecord3(params).isPrimary === true
+    isPrimary: asRecord6(params).isPrimary === true
   }, companyId);
   if (!created) throw new Error("SPS could not create the Project Workspace.");
   const workspaces = await listProjectWorkspaces(ctx, companyId, projectId);
@@ -16437,11 +16484,11 @@ function applyNativeSessionActivityEvent(state, event) {
     return true;
   }
   if (event.eventType !== "chunk") return false;
-  const payload = asRecord3(event.payload);
-  const nestedPayload = asRecord3(payload.payload);
-  const toolName = textParam(payload, "currentToolName") || textParam(nestedPayload, "toolName");
-  const eventType = textParam(payload, "eventType") || textParam(nestedPayload, "type") || "progress";
-  const summary = (textParam(payload, "lastAssistantSnippet") || textParam(event, "message") || textParam(payload, "message")).slice(0, 900);
+  const payload = asRecord6(event.payload);
+  const nestedPayload = asRecord6(payload.payload);
+  const toolName = textParam4(payload, "currentToolName") || textParam4(nestedPayload, "toolName");
+  const eventType = textParam4(payload, "eventType") || textParam4(nestedPayload, "type") || "progress";
+  const summary = (textParam4(payload, "lastAssistantSnippet") || textParam4(event, "message") || textParam4(payload, "message")).slice(0, 900);
   const label = toolName ? `Using ${toolName}` : eventType === "reasoning" ? "Reviewing context" : eventType === "assistant" ? "Preparing the response" : "Agent work in progress";
   activity.steps.push({
     id: `agent-session:${event.seq ?? activity.steps.length}`,
@@ -16589,7 +16636,7 @@ function gitStatusLabel(code) {
 function workspaceGitChanges(workspace) {
   const cwd = String(workspace?.cwd ?? workspace?.path ?? "").trim();
   const name = String(workspace?.name ?? "Workspace");
-  const kind = String(asRecord3(workspace?.metadata).kind ?? "implementation");
+  const kind = String(asRecord6(workspace?.metadata).kind ?? "implementation");
   if (!cwd || !fs2.existsSync(cwd)) {
     return { id: workspace?.id ?? null, name, kind, available: false, files: [] };
   }
@@ -16600,7 +16647,7 @@ function workspaceGitChanges(workspace) {
       timeout: 5e3,
       windowsHide: true
     }).trim();
-    const workspaceRelativeRoot = path2.relative(repositoryRoot, cwd).replace(/\\/g, "/").replace(/^\.\/$/, "");
+    const workspaceRelativeRoot = path3.relative(repositoryRoot, cwd).replace(/\\/g, "/").replace(/^\.\/$/, "");
     const workspacePrefix = workspaceRelativeRoot && !workspaceRelativeRoot.startsWith("../") && workspaceRelativeRoot !== ".." ? workspaceRelativeRoot.replace(/\/+$/, "") : "";
     const output = execFileSync("git", ["-c", "core.quotepath=false", "-C", cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all"], {
       encoding: "utf8",
@@ -16614,7 +16661,7 @@ function workspaceGitChanges(workspace) {
       const entry = entries[index];
       const code = entry.slice(0, 2).trim() || "M";
       const repositoryPath = entry.slice(3).replace(/\\/g, "/");
-      const scopedPath = workspacePrefix ? repositoryPath === workspacePrefix ? path2.posix.basename(repositoryPath) : repositoryPath.startsWith(`${workspacePrefix}/`) ? repositoryPath.slice(workspacePrefix.length + 1) : null : repositoryPath;
+      const scopedPath = workspacePrefix ? repositoryPath === workspacePrefix ? path3.posix.basename(repositoryPath) : repositoryPath.startsWith(`${workspacePrefix}/`) ? repositoryPath.slice(workspacePrefix.length + 1) : null : repositoryPath;
       if (!scopedPath) {
         if ((code.includes("R") || code.includes("C")) && index + 1 < entries.length) index += 1;
         continue;
@@ -16642,8 +16689,8 @@ function taskFileReferences(tasks) {
   const seen = /* @__PURE__ */ new Set();
   const files = [];
   for (const task of tasks) {
-    const add = (kind, path3) => {
-      const cleanPath = String(path3 || "").trim();
+    const add = (kind, path4) => {
+      const cleanPath = String(path4 || "").trim();
       if (!cleanPath || /^Not (declared|required)/i.test(cleanPath)) return;
       const key = `${kind}:${cleanPath}`;
       if (seen.has(key)) return;
@@ -16651,13 +16698,13 @@ function taskFileReferences(tasks) {
       files.push({ kind, path: cleanPath, taskId: task.id, taskIdentifier: task.identifier, taskTitle: task.title });
     };
     for (const reference of declaredDesignReferences(task.description)) add("design_reference", reference);
-    for (const path3 of declaredPaths(task.description)) add("task_target", path3);
+    for (const path4 of declaredPaths(task.description)) add("task_target", path4);
   }
   return files;
 }
 async function previewTask(ctx, companyId, projectId, roomIssueId, affectedPaths) {
   const activeTasks = await getActiveTasks(ctx, companyId, projectId, roomIssueId);
-  const normalizedPaths = [...new Set(affectedPaths.map((path3) => path3.trim()).filter(Boolean))];
+  const normalizedPaths = [...new Set(affectedPaths.map((path4) => path4.trim()).filter(Boolean))];
   const conflicts = activeTasks.filter((task) => pathsConflict(declaredPaths(task.description), normalizedPaths));
   return {
     affectedPaths: normalizedPaths,
@@ -16679,7 +16726,7 @@ async function previewTask(ctx, companyId, projectId, roomIssueId, affectedPaths
 }
 async function previewTaskDirect(apiUrl, companyId, projectId, roomIssueId, affectedPaths) {
   const activeTasks = await getActiveTasksDirect(apiUrl, companyId, projectId, roomIssueId);
-  const normalizedPaths = [...new Set(affectedPaths.map((path3) => path3.trim()).filter(Boolean))];
+  const normalizedPaths = [...new Set(affectedPaths.map((path4) => path4.trim()).filter(Boolean))];
   const conflicts = activeTasks.filter((task) => pathsConflict(declaredPaths(task.description), normalizedPaths));
   return {
     affectedPaths: normalizedPaths,
@@ -16804,7 +16851,7 @@ async function handleCodexServerRequest(ctx, request) {
   const roomContext = activeThreadContexts.get(params.threadId);
   if (!roomContext) throw new Error("Codex tool call does not belong to an active Room.");
   const name = `${params.namespace || ""}.${params.tool || ""}`.replace(/^\./, "");
-  const args = asRecord3(params.arguments);
+  const args = asRecord6(params.arguments);
   let content;
   try {
     const toolApi = dynamicRoomToolApi(ctx, roomContext);
@@ -16817,7 +16864,7 @@ async function handleCodexServerRequest(ctx, request) {
       });
     } else if (name === "paperclip.memory_search") {
       const memoryAccess = workplaneIdentityForRoomContext(roomContext).memoryAccess;
-      const query = textParam(args, "query");
+      const query = textParam4(args, "query");
       const limit = Math.max(1, Math.min(Number(args.limit) || 5, 10));
       if (memoryAccess === "none") {
         content = JSON.stringify({ ok: false, code: "memory_read_disabled", message: "This Agent's Organization policy does not allow SPS memory search." });
@@ -16874,7 +16921,7 @@ async function handleCodexServerRequest(ctx, request) {
             workplaneKind: identity.kind,
             status: agent.status,
             adapterType: agent.adapterType ?? null,
-            maxConcurrentRuns: Number(asRecord3(asRecord3(agent.runtimeConfig).heartbeat).maxConcurrentRuns) || 1
+            maxConcurrentRuns: Number(asRecord6(asRecord6(agent.runtimeConfig).heartbeat).maxConcurrentRuns) || 1
           };
         }), null, 2);
       }
@@ -16899,22 +16946,22 @@ async function handleCodexServerRequest(ctx, request) {
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_ASSIGN)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_assign_tasks", message: "This Lead is not configured to assign Worker Tasks." });
       } else {
-        const title = enforceTaskContractText(textParam(args, "title"), "Task title");
-        const description = enforceTaskContractText(textParam(args, "description"), "Task description");
-        const assigneeAgentId = textParam(args, "assigneeAgentId");
-        const requestedTaskType = textParam(args, "taskType", "implementation");
-        const taskType = normalizedTaskTypeKey(requestedTaskType);
-        const maturity = textParam(args, "maturity");
+        const title = enforceTaskContractText(textParam4(args, "title"), "Task title");
+        const description = enforceTaskContractText(textParam4(args, "description"), "Task description");
+        const assigneeAgentId = textParam4(args, "assigneeAgentId");
+        const requestedTaskType = textParam4(args, "taskType", "implementation");
+        const taskType = normalizedTaskTypeKey2(requestedTaskType);
+        const maturity = textParam4(args, "maturity");
         const affectedPaths = listParam(args, "affectedPaths");
         const designReferences = listParam(args, "designReferences");
         const acceptanceCriteria = listParam(args, "acceptanceCriteria");
         const verification = listParam(args, "verification");
         const blockedByIssueIds = [...new Set(listParam(args, "blockedByIssueIds"))];
-        const requestedProjectWorkspaceId = textParam(args, "projectWorkspaceId");
+        const requestedProjectWorkspaceId = textParam4(args, "projectWorkspaceId");
         const projectWorkspaces = await toolApi.listProjectWorkspaces();
         const companyAgents = await toolApi.listAgents();
         const selectedWorker = companyAgents.find((candidate) => candidate.id === assigneeAgentId) ?? null;
-        const workspaceProfile = normalizeWorkspaceProfile(asRecord3(roomContext.workspaceProfile), projectWorkspaces);
+        const workspaceProfile = normalizeWorkspaceProfile(asRecord6(roomContext.workspaceProfile), projectWorkspaces);
         const taskWorkspace = chooseTaskWorkspace(
           projectWorkspaces,
           taskType,
@@ -17049,7 +17096,7 @@ ${error.message}`);
       if (!roomContext.projectId) {
         content = JSON.stringify({ ok: false, code: "missing_project" });
       } else {
-        const task = await toolApi.getProjectTask(textParam(args, "taskId"));
+        const task = await toolApi.getProjectTask(textParam4(args, "taskId"));
         const [stateDocument, comments] = await Promise.all([
           toolApi.getDocument(task.id, TASK_ROOM_STATE_KEY),
           toolApi.listComments(task.id)
@@ -17067,9 +17114,9 @@ ${error.message}`);
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_ASSIGN)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_start_tasks" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam(args, "taskId"));
-        const dispatch = asRecord3(state.dispatch);
-        const workerAgentId = textParam(state, "workerAgentId") || task.assigneeAgentId;
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam4(args, "taskId"));
+        const dispatch = asRecord6(state.dispatch);
+        const workerAgentId = textParam4(state, "workerAgentId") || task.assigneeAgentId;
         const companyAgents = await toolApi.listAgents();
         const selectedWorker = companyAgents.find((candidate) => candidate.id === workerAgentId && isTaskWorkerAgent(candidate));
         if (task.status !== "blocked" || dispatch.status !== "waiting_for_worker" || dispatch.reason !== "worker_paused_before_start") {
@@ -17131,8 +17178,8 @@ ${error.message}`);
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_REVIEW)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_post_feedback" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam(args, "taskId"));
-        const message = enforceTaskContractText(textParam(args, "message"), "Task feedback");
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam4(args, "taskId"));
+        const message = enforceTaskContractText(textParam4(args, "message"), "Task feedback");
         if (!message) {
           content = JSON.stringify({ ok: false, code: "feedback_message_required" });
         } else if (!["in_review", "blocked", "done"].includes(task.status)) {
@@ -17146,19 +17193,19 @@ ${error.message}`);
           const feedbackBody = `## ${roomContext.agentName} Feedback
 ${message}`;
           const previousStateBody = serializeState(state);
-          const previousReview = asRecord3(state.review);
-          const previousNotification = asRecord3(state.ownerNotification);
+          const previousReview = asRecord6(state.review);
+          const previousNotification = asRecord6(state.ownerNotification);
           const feedbackAt = now();
-          const priorReportCommentId = textParam(previousReview, "workerReportCommentId") || textParam(previousNotification, "reportCommentId");
-          const priorReportFingerprint = textParam(previousReview, "workerReportFingerprint") || textParam(previousNotification, "reportFingerprint");
+          const priorReportCommentId = textParam4(previousReview, "workerReportCommentId") || textParam4(previousNotification, "reportCommentId");
+          const priorReportFingerprint = textParam4(previousReview, "workerReportFingerprint") || textParam4(previousNotification, "reportFingerprint");
           if (priorReportCommentId || priorReportFingerprint || Object.keys(previousNotification).length > 0) {
             const history = Array.isArray(state.reviewHistory) ? state.reviewHistory : [];
             state.reviewHistory = [...history, {
               outcome: "correction_requested",
               workerReportCommentId: priorReportCommentId || null,
               workerReportFingerprint: priorReportFingerprint || null,
-              ownerNotificationStatus: textParam(previousNotification, "status") || null,
-              ownerNotificationResultCommentId: textParam(previousNotification, "resultCommentId") || null,
+              ownerNotificationStatus: textParam4(previousNotification, "status") || null,
+              ownerNotificationResultCommentId: textParam4(previousNotification, "resultCommentId") || null,
               closedAt: feedbackAt
             }].slice(-20);
           }
@@ -17175,7 +17222,7 @@ ${message}`;
           };
           delete state.ownerNotification;
           state.dispatch = {
-            ...asRecord3(state.dispatch),
+            ...asRecord6(state.dispatch),
             status: "feedback_pending",
             reason: null,
             updatedAt: feedbackAt
@@ -17208,10 +17255,10 @@ ${message}`;
             });
             throw error;
           }
-          const comment = asRecord3(restarted?.comment);
-          state.review.feedbackCommentId = textParam(comment, "id") || null;
+          const comment = asRecord6(restarted?.comment);
+          state.review.feedbackCommentId = textParam4(comment, "id") || null;
           state.dispatch = {
-            ...asRecord3(state.dispatch),
+            ...asRecord6(state.dispatch),
             status: "ready",
             feedbackRestartedAt: feedbackAt,
             updatedAt: now()
@@ -17239,7 +17286,7 @@ ${message}`;
               status: restarted.status,
               assigneeAgentId: restarted.assigneeAgentId ?? null
             },
-            commentId: textParam(comment, "id") || null,
+            commentId: textParam4(comment, "id") || null,
             correctionRound
           }, null, 2);
         }
@@ -17250,9 +17297,9 @@ ${message}`;
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_COMPLETE)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_complete_tasks" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam(args, "taskId"));
-        const reviewSummary = enforceTaskContractText(textParam(args, "reviewSummary"), "Task review summary");
-        const workerReportCommentId = textParam(asRecord3(state.review), "workerReportCommentId");
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam4(args, "taskId"));
+        const reviewSummary = enforceTaskContractText(textParam4(args, "reviewSummary"), "Task review summary");
+        const workerReportCommentId = textParam4(asRecord6(state.review), "workerReportCommentId");
         if (task.status !== "in_review") {
           content = JSON.stringify({ ok: false, code: "task_not_in_review", status: task.status, message: "Only an in_review Task can be technically verified and marked done." });
         } else if (!workerReportCommentId) {
@@ -17261,7 +17308,7 @@ ${message}`;
           content = JSON.stringify({ ok: false, code: "review_summary_required" });
         } else {
           const completed = await toolApi.updateIssue(task.id, { status: "done" });
-          const previousReview = { ...asRecord3(state.review) };
+          const previousReview = { ...asRecord6(state.review) };
           delete previousReview.acceptedByAgentId;
           delete previousReview.acceptedByAgentName;
           delete previousReview.acceptedAt;
@@ -17325,8 +17372,8 @@ ${message}`;
   return { success: true, contentItems: [{ type: "inputText", text: content }] };
 }
 async function handleRoomView(ctx, params) {
-  const companyId = textParam(params, "companyId");
-  const issueId = textParam(params, "issueId");
+  const companyId = textParam4(params, "companyId");
+  const issueId = textParam4(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const [state, workState, checkpointDocument, nativeCompactionsDocument, comments, runtime, initialJobs] = await Promise.all([
@@ -17340,7 +17387,7 @@ async function handleRoomView(ctx, params) {
   ]);
   let jobs = initialJobs;
   const roomRuntime = agentRoomRuntime(runtime, agent);
-  const pendingJobId = textParam(state.pendingTurn, "jobId");
+  const pendingJobId = textParam4(state.pendingTurn, "jobId");
   const pendingJob = jobs.find((job) => job.id === pendingJobId) ?? null;
   if (pendingJob && ["starting", "working"].includes(pendingJob.status) && !activeRoomMessageJobs.has(issue.id)) {
     const interrupted = await updateRoomJob(ctx, pendingJob, {
@@ -17389,24 +17436,24 @@ async function handleRoomView(ctx, params) {
   };
 }
 async function handleCodexAccountsView(ctx, params) {
-  const companyId = textParam(params, "companyId");
+  const companyId = textParam4(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const [agents, runtime] = await Promise.all([
     ctx.agents.list({ companyId, limit: 200 }),
     getRuntimeConfig(ctx)
   ]);
   const accounts = localCodexAccounts();
-  const defaultHome = runtime.codexHome || textParam(process.env, "CODEX_HOME") || path2.join(os.homedir(), ".codex");
+  const defaultHome = runtime.codexHome || textParam4(process.env, "CODEX_HOME") || path3.join(os.homedir(), ".codex");
   return {
     accounts: accounts.map(({ id, label, directoryName, home }) => ({ id, label, directoryName, home })),
-    agents: agents.filter(isHiredAgent).filter((agent) => textParam(agent, "adapterType") === "codex_local").map((agent) => {
+    agents: agents.filter(isHiredAgent).filter((agent) => textParam4(agent, "adapterType") === "codex_local").map((agent) => {
       const effectiveHome = configuredEnvironmentValue(agent, "CODEX_HOME") || defaultHome;
       const selected = accounts.find((account) => normalizeCodexHome(account.home) === normalizeCodexHome(effectiveHome));
       return {
         id: agent.id,
         name: agent.name,
         role: agent.role ?? "general",
-        model: textParam(asRecord3(agent.adapterConfig), "model", "Default") || "Default",
+        model: textParam4(asRecord6(agent.adapterConfig), "model", "Default") || "Default",
         selectedAccountId: selected?.id ?? null,
         effectiveHome,
         usesExplicitAccount: Boolean(configuredEnvironmentValue(agent, "CODEX_HOME"))
@@ -17416,21 +17463,21 @@ async function handleCodexAccountsView(ctx, params) {
 }
 var WORKPLANE_ROLE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 function normalizeWorkplaneRoleId(value) {
-  const roleId = textParam({ value }, "value").toLowerCase().replace(/\s+/g, "-");
+  const roleId = textParam4({ value }, "value").toLowerCase().replace(/\s+/g, "-");
   if (!WORKPLANE_ROLE_ID_RE.test(roleId)) {
     throw new Error("Workplane role ID must use lowercase letters, numbers, and hyphens and start with a letter.");
   }
   return roleId;
 }
 function normalizeWorkplaneMemoryAccess(value) {
-  const memoryAccess = textParam({ value }, "value").toLowerCase();
+  const memoryAccess = textParam4({ value }, "value").toLowerCase();
   if (!(/* @__PURE__ */ new Set(["read_write", "read", "none"])).has(memoryAccess)) {
     throw new Error("Workplane memory access must be read_write, read, or none.");
   }
   return memoryAccess;
 }
 function normalizeWorkplaneReviewMode(value) {
-  const reviewMode = textParam({ value }, "value").toLowerCase();
+  const reviewMode = textParam4({ value }, "value").toLowerCase();
   if (!(/* @__PURE__ */ new Set(["automatic", "manual"])).has(reviewMode)) {
     throw new Error("Workplane review mode must be automatic or manual.");
   }
@@ -17444,13 +17491,13 @@ function organizationAgentSummary(agent) {
     name: agent.name,
     paperclipRole: agent.role ?? "general",
     adapterType: agent.adapterType ?? null,
-    model: textParam(asRecord3(agent.adapterConfig), "model") || null,
+    model: textParam4(asRecord6(agent.adapterConfig), "model") || null,
     status: agent.status ?? null,
     workplane: identity
   };
 }
 async function handleOrganizationSettingsView(ctx, params) {
-  const companyId = textParam(params, "companyId");
+  const companyId = textParam4(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const agents = await ctx.agents.list({ companyId, limit: 200 });
   const hiredAgents = agents.filter(isHiredAgent);
@@ -17469,24 +17516,24 @@ async function handleOrganizationSettingsView(ctx, params) {
 }
 async function handleOrganizationAgentPolicySave(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const agentId = textParam(params, "agentId");
-  const kind = textParam(params, "kind").toLowerCase();
+  const agentId = textParam4(params, "agentId");
+  const kind = textParam4(params, "kind").toLowerCase();
   if (!agentId) throw new Error("agentId is required.");
   if (!(/* @__PURE__ */ new Set(["lead", "worker", "hybrid"])).has(kind)) {
     throw new Error("Workplane kind must be lead, worker, or hybrid.");
   }
-  const roleId = normalizeWorkplaneRoleId(textParam(params, "roleId", kind));
+  const roleId = normalizeWorkplaneRoleId(textParam4(params, "roleId", kind));
   const requestedTargets = [...new Set(listParam(params, "assignableRoleIds").map(normalizeWorkplaneRoleId))];
   const assignableRoleIds = kind === "worker" ? [] : requestedTargets.length ? requestedTargets : ["worker", "hybrid"];
   const agent = await ctx.agents.get(agentId, companyId);
   if (!isHiredAgent(agent)) throw new Error("Only a hired Agent can receive a Workplane role.");
   const existingIdentity = resolveAgentWorkplaneIdentity(agent);
-  const memoryAccess = normalizeWorkplaneMemoryAccess(textParam(params, "memoryAccess", existingIdentity.memoryAccess));
-  const reviewMode = normalizeWorkplaneReviewMode(textParam(params, "reviewMode", existingIdentity.reviewMode));
+  const memoryAccess = normalizeWorkplaneMemoryAccess(textParam4(params, "memoryAccess", existingIdentity.memoryAccess));
+  const reviewMode = normalizeWorkplaneReviewMode(textParam4(params, "reviewMode", existingIdentity.reviewMode));
   const adapterConfig = {
-    ...asRecord3(agent.adapterConfig),
+    ...asRecord6(agent.adapterConfig),
     workplane: {
-      ...asRecord3(asRecord3(agent.adapterConfig).workplane),
+      ...asRecord6(asRecord6(agent.adapterConfig).workplane),
       roleId,
       kind,
       assignableRoleIds,
@@ -17516,7 +17563,7 @@ async function handleOrganizationCollaborationReadiness(_ctx, _params, actionCtx
 }
 async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const templateId = textParam(params, "templateId");
+  const templateId = textParam4(params, "templateId");
   if (!templateId) throw new Error("templateId is required.");
   const agents = (await ctx.agents.list({ companyId, limit: 200 })).filter(isHiredAgent);
   const preview = resolveOrganizationTemplate(templateId, agents);
@@ -17531,9 +17578,9 @@ async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
     const agent = agentsById.get(assignment.agentId);
     if (!agent) continue;
     const adapterConfig = {
-      ...asRecord3(agent.adapterConfig),
+      ...asRecord6(agent.adapterConfig),
       workplane: {
-        ...asRecord3(asRecord3(agent.adapterConfig).workplane),
+        ...asRecord6(asRecord6(agent.adapterConfig).workplane),
         ...assignment.policy
       }
     };
@@ -17556,13 +17603,13 @@ async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
 }
 async function handleCodexAccountSelect(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const agentId = textParam(params, "agentId");
-  const accountId = textParam(params, "accountId");
+  const agentId = textParam4(params, "agentId");
+  const accountId = textParam4(params, "accountId");
   if (!agentId || !accountId) throw new Error("agentId and accountId are required.");
   const account = localCodexAccounts().find((candidate) => candidate.id === accountId);
   if (!account) throw new Error("The selected Codex account is no longer signed in on this computer. Refresh the account list and choose an available account.");
   const agent = await ctx.agents.get(agentId, companyId);
-  if (!isHiredAgent(agent) || textParam(agent, "adapterType") !== "codex_local") {
+  if (!isHiredAgent(agent) || textParam4(agent, "adapterType") !== "codex_local") {
     throw new Error("Only a Codex CLI Agent can be assigned a Codex account.");
   }
   const runtime = await getRuntimeConfig(ctx);
@@ -17576,8 +17623,8 @@ async function handleCodexAccountSelect(ctx, params, actionCtx) {
   };
 }
 async function handleRoomTaskSummary(ctx, params) {
-  const companyId = textParam(params, "companyId");
-  const issueId = textParam(params, "issueId");
+  const companyId = textParam4(params, "companyId");
+  const issueId = textParam4(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const room = await ctx.issues.get(issueId, companyId);
   if (!isAgentRoom(room) || !room.projectId) return { room: null, tasks: [], activeTaskCount: 0, referencedFiles: [] };
@@ -17608,7 +17655,7 @@ async function handleRoomTaskSummary(ctx, params) {
 async function handleRoomWorkspaceView(ctx, params) {
   const roomView = await handleRoomView(ctx, params);
   const taskSummary = await handleRoomTaskSummary(ctx, params);
-  const companyId = textParam(params, "companyId");
+  const companyId = textParam4(params, "companyId");
   const projectId = roomView.room.projectId;
   const project = projectId ? await ctx.projects.get(projectId, companyId) : null;
   const agent = await ctx.agents.get(roomView.room.agentId, companyId);
@@ -17685,8 +17732,8 @@ function projectTaskSummary(issue, project, parentRoom = null) {
   };
 }
 async function handleProjectWorkplaneView(ctx, params) {
-  const companyId = textParam(params, "companyId");
-  const projectId = textParam(params, "projectId");
+  const companyId = textParam4(params, "companyId");
+  const projectId = textParam4(params, "projectId");
   if (!companyId || !projectId) throw new Error("companyId and projectId are required.");
   const project = await ctx.projects.get(projectId, companyId);
   if (!project) throw new Error("Project was not found.");
@@ -17734,7 +17781,7 @@ async function handleProjectWorkplaneView(ctx, params) {
   };
 }
 async function handleTeamWorkplaneDashboard(ctx, params) {
-  const companyId = textParam(params, "companyId");
+  const companyId = textParam4(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const [projects, issues] = await Promise.all([
     ctx.projects.list({ companyId, limit: 200 }),
@@ -17762,9 +17809,9 @@ async function handleTeamWorkplaneDashboard(ctx, params) {
   };
 }
 async function handleProjectTasksView(ctx, params) {
-  const companyId = textParam(params, "companyId");
+  const companyId = textParam4(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
-  const selectedProjectId = textParam(params, "projectId");
+  const selectedProjectId = textParam4(params, "projectId");
   const projects = await ctx.projects.list({ companyId, limit: 200 });
   const projectSummaries = projects.map((project) => ({ id: project.id, name: project.name ?? project.slug ?? project.id }));
   if (!selectedProjectId) {
@@ -17799,8 +17846,8 @@ async function handleProjectTasksView(ctx, params) {
   };
 }
 async function handleTaskRoomView(ctx, params) {
-  const companyId = textParam(params, "companyId");
-  const issueId = textParam(params, "issueId");
+  const companyId = textParam4(params, "companyId");
+  const issueId = textParam4(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const task = await ctx.issues.get(issueId, companyId);
   if (!task || !task.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -17836,8 +17883,8 @@ async function handleTaskOwnerFeedback(ctx, params, actionCtx) {
   if (!runtime.enabled) {
     return { ok: false, code: "codex_rooms_disabled", message: "Enable the Codex Room runtime before requesting owner feedback." };
   }
-  const issueId = textParam(params, "issueId");
-  const message = textParam(params, "message");
+  const issueId = textParam4(params, "issueId");
+  const message = textParam4(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A feedback request is required." };
   const task = await ctx.issues.get(issueId, companyId);
   if (!task || !task.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -17869,10 +17916,10 @@ ${message}`, companyId);
 }
 async function handleRoomBootstrap(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
-  const issueId = textParam(params, "issueId");
+  const issueId = textParam4(params, "issueId");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
-  const requestedWorkspaceId = textParam(params, "workspaceId");
-  const requestedWorkingDirectory = textParam(params, "workingDirectory");
+  const requestedWorkspaceId = textParam4(params, "workspaceId");
+  const requestedWorkingDirectory = textParam4(params, "workingDirectory");
   const state = await loadRoomState(ctx, companyId, issue, agent);
   const resolved = await resolveRoomWorkspace(ctx, companyId, issue, agent, state);
   if (!Array.isArray(resolved.workspaces) || !resolved.workspaces.length) {
@@ -17950,8 +17997,8 @@ async function handleRoomSend(ctx, params, actionCtx) {
   if (!runtime.enabled) {
     return { ok: false, code: "codex_rooms_disabled", message: "Codex Room runtime is disabled. Configure and enable it before sending a live message." };
   }
-  const issueId = textParam(params, "issueId");
-  const message = textParam(params, "message");
+  const issueId = textParam4(params, "issueId");
+  const message = textParam4(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A Room message is required." };
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const state = await loadRoomState(ctx, companyId, issue, agent);
@@ -17976,7 +18023,7 @@ async function handleRoomCompact(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
   if (!runtime.enabled) return { ok: false, code: "codex_rooms_disabled", message: "Codex Room runtime is disabled." };
-  const issueId = textParam(params, "issueId");
+  const issueId = textParam4(params, "issueId");
   return queueRoom(issueId, async () => {
     const { issue, agent } = await requireRoom(ctx, companyId, issueId);
     const state = await loadRoomState(ctx, companyId, issue, agent);
@@ -18041,7 +18088,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
     state = await loadRoomState(ctx, companyId, issue, agent);
     if (state.pendingTurn?.jobId !== job.id) return;
     if (isRoomCliRuntimeAgent(agent)) {
-      if (textParam(agent, "adapterType") === "codex_local" && textParam(asRecord3(job.payload), "retryRuntime") === "agy") {
+      if (textParam4(agent, "adapterType") === "codex_local" && textParam4(asRecord6(job.payload), "retryRuntime") === "agy") {
         const workingDirectory3 = isWorkerOnlyRoomAgent(agent) ? workerRoomSandboxDirectory(companyId, issue, agent) : await resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state);
         job = await updateRoomJob(ctx, job, { status: "working" });
         await saveRoomState(ctx, companyId, issue.id, state, "Bind Agy fallback runtime for queued Room Job");
@@ -18055,7 +18102,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
           issue,
           state,
           sessionId: fallbackSessionId,
-          currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments3, textParam(job.payload, "retryOfCommentId")),
+          currentText: roomTurnText(textParam4(job.payload, "message"), stagedAttachments3, textParam4(job.payload, "retryOfCommentId")),
           excludedCommentId: job.sourceCommentId
         });
         const turn2 = await runAgyRoomFallback(ctx, {
@@ -18075,12 +18122,12 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
 ${durableRoomJobResultText(job, turn2)}`, companyId);
         state.runtime.updatedAt = now();
         state.runtime.lastError = null;
-        state.runtime.quotaRetry = { ...asRecord3(state.runtime.quotaRetry), status: "resolved", resolvedAt: now(), resultCommentId: assistantComment3.id ?? null };
+        state.runtime.quotaRetry = { ...asRecord6(state.runtime.quotaRetry), status: "resolved", resolvedAt: now(), resultCommentId: assistantComment3.id ?? null };
         state.lastCommentId = assistantComment3.id ?? job.sourceCommentId ?? null;
         state.pendingTurn = null;
         finishRoomActivity(state, "completed");
         await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Agy quota retry Room Job");
-        job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment3.id ?? null, payload: { ...asRecord3(job.payload), quotaRetryAt: null } });
+        job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment3.id ?? null, payload: { ...asRecord6(job.payload), quotaRetryAt: null } });
         emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
         await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
         return job;
@@ -18097,7 +18144,7 @@ ${durableRoomJobResultText(job, turn2)}`, companyId);
         issue,
         state,
         threadId,
-        currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments2, textParam(job.payload, "retryOfCommentId")),
+        currentText: roomTurnText(textParam4(job.payload, "message"), stagedAttachments2, textParam4(job.payload, "retryOfCommentId")),
         excludedCommentId: job.sourceCommentId
       });
       const started2 = await startRoomTurn(
@@ -18153,7 +18200,7 @@ ${durableRoomJobResultText(job, turn)}`, companyId);
       issue,
       state,
       sessionId: session.sessionId,
-      currentText: roomTurnText(textParam(job.payload, "message"), stagedAttachments, textParam(job.payload, "retryOfCommentId")),
+      currentText: roomTurnText(textParam4(job.payload, "message"), stagedAttachments, textParam4(job.payload, "retryOfCommentId")),
       excludedCommentId: job.sourceCommentId
     });
     const started = await startNativeAgentSessionTurn(ctx, {
@@ -18377,7 +18424,7 @@ async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initi
     ownerState = await loadRoomState(ctx, companyId, ownerRoom, agent);
     if (ownerState.pendingTurn?.jobId !== job.id) return;
     const comments = await ctx.issues.listComments(task.id, companyId);
-    if (textParam(agent, "adapterType") === "codex_local") {
+    if (textParam4(agent, "adapterType") === "codex_local") {
       const { client, threadId, roomRuntime, workingDirectory } = await openThread(ctx, runtime, ownerState, companyId, ownerRoom, agent);
       job = await updateRoomJob(ctx, job, { status: "working" });
       await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Bind Codex app-server thread for Task feedback Job");
@@ -18390,7 +18437,7 @@ async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initi
         `Task: ${task.identifier ?? task.id} ${task.title}`,
         `Task state: ${JSON.stringify(taskState)}`,
         `Recent Task comments: ${mostRecentComments(comments, 12).map((comment) => comment.body).join("\n---\n")}`,
-        `User request: ${textParam(job.payload, "message")}`
+        `User request: ${textParam4(job.payload, "message")}`
       ].join("\n\n");
       const prepared2 = await prepareCodexRoomTurn(ctx, {
         companyId,
@@ -18451,7 +18498,7 @@ ${turnResultText(turn)}`, companyId);
       `Task: ${task.identifier ?? task.id} ${task.title}`,
       `Task state: ${JSON.stringify(taskState)}`,
       `Recent Task comments: ${mostRecentComments(comments, 12).map((comment) => comment.body).join("\n---\n")}`,
-      `User request: ${textParam(job.payload, "message")}`
+      `User request: ${textParam4(job.payload, "message")}`
     ].join("\n\n");
     const prepared = await prepareNativeRoomTurn(ctx, {
       companyId,
@@ -18573,11 +18620,11 @@ async function runQueuedRoomJobs(ctx) {
   const runtime = await getRuntimeConfig(ctx);
   const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
   for (const record of records) {
-    const job = roomJobData(asRecord3(record.data));
+    const job = roomJobData(asRecord6(record.data));
     if (job.status !== "queued" || !job.id || !job.companyId || !job.roomIssueId) continue;
     summary.scanned += 1;
     if (isRoomProviderQuotaRetryJob(job)) {
-      const retryAt = new Date(textParam(asRecord3(job.payload), "quotaRetryAt") || 0).getTime();
+      const retryAt = new Date(textParam4(asRecord6(job.payload), "quotaRetryAt") || 0).getTime();
       if (Number.isFinite(retryAt) && retryAt > Date.now()) {
         summary.waiting += 1;
         continue;
@@ -18616,10 +18663,10 @@ async function runQueuedRoomJobs(ctx) {
 async function handleRoomSendJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const issueId = textParam(params, "issueId");
-  const message = textParam(params, "message");
+  const issueId = textParam4(params, "issueId");
+  const message = textParam4(params, "message");
   const attachmentIds = attachmentIdsParam(params);
-  const retryOfCommentId = textParam(params, "retryOfCommentId");
+  const retryOfCommentId = textParam4(params, "retryOfCommentId");
   if (!message && !attachmentIds.length) return { ok: false, code: "message_required", message: "Write a message or attach at least one file." };
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const validatedRetryOfCommentId = await validateRoomRetrySource(ctx, companyId, issue.id, retryOfCommentId);
@@ -18643,7 +18690,7 @@ async function handleRoomSendJob(ctx, params, actionCtx) {
 async function handleRoomCompactJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const issueId = textParam(params, "issueId");
+  const issueId = textParam4(params, "issueId");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const state = await loadRoomState(ctx, companyId, issue, agent);
   if (await roomHasActiveWork(ctx, issue.id, state)) return { ok: false, code: "room_busy", message: `${agent.name} is already working in this Room.` };
@@ -18663,8 +18710,8 @@ async function handleRoomCompactJob(ctx, params, actionCtx) {
 async function handleTaskOwnerFeedbackJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const taskId = textParam(params, "issueId");
-  const message = textParam(params, "message");
+  const taskId = textParam4(params, "issueId");
+  const message = textParam4(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A feedback request is required." };
   const task = await ctx.issues.get(taskId, companyId);
   if (!task?.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -18692,11 +18739,11 @@ ${message}`, companyId);
   return { ok: true, accepted: true, queued: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
 }
 function taskStatusTransition(event) {
-  const payload = asRecord3(event?.payload);
-  const patch = asRecord3(payload.patch);
+  const payload = asRecord6(event?.payload);
+  const patch = asRecord6(payload.patch);
   return {
-    previousStatus: textParam(asRecord3(payload._previous), "status"),
-    nextStatus: textParam(payload, "status") || textParam(patch, "status")
+    previousStatus: textParam4(asRecord6(payload._previous), "status"),
+    nextStatus: textParam4(payload, "status") || textParam4(patch, "status")
   };
 }
 var TASK_BOUNDARY_REPORT_MIN_CHARS = 220;
@@ -18710,7 +18757,7 @@ function taskReportFingerprint(body) {
   return `${text4.length}:${(hash >>> 0).toString(16)}`;
 }
 function taskCommentAgentId(comment) {
-  return textParam(comment, "authorAgentId") || textParam(comment, "derivedAuthorAgentId");
+  return textParam4(comment, "authorAgentId") || textParam4(comment, "derivedAuthorAgentId");
 }
 function taskBoundaryReportKind(body) {
   const text4 = String(body || "").trim();
@@ -18740,15 +18787,15 @@ function isSubstantiveTaskBoundaryReport(body, kind) {
   return utf8EvidenceGroups.filter((pattern) => pattern.test(text4)).length >= 2;
 }
 function taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) {
-  const review = asRecord3(taskState?.review);
-  const correctionHistory = (Array.isArray(taskState?.reviewHistory) ? taskState.reviewHistory : []).map(asRecord3).filter((entry) => textParam(entry, "outcome") === "correction_requested");
-  const feedbackCommentId = textParam(review, "feedbackCommentId");
-  const hasCorrectionBoundary = textParam(review, "status") === "correction_requested" || Boolean(feedbackCommentId) || correctionHistory.length > 0;
+  const review = asRecord6(taskState?.review);
+  const correctionHistory = (Array.isArray(taskState?.reviewHistory) ? taskState.reviewHistory : []).map(asRecord6).filter((entry) => textParam4(entry, "outcome") === "correction_requested");
+  const feedbackCommentId = textParam4(review, "feedbackCommentId");
+  const hasCorrectionBoundary = textParam4(review, "status") === "correction_requested" || Boolean(feedbackCommentId) || correctionHistory.length > 0;
   if (!hasCorrectionBoundary) return true;
   const feedbackComment = feedbackCommentId ? mostRecentComments(comments, Number.MAX_SAFE_INTEGER).find((candidate) => candidate?.id === feedbackCommentId) : null;
   const cutoffCandidates = [
     feedbackComment?.createdAt,
-    textParam(review, "status") === "correction_requested" ? review.updatedAt : null,
+    textParam4(review, "status") === "correction_requested" ? review.updatedAt : null,
     ...correctionHistory.map((entry) => entry.closedAt)
   ].map((value) => Date.parse(String(value || ""))).filter(Number.isFinite);
   if (!cutoffCandidates.length) return false;
@@ -18756,7 +18803,7 @@ function taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) {
   return Number.isFinite(reportCreatedAt) && reportCreatedAt > Math.max(...cutoffCandidates);
 }
 function latestTaskBoundaryReport(comments, taskState, expectedKind = null) {
-  const workerAgentId = textParam(taskState, "workerAgentId");
+  const workerAgentId = textParam4(taskState, "workerAgentId");
   return mostRecentComments(comments, 100).slice().reverse().map((comment) => ({
     comment,
     kind: taskBoundaryReportKind(comment?.body),
@@ -18765,12 +18812,12 @@ function latestTaskBoundaryReport(comments, taskState, expectedKind = null) {
   })).find(({ comment, kind, authorAgentId }) => kind && (!expectedKind || kind === expectedKind) && authorAgentId === workerAgentId && taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) && isSubstantiveTaskBoundaryReport(comment?.body, kind)) ?? null;
 }
 function taskBoundaryAlreadyReported(taskState, report) {
-  const review = asRecord3(taskState?.review);
-  const notification = asRecord3(taskState?.ownerNotification);
-  const priorReportId = textParam(notification, "reportCommentId") || textParam(review, "workerReportCommentId");
-  const priorFingerprint = textParam(notification, "reportFingerprint") || textParam(review, "workerReportFingerprint");
-  const notificationStatus = textParam(notification, "status");
-  const manualReportPosted = notificationStatus === "manual_pending" && Boolean(textParam(notification, "roomReportCommentId"));
+  const review = asRecord6(taskState?.review);
+  const notification = asRecord6(taskState?.ownerNotification);
+  const priorReportId = textParam4(notification, "reportCommentId") || textParam4(review, "workerReportCommentId");
+  const priorFingerprint = textParam4(notification, "reportFingerprint") || textParam4(review, "workerReportFingerprint");
+  const notificationStatus = textParam4(notification, "status");
+  const manualReportPosted = notificationStatus === "manual_pending" && Boolean(textParam4(notification, "roomReportCommentId"));
   return (["working", "completed"].includes(notificationStatus) || manualReportPosted) && (priorReportId === report.comment.id || priorFingerprint && priorFingerprint === report.fingerprint);
 }
 async function recordManualTaskOwnerReview(ctx, { companyId, eventId, task, taskState, ownerRoom, report }) {
@@ -18835,7 +18882,7 @@ async function recordManualTaskOwnerReview(ctx, { companyId, eventId, task, task
 async function publishTaskOwnerReportInbox(ctx, input) {
   if (!ctx.inbox?.publish || !input?.task || !input?.ownerRoom) return { skipped: true, reason: "inbox_unavailable" };
   const task = input.task;
-  const reportCommentId = textParam(input, "reportCommentId");
+  const reportCommentId = textParam4(input, "reportCommentId");
   if (!reportCommentId) return { skipped: true, reason: "report_comment_missing" };
   const isBlocker = task.status === "blocked";
   const projectQuery = task.projectId ? `?project=${encodeURIComponent(task.projectId)}&room=${encodeURIComponent(input.ownerRoom.id)}` : `?room=${encodeURIComponent(input.ownerRoom.id)}`;
@@ -18853,8 +18900,8 @@ async function publishTaskOwnerReportInbox(ctx, input) {
         taskIssueId: task.id,
         ownerRoomIssueId: input.ownerRoom.id,
         reportCommentId,
-        reportFingerprint: textParam(input, "reportFingerprint") || null,
-        roomReportCommentId: textParam(input, "roomReportCommentId") || null
+        reportFingerprint: textParam4(input, "reportFingerprint") || null,
+        roomReportCommentId: textParam4(input, "roomReportCommentId") || null
       }
     });
     return { ok: true, ...result };
@@ -18876,8 +18923,8 @@ async function publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom,
     companyId,
     task,
     ownerRoom,
-    reportCommentId: textParam(asRecord3(job.payload), "reportCommentId"),
-    reportFingerprint: textParam(asRecord3(job.payload), "reportFingerprint"),
+    reportCommentId: textParam4(asRecord6(job.payload), "reportCommentId"),
+    reportFingerprint: textParam4(asRecord6(job.payload), "reportFingerprint"),
     roomReportCommentId: job.resultCommentId ?? null
   });
 }
@@ -18912,7 +18959,7 @@ async function taskOwnerRoomResultVisibilityOutsideInvocation({ apiUrl, task, ex
   if (expectedStatus !== "in_review") return { publish: true };
   try {
     const taskState = await latestTaskRoomStateOutsideInvocation(apiUrl, task, null);
-    const reviewStatus = textParam(asRecord3(taskState?.review), "status");
+    const reviewStatus = textParam4(asRecord6(taskState?.review), "status");
     if (reviewStatus === "correction_requested") {
       return { publish: false, reason: "task_feedback_continues_in_task_room" };
     }
@@ -18946,7 +18993,7 @@ function normalizeTaskOwnerCompletionReport(message) {
 function activeRoomProcessBlocksOwnerReport(ownerState, existingJob, activeProcessJob) {
   if (!activeProcessJob) return false;
   if (ownerState?.pendingTurn || existingJob) return true;
-  return ["working", "finishing"].includes(textParam(ownerState?.runtime?.activity, "status"));
+  return ["working", "finishing"].includes(textParam4(ownerState?.runtime?.activity, "status"));
 }
 async function runAutomaticTaskOwnerReport(ctx, { companyId, eventId, taskIssueId, ownerRoomIssueId, expectedStatus, reportCommentId, reportFingerprint }) {
   const task = await ctx.issues.get(taskIssueId, companyId);
@@ -19034,21 +19081,21 @@ function sortedIssueRuns(runs) {
   return [...Array.isArray(runs) ? runs : []].sort((left, right) => issueRunTimestamp(right) - issueRunTimestamp(left));
 }
 function issueRunErrorFamily(run) {
-  const result = asRecord3(run?.resultJson);
-  return textParam(run, "errorFamily") || textParam(result, "errorFamily") || textParam(run, "errorCode");
+  const result = asRecord6(run?.resultJson);
+  return textParam4(run, "errorFamily") || textParam4(result, "errorFamily") || textParam4(run, "errorCode");
 }
 function isProviderQuotaRun(run) {
   return issueRunErrorFamily(run) === PROVIDER_QUOTA_ERROR_CODE;
 }
 function issueRunRetryNotBefore(run) {
-  const result = asRecord3(run?.resultJson);
-  const value = textParam(run, "retryNotBefore") || textParam(result, "retryNotBefore") || textParam(result, "providerQuotaRetryNotBefore") || textParam(result, "transientRetryNotBefore");
+  const result = asRecord6(run?.resultJson);
+  const value = textParam4(run, "retryNotBefore") || textParam4(result, "retryNotBefore") || textParam4(result, "providerQuotaRetryNotBefore") || textParam4(result, "transientRetryNotBefore");
   const timestamp = new Date(value || 0).getTime();
   return Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toISOString() : null;
 }
 function providerQuotaRecoveryAction(action) {
-  const evidence = asRecord3(action?.evidence);
-  return textParam(evidence, "latestRunErrorCode") === PROVIDER_QUOTA_ERROR_CODE || textParam(evidence, "latestRunErrorFamily") === PROVIDER_QUOTA_ERROR_CODE;
+  const evidence = asRecord6(action?.evidence);
+  return textParam4(evidence, "latestRunErrorCode") === PROVIDER_QUOTA_ERROR_CODE || textParam4(evidence, "latestRunErrorFamily") === PROVIDER_QUOTA_ERROR_CODE;
 }
 function nextProviderQuotaRetryAt(run, current = Date.now()) {
   const requested = issueRunRetryNotBefore(run);
@@ -19056,38 +19103,38 @@ function nextProviderQuotaRetryAt(run, current = Date.now()) {
   return new Date(Math.max(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS, Number.isFinite(requestedAt) ? requestedAt : 0)).toISOString();
 }
 function providerQuotaRetryState(run, currentState = {}, current = Date.now()) {
-  const runId = textParam(run, "runId") || textParam(run, "id");
-  const previous = asRecord3(currentState);
-  const sameRun = textParam(previous, "lastFailedRunId") === runId;
+  const runId = textParam4(run, "runId") || textParam4(run, "id");
+  const previous = asRecord6(currentState);
+  const sameRun = textParam4(previous, "lastFailedRunId") === runId;
   return {
     ...previous,
-    status: sameRun && textParam(previous, "status") ? textParam(previous, "status") : "waiting",
+    status: sameRun && textParam4(previous, "status") ? textParam4(previous, "status") : "waiting",
     provider: "agy",
     intervalMinutes: 30,
-    lastFailedRunId: runId || textParam(previous, "lastFailedRunId") || null,
-    nextRetryAt: sameRun && textParam(previous, "nextRetryAt") ? textParam(previous, "nextRetryAt") : nextProviderQuotaRetryAt(run, current),
+    lastFailedRunId: runId || textParam4(previous, "lastFailedRunId") || null,
+    nextRetryAt: sameRun && textParam4(previous, "nextRetryAt") ? textParam4(previous, "nextRetryAt") : nextProviderQuotaRetryAt(run, current),
     attempt: sameRun ? Math.max(0, Number(previous.attempt) || 0) : Math.max(0, Number(previous.attempt) || 0) + 1,
-    lastWakeRunId: sameRun ? textParam(previous, "lastWakeRunId") || null : null,
-    updatedAt: sameRun && textParam(previous, "updatedAt") ? textParam(previous, "updatedAt") : now()
+    lastWakeRunId: sameRun ? textParam4(previous, "lastWakeRunId") || null : null,
+    updatedAt: sameRun && textParam4(previous, "updatedAt") ? textParam4(previous, "updatedAt") : now()
   };
 }
 function workerRuntimeRecoveryAction(task, taskState) {
-  const action = asRecord3(task?.activeRecoveryAction);
-  const workerAgentId = textParam(taskState, "workerAgentId");
-  const cause = textParam(action, "cause");
-  const returnedWorkerId = textParam(action, "returnOwnerAgentId") || textParam(action, "previousOwnerAgentId");
-  if (!textParam(action, "id") || !workerAgentId) return null;
-  if (textParam(action, "kind") !== "stranded_assigned_issue") return null;
+  const action = asRecord6(task?.activeRecoveryAction);
+  const workerAgentId = textParam4(taskState, "workerAgentId");
+  const cause = textParam4(action, "cause");
+  const returnedWorkerId = textParam4(action, "returnOwnerAgentId") || textParam4(action, "previousOwnerAgentId");
+  if (!textParam4(action, "id") || !workerAgentId) return null;
+  if (textParam4(action, "kind") !== "stranded_assigned_issue") return null;
   if (!TASK_WORKER_RUNTIME_RECOVERY_CAUSES.has(cause)) return null;
   if (returnedWorkerId !== workerAgentId) return null;
   return action;
 }
 function recoveryWorkerAgentId(task) {
-  const action = asRecord3(task?.activeRecoveryAction);
-  const cause = textParam(action, "cause");
-  const workerAgentId = textParam(action, "returnOwnerAgentId") || textParam(action, "previousOwnerAgentId");
-  if (!textParam(action, "id") || !workerAgentId) return "";
-  if (textParam(action, "kind") !== "stranded_assigned_issue") return "";
+  const action = asRecord6(task?.activeRecoveryAction);
+  const cause = textParam4(action, "cause");
+  const workerAgentId = textParam4(action, "returnOwnerAgentId") || textParam4(action, "previousOwnerAgentId");
+  if (!textParam4(action, "id") || !workerAgentId) return "";
+  if (textParam4(action, "kind") !== "stranded_assigned_issue") return "";
   if (!TASK_WORKER_RUNTIME_RECOVERY_CAUSES.has(cause)) return "";
   return workerAgentId;
 }
@@ -19142,15 +19189,15 @@ async function recoverLegacyTaskRoomState(ctx, event, task) {
   return state;
 }
 function workerRuntimeRecoveryFailure(action) {
-  const evidence = asRecord3(action?.evidence);
-  return textParam(evidence, "latestRunErrorCode") || textParam(action, "cause") || "runtime_unavailable";
+  const evidence = asRecord6(action?.evidence);
+  return textParam4(evidence, "latestRunErrorCode") || textParam4(action, "cause") || "runtime_unavailable";
 }
 function workerRuntimeRecoveryAlreadyReported(taskState, actionId) {
-  const notification = asRecord3(taskState?.ownerNotification);
-  return textParam(notification, "kind") === "runtime_block" && textParam(notification, "recoveryActionId") === actionId && ["working", "completed", "queued"].includes(textParam(notification, "status"));
+  const notification = asRecord6(taskState?.ownerNotification);
+  return textParam4(notification, "kind") === "runtime_block" && textParam4(notification, "recoveryActionId") === actionId && ["working", "completed", "queued"].includes(textParam4(notification, "status"));
 }
 function workerRuntimeBlockOwnerPrompt(task, taskState, worker, action) {
-  const evidence = asRecord3(action?.evidence);
+  const evidence = asRecord6(action?.evidence);
   return [
     "AUTOMATIC WORKER RUNTIME BLOCK REPORT.",
     "A Worker could not complete its assigned Task because its local runtime failed before it could submit a Worker blocker report.",
@@ -19158,10 +19205,10 @@ function workerRuntimeBlockOwnerPrompt(task, taskState, worker, action) {
     "Report the blocker to the user in this long-lived Agent Room: identify the affected Task, the exact runtime failure class, the impact, and the smallest next step. Do not create any Task approval or question interaction. Usually the next step is restoring the runtime or quota and then manually resuming the Worker before the owner moves the Task back to todo.",
     `Task: ${task.identifier ?? task.id} ${task.title}`,
     `Task status: ${task.status}`,
-    `Assigned Worker: ${worker?.name ?? textParam(taskState, "workerAgentId")}`,
+    `Assigned Worker: ${worker?.name ?? textParam4(taskState, "workerAgentId")}`,
     `Runtime failure class: ${workerRuntimeRecoveryFailure(action)}`,
-    `Recovery cause: ${textParam(action, "cause")}`,
-    `Last failed run: ${textParam(evidence, "latestRunId") || "unknown"}`,
+    `Recovery cause: ${textParam4(action, "cause")}`,
+    `Last failed run: ${textParam4(evidence, "latestRunId") || "unknown"}`,
     `Task description:
 ${trimRoomContext(task.description, 12e3) || "No description."}`,
     `Task Room state:
@@ -19304,16 +19351,16 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
   if (existing) return { scheduled: false, reason: "worker_runtime_recovery_in_progress", completion: existing };
   const completion = (async () => {
     const runtime = await getRuntimeConfig(ctx);
-    const workerAgentId = textParam(taskState, "workerAgentId");
+    const workerAgentId = textParam4(taskState, "workerAgentId");
     const worker = await ctx.agents.get(workerAgentId, event.companyId).catch(() => null);
     if (providerQuotaRecoveryAction(recoveryAction)) {
-      const evidence = asRecord3(recoveryAction.evidence);
+      const evidence = asRecord6(recoveryAction.evidence);
       const failedRun = {
-        runId: textParam(evidence, "latestRunId"),
+        runId: textParam4(evidence, "latestRunId"),
         errorCode: PROVIDER_QUOTA_ERROR_CODE,
         resultJson: {
           errorFamily: PROVIDER_QUOTA_ERROR_CODE,
-          retryNotBefore: textParam(evidence, "retryNotBefore") || null
+          retryNotBefore: textParam4(evidence, "retryNotBefore") || null
         }
       };
       await paperclipJsonDirect(runtime.spsApiUrl, `/api/issues/${encodeURIComponent(task.id)}/recovery-actions/resolve`, {
@@ -19346,7 +19393,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
         format: "markdown",
         changeSummary: "Record Worker provider quota block with automatic retry disabled"
       });
-      const eventId2 = textParam(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
+      const eventId2 = textParam4(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
       return runAutomaticWorkerRuntimeBlockReport(ctx, {
         companyId: event.companyId,
         eventId: eventId2,
@@ -19357,7 +19404,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
         recoveryAction
       });
     }
-    if (textParam(worker, "status") === "error") {
+    if (textParam4(worker, "status") === "error") {
       await paperclipJsonDirect(runtime.spsApiUrl, `/api/agents/${encodeURIComponent(workerAgentId)}/pause`, {
         method: "POST",
         body: {},
@@ -19376,7 +19423,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
     });
     await updateIssueDirect(runtime.spsApiUrl, task.id, { status: "blocked" });
     await updateIssueDirect(runtime.spsApiUrl, task.id, { assigneeAgentId: workerAgentId, assigneeUserId: null });
-    const eventId = textParam(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
+    const eventId = textParam4(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
     return runAutomaticWorkerRuntimeBlockReport(ctx, {
       companyId: event.companyId,
       eventId,
@@ -19414,14 +19461,14 @@ async function writeProviderQuotaRetryState(ctx, companyId, task, taskState, cha
   });
 }
 function issueExecutionAutomaticallyRetries(task) {
-  return asRecord3(asRecord3(task?.executionPolicy).failure).automaticRetry === true;
+  return asRecord6(asRecord6(task?.executionPolicy).failure).automaticRetry === true;
 }
 function taskExecutionPolicyWithAutomaticRetry(task, automaticRetry) {
-  const policy = asRecord3(task?.executionPolicy);
-  const failure = asRecord3(policy.failure);
+  const policy = asRecord6(task?.executionPolicy);
+  const failure = asRecord6(policy.failure);
   return {
     ...policy,
-    mode: textParam(policy, "mode") || "normal",
+    mode: textParam4(policy, "mode") || "normal",
     stages: Array.isArray(policy.stages) ? policy.stages : [],
     failure: {
       ...failure,
@@ -19434,7 +19481,7 @@ function taskExecutionPolicyWithAutomaticRetry(task, automaticRetry) {
 }
 async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskState) {
   const wasAutomatic = issueExecutionAutomaticallyRetries(task);
-  const priorQuotaRetry = asRecord3(taskState?.quotaRetry);
+  const priorQuotaRetry = asRecord6(taskState?.quotaRetry);
   const hadQuotaRetry = Object.keys(priorQuotaRetry).length > 0;
   const executionPolicy = taskExecutionPolicyWithAutomaticRetry(task, false);
   if (wasAutomatic) {
@@ -19442,10 +19489,10 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
     task.executionPolicy = executionPolicy;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduledRuns = runs.filter((run) => textParam(run, "status") === "scheduled_retry");
-  const desiredStatus = textParam(task, "status");
+  const scheduledRuns = runs.filter((run) => textParam4(run, "status") === "scheduled_retry");
+  const desiredStatus = textParam4(task, "status");
   for (const run of scheduledRuns) {
-    const runId = textParam(run, "runId") || textParam(run, "id");
+    const runId = textParam4(run, "runId") || textParam4(run, "id");
     if (!runId) continue;
     await paperclipJsonDirect(runtime.spsApiUrl, `/api/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
@@ -19462,7 +19509,7 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
     taskState.quotaRetry = {
       ...priorQuotaRetry,
       status: "disabled",
-      provider: textParam(priorQuotaRetry, "provider") || "agy",
+      provider: textParam4(priorQuotaRetry, "provider") || "agy",
       automaticRetry: false,
       scheduledRunId: null,
       nextRetryAt: null,
@@ -19473,10 +19520,10 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
   return { changed: wasAutomatic || hadQuotaRetry || scheduledRuns.length > 0, cancelledRuns: scheduledRuns.length };
 }
 async function cancelResolvedTaskWorkerQuotaRetry(ctx, { companyId, task, taskState }) {
-  const desiredStatus = textParam(task, "status");
+  const desiredStatus = textParam4(task, "status");
   if (!TASK_WORKER_RETRY_STOP_STATUSES.has(desiredStatus)) return false;
   const wasAutomatic = issueExecutionAutomaticallyRetries(task);
-  const quotaRetry = asRecord3(taskState?.quotaRetry);
+  const quotaRetry = asRecord6(taskState?.quotaRetry);
   const hadQuotaRetry = Boolean(Object.keys(quotaRetry).length);
   if (!wasAutomatic && !hadQuotaRetry) return false;
   const runtime = await getRuntimeConfig(ctx);
@@ -19486,9 +19533,9 @@ async function cancelResolvedTaskWorkerQuotaRetry(ctx, { companyId, task, taskSt
     task.executionPolicy = executionPolicy;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduledRuns = runs.filter((run) => textParam(run, "status") === "scheduled_retry");
+  const scheduledRuns = runs.filter((run) => textParam4(run, "status") === "scheduled_retry");
   for (const run of scheduledRuns) {
-    const runId = textParam(run, "runId") || textParam(run, "id");
+    const runId = textParam4(run, "runId") || textParam4(run, "id");
     if (!runId) continue;
     await paperclipJsonDirect(runtime.spsApiUrl, `/api/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
@@ -19523,9 +19570,9 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
   const document = await ctx.issues.documents.get(task.id, TASK_ROOM_STATE_KEY, companyId);
   const taskState = parseState(document?.body);
   if (!taskState || taskState.kind !== "task_room") return { outcome: "skipped", reason: "task_room_state_missing" };
-  const workerAgentId = textParam(taskState, "workerAgentId") || textParam(task, "assigneeAgentId");
+  const workerAgentId = textParam4(taskState, "workerAgentId") || textParam4(task, "assigneeAgentId");
   const worker = agentsById.get(workerAgentId);
-  if (!worker || textParam(worker, "adapterType") !== "antigravity_local") {
+  if (!worker || textParam4(worker, "adapterType") !== "antigravity_local") {
     return { outcome: "skipped", reason: "not_agy_worker" };
   }
   if (!AUTOMATIC_PROVIDER_QUOTA_RETRY_ENABLED) {
@@ -19537,18 +19584,18 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     task.executionPolicy = TASK_ROOM_EXECUTION_POLICY;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduled = runs.find((run) => textParam(run, "status") === "scheduled_retry");
+  const scheduled = runs.find((run) => textParam4(run, "status") === "scheduled_retry");
   if (scheduled) {
-    const nextRetryAt = textParam(scheduled, "scheduledRetryAt") || issueRunRetryNotBefore(scheduled);
-    const previous = asRecord3(taskState.quotaRetry);
-    if (textParam(previous, "status") !== "core_scheduled" || textParam(previous, "scheduledRunId") !== (textParam(scheduled, "runId") || textParam(scheduled, "id")) || textParam(previous, "nextRetryAt") !== nextRetryAt) {
+    const nextRetryAt = textParam4(scheduled, "scheduledRetryAt") || issueRunRetryNotBefore(scheduled);
+    const previous = asRecord6(taskState.quotaRetry);
+    if (textParam4(previous, "status") !== "core_scheduled" || textParam4(previous, "scheduledRunId") !== (textParam4(scheduled, "runId") || textParam4(scheduled, "id")) || textParam4(previous, "nextRetryAt") !== nextRetryAt) {
       taskState.quotaRetry = {
         ...previous,
         status: "core_scheduled",
         provider: "agy",
         intervalMinutes: 30,
-        lastFailedRunId: textParam(scheduled, "retryOfRunId") || textParam(previous, "lastFailedRunId") || null,
-        scheduledRunId: textParam(scheduled, "runId") || textParam(scheduled, "id") || null,
+        lastFailedRunId: textParam4(scheduled, "retryOfRunId") || textParam4(previous, "lastFailedRunId") || null,
+        scheduledRunId: textParam4(scheduled, "runId") || textParam4(scheduled, "id") || null,
         nextRetryAt: nextRetryAt || new Date(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS).toISOString(),
         updatedAt: now()
       };
@@ -19558,20 +19605,20 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
   }
   const latest = runs[0];
   if (!latest) return { outcome: "skipped", reason: "no_runs" };
-  const latestStatus = textParam(latest, "status");
+  const latestStatus = textParam4(latest, "status");
   if (["queued", "running"].includes(latestStatus)) {
-    if (taskState.quotaRetry && textParam(taskState.quotaRetry, "status") !== "executing") {
-      taskState.quotaRetry = { ...asRecord3(taskState.quotaRetry), status: "executing", activeRunId: textParam(latest, "runId") || textParam(latest, "id") || null, updatedAt: now() };
+    if (taskState.quotaRetry && textParam4(taskState.quotaRetry, "status") !== "executing") {
+      taskState.quotaRetry = { ...asRecord6(taskState.quotaRetry), status: "executing", activeRunId: textParam4(latest, "runId") || textParam4(latest, "id") || null, updatedAt: now() };
       await writeProviderQuotaRetryState(ctx, companyId, task, taskState, "Record active provider quota retry run");
     }
     return { outcome: "executing" };
   }
   if (!isProviderQuotaRun(latest)) {
-    if (taskState.quotaRetry && textParam(taskState.quotaRetry, "status") !== "resolved") {
+    if (taskState.quotaRetry && textParam4(taskState.quotaRetry, "status") !== "resolved") {
       taskState.quotaRetry = {
-        ...asRecord3(taskState.quotaRetry),
+        ...asRecord6(taskState.quotaRetry),
         status: "resolved",
-        resolvedByRunId: textParam(latest, "runId") || textParam(latest, "id") || null,
+        resolvedByRunId: textParam4(latest, "runId") || textParam4(latest, "id") || null,
         resolvedRunStatus: latestStatus || null,
         nextRetryAt: null,
         updatedAt: now()
@@ -19580,7 +19627,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     }
     return { outcome: "resolved", runStatus: latestStatus || null };
   }
-  const previousQuotaRetry = JSON.stringify(asRecord3(taskState.quotaRetry));
+  const previousQuotaRetry = JSON.stringify(asRecord6(taskState.quotaRetry));
   taskState.quotaRetry = providerQuotaRetryState(latest, taskState.quotaRetry, current);
   const retryAt = new Date(taskState.quotaRetry.nextRetryAt || 0).getTime();
   if (!Number.isFinite(retryAt) || retryAt > current) {
@@ -19589,7 +19636,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     }
     return { outcome: "waiting", nextRetryAt: taskState.quotaRetry.nextRetryAt };
   }
-  if (["paused", "error"].includes(textParam(worker, "status"))) {
+  if (["paused", "error"].includes(textParam4(worker, "status"))) {
     taskState.quotaRetry = {
       ...taskState.quotaRetry,
       status: "waiting_for_worker",
@@ -19599,16 +19646,16 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     await writeProviderQuotaRetryState(ctx, companyId, task, taskState, "Defer provider quota retry while the assigned Worker is unavailable");
     return { outcome: "waiting_for_worker", nextRetryAt: taskState.quotaRetry.nextRetryAt };
   }
-  const failedRunId = textParam(latest, "runId") || textParam(latest, "id");
+  const failedRunId = textParam4(latest, "runId") || textParam4(latest, "id");
   let wakeRunId = null;
-  if (textParam(task, "status") === "blocked" && textParam(taskState.quotaRetry, "holdReason") === "provider_quota") {
+  if (textParam4(task, "status") === "blocked" && textParam4(taskState.quotaRetry, "holdReason") === "provider_quota") {
     const activated = await updateIssueDirect(runtime.spsApiUrl, task.id, {
       status: "todo",
       assigneeAgentId: workerAgentId,
       assigneeUserId: null,
       executionPolicy: TASK_ROOM_EXECUTION_POLICY
     });
-    wakeRunId = textParam(activated, "executionRunId") || `assignment:${Date.now()}`;
+    wakeRunId = textParam4(activated, "executionRunId") || `assignment:${Date.now()}`;
   } else {
     const wake = await paperclipJsonDirect(runtime.spsApiUrl, `/api/agents/${encodeURIComponent(workerAgentId)}/wakeup`, {
       method: "POST",
@@ -19621,7 +19668,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
       },
       operation: "Worker provider quota retry wakeup"
     });
-    wakeRunId = textParam(wake, "id") || textParam(wake, "runId") || null;
+    wakeRunId = textParam4(wake, "id") || textParam4(wake, "runId") || null;
   }
   taskState.quotaRetry = {
     ...taskState.quotaRetry,
@@ -19713,7 +19760,7 @@ async function handleTaskStatusUpdated(ctx, event) {
   if (taskState.workerAgentId !== task.assigneeAgentId) {
     return { scheduled: false, reason: "task_worker_assignment_mismatch" };
   }
-  const eventAgentId = event.actorType === "agent" ? event.actorId : textParam(asRecord3(event.payload), "agentId");
+  const eventAgentId = event.actorType === "agent" ? event.actorId : textParam4(asRecord6(event.payload), "agentId");
   if (nextStatus === "done" && eventAgentId && eventAgentId === taskState.workerAgentId) {
     return continueTaskOwnerReportAfterStatusNormalization(ctx, event, {
       task,
@@ -19753,7 +19800,7 @@ async function handleTaskStatusUpdated(ctx, event) {
       completion: existingReport
     };
   }
-  const persistedOwnerReport = (await listRoomJobs(ctx, ownerRoomIssueId)).find((job) => job.kind === "task_owner_report" && job.taskIssueId === task.id && ACTIVE_ROOM_JOB_STATUSES.has(job.status) && (job.id === textParam(asRecord3(taskState.ownerNotification), "jobId") || textParam(asRecord3(job.payload), "reportCommentId") === report.comment.id));
+  const persistedOwnerReport = (await listRoomJobs(ctx, ownerRoomIssueId)).find((job) => job.kind === "task_owner_report" && job.taskIssueId === task.id && ACTIVE_ROOM_JOB_STATUSES.has(job.status) && (job.id === textParam4(asRecord6(taskState.ownerNotification), "jobId") || textParam4(asRecord6(job.payload), "reportCommentId") === report.comment.id));
   if (persistedOwnerReport) {
     return {
       scheduled: false,
@@ -19764,7 +19811,7 @@ async function handleTaskStatusUpdated(ctx, event) {
     };
   }
   if (taskBoundaryAlreadyReported(taskState, report)) return { scheduled: false, reason: "duplicate_worker_report" };
-  const eventId = textParam(event, "eventId") || `${task.id}:${previousStatus}:${nextStatus || task.status}:${report.comment.id}`;
+  const eventId = textParam4(event, "eventId") || `${task.id}:${previousStatus}:${nextStatus || task.status}:${report.comment.id}`;
   if (processedTaskOwnerReportEvents.has(eventId)) return { scheduled: false, reason: "duplicate_event" };
   processedTaskOwnerReportEvents.add(eventId);
   if (processedTaskOwnerReportEvents.size > 1e3) processedTaskOwnerReportEvents.delete(processedTaskOwnerReportEvents.values().next().value);
@@ -19849,13 +19896,13 @@ async function continueTaskOwnerReportAfterStatusNormalization(ctx, event, input
   await ctx.issues.update(input.task.id, { status: input.status }, event.companyId);
   const followUp = await handleTaskStatusUpdated(ctx, {
     ...event,
-    eventId: `${textParam(event, "eventId") || randomUUID2()}:normalized:${input.status}`,
+    eventId: `${textParam4(event, "eventId") || randomUUID2()}:normalized:${input.status}`,
     eventType: "plugin.task-owner-status-normalized",
     occurredAt: now(),
     entityId: input.task.id,
     entityType: "issue",
     payload: {
-      ...asRecord3(event.payload),
+      ...asRecord6(event.payload),
       status: input.status,
       _previous: { status: input.previousStatus }
     }
@@ -19875,7 +19922,7 @@ async function continueTaskOwnerReportAfterStatusNormalization(ctx, event, input
 async function reconcileTaskOwnerReportBoundaries(ctx, options = {}) {
   if (activeTaskOwnerBoundaryReconcile) return activeTaskOwnerBoundaryReconcile;
   const operation = (async () => {
-    const runId = textParam(options, "runId") || `task-owner-boundary-reconcile:${Date.now()}`;
+    const runId = textParam4(options, "runId") || `task-owner-boundary-reconcile:${Date.now()}`;
     const summary = { runId, companies: 0, scanned: 0, scheduled: 0, healthy: 0, skipped: 0, failed: 0 };
     const companies = await ctx.companies.list({ limit: 200 });
     summary.companies = companies.length;
@@ -19922,7 +19969,7 @@ async function reconcileTaskOwnerReportBoundaries(ctx, options = {}) {
 }
 async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
-  const taskId = textParam(params, "issueId") || textParam(params, "taskId");
+  const taskId = textParam4(params, "issueId") || textParam4(params, "taskId");
   if (!taskId) throw new Error("issueId is required.");
   const task = await ctx.issues.get(taskId, companyId);
   if (!task?.parentId) throw new Error("Task owner report reconciliation is available only on a child Task issue.");
@@ -19958,7 +20005,7 @@ async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
     eventType: "plugin.action",
     occurredAt,
     actorType: "user",
-    actorId: textParam(asRecord3(actionCtx?.actor), "id") || null,
+    actorId: textParam4(asRecord6(actionCtx?.actor), "id") || null,
     companyId,
     entityId: task.id,
     entityType: "issue",
@@ -19972,14 +20019,14 @@ async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
 }
 function reconcileTaskOwnerNotificationStateForJob(taskState, job) {
   if (job?.kind !== "task_owner_report" || !job?.taskIssueId || ACTIVE_ROOM_JOB_STATUSES.has(job.status)) return false;
-  const notification = asRecord3(taskState?.ownerNotification);
-  if (textParam(notification, "jobId") !== job.id || textParam(notification, "status") !== "working") return false;
+  const notification = asRecord6(taskState?.ownerNotification);
+  if (textParam4(notification, "jobId") !== job.id || textParam4(notification, "status") !== "working") return false;
   const completed = job.status === "completed";
   taskState.ownerNotification = {
     ...notification,
     status: completed ? "completed" : "failed",
     resultCommentId: job.resultCommentId ?? notification.resultCommentId ?? null,
-    ...completed ? {} : { error: textParam(job, "error") || `Task owner report Job ended with status ${job.status}.` },
+    ...completed ? {} : { error: textParam4(job, "error") || `Task owner report Job ended with status ${job.status}.` },
     updatedAt: now()
   };
   return true;
@@ -20009,7 +20056,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
   if (!ctx.entities?.list) return summary;
   const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
   for (const record of records) {
-    const job = roomJobData(asRecord3(record.data));
+    const job = roomJobData(asRecord6(record.data));
     if (!job.id || !job.companyId || !job.roomIssueId) continue;
     summary.scanned += 1;
     if (!ACTIVE_ROOM_JOB_STATUSES.has(job.status)) {
@@ -20027,7 +20074,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
     try {
       const { issue, agent } = await requireRoom(ctx, job.companyId, job.roomIssueId);
       const state = await loadRoomState(ctx, job.companyId, issue, agent);
-      if (isRoomProviderQuotaRetryJob(job) && textParam(state.pendingTurn, "jobId") === job.id) {
+      if (isRoomProviderQuotaRetryJob(job) && textParam4(state.pendingTurn, "jobId") === job.id) {
         await launchDueRoomProviderQuotaRetry(ctx, job).catch(() => null);
         continue;
       }
@@ -20040,7 +20087,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
         };
       }
       const reconciled = await updateRoomJob(ctx, job, patch);
-      if (textParam(state.pendingTurn, "jobId") === job.id) {
+      if (textParam4(state.pendingTurn, "jobId") === job.id) {
         state.pendingTurn = null;
         finishRoomActivity(state, "failed", reconciled.error);
         await saveRoomState(ctx, job.companyId, issue.id, state, "Mark interrupted Room Job during startup reconciliation");
@@ -20069,10 +20116,10 @@ async function reconcileInterruptedRoomJobs(ctx) {
   return summary;
 }
 function workplaneReconciliationHasActivity(input) {
-  const roomMemorySummary = asRecord3(input?.roomMemorySummary);
-  const interruptedRoomJobSummary = asRecord3(input?.interruptedRoomJobSummary);
-  const ownerSummary = asRecord3(input?.ownerSummary);
-  const queuedRoomJobSummary = asRecord3(input?.queuedRoomJobSummary);
+  const roomMemorySummary = asRecord6(input?.roomMemorySummary);
+  const interruptedRoomJobSummary = asRecord6(input?.interruptedRoomJobSummary);
+  const ownerSummary = asRecord6(input?.ownerSummary);
+  const queuedRoomJobSummary = asRecord6(input?.queuedRoomJobSummary);
   return Number(roomMemorySummary.checkpointsPublished || 0) > 0 || Number(roomMemorySummary.compactionsPublished || 0) > 0 || Number(roomMemorySummary.failed || 0) > 0 || Number(interruptedRoomJobSummary.reconciled || 0) > 0 || Number(interruptedRoomJobSummary.retired || 0) > 0 || Number(interruptedRoomJobSummary.failed || 0) > 0 || Number(ownerSummary.scheduled || 0) > 0 || Number(ownerSummary.failed || 0) > 0 || Number(queuedRoomJobSummary.started || 0) > 0 || Number(queuedRoomJobSummary.completed || 0) > 0 || Number(queuedRoomJobSummary.failed || 0) > 0;
 }
 var plugin = definePlugin({
