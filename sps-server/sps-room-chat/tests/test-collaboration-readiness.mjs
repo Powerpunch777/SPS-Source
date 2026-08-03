@@ -3,6 +3,32 @@ import assert from "node:assert/strict";
 process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
 
 const { collaborationReadinessFromConfig } = await import("../src/worker.js");
+const { createCollaborationReadiness } = await import("../src/collaboration-readiness.js");
+
+const injectedConfig = {
+  server: { deploymentMode: "local_trusted", host: "127.0.0.1", bind: "loopback" },
+  auth: {}
+};
+const injectedRuntime = createCollaborationReadiness({
+  fs: {
+    existsSync: () => true,
+    readFileSync: (filePath) => filePath.endsWith("config.json") ? JSON.stringify(injectedConfig) : "BETTER_AUTH_SECRET=test-secret"
+  },
+  os: { homedir: () => "C:/test-home" },
+  path: {
+    join: (...parts) => parts.join("/"),
+    dirname: (value) => value.slice(0, value.lastIndexOf("/"))
+  },
+  codexRoomSandbox: (value) => value,
+  codexRoomApprovalPolicy: (value) => value,
+  defaultAgyCommand: () => "agy-test",
+  loopbackSPSApiUrl: (value) => value,
+  environmentVariable: { PAPERCLIP_CONFIG_PATH: "C:/test-home/config.json" }
+});
+assert.equal(injectedRuntime.readCollaborationReadiness().state, "local_only");
+assert.equal(injectedRuntime.paperclipInstanceConfigPath(), "C:/test-home/config.json");
+const injectedRuntimeConfig = await injectedRuntime.getRuntimeConfig({ config: { get: async () => ({}) } });
+assert.equal(injectedRuntimeConfig.agyFallbackCommand, "agy-test");
 
 const localOnly = collaborationReadinessFromConfig({
   server: { deploymentMode: "local_trusted", exposure: "private", host: "127.0.0.1", bind: "loopback", port: 3100 },

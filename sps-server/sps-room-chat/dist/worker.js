@@ -487,8 +487,8 @@ function getErrorMap() {
 
 // ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path4, errorMaps, issueData } = params;
-  const fullPath = [...path4, ...issueData.path || []];
+  const { data, path: path5, errorMaps, issueData } = params;
+  const fullPath = [...path5, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -604,11 +604,11 @@ var errorUtil;
 
 // ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path4, key) {
+  constructor(parent, value, path5, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path4;
+    this._path = path5;
     this._key = key;
   }
   get path() {
@@ -9340,7 +9340,7 @@ var pluginManagedSkillDeclarationSchema = external_exports.object({
   files: external_exports.array(pluginManagedSkillFileDeclarationSchema).max(50).optional()
 }).superRefine((value, ctx) => {
   const paths = (value.files ?? []).map((file) => file.path);
-  const duplicates = paths.filter((path4, index) => paths.indexOf(path4) !== index);
+  const duplicates = paths.filter((path5, index) => paths.indexOf(path5) !== index);
   if (duplicates.length > 0) {
     ctx.addIssue({
       code: external_exports.ZodIssueCode.custom,
@@ -13347,6 +13347,252 @@ function terminalRoomJobPatchFromState(job, state) {
   };
 }
 
+// src/room-attachments.js
+import fs2 from "node:fs";
+import os from "node:os";
+import path3 from "node:path";
+var ROOM_ATTACHMENT_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1e3;
+var ROOM_RESPONSE_CONTRACT = [
+  "SYSTEM-PROVIDED ROOM RESPONSE CONTRACT:",
+  "- When the current request asks to show or preview an existing Workspace image, the final response must embed at least one relevant image with Markdown image syntax and a verified absolute local path.",
+  "- On Windows, use this form: `![description](<C:/absolute/path/to/image.png>)`. The Room UI converts verified Workspace paths into safe inline previews and clickable file links.",
+  "- Do not merely say that an image is shown. If no relevant image exists or its path cannot be verified, say that clearly instead of emitting a broken or invented path.",
+  "- Use ordinary Markdown links with verified absolute local paths for other Workspace files that the user should inspect."
+].join("\n");
+function textParam4(params, key, fallback = "") {
+  const value = params?.[key];
+  return value === void 0 || value === null ? fallback : String(value).trim();
+}
+function listParam(params, key) {
+  const value = params?.[key];
+  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+}
+function attachmentIdsParam(params) {
+  return [...new Set(listParam(params, "attachmentIds"))];
+}
+function repairUtf8Mojibake(value) {
+  const source = String(value ?? "");
+  const mojibake = /(?:Ã.|Â.|â..|ð...|ì[\u0080-\u00bf]|í[\u0080-\u00bf]|ë[\u0080-\u00bf]|ê[\u0080-\u00bf])/;
+  if (!source || /[^\u0000-\u00ff]/.test(source) || !mojibake.test(source)) return source;
+  let repaired = source;
+  for (let attempt = 0; attempt < 2 && mojibake.test(repaired); attempt += 1) {
+    try {
+      const candidate = Buffer.from(repaired, "latin1").toString("utf8");
+      if (!candidate || candidate.includes("\uFFFD") || candidate === repaired) break;
+      repaired = candidate;
+    } catch {
+      break;
+    }
+  }
+  return repaired;
+}
+function enforceUtf8Text(value, label = "Text") {
+  const text4 = repairUtf8Mojibake(value).replace(/\r\n/g, "\n");
+  if (text4.includes("\uFFFD")) {
+    throw new Error(`${label} contains an invalid UTF-8 replacement character and was not saved to avoid corrupted text.`);
+  }
+  return text4;
+}
+function enforceTaskContractText(value, label = "Task text") {
+  const text4 = enforceUtf8Text(value, label);
+  if (/\?{2,}/.test(text4)) {
+    throw new Error(`${label} contains a likely lossy encoding sequence (??) and was not saved.`);
+  }
+  return text4;
+}
+function roomAttachmentName(attachment) {
+  const filename = textParam4(attachment, "originalFilename") || textParam4(attachment, "filename");
+  return repairUtf8Mojibake(filename) || `attachment-${textParam4(attachment, "id", "file")}`;
+}
+function safeAttachmentFilename(filename) {
+  const basename = path3.basename(String(filename || "attachment"));
+  const cleaned = basename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().slice(0, 120);
+  return cleaned || "attachment";
+}
+function safeAttachmentPathSegment(value) {
+  return String(value || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "unknown";
+}
+function attachmentContentPath2(attachment) {
+  const contentPath = textParam4(attachment, "contentPath");
+  return contentPath || `/api/attachments/${encodeURIComponent(textParam4(attachment, "id"))}/content`;
+}
+function roomAttachmentContentUrl(apiUrl, attachment, loopbackSPSApiUrl2) {
+  return new URL(attachmentContentPath2(attachment), `${loopbackSPSApiUrl2(apiUrl)}/`).toString();
+}
+function isCodexImageAttachment(attachment) {
+  const contentType = textParam4(attachment, "contentType").toLowerCase();
+  if (/^image\/(png|jpe?g|webp|gif|avif|bmp)$/i.test(contentType)) return true;
+  return /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(roomAttachmentName(attachment));
+}
+function roomAttachmentCacheRoot() {
+  const paperclipHome = String(process.env.PAPERCLIP_HOME || "").trim();
+  return paperclipHome ? path3.join(paperclipHome, "room-attachments") : path3.join(os.homedir(), ".sps", "room-attachments");
+}
+function roomAttachmentWorkspaceRoot(workingDirectory) {
+  const requestedWorkspace = String(workingDirectory || "").trim();
+  if (!requestedWorkspace) {
+    throw new Error("A Room Workspace is required before attached files can be prepared for an Agent.");
+  }
+  const workspaceRoot = path3.resolve(requestedWorkspace);
+  const attachmentRoot = path3.resolve(workspaceRoot, ".sps", "room-attachments");
+  const relative = path3.relative(workspaceRoot, attachmentRoot);
+  if (!relative || relative === ".." || relative.startsWith(`..${path3.sep}`) || path3.isAbsolute(relative)) {
+    throw new Error("The Room attachment staging path must stay inside the selected Project Workspace.");
+  }
+  return attachmentRoot;
+}
+function workspaceGitExcludePath(workingDirectory) {
+  const dotGitPath = path3.join(workingDirectory, ".git");
+  if (!fs2.existsSync(dotGitPath)) return null;
+  const stats = fs2.statSync(dotGitPath);
+  if (stats.isDirectory()) return path3.join(dotGitPath, "info", "exclude");
+  if (!stats.isFile()) return null;
+  const match = fs2.readFileSync(dotGitPath, "utf8").match(/^gitdir:\s*(.+)\s*$/im);
+  return match ? path3.join(path3.resolve(workingDirectory, match[1]), "info", "exclude") : null;
+}
+function excludeWorkspaceRoomAttachments(workingDirectory) {
+  const excludePath = workspaceGitExcludePath(workingDirectory);
+  if (!excludePath) return null;
+  const rule = ".sps/room-attachments/";
+  const existing = fs2.existsSync(excludePath) ? fs2.readFileSync(excludePath, "utf8") : "";
+  if (existing.split(/\r?\n/).some((line) => line.trim().replace(/\\/g, "/") === rule)) return excludePath;
+  fs2.mkdirSync(path3.dirname(excludePath), { recursive: true });
+  fs2.appendFileSync(excludePath, `${existing && !existing.endsWith("\n") ? "\n" : ""}${rule}
+`, "utf8");
+  return excludePath;
+}
+function cleanupRoomAttachmentCache(root = roomAttachmentCacheRoot(), nowMs = Date.now()) {
+  if (!fs2.existsSync(root)) return [];
+  const removed = [];
+  for (const roomEntry of fs2.readdirSync(root, { withFileTypes: true })) {
+    if (!roomEntry.isDirectory()) continue;
+    const roomPath = path3.join(root, roomEntry.name);
+    for (const attachmentEntry of fs2.readdirSync(roomPath, { withFileTypes: true })) {
+      if (!attachmentEntry.isDirectory()) continue;
+      const attachmentPath = path3.join(roomPath, attachmentEntry.name);
+      const modifiedAt = fs2.statSync(attachmentPath).mtimeMs;
+      if (nowMs - modifiedAt <= ROOM_ATTACHMENT_CACHE_RETENTION_MS) continue;
+      fs2.rmSync(attachmentPath, { recursive: true, force: true });
+      removed.push(attachmentPath);
+    }
+    if (!fs2.readdirSync(roomPath).length) fs2.rmdirSync(roomPath);
+  }
+  return removed;
+}
+function attachmentSnapshot(attachment) {
+  return {
+    id: textParam4(attachment, "id"),
+    originalFilename: roomAttachmentName(attachment),
+    contentType: textParam4(attachment, "contentType") || "application/octet-stream",
+    byteSize: Number(attachment?.byteSize) || 0,
+    contentPath: attachmentContentPath2(attachment),
+    openPath: textParam4(attachment, "openPath") || null,
+    downloadPath: textParam4(attachment, "downloadPath") || null
+  };
+}
+async function listIssueAttachmentsDirect(apiUrl, issueId, { fetchImpl = globalThis.fetch, loopbackSPSApiUrl: loopbackSPSApiUrl2, spsDesktopAccessHeaders: spsDesktopAccessHeaders2 } = {}) {
+  const endpoint = `${loopbackSPSApiUrl2(apiUrl)}/api/issues/${encodeURIComponent(issueId)}/attachments`;
+  const response = await fetchImpl(endpoint, { headers: spsDesktopAccessHeaders2() });
+  if (!response.ok) throw new Error(`SPS attachment list failed (HTTP ${response.status}).`);
+  const result = await response.json();
+  return Array.isArray(result) ? result : Array.isArray(result?.attachments) ? result.attachments : [];
+}
+async function resolveRoomAttachments(apiUrl, issueId, attachmentIds, network) {
+  if (!attachmentIds.length) return [];
+  const available = await listIssueAttachmentsDirect(apiUrl, issueId, network);
+  const byId = new Map(available.map((attachment) => [textParam4(attachment, "id"), attachment]));
+  const missing = attachmentIds.filter((id) => !byId.has(id));
+  if (missing.length) throw new Error("One or more selected files are no longer attached to this Room.");
+  return attachmentIds.map((id) => attachmentSnapshot(byId.get(id)));
+}
+function mergeRoomAttachments(...groups) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const group of groups) {
+    for (const attachment of Array.isArray(group) ? group : []) {
+      const snapshot = attachmentSnapshot(attachment);
+      if (!snapshot.id || byId.has(snapshot.id)) continue;
+      byId.set(snapshot.id, snapshot);
+    }
+  }
+  return [...byId.values()];
+}
+async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDirectory, network) {
+  const workspaceRoot = path3.resolve(String(workingDirectory || "").trim());
+  const cacheRoot = roomAttachmentWorkspaceRoot(workspaceRoot);
+  excludeWorkspaceRoomAttachments(workspaceRoot);
+  cleanupRoomAttachmentCache(cacheRoot);
+  const roomDirectory = path3.join(cacheRoot, safeAttachmentPathSegment(roomIssueId));
+  const staged = [];
+  for (const attachment of attachments) {
+    const attachmentId = textParam4(attachment, "id");
+    if (!attachmentId) throw new Error("An attached file did not have a SPS attachment id.");
+    const directory = path3.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
+    const localPath = path3.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
+    const partialPath = `${localPath}.partial`;
+    const response = await network.fetchImpl(roomAttachmentContentUrl(apiUrl, attachment, network.loopbackSPSApiUrl), { headers: network.spsDesktopAccessHeaders() });
+    if (!response.ok) throw new Error(`Could not read attached file ${roomAttachmentName(attachment)} (HTTP ${response.status}).`);
+    fs2.mkdirSync(directory, { recursive: true });
+    fs2.writeFileSync(partialPath, Buffer.from(await response.arrayBuffer()));
+    fs2.rmSync(localPath, { force: true });
+    fs2.renameSync(partialPath, localPath);
+    fs2.utimesSync(directory, /* @__PURE__ */ new Date(), /* @__PURE__ */ new Date());
+    staged.push({ ...attachment, localPath, isImage: isCodexImageAttachment(attachment) });
+  }
+  return staged;
+}
+function roomAttachmentCommentBlock(attachments) {
+  if (!attachments.length) return "";
+  const rows = attachments.map((attachment) => {
+    const label = roomAttachmentName(attachment).replace(/([\[\]])/g, "\\$1");
+    return `- [${label}](${attachmentContentPath2(attachment)})`;
+  });
+  return `
+
+**Attached files**
+${rows.join("\n")}
+<!-- paperclip-room-attachments:${attachments.map((attachment) => attachment.id).join(",")} -->`;
+}
+function roomUserCommentBody(message, attachments, mode = "agent", retryOfCommentId = "") {
+  const text4 = enforceUtf8Text(message, "Room message").trim() || "Please inspect the attached files.";
+  const retryMarker = retryOfCommentId ? `
+<!-- paperclip-room-retry-of:${retryOfCommentId} -->` : "";
+  return `**User**
+${text4}${retryMarker}${roomAttachmentCommentBlock(attachments)}`;
+}
+function roomTurnText(message, stagedAttachments, retryOfCommentId = "") {
+  const text4 = enforceUtf8Text(message, "Room message").trim() || "Please inspect the attached files and respond to the user.";
+  const retryPreamble = retryOfCommentId ? `USER MESSAGE REVISION: This message replaces the earlier user message ${retryOfCommentId}. Treat this revision as the current request. Do not continue or answer the superseded version.
+
+` : "";
+  if (!stagedAttachments.length) return `${retryPreamble}${text4}
+
+${ROOM_RESPONSE_CONTRACT}`;
+  const fileContext = stagedAttachments.map((attachment) => {
+    const delivery = attachment.isImage ? "also supplied as an image input" : "available as a local file";
+    return `- ${roomAttachmentName(attachment)} (${attachment.contentType}, ${attachment.byteSize} bytes): ${attachment.localPath} (${delivery})`;
+  });
+  return `${retryPreamble}${text4}
+
+Attached Room files are durable SPS attachments. Inspect only the files relevant to the request and do not execute untrusted binaries.
+${fileContext.join("\n")}
+
+${ROOM_RESPONSE_CONTRACT}`;
+}
+function isRoomUserComment(comment) {
+  return /^\*\*User\*\*/i.test(String(comment?.body || "").trim());
+}
+async function validateRoomRetrySource(ctx, companyId, issueId, retryOfCommentId) {
+  const sourceCommentId = String(retryOfCommentId || "").trim();
+  if (!sourceCommentId) return "";
+  if (!ctx.issues.listComments) throw new Error("Room message retry is unavailable because Room comments could not be read.");
+  const comments = await ctx.issues.listComments(issueId, companyId);
+  const sourceComment = comments.find((comment) => comment.id === sourceCommentId);
+  if (!sourceComment || !isRoomUserComment(sourceComment)) {
+    throw new Error("The selected message is not a user message in this Room.");
+  }
+  return sourceCommentId;
+}
+
 // src/organization-legacy-compatibility.js
 var LEGACY_LEAD_ROLE_IDS = /* @__PURE__ */ new Set(["manager", "ceo", "designer", "cto"]);
 var LEGACY_WORKER_ROLE_IDS = /* @__PURE__ */ new Set([
@@ -13662,12 +13908,446 @@ function resolveOrganizationTemplate(templateId, agents) {
   };
 }
 
+// src/collaboration-readiness.js
+function asRecord6(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function textParam5(params, key, fallback = "") {
+  const value = asRecord6(params)[key];
+  return value === void 0 || value === null ? fallback : String(value).trim();
+}
+function createCollaborationReadiness({
+  fs: fs4,
+  os: os3,
+  path: path5,
+  codexRoomSandbox: codexRoomSandbox2,
+  codexRoomApprovalPolicy: codexRoomApprovalPolicy2,
+  defaultAgyCommand: defaultAgyCommand2,
+  loopbackSPSApiUrl: loopbackSPSApiUrl2,
+  environmentVariable = process.env
+}) {
+  if (!fs4 || !os3 || !path5 || typeof codexRoomSandbox2 !== "function" || typeof codexRoomApprovalPolicy2 !== "function" || typeof defaultAgyCommand2 !== "function" || typeof loopbackSPSApiUrl2 !== "function") {
+    throw new TypeError("createCollaborationReadiness requires explicit runtime dependencies.");
+  }
+  function getRuntimeConfigFromContext(ctx) {
+    return Promise.resolve(ctx.config.get()).then((rawConfig) => {
+      const config = asRecord6(rawConfig);
+      return {
+        enabled: config.enableCodexRooms !== false,
+        enableCodexRooms: config.enableCodexRooms !== false,
+        enableAgyRooms: config.enableAgyRooms !== false,
+        command: textParam5(config, "codexCommand", "codex"),
+        model: textParam5(config, "codexModel", "") || null,
+        codexHome: textParam5(config, "codexHome", "") || null,
+        codexSandbox: codexRoomSandbox2(textParam5(config, "codexRoomSandbox", "danger-full-access")),
+        codexApprovalPolicy: codexRoomApprovalPolicy2(textParam5(config, "codexRoomApprovalPolicy", "never")),
+        enableAgyQuotaFallback: config.enableAgyQuotaFallback === true,
+        agyFallbackCommand: textParam5(config, "agyFallbackCommand", defaultAgyCommand2()),
+        agyFallbackModel: textParam5(config, "agyFallbackModel", "gemini-3.1-pro-high"),
+        agyFallbackPrintTimeout: textParam5(config, "agyFallbackPrintTimeout", "2h"),
+        agyFallbackTimeoutMs: Math.max(0, Number(config.agyFallbackTimeoutSec) || 0) * 1e3,
+        enableTaskAssignment: config.enableTaskAssignment !== false,
+        spsApiUrl: loopbackSPSApiUrl2(
+          environmentVariable.SPS_ROOM_API_URL || textParam5(config, "spsApiUrl", textParam5(config, "paperclipApiUrl", "http://127.0.0.1:3100"))
+        )
+      };
+    });
+  }
+  function isLoopbackHost2(host) {
+    return (/* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"])).has(String(host || "").trim().toLowerCase());
+  }
+  function instanceConfigPath() {
+    const configured = String(environmentVariable.PAPERCLIP_CONFIG_PATH || "").trim();
+    return configured || path5.join(os3.homedir(), ".sps", "instances", "default", "config.json");
+  }
+  function environmentHasAuthenticationSecret(environmentPath) {
+    try {
+      const lines = fs4.readFileSync(environmentPath, "utf8").split(/\r?\n/);
+      return lines.some((line) => {
+        const match = /^\s*(BETTER_AUTH_SECRET|PAPERCLIP_AGENT_JWT_SECRET)\s*=\s*(.*)$/.exec(line);
+        if (!match) return false;
+        return match[2].trim().replace(/^['\"]|['\"]$/g, "").length > 0;
+      });
+    } catch {
+      return false;
+    }
+  }
+  function collaborationReadinessFromConfig2(config, { hasAuthenticationSecret = false } = {}) {
+    const server = asRecord6(asRecord6(config).server);
+    const auth = asRecord6(asRecord6(config).auth);
+    const deploymentMode = textParam5(server, "deploymentMode", "local_trusted");
+    const exposure = textParam5(server, "exposure", "private");
+    const listenHost = textParam5(server, "host", "127.0.0.1");
+    const inferredBind = isLoopbackHost2(listenHost) ? "loopback" : (/* @__PURE__ */ new Set(["0.0.0.0", "::"])).has(listenHost) ? "lan" : "custom";
+    const bind = textParam5(server, "bind", inferredBind);
+    const port = Number(server.port) || 3100;
+    const allowedHostnames = Array.isArray(server.allowedHostnames) ? server.allowedHostnames.map((value) => String(value || "").trim()).filter(Boolean) : [];
+    const checks = [];
+    const warnings = [];
+    const localOnlySafeDefault = deploymentMode === "local_trusted" && bind === "loopback";
+    if (localOnlySafeDefault) {
+      checks.push({ label: "\uC811\uC18D \uBC29\uC2DD", status: "pass", message: "\uB85C\uCEEC \uC804\uC6A9 \uBAA8\uB4DC\uAC00 \uC774 \uCEF4\uD4E8\uD130\uC5D0 \uC548\uC804\uD558\uAC8C \uBB36\uC5EC \uC788\uC2B5\uB2C8\uB2E4." });
+    } else if (deploymentMode === "authenticated") {
+      checks.push({
+        label: "\uC778\uC99D \uBE44\uBC00\uAC12",
+        status: hasAuthenticationSecret ? "pass" : "fail",
+        message: hasAuthenticationSecret ? "\uC778\uC99D \uBE44\uBC00\uAC12\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." : "\uC778\uC99D \uC811\uC18D\uC5D0\uB294 SPS .env \uD30C\uC77C\uC758 BETTER_AUTH_SECRET \uB610\uB294 PAPERCLIP_AGENT_JWT_SECRET\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4."
+      });
+    } else {
+      checks.push({ label: "\uC811\uC18D \uBC29\uC2DD", status: "fail", message: "\uB85C\uCEEC \uBC16\uC5D0\uC11C \uC811\uC18D\uD558\uB824\uBA74 \uC778\uC99D \uBAA8\uB4DC\uB97C \uC0AC\uC6A9\uD574\uC57C \uD569\uB2C8\uB2E4." });
+    }
+    if (deploymentMode === "authenticated" && exposure === "private") {
+      if (bind === "tailnet") {
+        checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "pass", message: "Tailnet \uBE44\uACF5\uAC1C \uD611\uC5C5\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." });
+      } else if (bind === "lan") {
+        checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "warn", message: "\uC778\uC99D\uB41C LAN \uC811\uC18D\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4. \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 LAN \uBC16\uC758 \uD611\uC5C5\uC790\uB294 Tailnet\uC744 \uAD8C\uC7A5\uD569\uB2C8\uB2E4." });
+      } else {
+        checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "fail", message: "\uBE44\uACF5\uAC1C \uD611\uC5C5\uC5D0\uB294 Tailnet \uB610\uB294 \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 LAN \uC5F0\uACB0\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
+      }
+      checks.push({
+        label: "\uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uD638\uC2A4\uD2B8 \uC774\uB984",
+        status: allowedHostnames.length > 0 ? "pass" : "fail",
+        message: allowedHostnames.length > 0 ? `\uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uBE44\uACF5\uAC1C \uD638\uC2A4\uD2B8 \uC774\uB984 ${allowedHostnames.length}\uAC1C\uAC00 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4.` : "\uD611\uC5C5\uC790\uB97C \uCD08\uB300\uD558\uAE30 \uC804\uC5D0 Tailnet DNS \uC774\uB984 \uB610\uB294 \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uBE44\uACF5\uAC1C \uD638\uC2A4\uD2B8 \uC774\uB984\uC744 \uCD94\uAC00\uD558\uC138\uC694."
+      });
+    }
+    if (deploymentMode === "authenticated" && exposure === "public") {
+      const publicBaseUrl = textParam5(auth, "publicBaseUrl");
+      const hasHttpsBaseUrl = textParam5(auth, "baseUrlMode") === "explicit" && publicBaseUrl.startsWith("https://");
+      checks.push({
+        label: "\uACF5\uAC1C URL",
+        status: hasHttpsBaseUrl ? "pass" : "fail",
+        message: hasHttpsBaseUrl ? "\uACF5\uAC1C HTTPS URL\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." : "\uACF5\uAC1C \uC811\uC18D\uC5D0\uB294 \uBA85\uC2DC\uC801\uC778 HTTPS auth.publicBaseUrl\uC774 \uD544\uC694\uD569\uB2C8\uB2E4."
+      });
+    }
+    const hasFailures = checks.some((check) => check.status === "fail");
+    const collaborationReady = deploymentMode === "authenticated" && bind !== "loopback" && !hasFailures;
+    const state = localOnlySafeDefault ? "local_only" : collaborationReady ? "collaboration_ready" : "configuration_incomplete";
+    const recommendation = state === "local_only" ? "\uAC1C\uC778 \uC791\uC5C5 \uC900\uBE44\uAC00 \uC644\uB8CC\uB410\uC2B5\uB2C8\uB2E4. \uCE5C\uAD6C\uB97C \uCD08\uB300\uD560 \uB54C\uB294 \uC774 \uCEF4\uD4E8\uD130\uB97C \uC9C1\uC811 \uB178\uCD9C\uD558\uC9C0 \uB9D0\uACE0 \uC778\uC99D\uB41C \uBE44\uACF5\uAC1C Tailnet \uC811\uC18D\uC744 \uC124\uC815\uD558\uC138\uC694." : state === "collaboration_ready" ? "\uD611\uC5C5\uC790\uB97C Operator\uB85C \uCD08\uB300\uD55C \uB4A4, \uB450 \uC0AC\uB78C\uC774 \uD568\uAED8 \uBE0C\uB77C\uC6B0\uC800 \uC811\uC18D \uD655\uC778\uC744 \uB9C8\uCE58\uC138\uC694." : "\uC2E4\uD328\uD55C \uD56D\uBAA9\uC744 \uACE0\uCE5C \uB4A4 Workplane\uC744 \uB2E4\uC2DC \uC2DC\uC791\uD558\uACE0, \uD611\uC5C5\uC790\uB97C \uCD08\uB300\uD558\uAE30 \uC804\uC5D0 \uC774 \uD655\uC778\uC744 \uB2E4\uC2DC \uC2E4\uD589\uD558\uC138\uC694.";
+    return {
+      state,
+      localOnlySafeDefault,
+      collaborationReady,
+      server: { deploymentMode, exposure, bind, listenHost, port, allowedHostnameCount: allowedHostnames.length },
+      checks,
+      warnings,
+      recommendation
+    };
+  }
+  function readCollaborationReadiness2() {
+    try {
+      const configPath = instanceConfigPath();
+      if (!fs4.existsSync(configPath)) {
+        return {
+          state: "configuration_unavailable",
+          localOnlySafeDefault: false,
+          collaborationReady: false,
+          server: null,
+          checks: [{ label: "SPS configuration", status: "fail", message: "The local SPS configuration file was not found." }],
+          warnings: [],
+          recommendation: "Start the Workplane once to create its local configuration, then check this page again."
+        };
+      }
+      const config = JSON.parse(fs4.readFileSync(configPath, "utf8"));
+      const environmentPath = path5.join(path5.dirname(configPath), ".env");
+      return collaborationReadinessFromConfig2(config, { hasAuthenticationSecret: environmentHasAuthenticationSecret(environmentPath) });
+    } catch {
+      return {
+        state: "configuration_unavailable",
+        localOnlySafeDefault: false,
+        collaborationReady: false,
+        server: null,
+        checks: [{ label: "SPS configuration", status: "fail", message: "The local SPS configuration could not be read." }],
+        warnings: [],
+        recommendation: "Fix the local SPS configuration, restart the Workplane, then check this page again."
+      };
+    }
+  }
+  return Object.freeze({
+    getRuntimeConfig: getRuntimeConfigFromContext,
+    collaborationReadinessFromConfig: collaborationReadinessFromConfig2,
+    readCollaborationReadiness: readCollaborationReadiness2,
+    isLoopbackHost: isLoopbackHost2,
+    paperclipInstanceConfigPath: instanceConfigPath,
+    environmentHasAuthenticationSecret
+  });
+}
+
+// src/room-memory-runtime.js
+function createRoomMemoryRuntime(deps) {
+  const {
+    asRecord: asRecord8,
+    textParam: textParam7,
+    listParam: listParam3,
+    parseState: parseState2,
+    serializeState: serializeState2,
+    now: now2,
+    isAgentRoom: isAgentRoom2,
+    getRoomDocumentDirect: getRoomDocumentDirect2,
+    putRoomDocument: putRoomDocument2,
+    upsertRoomDocument: upsertRoomDocument2,
+    loopbackSPSApiUrl: loopbackSPSApiUrl2,
+    spsDesktopAccessHeaders: spsDesktopAccessHeaders2,
+    roomCheckpointKey,
+    roomNativeCompactionsKey,
+    lifecycleReconcileKey,
+    memoryScopes,
+    localMemorySidecarConfigUrl,
+    readFileSync,
+    activeThreadContexts: activeThreadContexts2,
+    manualCodexCompactionThreads: manualCodexCompactionThreads2,
+    recordedNativeCompactionEvents: recordedNativeCompactionEvents2,
+    nativeCompactionLocks: nativeCompactionLocks2
+  } = deps;
+  function roomMemoryRuntime2() {
+    let config;
+    try {
+      config = JSON.parse(readFileSync(localMemorySidecarConfigUrl, "utf8"));
+    } catch {
+      throw new Error("The local Memory Sidecar companion configuration is unavailable.");
+    }
+    const host = String(config?.server?.host || "127.0.0.1").trim();
+    const port = Number(config?.server?.port || 3188);
+    const baseUrl = new URL(`http://${host}:${port}`);
+    if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(baseUrl.hostname)) {
+      throw new Error("The local Memory Sidecar must use a loopback address.");
+    }
+    return {
+      baseUrl,
+      token: String(process.env.MEMORY_SIDECAR_TOKEN || config?.security?.token || "").trim()
+    };
+  }
+  async function fetchRoomMemory2(pathname, options = {}) {
+    const runtime = roomMemoryRuntime2();
+    const url = new URL(pathname, runtime.baseUrl);
+    for (const [key, value] of Object.entries(asRecord8(options.searchParams))) {
+      if (value !== void 0 && value !== null && String(value).trim() !== "") url.searchParams.set(key, String(value));
+    }
+    const headers = { accept: "application/json", ...asRecord8(options.headers) };
+    if (runtime.token) headers["x-sidecar-token"] = runtime.token;
+    const response = await fetch(url, { method: options.method ?? "GET", headers, body: options.body });
+    const body = await response.text();
+    let data = null;
+    try {
+      data = body ? JSON.parse(body) : null;
+    } catch {
+      throw new Error("The Memory Sidecar returned an invalid response.");
+    }
+    if (!response.ok) throw new Error(`Memory Sidecar request failed (HTTP ${response.status}).`);
+    return data;
+  }
+  async function searchRoomMemory2(roomContext, query, requestedScopes, limit) {
+    const scopes = requestedScopes.length ? requestedScopes : ["company", "project", "agent"];
+    const selectedScopes = [...new Set(scopes.filter((scope) => memoryScopes.has(scope)))];
+    if (!selectedScopes.length) throw new Error("Choose one or more of company, project, or agent memory scopes.");
+    const itemsById = /* @__PURE__ */ new Map();
+    for (const scope of selectedScopes) {
+      if (scope === "project" && !roomContext.projectId) continue;
+      const searchParams = { q: query, scope, companyId: roomContext.companyId, limit };
+      if (scope === "project") searchParams.projectId = roomContext.projectId;
+      if (scope === "agent") searchParams.agentId = roomContext.agentId;
+      const result = await fetchRoomMemory2("/memory/search", { searchParams });
+      for (const item of Array.isArray(result?.items) ? result.items : []) itemsById.set(item.id, item);
+    }
+    return [...itemsById.values()].sort((left, right) => Number(right.score || 0) - Number(left.score || 0)).slice(0, limit);
+  }
+  async function proposeRoomMemory2(roomContext, input) {
+    const content = textParam7(input, "content");
+    const scope = textParam7(input, "scope", "project") || "project";
+    if (!content || content.length > 4e3) throw new Error("Memory candidate content must be between 1 and 4000 characters.");
+    if (!(/* @__PURE__ */ new Set(["company", "project", "agent", "task", "artifact", "user"])).has(scope)) throw new Error("Invalid memory candidate scope.");
+    const candidate = await fetchRoomMemory2("/memory/candidates", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        content,
+        scope,
+        type: textParam7(input, "type", "learning") || "learning",
+        tags: listParam3(input, "tags").slice(0, 12),
+        companyId: roomContext.companyId,
+        projectId: roomContext.projectId ?? null,
+        agentId: roomContext.agentId,
+        issueId: roomContext.issueId,
+        source: { kind: "room_chat", roomIssueId: roomContext.issueId, agentName: roomContext.agentName }
+      })
+    });
+    return candidate?.candidate ?? null;
+  }
+  async function reconcileRoomMemoryLifecycle2(ctx) {
+    const summary = { companies: 0, rooms: 0, checkpointsPublished: 0, compactionsPublished: 0, failed: 0 };
+    if (!ctx.memory?.publishLifecycle) return summary;
+    const companies = await ctx.companies.list({ limit: 200 });
+    for (const company of companies) {
+      if (!company?.id) continue;
+      summary.companies += 1;
+      const projects = await ctx.projects.list({ companyId: company.id, limit: 200 });
+      for (const project of projects) {
+        const issues = await ctx.issues.list({ companyId: company.id, projectId: project.id, limit: 500 });
+        for (const room of issues) {
+          if (!isAgentRoom2(room)) continue;
+          summary.rooms += 1;
+          try {
+            const document = await ctx.issues.documents.get(room.id, roomCheckpointKey, company.id);
+            const checkpoints = parseState2(document?.body);
+            const latest = Array.isArray(checkpoints) ? checkpoints.at(-1) : null;
+            const version = Number(latest?.version);
+            if (!Number.isInteger(version) || version < 1) continue;
+            const markerScope = { scopeKind: "issue", scopeId: room.id, stateKey: lifecycleReconcileKey };
+            const marker = await ctx.state.get(markerScope);
+            const deliveredVersion = Number(asRecord8(marker)?.checkpointVersion ?? 0);
+            if (deliveredVersion >= version) continue;
+            await publishRoomMemoryLifecycle2(ctx, company.id, room.id, "room.checkpoint", latest);
+            summary.checkpointsPublished += 1;
+            if (typeof latest.compactedAt === "string" && latest.compactedAt) {
+              await publishRoomMemoryLifecycle2(ctx, company.id, room.id, "room.compacted", latest);
+              summary.compactionsPublished += 1;
+            }
+            await ctx.state.set(markerScope, { checkpointVersion: version, reconciledAt: now2() });
+          } catch (error) {
+            summary.failed += 1;
+            ctx.logger?.warn?.("Room memory lifecycle reconciliation failed.", {
+              issueId: room.id,
+              message: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+      }
+    }
+    return summary;
+  }
+  async function appendCheckpointOutsideInvocation2(apiUrl, issueId, checkpoint) {
+    const document = await getRoomDocumentDirect2(apiUrl, issueId, roomCheckpointKey);
+    let checkpoints = parseState2(document?.body);
+    if (!Array.isArray(checkpoints)) checkpoints = [];
+    checkpoints.push(checkpoint);
+    return putRoomDocument2(apiUrl, {
+      issueId,
+      key: roomCheckpointKey,
+      body: serializeState2(checkpoints),
+      title: "Room checkpoints",
+      format: "markdown",
+      baseRevisionId: document?.latestRevisionId ?? null,
+      changeSummary: "Append Room compact checkpoint"
+    });
+  }
+  function nativeCompactionEventId2(message) {
+    const params = asRecord8(message?.params);
+    const threadId = textParam7(params, "threadId");
+    const turnId = textParam7(params, "turnId");
+    return threadId && turnId ? `${threadId}:${turnId}` : "";
+  }
+  async function appendNativeCompactionOutsideInvocation2(apiUrl, issueId, event) {
+    const document = await getRoomDocumentDirect2(apiUrl, issueId, roomNativeCompactionsKey);
+    let events = parseState2(document?.body);
+    if (!Array.isArray(events)) events = [];
+    if (events.some((entry) => entry?.id === event.id)) return events;
+    events.push(event);
+    await putRoomDocument2(apiUrl, {
+      issueId,
+      key: roomNativeCompactionsKey,
+      body: serializeState2(events.slice(-100)),
+      title: "Native Codex compactions",
+      format: "markdown",
+      baseRevisionId: document?.latestRevisionId ?? null,
+      changeSummary: "Record native Codex context compaction"
+    });
+    return events;
+  }
+  async function recordNativeCodexCompaction2(ctx, message) {
+    const itemCompaction = message?.method === "item/completed" && message?.params?.item?.type === "contextCompaction";
+    const threadCompaction = message?.method === "thread/compacted";
+    if (!itemCompaction && !threadCompaction) return false;
+    const eventId = nativeCompactionEventId2(message);
+    const threadId = textParam7(asRecord8(message?.params), "threadId");
+    const context = activeThreadContexts2.get(threadId);
+    if (!eventId || !context || manualCodexCompactionThreads2.has(threadId) || recordedNativeCompactionEvents2.has(eventId)) return false;
+    recordedNativeCompactionEvents2.add(eventId);
+    const run = async () => {
+      try {
+        await appendNativeCompactionOutsideInvocation2(context.spsApiUrl, context.issueId, {
+          id: eventId,
+          kind: "codex_native_auto",
+          threadId,
+          turnId: textParam7(asRecord8(message?.params), "turnId"),
+          occurredAt: now2(),
+          note: "Codex compacted its internal context automatically. SPS conversation and checkpoints remain the durable Room record."
+        });
+        return true;
+      } catch (error) {
+        recordedNativeCompactionEvents2.delete(eventId);
+        ctx.logger?.warn?.("Could not record native Codex compaction.", {
+          issueId: context.issueId,
+          threadId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        return false;
+      }
+    };
+    const previous = nativeCompactionLocks2.get(context.issueId) ?? Promise.resolve();
+    const next = previous.catch(() => {
+    }).then(run);
+    nativeCompactionLocks2.set(context.issueId, next);
+    try {
+      return await next;
+    } finally {
+      if (nativeCompactionLocks2.get(context.issueId) === next) nativeCompactionLocks2.delete(context.issueId);
+    }
+  }
+  async function appendCheckpoint2(ctx, companyId, issueId, checkpoint) {
+    const document = await ctx.issues.documents.get(issueId, roomCheckpointKey, companyId);
+    let checkpoints = parseState2(document?.body);
+    if (!Array.isArray(checkpoints)) checkpoints = [];
+    checkpoints.push(checkpoint);
+    await upsertRoomDocument2(ctx, {
+      issueId,
+      key: roomCheckpointKey,
+      body: serializeState2(checkpoints),
+      companyId,
+      title: "Room checkpoints",
+      format: "markdown",
+      changeSummary: "Append Room compact checkpoint"
+    });
+    await publishRoomMemoryLifecycle2(ctx, companyId, issueId, "room.checkpoint", checkpoint);
+  }
+  async function publishRoomMemoryLifecycle2(ctx, companyId, issueId, eventType, checkpoint) {
+    if (!ctx.memory?.publishLifecycle) return;
+    try {
+      await ctx.memory.publishLifecycle({
+        eventType,
+        companyId,
+        entityType: "room",
+        entityId: issueId,
+        roomId: issueId,
+        idempotencyKey: `room:${issueId}:${eventType}:${checkpoint.version}`
+      });
+    } catch (error) {
+      ctx.logger?.warn?.("Room memory lifecycle publication failed.", {
+        issueId,
+        eventType,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  return {
+    roomMemoryRuntime: roomMemoryRuntime2,
+    fetchRoomMemory: fetchRoomMemory2,
+    searchRoomMemory: searchRoomMemory2,
+    proposeRoomMemory: proposeRoomMemory2,
+    reconcileRoomMemoryLifecycle: reconcileRoomMemoryLifecycle2,
+    appendCheckpointOutsideInvocation: appendCheckpointOutsideInvocation2,
+    nativeCompactionEventId: nativeCompactionEventId2,
+    appendNativeCompactionOutsideInvocation: appendNativeCompactionOutsideInvocation2,
+    recordNativeCodexCompaction: recordNativeCodexCompaction2,
+    appendCheckpoint: appendCheckpoint2,
+    publishRoomMemoryLifecycle: publishRoomMemoryLifecycle2
+  };
+}
+
 // src/worker.js
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID as randomUUID2 } from "node:crypto";
-import fs2 from "node:fs";
-import os from "node:os";
-import path3 from "node:path";
+import fs3 from "node:fs";
+import os2 from "node:os";
+import path4 from "node:path";
 var SPS_DESKTOP_ACCESS_HEADER = "X-SPS-Desktop-Access";
 var desktopOwnerHostToken = String(process.env.SPS_DESKTOP_ACCESS_TOKEN || "").trim();
 var desktopOwnerHostOrigin = (() => {
@@ -13697,7 +14377,6 @@ if (desktopOwnerHostOrigin) {
 var ROOM_STATE_KEY = "ROOM_STATE";
 var ROOM_WORK_STATE_KEY = "ROOM_WORK_STATE";
 var ROOM_CHECKPOINTS_KEY = "ROOM_CHECKPOINTS";
-var ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY = "room-memory-lifecycle-reconcile-v1";
 var ROOM_NATIVE_COMPACTIONS_KEY = "ROOM_NATIVE_COMPACTIONS";
 var TASK_ROOM_STATE_KEY = "TASK_ROOM_STATE";
 var ROOM_PREFIX = "[Agent Room] ";
@@ -13708,12 +14387,9 @@ var WORKSPACE_PROFILE_ENTITY_TYPE = "workspace_profile";
 var WORKSPACE_PROFILE_EXTERNAL_ID = "workplane-workspace-profile-v1";
 var TASK_TYPE_KEY_PATTERN2 = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 var ACTIVE_ROOM_JOB_STATUSES = /* @__PURE__ */ new Set(["queued", "starting", "working"]);
-var ROOM_ATTACHMENT_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1e3;
 var ROOM_CONTEXT_RECOVERY_COMMENT_LIMIT = 120;
 var ROOM_CONTEXT_RECOVERY_CHAR_LIMIT = 6e4;
 var ROOM_CONTEXT_RECOVERY_ENTRY_LIMIT = 5e3;
-var LOCAL_MEMORY_SIDECAR_CONFIG_URL = new URL("../../memory-sidecar/config.local.json", import.meta.url);
-var ROOM_MEMORY_SCOPES = /* @__PURE__ */ new Set(["company", "project", "agent"]);
 var ROOM_READY_STATUS = "todo";
 var TERMINAL_STATUSES = /* @__PURE__ */ new Set(["done", "blocked", "cancelled"]);
 var ACTIVE_TASK_STATUSES = /* @__PURE__ */ new Set(["backlog", "todo", "pending", "queued", "running", "in_progress", "in_review"]);
@@ -13759,34 +14435,70 @@ var pluginCtx = null;
 var codexClients = /* @__PURE__ */ new Map();
 var testCodexClient = null;
 var testAgyClientFactory = null;
-function asRecord6(value) {
+function asRecord7(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
-function textParam4(params, key, fallback = "") {
-  const value = asRecord6(params)[key];
+function textParam6(params, key, fallback = "") {
+  const value = asRecord7(params)[key];
   return value === void 0 || value === null ? fallback : String(value).trim();
 }
 function rawTextParam(params, key, fallback = "") {
-  const value = asRecord6(params)[key];
+  const value = asRecord7(params)[key];
   return value === void 0 || value === null ? fallback : String(value);
 }
-function listParam(params, key) {
-  const value = asRecord6(params)[key];
+function listParam2(params, key) {
+  const value = asRecord7(params)[key];
   return Array.isArray(value) ? value.map((entry) => String(entry).trim()).filter(Boolean) : [];
 }
+var {
+  roomMemoryRuntime,
+  fetchRoomMemory,
+  searchRoomMemory,
+  proposeRoomMemory,
+  reconcileRoomMemoryLifecycle,
+  appendCheckpointOutsideInvocation,
+  nativeCompactionEventId,
+  appendNativeCompactionOutsideInvocation,
+  recordNativeCodexCompaction,
+  appendCheckpoint,
+  publishRoomMemoryLifecycle
+} = createRoomMemoryRuntime({
+  asRecord: asRecord7,
+  textParam: textParam6,
+  listParam: listParam2,
+  parseState,
+  serializeState,
+  now,
+  isAgentRoom,
+  getRoomDocumentDirect,
+  putRoomDocument,
+  upsertRoomDocument,
+  loopbackSPSApiUrl,
+  spsDesktopAccessHeaders,
+  roomCheckpointKey: ROOM_CHECKPOINTS_KEY,
+  roomNativeCompactionsKey: ROOM_NATIVE_COMPACTIONS_KEY,
+  lifecycleReconcileKey: "room-memory-lifecycle-reconcile-v1",
+  memoryScopes: /* @__PURE__ */ new Set(["company", "project", "agent"]),
+  localMemorySidecarConfigUrl: new URL("../../memory-sidecar/config.local.json", import.meta.url),
+  readFileSync: fs3.readFileSync,
+  activeThreadContexts,
+  manualCodexCompactionThreads,
+  recordedNativeCompactionEvents,
+  nativeCompactionLocks
+});
 function normalizedTaskTypeKey2(value, fallback = "") {
   const key = String(value || "").trim().toLowerCase();
   return TASK_TYPE_KEY_PATTERN2.test(key) ? key : fallback;
 }
 function configuredEnvironmentValue(agent, name) {
-  const value = asRecord6(asRecord6(agent?.adapterConfig).env)[name];
+  const value = asRecord7(asRecord7(agent?.adapterConfig).env)[name];
   if (typeof value === "string") return value.trim();
-  return textParam4(asRecord6(value), "value");
+  return textParam6(asRecord7(value), "value");
 }
 function configuredEnvironment(agent) {
   const env = {};
-  for (const [key, raw] of Object.entries(asRecord6(asRecord6(agent?.adapterConfig).env))) {
-    const value = typeof raw === "string" ? raw.trim() : textParam4(asRecord6(raw), "value");
+  for (const [key, raw] of Object.entries(asRecord7(asRecord7(agent?.adapterConfig).env))) {
+    const value = typeof raw === "string" ? raw.trim() : textParam6(asRecord7(raw), "value");
     if (value) env[key] = value;
   }
   return env;
@@ -13795,7 +14507,7 @@ function normalizeCodexHome(value) {
   const source = String(value || "").trim();
   if (!source) return "";
   try {
-    return path3.resolve(source).replace(/[\\/]+$/, "").toLowerCase();
+    return path4.resolve(source).replace(/[\\/]+$/, "").toLowerCase();
   } catch {
     return source.replace(/[\\/]+$/, "").toLowerCase();
   }
@@ -13807,28 +14519,28 @@ function codexAccountLabel(directoryName) {
   if (!suffix) return "Codex account";
   return `${suffix.replace(/\b\w/g, (character) => character.toUpperCase())} Codex account`;
 }
-function localCodexAccounts(homeDirectory = os.homedir()) {
-  const root = path3.resolve(homeDirectory);
+function localCodexAccounts(homeDirectory = os2.homedir()) {
+  const root = path4.resolve(homeDirectory);
   let entries = [];
   try {
-    entries = fs2.readdirSync(root, { withFileTypes: true });
+    entries = fs3.readdirSync(root, { withFileTypes: true });
   } catch {
     return [];
   }
   return entries.filter((entry) => entry.isDirectory() && (entry.name === ".codex" || entry.name.startsWith(".codex-"))).map((entry) => {
-    const accountHome = path3.join(root, entry.name);
+    const accountHome = path4.join(root, entry.name);
     return {
       id: `codex-home:${entry.name}`,
       label: codexAccountLabel(entry.name),
       directoryName: entry.name,
       home: accountHome,
-      hasAuth: fs2.existsSync(path3.join(accountHome, "auth.json"))
+      hasAuth: fs3.existsSync(path4.join(accountHome, "auth.json"))
     };
   }).filter((account) => account.hasAuth).sort((left, right) => left.directoryName === ".codex" ? -1 : right.directoryName === ".codex" ? 1 : left.label.localeCompare(right.label));
 }
 function applyCodexAccountToAdapterConfig(agent, account) {
-  const adapterConfig = asRecord6(agent?.adapterConfig);
-  const existingEnv = asRecord6(adapterConfig.env);
+  const adapterConfig = asRecord7(agent?.adapterConfig);
+  const existingEnv = asRecord7(adapterConfig.env);
   return {
     ...adapterConfig,
     codexAccount: account.directoryName,
@@ -13892,7 +14604,7 @@ function roomRuntimeWithRoomSafety(agent, runtime) {
   return { ...runtime, sandbox: "read-only", approvalPolicy: "never" };
 }
 function isRoomCliRuntimeAgent(agent) {
-  const adapterType = textParam4(agent, "adapterType");
+  const adapterType = textParam6(agent, "adapterType");
   return adapterType === "codex_local" || adapterType === "antigravity_local";
 }
 function effectiveRoomMessageMode(agent, requestedMode = "agent") {
@@ -13901,8 +14613,8 @@ function effectiveRoomMessageMode(agent, requestedMode = "agent") {
 function workerRoomSandboxDirectory(companyId, issue, agent) {
   const source = [companyId, issue?.projectId, issue?.id, agent?.id].map((value) => String(value || "")).join("\0");
   const key = createHash("sha256").update(source).digest("hex").slice(0, 32);
-  const directory = path3.join(os.homedir(), ".sps", "workplane-room-sandboxes", key);
-  fs2.mkdirSync(directory, { recursive: true });
+  const directory = path4.join(os2.homedir(), ".sps", "workplane-room-sandboxes", key);
+  fs3.mkdirSync(directory, { recursive: true });
   return directory;
 }
 function roomModeAllowsTool(mode, toolName) {
@@ -13918,13 +14630,13 @@ function roomModeAllowsTool(mode, toolName) {
   ])).has(toolName);
 }
 function agentRoomRuntime(runtime, agent) {
-  const adapterConfig = asRecord6(agent?.adapterConfig);
-  if (textParam4(agent, "adapterType") === "antigravity_local") {
+  const adapterConfig = asRecord7(agent?.adapterConfig);
+  if (textParam6(agent, "adapterType") === "antigravity_local") {
     return {
       kind: "agy_print",
       enabled: runtime.enableAgyRooms,
-      command: textParam4(adapterConfig, "command", "agy"),
-      model: textParam4(adapterConfig, "model", "auto") || "auto",
+      command: textParam6(adapterConfig, "command", "agy"),
+      model: textParam6(adapterConfig, "model", "auto") || "auto",
       sandbox: adapterConfig.sandbox === true,
       timeoutMs: Math.max(0, Number(adapterConfig.timeoutSec) || 0) * 1e3,
       extraArgs: Array.isArray(adapterConfig.extraArgs) ? adapterConfig.extraArgs : [],
@@ -13935,16 +14647,16 @@ function agentRoomRuntime(runtime, agent) {
     kind: "codex_app_server",
     enabled: runtime.enableCodexRooms,
     command: runtime.command,
-    model: textParam4(adapterConfig, "model", "") || runtime.model,
-    reasoningEffort: textParam4(adapterConfig, "modelReasoningEffort", textParam4(adapterConfig, "reasoningEffort", "")) || null,
+    model: textParam6(adapterConfig, "model", "") || runtime.model,
+    reasoningEffort: textParam6(adapterConfig, "modelReasoningEffort", textParam6(adapterConfig, "reasoningEffort", "")) || null,
     codexHome: runtime.codexHome,
     sandbox: runtime.codexSandbox,
     approvalPolicy: runtime.codexApprovalPolicy
   };
 }
 function defaultAgyCommand() {
-  const installed = path3.join(os.homedir(), "AppData", "Local", "agy", "bin", "agy.exe");
-  return fs2.existsSync(installed) ? installed : "agy";
+  const installed = path4.join(os2.homedir(), "AppData", "Local", "agy", "bin", "agy.exe");
+  return fs3.existsSync(installed) ? installed : "agy";
 }
 function roomRuntimeDisabledResult(agentRuntime) {
   return {
@@ -13954,100 +14666,26 @@ function roomRuntimeDisabledResult(agentRuntime) {
   };
 }
 function resolveCodexHomeForAgent(runtime, agent) {
-  const configuredAccount = textParam4(asRecord6(agent?.adapterConfig), "codexAccount");
+  const configuredAccount = textParam6(asRecord7(agent?.adapterConfig), "codexAccount");
   if (/^\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(configuredAccount)) {
-    return path3.join(os.homedir(), configuredAccount);
+    return path4.join(os2.homedir(), configuredAccount);
   }
-  return configuredEnvironmentValue(agent, "CODEX_HOME") || runtime.codexHome || textParam4(process.env, "CODEX_HOME") || null;
+  return configuredEnvironmentValue(agent, "CODEX_HOME") || runtime.codexHome || textParam6(process.env, "CODEX_HOME") || null;
 }
 function codexClientKey(runtime, agent) {
   return JSON.stringify({ command: runtime.command, codexHome: resolveCodexHomeForAgent(runtime, agent) });
 }
 function roomThreadIdForCodexRuntime(state, runtime, agent, currentInstructionsFingerprint = agentInstructionsFingerprint(agent)) {
-  const threadId = textParam4(state?.runtime, "codexThreadId") || null;
+  const threadId = textParam6(state?.runtime, "codexThreadId") || null;
   if (!threadId) return null;
-  const previousInstructionsFingerprint = textParam4(state?.runtime, "instructionsFingerprint") || null;
+  const previousInstructionsFingerprint = textParam6(state?.runtime, "instructionsFingerprint") || null;
   if (!previousInstructionsFingerprint || previousInstructionsFingerprint !== currentInstructionsFingerprint) return null;
-  const previousAccountKey = textParam4(state?.runtime, "codexAccountKey") || null;
+  const previousAccountKey = textParam6(state?.runtime, "codexAccountKey") || null;
   const selectedAccountKey = codexClientKey(runtime, agent);
   const hasExplicitHome = Boolean(resolveCodexHomeForAgent(runtime, agent));
   if (previousAccountKey && previousAccountKey !== selectedAccountKey) return null;
   if (!previousAccountKey && hasExplicitHome) return null;
   return threadId;
-}
-function roomMemoryRuntime() {
-  let config;
-  try {
-    config = JSON.parse(fs2.readFileSync(LOCAL_MEMORY_SIDECAR_CONFIG_URL, "utf8"));
-  } catch {
-    throw new Error("The local Memory Sidecar companion configuration is unavailable.");
-  }
-  const host = String(config?.server?.host || "127.0.0.1").trim();
-  const port = Number(config?.server?.port || 3188);
-  const baseUrl = new URL(`http://${host}:${port}`);
-  if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(baseUrl.hostname)) {
-    throw new Error("The local Memory Sidecar must use a loopback address.");
-  }
-  return {
-    baseUrl,
-    token: String(process.env.MEMORY_SIDECAR_TOKEN || config?.security?.token || "").trim()
-  };
-}
-async function fetchRoomMemory(pathname, options = {}) {
-  const runtime = roomMemoryRuntime();
-  const url = new URL(pathname, runtime.baseUrl);
-  for (const [key, value] of Object.entries(asRecord6(options.searchParams))) {
-    if (value !== void 0 && value !== null && String(value).trim() !== "") url.searchParams.set(key, String(value));
-  }
-  const headers = { accept: "application/json", ...asRecord6(options.headers) };
-  if (runtime.token) headers["x-sidecar-token"] = runtime.token;
-  const response = await fetch(url, { method: options.method ?? "GET", headers, body: options.body });
-  const body = await response.text();
-  let data = null;
-  try {
-    data = body ? JSON.parse(body) : null;
-  } catch {
-    throw new Error("The Memory Sidecar returned an invalid response.");
-  }
-  if (!response.ok) throw new Error(`Memory Sidecar request failed (HTTP ${response.status}).`);
-  return data;
-}
-async function searchRoomMemory(roomContext, query, requestedScopes, limit) {
-  const scopes = requestedScopes.length ? requestedScopes : ["company", "project", "agent"];
-  const selectedScopes = [...new Set(scopes.filter((scope) => ROOM_MEMORY_SCOPES.has(scope)))];
-  if (!selectedScopes.length) throw new Error("Choose one or more of company, project, or agent memory scopes.");
-  const itemsById = /* @__PURE__ */ new Map();
-  for (const scope of selectedScopes) {
-    if (scope === "project" && !roomContext.projectId) continue;
-    const searchParams = { q: query, scope, companyId: roomContext.companyId, limit };
-    if (scope === "project") searchParams.projectId = roomContext.projectId;
-    if (scope === "agent") searchParams.agentId = roomContext.agentId;
-    const result = await fetchRoomMemory("/memory/search", { searchParams });
-    for (const item of Array.isArray(result?.items) ? result.items : []) itemsById.set(item.id, item);
-  }
-  return [...itemsById.values()].sort((left, right) => Number(right.score || 0) - Number(left.score || 0)).slice(0, limit);
-}
-async function proposeRoomMemory(roomContext, input) {
-  const content = textParam4(input, "content");
-  const scope = textParam4(input, "scope", "project") || "project";
-  if (!content || content.length > 4e3) throw new Error("Memory candidate content must be between 1 and 4000 characters.");
-  if (!(/* @__PURE__ */ new Set(["company", "project", "agent", "task", "artifact", "user"])).has(scope)) throw new Error("Invalid memory candidate scope.");
-  const candidate = await fetchRoomMemory("/memory/candidates", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      content,
-      scope,
-      type: textParam4(input, "type", "learning") || "learning",
-      tags: listParam(input, "tags").slice(0, 12),
-      companyId: roomContext.companyId,
-      projectId: roomContext.projectId ?? null,
-      agentId: roomContext.agentId,
-      issueId: roomContext.issueId,
-      source: { kind: "room_chat", roomIssueId: roomContext.issueId, agentName: roomContext.agentName }
-    })
-  });
-  return candidate?.candidate ?? null;
 }
 function agentRoomOriginId(projectId, agentId) {
   return `project:${projectId}:agent-room:${agentId}`;
@@ -14070,28 +14708,28 @@ function isLongLivedRoom(issue) {
   return isAgentRoom(issue) || isLegacyRoleRoom(issue);
 }
 function isHiredAgent(agent) {
-  const builtIn = asRecord6(asRecord6(agent?.metadata).paperclipBuiltInAgent);
+  const builtIn = asRecord7(asRecord7(agent?.metadata).paperclipBuiltInAgent);
   return Boolean(
-    agent?.id && agent?.name && agent.status !== "terminated" && !textParam4(builtIn, "key")
+    agent?.id && agent?.name && agent.status !== "terminated" && !textParam6(builtIn, "key")
   );
 }
 function isTaskWorkerAgent(agent) {
   return isHiredAgent(agent) && isWorkplaneWorker(agent);
 }
 function agentWorkingDirectory(agent) {
-  return textParam4(asRecord6(agent?.adapterConfig), "cwd");
+  return textParam6(asRecord7(agent?.adapterConfig), "cwd");
 }
 function agentInstructionsPath(agent) {
-  const instructionsPath = textParam4(asRecord6(agent?.adapterConfig), "instructionsFilePath");
-  return instructionsPath && path3.isAbsolute(instructionsPath) ? instructionsPath : "";
+  const instructionsPath = textParam6(asRecord7(agent?.adapterConfig), "instructionsFilePath");
+  return instructionsPath && path4.isAbsolute(instructionsPath) ? instructionsPath : "";
 }
 function loadAgentInstructions(agent) {
-  const path4 = agentInstructionsPath(agent);
-  if (!path4 || !fs2.existsSync(path4)) {
+  const path5 = agentInstructionsPath(agent);
+  if (!path5 || !fs3.existsSync(path5)) {
     return "No managed Agent AGENTS.md was available. Ask the user to configure this Agent's Instructions before making policy decisions.";
   }
   try {
-    const body = fs2.readFileSync(path4, "utf8").trim();
+    const body = fs3.readFileSync(path5, "utf8").trim();
     return body || "The managed Agent AGENTS.md is empty.";
   } catch {
     return "The managed Agent AGENTS.md could not be read. Report this blocker before making policy decisions.";
@@ -14100,9 +14738,9 @@ function loadAgentInstructions(agent) {
 function agentInstructionsFingerprint(agent, instructions = loadAgentInstructions(agent)) {
   return createHash("sha256").update(JSON.stringify({
     version: 1,
-    agentId: textParam4(agent, "id"),
-    agentName: textParam4(agent, "name"),
-    agentRole: textParam4(agent, "role"),
+    agentId: textParam6(agent, "id"),
+    agentName: textParam6(agent, "name"),
+    agentRole: textParam6(agent, "role"),
     instructions
   }), "utf8").digest("hex");
 }
@@ -14177,55 +14815,6 @@ async function reconcileAllProjectAgentRooms(ctx) {
     summaries.push({ companyId: company.id });
   }
   return { companyCount: summaries.length, companies: summaries };
-}
-async function reconcileRoomMemoryLifecycle(ctx) {
-  const summary = { companies: 0, rooms: 0, checkpointsPublished: 0, compactionsPublished: 0, failed: 0 };
-  if (!ctx.memory?.publishLifecycle) return summary;
-  const companies = await ctx.companies.list({ limit: 200 });
-  for (const company of companies) {
-    if (!company?.id) continue;
-    summary.companies += 1;
-    const projects = await ctx.projects.list({ companyId: company.id, limit: 200 });
-    for (const project of projects) {
-      const issues = await ctx.issues.list({ companyId: company.id, projectId: project.id, limit: 500 });
-      for (const room of issues) {
-        if (!isAgentRoom(room)) continue;
-        summary.rooms += 1;
-        try {
-          const document = await ctx.issues.documents.get(room.id, ROOM_CHECKPOINTS_KEY, company.id);
-          const checkpoints = parseState(document?.body);
-          const latest = Array.isArray(checkpoints) ? checkpoints.at(-1) : null;
-          const version = Number(latest?.version);
-          if (!Number.isInteger(version) || version < 1) continue;
-          const markerScope = {
-            scopeKind: "issue",
-            scopeId: room.id,
-            stateKey: ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY
-          };
-          const marker = await ctx.state.get(markerScope);
-          const deliveredVersion = Number(asRecord6(marker)?.checkpointVersion ?? 0);
-          if (deliveredVersion >= version) continue;
-          await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.checkpoint", latest);
-          summary.checkpointsPublished += 1;
-          if (typeof latest.compactedAt === "string" && latest.compactedAt) {
-            await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.compacted", latest);
-            summary.compactionsPublished += 1;
-          }
-          await ctx.state.set(markerScope, {
-            checkpointVersion: version,
-            reconciledAt: now()
-          });
-        } catch (error) {
-          summary.failed += 1;
-          ctx.logger?.warn?.("Room memory lifecycle reconciliation failed.", {
-            issueId: room.id,
-            message: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
-    }
-  }
-  return summary;
 }
 async function syncAgentRoomTitles(ctx, companyId, agentId) {
   const agent = await ctx.agents.get(agentId, companyId);
@@ -14310,7 +14899,7 @@ async function resolveRoomWorkspace(ctx, companyId, issue, agent, state) {
   const workspaces = await listProjectWorkspaces(ctx, companyId, issue.projectId);
   if (workspaces === null) return { workspace: null, workspaces: null, legacy: true };
   const profile = await loadProjectWorkspaceProfile(ctx, issue.projectId, workspaces);
-  const currentId = textParam4(asRecord6(state?.workspace), "projectWorkspaceId");
+  const currentId = textParam6(asRecord7(state?.workspace), "projectWorkspaceId");
   const profileSelectedWorkspace = profileWorkspace(workspaces, profile, { agentId: agent?.id });
   const workspace = profileSelectedWorkspace ?? workspaces.find((entry) => entry.id === currentId) ?? chooseDefaultWorkspace(agent, workspaces, profile);
   return { workspace: workspace ?? null, workspaces, profile, legacy: false };
@@ -14319,7 +14908,7 @@ async function ensureRoomWorkspaceBinding(ctx, companyId, issue, agent, state) {
   const resolved = await resolveRoomWorkspace(ctx, companyId, issue, agent, state);
   if (!resolved.workspace) return { state, resolved, changed: false };
   const nextBinding = workspaceBinding(resolved.workspace);
-  const currentBinding = asRecord6(state.workspace);
+  const currentBinding = asRecord7(state.workspace);
   const changed = currentBinding.projectWorkspaceId !== nextBinding.projectWorkspaceId || currentBinding.kind !== nextBinding.kind || currentBinding.name !== nextBinding.name || Object.hasOwn(state, "workingDirectory");
   if (!changed) return { state, resolved, changed: false };
   state.workspace = nextBinding;
@@ -14330,8 +14919,8 @@ async function ensureRoomWorkspaceBinding(ctx, companyId, issue, agent, state) {
 async function resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state) {
   const resolved = await resolveRoomWorkspace(ctx, companyId, issue, agent, state);
   const workspacePath = workspaceLocalPath(resolved.workspace);
-  if (workspacePath && fs2.existsSync(workspacePath)) return workspacePath;
-  if (resolved.legacy && state.workingDirectory && fs2.existsSync(state.workingDirectory)) {
+  if (workspacePath && fs3.existsSync(workspacePath)) return workspacePath;
+  if (resolved.legacy && state.workingDirectory && fs3.existsSync(state.workingDirectory)) {
     return state.workingDirectory;
   }
   if (resolved.workspaces && !resolved.workspaces.length) {
@@ -14340,8 +14929,8 @@ async function resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state) 
   throw new Error("The Room Workspace is unavailable. Select a registered Project Workspace before starting a Room turn.");
 }
 function agentSessionContextMatches(session, expectedContext) {
-  const context = asRecord6(session?.context);
-  return textParam4(context, "projectId") === textParam4(expectedContext, "projectId") && textParam4(context, "projectWorkspaceId") === textParam4(expectedContext, "projectWorkspaceId") && !textParam4(context, "issueId");
+  const context = asRecord7(session?.context);
+  return textParam6(context, "projectId") === textParam6(expectedContext, "projectId") && textParam6(context, "projectWorkspaceId") === textParam6(expectedContext, "projectWorkspaceId") && !textParam6(context, "issueId");
 }
 async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   const binding = await ensureRoomWorkspaceBinding(ctx, companyId, issue, agent, state);
@@ -14354,7 +14943,7 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
     projectWorkspaceId: workspace.id
   };
   const sessions = await ctx.agents.sessions.list(agent.id, companyId);
-  const persistedSessionId = textParam4(state.runtime, "agentSessionId");
+  const persistedSessionId = textParam6(state.runtime, "agentSessionId");
   let session = sessions.find((candidate) => candidate.sessionId === persistedSessionId) ?? null;
   if (session && !agentSessionContextMatches(session, context)) {
     await ctx.agents.sessions.close(session.sessionId, companyId);
@@ -14375,7 +14964,7 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   state.runtime.lastRunId = session.lastRunId ?? state.runtime.lastRunId ?? null;
   state.runtime.lastError = session.lastError ?? null;
   state.runtime.codexThreadId = null;
-  state.runtime.model = textParam4(asRecord6(agent.adapterConfig), "model") || null;
+  state.runtime.model = textParam6(asRecord7(agent.adapterConfig), "model") || null;
   state.runtime.updatedAt = now();
   delete state.runtime.codexAccountKey;
   delete state.runtime.codexHome;
@@ -14388,19 +14977,19 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   };
 }
 function nativeSessionResultText(event) {
-  const payload = asRecord6(event?.payload);
+  const payload = asRecord7(event?.payload);
   if (event?.eventType === "error") {
-    const message = textParam4(payload, "error") || textParam4(payload, "errorCode") || textParam4(event, "message") || "The Agent Session run failed.";
+    const message = textParam6(payload, "error") || textParam6(payload, "errorCode") || textParam6(event, "message") || "The Agent Session run failed.";
     const error = new Error(message);
-    const resultRecord2 = asRecord6(payload.resultJson);
-    error.code = textParam4(payload, "errorCode") || textParam4(resultRecord2, "errorCode") || null;
-    error.errorFamily = textParam4(payload, "errorFamily") || textParam4(resultRecord2, "errorFamily") || null;
-    error.retryNotBefore = textParam4(payload, "retryNotBefore") || textParam4(resultRecord2, "retryNotBefore") || null;
+    const resultRecord2 = asRecord7(payload.resultJson);
+    error.code = textParam6(payload, "errorCode") || textParam6(resultRecord2, "errorCode") || null;
+    error.errorFamily = textParam6(payload, "errorFamily") || textParam6(resultRecord2, "errorFamily") || null;
+    error.retryNotBefore = textParam6(payload, "retryNotBefore") || textParam6(resultRecord2, "retryNotBefore") || null;
     throw error;
   }
   const result = payload.resultJson;
-  const resultRecord = asRecord6(result);
-  const text4 = typeof result === "string" ? result : textParam4(resultRecord, "summary") || textParam4(resultRecord, "message") || textParam4(resultRecord, "output");
+  const resultRecord = asRecord7(result);
+  const text4 = typeof result === "string" ? result : textParam6(resultRecord, "summary") || textParam6(resultRecord, "message") || textParam6(resultRecord, "output");
   if (!text4) throw new Error("The Agent Session completed without an assistant message.");
   return enforceUtf8Text(text4, "Agent Session output");
 }
@@ -14442,7 +15031,7 @@ function taskProtocolComment(roomContext, issue, taskState) {
     "- Do not search for SPS credentials or retry a submitted final report. Use only the provided Task capability and submit each final report once.",
     "",
     "Affected Paths (relative to the selected Project Workspace):",
-    ...taskState.declaredAffectedPaths.length ? taskState.declaredAffectedPaths.map((path4) => `- ${displayTaskPath(path4)}`) : ["- Not declared"],
+    ...taskState.declaredAffectedPaths.length ? taskState.declaredAffectedPaths.map((path5) => `- ${displayTaskPath(path5)}`) : ["- Not declared"],
     "",
     "Design References:",
     ...taskState.designReferences.length ? taskState.designReferences.map((reference) => `- ${reference}`) : ["- Not required for this task type"],
@@ -14464,7 +15053,7 @@ function taskDescription(input) {
     `Project Workspace: ${input.projectWorkspaceName || input.projectWorkspaceId || "Not bound"}`,
     "",
     "Affected Paths (relative to the selected Project Workspace):",
-    ...input.affectedPaths.length ? input.affectedPaths.map((path4) => `- ${displayTaskPath(path4)}`) : ["- Not declared"],
+    ...input.affectedPaths.length ? input.affectedPaths.map((path5) => `- ${displayTaskPath(path5)}`) : ["- Not declared"],
     "",
     "Design References:",
     ...input.designReferences.length ? input.designReferences.map((reference) => `- ${reference}`) : ["- Not required"],
@@ -14834,7 +15423,7 @@ async function paperclipJsonDirect(apiUrl, apiPath, { method = "GET", body, oper
     }
   }
   if (!response.ok) {
-    const detail = typeof result === "string" ? result : textParam4(asRecord6(result), "error") || responseText;
+    const detail = typeof result === "string" ? result : textParam6(asRecord7(result), "error") || responseText;
     const error = new Error(`SPS ${operation} failed (HTTP ${response.status})${detail ? `: ${String(detail).slice(0, 400)}` : "."}`);
     error.status = response.status;
     throw error;
@@ -14844,7 +15433,7 @@ async function paperclipJsonDirect(apiUrl, apiPath, { method = "GET", body, oper
 function directArrayPayload(value, keys = []) {
   if (Array.isArray(value)) return value;
   for (const key of keys) {
-    if (Array.isArray(asRecord6(value)[key])) return asRecord6(value)[key];
+    if (Array.isArray(asRecord7(value)[key])) return asRecord7(value)[key];
   }
   return [];
 }
@@ -14963,237 +15552,19 @@ async function updateAgentAdapterConfigDirect(apiUrl, companyId, agentId, adapte
     return null;
   }
 }
-function attachmentIdsParam(params) {
-  return [...new Set(listParam(params, "attachmentIds"))];
+var roomAttachmentNetwork = Object.freeze({
+  fetchImpl: (...args) => fetch(...args),
+  loopbackSPSApiUrl,
+  spsDesktopAccessHeaders
+});
+async function listIssueAttachmentsDirect2(apiUrl, issueId) {
+  return listIssueAttachmentsDirect(apiUrl, issueId, roomAttachmentNetwork);
 }
-function repairUtf8Mojibake(value) {
-  const source = String(value ?? "");
-  const mojibake = /(?:Ã.|Â.|â..|ð...|ì[\u0080-\u00bf]|í[\u0080-\u00bf]|ë[\u0080-\u00bf]|ê[\u0080-\u00bf])/;
-  if (!source || /[^\u0000-\u00ff]/.test(source) || !mojibake.test(source)) return source;
-  let repaired = source;
-  for (let attempt = 0; attempt < 2 && mojibake.test(repaired); attempt += 1) {
-    try {
-      const candidate = Buffer.from(repaired, "latin1").toString("utf8");
-      if (!candidate || candidate.includes("\uFFFD") || candidate === repaired) break;
-      repaired = candidate;
-    } catch {
-      break;
-    }
-  }
-  return repaired;
+async function resolveRoomAttachments2(apiUrl, issueId, attachmentIds) {
+  return resolveRoomAttachments(apiUrl, issueId, attachmentIds, roomAttachmentNetwork);
 }
-function enforceUtf8Text(value, label = "Text") {
-  const text4 = repairUtf8Mojibake(value).replace(/\r\n/g, "\n");
-  if (text4.includes("\uFFFD")) {
-    throw new Error(`${label} contains an invalid UTF-8 replacement character and was not saved to avoid corrupted text.`);
-  }
-  return text4;
-}
-function enforceTaskContractText(value, label = "Task text") {
-  const text4 = enforceUtf8Text(value, label);
-  if (/\?{2,}/.test(text4)) {
-    throw new Error(`${label} contains a likely lossy encoding sequence (??) and was not saved.`);
-  }
-  return text4;
-}
-function roomAttachmentName(attachment) {
-  const filename = textParam4(attachment, "originalFilename") || textParam4(attachment, "filename");
-  return repairUtf8Mojibake(filename) || `attachment-${textParam4(attachment, "id", "file")}`;
-}
-function safeAttachmentFilename(filename) {
-  const basename = path3.basename(String(filename || "attachment"));
-  const cleaned = basename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().slice(0, 120);
-  return cleaned || "attachment";
-}
-function safeAttachmentPathSegment(value) {
-  return String(value || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "unknown";
-}
-function attachmentContentPath2(attachment) {
-  const contentPath = textParam4(attachment, "contentPath");
-  return contentPath || `/api/attachments/${encodeURIComponent(textParam4(attachment, "id"))}/content`;
-}
-function roomAttachmentContentUrl(apiUrl, attachment) {
-  return new URL(attachmentContentPath2(attachment), `${loopbackSPSApiUrl(apiUrl)}/`).toString();
-}
-function isCodexImageAttachment(attachment) {
-  const contentType = textParam4(attachment, "contentType").toLowerCase();
-  if (/^image\/(png|jpe?g|webp|gif|avif|bmp)$/i.test(contentType)) return true;
-  return /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(roomAttachmentName(attachment));
-}
-function roomAttachmentCacheRoot() {
-  const paperclipHome = String(process.env.PAPERCLIP_HOME || "").trim();
-  return paperclipHome ? path3.join(paperclipHome, "room-attachments") : path3.join(os.homedir(), ".sps", "room-attachments");
-}
-function roomAttachmentWorkspaceRoot(workingDirectory) {
-  const requestedWorkspace = String(workingDirectory || "").trim();
-  if (!requestedWorkspace) {
-    throw new Error("A Room Workspace is required before attached files can be prepared for an Agent.");
-  }
-  const workspaceRoot = path3.resolve(requestedWorkspace);
-  const attachmentRoot = path3.resolve(workspaceRoot, ".sps", "room-attachments");
-  const relative = path3.relative(workspaceRoot, attachmentRoot);
-  if (!relative || relative === ".." || relative.startsWith(`..${path3.sep}`) || path3.isAbsolute(relative)) {
-    throw new Error("The Room attachment staging path must stay inside the selected Project Workspace.");
-  }
-  return attachmentRoot;
-}
-function workspaceGitExcludePath(workingDirectory) {
-  const dotGitPath = path3.join(workingDirectory, ".git");
-  if (!fs2.existsSync(dotGitPath)) return null;
-  const stats = fs2.statSync(dotGitPath);
-  if (stats.isDirectory()) return path3.join(dotGitPath, "info", "exclude");
-  if (!stats.isFile()) return null;
-  const match = fs2.readFileSync(dotGitPath, "utf8").match(/^gitdir:\s*(.+)\s*$/im);
-  return match ? path3.join(path3.resolve(workingDirectory, match[1]), "info", "exclude") : null;
-}
-function excludeWorkspaceRoomAttachments(workingDirectory) {
-  const excludePath = workspaceGitExcludePath(workingDirectory);
-  if (!excludePath) return null;
-  const rule = ".sps/room-attachments/";
-  const existing = fs2.existsSync(excludePath) ? fs2.readFileSync(excludePath, "utf8") : "";
-  if (existing.split(/\r?\n/).some((line) => line.trim().replace(/\\/g, "/") === rule)) return excludePath;
-  fs2.mkdirSync(path3.dirname(excludePath), { recursive: true });
-  fs2.appendFileSync(excludePath, `${existing && !existing.endsWith("\n") ? "\n" : ""}${rule}
-`, "utf8");
-  return excludePath;
-}
-function cleanupRoomAttachmentCache(root = roomAttachmentCacheRoot(), nowMs = Date.now()) {
-  if (!fs2.existsSync(root)) return [];
-  const removed = [];
-  for (const roomEntry of fs2.readdirSync(root, { withFileTypes: true })) {
-    if (!roomEntry.isDirectory()) continue;
-    const roomPath = path3.join(root, roomEntry.name);
-    for (const attachmentEntry of fs2.readdirSync(roomPath, { withFileTypes: true })) {
-      if (!attachmentEntry.isDirectory()) continue;
-      const attachmentPath = path3.join(roomPath, attachmentEntry.name);
-      const modifiedAt = fs2.statSync(attachmentPath).mtimeMs;
-      if (nowMs - modifiedAt <= ROOM_ATTACHMENT_CACHE_RETENTION_MS) continue;
-      fs2.rmSync(attachmentPath, { recursive: true, force: true });
-      removed.push(attachmentPath);
-    }
-    if (!fs2.readdirSync(roomPath).length) fs2.rmdirSync(roomPath);
-  }
-  return removed;
-}
-function attachmentSnapshot(attachment) {
-  return {
-    id: textParam4(attachment, "id"),
-    originalFilename: roomAttachmentName(attachment),
-    contentType: textParam4(attachment, "contentType") || "application/octet-stream",
-    byteSize: Number(attachment?.byteSize) || 0,
-    contentPath: attachmentContentPath2(attachment),
-    openPath: textParam4(attachment, "openPath") || null,
-    downloadPath: textParam4(attachment, "downloadPath") || null
-  };
-}
-async function listIssueAttachmentsDirect(apiUrl, issueId) {
-  const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(issueId)}/attachments`;
-  const response = await fetch(endpoint, { headers: spsDesktopAccessHeaders() });
-  if (!response.ok) throw new Error(`SPS attachment list failed (HTTP ${response.status}).`);
-  const result = await response.json();
-  return Array.isArray(result) ? result : Array.isArray(result?.attachments) ? result.attachments : [];
-}
-async function resolveRoomAttachments(apiUrl, issueId, attachmentIds) {
-  if (!attachmentIds.length) return [];
-  const available = await listIssueAttachmentsDirect(apiUrl, issueId);
-  const byId = new Map(available.map((attachment) => [textParam4(attachment, "id"), attachment]));
-  const missing = attachmentIds.filter((id) => !byId.has(id));
-  if (missing.length) throw new Error("One or more selected files are no longer attached to this Room.");
-  return attachmentIds.map((id) => attachmentSnapshot(byId.get(id)));
-}
-function mergeRoomAttachments(...groups) {
-  const byId = /* @__PURE__ */ new Map();
-  for (const group of groups) {
-    for (const attachment of Array.isArray(group) ? group : []) {
-      const snapshot = attachmentSnapshot(attachment);
-      if (!snapshot.id || byId.has(snapshot.id)) continue;
-      byId.set(snapshot.id, snapshot);
-    }
-  }
-  return [...byId.values()];
-}
-async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDirectory) {
-  const workspaceRoot = path3.resolve(String(workingDirectory || "").trim());
-  const cacheRoot = roomAttachmentWorkspaceRoot(workspaceRoot);
-  excludeWorkspaceRoomAttachments(workspaceRoot);
-  cleanupRoomAttachmentCache(cacheRoot);
-  const roomDirectory = path3.join(cacheRoot, safeAttachmentPathSegment(roomIssueId));
-  const staged = [];
-  for (const attachment of attachments) {
-    const attachmentId = textParam4(attachment, "id");
-    if (!attachmentId) throw new Error("An attached file did not have a SPS attachment id.");
-    const directory = path3.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
-    const localPath = path3.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
-    const partialPath = `${localPath}.partial`;
-    const response = await fetch(roomAttachmentContentUrl(apiUrl, attachment), { headers: spsDesktopAccessHeaders() });
-    if (!response.ok) throw new Error(`Could not read attached file ${roomAttachmentName(attachment)} (HTTP ${response.status}).`);
-    fs2.mkdirSync(directory, { recursive: true });
-    fs2.writeFileSync(partialPath, Buffer.from(await response.arrayBuffer()));
-    fs2.rmSync(localPath, { force: true });
-    fs2.renameSync(partialPath, localPath);
-    fs2.utimesSync(directory, /* @__PURE__ */ new Date(), /* @__PURE__ */ new Date());
-    staged.push({ ...attachment, localPath, isImage: isCodexImageAttachment(attachment) });
-  }
-  return staged;
-}
-function roomAttachmentCommentBlock(attachments) {
-  if (!attachments.length) return "";
-  const rows = attachments.map((attachment) => {
-    const label = roomAttachmentName(attachment).replace(/([\[\]])/g, "\\$1");
-    return `- [${label}](${attachmentContentPath2(attachment)})`;
-  });
-  return `
-
-**Attached files**
-${rows.join("\n")}
-<!-- paperclip-room-attachments:${attachments.map((attachment) => attachment.id).join(",")} -->`;
-}
-function roomUserCommentBody(message, attachments, mode = "agent", retryOfCommentId = "") {
-  const text4 = enforceUtf8Text(message, "Room message").trim() || "Please inspect the attached files.";
-  const retryMarker = retryOfCommentId ? `
-<!-- paperclip-room-retry-of:${retryOfCommentId} -->` : "";
-  return `**User**
-${text4}${retryMarker}${roomAttachmentCommentBlock(attachments)}`;
-}
-var ROOM_RESPONSE_CONTRACT = [
-  "SYSTEM-PROVIDED ROOM RESPONSE CONTRACT:",
-  "- When the current request asks to show or preview an existing Workspace image, the final response must embed at least one relevant image with Markdown image syntax and a verified absolute local path.",
-  "- On Windows, use this form: `![description](<C:/absolute/path/to/image.png>)`. The Room UI converts verified Workspace paths into safe inline previews and clickable file links.",
-  "- Do not merely say that an image is shown. If no relevant image exists or its path cannot be verified, say that clearly instead of emitting a broken or invented path.",
-  "- Use ordinary Markdown links with verified absolute local paths for other Workspace files that the user should inspect."
-].join("\n");
-function roomTurnText(message, stagedAttachments, retryOfCommentId = "") {
-  const text4 = enforceUtf8Text(message, "Room message").trim() || "Please inspect the attached files and respond to the user.";
-  const retryPreamble = retryOfCommentId ? `USER MESSAGE REVISION: This message replaces the earlier user message ${retryOfCommentId}. Treat this revision as the current request. Do not continue or answer the superseded version.
-
-` : "";
-  if (!stagedAttachments.length) return `${retryPreamble}${text4}
-
-${ROOM_RESPONSE_CONTRACT}`;
-  const fileContext = stagedAttachments.map((attachment) => {
-    const delivery = attachment.isImage ? "also supplied as an image input" : "available as a local file";
-    return `- ${roomAttachmentName(attachment)} (${attachment.contentType}, ${attachment.byteSize} bytes): ${attachment.localPath} (${delivery})`;
-  });
-  return `${retryPreamble}${text4}
-
-Attached Room files are durable SPS attachments. Inspect only the files relevant to the request and do not execute untrusted binaries.
-${fileContext.join("\n")}
-
-${ROOM_RESPONSE_CONTRACT}`;
-}
-function isRoomUserComment(comment) {
-  return /^\*\*User\*\*/i.test(String(comment?.body || "").trim());
-}
-async function validateRoomRetrySource(ctx, companyId, issueId, retryOfCommentId) {
-  const sourceCommentId = String(retryOfCommentId || "").trim();
-  if (!sourceCommentId) return "";
-  if (!ctx.issues.listComments) throw new Error("Room message retry is unavailable because Room comments could not be read.");
-  const comments = await ctx.issues.listComments(issueId, companyId);
-  const sourceComment = comments.find((comment) => comment.id === sourceCommentId);
-  if (!sourceComment || !isRoomUserComment(sourceComment)) {
-    throw new Error("The selected message is not a user message in this Room.");
-  }
-  return sourceCommentId;
+async function stageRoomAttachments2(apiUrl, roomIssueId, attachments, workingDirectory) {
+  return stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDirectory, roomAttachmentNetwork);
 }
 async function putRoomDocument(apiUrl, input) {
   const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(input.issueId)}/documents/${encodeURIComponent(input.key)}`;
@@ -15277,104 +15648,6 @@ async function updateRoomWorkStateOutsideInvocation(roomContext, patch, changeSu
     });
   });
 }
-function nativeCompactionEventId(message) {
-  const params = asRecord6(message?.params);
-  const threadId = textParam4(params, "threadId");
-  const turnId = textParam4(params, "turnId");
-  return threadId && turnId ? `${threadId}:${turnId}` : "";
-}
-async function appendNativeCompactionOutsideInvocation(apiUrl, issueId, event) {
-  const document = await getRoomDocumentDirect(apiUrl, issueId, ROOM_NATIVE_COMPACTIONS_KEY);
-  let events = parseState(document?.body);
-  if (!Array.isArray(events)) events = [];
-  if (events.some((entry) => entry?.id === event.id)) return events;
-  events.push(event);
-  await putRoomDocument(apiUrl, {
-    issueId,
-    key: ROOM_NATIVE_COMPACTIONS_KEY,
-    body: serializeState(events.slice(-100)),
-    title: "Native Codex compactions",
-    format: "markdown",
-    baseRevisionId: document?.latestRevisionId ?? null,
-    changeSummary: "Record native Codex context compaction"
-  });
-  return events;
-}
-async function recordNativeCodexCompaction(ctx, message) {
-  const itemCompaction = message?.method === "item/completed" && message?.params?.item?.type === "contextCompaction";
-  const threadCompaction = message?.method === "thread/compacted";
-  if (!itemCompaction && !threadCompaction) return false;
-  const eventId = nativeCompactionEventId(message);
-  const threadId = textParam4(asRecord6(message?.params), "threadId");
-  const context = activeThreadContexts.get(threadId);
-  if (!eventId || !context || manualCodexCompactionThreads.has(threadId) || recordedNativeCompactionEvents.has(eventId)) return false;
-  recordedNativeCompactionEvents.add(eventId);
-  const run = async () => {
-    try {
-      await appendNativeCompactionOutsideInvocation(context.spsApiUrl, context.issueId, {
-        id: eventId,
-        kind: "codex_native_auto",
-        threadId,
-        turnId: textParam4(asRecord6(message?.params), "turnId"),
-        occurredAt: now(),
-        note: "Codex compacted its internal context automatically. SPS conversation and checkpoints remain the durable Room record."
-      });
-      return true;
-    } catch (error) {
-      recordedNativeCompactionEvents.delete(eventId);
-      ctx.logger?.warn?.("Could not record native Codex compaction.", {
-        issueId: context.issueId,
-        threadId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return false;
-    }
-  };
-  const previous = nativeCompactionLocks.get(context.issueId) ?? Promise.resolve();
-  const next = previous.catch(() => {
-  }).then(run);
-  nativeCompactionLocks.set(context.issueId, next);
-  try {
-    return await next;
-  } finally {
-    if (nativeCompactionLocks.get(context.issueId) === next) nativeCompactionLocks.delete(context.issueId);
-  }
-}
-async function appendCheckpoint(ctx, companyId, issueId, checkpoint) {
-  const document = await ctx.issues.documents.get(issueId, ROOM_CHECKPOINTS_KEY, companyId);
-  let checkpoints = parseState(document?.body);
-  if (!Array.isArray(checkpoints)) checkpoints = [];
-  checkpoints.push(checkpoint);
-  await upsertRoomDocument(ctx, {
-    issueId,
-    key: ROOM_CHECKPOINTS_KEY,
-    body: serializeState(checkpoints),
-    companyId,
-    title: "Room checkpoints",
-    format: "markdown",
-    changeSummary: "Append Room compact checkpoint"
-  });
-  await publishRoomMemoryLifecycle(ctx, companyId, issueId, "room.checkpoint", checkpoint);
-}
-async function publishRoomMemoryLifecycle(ctx, companyId, issueId, eventType, checkpoint) {
-  if (!ctx.memory?.publishLifecycle) return;
-  try {
-    await ctx.memory.publishLifecycle({
-      eventType,
-      companyId,
-      entityType: "room",
-      entityId: issueId,
-      roomId: issueId,
-      idempotencyKey: `room:${issueId}:${eventType}:${checkpoint.version}`
-    });
-  } catch (error) {
-    ctx.logger?.warn?.("Room memory lifecycle publication failed.", {
-      issueId,
-      eventType,
-      message: error instanceof Error ? error.message : String(error)
-    });
-  }
-}
 function roomStreamChannel(issueId) {
   return `room:${issueId}`;
 }
@@ -15429,7 +15702,7 @@ async function listRoomJobs(ctx, issueId) {
     scopeId: issueId,
     limit: 100
   });
-  return records.map((record) => roomJobData(asRecord6(record.data))).filter((job) => job.id && job.roomIssueId === issueId);
+  return records.map((record) => roomJobData(asRecord7(record.data))).filter((job) => job.id && job.roomIssueId === issueId);
 }
 async function activeRoomJob(ctx, issueId) {
   const jobs = await listRoomJobs(ctx, issueId);
@@ -15443,7 +15716,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
       completedAt: now(),
       error: quotaError,
       payload: {
-        ...asRecord6(job.payload),
+        ...asRecord7(job.payload),
         retryRuntime: null,
         quotaRetryAt: null,
         quotaError
@@ -15472,9 +15745,9 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
   }
   const current = Date.now();
   const retryAt = providerQuotaRetryAtFromError(error, current);
-  const priorAttempt = Math.max(0, Number(asRecord6(job.payload).quotaRetryAttempt) || 0);
+  const priorAttempt = Math.max(0, Number(asRecord7(job.payload).quotaRetryAttempt) || 0);
   const payload = {
-    ...asRecord6(job.payload),
+    ...asRecord7(job.payload),
     retryRuntime: "agy",
     quotaRetryAt: retryAt,
     quotaRetryAttempt: priorAttempt + 1,
@@ -15488,7 +15761,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
     payload
   });
   state.pendingTurn = {
-    ...asRecord6(state.pendingTurn),
+    ...asRecord7(state.pendingTurn),
     kind: queuedJob.kind,
     jobId: queuedJob.id,
     sourceCommentId: queuedJob.sourceCommentId ?? null,
@@ -15535,13 +15808,13 @@ async function launchDueRoomProviderQuotaRetry(ctx, job, current = Date.now()) {
       }
     }
   }
-  const retryAt = new Date(textParam4(asRecord6(job.payload), "quotaRetryAt") || 0).getTime();
+  const retryAt = new Date(textParam6(asRecord7(job.payload), "quotaRetryAt") || 0).getTime();
   if (!Number.isFinite(retryAt) || retryAt > current) return { launched: false, reason: "not_due" };
   if (activeRoomMessageJobs.has(job.roomIssueId)) return { launched: false, reason: "room_busy" };
   const { issue, agent } = await requireRoom(ctx, job.companyId, job.roomIssueId);
   const state = await loadRoomState(ctx, job.companyId, issue, agent);
-  if (textParam4(state.pendingTurn, "jobId") !== job.id) return { launched: false, reason: "pending_turn_changed" };
-  state.pendingTurn = { ...asRecord6(state.pendingTurn), startedAt: now(), retryAt: null, retryRuntime: "agy" };
+  if (textParam6(state.pendingTurn, "jobId") !== job.id) return { launched: false, reason: "pending_turn_changed" };
+  state.pendingTurn = { ...asRecord7(state.pendingTurn), startedAt: now(), retryAt: null, retryRuntime: "agy" };
   beginRoomActivity(state, job.kind, job.id, job.sourceCommentId ?? null);
   state.runtime.activity.steps.push({ id: `quota-retry-${Date.now()}`, type: "runtime", label: "Retrying queued Room turn with Agy", status: "working", updatedAt: now() });
   await saveRoomState(ctx, job.companyId, issue.id, state, "Start due Agy provider quota Room retry");
@@ -15555,7 +15828,7 @@ async function reconcileRoomProviderQuotaRetries(ctx, options = {}) {
     const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
     const summary = { scanned: 0, launched: 0, waiting: 0, failed: 0 };
     for (const record of records) {
-      const job = roomJobData(asRecord6(record.data));
+      const job = roomJobData(asRecord7(record.data));
       if (!isRoomProviderQuotaRetryJob(job)) continue;
       summary.scanned += 1;
       try {
@@ -15584,8 +15857,8 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
   const jobs = await listRoomJobs(ctx, ownerRoom.id);
   const agent = await ctx.agents.get(agentRoomAgentId(ownerRoom), companyId);
   const ownerState = await loadRoomState(ctx, companyId, ownerRoom, agent);
-  const pendingJobId = textParam4(ownerState.pendingTurn, "jobId");
-  const notifiedJobId = textParam4(asRecord6(taskState.ownerNotification), "jobId");
+  const pendingJobId = textParam6(ownerState.pendingTurn, "jobId");
+  const notifiedJobId = textParam6(asRecord7(taskState.ownerNotification), "jobId");
   const job = jobs.find((candidate) => candidate.kind === "task_owner_report" && candidate.taskIssueId === task.id && (isRoomProviderQuotaRetryJob(candidate) || pendingJobId && candidate.id === pendingJobId));
   const resolvedJobId = job?.id || (pendingJobId && pendingJobId === notifiedJobId ? pendingJobId : "");
   if (!resolvedJobId) return false;
@@ -15594,10 +15867,10 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
       status: "cancelled",
       completedAt: now(),
       error: `Task moved to ${task.status}; the queued owner report is no longer current.`,
-      payload: { ...asRecord6(job.payload), quotaRetryAt: null }
+      payload: { ...asRecord7(job.payload), quotaRetryAt: null }
     });
   }
-  if (textParam4(ownerState.pendingTurn, "jobId") === resolvedJobId) {
+  if (textParam6(ownerState.pendingTurn, "jobId") === resolvedJobId) {
     ownerState.pendingTurn = null;
     ownerState.runtime ??= {};
     ownerState.runtime.quotaRetry = {
@@ -15611,13 +15884,13 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
     await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Release resolved Task owner report quota retry");
   }
   taskState.review = {
-    ...asRecord6(taskState.review),
+    ...asRecord7(taskState.review),
     status: "user_reviewed",
     reviewedAt: now(),
     updatedAt: now()
   };
   taskState.ownerNotification = {
-    ...asRecord6(taskState.ownerNotification),
+    ...asRecord7(taskState.ownerNotification),
     status: "completed",
     taskStatus: task.status,
     jobId: resolvedJobId,
@@ -15640,8 +15913,8 @@ async function roomHasActiveWork(ctx, issueId, state) {
   let jobs = await listRoomJobs(ctx, issueId);
   jobs = await reconcileRoomJobLedger(ctx, issueId, state, jobs);
   const persistedJob = jobs.find((job) => ACTIVE_ROOM_JOB_STATUSES.has(job.status)) ?? null;
-  const pendingKind = textParam4(asRecord6(state?.pendingTurn), "kind");
-  const activityStatus = textParam4(asRecord6(state?.runtime?.activity), "status");
+  const pendingKind = textParam6(asRecord7(state?.pendingTurn), "kind");
+  const activityStatus = textParam6(asRecord7(state?.runtime?.activity), "status");
   const stateBusy = Boolean(pendingKind) || ["working", "finishing"].includes(activityStatus);
   if (processJob && !persistedJob && !stateBusy) {
     if (activeRoomMessageJobs.get(issueId) === processJob) activeRoomMessageJobs.delete(issueId);
@@ -15767,9 +16040,9 @@ async function prepareRoomOperatingBrief(ctx, { companyId, issue, state, agent =
   return { workState, tasks, text: buildRoomOperatingBrief(workState, tasks, roomAgent) };
 }
 function buildRoomRecoveryContext(state, comments, excludedCommentId = "") {
-  const checkpoint = asRecord6(state?.checkpoint);
+  const checkpoint = asRecord7(state?.checkpoint);
   const checkpointSummary = trimRoomContext(checkpoint.summary, 1e4);
-  const checkpointSourceId = textParam4(checkpoint, "sourceCommentId");
+  const checkpointSourceId = textParam6(checkpoint, "sourceCommentId");
   const excludedId = String(excludedCommentId || "").trim();
   const ordered = mostRecentComments(comments, Number.MAX_SAFE_INTEGER).filter((comment) => comment?.id !== excludedId && String(comment?.body || "").trim());
   let candidates = ordered;
@@ -15782,7 +16055,7 @@ function buildRoomRecoveryContext(state, comments, excludedCommentId = "") {
   let used = checkpointSummary.length;
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     const comment = candidates[index];
-    const timestamp = textParam4(comment, "createdAt") || "unknown time";
+    const timestamp = textParam6(comment, "createdAt") || "unknown time";
     const body = trimRoomContext(comment?.body, ROOM_CONTEXT_RECOVERY_ENTRY_LIMIT);
     const entry = `[${timestamp} | comment ${comment.id || "unknown"}]
 ${body}`;
@@ -15807,7 +16080,7 @@ ${selected.join("\n\n---\n\n") || "No earlier Room comments were available."}`,
 }
 async function prepareCodexRoomTurn(ctx, { companyId, issue, state, threadId, currentText, excludedCommentId = "" }) {
   const operating = await prepareRoomOperatingBrief(ctx, { companyId, issue, state });
-  if (textParam4(state?.runtime, "contextHydratedThreadId") === threadId) {
+  if (textParam6(state?.runtime, "contextHydratedThreadId") === threadId) {
     return {
       text: `${operating.text}
 
@@ -15834,7 +16107,7 @@ ${currentText}`,
 }
 async function prepareNativeRoomTurn(ctx, { companyId, issue, state, sessionId, currentText, excludedCommentId = "" }) {
   const operating = await prepareRoomOperatingBrief(ctx, { companyId, issue, state });
-  if (textParam4(state?.runtime, "contextHydratedNativeSessionId") === sessionId) {
+  if (textParam6(state?.runtime, "contextHydratedNativeSessionId") === sessionId) {
     return {
       text: `${operating.text}
 
@@ -15871,144 +16144,20 @@ function markNativeRoomContextHydrated(state, sessionId, prepared) {
   state.runtime.contextHydratedNativeAt = now();
   state.runtime.contextHydratedNativeThroughCommentId = prepared.latestCommentId ?? null;
 }
-async function getRuntimeConfig(ctx) {
-  const config = asRecord6(await ctx.config.get());
-  return {
-    enabled: config.enableCodexRooms !== false,
-    enableCodexRooms: config.enableCodexRooms !== false,
-    enableAgyRooms: config.enableAgyRooms !== false,
-    command: textParam4(config, "codexCommand", "codex"),
-    model: textParam4(config, "codexModel", "") || null,
-    codexHome: textParam4(config, "codexHome", "") || null,
-    codexSandbox: codexRoomSandbox(textParam4(config, "codexRoomSandbox", "danger-full-access")),
-    codexApprovalPolicy: codexRoomApprovalPolicy(textParam4(config, "codexRoomApprovalPolicy", "never")),
-    // A provider switch is an explicit product choice, not a hidden retry.
-    enableAgyQuotaFallback: config.enableAgyQuotaFallback === true,
-    agyFallbackCommand: textParam4(config, "agyFallbackCommand", defaultAgyCommand()),
-    agyFallbackModel: textParam4(config, "agyFallbackModel", "gemini-3.1-pro-high"),
-    agyFallbackPrintTimeout: textParam4(config, "agyFallbackPrintTimeout", "2h"),
-    agyFallbackTimeoutMs: Math.max(0, Number(config.agyFallbackTimeoutSec) || 0) * 1e3,
-    // Lead and Worker policies are the authorization boundary. Task delegation
-    // should work by default once those policies are explicitly configured;
-    // this switch is only an emergency pause for an entire Workplane.
-    enableTaskAssignment: config.enableTaskAssignment !== false,
-    // The packaged Owner Host chooses an available loopback port on first run.
-    // Its process value must win over the manifest's old 3100 default; otherwise
-    // Room UI can load while durable writes go to a different SPS server.
-    spsApiUrl: loopbackSPSApiUrl(
-      process.env.SPS_ROOM_API_URL || textParam4(config, "spsApiUrl", textParam4(config, "paperclipApiUrl", "http://127.0.0.1:3100"))
-    )
-  };
-}
-function isLoopbackHost2(host) {
-  return (/* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"])).has(String(host || "").trim().toLowerCase());
-}
-function paperclipInstanceConfigPath() {
-  const configured = String(process.env.PAPERCLIP_CONFIG_PATH || "").trim();
-  return configured || path3.join(os.homedir(), ".sps", "instances", "default", "config.json");
-}
-function environmentHasAuthenticationSecret(environmentPath) {
-  try {
-    const lines = fs2.readFileSync(environmentPath, "utf8").split(/\r?\n/);
-    return lines.some((line) => {
-      const match = /^\s*(BETTER_AUTH_SECRET|PAPERCLIP_AGENT_JWT_SECRET)\s*=\s*(.*)$/.exec(line);
-      if (!match) return false;
-      return match[2].trim().replace(/^['\"]|['\"]$/g, "").length > 0;
-    });
-  } catch {
-    return false;
-  }
-}
-function collaborationReadinessFromConfig(config, { hasAuthenticationSecret = false } = {}) {
-  const server = asRecord6(asRecord6(config).server);
-  const auth = asRecord6(asRecord6(config).auth);
-  const deploymentMode = textParam4(server, "deploymentMode", "local_trusted");
-  const exposure = textParam4(server, "exposure", "private");
-  const listenHost = textParam4(server, "host", "127.0.0.1");
-  const inferredBind = isLoopbackHost2(listenHost) ? "loopback" : (/* @__PURE__ */ new Set(["0.0.0.0", "::"])).has(listenHost) ? "lan" : "custom";
-  const bind = textParam4(server, "bind", inferredBind);
-  const port = Number(server.port) || 3100;
-  const allowedHostnames = Array.isArray(server.allowedHostnames) ? server.allowedHostnames.map((value) => String(value || "").trim()).filter(Boolean) : [];
-  const checks = [];
-  const warnings = [];
-  const localOnlySafeDefault = deploymentMode === "local_trusted" && bind === "loopback";
-  if (localOnlySafeDefault) {
-    checks.push({ label: "\uC811\uC18D \uBC29\uC2DD", status: "pass", message: "\uB85C\uCEEC \uC804\uC6A9 \uBAA8\uB4DC\uAC00 \uC774 \uCEF4\uD4E8\uD130\uC5D0 \uC548\uC804\uD558\uAC8C \uBB36\uC5EC \uC788\uC2B5\uB2C8\uB2E4." });
-  } else if (deploymentMode === "authenticated") {
-    checks.push({
-      label: "\uC778\uC99D \uBE44\uBC00\uAC12",
-      status: hasAuthenticationSecret ? "pass" : "fail",
-      message: hasAuthenticationSecret ? "\uC778\uC99D \uBE44\uBC00\uAC12\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." : "\uC778\uC99D \uC811\uC18D\uC5D0\uB294 SPS .env \uD30C\uC77C\uC758 BETTER_AUTH_SECRET \uB610\uB294 PAPERCLIP_AGENT_JWT_SECRET\uAC00 \uD544\uC694\uD569\uB2C8\uB2E4."
-    });
-  } else {
-    checks.push({ label: "\uC811\uC18D \uBC29\uC2DD", status: "fail", message: "\uB85C\uCEEC \uBC16\uC5D0\uC11C \uC811\uC18D\uD558\uB824\uBA74 \uC778\uC99D \uBAA8\uB4DC\uB97C \uC0AC\uC6A9\uD574\uC57C \uD569\uB2C8\uB2E4." });
-  }
-  if (deploymentMode === "authenticated" && exposure === "private") {
-    if (bind === "tailnet") {
-      checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "pass", message: "Tailnet \uBE44\uACF5\uAC1C \uD611\uC5C5\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." });
-    } else if (bind === "lan") {
-      checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "warn", message: "\uC778\uC99D\uB41C LAN \uC811\uC18D\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4. \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 LAN \uBC16\uC758 \uD611\uC5C5\uC790\uB294 Tailnet\uC744 \uAD8C\uC7A5\uD569\uB2C8\uB2E4." });
-    } else {
-      checks.push({ label: "\uBE44\uACF5\uAC1C \uB124\uD2B8\uC6CC\uD06C", status: "fail", message: "\uBE44\uACF5\uAC1C \uD611\uC5C5\uC5D0\uB294 Tailnet \uB610\uB294 \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 LAN \uC5F0\uACB0\uC774 \uD544\uC694\uD569\uB2C8\uB2E4." });
-    }
-    checks.push({
-      label: "\uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uD638\uC2A4\uD2B8 \uC774\uB984",
-      status: allowedHostnames.length > 0 ? "pass" : "fail",
-      message: allowedHostnames.length > 0 ? `\uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uBE44\uACF5\uAC1C \uD638\uC2A4\uD2B8 \uC774\uB984 ${allowedHostnames.length}\uAC1C\uAC00 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4.` : "\uD611\uC5C5\uC790\uB97C \uCD08\uB300\uD558\uAE30 \uC804\uC5D0 Tailnet DNS \uC774\uB984 \uB610\uB294 \uC2E0\uB8B0\uD560 \uC218 \uC788\uB294 \uBE44\uACF5\uAC1C \uD638\uC2A4\uD2B8 \uC774\uB984\uC744 \uCD94\uAC00\uD558\uC138\uC694."
-    });
-  }
-  if (deploymentMode === "authenticated" && exposure === "public") {
-    const publicBaseUrl = textParam4(auth, "publicBaseUrl");
-    const hasHttpsBaseUrl = textParam4(auth, "baseUrlMode") === "explicit" && publicBaseUrl.startsWith("https://");
-    checks.push({
-      label: "\uACF5\uAC1C URL",
-      status: hasHttpsBaseUrl ? "pass" : "fail",
-      message: hasHttpsBaseUrl ? "\uACF5\uAC1C HTTPS URL\uC774 \uC124\uC815\uB418\uC5B4 \uC788\uC2B5\uB2C8\uB2E4." : "\uACF5\uAC1C \uC811\uC18D\uC5D0\uB294 \uBA85\uC2DC\uC801\uC778 HTTPS auth.publicBaseUrl\uC774 \uD544\uC694\uD569\uB2C8\uB2E4."
-    });
-  }
-  const hasFailures = checks.some((check) => check.status === "fail");
-  const collaborationReady = deploymentMode === "authenticated" && bind !== "loopback" && !hasFailures;
-  const state = localOnlySafeDefault ? "local_only" : collaborationReady ? "collaboration_ready" : "configuration_incomplete";
-  const recommendation = state === "local_only" ? "\uAC1C\uC778 \uC791\uC5C5 \uC900\uBE44\uAC00 \uC644\uB8CC\uB410\uC2B5\uB2C8\uB2E4. \uCE5C\uAD6C\uB97C \uCD08\uB300\uD560 \uB54C\uB294 \uC774 \uCEF4\uD4E8\uD130\uB97C \uC9C1\uC811 \uB178\uCD9C\uD558\uC9C0 \uB9D0\uACE0 \uC778\uC99D\uB41C \uBE44\uACF5\uAC1C Tailnet \uC811\uC18D\uC744 \uC124\uC815\uD558\uC138\uC694." : state === "collaboration_ready" ? "\uD611\uC5C5\uC790\uB97C Operator\uB85C \uCD08\uB300\uD55C \uB4A4, \uB450 \uC0AC\uB78C\uC774 \uD568\uAED8 \uBE0C\uB77C\uC6B0\uC800 \uC811\uC18D \uD655\uC778\uC744 \uB9C8\uCE58\uC138\uC694." : "\uC2E4\uD328\uD55C \uD56D\uBAA9\uC744 \uACE0\uCE5C \uB4A4 Workplane\uC744 \uB2E4\uC2DC \uC2DC\uC791\uD558\uACE0, \uD611\uC5C5\uC790\uB97C \uCD08\uB300\uD558\uAE30 \uC804\uC5D0 \uC774 \uD655\uC778\uC744 \uB2E4\uC2DC \uC2E4\uD589\uD558\uC138\uC694.";
-  return {
-    state,
-    localOnlySafeDefault,
-    collaborationReady,
-    server: { deploymentMode, exposure, bind, listenHost, port, allowedHostnameCount: allowedHostnames.length },
-    checks,
-    warnings,
-    recommendation
-  };
-}
-function readCollaborationReadiness() {
-  try {
-    const configPath = paperclipInstanceConfigPath();
-    if (!fs2.existsSync(configPath)) {
-      return {
-        state: "configuration_unavailable",
-        localOnlySafeDefault: false,
-        collaborationReady: false,
-        server: null,
-        checks: [{ label: "SPS configuration", status: "fail", message: "The local SPS configuration file was not found." }],
-        warnings: [],
-        recommendation: "Start the Workplane once to create its local configuration, then check this page again."
-      };
-    }
-    const config = JSON.parse(fs2.readFileSync(configPath, "utf8"));
-    const environmentPath = path3.join(path3.dirname(configPath), ".env");
-    return collaborationReadinessFromConfig(config, { hasAuthenticationSecret: environmentHasAuthenticationSecret(environmentPath) });
-  } catch {
-    return {
-      state: "configuration_unavailable",
-      localOnlySafeDefault: false,
-      collaborationReady: false,
-      server: null,
-      checks: [{ label: "SPS configuration", status: "fail", message: "The local SPS configuration could not be read." }],
-      warnings: [],
-      recommendation: "Fix the local SPS configuration, restart the Workplane, then check this page again."
-    };
-  }
-}
+var runtimeConfiguration = createCollaborationReadiness({
+  fs: fs3,
+  os: os2,
+  path: path4,
+  codexRoomSandbox,
+  codexRoomApprovalPolicy,
+  defaultAgyCommand,
+  loopbackSPSApiUrl,
+  environmentVariable: process.env
+});
+var getRuntimeConfig = runtimeConfiguration.getRuntimeConfig;
+var collaborationReadinessFromConfig = runtimeConfiguration.collaborationReadinessFromConfig;
+var readCollaborationReadiness = runtimeConfiguration.readCollaborationReadiness;
+var paperclipInstanceConfigPath = runtimeConfiguration.paperclipInstanceConfigPath;
 var PROVIDER_QUOTA_ERROR_RE = /(?:provider_quota|resource_exhausted|usage[_\s-]?limit|quota|rate[_\s-]?limit|too many requests|\b429\b|weekly limit|5[-\s]?hour limit)/i;
 var AGY_FALLBACK_MAX_TOOL_STEPS = 10;
 function errorDiagnosticText(error) {
@@ -16022,10 +16171,10 @@ function errorDiagnosticText(error) {
 ${data}`;
 }
 function isProviderQuotaError(error) {
-  return textParam4(error, "code") === PROVIDER_QUOTA_ERROR_CODE || textParam4(error, "errorFamily") === PROVIDER_QUOTA_ERROR_CODE || PROVIDER_QUOTA_ERROR_RE.test(errorDiagnosticText(error));
+  return textParam6(error, "code") === PROVIDER_QUOTA_ERROR_CODE || textParam6(error, "errorFamily") === PROVIDER_QUOTA_ERROR_CODE || PROVIDER_QUOTA_ERROR_RE.test(errorDiagnosticText(error));
 }
 function providerQuotaRetryAtFromError(error, current = Date.now()) {
-  const requestedAt = new Date(textParam4(error, "retryNotBefore") || 0).getTime();
+  const requestedAt = new Date(textParam6(error, "retryNotBefore") || 0).getTime();
   return new Date(Math.max(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS, Number.isFinite(requestedAt) ? requestedAt : 0)).toISOString();
 }
 function roomToolContext(runtime, companyId, issue, agent, mode = "agent", workspaceProfile = null) {
@@ -16044,7 +16193,7 @@ function roomToolContext(runtime, companyId, issue, agent, mode = "agent", works
     mode: roomMessageMode(mode),
     // Dynamic CLI tool calls outlive the plugin invocation. Carry the durable
     // Project routing decision into that call instead of reading plugin storage.
-    workspaceProfile: asRecord6(workspaceProfile)
+    workspaceProfile: asRecord7(workspaceProfile)
   };
 }
 function workplaneIdentityForRoomContext(roomContext) {
@@ -16053,7 +16202,7 @@ function workplaneIdentityForRoomContext(roomContext) {
     name: roomContext?.agentName,
     role: roomContext?.workplaneRole || roomContext?.agentRole,
     adapterConfig: {
-      workplane: asRecord6(roomContext?.workplanePolicy)
+      workplane: asRecord7(roomContext?.workplanePolicy)
     }
   });
 }
@@ -16076,15 +16225,15 @@ function parseAgyFallbackEnvelope(text4) {
   } catch {
     return { type: "final", message: raw };
   }
-  const record = asRecord6(value);
-  if (textParam4(record, "type") === "tool_call") {
+  const record = asRecord7(value);
+  if (textParam6(record, "type") === "tool_call") {
     return {
       type: "tool_call",
-      name: textParam4(record, "name"),
-      arguments: asRecord6(record.arguments)
+      name: textParam6(record, "name"),
+      arguments: asRecord7(record.arguments)
     };
   }
-  if (textParam4(record, "type") === "final" && textParam4(record, "message")) {
+  if (textParam6(record, "type") === "final" && textParam6(record, "message")) {
     return { type: "final", message: rawTextParam(record, "message").trim() };
   }
   return { type: "final", message: raw };
@@ -16201,7 +16350,7 @@ function codexCompletionWithAgyFallback(ctx, input) {
       model: input.runtime.agyFallbackModel || "gemini-3.1-pro-high",
       at: now()
     };
-    const activity = asRecord6(input.state.runtime.activity);
+    const activity = asRecord7(input.state.runtime.activity);
     if (Array.isArray(activity.steps)) {
       activity.steps.push({ id: `agy-fallback-${Date.now()}`, type: "runtime", label: "Codex quota reached; continuing with Agy", status: "working", updatedAt: now() });
       activity.updatedAt = now();
@@ -16274,8 +16423,8 @@ async function openThread(ctx, runtime, state, companyId, issue, agent) {
   }
   const client = await getCodexClient(ctx, roomRuntime, agent);
   state.runtime ??= {};
-  const storedThreadId = textParam4(state.runtime, "codexThreadId") || null;
-  const storedInstructionsFingerprint = textParam4(state.runtime, "instructionsFingerprint") || null;
+  const storedThreadId = textParam6(state.runtime, "codexThreadId") || null;
+  const storedInstructionsFingerprint = textParam6(state.runtime, "instructionsFingerprint") || null;
   const instructionsChanged = Boolean(storedThreadId) && storedInstructionsFingerprint !== instructionsFingerprint;
   if (instructionsChanged) {
     state.runtime.lastThreadRotation = {
@@ -16361,18 +16510,18 @@ async function handleWorkspaceProfileAccess(_ctx, _params, actionCtx) {
 }
 async function handleWorkspaceProfileSave(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const projectId = textParam4(params, "projectId");
+  const projectId = textParam6(params, "projectId");
   if (!projectId) throw new Error("projectId is required.");
   const project = await ctx.projects.get(projectId, companyId);
   if (!project) throw new Error("Project was not found.");
   const workspaces = await listProjectWorkspaces(ctx, companyId, projectId);
   if (!Array.isArray(workspaces)) throw new Error("Project Workspace access is unavailable.");
-  const profile = await saveProjectWorkspaceProfile(ctx, projectId, asRecord6(params).profile, workspaces);
+  const profile = await saveProjectWorkspaceProfile(ctx, projectId, asRecord7(params).profile, workspaces);
   return { ok: true, profile };
 }
 async function handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const projectId = textParam4(params, "projectId");
+  const projectId = textParam6(params, "projectId");
   const cwd = rawTextParam(params, "cwd").trim();
   const repoUrl = rawTextParam(params, "repoUrl").trim();
   if (!projectId) throw new Error("projectId is required.");
@@ -16386,7 +16535,7 @@ async function handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx) {
     ...cwd ? { cwd } : {},
     ...repoUrl ? { repoUrl } : {},
     sourceType: cwd ? "local_path" : "git_repo",
-    isPrimary: asRecord6(params).isPrimary === true
+    isPrimary: asRecord7(params).isPrimary === true
   }, companyId);
   if (!created) throw new Error("SPS could not create the Project Workspace.");
   const workspaces = await listProjectWorkspaces(ctx, companyId, projectId);
@@ -16484,11 +16633,11 @@ function applyNativeSessionActivityEvent(state, event) {
     return true;
   }
   if (event.eventType !== "chunk") return false;
-  const payload = asRecord6(event.payload);
-  const nestedPayload = asRecord6(payload.payload);
-  const toolName = textParam4(payload, "currentToolName") || textParam4(nestedPayload, "toolName");
-  const eventType = textParam4(payload, "eventType") || textParam4(nestedPayload, "type") || "progress";
-  const summary = (textParam4(payload, "lastAssistantSnippet") || textParam4(event, "message") || textParam4(payload, "message")).slice(0, 900);
+  const payload = asRecord7(event.payload);
+  const nestedPayload = asRecord7(payload.payload);
+  const toolName = textParam6(payload, "currentToolName") || textParam6(nestedPayload, "toolName");
+  const eventType = textParam6(payload, "eventType") || textParam6(nestedPayload, "type") || "progress";
+  const summary = (textParam6(payload, "lastAssistantSnippet") || textParam6(event, "message") || textParam6(payload, "message")).slice(0, 900);
   const label = toolName ? `Using ${toolName}` : eventType === "reasoning" ? "Reviewing context" : eventType === "assistant" ? "Preparing the response" : "Agent work in progress";
   activity.steps.push({
     id: `agent-session:${event.seq ?? activity.steps.length}`,
@@ -16636,8 +16785,8 @@ function gitStatusLabel(code) {
 function workspaceGitChanges(workspace) {
   const cwd = String(workspace?.cwd ?? workspace?.path ?? "").trim();
   const name = String(workspace?.name ?? "Workspace");
-  const kind = String(asRecord6(workspace?.metadata).kind ?? "implementation");
-  if (!cwd || !fs2.existsSync(cwd)) {
+  const kind = String(asRecord7(workspace?.metadata).kind ?? "implementation");
+  if (!cwd || !fs3.existsSync(cwd)) {
     return { id: workspace?.id ?? null, name, kind, available: false, files: [] };
   }
   try {
@@ -16647,7 +16796,7 @@ function workspaceGitChanges(workspace) {
       timeout: 5e3,
       windowsHide: true
     }).trim();
-    const workspaceRelativeRoot = path3.relative(repositoryRoot, cwd).replace(/\\/g, "/").replace(/^\.\/$/, "");
+    const workspaceRelativeRoot = path4.relative(repositoryRoot, cwd).replace(/\\/g, "/").replace(/^\.\/$/, "");
     const workspacePrefix = workspaceRelativeRoot && !workspaceRelativeRoot.startsWith("../") && workspaceRelativeRoot !== ".." ? workspaceRelativeRoot.replace(/\/+$/, "") : "";
     const output = execFileSync("git", ["-c", "core.quotepath=false", "-C", cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all"], {
       encoding: "utf8",
@@ -16661,7 +16810,7 @@ function workspaceGitChanges(workspace) {
       const entry = entries[index];
       const code = entry.slice(0, 2).trim() || "M";
       const repositoryPath = entry.slice(3).replace(/\\/g, "/");
-      const scopedPath = workspacePrefix ? repositoryPath === workspacePrefix ? path3.posix.basename(repositoryPath) : repositoryPath.startsWith(`${workspacePrefix}/`) ? repositoryPath.slice(workspacePrefix.length + 1) : null : repositoryPath;
+      const scopedPath = workspacePrefix ? repositoryPath === workspacePrefix ? path4.posix.basename(repositoryPath) : repositoryPath.startsWith(`${workspacePrefix}/`) ? repositoryPath.slice(workspacePrefix.length + 1) : null : repositoryPath;
       if (!scopedPath) {
         if ((code.includes("R") || code.includes("C")) && index + 1 < entries.length) index += 1;
         continue;
@@ -16689,8 +16838,8 @@ function taskFileReferences(tasks) {
   const seen = /* @__PURE__ */ new Set();
   const files = [];
   for (const task of tasks) {
-    const add = (kind, path4) => {
-      const cleanPath = String(path4 || "").trim();
+    const add = (kind, path5) => {
+      const cleanPath = String(path5 || "").trim();
       if (!cleanPath || /^Not (declared|required)/i.test(cleanPath)) return;
       const key = `${kind}:${cleanPath}`;
       if (seen.has(key)) return;
@@ -16698,13 +16847,13 @@ function taskFileReferences(tasks) {
       files.push({ kind, path: cleanPath, taskId: task.id, taskIdentifier: task.identifier, taskTitle: task.title });
     };
     for (const reference of declaredDesignReferences(task.description)) add("design_reference", reference);
-    for (const path4 of declaredPaths(task.description)) add("task_target", path4);
+    for (const path5 of declaredPaths(task.description)) add("task_target", path5);
   }
   return files;
 }
 async function previewTask(ctx, companyId, projectId, roomIssueId, affectedPaths) {
   const activeTasks = await getActiveTasks(ctx, companyId, projectId, roomIssueId);
-  const normalizedPaths = [...new Set(affectedPaths.map((path4) => path4.trim()).filter(Boolean))];
+  const normalizedPaths = [...new Set(affectedPaths.map((path5) => path5.trim()).filter(Boolean))];
   const conflicts = activeTasks.filter((task) => pathsConflict(declaredPaths(task.description), normalizedPaths));
   return {
     affectedPaths: normalizedPaths,
@@ -16726,7 +16875,7 @@ async function previewTask(ctx, companyId, projectId, roomIssueId, affectedPaths
 }
 async function previewTaskDirect(apiUrl, companyId, projectId, roomIssueId, affectedPaths) {
   const activeTasks = await getActiveTasksDirect(apiUrl, companyId, projectId, roomIssueId);
-  const normalizedPaths = [...new Set(affectedPaths.map((path4) => path4.trim()).filter(Boolean))];
+  const normalizedPaths = [...new Set(affectedPaths.map((path5) => path5.trim()).filter(Boolean))];
   const conflicts = activeTasks.filter((task) => pathsConflict(declaredPaths(task.description), normalizedPaths));
   return {
     affectedPaths: normalizedPaths,
@@ -16851,7 +17000,7 @@ async function handleCodexServerRequest(ctx, request) {
   const roomContext = activeThreadContexts.get(params.threadId);
   if (!roomContext) throw new Error("Codex tool call does not belong to an active Room.");
   const name = `${params.namespace || ""}.${params.tool || ""}`.replace(/^\./, "");
-  const args = asRecord6(params.arguments);
+  const args = asRecord7(params.arguments);
   let content;
   try {
     const toolApi = dynamicRoomToolApi(ctx, roomContext);
@@ -16864,14 +17013,14 @@ async function handleCodexServerRequest(ctx, request) {
       });
     } else if (name === "paperclip.memory_search") {
       const memoryAccess = workplaneIdentityForRoomContext(roomContext).memoryAccess;
-      const query = textParam4(args, "query");
+      const query = textParam6(args, "query");
       const limit = Math.max(1, Math.min(Number(args.limit) || 5, 10));
       if (memoryAccess === "none") {
         content = JSON.stringify({ ok: false, code: "memory_read_disabled", message: "This Agent's Organization policy does not allow SPS memory search." });
       } else if (!query || query.length > 500) {
         content = JSON.stringify({ ok: false, code: "invalid_memory_query", message: "Memory search queries must be between 1 and 500 characters." });
       } else {
-        const items = await searchRoomMemory(roomContext, query, listParam(args, "scopes"), limit);
+        const items = await searchRoomMemory(roomContext, query, listParam2(args, "scopes"), limit);
         content = JSON.stringify({ ok: true, items }, null, 2);
       }
     } else if (name === "paperclip.memory_propose") {
@@ -16921,7 +17070,7 @@ async function handleCodexServerRequest(ctx, request) {
             workplaneKind: identity.kind,
             status: agent.status,
             adapterType: agent.adapterType ?? null,
-            maxConcurrentRuns: Number(asRecord6(asRecord6(agent.runtimeConfig).heartbeat).maxConcurrentRuns) || 1
+            maxConcurrentRuns: Number(asRecord7(asRecord7(agent.runtimeConfig).heartbeat).maxConcurrentRuns) || 1
           };
         }), null, 2);
       }
@@ -16929,7 +17078,7 @@ async function handleCodexServerRequest(ctx, request) {
       if (!roomContext.projectId) {
         content = JSON.stringify({ ok: false, code: "missing_project", message: "An Agent Room must belong to a project before it can preview Tasks." });
       } else {
-        const preview = await toolApi.previewTask(listParam(args, "affectedPaths"));
+        const preview = await toolApi.previewTask(listParam2(args, "affectedPaths"));
         content = JSON.stringify({ ok: true, ...preview }, null, 2);
       }
     } else if (name === "paperclip.create_task") {
@@ -16946,22 +17095,22 @@ async function handleCodexServerRequest(ctx, request) {
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_ASSIGN)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_assign_tasks", message: "This Lead is not configured to assign Worker Tasks." });
       } else {
-        const title = enforceTaskContractText(textParam4(args, "title"), "Task title");
-        const description = enforceTaskContractText(textParam4(args, "description"), "Task description");
-        const assigneeAgentId = textParam4(args, "assigneeAgentId");
-        const requestedTaskType = textParam4(args, "taskType", "implementation");
+        const title = enforceTaskContractText(textParam6(args, "title"), "Task title");
+        const description = enforceTaskContractText(textParam6(args, "description"), "Task description");
+        const assigneeAgentId = textParam6(args, "assigneeAgentId");
+        const requestedTaskType = textParam6(args, "taskType", "implementation");
         const taskType = normalizedTaskTypeKey2(requestedTaskType);
-        const maturity = textParam4(args, "maturity");
-        const affectedPaths = listParam(args, "affectedPaths");
-        const designReferences = listParam(args, "designReferences");
-        const acceptanceCriteria = listParam(args, "acceptanceCriteria");
-        const verification = listParam(args, "verification");
-        const blockedByIssueIds = [...new Set(listParam(args, "blockedByIssueIds"))];
-        const requestedProjectWorkspaceId = textParam4(args, "projectWorkspaceId");
+        const maturity = textParam6(args, "maturity");
+        const affectedPaths = listParam2(args, "affectedPaths");
+        const designReferences = listParam2(args, "designReferences");
+        const acceptanceCriteria = listParam2(args, "acceptanceCriteria");
+        const verification = listParam2(args, "verification");
+        const blockedByIssueIds = [...new Set(listParam2(args, "blockedByIssueIds"))];
+        const requestedProjectWorkspaceId = textParam6(args, "projectWorkspaceId");
         const projectWorkspaces = await toolApi.listProjectWorkspaces();
         const companyAgents = await toolApi.listAgents();
         const selectedWorker = companyAgents.find((candidate) => candidate.id === assigneeAgentId) ?? null;
-        const workspaceProfile = normalizeWorkspaceProfile(asRecord6(roomContext.workspaceProfile), projectWorkspaces);
+        const workspaceProfile = normalizeWorkspaceProfile(asRecord7(roomContext.workspaceProfile), projectWorkspaces);
         const taskWorkspace = chooseTaskWorkspace(
           projectWorkspaces,
           taskType,
@@ -17096,7 +17245,7 @@ ${error.message}`);
       if (!roomContext.projectId) {
         content = JSON.stringify({ ok: false, code: "missing_project" });
       } else {
-        const task = await toolApi.getProjectTask(textParam4(args, "taskId"));
+        const task = await toolApi.getProjectTask(textParam6(args, "taskId"));
         const [stateDocument, comments] = await Promise.all([
           toolApi.getDocument(task.id, TASK_ROOM_STATE_KEY),
           toolApi.listComments(task.id)
@@ -17114,9 +17263,9 @@ ${error.message}`);
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_ASSIGN)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_start_tasks" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam4(args, "taskId"));
-        const dispatch = asRecord6(state.dispatch);
-        const workerAgentId = textParam4(state, "workerAgentId") || task.assigneeAgentId;
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam6(args, "taskId"));
+        const dispatch = asRecord7(state.dispatch);
+        const workerAgentId = textParam6(state, "workerAgentId") || task.assigneeAgentId;
         const companyAgents = await toolApi.listAgents();
         const selectedWorker = companyAgents.find((candidate) => candidate.id === workerAgentId && isTaskWorkerAgent(candidate));
         if (task.status !== "blocked" || dispatch.status !== "waiting_for_worker" || dispatch.reason !== "worker_paused_before_start") {
@@ -17178,8 +17327,8 @@ ${error.message}`);
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_REVIEW)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_post_feedback" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam4(args, "taskId"));
-        const message = enforceTaskContractText(textParam4(args, "message"), "Task feedback");
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam6(args, "taskId"));
+        const message = enforceTaskContractText(textParam6(args, "message"), "Task feedback");
         if (!message) {
           content = JSON.stringify({ ok: false, code: "feedback_message_required" });
         } else if (!["in_review", "blocked", "done"].includes(task.status)) {
@@ -17193,19 +17342,19 @@ ${error.message}`);
           const feedbackBody = `## ${roomContext.agentName} Feedback
 ${message}`;
           const previousStateBody = serializeState(state);
-          const previousReview = asRecord6(state.review);
-          const previousNotification = asRecord6(state.ownerNotification);
+          const previousReview = asRecord7(state.review);
+          const previousNotification = asRecord7(state.ownerNotification);
           const feedbackAt = now();
-          const priorReportCommentId = textParam4(previousReview, "workerReportCommentId") || textParam4(previousNotification, "reportCommentId");
-          const priorReportFingerprint = textParam4(previousReview, "workerReportFingerprint") || textParam4(previousNotification, "reportFingerprint");
+          const priorReportCommentId = textParam6(previousReview, "workerReportCommentId") || textParam6(previousNotification, "reportCommentId");
+          const priorReportFingerprint = textParam6(previousReview, "workerReportFingerprint") || textParam6(previousNotification, "reportFingerprint");
           if (priorReportCommentId || priorReportFingerprint || Object.keys(previousNotification).length > 0) {
             const history = Array.isArray(state.reviewHistory) ? state.reviewHistory : [];
             state.reviewHistory = [...history, {
               outcome: "correction_requested",
               workerReportCommentId: priorReportCommentId || null,
               workerReportFingerprint: priorReportFingerprint || null,
-              ownerNotificationStatus: textParam4(previousNotification, "status") || null,
-              ownerNotificationResultCommentId: textParam4(previousNotification, "resultCommentId") || null,
+              ownerNotificationStatus: textParam6(previousNotification, "status") || null,
+              ownerNotificationResultCommentId: textParam6(previousNotification, "resultCommentId") || null,
               closedAt: feedbackAt
             }].slice(-20);
           }
@@ -17222,7 +17371,7 @@ ${message}`;
           };
           delete state.ownerNotification;
           state.dispatch = {
-            ...asRecord6(state.dispatch),
+            ...asRecord7(state.dispatch),
             status: "feedback_pending",
             reason: null,
             updatedAt: feedbackAt
@@ -17255,10 +17404,10 @@ ${message}`;
             });
             throw error;
           }
-          const comment = asRecord6(restarted?.comment);
-          state.review.feedbackCommentId = textParam4(comment, "id") || null;
+          const comment = asRecord7(restarted?.comment);
+          state.review.feedbackCommentId = textParam6(comment, "id") || null;
           state.dispatch = {
-            ...asRecord6(state.dispatch),
+            ...asRecord7(state.dispatch),
             status: "ready",
             feedbackRestartedAt: feedbackAt,
             updatedAt: now()
@@ -17286,7 +17435,7 @@ ${message}`;
               status: restarted.status,
               assigneeAgentId: restarted.assigneeAgentId ?? null
             },
-            commentId: textParam4(comment, "id") || null,
+            commentId: textParam6(comment, "id") || null,
             correctionRound
           }, null, 2);
         }
@@ -17297,9 +17446,9 @@ ${message}`;
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_COMPLETE)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_complete_tasks" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam4(args, "taskId"));
-        const reviewSummary = enforceTaskContractText(textParam4(args, "reviewSummary"), "Task review summary");
-        const workerReportCommentId = textParam4(asRecord6(state.review), "workerReportCommentId");
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam6(args, "taskId"));
+        const reviewSummary = enforceTaskContractText(textParam6(args, "reviewSummary"), "Task review summary");
+        const workerReportCommentId = textParam6(asRecord7(state.review), "workerReportCommentId");
         if (task.status !== "in_review") {
           content = JSON.stringify({ ok: false, code: "task_not_in_review", status: task.status, message: "Only an in_review Task can be technically verified and marked done." });
         } else if (!workerReportCommentId) {
@@ -17308,7 +17457,7 @@ ${message}`;
           content = JSON.stringify({ ok: false, code: "review_summary_required" });
         } else {
           const completed = await toolApi.updateIssue(task.id, { status: "done" });
-          const previousReview = { ...asRecord6(state.review) };
+          const previousReview = { ...asRecord7(state.review) };
           delete previousReview.acceptedByAgentId;
           delete previousReview.acceptedByAgentName;
           delete previousReview.acceptedAt;
@@ -17372,8 +17521,8 @@ ${message}`;
   return { success: true, contentItems: [{ type: "inputText", text: content }] };
 }
 async function handleRoomView(ctx, params) {
-  const companyId = textParam4(params, "companyId");
-  const issueId = textParam4(params, "issueId");
+  const companyId = textParam6(params, "companyId");
+  const issueId = textParam6(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const [state, workState, checkpointDocument, nativeCompactionsDocument, comments, runtime, initialJobs] = await Promise.all([
@@ -17387,7 +17536,7 @@ async function handleRoomView(ctx, params) {
   ]);
   let jobs = initialJobs;
   const roomRuntime = agentRoomRuntime(runtime, agent);
-  const pendingJobId = textParam4(state.pendingTurn, "jobId");
+  const pendingJobId = textParam6(state.pendingTurn, "jobId");
   const pendingJob = jobs.find((job) => job.id === pendingJobId) ?? null;
   if (pendingJob && ["starting", "working"].includes(pendingJob.status) && !activeRoomMessageJobs.has(issue.id)) {
     const interrupted = await updateRoomJob(ctx, pendingJob, {
@@ -17402,7 +17551,7 @@ async function handleRoomView(ctx, params) {
     jobs.splice(jobs.findIndex((job) => job.id === pendingJob.id), 1, interrupted);
   }
   jobs = await reconcileRoomJobLedger(ctx, issue.id, state, jobs);
-  const attachments = await listIssueAttachmentsDirect(runtime.spsApiUrl, issue.id).catch((error) => {
+  const attachments = await listIssueAttachmentsDirect2(runtime.spsApiUrl, issue.id).catch((error) => {
     ctx.logger?.warn?.("Room attachment list failed.", {
       issueId: issue.id,
       message: error instanceof Error ? error.message : String(error)
@@ -17436,24 +17585,24 @@ async function handleRoomView(ctx, params) {
   };
 }
 async function handleCodexAccountsView(ctx, params) {
-  const companyId = textParam4(params, "companyId");
+  const companyId = textParam6(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const [agents, runtime] = await Promise.all([
     ctx.agents.list({ companyId, limit: 200 }),
     getRuntimeConfig(ctx)
   ]);
   const accounts = localCodexAccounts();
-  const defaultHome = runtime.codexHome || textParam4(process.env, "CODEX_HOME") || path3.join(os.homedir(), ".codex");
+  const defaultHome = runtime.codexHome || textParam6(process.env, "CODEX_HOME") || path4.join(os2.homedir(), ".codex");
   return {
     accounts: accounts.map(({ id, label, directoryName, home }) => ({ id, label, directoryName, home })),
-    agents: agents.filter(isHiredAgent).filter((agent) => textParam4(agent, "adapterType") === "codex_local").map((agent) => {
+    agents: agents.filter(isHiredAgent).filter((agent) => textParam6(agent, "adapterType") === "codex_local").map((agent) => {
       const effectiveHome = configuredEnvironmentValue(agent, "CODEX_HOME") || defaultHome;
       const selected = accounts.find((account) => normalizeCodexHome(account.home) === normalizeCodexHome(effectiveHome));
       return {
         id: agent.id,
         name: agent.name,
         role: agent.role ?? "general",
-        model: textParam4(asRecord6(agent.adapterConfig), "model", "Default") || "Default",
+        model: textParam6(asRecord7(agent.adapterConfig), "model", "Default") || "Default",
         selectedAccountId: selected?.id ?? null,
         effectiveHome,
         usesExplicitAccount: Boolean(configuredEnvironmentValue(agent, "CODEX_HOME"))
@@ -17463,21 +17612,21 @@ async function handleCodexAccountsView(ctx, params) {
 }
 var WORKPLANE_ROLE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 function normalizeWorkplaneRoleId(value) {
-  const roleId = textParam4({ value }, "value").toLowerCase().replace(/\s+/g, "-");
+  const roleId = textParam6({ value }, "value").toLowerCase().replace(/\s+/g, "-");
   if (!WORKPLANE_ROLE_ID_RE.test(roleId)) {
     throw new Error("Workplane role ID must use lowercase letters, numbers, and hyphens and start with a letter.");
   }
   return roleId;
 }
 function normalizeWorkplaneMemoryAccess(value) {
-  const memoryAccess = textParam4({ value }, "value").toLowerCase();
+  const memoryAccess = textParam6({ value }, "value").toLowerCase();
   if (!(/* @__PURE__ */ new Set(["read_write", "read", "none"])).has(memoryAccess)) {
     throw new Error("Workplane memory access must be read_write, read, or none.");
   }
   return memoryAccess;
 }
 function normalizeWorkplaneReviewMode(value) {
-  const reviewMode = textParam4({ value }, "value").toLowerCase();
+  const reviewMode = textParam6({ value }, "value").toLowerCase();
   if (!(/* @__PURE__ */ new Set(["automatic", "manual"])).has(reviewMode)) {
     throw new Error("Workplane review mode must be automatic or manual.");
   }
@@ -17491,13 +17640,13 @@ function organizationAgentSummary(agent) {
     name: agent.name,
     paperclipRole: agent.role ?? "general",
     adapterType: agent.adapterType ?? null,
-    model: textParam4(asRecord6(agent.adapterConfig), "model") || null,
+    model: textParam6(asRecord7(agent.adapterConfig), "model") || null,
     status: agent.status ?? null,
     workplane: identity
   };
 }
 async function handleOrganizationSettingsView(ctx, params) {
-  const companyId = textParam4(params, "companyId");
+  const companyId = textParam6(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const agents = await ctx.agents.list({ companyId, limit: 200 });
   const hiredAgents = agents.filter(isHiredAgent);
@@ -17516,24 +17665,24 @@ async function handleOrganizationSettingsView(ctx, params) {
 }
 async function handleOrganizationAgentPolicySave(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const agentId = textParam4(params, "agentId");
-  const kind = textParam4(params, "kind").toLowerCase();
+  const agentId = textParam6(params, "agentId");
+  const kind = textParam6(params, "kind").toLowerCase();
   if (!agentId) throw new Error("agentId is required.");
   if (!(/* @__PURE__ */ new Set(["lead", "worker", "hybrid"])).has(kind)) {
     throw new Error("Workplane kind must be lead, worker, or hybrid.");
   }
-  const roleId = normalizeWorkplaneRoleId(textParam4(params, "roleId", kind));
-  const requestedTargets = [...new Set(listParam(params, "assignableRoleIds").map(normalizeWorkplaneRoleId))];
+  const roleId = normalizeWorkplaneRoleId(textParam6(params, "roleId", kind));
+  const requestedTargets = [...new Set(listParam2(params, "assignableRoleIds").map(normalizeWorkplaneRoleId))];
   const assignableRoleIds = kind === "worker" ? [] : requestedTargets.length ? requestedTargets : ["worker", "hybrid"];
   const agent = await ctx.agents.get(agentId, companyId);
   if (!isHiredAgent(agent)) throw new Error("Only a hired Agent can receive a Workplane role.");
   const existingIdentity = resolveAgentWorkplaneIdentity(agent);
-  const memoryAccess = normalizeWorkplaneMemoryAccess(textParam4(params, "memoryAccess", existingIdentity.memoryAccess));
-  const reviewMode = normalizeWorkplaneReviewMode(textParam4(params, "reviewMode", existingIdentity.reviewMode));
+  const memoryAccess = normalizeWorkplaneMemoryAccess(textParam6(params, "memoryAccess", existingIdentity.memoryAccess));
+  const reviewMode = normalizeWorkplaneReviewMode(textParam6(params, "reviewMode", existingIdentity.reviewMode));
   const adapterConfig = {
-    ...asRecord6(agent.adapterConfig),
+    ...asRecord7(agent.adapterConfig),
     workplane: {
-      ...asRecord6(asRecord6(agent.adapterConfig).workplane),
+      ...asRecord7(asRecord7(agent.adapterConfig).workplane),
       roleId,
       kind,
       assignableRoleIds,
@@ -17563,7 +17712,7 @@ async function handleOrganizationCollaborationReadiness(_ctx, _params, actionCtx
 }
 async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const templateId = textParam4(params, "templateId");
+  const templateId = textParam6(params, "templateId");
   if (!templateId) throw new Error("templateId is required.");
   const agents = (await ctx.agents.list({ companyId, limit: 200 })).filter(isHiredAgent);
   const preview = resolveOrganizationTemplate(templateId, agents);
@@ -17578,9 +17727,9 @@ async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
     const agent = agentsById.get(assignment.agentId);
     if (!agent) continue;
     const adapterConfig = {
-      ...asRecord6(agent.adapterConfig),
+      ...asRecord7(agent.adapterConfig),
       workplane: {
-        ...asRecord6(asRecord6(agent.adapterConfig).workplane),
+        ...asRecord7(asRecord7(agent.adapterConfig).workplane),
         ...assignment.policy
       }
     };
@@ -17603,13 +17752,13 @@ async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
 }
 async function handleCodexAccountSelect(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const agentId = textParam4(params, "agentId");
-  const accountId = textParam4(params, "accountId");
+  const agentId = textParam6(params, "agentId");
+  const accountId = textParam6(params, "accountId");
   if (!agentId || !accountId) throw new Error("agentId and accountId are required.");
   const account = localCodexAccounts().find((candidate) => candidate.id === accountId);
   if (!account) throw new Error("The selected Codex account is no longer signed in on this computer. Refresh the account list and choose an available account.");
   const agent = await ctx.agents.get(agentId, companyId);
-  if (!isHiredAgent(agent) || textParam4(agent, "adapterType") !== "codex_local") {
+  if (!isHiredAgent(agent) || textParam6(agent, "adapterType") !== "codex_local") {
     throw new Error("Only a Codex CLI Agent can be assigned a Codex account.");
   }
   const runtime = await getRuntimeConfig(ctx);
@@ -17623,8 +17772,8 @@ async function handleCodexAccountSelect(ctx, params, actionCtx) {
   };
 }
 async function handleRoomTaskSummary(ctx, params) {
-  const companyId = textParam4(params, "companyId");
-  const issueId = textParam4(params, "issueId");
+  const companyId = textParam6(params, "companyId");
+  const issueId = textParam6(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const room = await ctx.issues.get(issueId, companyId);
   if (!isAgentRoom(room) || !room.projectId) return { room: null, tasks: [], activeTaskCount: 0, referencedFiles: [] };
@@ -17655,7 +17804,7 @@ async function handleRoomTaskSummary(ctx, params) {
 async function handleRoomWorkspaceView(ctx, params) {
   const roomView = await handleRoomView(ctx, params);
   const taskSummary = await handleRoomTaskSummary(ctx, params);
-  const companyId = textParam4(params, "companyId");
+  const companyId = textParam6(params, "companyId");
   const projectId = roomView.room.projectId;
   const project = projectId ? await ctx.projects.get(projectId, companyId) : null;
   const agent = await ctx.agents.get(roomView.room.agentId, companyId);
@@ -17663,7 +17812,7 @@ async function handleRoomWorkspaceView(ctx, params) {
   const projectWorkspaces = resolvedWorkspace.workspaces;
   const selectedWorkspace = resolvedWorkspace.workspace;
   const workingDirectory = workspaceLocalPath(selectedWorkspace) || roomView.state?.workingDirectory || "";
-  const workspaceSetupState = projectWorkspaces === null ? "legacy" : !projectWorkspaces.length || !selectedWorkspace ? "missing" : !workingDirectory || !fs2.existsSync(workingDirectory) ? "unavailable" : "ready";
+  const workspaceSetupState = projectWorkspaces === null ? "legacy" : !projectWorkspaces.length || !selectedWorkspace ? "missing" : !workingDirectory || !fs3.existsSync(workingDirectory) ? "unavailable" : "ready";
   const workspaces = workingDirectory ? [workspaceGitChanges({
     // Changed files must retain the Project Workspace identifier. The file
     // resource endpoint intentionally authorizes that ID, not the Room's
@@ -17732,8 +17881,8 @@ function projectTaskSummary(issue, project, parentRoom = null) {
   };
 }
 async function handleProjectWorkplaneView(ctx, params) {
-  const companyId = textParam4(params, "companyId");
-  const projectId = textParam4(params, "projectId");
+  const companyId = textParam6(params, "companyId");
+  const projectId = textParam6(params, "projectId");
   if (!companyId || !projectId) throw new Error("companyId and projectId are required.");
   const project = await ctx.projects.get(projectId, companyId);
   if (!project) throw new Error("Project was not found.");
@@ -17781,7 +17930,7 @@ async function handleProjectWorkplaneView(ctx, params) {
   };
 }
 async function handleTeamWorkplaneDashboard(ctx, params) {
-  const companyId = textParam4(params, "companyId");
+  const companyId = textParam6(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const [projects, issues] = await Promise.all([
     ctx.projects.list({ companyId, limit: 200 }),
@@ -17809,9 +17958,9 @@ async function handleTeamWorkplaneDashboard(ctx, params) {
   };
 }
 async function handleProjectTasksView(ctx, params) {
-  const companyId = textParam4(params, "companyId");
+  const companyId = textParam6(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
-  const selectedProjectId = textParam4(params, "projectId");
+  const selectedProjectId = textParam6(params, "projectId");
   const projects = await ctx.projects.list({ companyId, limit: 200 });
   const projectSummaries = projects.map((project) => ({ id: project.id, name: project.name ?? project.slug ?? project.id }));
   if (!selectedProjectId) {
@@ -17846,8 +17995,8 @@ async function handleProjectTasksView(ctx, params) {
   };
 }
 async function handleTaskRoomView(ctx, params) {
-  const companyId = textParam4(params, "companyId");
-  const issueId = textParam4(params, "issueId");
+  const companyId = textParam6(params, "companyId");
+  const issueId = textParam6(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const task = await ctx.issues.get(issueId, companyId);
   if (!task || !task.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -17883,8 +18032,8 @@ async function handleTaskOwnerFeedback(ctx, params, actionCtx) {
   if (!runtime.enabled) {
     return { ok: false, code: "codex_rooms_disabled", message: "Enable the Codex Room runtime before requesting owner feedback." };
   }
-  const issueId = textParam4(params, "issueId");
-  const message = textParam4(params, "message");
+  const issueId = textParam6(params, "issueId");
+  const message = textParam6(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A feedback request is required." };
   const task = await ctx.issues.get(issueId, companyId);
   if (!task || !task.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -17916,10 +18065,10 @@ ${message}`, companyId);
 }
 async function handleRoomBootstrap(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
-  const issueId = textParam4(params, "issueId");
+  const issueId = textParam6(params, "issueId");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
-  const requestedWorkspaceId = textParam4(params, "workspaceId");
-  const requestedWorkingDirectory = textParam4(params, "workingDirectory");
+  const requestedWorkspaceId = textParam6(params, "workspaceId");
+  const requestedWorkingDirectory = textParam6(params, "workingDirectory");
   const state = await loadRoomState(ctx, companyId, issue, agent);
   const resolved = await resolveRoomWorkspace(ctx, companyId, issue, agent, state);
   if (!Array.isArray(resolved.workspaces) || !resolved.workspaces.length) {
@@ -17997,8 +18146,8 @@ async function handleRoomSend(ctx, params, actionCtx) {
   if (!runtime.enabled) {
     return { ok: false, code: "codex_rooms_disabled", message: "Codex Room runtime is disabled. Configure and enable it before sending a live message." };
   }
-  const issueId = textParam4(params, "issueId");
-  const message = textParam4(params, "message");
+  const issueId = textParam6(params, "issueId");
+  const message = textParam6(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A Room message is required." };
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const state = await loadRoomState(ctx, companyId, issue, agent);
@@ -18023,7 +18172,7 @@ async function handleRoomCompact(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
   if (!runtime.enabled) return { ok: false, code: "codex_rooms_disabled", message: "Codex Room runtime is disabled." };
-  const issueId = textParam4(params, "issueId");
+  const issueId = textParam6(params, "issueId");
   return queueRoom(issueId, async () => {
     const { issue, agent } = await requireRoom(ctx, companyId, issueId);
     const state = await loadRoomState(ctx, companyId, issue, agent);
@@ -18088,21 +18237,21 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
     state = await loadRoomState(ctx, companyId, issue, agent);
     if (state.pendingTurn?.jobId !== job.id) return;
     if (isRoomCliRuntimeAgent(agent)) {
-      if (textParam4(agent, "adapterType") === "codex_local" && textParam4(asRecord6(job.payload), "retryRuntime") === "agy") {
+      if (textParam6(agent, "adapterType") === "codex_local" && textParam6(asRecord7(job.payload), "retryRuntime") === "agy") {
         const workingDirectory3 = isWorkerOnlyRoomAgent(agent) ? workerRoomSandboxDirectory(companyId, issue, agent) : await resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state);
         job = await updateRoomJob(ctx, job, { status: "working" });
         await saveRoomState(ctx, companyId, issue.id, state, "Bind Agy fallback runtime for queued Room Job");
         emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
         activity = roomActivityReporter(ctx, companyId, issue.id, state);
         const requestedAttachments3 = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
-        const stagedAttachments3 = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments3, workingDirectory3);
+        const stagedAttachments3 = await stageRoomAttachments2(runtime.spsApiUrl, issue.id, requestedAttachments3, workingDirectory3);
         const fallbackSessionId = `agy-quota-retry-${job.id}`;
         const prepared3 = await prepareNativeRoomTurn(ctx, {
           companyId,
           issue,
           state,
           sessionId: fallbackSessionId,
-          currentText: roomTurnText(textParam4(job.payload, "message"), stagedAttachments3, textParam4(job.payload, "retryOfCommentId")),
+          currentText: roomTurnText(textParam6(job.payload, "message"), stagedAttachments3, textParam6(job.payload, "retryOfCommentId")),
           excludedCommentId: job.sourceCommentId
         });
         const turn2 = await runAgyRoomFallback(ctx, {
@@ -18122,12 +18271,12 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
 ${durableRoomJobResultText(job, turn2)}`, companyId);
         state.runtime.updatedAt = now();
         state.runtime.lastError = null;
-        state.runtime.quotaRetry = { ...asRecord6(state.runtime.quotaRetry), status: "resolved", resolvedAt: now(), resultCommentId: assistantComment3.id ?? null };
+        state.runtime.quotaRetry = { ...asRecord7(state.runtime.quotaRetry), status: "resolved", resolvedAt: now(), resultCommentId: assistantComment3.id ?? null };
         state.lastCommentId = assistantComment3.id ?? job.sourceCommentId ?? null;
         state.pendingTurn = null;
         finishRoomActivity(state, "completed");
         await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Agy quota retry Room Job");
-        job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment3.id ?? null, payload: { ...asRecord6(job.payload), quotaRetryAt: null } });
+        job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment3.id ?? null, payload: { ...asRecord7(job.payload), quotaRetryAt: null } });
         emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
         await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
         return job;
@@ -18138,13 +18287,13 @@ ${durableRoomJobResultText(job, turn2)}`, companyId);
       emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
       activity = roomActivityReporter(ctx, companyId, issue.id, state);
       const requestedAttachments2 = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
-      const stagedAttachments2 = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments2, workingDirectory2);
+      const stagedAttachments2 = await stageRoomAttachments2(runtime.spsApiUrl, issue.id, requestedAttachments2, workingDirectory2);
       const prepared2 = await prepareCodexRoomTurn(ctx, {
         companyId,
         issue,
         state,
         threadId,
-        currentText: roomTurnText(textParam4(job.payload, "message"), stagedAttachments2, textParam4(job.payload, "retryOfCommentId")),
+        currentText: roomTurnText(textParam6(job.payload, "message"), stagedAttachments2, textParam6(job.payload, "retryOfCommentId")),
         excludedCommentId: job.sourceCommentId
       });
       const started2 = await startRoomTurn(
@@ -18194,13 +18343,13 @@ ${durableRoomJobResultText(job, turn)}`, companyId);
     emitRoomEvent(ctx, companyId, issue.id, { type: "job", job });
     activity = nativeRoomActivityReporter(ctx, companyId, issue.id, state);
     const requestedAttachments = Array.isArray(job.payload?.attachments) ? job.payload.attachments : [];
-    const stagedAttachments = await stageRoomAttachments(runtime.spsApiUrl, issue.id, requestedAttachments, workingDirectory);
+    const stagedAttachments = await stageRoomAttachments2(runtime.spsApiUrl, issue.id, requestedAttachments, workingDirectory);
     const prepared = await prepareNativeRoomTurn(ctx, {
       companyId,
       issue,
       state,
       sessionId: session.sessionId,
-      currentText: roomTurnText(textParam4(job.payload, "message"), stagedAttachments, textParam4(job.payload, "retryOfCommentId")),
+      currentText: roomTurnText(textParam6(job.payload, "message"), stagedAttachments, textParam6(job.payload, "retryOfCommentId")),
       excludedCommentId: job.sourceCommentId
     });
     const started = await startNativeAgentSessionTurn(ctx, {
@@ -18424,7 +18573,7 @@ async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initi
     ownerState = await loadRoomState(ctx, companyId, ownerRoom, agent);
     if (ownerState.pendingTurn?.jobId !== job.id) return;
     const comments = await ctx.issues.listComments(task.id, companyId);
-    if (textParam4(agent, "adapterType") === "codex_local") {
+    if (textParam6(agent, "adapterType") === "codex_local") {
       const { client, threadId, roomRuntime, workingDirectory } = await openThread(ctx, runtime, ownerState, companyId, ownerRoom, agent);
       job = await updateRoomJob(ctx, job, { status: "working" });
       await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Bind Codex app-server thread for Task feedback Job");
@@ -18437,7 +18586,7 @@ async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initi
         `Task: ${task.identifier ?? task.id} ${task.title}`,
         `Task state: ${JSON.stringify(taskState)}`,
         `Recent Task comments: ${mostRecentComments(comments, 12).map((comment) => comment.body).join("\n---\n")}`,
-        `User request: ${textParam4(job.payload, "message")}`
+        `User request: ${textParam6(job.payload, "message")}`
       ].join("\n\n");
       const prepared2 = await prepareCodexRoomTurn(ctx, {
         companyId,
@@ -18498,7 +18647,7 @@ ${turnResultText(turn)}`, companyId);
       `Task: ${task.identifier ?? task.id} ${task.title}`,
       `Task state: ${JSON.stringify(taskState)}`,
       `Recent Task comments: ${mostRecentComments(comments, 12).map((comment) => comment.body).join("\n---\n")}`,
-      `User request: ${textParam4(job.payload, "message")}`
+      `User request: ${textParam6(job.payload, "message")}`
     ].join("\n\n");
     const prepared = await prepareNativeRoomTurn(ctx, {
       companyId,
@@ -18620,11 +18769,11 @@ async function runQueuedRoomJobs(ctx) {
   const runtime = await getRuntimeConfig(ctx);
   const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
   for (const record of records) {
-    const job = roomJobData(asRecord6(record.data));
+    const job = roomJobData(asRecord7(record.data));
     if (job.status !== "queued" || !job.id || !job.companyId || !job.roomIssueId) continue;
     summary.scanned += 1;
     if (isRoomProviderQuotaRetryJob(job)) {
-      const retryAt = new Date(textParam4(asRecord6(job.payload), "quotaRetryAt") || 0).getTime();
+      const retryAt = new Date(textParam6(asRecord7(job.payload), "quotaRetryAt") || 0).getTime();
       if (Number.isFinite(retryAt) && retryAt > Date.now()) {
         summary.waiting += 1;
         continue;
@@ -18663,16 +18812,16 @@ async function runQueuedRoomJobs(ctx) {
 async function handleRoomSendJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const issueId = textParam4(params, "issueId");
-  const message = textParam4(params, "message");
+  const issueId = textParam6(params, "issueId");
+  const message = textParam6(params, "message");
   const attachmentIds = attachmentIdsParam(params);
-  const retryOfCommentId = textParam4(params, "retryOfCommentId");
+  const retryOfCommentId = textParam6(params, "retryOfCommentId");
   if (!message && !attachmentIds.length) return { ok: false, code: "message_required", message: "Write a message or attach at least one file." };
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const validatedRetryOfCommentId = await validateRoomRetrySource(ctx, companyId, issue.id, retryOfCommentId);
   const state = await loadRoomState(ctx, companyId, issue, agent);
   if (await roomHasActiveWork(ctx, issue.id, state)) return { ok: false, code: "room_busy", message: `${agent.name} is already working in this Room.` };
-  const attachments = await resolveRoomAttachments(runtime.spsApiUrl, issue.id, attachmentIds);
+  const attachments = await resolveRoomAttachments2(runtime.spsApiUrl, issue.id, attachmentIds);
   const userComment = await ctx.issues.createComment(issue.id, roomUserCommentBody(message, attachments, "agent", validatedRetryOfCommentId), companyId);
   const job = await createRoomJob(ctx, {
     companyId,
@@ -18690,7 +18839,7 @@ async function handleRoomSendJob(ctx, params, actionCtx) {
 async function handleRoomCompactJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const issueId = textParam4(params, "issueId");
+  const issueId = textParam6(params, "issueId");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const state = await loadRoomState(ctx, companyId, issue, agent);
   if (await roomHasActiveWork(ctx, issue.id, state)) return { ok: false, code: "room_busy", message: `${agent.name} is already working in this Room.` };
@@ -18710,8 +18859,8 @@ async function handleRoomCompactJob(ctx, params, actionCtx) {
 async function handleTaskOwnerFeedbackJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const taskId = textParam4(params, "issueId");
-  const message = textParam4(params, "message");
+  const taskId = textParam6(params, "issueId");
+  const message = textParam6(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A feedback request is required." };
   const task = await ctx.issues.get(taskId, companyId);
   if (!task?.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -18739,11 +18888,11 @@ ${message}`, companyId);
   return { ok: true, accepted: true, queued: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
 }
 function taskStatusTransition(event) {
-  const payload = asRecord6(event?.payload);
-  const patch = asRecord6(payload.patch);
+  const payload = asRecord7(event?.payload);
+  const patch = asRecord7(payload.patch);
   return {
-    previousStatus: textParam4(asRecord6(payload._previous), "status"),
-    nextStatus: textParam4(payload, "status") || textParam4(patch, "status")
+    previousStatus: textParam6(asRecord7(payload._previous), "status"),
+    nextStatus: textParam6(payload, "status") || textParam6(patch, "status")
   };
 }
 var TASK_BOUNDARY_REPORT_MIN_CHARS = 220;
@@ -18757,7 +18906,7 @@ function taskReportFingerprint(body) {
   return `${text4.length}:${(hash >>> 0).toString(16)}`;
 }
 function taskCommentAgentId(comment) {
-  return textParam4(comment, "authorAgentId") || textParam4(comment, "derivedAuthorAgentId");
+  return textParam6(comment, "authorAgentId") || textParam6(comment, "derivedAuthorAgentId");
 }
 function taskBoundaryReportKind(body) {
   const text4 = String(body || "").trim();
@@ -18787,15 +18936,15 @@ function isSubstantiveTaskBoundaryReport(body, kind) {
   return utf8EvidenceGroups.filter((pattern) => pattern.test(text4)).length >= 2;
 }
 function taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) {
-  const review = asRecord6(taskState?.review);
-  const correctionHistory = (Array.isArray(taskState?.reviewHistory) ? taskState.reviewHistory : []).map(asRecord6).filter((entry) => textParam4(entry, "outcome") === "correction_requested");
-  const feedbackCommentId = textParam4(review, "feedbackCommentId");
-  const hasCorrectionBoundary = textParam4(review, "status") === "correction_requested" || Boolean(feedbackCommentId) || correctionHistory.length > 0;
+  const review = asRecord7(taskState?.review);
+  const correctionHistory = (Array.isArray(taskState?.reviewHistory) ? taskState.reviewHistory : []).map(asRecord7).filter((entry) => textParam6(entry, "outcome") === "correction_requested");
+  const feedbackCommentId = textParam6(review, "feedbackCommentId");
+  const hasCorrectionBoundary = textParam6(review, "status") === "correction_requested" || Boolean(feedbackCommentId) || correctionHistory.length > 0;
   if (!hasCorrectionBoundary) return true;
   const feedbackComment = feedbackCommentId ? mostRecentComments(comments, Number.MAX_SAFE_INTEGER).find((candidate) => candidate?.id === feedbackCommentId) : null;
   const cutoffCandidates = [
     feedbackComment?.createdAt,
-    textParam4(review, "status") === "correction_requested" ? review.updatedAt : null,
+    textParam6(review, "status") === "correction_requested" ? review.updatedAt : null,
     ...correctionHistory.map((entry) => entry.closedAt)
   ].map((value) => Date.parse(String(value || ""))).filter(Number.isFinite);
   if (!cutoffCandidates.length) return false;
@@ -18803,7 +18952,7 @@ function taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) {
   return Number.isFinite(reportCreatedAt) && reportCreatedAt > Math.max(...cutoffCandidates);
 }
 function latestTaskBoundaryReport(comments, taskState, expectedKind = null) {
-  const workerAgentId = textParam4(taskState, "workerAgentId");
+  const workerAgentId = textParam6(taskState, "workerAgentId");
   return mostRecentComments(comments, 100).slice().reverse().map((comment) => ({
     comment,
     kind: taskBoundaryReportKind(comment?.body),
@@ -18812,12 +18961,12 @@ function latestTaskBoundaryReport(comments, taskState, expectedKind = null) {
   })).find(({ comment, kind, authorAgentId }) => kind && (!expectedKind || kind === expectedKind) && authorAgentId === workerAgentId && taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) && isSubstantiveTaskBoundaryReport(comment?.body, kind)) ?? null;
 }
 function taskBoundaryAlreadyReported(taskState, report) {
-  const review = asRecord6(taskState?.review);
-  const notification = asRecord6(taskState?.ownerNotification);
-  const priorReportId = textParam4(notification, "reportCommentId") || textParam4(review, "workerReportCommentId");
-  const priorFingerprint = textParam4(notification, "reportFingerprint") || textParam4(review, "workerReportFingerprint");
-  const notificationStatus = textParam4(notification, "status");
-  const manualReportPosted = notificationStatus === "manual_pending" && Boolean(textParam4(notification, "roomReportCommentId"));
+  const review = asRecord7(taskState?.review);
+  const notification = asRecord7(taskState?.ownerNotification);
+  const priorReportId = textParam6(notification, "reportCommentId") || textParam6(review, "workerReportCommentId");
+  const priorFingerprint = textParam6(notification, "reportFingerprint") || textParam6(review, "workerReportFingerprint");
+  const notificationStatus = textParam6(notification, "status");
+  const manualReportPosted = notificationStatus === "manual_pending" && Boolean(textParam6(notification, "roomReportCommentId"));
   return (["working", "completed"].includes(notificationStatus) || manualReportPosted) && (priorReportId === report.comment.id || priorFingerprint && priorFingerprint === report.fingerprint);
 }
 async function recordManualTaskOwnerReview(ctx, { companyId, eventId, task, taskState, ownerRoom, report }) {
@@ -18882,7 +19031,7 @@ async function recordManualTaskOwnerReview(ctx, { companyId, eventId, task, task
 async function publishTaskOwnerReportInbox(ctx, input) {
   if (!ctx.inbox?.publish || !input?.task || !input?.ownerRoom) return { skipped: true, reason: "inbox_unavailable" };
   const task = input.task;
-  const reportCommentId = textParam4(input, "reportCommentId");
+  const reportCommentId = textParam6(input, "reportCommentId");
   if (!reportCommentId) return { skipped: true, reason: "report_comment_missing" };
   const isBlocker = task.status === "blocked";
   const projectQuery = task.projectId ? `?project=${encodeURIComponent(task.projectId)}&room=${encodeURIComponent(input.ownerRoom.id)}` : `?room=${encodeURIComponent(input.ownerRoom.id)}`;
@@ -18900,8 +19049,8 @@ async function publishTaskOwnerReportInbox(ctx, input) {
         taskIssueId: task.id,
         ownerRoomIssueId: input.ownerRoom.id,
         reportCommentId,
-        reportFingerprint: textParam4(input, "reportFingerprint") || null,
-        roomReportCommentId: textParam4(input, "roomReportCommentId") || null
+        reportFingerprint: textParam6(input, "reportFingerprint") || null,
+        roomReportCommentId: textParam6(input, "roomReportCommentId") || null
       }
     });
     return { ok: true, ...result };
@@ -18923,8 +19072,8 @@ async function publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom,
     companyId,
     task,
     ownerRoom,
-    reportCommentId: textParam4(asRecord6(job.payload), "reportCommentId"),
-    reportFingerprint: textParam4(asRecord6(job.payload), "reportFingerprint"),
+    reportCommentId: textParam6(asRecord7(job.payload), "reportCommentId"),
+    reportFingerprint: textParam6(asRecord7(job.payload), "reportFingerprint"),
     roomReportCommentId: job.resultCommentId ?? null
   });
 }
@@ -18959,7 +19108,7 @@ async function taskOwnerRoomResultVisibilityOutsideInvocation({ apiUrl, task, ex
   if (expectedStatus !== "in_review") return { publish: true };
   try {
     const taskState = await latestTaskRoomStateOutsideInvocation(apiUrl, task, null);
-    const reviewStatus = textParam4(asRecord6(taskState?.review), "status");
+    const reviewStatus = textParam6(asRecord7(taskState?.review), "status");
     if (reviewStatus === "correction_requested") {
       return { publish: false, reason: "task_feedback_continues_in_task_room" };
     }
@@ -18993,7 +19142,7 @@ function normalizeTaskOwnerCompletionReport(message) {
 function activeRoomProcessBlocksOwnerReport(ownerState, existingJob, activeProcessJob) {
   if (!activeProcessJob) return false;
   if (ownerState?.pendingTurn || existingJob) return true;
-  return ["working", "finishing"].includes(textParam4(ownerState?.runtime?.activity, "status"));
+  return ["working", "finishing"].includes(textParam6(ownerState?.runtime?.activity, "status"));
 }
 async function runAutomaticTaskOwnerReport(ctx, { companyId, eventId, taskIssueId, ownerRoomIssueId, expectedStatus, reportCommentId, reportFingerprint }) {
   const task = await ctx.issues.get(taskIssueId, companyId);
@@ -19081,21 +19230,21 @@ function sortedIssueRuns(runs) {
   return [...Array.isArray(runs) ? runs : []].sort((left, right) => issueRunTimestamp(right) - issueRunTimestamp(left));
 }
 function issueRunErrorFamily(run) {
-  const result = asRecord6(run?.resultJson);
-  return textParam4(run, "errorFamily") || textParam4(result, "errorFamily") || textParam4(run, "errorCode");
+  const result = asRecord7(run?.resultJson);
+  return textParam6(run, "errorFamily") || textParam6(result, "errorFamily") || textParam6(run, "errorCode");
 }
 function isProviderQuotaRun(run) {
   return issueRunErrorFamily(run) === PROVIDER_QUOTA_ERROR_CODE;
 }
 function issueRunRetryNotBefore(run) {
-  const result = asRecord6(run?.resultJson);
-  const value = textParam4(run, "retryNotBefore") || textParam4(result, "retryNotBefore") || textParam4(result, "providerQuotaRetryNotBefore") || textParam4(result, "transientRetryNotBefore");
+  const result = asRecord7(run?.resultJson);
+  const value = textParam6(run, "retryNotBefore") || textParam6(result, "retryNotBefore") || textParam6(result, "providerQuotaRetryNotBefore") || textParam6(result, "transientRetryNotBefore");
   const timestamp = new Date(value || 0).getTime();
   return Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toISOString() : null;
 }
 function providerQuotaRecoveryAction(action) {
-  const evidence = asRecord6(action?.evidence);
-  return textParam4(evidence, "latestRunErrorCode") === PROVIDER_QUOTA_ERROR_CODE || textParam4(evidence, "latestRunErrorFamily") === PROVIDER_QUOTA_ERROR_CODE;
+  const evidence = asRecord7(action?.evidence);
+  return textParam6(evidence, "latestRunErrorCode") === PROVIDER_QUOTA_ERROR_CODE || textParam6(evidence, "latestRunErrorFamily") === PROVIDER_QUOTA_ERROR_CODE;
 }
 function nextProviderQuotaRetryAt(run, current = Date.now()) {
   const requested = issueRunRetryNotBefore(run);
@@ -19103,38 +19252,38 @@ function nextProviderQuotaRetryAt(run, current = Date.now()) {
   return new Date(Math.max(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS, Number.isFinite(requestedAt) ? requestedAt : 0)).toISOString();
 }
 function providerQuotaRetryState(run, currentState = {}, current = Date.now()) {
-  const runId = textParam4(run, "runId") || textParam4(run, "id");
-  const previous = asRecord6(currentState);
-  const sameRun = textParam4(previous, "lastFailedRunId") === runId;
+  const runId = textParam6(run, "runId") || textParam6(run, "id");
+  const previous = asRecord7(currentState);
+  const sameRun = textParam6(previous, "lastFailedRunId") === runId;
   return {
     ...previous,
-    status: sameRun && textParam4(previous, "status") ? textParam4(previous, "status") : "waiting",
+    status: sameRun && textParam6(previous, "status") ? textParam6(previous, "status") : "waiting",
     provider: "agy",
     intervalMinutes: 30,
-    lastFailedRunId: runId || textParam4(previous, "lastFailedRunId") || null,
-    nextRetryAt: sameRun && textParam4(previous, "nextRetryAt") ? textParam4(previous, "nextRetryAt") : nextProviderQuotaRetryAt(run, current),
+    lastFailedRunId: runId || textParam6(previous, "lastFailedRunId") || null,
+    nextRetryAt: sameRun && textParam6(previous, "nextRetryAt") ? textParam6(previous, "nextRetryAt") : nextProviderQuotaRetryAt(run, current),
     attempt: sameRun ? Math.max(0, Number(previous.attempt) || 0) : Math.max(0, Number(previous.attempt) || 0) + 1,
-    lastWakeRunId: sameRun ? textParam4(previous, "lastWakeRunId") || null : null,
-    updatedAt: sameRun && textParam4(previous, "updatedAt") ? textParam4(previous, "updatedAt") : now()
+    lastWakeRunId: sameRun ? textParam6(previous, "lastWakeRunId") || null : null,
+    updatedAt: sameRun && textParam6(previous, "updatedAt") ? textParam6(previous, "updatedAt") : now()
   };
 }
 function workerRuntimeRecoveryAction(task, taskState) {
-  const action = asRecord6(task?.activeRecoveryAction);
-  const workerAgentId = textParam4(taskState, "workerAgentId");
-  const cause = textParam4(action, "cause");
-  const returnedWorkerId = textParam4(action, "returnOwnerAgentId") || textParam4(action, "previousOwnerAgentId");
-  if (!textParam4(action, "id") || !workerAgentId) return null;
-  if (textParam4(action, "kind") !== "stranded_assigned_issue") return null;
+  const action = asRecord7(task?.activeRecoveryAction);
+  const workerAgentId = textParam6(taskState, "workerAgentId");
+  const cause = textParam6(action, "cause");
+  const returnedWorkerId = textParam6(action, "returnOwnerAgentId") || textParam6(action, "previousOwnerAgentId");
+  if (!textParam6(action, "id") || !workerAgentId) return null;
+  if (textParam6(action, "kind") !== "stranded_assigned_issue") return null;
   if (!TASK_WORKER_RUNTIME_RECOVERY_CAUSES.has(cause)) return null;
   if (returnedWorkerId !== workerAgentId) return null;
   return action;
 }
 function recoveryWorkerAgentId(task) {
-  const action = asRecord6(task?.activeRecoveryAction);
-  const cause = textParam4(action, "cause");
-  const workerAgentId = textParam4(action, "returnOwnerAgentId") || textParam4(action, "previousOwnerAgentId");
-  if (!textParam4(action, "id") || !workerAgentId) return "";
-  if (textParam4(action, "kind") !== "stranded_assigned_issue") return "";
+  const action = asRecord7(task?.activeRecoveryAction);
+  const cause = textParam6(action, "cause");
+  const workerAgentId = textParam6(action, "returnOwnerAgentId") || textParam6(action, "previousOwnerAgentId");
+  if (!textParam6(action, "id") || !workerAgentId) return "";
+  if (textParam6(action, "kind") !== "stranded_assigned_issue") return "";
   if (!TASK_WORKER_RUNTIME_RECOVERY_CAUSES.has(cause)) return "";
   return workerAgentId;
 }
@@ -19189,15 +19338,15 @@ async function recoverLegacyTaskRoomState(ctx, event, task) {
   return state;
 }
 function workerRuntimeRecoveryFailure(action) {
-  const evidence = asRecord6(action?.evidence);
-  return textParam4(evidence, "latestRunErrorCode") || textParam4(action, "cause") || "runtime_unavailable";
+  const evidence = asRecord7(action?.evidence);
+  return textParam6(evidence, "latestRunErrorCode") || textParam6(action, "cause") || "runtime_unavailable";
 }
 function workerRuntimeRecoveryAlreadyReported(taskState, actionId) {
-  const notification = asRecord6(taskState?.ownerNotification);
-  return textParam4(notification, "kind") === "runtime_block" && textParam4(notification, "recoveryActionId") === actionId && ["working", "completed", "queued"].includes(textParam4(notification, "status"));
+  const notification = asRecord7(taskState?.ownerNotification);
+  return textParam6(notification, "kind") === "runtime_block" && textParam6(notification, "recoveryActionId") === actionId && ["working", "completed", "queued"].includes(textParam6(notification, "status"));
 }
 function workerRuntimeBlockOwnerPrompt(task, taskState, worker, action) {
-  const evidence = asRecord6(action?.evidence);
+  const evidence = asRecord7(action?.evidence);
   return [
     "AUTOMATIC WORKER RUNTIME BLOCK REPORT.",
     "A Worker could not complete its assigned Task because its local runtime failed before it could submit a Worker blocker report.",
@@ -19205,10 +19354,10 @@ function workerRuntimeBlockOwnerPrompt(task, taskState, worker, action) {
     "Report the blocker to the user in this long-lived Agent Room: identify the affected Task, the exact runtime failure class, the impact, and the smallest next step. Do not create any Task approval or question interaction. Usually the next step is restoring the runtime or quota and then manually resuming the Worker before the owner moves the Task back to todo.",
     `Task: ${task.identifier ?? task.id} ${task.title}`,
     `Task status: ${task.status}`,
-    `Assigned Worker: ${worker?.name ?? textParam4(taskState, "workerAgentId")}`,
+    `Assigned Worker: ${worker?.name ?? textParam6(taskState, "workerAgentId")}`,
     `Runtime failure class: ${workerRuntimeRecoveryFailure(action)}`,
-    `Recovery cause: ${textParam4(action, "cause")}`,
-    `Last failed run: ${textParam4(evidence, "latestRunId") || "unknown"}`,
+    `Recovery cause: ${textParam6(action, "cause")}`,
+    `Last failed run: ${textParam6(evidence, "latestRunId") || "unknown"}`,
     `Task description:
 ${trimRoomContext(task.description, 12e3) || "No description."}`,
     `Task Room state:
@@ -19351,16 +19500,16 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
   if (existing) return { scheduled: false, reason: "worker_runtime_recovery_in_progress", completion: existing };
   const completion = (async () => {
     const runtime = await getRuntimeConfig(ctx);
-    const workerAgentId = textParam4(taskState, "workerAgentId");
+    const workerAgentId = textParam6(taskState, "workerAgentId");
     const worker = await ctx.agents.get(workerAgentId, event.companyId).catch(() => null);
     if (providerQuotaRecoveryAction(recoveryAction)) {
-      const evidence = asRecord6(recoveryAction.evidence);
+      const evidence = asRecord7(recoveryAction.evidence);
       const failedRun = {
-        runId: textParam4(evidence, "latestRunId"),
+        runId: textParam6(evidence, "latestRunId"),
         errorCode: PROVIDER_QUOTA_ERROR_CODE,
         resultJson: {
           errorFamily: PROVIDER_QUOTA_ERROR_CODE,
-          retryNotBefore: textParam4(evidence, "retryNotBefore") || null
+          retryNotBefore: textParam6(evidence, "retryNotBefore") || null
         }
       };
       await paperclipJsonDirect(runtime.spsApiUrl, `/api/issues/${encodeURIComponent(task.id)}/recovery-actions/resolve`, {
@@ -19393,7 +19542,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
         format: "markdown",
         changeSummary: "Record Worker provider quota block with automatic retry disabled"
       });
-      const eventId2 = textParam4(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
+      const eventId2 = textParam6(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
       return runAutomaticWorkerRuntimeBlockReport(ctx, {
         companyId: event.companyId,
         eventId: eventId2,
@@ -19404,7 +19553,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
         recoveryAction
       });
     }
-    if (textParam4(worker, "status") === "error") {
+    if (textParam6(worker, "status") === "error") {
       await paperclipJsonDirect(runtime.spsApiUrl, `/api/agents/${encodeURIComponent(workerAgentId)}/pause`, {
         method: "POST",
         body: {},
@@ -19423,7 +19572,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
     });
     await updateIssueDirect(runtime.spsApiUrl, task.id, { status: "blocked" });
     await updateIssueDirect(runtime.spsApiUrl, task.id, { assigneeAgentId: workerAgentId, assigneeUserId: null });
-    const eventId = textParam4(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
+    const eventId = textParam6(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
     return runAutomaticWorkerRuntimeBlockReport(ctx, {
       companyId: event.companyId,
       eventId,
@@ -19461,14 +19610,14 @@ async function writeProviderQuotaRetryState(ctx, companyId, task, taskState, cha
   });
 }
 function issueExecutionAutomaticallyRetries(task) {
-  return asRecord6(asRecord6(task?.executionPolicy).failure).automaticRetry === true;
+  return asRecord7(asRecord7(task?.executionPolicy).failure).automaticRetry === true;
 }
 function taskExecutionPolicyWithAutomaticRetry(task, automaticRetry) {
-  const policy = asRecord6(task?.executionPolicy);
-  const failure = asRecord6(policy.failure);
+  const policy = asRecord7(task?.executionPolicy);
+  const failure = asRecord7(policy.failure);
   return {
     ...policy,
-    mode: textParam4(policy, "mode") || "normal",
+    mode: textParam6(policy, "mode") || "normal",
     stages: Array.isArray(policy.stages) ? policy.stages : [],
     failure: {
       ...failure,
@@ -19481,7 +19630,7 @@ function taskExecutionPolicyWithAutomaticRetry(task, automaticRetry) {
 }
 async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskState) {
   const wasAutomatic = issueExecutionAutomaticallyRetries(task);
-  const priorQuotaRetry = asRecord6(taskState?.quotaRetry);
+  const priorQuotaRetry = asRecord7(taskState?.quotaRetry);
   const hadQuotaRetry = Object.keys(priorQuotaRetry).length > 0;
   const executionPolicy = taskExecutionPolicyWithAutomaticRetry(task, false);
   if (wasAutomatic) {
@@ -19489,10 +19638,10 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
     task.executionPolicy = executionPolicy;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduledRuns = runs.filter((run) => textParam4(run, "status") === "scheduled_retry");
-  const desiredStatus = textParam4(task, "status");
+  const scheduledRuns = runs.filter((run) => textParam6(run, "status") === "scheduled_retry");
+  const desiredStatus = textParam6(task, "status");
   for (const run of scheduledRuns) {
-    const runId = textParam4(run, "runId") || textParam4(run, "id");
+    const runId = textParam6(run, "runId") || textParam6(run, "id");
     if (!runId) continue;
     await paperclipJsonDirect(runtime.spsApiUrl, `/api/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
@@ -19509,7 +19658,7 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
     taskState.quotaRetry = {
       ...priorQuotaRetry,
       status: "disabled",
-      provider: textParam4(priorQuotaRetry, "provider") || "agy",
+      provider: textParam6(priorQuotaRetry, "provider") || "agy",
       automaticRetry: false,
       scheduledRunId: null,
       nextRetryAt: null,
@@ -19520,10 +19669,10 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
   return { changed: wasAutomatic || hadQuotaRetry || scheduledRuns.length > 0, cancelledRuns: scheduledRuns.length };
 }
 async function cancelResolvedTaskWorkerQuotaRetry(ctx, { companyId, task, taskState }) {
-  const desiredStatus = textParam4(task, "status");
+  const desiredStatus = textParam6(task, "status");
   if (!TASK_WORKER_RETRY_STOP_STATUSES.has(desiredStatus)) return false;
   const wasAutomatic = issueExecutionAutomaticallyRetries(task);
-  const quotaRetry = asRecord6(taskState?.quotaRetry);
+  const quotaRetry = asRecord7(taskState?.quotaRetry);
   const hadQuotaRetry = Boolean(Object.keys(quotaRetry).length);
   if (!wasAutomatic && !hadQuotaRetry) return false;
   const runtime = await getRuntimeConfig(ctx);
@@ -19533,9 +19682,9 @@ async function cancelResolvedTaskWorkerQuotaRetry(ctx, { companyId, task, taskSt
     task.executionPolicy = executionPolicy;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduledRuns = runs.filter((run) => textParam4(run, "status") === "scheduled_retry");
+  const scheduledRuns = runs.filter((run) => textParam6(run, "status") === "scheduled_retry");
   for (const run of scheduledRuns) {
-    const runId = textParam4(run, "runId") || textParam4(run, "id");
+    const runId = textParam6(run, "runId") || textParam6(run, "id");
     if (!runId) continue;
     await paperclipJsonDirect(runtime.spsApiUrl, `/api/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
@@ -19570,9 +19719,9 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
   const document = await ctx.issues.documents.get(task.id, TASK_ROOM_STATE_KEY, companyId);
   const taskState = parseState(document?.body);
   if (!taskState || taskState.kind !== "task_room") return { outcome: "skipped", reason: "task_room_state_missing" };
-  const workerAgentId = textParam4(taskState, "workerAgentId") || textParam4(task, "assigneeAgentId");
+  const workerAgentId = textParam6(taskState, "workerAgentId") || textParam6(task, "assigneeAgentId");
   const worker = agentsById.get(workerAgentId);
-  if (!worker || textParam4(worker, "adapterType") !== "antigravity_local") {
+  if (!worker || textParam6(worker, "adapterType") !== "antigravity_local") {
     return { outcome: "skipped", reason: "not_agy_worker" };
   }
   if (!AUTOMATIC_PROVIDER_QUOTA_RETRY_ENABLED) {
@@ -19584,18 +19733,18 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     task.executionPolicy = TASK_ROOM_EXECUTION_POLICY;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduled = runs.find((run) => textParam4(run, "status") === "scheduled_retry");
+  const scheduled = runs.find((run) => textParam6(run, "status") === "scheduled_retry");
   if (scheduled) {
-    const nextRetryAt = textParam4(scheduled, "scheduledRetryAt") || issueRunRetryNotBefore(scheduled);
-    const previous = asRecord6(taskState.quotaRetry);
-    if (textParam4(previous, "status") !== "core_scheduled" || textParam4(previous, "scheduledRunId") !== (textParam4(scheduled, "runId") || textParam4(scheduled, "id")) || textParam4(previous, "nextRetryAt") !== nextRetryAt) {
+    const nextRetryAt = textParam6(scheduled, "scheduledRetryAt") || issueRunRetryNotBefore(scheduled);
+    const previous = asRecord7(taskState.quotaRetry);
+    if (textParam6(previous, "status") !== "core_scheduled" || textParam6(previous, "scheduledRunId") !== (textParam6(scheduled, "runId") || textParam6(scheduled, "id")) || textParam6(previous, "nextRetryAt") !== nextRetryAt) {
       taskState.quotaRetry = {
         ...previous,
         status: "core_scheduled",
         provider: "agy",
         intervalMinutes: 30,
-        lastFailedRunId: textParam4(scheduled, "retryOfRunId") || textParam4(previous, "lastFailedRunId") || null,
-        scheduledRunId: textParam4(scheduled, "runId") || textParam4(scheduled, "id") || null,
+        lastFailedRunId: textParam6(scheduled, "retryOfRunId") || textParam6(previous, "lastFailedRunId") || null,
+        scheduledRunId: textParam6(scheduled, "runId") || textParam6(scheduled, "id") || null,
         nextRetryAt: nextRetryAt || new Date(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS).toISOString(),
         updatedAt: now()
       };
@@ -19605,20 +19754,20 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
   }
   const latest = runs[0];
   if (!latest) return { outcome: "skipped", reason: "no_runs" };
-  const latestStatus = textParam4(latest, "status");
+  const latestStatus = textParam6(latest, "status");
   if (["queued", "running"].includes(latestStatus)) {
-    if (taskState.quotaRetry && textParam4(taskState.quotaRetry, "status") !== "executing") {
-      taskState.quotaRetry = { ...asRecord6(taskState.quotaRetry), status: "executing", activeRunId: textParam4(latest, "runId") || textParam4(latest, "id") || null, updatedAt: now() };
+    if (taskState.quotaRetry && textParam6(taskState.quotaRetry, "status") !== "executing") {
+      taskState.quotaRetry = { ...asRecord7(taskState.quotaRetry), status: "executing", activeRunId: textParam6(latest, "runId") || textParam6(latest, "id") || null, updatedAt: now() };
       await writeProviderQuotaRetryState(ctx, companyId, task, taskState, "Record active provider quota retry run");
     }
     return { outcome: "executing" };
   }
   if (!isProviderQuotaRun(latest)) {
-    if (taskState.quotaRetry && textParam4(taskState.quotaRetry, "status") !== "resolved") {
+    if (taskState.quotaRetry && textParam6(taskState.quotaRetry, "status") !== "resolved") {
       taskState.quotaRetry = {
-        ...asRecord6(taskState.quotaRetry),
+        ...asRecord7(taskState.quotaRetry),
         status: "resolved",
-        resolvedByRunId: textParam4(latest, "runId") || textParam4(latest, "id") || null,
+        resolvedByRunId: textParam6(latest, "runId") || textParam6(latest, "id") || null,
         resolvedRunStatus: latestStatus || null,
         nextRetryAt: null,
         updatedAt: now()
@@ -19627,7 +19776,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     }
     return { outcome: "resolved", runStatus: latestStatus || null };
   }
-  const previousQuotaRetry = JSON.stringify(asRecord6(taskState.quotaRetry));
+  const previousQuotaRetry = JSON.stringify(asRecord7(taskState.quotaRetry));
   taskState.quotaRetry = providerQuotaRetryState(latest, taskState.quotaRetry, current);
   const retryAt = new Date(taskState.quotaRetry.nextRetryAt || 0).getTime();
   if (!Number.isFinite(retryAt) || retryAt > current) {
@@ -19636,7 +19785,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     }
     return { outcome: "waiting", nextRetryAt: taskState.quotaRetry.nextRetryAt };
   }
-  if (["paused", "error"].includes(textParam4(worker, "status"))) {
+  if (["paused", "error"].includes(textParam6(worker, "status"))) {
     taskState.quotaRetry = {
       ...taskState.quotaRetry,
       status: "waiting_for_worker",
@@ -19646,16 +19795,16 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     await writeProviderQuotaRetryState(ctx, companyId, task, taskState, "Defer provider quota retry while the assigned Worker is unavailable");
     return { outcome: "waiting_for_worker", nextRetryAt: taskState.quotaRetry.nextRetryAt };
   }
-  const failedRunId = textParam4(latest, "runId") || textParam4(latest, "id");
+  const failedRunId = textParam6(latest, "runId") || textParam6(latest, "id");
   let wakeRunId = null;
-  if (textParam4(task, "status") === "blocked" && textParam4(taskState.quotaRetry, "holdReason") === "provider_quota") {
+  if (textParam6(task, "status") === "blocked" && textParam6(taskState.quotaRetry, "holdReason") === "provider_quota") {
     const activated = await updateIssueDirect(runtime.spsApiUrl, task.id, {
       status: "todo",
       assigneeAgentId: workerAgentId,
       assigneeUserId: null,
       executionPolicy: TASK_ROOM_EXECUTION_POLICY
     });
-    wakeRunId = textParam4(activated, "executionRunId") || `assignment:${Date.now()}`;
+    wakeRunId = textParam6(activated, "executionRunId") || `assignment:${Date.now()}`;
   } else {
     const wake = await paperclipJsonDirect(runtime.spsApiUrl, `/api/agents/${encodeURIComponent(workerAgentId)}/wakeup`, {
       method: "POST",
@@ -19668,7 +19817,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
       },
       operation: "Worker provider quota retry wakeup"
     });
-    wakeRunId = textParam4(wake, "id") || textParam4(wake, "runId") || null;
+    wakeRunId = textParam6(wake, "id") || textParam6(wake, "runId") || null;
   }
   taskState.quotaRetry = {
     ...taskState.quotaRetry,
@@ -19760,7 +19909,7 @@ async function handleTaskStatusUpdated(ctx, event) {
   if (taskState.workerAgentId !== task.assigneeAgentId) {
     return { scheduled: false, reason: "task_worker_assignment_mismatch" };
   }
-  const eventAgentId = event.actorType === "agent" ? event.actorId : textParam4(asRecord6(event.payload), "agentId");
+  const eventAgentId = event.actorType === "agent" ? event.actorId : textParam6(asRecord7(event.payload), "agentId");
   if (nextStatus === "done" && eventAgentId && eventAgentId === taskState.workerAgentId) {
     return continueTaskOwnerReportAfterStatusNormalization(ctx, event, {
       task,
@@ -19800,7 +19949,7 @@ async function handleTaskStatusUpdated(ctx, event) {
       completion: existingReport
     };
   }
-  const persistedOwnerReport = (await listRoomJobs(ctx, ownerRoomIssueId)).find((job) => job.kind === "task_owner_report" && job.taskIssueId === task.id && ACTIVE_ROOM_JOB_STATUSES.has(job.status) && (job.id === textParam4(asRecord6(taskState.ownerNotification), "jobId") || textParam4(asRecord6(job.payload), "reportCommentId") === report.comment.id));
+  const persistedOwnerReport = (await listRoomJobs(ctx, ownerRoomIssueId)).find((job) => job.kind === "task_owner_report" && job.taskIssueId === task.id && ACTIVE_ROOM_JOB_STATUSES.has(job.status) && (job.id === textParam6(asRecord7(taskState.ownerNotification), "jobId") || textParam6(asRecord7(job.payload), "reportCommentId") === report.comment.id));
   if (persistedOwnerReport) {
     return {
       scheduled: false,
@@ -19811,7 +19960,7 @@ async function handleTaskStatusUpdated(ctx, event) {
     };
   }
   if (taskBoundaryAlreadyReported(taskState, report)) return { scheduled: false, reason: "duplicate_worker_report" };
-  const eventId = textParam4(event, "eventId") || `${task.id}:${previousStatus}:${nextStatus || task.status}:${report.comment.id}`;
+  const eventId = textParam6(event, "eventId") || `${task.id}:${previousStatus}:${nextStatus || task.status}:${report.comment.id}`;
   if (processedTaskOwnerReportEvents.has(eventId)) return { scheduled: false, reason: "duplicate_event" };
   processedTaskOwnerReportEvents.add(eventId);
   if (processedTaskOwnerReportEvents.size > 1e3) processedTaskOwnerReportEvents.delete(processedTaskOwnerReportEvents.values().next().value);
@@ -19896,13 +20045,13 @@ async function continueTaskOwnerReportAfterStatusNormalization(ctx, event, input
   await ctx.issues.update(input.task.id, { status: input.status }, event.companyId);
   const followUp = await handleTaskStatusUpdated(ctx, {
     ...event,
-    eventId: `${textParam4(event, "eventId") || randomUUID2()}:normalized:${input.status}`,
+    eventId: `${textParam6(event, "eventId") || randomUUID2()}:normalized:${input.status}`,
     eventType: "plugin.task-owner-status-normalized",
     occurredAt: now(),
     entityId: input.task.id,
     entityType: "issue",
     payload: {
-      ...asRecord6(event.payload),
+      ...asRecord7(event.payload),
       status: input.status,
       _previous: { status: input.previousStatus }
     }
@@ -19922,7 +20071,7 @@ async function continueTaskOwnerReportAfterStatusNormalization(ctx, event, input
 async function reconcileTaskOwnerReportBoundaries(ctx, options = {}) {
   if (activeTaskOwnerBoundaryReconcile) return activeTaskOwnerBoundaryReconcile;
   const operation = (async () => {
-    const runId = textParam4(options, "runId") || `task-owner-boundary-reconcile:${Date.now()}`;
+    const runId = textParam6(options, "runId") || `task-owner-boundary-reconcile:${Date.now()}`;
     const summary = { runId, companies: 0, scanned: 0, scheduled: 0, healthy: 0, skipped: 0, failed: 0 };
     const companies = await ctx.companies.list({ limit: 200 });
     summary.companies = companies.length;
@@ -19969,7 +20118,7 @@ async function reconcileTaskOwnerReportBoundaries(ctx, options = {}) {
 }
 async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
-  const taskId = textParam4(params, "issueId") || textParam4(params, "taskId");
+  const taskId = textParam6(params, "issueId") || textParam6(params, "taskId");
   if (!taskId) throw new Error("issueId is required.");
   const task = await ctx.issues.get(taskId, companyId);
   if (!task?.parentId) throw new Error("Task owner report reconciliation is available only on a child Task issue.");
@@ -20005,7 +20154,7 @@ async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
     eventType: "plugin.action",
     occurredAt,
     actorType: "user",
-    actorId: textParam4(asRecord6(actionCtx?.actor), "id") || null,
+    actorId: textParam6(asRecord7(actionCtx?.actor), "id") || null,
     companyId,
     entityId: task.id,
     entityType: "issue",
@@ -20019,14 +20168,14 @@ async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
 }
 function reconcileTaskOwnerNotificationStateForJob(taskState, job) {
   if (job?.kind !== "task_owner_report" || !job?.taskIssueId || ACTIVE_ROOM_JOB_STATUSES.has(job.status)) return false;
-  const notification = asRecord6(taskState?.ownerNotification);
-  if (textParam4(notification, "jobId") !== job.id || textParam4(notification, "status") !== "working") return false;
+  const notification = asRecord7(taskState?.ownerNotification);
+  if (textParam6(notification, "jobId") !== job.id || textParam6(notification, "status") !== "working") return false;
   const completed = job.status === "completed";
   taskState.ownerNotification = {
     ...notification,
     status: completed ? "completed" : "failed",
     resultCommentId: job.resultCommentId ?? notification.resultCommentId ?? null,
-    ...completed ? {} : { error: textParam4(job, "error") || `Task owner report Job ended with status ${job.status}.` },
+    ...completed ? {} : { error: textParam6(job, "error") || `Task owner report Job ended with status ${job.status}.` },
     updatedAt: now()
   };
   return true;
@@ -20056,7 +20205,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
   if (!ctx.entities?.list) return summary;
   const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
   for (const record of records) {
-    const job = roomJobData(asRecord6(record.data));
+    const job = roomJobData(asRecord7(record.data));
     if (!job.id || !job.companyId || !job.roomIssueId) continue;
     summary.scanned += 1;
     if (!ACTIVE_ROOM_JOB_STATUSES.has(job.status)) {
@@ -20074,7 +20223,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
     try {
       const { issue, agent } = await requireRoom(ctx, job.companyId, job.roomIssueId);
       const state = await loadRoomState(ctx, job.companyId, issue, agent);
-      if (isRoomProviderQuotaRetryJob(job) && textParam4(state.pendingTurn, "jobId") === job.id) {
+      if (isRoomProviderQuotaRetryJob(job) && textParam6(state.pendingTurn, "jobId") === job.id) {
         await launchDueRoomProviderQuotaRetry(ctx, job).catch(() => null);
         continue;
       }
@@ -20087,7 +20236,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
         };
       }
       const reconciled = await updateRoomJob(ctx, job, patch);
-      if (textParam4(state.pendingTurn, "jobId") === job.id) {
+      if (textParam6(state.pendingTurn, "jobId") === job.id) {
         state.pendingTurn = null;
         finishRoomActivity(state, "failed", reconciled.error);
         await saveRoomState(ctx, job.companyId, issue.id, state, "Mark interrupted Room Job during startup reconciliation");
@@ -20116,10 +20265,10 @@ async function reconcileInterruptedRoomJobs(ctx) {
   return summary;
 }
 function workplaneReconciliationHasActivity(input) {
-  const roomMemorySummary = asRecord6(input?.roomMemorySummary);
-  const interruptedRoomJobSummary = asRecord6(input?.interruptedRoomJobSummary);
-  const ownerSummary = asRecord6(input?.ownerSummary);
-  const queuedRoomJobSummary = asRecord6(input?.queuedRoomJobSummary);
+  const roomMemorySummary = asRecord7(input?.roomMemorySummary);
+  const interruptedRoomJobSummary = asRecord7(input?.interruptedRoomJobSummary);
+  const ownerSummary = asRecord7(input?.ownerSummary);
+  const queuedRoomJobSummary = asRecord7(input?.queuedRoomJobSummary);
   return Number(roomMemorySummary.checkpointsPublished || 0) > 0 || Number(roomMemorySummary.compactionsPublished || 0) > 0 || Number(roomMemorySummary.failed || 0) > 0 || Number(interruptedRoomJobSummary.reconciled || 0) > 0 || Number(interruptedRoomJobSummary.retired || 0) > 0 || Number(interruptedRoomJobSummary.failed || 0) > 0 || Number(ownerSummary.scheduled || 0) > 0 || Number(ownerSummary.failed || 0) > 0 || Number(queuedRoomJobSummary.started || 0) > 0 || Number(queuedRoomJobSummary.completed || 0) > 0 || Number(queuedRoomJobSummary.failed || 0) > 0;
 }
 var plugin = definePlugin({
@@ -20339,7 +20488,7 @@ export {
   isRoomUserComment,
   isSubstantiveTaskBoundaryReport,
   isWorkerOnlyRoomAgent,
-  listIssueAttachmentsDirect,
+  listIssueAttachmentsDirect2 as listIssueAttachmentsDirect,
   listIssueRunsDirect,
   listRoomJobs,
   loadAgentInstructions,
@@ -20384,7 +20533,7 @@ export {
   repairUtf8Mojibake,
   requireAgentConfigurationAction,
   resolveCodexHomeForAgent,
-  resolveRoomAttachments,
+  resolveRoomAttachments2 as resolveRoomAttachments,
   retryRoomDocumentWrite,
   roomAttachmentCommentBlock,
   roomAttachmentName,
@@ -20411,7 +20560,7 @@ export {
   setActiveThreadContextForTest,
   setAgyClientFactoryForTest,
   setCodexClientForTest,
-  stageRoomAttachments,
+  stageRoomAttachments2 as stageRoomAttachments,
   startNativeAgentSessionTurn,
   startRoomTurn,
   syncAgentRoomTitles,

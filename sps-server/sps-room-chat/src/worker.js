@@ -34,14 +34,37 @@ import {
   roomJobTitle,
   terminalRoomJobPatchFromState,
 } from "./room-job-policy.js";
+import {
+  attachmentIdsParam,
+  attachmentSnapshot,
+  cleanupRoomAttachmentCache,
+  enforceTaskContractText,
+  enforceUtf8Text,
+  excludeWorkspaceRoomAttachments,
+  isCodexImageAttachment,
+  isRoomUserComment,
+  listIssueAttachmentsDirect as listIssueAttachmentsDirectModule,
+  mergeRoomAttachments,
+  repairUtf8Mojibake,
+  resolveRoomAttachments as resolveRoomAttachmentsModule,
+  roomAttachmentCommentBlock,
+  roomAttachmentName,
+  roomAttachmentWorkspaceRoot,
+  roomTurnText,
+  roomUserCommentBody,
+  stageRoomAttachments as stageRoomAttachmentsModule,
+  validateRoomRetrySource,
+  workspaceGitExcludePath,
+} from "./room-attachments.js";
 import { WORKPLANE_CAPABILITIES, canDelegateTo, hasWorkplaneCapability, isWorkplaneWorker, resolveAgentWorkplaneIdentity } from "./organization-policy.js";
 import { listOrganizationTemplates, resolveOrganizationTemplate } from "./organization-templates.js";
+import { createCollaborationReadiness } from "./collaboration-readiness.js";
+import { createRoomMemoryRuntime } from "./room-memory-runtime.js";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 const SPS_DESKTOP_ACCESS_HEADER = "X-SPS-Desktop-Access";
 const desktopOwnerHostToken = String(process.env.SPS_DESKTOP_ACCESS_TOKEN || "").trim();
 const desktopOwnerHostOrigin = (() => {
@@ -73,7 +96,6 @@ if (desktopOwnerHostOrigin) {
 const ROOM_STATE_KEY = "ROOM_STATE";
 const ROOM_WORK_STATE_KEY = "ROOM_WORK_STATE";
 const ROOM_CHECKPOINTS_KEY = "ROOM_CHECKPOINTS";
-const ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY = "room-memory-lifecycle-reconcile-v1";
 const ROOM_NATIVE_COMPACTIONS_KEY = "ROOM_NATIVE_COMPACTIONS";
 const TASK_ROOM_STATE_KEY = "TASK_ROOM_STATE";
 // Historical role Rooms are detected and retired only; no new Room uses them.
@@ -86,12 +108,9 @@ const WORKSPACE_PROFILE_ENTITY_TYPE = "workspace_profile";
 const WORKSPACE_PROFILE_EXTERNAL_ID = "workplane-workspace-profile-v1";
 const TASK_TYPE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ACTIVE_ROOM_JOB_STATUSES = new Set(["queued", "starting", "working"]);
-const ROOM_ATTACHMENT_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const ROOM_CONTEXT_RECOVERY_COMMENT_LIMIT = 120;
 const ROOM_CONTEXT_RECOVERY_CHAR_LIMIT = 60000;
 const ROOM_CONTEXT_RECOVERY_ENTRY_LIMIT = 5000;
-const LOCAL_MEMORY_SIDECAR_CONFIG_URL = new URL("../../memory-sidecar/config.local.json", import.meta.url);
-const ROOM_MEMORY_SCOPES = new Set(["company", "project", "agent"]);
 const ROOM_READY_STATUS = "todo";
 const TERMINAL_STATUSES = new Set(["done", "blocked", "cancelled"]);
 const ACTIVE_TASK_STATUSES = new Set(["backlog", "todo", "pending", "queued", "running", "in_progress", "in_review"]);
@@ -147,21 +166,55 @@ let testAgyClientFactory = null;
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
-
 function textParam(params, key, fallback = "") {
   const value = asRecord(params)[key];
   return value === undefined || value === null ? fallback : String(value).trim();
 }
-
 function rawTextParam(params, key, fallback = "") {
   const value = asRecord(params)[key];
   return value === undefined || value === null ? fallback : String(value);
 }
-
 function listParam(params, key) {
   const value = asRecord(params)[key];
   return Array.isArray(value) ? value.map((entry) => String(entry).trim()).filter(Boolean) : [];
 }
+
+const {
+  roomMemoryRuntime,
+  fetchRoomMemory,
+  searchRoomMemory,
+  proposeRoomMemory,
+  reconcileRoomMemoryLifecycle,
+  appendCheckpointOutsideInvocation,
+  nativeCompactionEventId,
+  appendNativeCompactionOutsideInvocation,
+  recordNativeCodexCompaction,
+  appendCheckpoint,
+  publishRoomMemoryLifecycle,
+} = createRoomMemoryRuntime({
+  asRecord,
+  textParam,
+  listParam,
+  parseState,
+  serializeState,
+  now,
+  isAgentRoom,
+  getRoomDocumentDirect,
+  putRoomDocument,
+  upsertRoomDocument,
+  loopbackSPSApiUrl,
+  spsDesktopAccessHeaders,
+  roomCheckpointKey: ROOM_CHECKPOINTS_KEY,
+  roomNativeCompactionsKey: ROOM_NATIVE_COMPACTIONS_KEY,
+  lifecycleReconcileKey: "room-memory-lifecycle-reconcile-v1",
+  memoryScopes: new Set(["company", "project", "agent"]),
+  localMemorySidecarConfigUrl: new URL("../../memory-sidecar/config.local.json", import.meta.url),
+  readFileSync: fs.readFileSync,
+  activeThreadContexts,
+  manualCodexCompactionThreads,
+  recordedNativeCompactionEvents,
+  nativeCompactionLocks,
+});
 
 function normalizedTaskTypeKey(value, fallback = "") {
   const key = String(value || "").trim().toLowerCase();
@@ -395,86 +448,6 @@ function roomThreadIdForCodexRuntime(state, runtime, agent, currentInstructionsF
   if (previousAccountKey && previousAccountKey !== selectedAccountKey) return null;
   if (!previousAccountKey && hasExplicitHome) return null;
   return threadId;
-}
-
-function roomMemoryRuntime() {
-  let config;
-  try {
-    config = JSON.parse(fs.readFileSync(LOCAL_MEMORY_SIDECAR_CONFIG_URL, "utf8"));
-  } catch {
-    throw new Error("The local Memory Sidecar companion configuration is unavailable.");
-  }
-  const host = String(config?.server?.host || "127.0.0.1").trim();
-  const port = Number(config?.server?.port || 3188);
-  const baseUrl = new URL(`http://${host}:${port}`);
-  if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(baseUrl.hostname)) {
-    throw new Error("The local Memory Sidecar must use a loopback address.");
-  }
-  return {
-    baseUrl,
-    token: String(process.env.MEMORY_SIDECAR_TOKEN || config?.security?.token || "").trim()
-  };
-}
-
-async function fetchRoomMemory(pathname, options = {}) {
-  const runtime = roomMemoryRuntime();
-  const url = new URL(pathname, runtime.baseUrl);
-  for (const [key, value] of Object.entries(asRecord(options.searchParams))) {
-    if (value !== undefined && value !== null && String(value).trim() !== "") url.searchParams.set(key, String(value));
-  }
-  const headers = { accept: "application/json", ...asRecord(options.headers) };
-  if (runtime.token) headers["x-sidecar-token"] = runtime.token;
-  const response = await fetch(url, { method: options.method ?? "GET", headers, body: options.body });
-  const body = await response.text();
-  let data = null;
-  try {
-    data = body ? JSON.parse(body) : null;
-  } catch {
-    throw new Error("The Memory Sidecar returned an invalid response.");
-  }
-  if (!response.ok) throw new Error(`Memory Sidecar request failed (HTTP ${response.status}).`);
-  return data;
-}
-
-async function searchRoomMemory(roomContext, query, requestedScopes, limit) {
-  const scopes = requestedScopes.length ? requestedScopes : ["company", "project", "agent"];
-  const selectedScopes = [...new Set(scopes.filter((scope) => ROOM_MEMORY_SCOPES.has(scope)))];
-  if (!selectedScopes.length) throw new Error("Choose one or more of company, project, or agent memory scopes.");
-  const itemsById = new Map();
-  for (const scope of selectedScopes) {
-    if (scope === "project" && !roomContext.projectId) continue;
-    const searchParams = { q: query, scope, companyId: roomContext.companyId, limit };
-    if (scope === "project") searchParams.projectId = roomContext.projectId;
-    if (scope === "agent") searchParams.agentId = roomContext.agentId;
-    const result = await fetchRoomMemory("/memory/search", { searchParams });
-    for (const item of Array.isArray(result?.items) ? result.items : []) itemsById.set(item.id, item);
-  }
-  return [...itemsById.values()]
-    .sort((left, right) => Number(right.score || 0) - Number(left.score || 0))
-    .slice(0, limit);
-}
-
-async function proposeRoomMemory(roomContext, input) {
-  const content = textParam(input, "content");
-  const scope = textParam(input, "scope", "project") || "project";
-  if (!content || content.length > 4000) throw new Error("Memory candidate content must be between 1 and 4000 characters.");
-  if (!new Set(["company", "project", "agent", "task", "artifact", "user"]).has(scope)) throw new Error("Invalid memory candidate scope.");
-  const candidate = await fetchRoomMemory("/memory/candidates", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      content,
-      scope,
-      type: textParam(input, "type", "learning") || "learning",
-      tags: listParam(input, "tags").slice(0, 12),
-      companyId: roomContext.companyId,
-      projectId: roomContext.projectId ?? null,
-      agentId: roomContext.agentId,
-      issueId: roomContext.issueId,
-      source: { kind: "room_chat", roomIssueId: roomContext.issueId, agentName: roomContext.agentName }
-    })
-  });
-  return candidate?.candidate ?? null;
 }
 
 function agentRoomOriginId(projectId, agentId) {
@@ -836,56 +809,6 @@ async function reconcileAllProjectAgentRooms(ctx) {
     summaries.push({ companyId: company.id });
   }
   return { companyCount: summaries.length, companies: summaries };
-}
-
-async function reconcileRoomMemoryLifecycle(ctx) {
-  const summary = { companies: 0, rooms: 0, checkpointsPublished: 0, compactionsPublished: 0, failed: 0 };
-  if (!ctx.memory?.publishLifecycle) return summary;
-  const companies = await ctx.companies.list({ limit: 200 });
-  for (const company of companies) {
-    if (!company?.id) continue;
-    summary.companies += 1;
-    const projects = await ctx.projects.list({ companyId: company.id, limit: 200 });
-    for (const project of projects) {
-      const issues = await ctx.issues.list({ companyId: company.id, projectId: project.id, limit: 500 });
-      for (const room of issues) {
-        if (!isAgentRoom(room)) continue;
-        summary.rooms += 1;
-        try {
-          const document = await ctx.issues.documents.get(room.id, ROOM_CHECKPOINTS_KEY, company.id);
-          const checkpoints = parseState(document?.body);
-          const latest = Array.isArray(checkpoints) ? checkpoints.at(-1) : null;
-          const version = Number(latest?.version);
-          if (!Number.isInteger(version) || version < 1) continue;
-          const markerScope = {
-            scopeKind: "issue",
-            scopeId: room.id,
-            stateKey: ROOM_MEMORY_LIFECYCLE_RECONCILE_KEY
-          };
-          const marker = await ctx.state.get(markerScope);
-          const deliveredVersion = Number(asRecord(marker)?.checkpointVersion ?? 0);
-          if (deliveredVersion >= version) continue;
-          await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.checkpoint", latest);
-          summary.checkpointsPublished += 1;
-          if (typeof latest.compactedAt === "string" && latest.compactedAt) {
-            await publishRoomMemoryLifecycle(ctx, company.id, room.id, "room.compacted", latest);
-            summary.compactionsPublished += 1;
-          }
-          await ctx.state.set(markerScope, {
-            checkpointVersion: version,
-            reconciledAt: now()
-          });
-        } catch (error) {
-          summary.failed += 1;
-          ctx.logger?.warn?.("Room memory lifecycle reconciliation failed.", {
-            issueId: room.id,
-            message: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
-    }
-  }
-  return summary;
 }
 
 async function syncAgentRoomTitles(ctx, companyId, agentId) {
@@ -1709,250 +1632,22 @@ async function updateAgentAdapterConfigDirect(apiUrl, companyId, agentId, adapte
   }
 }
 
-function attachmentIdsParam(params) {
-  return [...new Set(listParam(params, "attachmentIds"))];
-}
-
-function repairUtf8Mojibake(value) {
-  const source = String(value ?? "");
-  const mojibake = /(?:Ã.|Â.|â..|ð...|ì[\u0080-\u00bf]|í[\u0080-\u00bf]|ë[\u0080-\u00bf]|ê[\u0080-\u00bf])/;
-  if (!source || /[^\u0000-\u00ff]/.test(source) || !mojibake.test(source)) return source;
-  let repaired = source;
-  for (let attempt = 0; attempt < 2 && mojibake.test(repaired); attempt += 1) {
-    try {
-      const candidate = Buffer.from(repaired, "latin1").toString("utf8");
-      if (!candidate || candidate.includes("\ufffd") || candidate === repaired) break;
-      repaired = candidate;
-    } catch {
-      break;
-    }
-  }
-  return repaired;
-}
-
-function enforceUtf8Text(value, label = "Text") {
-  const text = repairUtf8Mojibake(value).replace(/\r\n/g, "\n");
-  if (text.includes("\ufffd")) {
-    throw new Error(`${label} contains an invalid UTF-8 replacement character and was not saved to avoid corrupted text.`);
-  }
-  return text;
-}
-
-function enforceTaskContractText(value, label = "Task text") {
-  const text = enforceUtf8Text(value, label);
-  if (/\?{2,}/.test(text)) {
-    throw new Error(`${label} contains a likely lossy encoding sequence (??) and was not saved.`);
-  }
-  return text;
-}
-
-function roomAttachmentName(attachment) {
-  const filename = textParam(attachment, "originalFilename") || textParam(attachment, "filename");
-  return repairUtf8Mojibake(filename) || `attachment-${textParam(attachment, "id", "file")}`;
-}
-
-function safeAttachmentFilename(filename) {
-  const basename = path.basename(String(filename || "attachment"));
-  const cleaned = basename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().slice(0, 120);
-  return cleaned || "attachment";
-}
-
-function safeAttachmentPathSegment(value) {
-  return String(value || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "unknown";
-}
-
-function attachmentContentPath(attachment) {
-  const contentPath = textParam(attachment, "contentPath");
-  return contentPath || `/api/attachments/${encodeURIComponent(textParam(attachment, "id"))}/content`;
-}
-
-function roomAttachmentContentUrl(apiUrl, attachment) {
-  return new URL(attachmentContentPath(attachment), `${loopbackSPSApiUrl(apiUrl)}/`).toString();
-}
-
-function isCodexImageAttachment(attachment) {
-  const contentType = textParam(attachment, "contentType").toLowerCase();
-  if (/^image\/(png|jpe?g|webp|gif|avif|bmp)$/i.test(contentType)) return true;
-  return /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(roomAttachmentName(attachment));
-}
-
-function roomAttachmentCacheRoot() {
-  const paperclipHome = String(process.env.PAPERCLIP_HOME || "").trim();
-  return paperclipHome
-    ? path.join(paperclipHome, "room-attachments")
-    : path.join(os.homedir(), ".sps", "room-attachments");
-}
-
-function roomAttachmentWorkspaceRoot(workingDirectory) {
-  const requestedWorkspace = String(workingDirectory || "").trim();
-  if (!requestedWorkspace) {
-    throw new Error("A Room Workspace is required before attached files can be prepared for an Agent.");
-  }
-  const workspaceRoot = path.resolve(requestedWorkspace);
-  const attachmentRoot = path.resolve(workspaceRoot, ".sps", "room-attachments");
-  const relative = path.relative(workspaceRoot, attachmentRoot);
-  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error("The Room attachment staging path must stay inside the selected Project Workspace.");
-  }
-  return attachmentRoot;
-}
-
-function workspaceGitExcludePath(workingDirectory) {
-  const dotGitPath = path.join(workingDirectory, ".git");
-  if (!fs.existsSync(dotGitPath)) return null;
-  const stats = fs.statSync(dotGitPath);
-  if (stats.isDirectory()) return path.join(dotGitPath, "info", "exclude");
-  if (!stats.isFile()) return null;
-  const match = fs.readFileSync(dotGitPath, "utf8").match(/^gitdir:\s*(.+)\s*$/im);
-  return match ? path.join(path.resolve(workingDirectory, match[1]), "info", "exclude") : null;
-}
-
-function excludeWorkspaceRoomAttachments(workingDirectory) {
-  const excludePath = workspaceGitExcludePath(workingDirectory);
-  if (!excludePath) return null;
-  const rule = ".sps/room-attachments/";
-  const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf8") : "";
-  if (existing.split(/\r?\n/).some((line) => line.trim().replace(/\\/g, "/") === rule)) return excludePath;
-  fs.mkdirSync(path.dirname(excludePath), { recursive: true });
-  fs.appendFileSync(excludePath, `${existing && !existing.endsWith("\n") ? "\n" : ""}${rule}\n`, "utf8");
-  return excludePath;
-}
-
-function cleanupRoomAttachmentCache(root = roomAttachmentCacheRoot(), nowMs = Date.now()) {
-  if (!fs.existsSync(root)) return [];
-  const removed = [];
-  for (const roomEntry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!roomEntry.isDirectory()) continue;
-    const roomPath = path.join(root, roomEntry.name);
-    for (const attachmentEntry of fs.readdirSync(roomPath, { withFileTypes: true })) {
-      if (!attachmentEntry.isDirectory()) continue;
-      const attachmentPath = path.join(roomPath, attachmentEntry.name);
-      const modifiedAt = fs.statSync(attachmentPath).mtimeMs;
-      if (nowMs - modifiedAt <= ROOM_ATTACHMENT_CACHE_RETENTION_MS) continue;
-      fs.rmSync(attachmentPath, { recursive: true, force: true });
-      removed.push(attachmentPath);
-    }
-    if (!fs.readdirSync(roomPath).length) fs.rmdirSync(roomPath);
-  }
-  return removed;
-}
-
-function attachmentSnapshot(attachment) {
-  return {
-    id: textParam(attachment, "id"),
-    originalFilename: roomAttachmentName(attachment),
-    contentType: textParam(attachment, "contentType") || "application/octet-stream",
-    byteSize: Number(attachment?.byteSize) || 0,
-    contentPath: attachmentContentPath(attachment),
-    openPath: textParam(attachment, "openPath") || null,
-    downloadPath: textParam(attachment, "downloadPath") || null
-  };
-}
+const roomAttachmentNetwork = Object.freeze({
+  fetchImpl: (...args) => fetch(...args),
+  loopbackSPSApiUrl,
+  spsDesktopAccessHeaders
+});
 
 async function listIssueAttachmentsDirect(apiUrl, issueId) {
-  const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(issueId)}/attachments`;
-  const response = await fetch(endpoint, { headers: spsDesktopAccessHeaders() });
-  if (!response.ok) throw new Error(`SPS attachment list failed (HTTP ${response.status}).`);
-  const result = await response.json();
-  return Array.isArray(result) ? result : Array.isArray(result?.attachments) ? result.attachments : [];
+  return listIssueAttachmentsDirectModule(apiUrl, issueId, roomAttachmentNetwork);
 }
 
 async function resolveRoomAttachments(apiUrl, issueId, attachmentIds) {
-  if (!attachmentIds.length) return [];
-  const available = await listIssueAttachmentsDirect(apiUrl, issueId);
-  const byId = new Map(available.map((attachment) => [textParam(attachment, "id"), attachment]));
-  const missing = attachmentIds.filter((id) => !byId.has(id));
-  if (missing.length) throw new Error("One or more selected files are no longer attached to this Room.");
-  return attachmentIds.map((id) => attachmentSnapshot(byId.get(id)));
-}
-
-function mergeRoomAttachments(...groups) {
-  const byId = new Map();
-  for (const group of groups) {
-    for (const attachment of Array.isArray(group) ? group : []) {
-      const snapshot = attachmentSnapshot(attachment);
-      if (!snapshot.id || byId.has(snapshot.id)) continue;
-      byId.set(snapshot.id, snapshot);
-    }
-  }
-  return [...byId.values()];
+  return resolveRoomAttachmentsModule(apiUrl, issueId, attachmentIds, roomAttachmentNetwork);
 }
 
 async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDirectory) {
-  const workspaceRoot = path.resolve(String(workingDirectory || "").trim());
-  const cacheRoot = roomAttachmentWorkspaceRoot(workspaceRoot);
-  excludeWorkspaceRoomAttachments(workspaceRoot);
-  cleanupRoomAttachmentCache(cacheRoot);
-  const roomDirectory = path.join(cacheRoot, safeAttachmentPathSegment(roomIssueId));
-  const staged = [];
-  for (const attachment of attachments) {
-    const attachmentId = textParam(attachment, "id");
-    if (!attachmentId) throw new Error("An attached file did not have a SPS attachment id.");
-    const directory = path.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
-    const localPath = path.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
-    const partialPath = `${localPath}.partial`;
-    const response = await fetch(roomAttachmentContentUrl(apiUrl, attachment), { headers: spsDesktopAccessHeaders() });
-    if (!response.ok) throw new Error(`Could not read attached file ${roomAttachmentName(attachment)} (HTTP ${response.status}).`);
-    fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(partialPath, Buffer.from(await response.arrayBuffer()));
-    fs.rmSync(localPath, { force: true });
-    fs.renameSync(partialPath, localPath);
-    fs.utimesSync(directory, new Date(), new Date());
-    staged.push({ ...attachment, localPath, isImage: isCodexImageAttachment(attachment) });
-  }
-  return staged;
-}
-
-function roomAttachmentCommentBlock(attachments) {
-  if (!attachments.length) return "";
-  const rows = attachments.map((attachment) => {
-    const label = roomAttachmentName(attachment).replace(/([\[\]])/g, "\\$1");
-    return `- [${label}](${attachmentContentPath(attachment)})`;
-  });
-  return `\n\n**Attached files**\n${rows.join("\n")}\n<!-- paperclip-room-attachments:${attachments.map((attachment) => attachment.id).join(",")} -->`;
-}
-
-function roomUserCommentBody(message, attachments, mode = "agent", retryOfCommentId = "") {
-  const text = enforceUtf8Text(message, "Room message").trim() || "Please inspect the attached files.";
-  const retryMarker = retryOfCommentId ? `\n<!-- paperclip-room-retry-of:${retryOfCommentId} -->` : "";
-  return `**User**\n${text}${retryMarker}${roomAttachmentCommentBlock(attachments)}`;
-}
-
-const ROOM_RESPONSE_CONTRACT = [
-  "SYSTEM-PROVIDED ROOM RESPONSE CONTRACT:",
-  "- When the current request asks to show or preview an existing Workspace image, the final response must embed at least one relevant image with Markdown image syntax and a verified absolute local path.",
-  "- On Windows, use this form: `![description](<C:/absolute/path/to/image.png>)`. The Room UI converts verified Workspace paths into safe inline previews and clickable file links.",
-  "- Do not merely say that an image is shown. If no relevant image exists or its path cannot be verified, say that clearly instead of emitting a broken or invented path.",
-  "- Use ordinary Markdown links with verified absolute local paths for other Workspace files that the user should inspect."
-].join("\n");
-
-function roomTurnText(message, stagedAttachments, retryOfCommentId = "") {
-  const text = enforceUtf8Text(message, "Room message").trim() || "Please inspect the attached files and respond to the user.";
-  const retryPreamble = retryOfCommentId
-    ? `USER MESSAGE REVISION: This message replaces the earlier user message ${retryOfCommentId}. Treat this revision as the current request. Do not continue or answer the superseded version.\n\n`
-    : "";
-  if (!stagedAttachments.length) return `${retryPreamble}${text}\n\n${ROOM_RESPONSE_CONTRACT}`;
-  const fileContext = stagedAttachments.map((attachment) => {
-    const delivery = attachment.isImage ? "also supplied as an image input" : "available as a local file";
-    return `- ${roomAttachmentName(attachment)} (${attachment.contentType}, ${attachment.byteSize} bytes): ${attachment.localPath} (${delivery})`;
-  });
-  return `${retryPreamble}${text}\n\nAttached Room files are durable SPS attachments. Inspect only the files relevant to the request and do not execute untrusted binaries.\n${fileContext.join("\n")}\n\n${ROOM_RESPONSE_CONTRACT}`;
-}
-
-function isRoomUserComment(comment) {
-  return /^\*\*User\*\*/i.test(String(comment?.body || "").trim());
-}
-
-async function validateRoomRetrySource(ctx, companyId, issueId, retryOfCommentId) {
-  const sourceCommentId = String(retryOfCommentId || "").trim();
-  if (!sourceCommentId) return "";
-  if (!ctx.issues.listComments) throw new Error("Room message retry is unavailable because Room comments could not be read.");
-  const comments = await ctx.issues.listComments(issueId, companyId);
-  const sourceComment = comments.find((comment) => comment.id === sourceCommentId);
-  if (!sourceComment || !isRoomUserComment(sourceComment)) {
-    throw new Error("The selected message is not a user message in this Room.");
-  }
-  return sourceCommentId;
+  return stageRoomAttachmentsModule(apiUrl, roomIssueId, attachments, workingDirectory, roomAttachmentNetwork);
 }
 
 async function putRoomDocument(apiUrl, input) {
@@ -2049,87 +1744,6 @@ async function updateRoomWorkStateOutsideInvocation(roomContext, patch, changeSu
   });
 }
 
-async function appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint) {
-  const document = await getRoomDocumentDirect(apiUrl, issueId, ROOM_CHECKPOINTS_KEY);
-  let checkpoints = parseState(document?.body);
-  if (!Array.isArray(checkpoints)) checkpoints = [];
-  checkpoints.push(checkpoint);
-  return putRoomDocument(apiUrl, {
-    issueId,
-    key: ROOM_CHECKPOINTS_KEY,
-    body: serializeState(checkpoints),
-    title: "Room checkpoints",
-    format: "markdown",
-    baseRevisionId: document?.latestRevisionId ?? null,
-    changeSummary: "Append Room compact checkpoint"
-  });
-}
-
-function nativeCompactionEventId(message) {
-  const params = asRecord(message?.params);
-  const threadId = textParam(params, "threadId");
-  const turnId = textParam(params, "turnId");
-  return threadId && turnId ? `${threadId}:${turnId}` : "";
-}
-
-async function appendNativeCompactionOutsideInvocation(apiUrl, issueId, event) {
-  const document = await getRoomDocumentDirect(apiUrl, issueId, ROOM_NATIVE_COMPACTIONS_KEY);
-  let events = parseState(document?.body);
-  if (!Array.isArray(events)) events = [];
-  if (events.some((entry) => entry?.id === event.id)) return events;
-  events.push(event);
-  await putRoomDocument(apiUrl, {
-    issueId,
-    key: ROOM_NATIVE_COMPACTIONS_KEY,
-    body: serializeState(events.slice(-100)),
-    title: "Native Codex compactions",
-    format: "markdown",
-    baseRevisionId: document?.latestRevisionId ?? null,
-    changeSummary: "Record native Codex context compaction"
-  });
-  return events;
-}
-
-async function recordNativeCodexCompaction(ctx, message) {
-  const itemCompaction = message?.method === "item/completed" && message?.params?.item?.type === "contextCompaction";
-  const threadCompaction = message?.method === "thread/compacted";
-  if (!itemCompaction && !threadCompaction) return false;
-  const eventId = nativeCompactionEventId(message);
-  const threadId = textParam(asRecord(message?.params), "threadId");
-  const context = activeThreadContexts.get(threadId);
-  if (!eventId || !context || manualCodexCompactionThreads.has(threadId) || recordedNativeCompactionEvents.has(eventId)) return false;
-  recordedNativeCompactionEvents.add(eventId);
-  const run = async () => {
-    try {
-      await appendNativeCompactionOutsideInvocation(context.spsApiUrl, context.issueId, {
-        id: eventId,
-        kind: "codex_native_auto",
-        threadId,
-        turnId: textParam(asRecord(message?.params), "turnId"),
-        occurredAt: now(),
-        note: "Codex compacted its internal context automatically. SPS conversation and checkpoints remain the durable Room record."
-      });
-      return true;
-    } catch (error) {
-      recordedNativeCompactionEvents.delete(eventId);
-      ctx.logger?.warn?.("Could not record native Codex compaction.", {
-        issueId: context.issueId,
-        threadId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return false;
-    }
-  };
-  const previous = nativeCompactionLocks.get(context.issueId) ?? Promise.resolve();
-  const next = previous.catch(() => {}).then(run);
-  nativeCompactionLocks.set(context.issueId, next);
-  try {
-    return await next;
-  } finally {
-    if (nativeCompactionLocks.get(context.issueId) === next) nativeCompactionLocks.delete(context.issueId);
-  }
-}
-
 async function createRoomCommentOutsideInvocation(apiUrl, issueId, body) {
   const endpoint = `${loopbackSPSApiUrl(apiUrl)}/api/issues/${encodeURIComponent(issueId)}/comments`;
   const response = await fetch(endpoint, {
@@ -2156,44 +1770,6 @@ async function createRoomCommentDurably(apiUrl, companyId, issueId, body) {
 
 async function appendCheckpointDurably(apiUrl, companyId, issueId, checkpoint) {
   return appendCheckpointOutsideInvocation(apiUrl, issueId, checkpoint);
-}
-
-async function appendCheckpoint(ctx, companyId, issueId, checkpoint) {
-  const document = await ctx.issues.documents.get(issueId, ROOM_CHECKPOINTS_KEY, companyId);
-  let checkpoints = parseState(document?.body);
-  if (!Array.isArray(checkpoints)) checkpoints = [];
-  checkpoints.push(checkpoint);
-  await upsertRoomDocument(ctx, {
-    issueId,
-    key: ROOM_CHECKPOINTS_KEY,
-    body: serializeState(checkpoints),
-    companyId,
-    title: "Room checkpoints",
-    format: "markdown",
-    changeSummary: "Append Room compact checkpoint"
-  });
-  await publishRoomMemoryLifecycle(ctx, companyId, issueId, "room.checkpoint", checkpoint);
-}
-
-async function publishRoomMemoryLifecycle(ctx, companyId, issueId, eventType, checkpoint) {
-  if (!ctx.memory?.publishLifecycle) return;
-  try {
-    await ctx.memory.publishLifecycle({
-      eventType,
-      companyId,
-      entityType: "room",
-      entityId: issueId,
-      roomId: issueId,
-      idempotencyKey: `room:${issueId}:${eventType}:${checkpoint.version}`
-    });
-  } catch (error) {
-    // A memory provider must not make a durable Room checkpoint unavailable.
-    ctx.logger?.warn?.("Room memory lifecycle publication failed.", {
-      issueId,
-      eventType,
-      message: error instanceof Error ? error.message : String(error)
-    });
-  }
 }
 
 function roomStreamChannel(issueId) {
@@ -2720,167 +2296,20 @@ function markNativeRoomContextHydrated(state, sessionId, prepared) {
   state.runtime.contextHydratedNativeThroughCommentId = prepared.latestCommentId ?? null;
 }
 
-async function getRuntimeConfig(ctx) {
-  const config = asRecord(await ctx.config.get());
-  return {
-    enabled: config.enableCodexRooms !== false,
-    enableCodexRooms: config.enableCodexRooms !== false,
-    enableAgyRooms: config.enableAgyRooms !== false,
-    command: textParam(config, "codexCommand", "codex"),
-    model: textParam(config, "codexModel", "") || null,
-    codexHome: textParam(config, "codexHome", "") || null,
-    codexSandbox: codexRoomSandbox(textParam(config, "codexRoomSandbox", "danger-full-access")),
-    codexApprovalPolicy: codexRoomApprovalPolicy(textParam(config, "codexRoomApprovalPolicy", "never")),
-    // A provider switch is an explicit product choice, not a hidden retry.
-    enableAgyQuotaFallback: config.enableAgyQuotaFallback === true,
-    agyFallbackCommand: textParam(config, "agyFallbackCommand", defaultAgyCommand()),
-    agyFallbackModel: textParam(config, "agyFallbackModel", "gemini-3.1-pro-high"),
-    agyFallbackPrintTimeout: textParam(config, "agyFallbackPrintTimeout", "2h"),
-    agyFallbackTimeoutMs: Math.max(0, Number(config.agyFallbackTimeoutSec) || 0) * 1000,
-    // Lead and Worker policies are the authorization boundary. Task delegation
-    // should work by default once those policies are explicitly configured;
-    // this switch is only an emergency pause for an entire Workplane.
-    enableTaskAssignment: config.enableTaskAssignment !== false,
-    // The packaged Owner Host chooses an available loopback port on first run.
-    // Its process value must win over the manifest's old 3100 default; otherwise
-    // Room UI can load while durable writes go to a different SPS server.
-    spsApiUrl: loopbackSPSApiUrl(
-      process.env.SPS_ROOM_API_URL
-      || textParam(config, "spsApiUrl", textParam(config, "paperclipApiUrl", "http://127.0.0.1:3100"))
-    )
-  };
-}
-
-function isLoopbackHost(host) {
-  return new Set(["127.0.0.1", "localhost", "::1"]).has(String(host || "").trim().toLowerCase());
-}
-
-function paperclipInstanceConfigPath() {
-  const configured = String(process.env.PAPERCLIP_CONFIG_PATH || "").trim();
-  return configured || path.join(os.homedir(), ".sps", "instances", "default", "config.json");
-}
-
-function environmentHasAuthenticationSecret(environmentPath) {
-  try {
-    const lines = fs.readFileSync(environmentPath, "utf8").split(/\r?\n/);
-    return lines.some((line) => {
-      const match = /^\s*(BETTER_AUTH_SECRET|PAPERCLIP_AGENT_JWT_SECRET)\s*=\s*(.*)$/.exec(line);
-      if (!match) return false;
-      return match[2].trim().replace(/^['\"]|['\"]$/g, "").length > 0;
-    });
-  } catch {
-    return false;
-  }
-}
-
-function collaborationReadinessFromConfig(config, { hasAuthenticationSecret = false } = {}) {
-  const server = asRecord(asRecord(config).server);
-  const auth = asRecord(asRecord(config).auth);
-  const deploymentMode = textParam(server, "deploymentMode", "local_trusted");
-  const exposure = textParam(server, "exposure", "private");
-  const listenHost = textParam(server, "host", "127.0.0.1");
-  const inferredBind = isLoopbackHost(listenHost) ? "loopback" : new Set(["0.0.0.0", "::"]).has(listenHost) ? "lan" : "custom";
-  const bind = textParam(server, "bind", inferredBind);
-  const port = Number(server.port) || 3100;
-  const allowedHostnames = Array.isArray(server.allowedHostnames)
-    ? server.allowedHostnames.map((value) => String(value || "").trim()).filter(Boolean)
-    : [];
-  const checks = [];
-  const warnings = [];
-  const localOnlySafeDefault = deploymentMode === "local_trusted" && bind === "loopback";
-
-  if (localOnlySafeDefault) {
-    checks.push({ label: "접속 방식", status: "pass", message: "로컬 전용 모드가 이 컴퓨터에 안전하게 묶여 있습니다." });
-  } else if (deploymentMode === "authenticated") {
-    checks.push({
-      label: "인증 비밀값",
-      status: hasAuthenticationSecret ? "pass" : "fail",
-      message: hasAuthenticationSecret
-        ? "인증 비밀값이 설정되어 있습니다."
-        : "인증 접속에는 SPS .env 파일의 BETTER_AUTH_SECRET 또는 PAPERCLIP_AGENT_JWT_SECRET가 필요합니다."
-    });
-  } else {
-    checks.push({ label: "접속 방식", status: "fail", message: "로컬 밖에서 접속하려면 인증 모드를 사용해야 합니다." });
-  }
-
-  if (deploymentMode === "authenticated" && exposure === "private") {
-    if (bind === "tailnet") {
-      checks.push({ label: "비공개 네트워크", status: "pass", message: "Tailnet 비공개 협업이 설정되어 있습니다." });
-    } else if (bind === "lan") {
-      checks.push({ label: "비공개 네트워크", status: "warn", message: "인증된 LAN 접속이 설정되어 있습니다. 신뢰할 수 있는 LAN 밖의 협업자는 Tailnet을 권장합니다." });
-    } else {
-      checks.push({ label: "비공개 네트워크", status: "fail", message: "비공개 협업에는 Tailnet 또는 신뢰할 수 있는 LAN 연결이 필요합니다." });
-    }
-    checks.push({
-      label: "신뢰할 수 있는 호스트 이름",
-      status: allowedHostnames.length > 0 ? "pass" : "fail",
-      message: allowedHostnames.length > 0
-        ? `신뢰할 수 있는 비공개 호스트 이름 ${allowedHostnames.length}개가 설정되어 있습니다.`
-        : "협업자를 초대하기 전에 Tailnet DNS 이름 또는 신뢰할 수 있는 비공개 호스트 이름을 추가하세요."
-    });
-  }
-
-  if (deploymentMode === "authenticated" && exposure === "public") {
-    const publicBaseUrl = textParam(auth, "publicBaseUrl");
-    const hasHttpsBaseUrl = textParam(auth, "baseUrlMode") === "explicit" && publicBaseUrl.startsWith("https://");
-    checks.push({
-      label: "공개 URL",
-      status: hasHttpsBaseUrl ? "pass" : "fail",
-      message: hasHttpsBaseUrl
-        ? "공개 HTTPS URL이 설정되어 있습니다."
-        : "공개 접속에는 명시적인 HTTPS auth.publicBaseUrl이 필요합니다."
-    });
-  }
-
-  const hasFailures = checks.some((check) => check.status === "fail");
-  const collaborationReady = deploymentMode === "authenticated" && bind !== "loopback" && !hasFailures;
-  const state = localOnlySafeDefault ? "local_only" : collaborationReady ? "collaboration_ready" : "configuration_incomplete";
-  const recommendation = state === "local_only"
-    ? "개인 작업 준비가 완료됐습니다. 친구를 초대할 때는 이 컴퓨터를 직접 노출하지 말고 인증된 비공개 Tailnet 접속을 설정하세요."
-    : state === "collaboration_ready"
-      ? "협업자를 Operator로 초대한 뒤, 두 사람이 함께 브라우저 접속 확인을 마치세요."
-      : "실패한 항목을 고친 뒤 Workplane을 다시 시작하고, 협업자를 초대하기 전에 이 확인을 다시 실행하세요.";
-
-  return {
-    state,
-    localOnlySafeDefault,
-    collaborationReady,
-    server: { deploymentMode, exposure, bind, listenHost, port, allowedHostnameCount: allowedHostnames.length },
-    checks,
-    warnings,
-    recommendation
-  };
-}
-
-function readCollaborationReadiness() {
-  try {
-    const configPath = paperclipInstanceConfigPath();
-    if (!fs.existsSync(configPath)) {
-      return {
-        state: "configuration_unavailable",
-        localOnlySafeDefault: false,
-        collaborationReady: false,
-        server: null,
-        checks: [{ label: "SPS configuration", status: "fail", message: "The local SPS configuration file was not found." }],
-        warnings: [],
-        recommendation: "Start the Workplane once to create its local configuration, then check this page again."
-      };
-    }
-    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    const environmentPath = path.join(path.dirname(configPath), ".env");
-    return collaborationReadinessFromConfig(config, { hasAuthenticationSecret: environmentHasAuthenticationSecret(environmentPath) });
-  } catch {
-    return {
-      state: "configuration_unavailable",
-      localOnlySafeDefault: false,
-      collaborationReady: false,
-      server: null,
-      checks: [{ label: "SPS configuration", status: "fail", message: "The local SPS configuration could not be read." }],
-      warnings: [],
-      recommendation: "Fix the local SPS configuration, restart the Workplane, then check this page again."
-    };
-  }
-}
+const runtimeConfiguration = createCollaborationReadiness({
+  fs,
+  os,
+  path,
+  codexRoomSandbox,
+  codexRoomApprovalPolicy,
+  defaultAgyCommand,
+  loopbackSPSApiUrl,
+  environmentVariable: process.env
+});
+const getRuntimeConfig = runtimeConfiguration.getRuntimeConfig;
+const collaborationReadinessFromConfig = runtimeConfiguration.collaborationReadinessFromConfig;
+const readCollaborationReadiness = runtimeConfiguration.readCollaborationReadiness;
+const paperclipInstanceConfigPath = runtimeConfiguration.paperclipInstanceConfigPath;
 
 const PROVIDER_QUOTA_ERROR_RE = /(?:provider_quota|resource_exhausted|usage[_\s-]?limit|quota|rate[_\s-]?limit|too many requests|\b429\b|weekly limit|5[-\s]?hour limit)/i;
 const AGY_FALLBACK_MAX_TOOL_STEPS = 10;
@@ -8294,25 +7723,20 @@ const plugin = definePlugin({
     pluginCtx = null;
   }
 });
-
 function setActiveThreadContextForTest(threadId, context) {
   if (context) activeThreadContexts.set(threadId, context);
   else activeThreadContexts.delete(threadId);
 }
-
 function setCodexClientForTest(client) {
   testCodexClient = client;
 }
-
 function setAgyClientFactoryForTest(factory) {
   testAgyClientFactory = factory;
 }
-
 function setActiveRoomJobForTest(issueId, promise) {
   if (promise) activeRoomMessageJobs.set(issueId, promise);
   else activeRoomMessageJobs.delete(issueId);
 }
-
 export { agentInstructions, agentInstructionsFingerprint, agentRoomAgentId, agentRoomRuntime, agentSessionContextMatches, appendCheckpoint, appendNativeCompactionOutsideInvocation, applyCodexAccountToAdapterConfig, applyNativeSessionActivityEvent, attachmentIdsParam, buildAgyRoomPrompt, buildRoomOperatingBrief, cancelResolvedTaskOwnerQuotaRetry, cancelResolvedTaskWorkerQuotaRetry, chooseDefaultWorkspace, chooseTaskWorkspace, cleanupRoomAttachmentCache, codexAccountLabel, codexClientKey, configuredEnvironment, configuredEnvironmentValue, defaultWorkspaceKindForAgent, enforceUtf8Text, ensureNativeRoomSession, excludeWorkspaceRoomAttachments, fetchRoomMemory, getCodexClient, getRuntimeConfig, handleCodexAccountSelect, handleCodexAccountsView, handleCodexServerRequest, handleOrganizationAgentPolicySave, handleOrganizationSettingsView, handleProjectTasksView, handleProjectWorkplaneView, handleRoomBootstrap, handleRoomCompact, handleRoomCompactJob, handleRoomSend, handleRoomSendJob, handleRoomTaskSummary, handleRoomView, handleRoomWorkspaceView, handleTaskOwnerFeedback, handleTaskOwnerFeedbackJob, handleTaskOwnerReportReconcile, handleTaskRoomView, handleTaskStatusUpdated, isAgentRoom, isCodexImageAttachment, isLongLivedRoom, isProviderQuotaError, isProviderQuotaRun, isRoomProviderQuotaRetryJob, isRoomUserComment, isWorkerOnlyRoomAgent, listIssueAttachmentsDirect, listIssueRunsDirect, listRoomJobs, loadAgentInstructions, loadRoomState, loadRoomWorkState, localCodexAccounts, mergeRoomAttachments, mergeRoomWorkState, mostRecentComments, nativeCompactionEventId, nativeSessionResultText, newRoomState, newRoomWorkState, nextProviderQuotaRetryAt, normalizeCodexHome, normalizeRoomWorkState, parseAgyFallbackEnvelope, parseState, prepareCodexRoomTurn, prepareNativeRoomTurn, proposeRoomMemory, providerQuotaRetryAtFromError, providerQuotaRetryState, provisionProjectAgentRooms, provisionAllProjectAgentRooms, queueProjectRoomProvision, queueRoomDocumentWrite, reconcileAllProjectAgentRooms, reconcileInterruptedRoomJobs, reconcileProviderQuotaRetries, reconcileProviderQuotaTask, reconcileRoomProviderQuotaRetries, reconcileTaskOwnerReportBoundaries, recordNativeCodexCompaction, repairUtf8Mojibake, resolveCodexHomeForAgent, resolveRoomAttachments, retryRoomDocumentWrite, roomAttachmentCommentBlock, roomAttachmentName, roomAttachmentWorkspaceRoot, roomHasActiveWork, roomRole, roomRuntimeDisabledResult, roomRuntimeWithRoomSafety, roomThreadIdForCodexRuntime, roomTools, roomTurnText, roomUserCommentBody, roomWorkplaneBoundary, runAgyRoomFallback, runQueuedRoomJobs, saveRoomState, saveRoomStateOutsideInvocation, saveRoomWorkState, scheduleRoomProviderQuotaRetry, searchRoomMemory, serializeState, setActiveRoomJobForTest, setActiveThreadContextForTest, setAgyClientFactoryForTest, setCodexClientForTest, stageRoomAttachments, startNativeAgentSessionTurn, startRoomTurn, syncAgentRoomTitles, taskOwnerReportPrompt, taskOwnerRoomResultVisibilityOutsideInvocation, taskStatusTransition, updateAgentAdapterConfigDirect, updateRoomWorkStateOutsideInvocation, validateRoomRetrySource, workspaceGitChanges, workspaceGitExcludePath, workspaceKindForProjectWorkspace, workspaceLocalPath };
 export { activeRoomProcessBlocksOwnerReport, isSubstantiveTaskBoundaryReport, reconcileTaskOwnerNotificationStateForJob, taskBoundaryReportKind };
 export { handleTeamWorkplaneDashboard, publishTaskOwnerReportInbox };
