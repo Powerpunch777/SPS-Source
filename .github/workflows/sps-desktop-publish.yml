@@ -49,6 +49,8 @@ jobs:
           if ($env:SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON.Length -eq 0) { throw "Protected Host and Member device enrollment is required." }
           if ($env:CLOUDFLARE_API_TOKEN.Length -eq 0 -or $env:CLOUDFLARE_ACCOUNT_ID.Length -eq 0) { throw "Cloudflare verification credentials are required." }
           if ($env:SPS_IDENTITY_EXPECTED_PRODUCTION_DEPLOYMENT_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_PRODUCTION_VERSION_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_STAGING_DEPLOYMENT_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_STAGING_VERSION_ID.Length -eq 0) { throw "Exact Identity deployment/version IDs are required." }
+          $immutable = gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/Powerpunch777/SPS-Desktop-Releases/immutable-releases | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $immutable.enabled -ne $true) { throw "SPS-Desktop-Releases must enforce GitHub immutable releases before Stable publication." }
           if ("${{ inputs.tag }}" -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "The publish tag is invalid." }
           if ($env:GITHUB_REF_TYPE -eq "branch") { Write-Output "workflow_dispatch uses an explicit tag checkout below." }
           $tagCommit = (git rev-list -n 1 "${{ inputs.tag }}").Trim()
@@ -145,7 +147,19 @@ jobs:
             tagName = $published.tag_name
             assets = @($published.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
           }
-          if ($published.draft -or ($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($publishedSnapshot | ConvertTo-Json -Depth 6 -Compress)) {
-            gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft --latest=false
-            throw "Published release identity changed during publication and was returned to draft quarantine."
+          if ($published.draft -or $published.immutable -ne $true -or ($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($publishedSnapshot | ConvertTo-Json -Depth 6 -Compress)) {
+            throw "Published release is not the exact immutable release that was verified before publication."
           }
+          gh release verify "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases
+          if ($LASTEXITCODE -ne 0) { throw "GitHub could not verify the immutable release attestation." }
+          Get-ChildItem -LiteralPath "release-assets" -File | ForEach-Object {
+            gh release verify-asset "${{ inputs.tag }}" $_.FullName --repo Powerpunch777/SPS-Desktop-Releases
+            if ($LASTEXITCODE -ne 0) { throw "GitHub could not verify immutable release asset $($_.Name)." }
+          }
+          $verified = gh api $releaseApi | ConvertFrom-Json
+          $verifiedSnapshot = [ordered]@{
+            releaseId = $verified.id
+            tagName = $verified.tag_name
+            assets = @($verified.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
+          }
+          if ($verified.immutable -ne $true -or ($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($verifiedSnapshot | ConvertTo-Json -Depth 6 -Compress)) { throw "Immutable release identity changed during attestation verification." }

@@ -19,6 +19,7 @@ test("Identity migrations preserve the previous Worker and backfill active legac
   const migration3 = await readFile(path.join(identityRoot, "migrations", "0003_refresh_reuse_protection.sql"), "utf8");
   const migration4 = await readFile(path.join(identityRoot, "migrations", "0004_legacy_refresh_family_roots.sql"), "utf8");
   const migration5 = await readFile(path.join(identityRoot, "migrations", "0005_oauth_evidence_receipts.sql"), "utf8");
+  const migration6 = await readFile(path.join(identityRoot, "migrations", "0006_oauth_evidence_revoke_replay.sql"), "utf8");
   assert.match(migration3, /CREATE TABLE identity_replay_results_v2/);
   assert.doesNotMatch(migration3, /DROP TABLE|DROP INDEX/i);
   assert.match(migration4, /SET family_id = 'legacy-root:' \|\| token_hash/);
@@ -28,6 +29,9 @@ test("Identity migrations preserve the previous Worker and backfill active legac
   assert.match(migration5, /ALTER TABLE authorization_codes ADD COLUMN google_verified_at/);
   assert.match(migration5, /ALTER TABLE refresh_tokens ADD COLUMN oauth_evidence_nonce/);
   assert.doesNotMatch(migration5, /DROP TABLE|DELETE FROM/i);
+  assert.match(migration6, /CREATE TABLE IF NOT EXISTS oauth_evidence_revoke_results/);
+  assert.match(migration6, /refresh_token_hash TEXT PRIMARY KEY/);
+  assert.doesNotMatch(migration6, /DROP TABLE|DELETE FROM/i);
 });
 
 test("Identity deployment requires real staging evidence and never overwrites replay keys", async () => {
@@ -80,6 +84,7 @@ test("Identity deployment requires real staging evidence and never overwrites re
   assert.match(worker, /SPS_IDENTITY_REPLAY_KEY_\$\{version\.toUpperCase\(\)\}/);
   assert.match(worker, /sps-oauth-evidence\+jwt/);
   assert.match(worker, /CF_VERSION_METADATA/);
+  assert.doesNotMatch(worker, /CF_VERSION_METADATA\?\.id\) \|\| text\(env\.SPS_IDENTITY_VERSION_ID\)/);
   assert.doesNotMatch(
     worker.slice(worker.indexOf("async function replayEncryptionKey"), worker.indexOf("async function encryptReplayResponse")),
     /SPS_IDENTITY_PRIVATE_KEY_PEM/,

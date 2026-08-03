@@ -19,6 +19,13 @@ export function deploymentHasVersion(deployment, versionId) {
     ));
 }
 
+export function deploymentIsExclusiveVersion(deployment, versionId) {
+  return Array.isArray(deployment?.versions)
+    && deployment.versions.length === 1
+    && deployment.versions[0]?.version_id === versionId
+    && Number(deployment.versions[0]?.percentage) === 100;
+}
+
 function deploymentCreatedAt(deployment) {
   const value = Date.parse(deployment?.created_on ?? "");
   if (!Number.isFinite(value)) {
@@ -50,6 +57,9 @@ export function selectCurrentDeployment(deployments, { deploymentId, versionId }
   }
   if (ordered[0].deployment.id !== declared.id) {
     throw new Error("The declared Cloudflare deployment is not the latest active deployment.");
+  }
+  if (!deploymentIsExclusiveVersion(declared, versionId)) {
+    throw new Error("The declared Cloudflare deployment must route 100% of traffic to the exact Worker version.");
   }
   return declared;
 }

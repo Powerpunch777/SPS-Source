@@ -90,7 +90,11 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(publishWorkflow, /verify-release-attestation\.mjs/);
   assert.match(publishWorkflow, /pinned Plugin SDK revision must be reachable from its main branch/);
   assert.match(publishWorkflow, /gh release edit "\$\{\{ inputs\.tag \}\}" --repo .* --draft=false/);
-  assert.match(publishWorkflow, /Published release identity changed during publication/);
+  assert.match(publishWorkflow, /immutable-releases/);
+  assert.match(publishWorkflow, /\$published\.immutable -ne \$true/);
+  assert.match(publishWorkflow, /gh release verify "\$\{\{ inputs\.tag \}\}"/);
+  assert.match(publishWorkflow, /gh release verify-asset/);
+  assert.doesNotMatch(publishWorkflow, /--draft --latest=false/);
   assert.doesNotMatch(publishWorkflow, /electron-builder|npm run release:win/);
   assert.doesNotMatch(publishWorkflow, /gh release upload|--clobber/);
   assert.match(workflow, /merge-base --is-ancestor \$env:GITHUB_SHA origin\/main/);

@@ -11,6 +11,7 @@ const AUTHORIZATION_CODE_TTL_MS = 5 * 60 * 1000;
 export const SPS_DESKTOP_SIGN_IN_TTL_MS = 15 * 60 * 1000;
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const OAUTH_EVIDENCE_RECEIPT_TTL_SECONDS = 24 * 60 * 60;
+const OAUTH_EVIDENCE_REVOKE_REPLAY_TTL_MS = OAUTH_EVIDENCE_RECEIPT_TTL_SECONDS * 1000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const IDENTITY_REPLAY_TTL_MS = 60 * 1000;
 const IDENTITY_REPLAY_ENCRYPTION_CONTEXT = "sps-identity-replay";
@@ -95,6 +96,12 @@ function validEvidenceNonce(value) {
 
 function validDeploymentId(value) {
   return /^[A-Za-z0-9-]{8,128}$/.test(text(value));
+}
+
+function runtimeVersionId(env) {
+  const versionId = text(env.CF_VERSION_METADATA?.id);
+  if (!versionId) throw new Error("SPS Identity requires the Cloudflare version metadata binding.");
+  return versionId;
 }
 
 export function isLoopbackRedirectUri(value) {
@@ -185,10 +192,9 @@ async function signAccessToken(env, claims) {
 
 async function signOAuthEvidenceReceipt(env, record) {
   const now = Math.floor(Date.now() / 1000);
-  const versionId = text(env.CF_VERSION_METADATA?.id) || text(env.SPS_IDENTITY_VERSION_ID);
+  const versionId = runtimeVersionId(env);
   const sourceRevision = requireEnv(env, "SPS_IDENTITY_SOURCE_REVISION");
   const releaseId = requireEnv(env, "SPS_IDENTITY_RELEASE_ID");
-  if (!versionId) throw new Error("SPS Identity OAuth evidence requires Cloudflare version metadata.");
   if (!validEvidenceNonce(record.oauth_evidence_nonce) || !validDeploymentId(record.oauth_evidence_deployment_id)) {
     throw new Error("SPS Identity OAuth evidence binding is invalid.");
   }
@@ -401,6 +407,20 @@ async function replayResult(env, replayKey, requestHash, idempotencyKeyHash) {
   };
 }
 
+async function oauthEvidenceRevokeReplay(env, refreshTokenHash, idempotencyKeyHash) {
+  const record = await env.DB.prepare(
+    "SELECT idempotency_key_hash, receipt_jwt, expires_at FROM oauth_evidence_revoke_results WHERE refresh_token_hash = ?",
+  ).bind(refreshTokenHash).first();
+  if (!record) return { kind: "missing" };
+  if (Number(record.expires_at) <= Date.now()) {
+    await env.DB.prepare("DELETE FROM oauth_evidence_revoke_results WHERE refresh_token_hash = ?")
+      .bind(refreshTokenHash).run();
+    return { kind: "missing" };
+  }
+  if (record.idempotency_key_hash !== idempotencyKeyHash) return { kind: "mismatch" };
+  return { kind: "response", response: json({ revoked: true, oauth_evidence_receipt: record.receipt_jwt }) };
+}
+
 async function consumeAndPersistPair(env, {
   sourceTable,
   sourceKeyColumn,
@@ -454,18 +474,22 @@ async function consumeAndPersistPair(env, {
 }
 
 async function revokeRefreshFamily(env, familyId, tokenHash) {
+  const statements = revokeRefreshFamilyStatements(env, familyId, tokenHash);
+  await env.DB.batch(statements);
+}
+
+function revokeRefreshFamilyStatements(env, familyId, tokenHash) {
   if (text(familyId)) {
-    await env.DB.batch([
+    return [
       env.DB.prepare("DELETE FROM refresh_tokens WHERE family_id = ?").bind(familyId),
       env.DB.prepare("DELETE FROM identity_replay_results_v2 WHERE family_id = ?").bind(familyId),
-    ]);
-    return;
+    ];
   }
-  await env.DB.batch([
+  return [
     env.DB.prepare("DELETE FROM refresh_tokens WHERE token_hash = ?").bind(tokenHash),
     env.DB.prepare("DELETE FROM identity_replay_results_v2 WHERE replay_key = ?").bind(`refresh-token:${tokenHash}`),
     env.DB.prepare("DELETE FROM identity_replay_results WHERE replay_key = ?").bind(`refresh-token:${tokenHash}`),
-  ]);
+  ];
 }
 
 async function readJson(request) {
@@ -485,6 +509,7 @@ async function cleanupExpiredIdentityRecords(env) {
     env.DB.prepare("DELETE FROM refresh_tokens WHERE expires_at <= ?").bind(now).run(),
     env.DB.prepare("DELETE FROM identity_replay_results_v2 WHERE expires_at <= ?").bind(now).run(),
     env.DB.prepare("DELETE FROM identity_replay_results WHERE expires_at <= ?").bind(now).run(),
+    env.DB.prepare("DELETE FROM oauth_evidence_revoke_results WHERE expires_at <= ?").bind(now).run(),
   ]).catch((reason) => {
     // Cleanup is opportunistic: a transient D1 failure must not block sign-in.
     console.warn("SPS Identity cleanup failed", reason);
@@ -718,12 +743,42 @@ async function revoke(request, env) {
   const refreshToken = text(body.refresh_token);
   if (refreshToken) {
     const hash = await sha256Base64Url(refreshToken);
+    const idempotencyKey = text(body.idempotency_key);
+    const idempotencyKeyHash = validIdempotencyKey(idempotencyKey)
+      ? await sha256Base64Url(idempotencyKey)
+      : "";
+    if (idempotencyKeyHash) {
+      const replay = await oauthEvidenceRevokeReplay(env, hash, idempotencyKeyHash);
+      if (replay.kind === "response") return replay.response;
+      if (replay.kind === "mismatch") {
+        return error("SPS OAuth evidence revoke idempotency key does not match.", 409, "revoke_idempotency_mismatch");
+      }
+    }
     const record = await env.DB.prepare("SELECT family_id, subject, device_id, google_verified_at, oauth_evidence_nonce, oauth_evidence_deployment_id FROM refresh_tokens WHERE token_hash = ?").bind(hash).first();
-    await revokeRefreshFamily(env, record?.family_id, hash);
     if (record?.oauth_evidence_nonce) {
-      const receipt = await signOAuthEvidenceReceipt(env, { ...record, revoked_at: Date.now() });
+      if (!idempotencyKeyHash) {
+        return error("SPS OAuth evidence revoke requires an idempotency key.", 400, "revoke_idempotency_required");
+      }
+      const now = Date.now();
+      const receipt = await signOAuthEvidenceReceipt(env, { ...record, revoked_at: now });
+      try {
+        await env.DB.batch([
+          env.DB.prepare(
+            "INSERT INTO oauth_evidence_revoke_results (refresh_token_hash, idempotency_key_hash, receipt_jwt, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+          ).bind(hash, idempotencyKeyHash, receipt, now + OAUTH_EVIDENCE_REVOKE_REPLAY_TTL_MS, now),
+          ...revokeRefreshFamilyStatements(env, record.family_id, hash),
+        ]);
+      } catch (reason) {
+        const replay = await oauthEvidenceRevokeReplay(env, hash, idempotencyKeyHash);
+        if (replay.kind === "response") return replay.response;
+        if (replay.kind === "mismatch") {
+          return error("SPS OAuth evidence revoke idempotency key does not match.", 409, "revoke_idempotency_mismatch");
+        }
+        throw reason;
+      }
       return json({ revoked: true, oauth_evidence_receipt: receipt });
     }
+    await revokeRefreshFamily(env, record?.family_id, hash);
   }
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }
@@ -741,7 +796,7 @@ export function createSpsIdentityWorker({ fetchImpl = fetch } = {}) {
             replay_key_version: replayKey.activeVersion,
             source_revision: text(env.SPS_IDENTITY_SOURCE_REVISION) || null,
             deployment_id: text(env.SPS_IDENTITY_DEPLOYMENT_ID) || null,
-            version_id: text(env.CF_VERSION_METADATA?.id) || text(env.SPS_IDENTITY_VERSION_ID) || null,
+            version_id: runtimeVersionId(env),
             release_id: text(env.SPS_IDENTITY_RELEASE_ID) || null,
             protocol_version: text(env.SPS_IDENTITY_PROTOCOL_VERSION) || null,
             rollback_floor: text(env.SPS_IDENTITY_ROLLBACK_FLOOR) || null,

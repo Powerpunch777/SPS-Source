@@ -36,6 +36,7 @@ function createSigningEnv() {
     SPS_IDENTITY_PROTOCOL_VERSION: "2",
     SPS_IDENTITY_ROLLBACK_FLOOR: "bridge-v2",
     SPS_IDENTITY_ROLLOUT_PHASE: "bridge",
+    CF_VERSION_METADATA: { id: "identity-test-version", tag: "test", timestamp: new Date().toISOString() },
   };
 }
 
@@ -102,6 +103,7 @@ class FakeStatement {
     const rows = this.db.rows(table);
     const row = rows.find((candidate) => candidate.code_hash === this.values[0]
       || candidate.token_hash === this.values[0]
+      || candidate.refresh_token_hash === this.values[0]
       || candidate.replay_key === this.values[0]
       || candidate.subject === this.values[0]);
     if (this.db.readBarrier) await this.db.readBarrier();
@@ -190,6 +192,7 @@ class FakeStatement {
       const rows = this.db.rows(table);
       const existing = rows.findIndex((candidate) => candidate[columns[0]] === row[columns[0]]);
       if (existing >= 0 && this.sql.includes("ON CONFLICT")) rows[existing] = { ...rows[existing], ...row };
+      else if (existing >= 0) throw new Error("D1 primary key conflict");
       else rows.push(row);
       return { success: true, meta: { changes: 1 } };
     }
@@ -245,6 +248,11 @@ test("health verifies the active versioned replay secret", async () => {
   delete env.SPS_IDENTITY_REPLAY_KEY_V1;
   const missing = await worker.fetch(new Request("https://auth.example/health"), env);
   assert.equal(missing.status, 500);
+
+  const missingVersion = createSigningEnv();
+  delete missingVersion.CF_VERSION_METADATA;
+  const missingVersionResponse = await worker.fetch(new Request("https://auth.example/health"), missingVersion);
+  assert.equal(missingVersionResponse.status, 500);
 });
 
 test("rejects malformed desktop device requests before touching identity storage", async () => {
@@ -395,7 +403,13 @@ test("issues a Worker-signed receipt only for a Google-verified evidence authori
     alg: "RS256",
   };
   assert.equal(body.oauth_evidence_receipt, undefined);
-  const revoked = await worker.fetch(request("/v1/desktop/revoke", { refresh_token: body.refresh_token }), { ...env, DB: db });
+  const missingIdempotency = await worker.fetch(request("/v1/desktop/revoke", {
+    refresh_token: body.refresh_token,
+  }), { ...env, DB: db });
+  assert.equal(missingIdempotency.status, 400);
+  assert.equal((await responseBody(missingIdempotency)).error_code, "revoke_idempotency_required");
+  const revokeBody = { refresh_token: body.refresh_token, idempotency_key: IDEMPOTENCY_KEY };
+  const revoked = await worker.fetch(request("/v1/desktop/revoke", revokeBody), { ...env, DB: db });
   assert.equal(revoked.status, 200);
   const revocation = await responseBody(revoked);
   const receipt = verifyOAuthEvidenceReceipt(revocation.oauth_evidence_receipt, {
@@ -409,6 +423,16 @@ test("issues a Worker-signed receipt only for a Google-verified evidence authori
     accountSubjectHash: hash(PROFILE.subject),
   });
   assert.equal(receipt.payload.scope, "sps.release.oauth-evidence");
+
+  const replayed = await worker.fetch(request("/v1/desktop/revoke", revokeBody), { ...env, DB: db });
+  assert.equal(replayed.status, 200);
+  assert.equal((await responseBody(replayed)).oauth_evidence_receipt, revocation.oauth_evidence_receipt);
+  const mismatched = await worker.fetch(request("/v1/desktop/revoke", {
+    refresh_token: body.refresh_token,
+    idempotency_key: SECOND_IDEMPOTENCY_KEY,
+  }), { ...env, DB: db });
+  assert.equal(mismatched.status, 409);
+  assert.equal((await responseBody(mismatched)).error_code, "revoke_idempotency_mismatch");
 
   const unverifiedCode = "unverified-evidence-code";
   db.rows("authorization_codes").push({

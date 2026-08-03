@@ -11,6 +11,14 @@ const pinned = {
   staging: { url: "https://auth-staging.redongames.com", databaseId: "b0f62d9e-0f87-4ed2-ac99-ffc164c0892c", databaseName: "sps-identity-staging", worker: "sps-identity-staging", config: "wrangler.staging.toml" },
 };
 
+function singleRsaModulus(jwks, environment) {
+  const moduli = [...new Set((Array.isArray(jwks?.keys) ? jwks.keys : [])
+    .filter((key) => key?.kty === "RSA" && typeof key?.n === "string" && key.n)
+    .map((key) => key.n))];
+  if (moduli.length !== 1) throw new Error(`${environment} Identity JWKS must expose exactly one RSA modulus.`);
+  return moduli[0];
+}
+
 export function validateReleaseAttestation(attestation, {
   sourceRevision,
   productionDeploymentId,
@@ -18,6 +26,7 @@ export function validateReleaseAttestation(attestation, {
   stagingDeploymentId,
   stagingVersionId,
   stagingJwks,
+  productionJwks,
   now = Date.now(),
 } = {}) {
   if (attestation?.schemaVersion !== 2 || attestation?.status !== "passed" || attestation?.environment !== "production") throw new Error("Identity release attestation is not a successful production schema-v2 result.");
@@ -42,6 +51,9 @@ export function validateReleaseAttestation(attestation, {
     jwks: stagingJwks,
     now,
   });
+  if (singleRsaModulus(productionJwks, "Production") === singleRsaModulus(stagingJwks, "Staging")) {
+    throw new Error("Production and Staging Identity must use distinct RSA signing keys.");
+  }
   return attestation;
 }
 
@@ -74,9 +86,17 @@ function productionFinalizationState() {
 export async function verifyRemoteReleaseAttestation(attestation, options) {
   const productionHealth = await health(pinned.production.url);
   const stagingHealth = await health(pinned.staging.url);
-  const stagingJwksResponse = await fetch(`${pinned.staging.url}/.well-known/jwks.json`, { redirect: "error" });
+  const [productionJwksResponse, stagingJwksResponse] = await Promise.all([
+    fetch(`${pinned.production.url}/.well-known/jwks.json`, { redirect: "error" }),
+    fetch(`${pinned.staging.url}/.well-known/jwks.json`, { redirect: "error" }),
+  ]);
+  if (!productionJwksResponse.ok) throw new Error(`Identity JWKS failed at ${pinned.production.url}: ${productionJwksResponse.status}`);
   if (!stagingJwksResponse.ok) throw new Error(`Identity JWKS failed at ${pinned.staging.url}: ${stagingJwksResponse.status}`);
-  validateReleaseAttestation(attestation, { ...options, stagingJwks: await stagingJwksResponse.json() });
+  validateReleaseAttestation(attestation, {
+    ...options,
+    productionJwks: await productionJwksResponse.json(),
+    stagingJwks: await stagingJwksResponse.json(),
+  });
   for (const field of ["status", "service", "source_revision", "replay_key_version", "protocol_version", "rollback_floor", "rollout_phase", "release_id"]) {
     if (productionHealth[field] !== attestation.health?.[field]) throw new Error(`Remote production health ${field} does not match the attestation.`);
     if (stagingHealth[field] !== attestation.stagingEvidence?.health?.[field]) throw new Error(`Remote staging health ${field} does not match the attestation.`);

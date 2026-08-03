@@ -79,6 +79,21 @@ test("requires the declared deployment to be the newest active deployment regard
   assert.equal(selectCurrentDeployment(deployments.toReversed(), { deploymentId: "current", versionId: "current-version" }).id, "current");
 });
 
+test("requires the current deployment to route all traffic to one exact Worker version", () => {
+  const split = [{
+    id: "current",
+    created_on: "2026-08-03T11:00:00.000Z",
+    versions: [
+      { version_id: "current-version", percentage: 1 },
+      { version_id: "old-version", percentage: 99 },
+    ],
+  }];
+  assert.throws(
+    () => selectCurrentDeployment(split, { deploymentId: "current", versionId: "current-version" }),
+    /100% of traffic/,
+  );
+});
+
 test("verifies the access token against the published RSA JWKS", () => {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const jwk = { ...publicKey.export({ format: "jwk" }), kid: "identity-test", alg: "RS256" };
@@ -159,6 +174,8 @@ test("release attestation binds final production and bridge staging to exact Clo
     checks: { health: true, oauthConfigurationSmoke: true, token: true, tokenRetry: true, refresh: true, refreshRetry: true, reuse: true, familyRevoke: true, revoke: true },
   };
   const { evidence: fullOAuthEvidence, jwks: stagingJwks } = oauthEvidenceFixture({ sourceRevision, completedAt: generatedAt });
+  const { publicKey: productionPublicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const productionJwks = { keys: [{ ...productionPublicKey.export({ format: "jwk" }), kid: "production-key", alg: "RS256" }] };
   const attestation = {
     schemaVersion: 2,
     status: "passed",
@@ -180,6 +197,7 @@ test("release attestation binds final production and bridge staging to exact Clo
     productionVersionId: "production-version",
     stagingDeploymentId: "staging-deployment",
     stagingVersionId: "staging-version",
+    productionJwks,
     stagingJwks,
     now: Date.parse("2026-08-03T11:00:00.000Z"),
   }), attestation);
@@ -189,7 +207,18 @@ test("release attestation binds final production and bridge staging to exact Clo
     productionVersionId: "production-version",
     stagingDeploymentId: "staging-deployment",
     stagingVersionId: "staging-version",
+    productionJwks,
     stagingJwks,
     now: Date.parse("2026-08-03T11:00:00.000Z"),
   }), /ambiguous/);
+  assert.throws(() => validateReleaseAttestation(attestation, {
+    sourceRevision,
+    productionDeploymentId: "production-deployment",
+    productionVersionId: "production-version",
+    stagingDeploymentId: "staging-deployment",
+    stagingVersionId: "staging-version",
+    productionJwks: stagingJwks,
+    stagingJwks,
+    now: Date.parse("2026-08-03T11:00:00.000Z"),
+  }), /distinct RSA signing keys/);
 });

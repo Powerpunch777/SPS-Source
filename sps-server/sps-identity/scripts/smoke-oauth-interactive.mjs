@@ -146,16 +146,32 @@ async function receiveAuthorizationCode({ state, timeoutMs = 5 * 60 * 1000 }) {
   };
 }
 
-async function jsonPost(identityUrl, pathname, body, expectedStatus) {
-  const response = await fetch(new URL(pathname, `${identityUrl}/`), {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
-  if (response.status !== expectedStatus) throw new Error(`${pathname} returned ${response.status}: ${text}`);
-  return payload;
+async function jsonPost(identityUrl, pathname, body, expectedStatus, attempts = 1) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(new URL(pathname, `${identityUrl}/`), {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      if (response.status !== expectedStatus) {
+        const failure = new Error(`${pathname} returned ${response.status}: ${text}`);
+        if (response.status < 500) {
+          failure.retryable = false;
+          throw failure;
+        }
+        lastError = failure;
+        continue;
+      }
+      return text ? JSON.parse(text) : null;
+    } catch (reason) {
+      if (reason?.retryable === false) throw reason;
+      lastError = reason;
+    }
+  }
+  throw lastError ?? new Error(`${pathname} failed without a response.`);
 }
 
 export function validateFullOAuthEvidence(evidence, {
@@ -247,7 +263,11 @@ export async function runInteractiveOAuthSmoke({
     jwks,
     issuer: identityUrl,
   });
-  const revocation = await jsonPost(identityUrl, "/v1/desktop/revoke", { refresh_token: pair.refresh_token }, 200);
+  const revokeIdempotencyKey = randomValue(32);
+  const revocation = await jsonPost(identityUrl, "/v1/desktop/revoke", {
+    refresh_token: pair.refresh_token,
+    idempotency_key: revokeIdempotencyKey,
+  }, 200, 2);
   if (revocation?.revoked !== true || !revocation.oauth_evidence_receipt) throw new Error("Full OAuth session revocation returned no signed evidence receipt.");
   const evidence = {
     schemaVersion: 2,

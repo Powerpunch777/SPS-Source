@@ -136,6 +136,10 @@ Migration `0005` additively carries an optional OAuth evidence nonce and
 deployment binding through the Google callback into the one-time authorization
 code. Previous Workers ignore those nullable columns, preserving Bridge
 rollback compatibility.
+Migration `0006` additively stores the signed OAuth-evidence revoke receipt and
+its hashed idempotency key. Receipt persistence and refresh-family deletion
+happen in one D1 batch, so a caller can recover the exact receipt after a lost
+response without allowing the revoked token to mint another descendant.
 
 Finalization reads the legacy replay table and refuses to run until its real
 maximum expiry has elapsed. It does not accept a manual "TTL elapsed" checkbox:
@@ -157,6 +161,9 @@ After finalization, combine the Production Final rollout, staging protocol
 smoke, and staging full-OAuth evidence with `npm run attest:release -- <four
 paths>`. The Stable publish workflow remotely rechecks both Workers, exact
 Cloudflare version traffic, and the finalized Production D1 before publishing.
+Both Workers must expose Cloudflare's `CF_VERSION_METADATA` binding, the Final
+version must receive exactly 100% of traffic, and Production/Staging JWKS must
+contain different RSA signing keys.
 
 Desktop retries a lost or truncated response once with the same high-entropy
 idempotency key. Identity returns structured refresh error codes so revoked,

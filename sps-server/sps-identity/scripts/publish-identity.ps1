@@ -133,7 +133,7 @@ try {
   }
   [System.IO.File]::WriteAllText($secretBundlePath, ($secretBundle | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
 
-  # Migrations 0003 through 0005 are additive. The previous Worker schema remains
+  # Migrations 0003 through 0006 are additive. The previous Worker schema remains
   # valid, while active legacy refresh tokens receive safe family roots.
   npx wrangler d1 migrations apply $database --remote --config $configPath
   if ($LASTEXITCODE -ne 0) { throw "Could not apply $Environment SPS Identity migrations." }

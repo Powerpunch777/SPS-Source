@@ -15,6 +15,9 @@ export async function createReleaseAttestation({ productionRolloutPath, stagingE
   const response = await fetch("https://auth.redongames.com/health", { redirect: "error" });
   if (!response.ok) throw new Error(`Production Identity health failed with ${response.status}.`);
   const health = await response.json();
+  const productionJwksResponse = await fetch("https://auth.redongames.com/.well-known/jwks.json", { redirect: "error" });
+  if (!productionJwksResponse.ok) throw new Error(`Production Identity JWKS failed with ${productionJwksResponse.status}.`);
+  const productionJwks = await productionJwksResponse.json();
   const stagingJwksResponse = await fetch("https://auth-staging.redongames.com/.well-known/jwks.json", { redirect: "error" });
   if (!stagingJwksResponse.ok) throw new Error(`Staging Identity JWKS failed with ${stagingJwksResponse.status}.`);
   const stagingJwks = await stagingJwksResponse.json();
@@ -40,6 +43,7 @@ export async function createReleaseAttestation({ productionRolloutPath, stagingE
     productionVersionId: production.versionId,
     stagingDeploymentId: stagingEvidence.cloudflareDeploymentId,
     stagingVersionId: stagingEvidence.versionId,
+    productionJwks,
     stagingJwks,
   });
   await writeFile(path.resolve(outputPath), `${JSON.stringify(attestation, null, 2)}\n`, { encoding: "utf8", flag: "wx" });

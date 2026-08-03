@@ -57,6 +57,8 @@ async function createIdentityRuntime({ includeLegacyBackfill = true } = {}) {
       SPS_IDENTITY_ROLLBACK_FLOOR: "bridge-v2",
       SPS_IDENTITY_ROLLOUT_PHASE: "bridge",
       SPS_IDENTITY_SOURCE_REVISION: "test-source-revision",
+      SPS_IDENTITY_RELEASE_ID: "identity-miniflare-release",
+      CF_VERSION_METADATA: { id: "identity-miniflare-version", tag: "test", timestamp: new Date().toISOString() },
     },
   });
   await bounded(mf.ready, "Miniflare startup");
@@ -68,6 +70,7 @@ async function createIdentityRuntime({ includeLegacyBackfill = true } = {}) {
   ];
   if (includeLegacyBackfill) migrations.push("0004_legacy_refresh_family_roots.sql");
   migrations.push("0005_oauth_evidence_receipts.sql");
+  migrations.push("0006_oauth_evidence_revoke_replay.sql");
   for (const migration of migrations) await applyMigration(db, migration);
   return { mf, db };
 }
@@ -94,6 +97,14 @@ function tokenRequest(code, verifier, idempotencyKey) {
       device_id: deviceId,
       idempotency_key: idempotencyKey,
     }),
+  };
+}
+
+function revokeRequest(refreshToken, idempotencyKey) {
+  return {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken, idempotency_key: idempotencyKey }),
   };
 }
 
@@ -324,6 +335,61 @@ test("D1 atomically rotates one token, encrypts replay data, and revokes reuse",
       "SELECT replay_key FROM identity_replay_results_v2 WHERE family_id = ?",
     ).bind(familyId).all();
     assert.equal(replayAfterRevoke.results.length, 0);
+  } finally {
+    await bounded(mf.dispose(), "Miniflare disposal", 5_000);
+  }
+});
+
+test("D1 atomically revokes and replays one OAuth evidence receipt", async () => {
+  const { mf, db } = await createIdentityRuntime();
+  try {
+    const code = "miniflare-oauth-evidence-code";
+    const verifier = "miniflare-evidence-verifier-1234567890";
+    const now = Date.now();
+    await db.batch([
+      db.prepare(
+        "INSERT INTO identity_users (subject, email, name, picture, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind("evidence-subject", "evidence@example.com", "Evidence", null, now, now),
+      db.prepare(
+        "INSERT INTO authorization_codes (code_hash, subject, email, name, picture, device_id, code_challenge, expires_at, google_verified_at, oauth_evidence_nonce, oauth_evidence_deployment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).bind(
+        hash(code), "evidence-subject", "evidence@example.com", "Evidence", null, deviceId,
+        hash(verifier), now + 60_000, now, "n".repeat(43), "staging-deployment",
+      ),
+    ]);
+    const token = await mf.dispatchFetch(
+      "https://auth.example/v1/desktop/token",
+      tokenRequest(code, verifier, "miniflare-evidence-token-key-1234567890"),
+    );
+    assert.equal(token.status, 200);
+    const pair = await token.json();
+    const idempotencyKey = "miniflare-evidence-revoke-key-1234567890";
+    const first = await mf.dispatchFetch(
+      "https://auth.example/v1/desktop/revoke",
+      revokeRequest(pair.refresh_token, idempotencyKey),
+    );
+    assert.equal(first.status, 200);
+    const firstBody = await first.json();
+    assert.match(firstBody.oauth_evidence_receipt, /^[^.]+\.[^.]+\.[^.]+$/);
+
+    const replay = await mf.dispatchFetch(
+      "https://auth.example/v1/desktop/revoke",
+      revokeRequest(pair.refresh_token, idempotencyKey),
+    );
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), firstBody);
+    const stored = await db.prepare(
+      "SELECT receipt_jwt, idempotency_key_hash FROM oauth_evidence_revoke_results WHERE refresh_token_hash = ?",
+    ).bind(hash(pair.refresh_token)).first();
+    assert.equal(stored?.receipt_jwt, firstBody.oauth_evidence_receipt);
+    assert.equal(stored?.idempotency_key_hash, hash(idempotencyKey));
+
+    const mismatch = await mf.dispatchFetch(
+      "https://auth.example/v1/desktop/revoke",
+      revokeRequest(pair.refresh_token, "miniflare-evidence-other-key-0987654321"),
+    );
+    assert.equal(mismatch.status, 409);
+    assert.equal((await mismatch.json()).error_code, "revoke_idempotency_mismatch");
   } finally {
     await bounded(mf.dispose(), "Miniflare disposal", 5_000);
   }
