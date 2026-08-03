@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
+import { runIdentityStagingSmoke } from "../scripts/smoke-staging.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const deviceId = "sps-miniflare-device-1234";
@@ -27,7 +28,16 @@ async function bounded(promise, label, timeoutMs = 10_000) {
   }
 }
 
-async function createIdentityRuntime() {
+async function applyMigration(db, migration) {
+  const statements = (await fs.readFile(path.join(root, "migrations", migration), "utf8"))
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean)
+    .map((statement) => db.prepare(statement));
+  await bounded(db.batch(statements), `D1 migration ${migration}`);
+}
+
+async function createIdentityRuntime({ includeLegacyBackfill = true } = {}) {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const mf = new Miniflare({
     modules: true,
@@ -43,25 +53,18 @@ async function createIdentityRuntime() {
       SPS_IDENTITY_PRIVATE_KEY_PEM: privateKey.export({ type: "pkcs8", format: "pem" }),
       SPS_IDENTITY_REPLAY_KEY_VERSION: "v1",
       SPS_IDENTITY_REPLAY_KEY_V1: "identity-miniflare-replay-key-material-32-bytes",
+      SPS_IDENTITY_SOURCE_REVISION: "test-source-revision",
     },
   });
   await bounded(mf.ready, "Miniflare startup");
   const db = await bounded(mf.getD1Database("DB"), "D1 binding");
-  for (const migration of [
+  const migrations = [
     "0001_identity.sql",
     "0002_atomic_consumption.sql",
     "0003_refresh_reuse_protection.sql",
-  ]) {
-    const statements = (await fs.readFile(path.join(root, "migrations", migration), "utf8"))
-      .split(";")
-      .map((statement) => statement.trim())
-      .filter(Boolean)
-      .map((statement) => db.prepare(statement));
-    await bounded(
-      db.batch(statements),
-      `D1 migration ${migration}`,
-    );
-  }
+  ];
+  if (includeLegacyBackfill) migrations.push("0004_legacy_refresh_family_roots.sql");
+  for (const migration of migrations) await applyMigration(db, migration);
   return { mf, db };
 }
 
@@ -107,7 +110,42 @@ test("D1 migration 0003 preserves the previous replay table for Worker rollback"
   }
 });
 
-test("D1 rejects and removes a legacy refresh token without family lineage", async () => {
+test("D1 backfills a safe family root and preserves an active legacy session", async () => {
+  const { mf, db } = await createIdentityRuntime({ includeLegacyBackfill: false });
+  try {
+    const refreshToken = "legacy-refresh-token-to-backfill";
+    const now = Date.now();
+    await db.batch([
+      db.prepare(
+        "INSERT INTO identity_users (subject, email, name, picture, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind("legacy-subject", "legacy@example.com", "Legacy", null, now, now),
+      db.prepare(
+        "INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+      ).bind(hash(refreshToken), "legacy-subject", deviceId, now + 60_000, now),
+    ]);
+
+    await applyMigration(db, "0004_legacy_refresh_family_roots.sql");
+    const backfilled = await db.prepare("SELECT family_id FROM refresh_tokens WHERE token_hash = ?")
+      .bind(hash(refreshToken)).first();
+    assert.equal(backfilled?.family_id, `legacy-root:${hash(refreshToken)}`);
+
+    const response = await mf.dispatchFetch(
+      "https://auth.example/v1/desktop/refresh",
+      refreshRequest(refreshToken, "legacy-refresh-request-key-1234567890"),
+    );
+    assert.equal(response.status, 200);
+    const rotated = await response.json();
+    assert.ok(rotated.refresh_token);
+    const active = await db.prepare(
+      "SELECT family_id FROM refresh_tokens WHERE token_hash = ? AND consumed_at IS NULL",
+    ).bind(hash(rotated.refresh_token)).first();
+    assert.equal(active?.family_id, `legacy-root:${hash(refreshToken)}`);
+  } finally {
+    await bounded(mf.dispose(), "Miniflare disposal", 5_000);
+  }
+});
+
+test("D1 adopts an unbackfilled active legacy token without logging the user out", async () => {
   const { mf, db } = await createIdentityRuntime();
   try {
     const refreshToken = "legacy-refresh-token-without-family";
@@ -125,11 +163,41 @@ test("D1 rejects and removes a legacy refresh token without family lineage", asy
       "https://auth.example/v1/desktop/refresh",
       refreshRequest(refreshToken, "legacy-refresh-request-key-1234567890"),
     );
+    assert.equal(response.status, 200);
+    const rotated = await response.json();
+    const active = await db.prepare(
+      "SELECT family_id FROM refresh_tokens WHERE token_hash = ? AND consumed_at IS NULL",
+    ).bind(hash(rotated.refresh_token)).first();
+    assert.ok(active?.family_id);
+  } finally {
+    await bounded(mf.dispose(), "Miniflare disposal", 5_000);
+  }
+});
+
+test("D1 rejects but does not delete an already-consumed legacy token with unknown lineage", async () => {
+  const { mf, db } = await createIdentityRuntime();
+  try {
+    const refreshToken = "consumed-legacy-refresh-token";
+    const now = Date.now();
+    await db.batch([
+      db.prepare(
+        "INSERT INTO identity_users (subject, email, name, picture, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind("legacy-consumed-subject", "legacy-consumed@example.com", "Legacy", null, now, now),
+      db.prepare(
+        "INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at, consumed_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind(hash(refreshToken), "legacy-consumed-subject", deviceId, now + 60_000, now, now - 1_000),
+    ]);
+
+    const response = await mf.dispatchFetch(
+      "https://auth.example/v1/desktop/refresh",
+      refreshRequest(refreshToken, "consumed-legacy-request-key-1234567890"),
+    );
     assert.equal(response.status, 401);
-    assert.match((await response.json()).error, /predates refresh-token reuse protection/i);
+    const failure = await response.json();
+    assert.equal(failure.error_code, "legacy_refresh_token");
     const remaining = await db.prepare("SELECT token_hash FROM refresh_tokens WHERE token_hash = ?")
       .bind(hash(refreshToken)).first();
-    assert.equal(remaining, null);
+    assert.equal(remaining?.token_hash, hash(refreshToken));
   } finally {
     await bounded(mf.dispose(), "Miniflare disposal", 5_000);
   }
@@ -242,7 +310,9 @@ test("D1 atomically rotates one token, encrypts replay data, and revokes reuse",
       refreshRequest(refreshToken, "miniflare-second-request-key-0987654321"),
     );
     assert.equal(misuse.status, 401);
-    assert.match((await misuse.json()).error, /reuse was detected/i);
+    const misuseBody = await misuse.json();
+    assert.match(misuseBody.error, /reuse was detected/i);
+    assert.equal(misuseBody.error_code, "refresh_token_reused");
 
     const remaining = await db.prepare("SELECT token_hash FROM refresh_tokens WHERE family_id = ?").bind(familyId).all();
     assert.equal(remaining.results.length, 0);
@@ -250,6 +320,54 @@ test("D1 atomically rotates one token, encrypts replay data, and revokes reuse",
       "SELECT replay_key FROM identity_replay_results_v2 WHERE family_id = ?",
     ).bind(familyId).all();
     assert.equal(replayAfterRevoke.results.length, 0);
+  } finally {
+    await bounded(mf.dispose(), "Miniflare disposal", 5_000);
+  }
+});
+
+test("staging smoke exercises token, retry, reuse, family revoke, and explicit revoke against D1", async () => {
+  const { mf, db } = await createIdentityRuntime();
+  let writtenEvidence = null;
+  try {
+    const evidence = await runIdentityStagingSmoke({
+      identityUrl: "https://auth-staging.example",
+      sourceRevision: "test-source-revision",
+      fetchImpl: (url, options) => mf.dispatchFetch(url, options),
+      seedAuthorizationCode: async ({ subject, email, name, deviceId: seededDeviceId, codeHash, codeChallenge, expiresAt }) => {
+        const now = Date.now();
+        await db.batch([
+          db.prepare(
+            "INSERT INTO identity_users (subject, email, name, picture, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET email = excluded.email, name = excluded.name, updated_at = excluded.updated_at",
+          ).bind(subject, email, name, null, now, now),
+          db.prepare(
+            "INSERT INTO authorization_codes (code_hash, subject, email, name, picture, device_id, code_challenge, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          ).bind(codeHash, subject, email, name, null, seededDeviceId, codeChallenge, expiresAt),
+        ]);
+      },
+      cleanup: async ({ subject, codeHashes }) => {
+        await db.batch([
+          ...codeHashes.map((codeHash) => db.prepare(
+            "DELETE FROM identity_replay_results_v2 WHERE replay_key = ?",
+          ).bind(`authorization-code:${codeHash}`)),
+          db.prepare("DELETE FROM authorization_codes WHERE subject = ?").bind(subject),
+          db.prepare("DELETE FROM refresh_tokens WHERE subject = ?").bind(subject),
+          db.prepare("DELETE FROM identity_users WHERE subject = ?").bind(subject),
+        ]);
+      },
+      writeEvidence: async (value) => { writtenEvidence = value; },
+    });
+    assert.equal(evidence.status, "passed");
+    assert.deepEqual(evidence.checks, {
+      health: true,
+      token: true,
+      tokenRetry: true,
+      refresh: true,
+      refreshRetry: true,
+      reuse: true,
+      familyRevoke: true,
+      revoke: true,
+    });
+    assert.deepEqual(writtenEvidence, evidence);
   } finally {
     await bounded(mf.dispose(), "Miniflare disposal", 5_000);
   }

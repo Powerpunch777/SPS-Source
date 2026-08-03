@@ -298,7 +298,9 @@ test("revokes a refresh family when a consumed token is replayed with another no
     idempotency_key: SECOND_IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(mismatched.status, 401);
-  assert.match((await responseBody(mismatched)).error, /reuse was detected/i);
+  const mismatchedBody = await responseBody(mismatched);
+  assert.match(mismatchedBody.error, /reuse was detected/i);
+  assert.equal(mismatchedBody.error_code, "refresh_token_reused");
   assert.equal(db.rows("refresh_tokens").filter((row) => row.family_id === "refresh-family-1234").length, 0);
   assert.equal(db.rows("identity_replay_results_v2").length, 0);
   assert.ok(firstBody.refresh_token);
@@ -318,6 +320,7 @@ test("rejects a revoked refresh token", async () => {
     idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(replay.status, 401);
+  assert.equal((await responseBody(replay)).error_code, "refresh_token_invalid");
 });
 
 test("consumes an authorization code once and rejects reuse", async () => {

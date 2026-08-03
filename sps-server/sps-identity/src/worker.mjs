@@ -29,8 +29,8 @@ function json(value, status = 200) {
   });
 }
 
-function error(message, status = 400) {
-  return json({ error: message }, status);
+function error(message, status = 400, code = "") {
+  return json(code ? { error: message, error_code: code } : { error: message }, status);
 }
 
 function redirect(location) {
@@ -579,25 +579,32 @@ async function refresh(request, env) {
   if (replay.kind === "response") return replay.response;
   if (replay.kind === "mismatch") {
     await revokeRefreshFamily(env, replay.record.family_id, hash);
-    return error("SPS refresh token reuse was detected. Sign in again.", 401);
+    return error("SPS refresh token reuse was detected. Sign in again.", 401, "refresh_token_reused");
   }
   const record = await env.DB.prepare("SELECT * FROM refresh_tokens WHERE token_hash = ?").bind(hash).first();
-  if (!record) return error("SPS refresh token is invalid or expired.", 401);
+  if (!record) return error("SPS refresh token is invalid or expired.", 401, "refresh_token_invalid");
   if (Number(record.expires_at) <= Date.now()) {
     await env.DB.prepare("DELETE FROM refresh_tokens WHERE token_hash = ?").bind(hash).run();
-    return error("SPS refresh token is invalid or expired.", 401);
+    return error("SPS refresh token is invalid or expired.", 401, "refresh_token_expired");
   }
-  if (record.device_id !== deviceId) return error("SPS refresh token belongs to another device.", 401);
-  if (!text(record.family_id)) {
-    await revokeRefreshFamily(env, null, hash);
-    return error("This SPS session predates refresh-token reuse protection. Sign in again.", 401);
+  if (record.device_id !== deviceId) {
+    return error("SPS refresh token belongs to another device.", 401, "refresh_token_device_mismatch");
   }
   if (record.consumed_at != null) {
+    if (!text(record.family_id)) {
+      // Lineage for an already-consumed legacy token cannot be reconstructed.
+      // Keep the row for an emergency old-Worker rollback and fail closed.
+      return error(
+        "This SPS session predates refresh-token reuse protection. Sign in again.",
+        401,
+        "legacy_refresh_token",
+      );
+    }
     await revokeRefreshFamily(env, record.family_id, hash);
-    return error("SPS refresh token reuse was detected. Sign in again.", 401);
+    return error("SPS refresh token reuse was detected. Sign in again.", 401, "refresh_token_reused");
   }
   const profile = await env.DB.prepare("SELECT * FROM identity_users WHERE subject = ?").bind(record.subject).first();
-  if (!profile) return error("SPS account is unavailable.", 401);
+  if (!profile) return error("SPS account is unavailable.", 401, "account_unavailable");
   const pair = await createTokenPair(env, {
     subject: profile.subject,
     email: profile.email,
@@ -625,7 +632,7 @@ async function refresh(request, env) {
   if (result.kind === "mismatch") {
     await revokeRefreshFamily(env, result.record.family_id || familyId, hash);
   }
-  return error("SPS refresh token reuse was detected. Sign in again.", 401);
+  return error("SPS refresh token reuse was detected. Sign in again.", 401, "refresh_token_reused");
 }
 
 async function revoke(request, env) {
@@ -646,7 +653,12 @@ export function createSpsIdentityWorker({ fetchImpl = fetch } = {}) {
         const url = new URL(request.url);
         if (request.method === "GET" && url.pathname === "/health") {
           const replayKey = replayKeyConfiguration(env);
-          return json({ status: "ok", service: "sps-identity", replay_key_version: replayKey.activeVersion });
+          return json({
+            status: "ok",
+            service: "sps-identity",
+            replay_key_version: replayKey.activeVersion,
+            source_revision: text(env.SPS_IDENTITY_SOURCE_REVISION) || null,
+          });
         }
         if (request.method === "GET" && url.pathname === "/.well-known/jwks.json") {
           const jwk = await publicJwk(env);

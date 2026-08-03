@@ -1,12 +1,10 @@
 # SPS Identity
 
-> 이 패키지는 외부 Host·원격 협업 모드에서 사용할 수 있는 identity runtime이다. 개인·소규모 팀 기본 제품 흐름의 역할·접근 정책은 Core가 아니라 활성화된 정책 플러그인이 정의한다.
+SPS Identity is the central account plane for SPS Desktop. It stores only
+identity, device, OAuth state, one-time code, and hashed refresh-token records.
+It is not a Workspace, Room, Task, agent, attachment, or execution server.
 
-This Cloudflare Worker is SPS's central identity plane. It deliberately stores
-only identity, device, OAuth state, one-time code, and refresh-token records.
-It is not a workspace, Room, Task, agent, attachment, or execution server.
-
-## Local checks
+## Local verification
 
 ```powershell
 Set-Location sps-server/sps-identity
@@ -14,55 +12,88 @@ npm ci
 npm test
 ```
 
-## Provisioning
+## Environments
 
-1. Create a Google OAuth **Web application** with this redirect URI:
-   `https://auth.redongames.com/v1/oauth/google/callback`.
-2. Run `npm run keygen` once on the deployment machine. It writes the RSA
-   private key and public JWK under the ignored `.secrets/` folder. Set the
-   public JWK as `SPS_IDENTITY_PUBLIC_JWK`, then put the private PEM in the
-   Worker secret named `SPS_IDENTITY_PRIVATE_KEY_PEM`.
-3. Run the deployment helper below. It creates the D1 database if needed,
-   creates a separate versioned AES-GCM replay secret under the ignored
-   `.secrets/` folder, applies additive D1 migrations, and attaches
-   `auth.redongames.com` during the Worker deploy.
+Production and staging are deliberately isolated:
 
-## Safe deployment helper
+| Environment | Worker | D1 | URL |
+| --- | --- | --- | --- |
+| Staging | `sps-identity-staging` | `sps-identity-staging` | `https://auth-staging.redongames.com` |
+| Production | `sps-identity` | `sps-identity` | `https://auth.redongames.com` |
 
-After Wrangler is authenticated, run
-`./scripts/publish-identity.ps1 -GoogleClientId <web-client-id>`. The script
-prompts for the Google web-client secret without writing it to a file, uploads
-the RSA key and the independent `SPS_IDENTITY_REPLAY_KEY_V1` material, applies
-all pending additive D1 migrations, deploys the Worker, and verifies health and
-the signing key. Migration `0003` keeps the previous `response_json` replay
-table intact and adds `identity_replay_results_v2`, so a failed deploy can be
-rolled back without a schema outage.
+Google OAuth needs a Web application redirect URI for each environment.
+Production uses `https://auth.redongames.com/v1/oauth/google/callback`; staging
+uses `https://auth-staging.redongames.com/v1/oauth/google/callback`.
 
-After token, refresh, retry, reuse, and revoke staging smoke passes and the
-previous Worker's replay TTL has elapsed, explicitly finalize the transition:
+Run `npm run keygen` once on the protected deployment machine. The ignored
+`.secrets/` directory contains the RSA private key and public JWK. Never commit
+these files.
+
+## Replay-key initialization and rotation
+
+Normal deployment never generates or uploads an AES-GCM replay key. Initialize
+each environment once with an explicit command:
+
+```powershell
+./scripts/initialize-replay-key.ps1 -Environment Staging -GenerateNewKey
+./scripts/initialize-replay-key.ps1 -Environment Production -GenerateNewKey
+```
+
+The initializer refuses to overwrite a remote key with the same version. To
+rotate, increase `SPS_IDENTITY_REPLAY_KEY_VERSION`, initialize that new version,
+deploy, wait longer than the 60-second replay TTL, and only then remove the old
+secret. Ciphertexts include their key version during the overlap.
+
+## Staged deployment
+
+Deploy staging first:
+
+```powershell
+./scripts/publish-identity.ps1 `
+  -Environment Staging `
+  -GoogleClientId <staging-web-client-id>
+```
+
+The command applies migrations to the staging D1, deploys the staging Worker,
+verifies health/JWKS/source revision, and automatically exercises token,
+token retry, refresh, refresh retry, reuse detection, family revocation, and
+explicit revocation. It writes a token-free JSON evidence file under the
+ignored `artifacts/` directory.
+
+Production requires recent evidence from the exact Source revision:
+
+```powershell
+./scripts/publish-identity.ps1 `
+  -Environment Production `
+  -GoogleClientId <production-web-client-id> `
+  -StagingEvidencePath <staging-evidence.json> `
+  -ConfirmProduction
+```
+
+Migration `0003` keeps the old plaintext replay table for Worker rollback and
+adds the encrypted v2 table. Migration `0004` assigns a unique safe family root
+to every active legacy refresh token, so users are not logged out during the
+rollout. As a second safety net, an unbackfilled active token receives a family
+root during its first atomic rotation. An already-consumed token whose lineage
+cannot be reconstructed is rejected without deleting its row.
+
+After the previous Worker's replay TTL has elapsed, finalize with the same
+staging evidence:
 
 ```powershell
 ./scripts/finalize-identity-v2.ps1 `
-  -ConfirmStagingSmokePassed `
+  -StagingEvidencePath <staging-evidence.json> `
   -ConfirmLegacyReplayWindowElapsed
 ```
 
-Finalization revokes refresh tokens that predate family lineage and removes
-drained plaintext replay rows. The old table structure remains available for
-an emergency Worker rollback, but users must sign in again after rollback.
-Before finalization, use `npx wrangler deployments list` and
-`npx wrangler rollback <previous-version-id> -y` if the new Worker fails.
+Finalization removes only consumed legacy token rows and drained plaintext
+replay rows. Active migrated sessions remain valid. Before finalization, list
+deployments and use Wrangler rollback if production verification fails.
 
-Successful code and refresh exchanges retain an AES-GCM-encrypted response for
-at most 60 seconds. Desktop retries a lost or truncated response once with the
-same high-entropy idempotency key. Reuse with a different key revokes the
-active refresh-token family and requires sign-in again. D1 stores
-refresh-token hashes rather than plaintext refresh tokens.
+Desktop retries a lost or truncated response once with the same high-entropy
+idempotency key. Identity returns structured refresh error codes so revoked,
+reused, expired, and legacy sessions are cleared immediately without parsing
+human-readable messages.
 
-To rotate replay encryption independently from the RSA signing key, create the
-next ignored replay-key file, update `SPS_IDENTITY_REPLAY_KEY_VERSION`, publish,
-wait longer than the 60-second replay TTL, and only then remove the old Worker
-secret. Ciphertexts carry their key version so the overlap remains readable.
-
-Never commit the Google secret, RSA private key, D1 database contents, or a
-Desktop refresh token.
+Never commit Google secrets, RSA private keys, replay keys, D1 contents,
+staging evidence, or Desktop refresh tokens.

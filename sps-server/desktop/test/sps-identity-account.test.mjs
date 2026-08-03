@@ -42,7 +42,32 @@ test("permits HTTPS identity services and loopback-only HTTP for development", (
 
 test("recognizes an expired SPS Desktop refresh token without treating unrelated failures as sign-out", () => {
   assert.equal(isExpiredSpsDesktopRefreshToken(new Error("SPS sign-in could not finish: SPS refresh token is invalid or expired.")), true);
+  for (const code of [
+    "refresh_token_invalid",
+    "refresh_token_expired",
+    "refresh_token_reused",
+    "legacy_refresh_token",
+  ]) {
+    const failure = new Error("Localized or revised Identity message");
+    failure.code = code;
+    assert.equal(isExpiredSpsDesktopRefreshToken(failure), true);
+  }
   assert.equal(isExpiredSpsDesktopRefreshToken(new Error("SPS Identity is temporarily unavailable.")), false);
+});
+
+test("preserves the structured Identity error code on refresh failure", async () => {
+  await assert.rejects(
+    refreshSpsDesktopIdentity({
+      identityUrl: "https://auth.redongames.com",
+      refreshToken: "refresh-token",
+      deviceId: "desktop-device-1234",
+      fetchImpl: async () => new Response(JSON.stringify({
+        error: "SPS refresh token reuse was detected. Sign in again.",
+        error_code: "refresh_token_reused",
+      }), { status: 401 }),
+    }),
+    (failure) => failure?.code === "refresh_token_reused" && isExpiredSpsDesktopRefreshToken(failure),
+  );
 });
 
 test("exchanges a one-time SPS code with its PKCE verifier", async () => {

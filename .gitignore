@@ -46,6 +46,7 @@ sps-server/desktop/.onboarding-e2e-profile/
 sps-server/sps-identity/.dev.vars
 sps-server/sps-identity/.wrangler/
 sps-server/sps-identity/.secrets/
+sps-server/sps-identity/artifacts/
 
 # Candidate-specific physical release evidence is injected from a protected
 # GitHub Actions secret. Committing it would change the revision it certifies.

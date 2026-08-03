@@ -1,34 +1,44 @@
 param(
-  [switch]$ConfirmStagingSmokePassed,
+  [Parameter(Mandatory = $true)]
+  [string]$StagingEvidencePath,
   [switch]$ConfirmLegacyReplayWindowElapsed
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+$sourceRoot = Resolve-Path (Join-Path $root "..\..")
 Set-Location -LiteralPath $root
 
-if (-not $ConfirmStagingSmokePassed -or -not $ConfirmLegacyReplayWindowElapsed) {
-  throw "Run this only after token/refresh/revoke staging smoke passes and the previous Worker's replay TTL has elapsed. Supply both confirmation switches."
+if (-not $ConfirmLegacyReplayWindowElapsed) {
+  throw "Wait longer than the previous Worker's replay TTL, then supply -ConfirmLegacyReplayWindowElapsed."
 }
 
-npx wrangler whoami
-if ($LASTEXITCODE -ne 0) {
-  throw "Wrangler authentication is unavailable."
+$sourceRevision = (git -C $sourceRoot rev-parse HEAD).Trim()
+$env:SPS_IDENTITY_STAGING_EVIDENCE = (Resolve-Path -LiteralPath $StagingEvidencePath).Path
+$env:SPS_IDENTITY_SOURCE_REVISION = $sourceRevision
+try {
+  npm run verify:staging-evidence
+  if ($LASTEXITCODE -ne 0) { throw "Staging evidence validation failed." }
+
+  npx wrangler whoami
+  if ($LASTEXITCODE -ne 0) { throw "Wrangler authentication is unavailable." }
+
+  $env:SPS_IDENTITY_URL = "https://auth.redongames.com"
+  $env:SPS_IDENTITY_WRANGLER_CONFIG = "wrangler.toml"
+  npm run verify:deployment
+  if ($LASTEXITCODE -ne 0) {
+    throw "The active production SPS Identity deployment does not match this Source revision."
+  }
+
+  # Active legacy sessions were assigned family roots by migration 0004.
+  # Finalization removes only consumed legacy rows and drained plaintext replay.
+  npx wrangler d1 execute sps-identity --remote --config wrangler.toml --file "scripts/finalize-identity-v2.sql"
+  if ($LASTEXITCODE -ne 0) { throw "Could not finalize SPS Identity v2 storage." }
+} finally {
+  Remove-Item Env:\SPS_IDENTITY_STAGING_EVIDENCE -ErrorAction SilentlyContinue
+  Remove-Item Env:\SPS_IDENTITY_SOURCE_REVISION -ErrorAction SilentlyContinue
+  Remove-Item Env:\SPS_IDENTITY_URL -ErrorAction SilentlyContinue
+  Remove-Item Env:\SPS_IDENTITY_WRANGLER_CONFIG -ErrorAction SilentlyContinue
 }
 
-npm run verify:deployment
-if ($LASTEXITCODE -ne 0) {
-  throw "The active SPS Identity deployment did not pass health and signing-key verification."
-}
-
-# Legacy tokens have no trustworthy family lineage. Revoking them is safer
-# than silently adopting them into a new family. The old replay table remains
-# structurally available so an emergency Worker rollback still starts; users
-# must sign in again after this point.
-npx wrangler d1 execute sps-identity --remote --file "scripts/finalize-identity-v2.sql"
-if ($LASTEXITCODE -ne 0) {
-  throw "Could not revoke legacy SPS Identity sessions."
-}
-
-Write-Output "Legacy refresh tokens and drained plaintext replay rows were removed. SPS Identity v2 finalization is complete."
-Write-Output "For emergency rollback, run 'npx wrangler deployments list' followed by 'npx wrangler rollback <previous-version-id> -y'. All users must sign in again after rollback."
+Write-Output "Consumed legacy refresh rows and drained plaintext replay rows were removed. Active migrated sessions remain valid."

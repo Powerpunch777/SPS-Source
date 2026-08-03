@@ -1,12 +1,20 @@
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const identityUrl = String(process.env.SPS_IDENTITY_URL ?? "https://auth.redongames.com").replace(/\/$/, "");
-const keyId = String(process.env.SPS_IDENTITY_KEY_ID ?? "sps-identity-2026-01");
+const wranglerConfigPath = String(process.env.SPS_IDENTITY_WRANGLER_CONFIG ?? "wrangler.toml");
 const expected = JSON.parse(await readFile(join(process.cwd(), ".secrets", "sps-identity-public.jwk.json"), "utf8"));
-const wranglerConfig = await readFile(join(process.cwd(), "wrangler.toml"), "utf8");
+const wranglerConfig = await readFile(join(process.cwd(), wranglerConfigPath), "utf8");
+const keyId = String(process.env.SPS_IDENTITY_KEY_ID
+  ?? wranglerConfig.match(/SPS_IDENTITY_KEY_ID\s*=\s*"([^"]+)"/)?.[1]
+  ?? "");
 const replayKeyVersion = wranglerConfig.match(/SPS_IDENTITY_REPLAY_KEY_VERSION\s*=\s*"(v[1-9][0-9]*)"/)?.[1];
 if (!replayKeyVersion) throw new Error("wrangler.toml does not define a valid SPS Identity replay key version.");
+if (!keyId) throw new Error(`${wranglerConfigPath} does not define SPS_IDENTITY_KEY_ID.`);
+const sourceRoot = join(process.cwd(), "..", "..");
+const sourceRevision = String(process.env.SPS_IDENTITY_SOURCE_REVISION
+  ?? execFileSync("git", ["-C", sourceRoot, "rev-parse", "HEAD"], { encoding: "utf8" })).trim();
 
 const health = await fetch(`${identityUrl}/health`);
 if (!health.ok) throw new Error(`SPS Identity health check failed with ${health.status}.`);
@@ -15,6 +23,7 @@ if (
   healthBody?.status !== "ok"
   || healthBody?.service !== "sps-identity"
   || healthBody?.replay_key_version !== replayKeyVersion
+  || healthBody?.source_revision !== sourceRevision
 ) {
   throw new Error("SPS Identity health response is invalid.");
 }

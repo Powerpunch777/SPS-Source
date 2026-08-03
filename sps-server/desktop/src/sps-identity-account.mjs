@@ -10,6 +10,13 @@ function value(input) {
 }
 
 export function isExpiredSpsDesktopRefreshToken(error) {
+  const code = value(error?.code);
+  if ([
+    "refresh_token_invalid",
+    "refresh_token_expired",
+    "refresh_token_reused",
+    "legacy_refresh_token",
+  ].includes(code)) return true;
   const message = error instanceof Error ? error.message : String(error ?? "");
   return /(?:refresh[\s_-]*token).*(?:invalid|expired)|(?:invalid|expired).*(?:refresh[\s_-]*token)/i.test(message);
 }
@@ -125,7 +132,10 @@ async function requestIdentityToken({ fetchImpl, identityUrl, path, body, timeou
       throw identityRequestFailure(error);
     }
     const reason = value(payload?.error);
-    throw new Error(reason ? `SPS sign-in could not finish: ${reason}` : "SPS sign-in could not finish.");
+    const failure = new Error(reason ? `SPS sign-in could not finish: ${reason}` : "SPS sign-in could not finish.");
+    const errorCode = value(payload?.error_code);
+    if (errorCode) failure.code = errorCode;
+    throw failure;
   }
   throw new Error("SPS Identity request did not return a response.");
 }
