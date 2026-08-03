@@ -10,7 +10,7 @@ It is not a workspace, Room, Task, agent, attachment, or execution server.
 
 ```powershell
 Set-Location sps-server/sps-identity
-npm install
+npm ci
 npm test
 ```
 
@@ -23,7 +23,8 @@ npm test
    public JWK as `SPS_IDENTITY_PUBLIC_JWK`, then put the private PEM in the
    Worker secret named `SPS_IDENTITY_PRIVATE_KEY_PEM`.
 3. Run the deployment helper below. It creates the D1 database if needed,
-   applies all pending D1 migrations, stores the secrets, and attaches
+   creates a separate versioned AES-GCM replay secret under the ignored
+   `.secrets/` folder, applies additive D1 migrations, and attaches
    `auth.redongames.com` during the Worker deploy.
 
 ## Safe deployment helper
@@ -31,13 +32,37 @@ npm test
 After Wrangler is authenticated, run
 `./scripts/publish-identity.ps1 -GoogleClientId <web-client-id>`. The script
 prompts for the Google web-client secret without writing it to a file, uploads
-the RSA key material from the ignored `.secrets/` folder, applies all pending
-D1 migrations, and deploys the Worker. Successful code and refresh exchanges
-retain an AES-GCM-encrypted response for at most 60 seconds. Desktop retries a
-lost response once with the same high-entropy idempotency key. Reuse with a
-different key revokes the active refresh-token family and requires sign-in
-again. D1 stores refresh-token hashes rather than plaintext refresh tokens.
-Finish with `npm run verify:deployment`.
+the RSA key and the independent `SPS_IDENTITY_REPLAY_KEY_V1` material, applies
+all pending additive D1 migrations, deploys the Worker, and verifies health and
+the signing key. Migration `0003` keeps the previous `response_json` replay
+table intact and adds `identity_replay_results_v2`, so a failed deploy can be
+rolled back without a schema outage.
+
+After token, refresh, retry, reuse, and revoke staging smoke passes and the
+previous Worker's replay TTL has elapsed, explicitly finalize the transition:
+
+```powershell
+./scripts/finalize-identity-v2.ps1 `
+  -ConfirmStagingSmokePassed `
+  -ConfirmLegacyReplayWindowElapsed
+```
+
+Finalization revokes refresh tokens that predate family lineage and removes
+drained plaintext replay rows. The old table structure remains available for
+an emergency Worker rollback, but users must sign in again after rollback.
+Before finalization, use `npx wrangler deployments list` and
+`npx wrangler rollback <previous-version-id> -y` if the new Worker fails.
+
+Successful code and refresh exchanges retain an AES-GCM-encrypted response for
+at most 60 seconds. Desktop retries a lost or truncated response once with the
+same high-entropy idempotency key. Reuse with a different key revokes the
+active refresh-token family and requires sign-in again. D1 stores
+refresh-token hashes rather than plaintext refresh tokens.
+
+To rotate replay encryption independently from the RSA signing key, create the
+next ignored replay-key file, update `SPS_IDENTITY_REPLAY_KEY_VERSION`, publish,
+wait longer than the 60-second replay TTL, and only then remove the old Worker
+secret. Ciphertexts carry their key version so the overlap remains readable.
 
 Never commit the Google secret, RSA private key, D1 database contents, or a
 Desktop refresh token.

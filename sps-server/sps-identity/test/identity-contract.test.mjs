@@ -30,6 +30,8 @@ function createSigningEnv() {
     SPS_IDENTITY_AUDIENCE: "sps-core",
     SPS_IDENTITY_KEY_ID: "identity-test",
     SPS_IDENTITY_PRIVATE_KEY_PEM: privateKey.export({ type: "pkcs8", format: "pem" }),
+    SPS_IDENTITY_REPLAY_KEY_VERSION: "v1",
+    SPS_IDENTITY_REPLAY_KEY_V1: "identity-test-replay-key-material-32-bytes",
   };
 }
 
@@ -227,6 +229,18 @@ test("accepts only SPS Desktop loopback callbacks", () => {
   assert.equal(isLoopbackRedirectUri("http://127.0.0.1/oauth2/callback"), false);
 });
 
+test("health verifies the active versioned replay secret", async () => {
+  const worker = createSpsIdentityWorker();
+  const env = createSigningEnv();
+  const response = await worker.fetch(new Request("https://auth.example/health"), env);
+  assert.equal(response.status, 200);
+  assert.equal((await responseBody(response)).replay_key_version, "v1");
+
+  delete env.SPS_IDENTITY_REPLAY_KEY_V1;
+  const missing = await worker.fetch(new Request("https://auth.example/health"), env);
+  assert.equal(missing.status, 500);
+});
+
 test("rejects malformed desktop device requests before touching identity storage", async () => {
   const worker = createSpsIdentityWorker();
   const response = await worker.fetch(new Request("https://auth.example/v1/desktop/token", {
@@ -252,7 +266,7 @@ test("rotates refresh tokens and permits only a nonce-bound short retry", async 
   assert.equal(first.status, 200);
   const firstBody = await responseBody(first);
   assert.notEqual(firstBody.refresh_token, oldToken);
-  const replayRecord = db.rows("identity_replay_results")[0];
+  const replayRecord = db.rows("identity_replay_results_v2")[0];
   assert.ok(replayRecord.expires_at > Date.now());
   assert.ok(replayRecord.expires_at <= Date.now() + 60 * 1000);
   assert.equal(Object.hasOwn(replayRecord, "response_json"), false);
@@ -286,7 +300,7 @@ test("revokes a refresh family when a consumed token is replayed with another no
   assert.equal(mismatched.status, 401);
   assert.match((await responseBody(mismatched)).error, /reuse was detected/i);
   assert.equal(db.rows("refresh_tokens").filter((row) => row.family_id === "refresh-family-1234").length, 0);
-  assert.equal(db.rows("identity_replay_results").length, 0);
+  assert.equal(db.rows("identity_replay_results_v2").length, 0);
   assert.ok(firstBody.refresh_token);
 });
 
@@ -341,7 +355,7 @@ test("fails closed when D1 cannot rotate a refresh token", async () => {
   const db = new FakeD1();
   const worker = createSpsIdentityWorker();
   const refreshToken = seedRefresh(db);
-  db.failWhen((sql, operation) => operation === "run" && sql.includes("INSERT INTO identity_replay_results"));
+  db.failWhen((sql, operation) => operation === "run" && sql.includes("INSERT INTO identity_replay_results_v2"));
 
   const response = await worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: refreshToken,
@@ -405,7 +419,7 @@ test("fails closed when D1 cannot consume an authorization code", async () => {
     code_challenge: hash(verifier),
     expires_at: Date.now() + 60_000,
   });
-  db.failWhen((sql, operation) => operation === "run" && sql.includes("INSERT INTO identity_replay_results"));
+  db.failWhen((sql, operation) => operation === "run" && sql.includes("INSERT INTO identity_replay_results_v2"));
 
   const response = await worker.fetch(request("/v1/desktop/token", {
     code,

@@ -102,8 +102,8 @@ function normalizeIdentityTokenPayload(payload) {
 async function requestIdentityToken({ fetchImpl, identityUrl, path, body, timeoutMs = DEFAULT_IDENTITY_REQUEST_TIMEOUT_MS }) {
   const endpoint = new URL(path, `${configuredSpsIdentityUrl(identityUrl)}/`);
   const encodedBody = JSON.stringify(body);
-  let response = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    let response;
     try {
       response = await fetchImpl(endpoint, {
         method: "POST",
@@ -116,15 +116,18 @@ async function requestIdentityToken({ fetchImpl, identityUrl, path, body, timeou
       throw identityRequestFailure(error);
     }
     if (attempt === 0 && response.status >= 500) continue;
-    break;
-  }
-  if (!response) throw new Error("SPS Identity request did not return a response.");
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
+    let payload;
+    try {
+      payload = await response.json();
+      if (response.ok) return normalizeIdentityTokenPayload(payload);
+    } catch (error) {
+      if (attempt === 0) continue;
+      throw identityRequestFailure(error);
+    }
     const reason = value(payload?.error);
     throw new Error(reason ? `SPS sign-in could not finish: ${reason}` : "SPS sign-in could not finish.");
   }
-  return normalizeIdentityTokenPayload(payload);
+  throw new Error("SPS Identity request did not return a response.");
 }
 
 export async function refreshSpsDesktopIdentity({

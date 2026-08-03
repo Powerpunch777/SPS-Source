@@ -4,11 +4,18 @@ import { join } from "node:path";
 const identityUrl = String(process.env.SPS_IDENTITY_URL ?? "https://auth.redongames.com").replace(/\/$/, "");
 const keyId = String(process.env.SPS_IDENTITY_KEY_ID ?? "sps-identity-2026-01");
 const expected = JSON.parse(await readFile(join(process.cwd(), ".secrets", "sps-identity-public.jwk.json"), "utf8"));
+const wranglerConfig = await readFile(join(process.cwd(), "wrangler.toml"), "utf8");
+const replayKeyVersion = wranglerConfig.match(/SPS_IDENTITY_REPLAY_KEY_VERSION\s*=\s*"(v[1-9][0-9]*)"/)?.[1];
+if (!replayKeyVersion) throw new Error("wrangler.toml does not define a valid SPS Identity replay key version.");
 
 const health = await fetch(`${identityUrl}/health`);
 if (!health.ok) throw new Error(`SPS Identity health check failed with ${health.status}.`);
 const healthBody = await health.json();
-if (healthBody?.status !== "ok" || healthBody?.service !== "sps-identity") {
+if (
+  healthBody?.status !== "ok"
+  || healthBody?.service !== "sps-identity"
+  || healthBody?.replay_key_version !== replayKeyVersion
+) {
   throw new Error("SPS Identity health response is invalid.");
 }
 

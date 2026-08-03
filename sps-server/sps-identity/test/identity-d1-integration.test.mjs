@@ -41,6 +41,8 @@ async function createIdentityRuntime() {
       SPS_IDENTITY_AUDIENCE: "sps-core",
       SPS_IDENTITY_KEY_ID: "identity-test",
       SPS_IDENTITY_PRIVATE_KEY_PEM: privateKey.export({ type: "pkcs8", format: "pem" }),
+      SPS_IDENTITY_REPLAY_KEY_VERSION: "v1",
+      SPS_IDENTITY_REPLAY_KEY_V1: "identity-miniflare-replay-key-material-32-bytes",
     },
   });
   await bounded(mf.ready, "Miniflare startup");
@@ -88,6 +90,51 @@ function tokenRequest(code, verifier, idempotencyKey) {
   };
 }
 
+test("D1 migration 0003 preserves the previous replay table for Worker rollback", async () => {
+  const { mf, db } = await createIdentityRuntime();
+  try {
+    const legacy = await db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'identity_replay_results'",
+    ).first();
+    const v2 = await db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'identity_replay_results_v2'",
+    ).first();
+    assert.match(legacy?.sql ?? "", /response_json/);
+    assert.match(v2?.sql ?? "", /response_ciphertext/);
+    assert.match(v2?.sql ?? "", /idempotency_key_hash/);
+  } finally {
+    await bounded(mf.dispose(), "Miniflare disposal", 5_000);
+  }
+});
+
+test("D1 rejects and removes a legacy refresh token without family lineage", async () => {
+  const { mf, db } = await createIdentityRuntime();
+  try {
+    const refreshToken = "legacy-refresh-token-without-family";
+    const now = Date.now();
+    await db.batch([
+      db.prepare(
+        "INSERT INTO identity_users (subject, email, name, picture, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind("legacy-subject", "legacy@example.com", "Legacy", null, now, now),
+      db.prepare(
+        "INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+      ).bind(hash(refreshToken), "legacy-subject", deviceId, now + 60_000, now),
+    ]);
+
+    const response = await mf.dispatchFetch(
+      "https://auth.example/v1/desktop/refresh",
+      refreshRequest(refreshToken, "legacy-refresh-request-key-1234567890"),
+    );
+    assert.equal(response.status, 401);
+    assert.match((await response.json()).error, /predates refresh-token reuse protection/i);
+    const remaining = await db.prepare("SELECT token_hash FROM refresh_tokens WHERE token_hash = ?")
+      .bind(hash(refreshToken)).first();
+    assert.equal(remaining, null);
+  } finally {
+    await bounded(mf.dispose(), "Miniflare disposal", 5_000);
+  }
+});
+
 test("D1 atomically exchanges one authorization code and binds retries to one nonce", async () => {
   const { mf, db } = await createIdentityRuntime();
   try {
@@ -134,10 +181,11 @@ test("D1 atomically exchanges one authorization code and binds retries to one no
     assert.ok(active.results[0].family_id);
 
     const replay = await db.prepare(
-      "SELECT response_ciphertext, idempotency_key_hash, consumption_id FROM identity_replay_results WHERE replay_key = ?",
+      "SELECT response_ciphertext, idempotency_key_hash, consumption_id FROM identity_replay_results_v2 WHERE replay_key = ?",
     ).bind(`authorization-code:${hash(code)}`).first();
     assert.equal(replay?.consumption_id, source.consumption_id);
     assert.ok(replay?.idempotency_key_hash);
+    assert.match(replay.response_ciphertext, /^v1\./);
     assert.doesNotMatch(replay.response_ciphertext, new RegExp(bodies[0].refresh_token));
 
     const misuse = await mf.dispatchFetch(
@@ -182,10 +230,11 @@ test("D1 atomically rotates one token, encrypts replay data, and revokes reuse",
     assert.equal(active.results[0].token_hash, hash(bodies[0].refresh_token));
 
     const replay = await db.prepare(
-      "SELECT response_ciphertext, idempotency_key_hash, consumption_id FROM identity_replay_results WHERE family_id = ?",
+      "SELECT response_ciphertext, idempotency_key_hash, consumption_id FROM identity_replay_results_v2 WHERE family_id = ?",
     ).bind(familyId).first();
     assert.ok(replay?.consumption_id);
     assert.ok(replay?.idempotency_key_hash);
+    assert.match(replay.response_ciphertext, /^v1\./);
     assert.doesNotMatch(replay.response_ciphertext, new RegExp(bodies[0].refresh_token));
 
     const misuse = await mf.dispatchFetch(
@@ -198,7 +247,7 @@ test("D1 atomically rotates one token, encrypts replay data, and revokes reuse",
     const remaining = await db.prepare("SELECT token_hash FROM refresh_tokens WHERE family_id = ?").bind(familyId).all();
     assert.equal(remaining.results.length, 0);
     const replayAfterRevoke = await db.prepare(
-      "SELECT replay_key FROM identity_replay_results WHERE family_id = ?",
+      "SELECT replay_key FROM identity_replay_results_v2 WHERE family_id = ?",
     ).bind(familyId).all();
     assert.equal(replayAfterRevoke.results.length, 0);
   } finally {

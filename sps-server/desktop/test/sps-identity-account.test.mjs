@@ -113,3 +113,31 @@ test("retries a lost refresh response once with the same idempotency key", async
   assert.equal(requests.length, 2);
   assert.equal(requests[0].idempotency_key, requests[1].idempotency_key);
 });
+
+test("retries a truncated refresh response once with the same idempotency key", async () => {
+  const requests = [];
+  const account = await refreshSpsDesktopIdentity({
+    identityUrl: "https://auth.redongames.com",
+    refreshToken: "refresh-token",
+    deviceId: "desktop-device-1234",
+    randomBytes: (size) => Buffer.alloc(size, 6),
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      if (requests.length === 1) {
+        return new Response('{"access_token":"rotated-but-truncated"', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        access_token: "next-access-token",
+        refresh_token: "next-refresh-token",
+        expires_in: 900,
+        account: { subject: "sps-user", email: "person@example.com", name: "SPS Person" },
+      }), { status: 200 });
+    },
+  });
+  assert.equal(account.refreshToken, "next-refresh-token");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].idempotency_key, requests[1].idempotency_key);
+});

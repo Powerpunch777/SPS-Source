@@ -178,7 +178,12 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: sps-server/sps-identity/package-lock.json
+
+      - name: Install SPS Identity dependencies
+        working-directory: sps-server/sps-identity
+        run: npm ci
 
       - name: Verify sign-in, token rotation, revocation, and concurrency
         working-directory: sps-server/sps-identity
