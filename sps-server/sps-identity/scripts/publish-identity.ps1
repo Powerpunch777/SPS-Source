@@ -4,6 +4,7 @@ param(
   [ValidateSet("Staging", "Production")]
   [string]$Environment = "Staging",
   [string]$StagingEvidencePath,
+  [string]$FullOAuthEvidencePath,
   [string]$StagingDeploymentId,
   [string]$StagingVersionId,
   [string]$StagingReleaseId,
@@ -48,6 +49,8 @@ if ($Environment -ne "Production" -and $RolloutPhase -eq "Final") {
 if (-not (Test-Path -LiteralPath $privateKeyPath) -or -not (Test-Path -LiteralPath $publicJwkPath)) {
   throw "Run `$env:SPS_IDENTITY_ENVIRONMENT=$($Environment.ToLowerInvariant()); npm run keygen` before publishing SPS Identity."
 }
+node scripts/validate-signing-material.mjs $privateKeyPath $publicJwkPath
+if ($LASTEXITCODE -ne 0) { throw "SPS Identity signing material validation failed." }
 
 $sourceRevision = (git -C $sourceRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $sourceRevision) { throw "Could not resolve the SPS Source revision." }
@@ -58,10 +61,12 @@ if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -gt 0) {
 
 if ($Environment -eq "Production") {
   if (-not $StagingEvidencePath) { throw "Production deployment requires -StagingEvidencePath from smoke:staging." }
+  if (-not $FullOAuthEvidencePath) { throw "Production deployment requires -FullOAuthEvidencePath from the real staging Google sign-in smoke." }
   if ([string]::IsNullOrWhiteSpace($StagingDeploymentId) -or [string]::IsNullOrWhiteSpace($StagingVersionId) -or [string]::IsNullOrWhiteSpace($StagingReleaseId)) {
     throw "Production deployment requires the exact staging Cloudflare deployment ID, Worker version ID, and SPS release ID from the evidence."
   }
   $env:SPS_IDENTITY_STAGING_EVIDENCE = (Resolve-Path -LiteralPath $StagingEvidencePath).Path
+  $env:SPS_IDENTITY_FULL_OAUTH_EVIDENCE = (Resolve-Path -LiteralPath $FullOAuthEvidencePath).Path
   $env:SPS_IDENTITY_SOURCE_REVISION = $sourceRevision
   $env:SPS_IDENTITY_EXPECTED_DEPLOYMENT_ID = $StagingDeploymentId
   $env:SPS_IDENTITY_EXPECTED_VERSION_ID = $StagingVersionId
@@ -69,8 +74,11 @@ if ($Environment -eq "Production") {
   try {
     npm run verify:staging-evidence
     if ($LASTEXITCODE -ne 0) { throw "Staging evidence validation failed." }
+    npm run verify:oauth-evidence
+    if ($LASTEXITCODE -ne 0) { throw "Full staging Google OAuth evidence validation failed." }
   } finally {
     Remove-Item Env:\SPS_IDENTITY_STAGING_EVIDENCE -ErrorAction SilentlyContinue
+    Remove-Item Env:\SPS_IDENTITY_FULL_OAUTH_EVIDENCE -ErrorAction SilentlyContinue
     Remove-Item Env:\SPS_IDENTITY_SOURCE_REVISION -ErrorAction SilentlyContinue
     Remove-Item Env:\SPS_IDENTITY_EXPECTED_DEPLOYMENT_ID -ErrorAction SilentlyContinue
     Remove-Item Env:\SPS_IDENTITY_EXPECTED_VERSION_ID -ErrorAction SilentlyContinue
@@ -96,12 +104,8 @@ if ($RolloutPhase -eq "Final") {
   }
   $bridgeDeployments = @(npx wrangler deployments list --name $workerName --config $configPath --json)
   if ($LASTEXITCODE -ne 0) { throw "Could not inspect Cloudflare deployments before Final rollout." }
-  $bridgeDeploymentRecords = @(($bridgeDeployments -join "`n") | ConvertFrom-Json)
-  $bridgeDeployment = $bridgeDeploymentRecords | Select-Object -First 1 | Where-Object {
-    $_.id -eq $BridgeCloudflareDeploymentId -and
-    @($_.versions | Where-Object { $_.version_id -eq $BridgeVersionId -and [double]$_.percentage -gt 0 }).Count -gt 0
-  } | Select-Object -First 1
-  if (-not $bridgeDeployment) { throw "The declared Bridge deployment is not the active Cloudflare rollback floor." }
+  ($bridgeDeployments -join "`n") | node scripts/validate-current-deployment.mjs $BridgeCloudflareDeploymentId $BridgeVersionId | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "The declared Bridge deployment is not the latest active Cloudflare rollback floor." }
 }
 
 npx wrangler whoami
@@ -114,11 +118,6 @@ $remoteSecrets = ($listed -join "`n") | ConvertFrom-Json
 if (@($remoteSecrets | Where-Object { $_.name -eq $replaySecretName }).Count -eq 0) {
   throw "$replaySecretName is missing for $Environment. Initialize it explicitly; normal deployment never creates or overwrites replay keys."
 }
-$replayKeyPath = Join-Path $root ".secrets\replay\$($Environment.ToLowerInvariant())\$replayVersion.key"
-if (-not (Test-Path -LiteralPath $replayKeyPath)) {
-  throw "Local $replaySecretName material is missing. Restore the environment-specific key before uploading an immutable version."
-}
-
 $googleSecret = Read-Host "Google OAuth web client secret for $Environment" -AsSecureString
 $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($googleSecret)
 $secretBundlePath = $null
@@ -131,7 +130,6 @@ try {
     GOOGLE_CLIENT_SECRET = $GoogleClientSecret
     SPS_IDENTITY_PRIVATE_KEY_PEM = Get-Content -LiteralPath $privateKeyPath -Raw
     SPS_IDENTITY_PUBLIC_JWK = Get-Content -LiteralPath $publicJwkPath -Raw
-    $replaySecretName = (Get-Content -LiteralPath $replayKeyPath -Raw).Trim()
   }
   [System.IO.File]::WriteAllText($secretBundlePath, ($secretBundle | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
 
@@ -169,16 +167,18 @@ try {
   if ($newDeployments.Count -ne 1) { throw "Wrangler did not return exactly one new deployment for the uploaded Worker version." }
   $cloudflareDeploymentId = $newDeployments[0].id
   if (-not $cloudflareDeploymentId) { throw "The exact uploaded version has no Cloudflare deployment ID." }
+  ($deployments -join "`n") | node scripts/validate-current-deployment.mjs $cloudflareDeploymentId $version | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "The uploaded Worker version did not become the latest active Cloudflare deployment." }
 
-    $env:SPS_IDENTITY_URL = $identityUrl
+  $env:SPS_IDENTITY_URL = $identityUrl
   $env:SPS_IDENTITY_WRANGLER_CONFIG = $configPath
-    $env:SPS_IDENTITY_SOURCE_REVISION = $sourceRevision
-    $env:SPS_IDENTITY_EXPECTED_CLOUDFLARE_DEPLOYMENT_ID = $cloudflareDeploymentId
-    $env:SPS_IDENTITY_EXPECTED_RELEASE_ID = $releaseId
-    $env:SPS_IDENTITY_VERSION_ID = $version
-    $env:SPS_IDENTITY_EXPECTED_ROLLOUT_PHASE = $RolloutPhase.ToLowerInvariant()
-    $env:SPS_IDENTITY_EXPECTED_DATABASE_ID = $databaseId
-    $env:SPS_IDENTITY_EXPECTED_DATABASE_NAME = $database
+  $env:SPS_IDENTITY_SOURCE_REVISION = $sourceRevision
+  $env:SPS_IDENTITY_EXPECTED_CLOUDFLARE_DEPLOYMENT_ID = $cloudflareDeploymentId
+  $env:SPS_IDENTITY_EXPECTED_RELEASE_ID = $releaseId
+  $env:SPS_IDENTITY_VERSION_ID = $version
+  $env:SPS_IDENTITY_EXPECTED_ROLLOUT_PHASE = $RolloutPhase.ToLowerInvariant()
+  $env:SPS_IDENTITY_EXPECTED_DATABASE_ID = $databaseId
+  $env:SPS_IDENTITY_EXPECTED_DATABASE_NAME = $database
   try {
     try {
       npm run verify:deployment

@@ -40,8 +40,8 @@ jobs:
         shell: pwsh
         run: |
           git fetch origin main
-          git merge-base --is-ancestor origin/main $env:GITHUB_SHA
-          if ($LASTEXITCODE -ne 0) { throw "Release tags must descend from origin/main." }
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Release tags must already belong to origin/main." }
           if ((git -C external/sps-core rev-parse --is-shallow-repository).Trim() -eq "true") { git -C external/sps-core fetch --unshallow origin main } else { git -C external/sps-core fetch origin main }
           git -C external/sps-core merge-base --is-ancestor HEAD origin/main
           if ($LASTEXITCODE -ne 0) { throw "The pinned SPS Core revision must be reachable from its main branch." }
@@ -105,6 +105,7 @@ jobs:
             "sps-server/desktop/dist/SPS-Desktop-Setup-$version.exe.blockmap",
             "sps-server/desktop/dist/latest.yml",
             "sps-server/desktop/dist/sps-release-manifest.json",
+            "sps-server/desktop/dist/sps-release-challenge.json",
             "sps-server/desktop/dist/sps-agent-runtime-packs.json"
           )
           $releaseManifest = Get-Content -Raw -Encoding utf8 "sps-server/desktop/dist/sps-release-manifest.json" | ConvertFrom-Json

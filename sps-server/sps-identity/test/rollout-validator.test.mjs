@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { deploymentHasVersion, selectDeployment, selectVersionByTag, wranglerCollection } from "../scripts/version-selection.mjs";
-import { validateFullOAuthEvidence } from "../scripts/smoke-oauth-interactive.mjs";
+import { deploymentHasVersion, selectCurrentDeployment, selectDeployment, selectVersionByTag, wranglerCollection } from "../scripts/version-selection.mjs";
+import { validateFullOAuthEvidence, verifyAccessTokenJwt } from "../scripts/smoke-oauth-interactive.mjs";
 import { validateReleaseAttestation } from "../scripts/verify-release-attestation.mjs";
+import { validateSigningMaterial } from "../scripts/validate-signing-material.mjs";
 
 test("selects the exact Cloudflare version annotation instead of list order", () => {
   const selected = selectVersionByTag([
@@ -14,11 +19,57 @@ test("selects the exact Cloudflare version annotation instead of list order", ()
 });
 
 test("parses Wrangler arrays and binds a deployment to a traffic-bearing version", () => {
-  const payload = [{ id: "deployment-1", versions: [{ version_id: "version-1", percentage: 100 }] }];
+  const payload = [{ id: "deployment-1", created_on: "2026-08-03T10:00:00.000Z", versions: [{ version_id: "version-1", percentage: 100 }] }];
   assert.deepEqual(wranglerCollection(JSON.stringify(payload), "deployments"), payload);
   assert.equal(deploymentHasVersion(payload[0], "version-1"), true);
   assert.equal(selectDeployment(payload, { deploymentId: "deployment-1", versionId: "version-1" }), payload[0]);
   assert.throws(() => selectDeployment(payload, { deploymentId: "deployment-1", versionId: "wrong" }), /exactly one/);
+});
+
+test("requires the declared deployment to be the newest active deployment regardless of list order", () => {
+  const deployments = [
+    { id: "old", created_on: "2026-08-03T09:00:00.000Z", versions: [{ version_id: "old-version", percentage: 100 }] },
+    { id: "current", created_on: "2026-08-03T11:00:00.000Z", versions: [{ version_id: "current-version", percentage: 100 }] },
+  ];
+  assert.equal(selectCurrentDeployment(deployments, { deploymentId: "current", versionId: "current-version" }).id, "current");
+  assert.throws(() => selectCurrentDeployment(deployments, { deploymentId: "old", versionId: "old-version" }), /latest active/);
+  assert.equal(selectCurrentDeployment(deployments.toReversed(), { deploymentId: "current", versionId: "current-version" }).id, "current");
+});
+
+test("verifies the access token against the published RSA JWKS", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = { ...publicKey.export({ format: "jwk" }), kid: "identity-test", alg: "RS256" };
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: jwk.kid })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ iss: "https://auth-staging.redongames.com", aud: "sps-core", exp: 1_786_000_000 })).toString("base64url");
+  const signed = `${header}.${payload}`;
+  const token = `${signed}.${sign("RSA-SHA256", Buffer.from(signed), privateKey).toString("base64url")}`;
+  assert.equal(verifyAccessTokenJwt(token, {
+    jwks: { keys: [jwk] },
+    issuer: "https://auth-staging.redongames.com",
+    now: 1_785_000_000_000,
+  }).header.kid, jwk.kid);
+  assert.throws(() => verifyAccessTokenJwt(`${signed}.AA`, {
+    jwks: { keys: [jwk] },
+    issuer: "https://auth-staging.redongames.com",
+    now: 1_785_000_000_000,
+  }), /signature/);
+});
+
+test("rejects a public JWK that does not match the deployment private PEM", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-identity-keypair-"));
+  try {
+    const first = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const second = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const privatePath = path.join(root, "private.pem");
+    const publicPath = path.join(root, "public.json");
+    await writeFile(privatePath, first.privateKey.export({ type: "pkcs8", format: "pem" }));
+    await writeFile(publicPath, JSON.stringify(first.publicKey.export({ format: "jwk" })));
+    await validateSigningMaterial(privatePath, publicPath);
+    await writeFile(publicPath, JSON.stringify(second.publicKey.export({ format: "jwk" })));
+    await assert.rejects(() => validateSigningMaterial(privatePath, publicPath), /same RSA key pair/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("full OAuth evidence is token-free and independently validated", () => {
@@ -33,7 +84,7 @@ test("full OAuth evidence is token-free and independently validated", () => {
     releaseId: "staging-release-1",
     accountSubjectHash: "b".repeat(64),
     completedAt: "2026-08-03T10:00:00.000Z",
-    checks: { googleSignIn: true, tokenExchange: true, revoke: true },
+    checks: { googleSignIn: true, tokenExchange: true, accessTokenSignature: true, revoke: true },
   };
   assert.equal(validateFullOAuthEvidence(evidence, { sourceRevision: "a".repeat(40), now: Date.parse("2026-08-03T11:00:00.000Z") }), evidence);
   assert.throws(() => validateFullOAuthEvidence({ ...evidence, refreshToken: "secret" }, { sourceRevision: "a".repeat(40), now: Date.parse("2026-08-03T11:00:00.000Z") }), /tokens/);
@@ -75,7 +126,7 @@ test("release attestation binds final production and bridge staging to exact Clo
     releaseId: "staging-release",
     accountSubjectHash: "b".repeat(64),
     completedAt: generatedAt,
-    checks: { googleSignIn: true, tokenExchange: true, revoke: true },
+    checks: { googleSignIn: true, tokenExchange: true, accessTokenSignature: true, revoke: true },
   };
   const attestation = {
     schemaVersion: 2,

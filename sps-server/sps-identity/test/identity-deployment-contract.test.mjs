@@ -41,6 +41,8 @@ test("Identity deployment requires real staging evidence and never overwrites re
   assert.match(publish, /ValidateSet\("Staging", "Production"\)/);
   assert.match(publish, /npm run smoke:staging/);
   assert.match(publish, /npm run verify:staging-evidence/);
+  assert.match(publish, /npm run verify:oauth-evidence/);
+  assert.match(publish, /FullOAuthEvidencePath/);
   assert.match(publish, /ValidateSet\("Bridge", "Final"\)/);
   assert.match(publish, /versions upload[\s\S]*--tag \$uploadTag/);
   assert.match(publish, /annotations\.'workers\/tag'/);
@@ -52,6 +54,13 @@ test("Identity deployment requires real staging evidence and never overwrites re
   assert.match(publish, /finally \{[\s\S]*Remove-Item -LiteralPath \$secretBundlePath/);
   assert.match(publish, /normal deployment never creates or overwrites replay keys/i);
   assert.doesNotMatch(publish, /secret put \$replaySecretName/);
+  const deploymentSecretBundle = publish.slice(
+    publish.indexOf("$secretBundle ="),
+    publish.indexOf("[System.IO.File]::WriteAllText($secretBundlePath"),
+  );
+  assert.doesNotMatch(deploymentSecretBundle, /replaySecretName/);
+  assert.match(publish, /validate-current-deployment\.mjs \$BridgeCloudflareDeploymentId \$BridgeVersionId/);
+  assert.match(publish, /validate-current-deployment\.mjs \$cloudflareDeploymentId \$version/);
   assert.match(initialize, /Never overwrite a replay key version/);
   assert.match(initialize, /GenerateNewKey/);
   assert.match(initialize, /replay_key_initializations/);

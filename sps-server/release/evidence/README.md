@@ -1,51 +1,68 @@
 # SPS Physical Release Evidence
 
-Stable SPS Desktop releases require candidate-specific evidence from two real
-Windows devices. Candidate and pilot builds remain available so this evidence
-can be produced before publication.
+Stable SPS Desktop releases require evidence from two real Windows devices for
+the exact signed installer. The Prepare workflow publishes a draft-only
+`sps-release-challenge.json` containing a random 256-bit nonce bound to the
+Desktop version, Source revision, and installer SHA-256.
 
-Create `v<desktopVersion>.json` locally only after completing the required
-scenarios:
+Complete every scenario before signing the evidence:
 
 - Host and Member invitation/join;
 - an allowed Agent runtime executed from the Member Node;
 - Member editing of the Host-owned Workspace Source;
 - Tailscale/network interruption and recovery;
 - Node and runtime permission revocation failing closed;
-- export followed by restore into an empty Host.
+- export followed by restore into an empty Host;
+- a clean installation of the candidate;
+- an upgrade from the previous Stable release.
 
 Do not store names, emails, machine names, IP addresses, tokens, or project
-contents. Store SHA-256 device fingerprints and compact, sanitized JSON or text
-logs in the protected Secret. Each embedded log is Base64 encoded, and the
-release gate recalculates its SHA-256 instead of trusting a declared digest.
-The combined decoded logs must remain at or below 12 KiB so the Base64 JSON
-fits safely inside both a GitHub Actions Secret and one Windows environment
-variable used by the release runner.
+contents. Embed only compact sanitized JSON or text logs. Each log is Base64
+encoded and hashed; all decoded logs together must remain at or below 12 KiB.
 
-Do not commit the candidate evidence file. Its `sourceRevision` names the
-already-tested commit, so committing the evidence would create a different
-revision. Store the compact JSON as the private GitHub Actions secret
-`SPS_PHYSICAL_RELEASE_EVIDENCE_JSON`. The stable release workflow writes that
-secret to a temporary runner file and validates it against the release tag's
-exact commit. Local verification can pass the file with
-`SPS_PHYSICAL_EVIDENCE_PATH`.
+The evidence schema is `2`. Copy the challenge nonce into `releaseNonce`, add
+the exact candidate and installer tuple, logs, and scenario references, then
+sign the same file on both devices. Each device owns a local Ed25519 key that is
+never included in the evidence:
 
-Use this shape:
+```powershell
+# Run once on each test device.
+Set-Location sps-server/desktop
+npm run release:init-device-key
+
+# Host signs the unsigned evidence into a new file.
+npm run release:sign-device-evidence -- unsigned.json host-signed.json host
+
+# Transfer host-signed.json to the Member device. Member creates the final file.
+npm run release:sign-device-evidence -- host-signed.json final-evidence.json member
+```
+
+The signatures cover the release nonce, candidate tuple, installer tuple,
+completion timestamp, every artifact digest, and every scenario result. The
+Stable gate rejects altered results, reused nonce evidence, invalid signatures,
+or two signatures from the same device key. This is application-level device
+identity evidence, not TPM hardware attestation.
+
+Use this unsigned starting shape:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "releaseNonce": "<nonce from sps-release-challenge.json>",
   "candidate": {
-    "desktopVersion": "0.4.112",
-    "sourceRevision": "<40-character Git revision>",
-    "coreRevision": "<40-character Git revision>",
-    "pluginSdkRevision": "<40-character Git revision>"
+    "desktopVersion": "<current Desktop version>",
+    "sourceRevision": "<40-character Source revision>",
+    "coreRevision": "<40-character Core revision>",
+    "pluginSdkRevision": "<40-character Plugin SDK revision>"
   },
-  "completedAt": "2026-08-02T00:00:00.000Z",
-  "devices": {
-    "hostFingerprint": "<SHA-256>",
-    "memberFingerprint": "<different SHA-256>"
+  "completedAt": "<ISO-8601 timestamp>",
+  "installer": {
+    "version": "<current Desktop version>",
+    "sizeBytes": 123,
+    "sha256": "<installer SHA-256>",
+    "signatureStatus": "Valid"
   },
+  "devices": {},
   "artifacts": [
     {
       "name": "two-device-session-log",
@@ -60,7 +77,13 @@ Use this shape:
     "hostSourceEdit": { "status": "pass", "artifactNames": ["two-device-session-log"] },
     "networkRecovery": { "status": "pass", "artifactNames": ["two-device-session-log"] },
     "nodeAndRuntimeRevocation": { "status": "pass", "artifactNames": ["two-device-session-log"] },
-    "emptyHostRestore": { "status": "pass", "artifactNames": ["two-device-session-log"] }
+    "emptyHostRestore": { "status": "pass", "artifactNames": ["two-device-session-log"] },
+    "freshInstall": { "status": "pass", "artifactNames": ["two-device-session-log"] },
+    "previousStableUpgrade": { "status": "pass", "artifactNames": ["two-device-session-log"] }
   }
 }
 ```
+
+Do not commit the final evidence. Store its compact JSON in the protected
+`SPS_PHYSICAL_RELEASE_EVIDENCE_JSON` GitHub Actions secret. The Publish workflow
+rechecks both signatures against the exact downloaded challenge and installer.

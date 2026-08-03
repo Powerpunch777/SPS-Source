@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,6 +100,18 @@ export async function createSpsReleaseManifest({
     throw new Error(`Release output is missing the expected installer ${expectedInstaller}.`);
   }
   if (!installerStats.isFile()) throw new Error(`Release installer is not a file: ${expectedInstaller}.`);
+  const installerSha256 = await sha256(installerPath);
+  const challengePath = path.join(distRoot, "sps-release-challenge.json");
+  const challenge = {
+    schemaVersion: 1,
+    desktopVersion: baseline.desktopVersion,
+    sourceRevision: baseline.sourceRevision,
+    installerSha256,
+    releaseNonce: randomBytes(32).toString("hex"),
+    generatedAt: new Date().toISOString(),
+  };
+  await writeFile(challengePath, `${JSON.stringify(challenge, null, 2)}\n`, "utf8");
+  const challengeStats = await stat(challengePath);
   const manifest = {
     schemaVersion: 1,
     baseline,
@@ -107,7 +119,7 @@ export async function createSpsReleaseManifest({
       installer: {
         file: expectedInstaller,
         sizeBytes: installerStats.size,
-        sha256: await sha256(installerPath),
+        sha256: installerSha256,
       },
       updateMetadata: {
         file: "latest.yml",
@@ -120,6 +132,11 @@ export async function createSpsReleaseManifest({
       agentRuntimeCatalog: {
         file: "sps-agent-runtime-packs.json",
         sha256: await sha256(path.join(distRoot, "sps-agent-runtime-packs.json")),
+      },
+      releaseChallenge: {
+        file: "sps-release-challenge.json",
+        sizeBytes: challengeStats.size,
+        sha256: await sha256(challengePath),
       },
       agentRuntimePacks: await runtimePackArtifacts(distRoot),
     },

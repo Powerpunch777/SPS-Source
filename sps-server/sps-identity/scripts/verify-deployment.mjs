@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { selectDeployment, wranglerCollection } from "./version-selection.mjs";
+import { selectCurrentDeployment, wranglerCollection } from "./version-selection.mjs";
 
 const identityUrl = String(process.env.SPS_IDENTITY_URL ?? "https://auth.redongames.com").replace(/\/$/, "");
 const wranglerConfigPath = String(process.env.SPS_IDENTITY_WRANGLER_CONFIG ?? "wrangler.toml");
@@ -57,12 +57,12 @@ const deploymentJson = execFileSync(
 );
 const deployments = wranglerCollection(deploymentJson, "deployments");
 try {
-  selectDeployment(deployments, {
+  selectCurrentDeployment(deployments, {
     deploymentId: process.env.SPS_IDENTITY_EXPECTED_CLOUDFLARE_DEPLOYMENT_ID,
     versionId: process.env.SPS_IDENTITY_VERSION_ID,
   });
 } catch {
-  throw new Error("Cloudflare deployment ID does not point to the exact uploaded Worker version.");
+  throw new Error("Cloudflare deployment ID does not point to the latest active exact Worker version.");
 }
 
 const jwksResponse = await fetch(`${identityUrl}/.well-known/jwks.json`);

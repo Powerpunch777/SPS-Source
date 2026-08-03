@@ -52,8 +52,8 @@ jobs:
           $tagCommit = (git rev-list -n 1 "${{ inputs.tag }}").Trim()
           if ($tagCommit -ne (git rev-parse HEAD).Trim()) { throw "The checked-out Source revision does not match the release tag." }
           git fetch origin main
-          git merge-base --is-ancestor origin/main $tagCommit
-          if ($LASTEXITCODE -ne 0) { throw "Release tags must descend from origin/main." }
+          git merge-base --is-ancestor $tagCommit origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Release tags must already belong to origin/main." }
           if ((git -C external/sps-core rev-parse --is-shallow-repository).Trim() -eq "true") { git -C external/sps-core fetch --unshallow origin main } else { git -C external/sps-core fetch origin main }
           git -C external/sps-core merge-base --is-ancestor HEAD origin/main
           if ($LASTEXITCODE -ne 0) { throw "The pinned SPS Core revision must be reachable from its main branch." }
@@ -69,15 +69,31 @@ jobs:
       - name: Download the existing draft assets without rebuilding
         shell: pwsh
         run: |
-          $draft = gh release view "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --json isDraft,tagName | ConvertFrom-Json
-          if (-not $draft.isDraft -or $draft.tagName -ne "${{ inputs.tag }}") { throw "The requested immutable draft release is unavailable." }
+          $releaseApi = "repos/Powerpunch777/SPS-Desktop-Releases/releases/tags/${{ inputs.tag }}"
+          $draft = gh api $releaseApi | ConvertFrom-Json
+          if (-not $draft.draft -or $draft.tag_name -ne "${{ inputs.tag }}") { throw "The requested immutable draft release is unavailable." }
+          if (@($draft.assets).Count -eq 0 -or @($draft.assets | Where-Object { $_.digest -notmatch '^sha256:[0-9a-f]{64}$' }).Count -gt 0) { throw "Every draft asset must expose a GitHub SHA-256 digest." }
+          $before = [ordered]@{
+            releaseId = $draft.id
+            tagName = $draft.tag_name
+            assets = @($draft.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
+          }
           gh release download "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --dir release-assets
           if ($LASTEXITCODE -ne 0) { throw "Could not download the immutable draft assets." }
+          $afterDraft = gh api $releaseApi | ConvertFrom-Json
+          $after = [ordered]@{
+            releaseId = $afterDraft.id
+            tagName = $afterDraft.tag_name
+            assets = @($afterDraft.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
+          }
+          if (($before | ConvertTo-Json -Depth 6 -Compress) -ne ($after | ConvertTo-Json -Depth 6 -Compress)) { throw "Draft release assets changed while they were being downloaded." }
+          [IO.File]::WriteAllText((Join-Path $PWD "release-asset-snapshot.json"), ($after | ConvertTo-Json -Depth 6 -Compress), [Text.UTF8Encoding]::new($false))
 
       - name: Verify the immutable draft manifest, hashes, and signature
         shell: pwsh
         run: |
           $env:SPS_RELEASE_ASSETS_DIRECTORY = (Resolve-Path "release-assets").Path
+          $env:SPS_REQUIRE_EXACT_RELEASE_ASSET_SET = "1"
           $env:SPS_SOURCE_REVISION = (git rev-parse HEAD).Trim()
           node sps-server/desktop/scripts/verify-release-assets.mjs
 
@@ -91,6 +107,7 @@ jobs:
           if (-not $installer) { throw "Draft release installer is missing." }
           $env:SPS_PHYSICAL_EVIDENCE_PATH = $path
           $env:SPS_FINAL_INSTALLER_PATH = $installer.FullName
+          $env:SPS_RELEASE_CHALLENGE_PATH = (Resolve-Path "release-assets/sps-release-challenge.json").Path
           node sps-server/desktop/scripts/verify-physical-release-evidence.mjs
 
       - name: Verify production Identity remotely and require full OAuth evidence
@@ -107,7 +124,16 @@ jobs:
       - name: Publish the same downloaded bytes
         shell: pwsh
         run: |
-          $draft = gh release view "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --json isDraft | ConvertFrom-Json
-          if (-not $draft.isDraft) { throw "The release is no longer a draft; refusing to republish." }
+          $releaseApi = "repos/Powerpunch777/SPS-Desktop-Releases/releases/tags/${{ inputs.tag }}"
+          $draft = gh api $releaseApi | ConvertFrom-Json
+          if (-not $draft.draft) { throw "The release is no longer a draft; refusing to republish." }
+          if (@($draft.assets).Count -eq 0 -or @($draft.assets | Where-Object { $_.digest -notmatch '^sha256:[0-9a-f]{64}$' }).Count -gt 0) { throw "Every verified draft asset must retain its GitHub SHA-256 digest." }
+          $current = [ordered]@{
+            releaseId = $draft.id
+            tagName = $draft.tag_name
+            assets = @($draft.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
+          }
+          $snapshot = Get-Content -Raw -Encoding utf8 "release-asset-snapshot.json" | ConvertFrom-Json
+          if (($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($current | ConvertTo-Json -Depth 6 -Compress)) { throw "Draft release assets changed after verification; refusing publication." }
           gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw "Could not publish the verified immutable draft." }

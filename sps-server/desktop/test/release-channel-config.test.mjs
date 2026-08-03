@@ -63,6 +63,7 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(workflow, /SPS_REQUIRE_CLEAN_RELEASE:\s*"1"/);
   assert.match(workflow, /SPS_RELEASE_STATUS:\s*"stable"/);
   assert.match(workflow, /sps-release-manifest\.json/);
+  assert.match(workflow, /sps-release-challenge\.json/);
   assert.match(workflow, /sps-agent-runtime-packs\.json/);
   assert.match(workflow, /Get-AuthenticodeSignature/);
   assert.match(workflow, /GitHub did not verify the release tag signature/);
@@ -80,11 +81,16 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(publishWorkflow, /gh release download/);
   assert.match(publishWorkflow, /ref: \$\{\{ inputs\.tag \}\}/);
   assert.match(publishWorkflow, /verify-release-assets\.mjs/);
+  assert.match(publishWorkflow, /SPS_REQUIRE_EXACT_RELEASE_ASSET_SET/);
+  assert.match(publishWorkflow, /release-asset-snapshot\.json/);
+  assert.match(publishWorkflow, /SPS_RELEASE_CHALLENGE_PATH/);
   assert.match(publishWorkflow, /verify-release-attestation\.mjs/);
   assert.match(publishWorkflow, /pinned Plugin SDK revision must be reachable from its main branch/);
   assert.match(publishWorkflow, /gh release edit "\$\{\{ inputs\.tag \}\}" --repo .* --draft=false/);
   assert.doesNotMatch(publishWorkflow, /electron-builder|npm run release:win/);
   assert.doesNotMatch(publishWorkflow, /gh release upload|--clobber/);
+  assert.match(workflow, /merge-base --is-ancestor \$env:GITHUB_SHA origin\/main/);
+  assert.match(publishWorkflow, /merge-base --is-ancestor \$tagCommit origin\/main/);
 });
 
 test("release verification includes every bundled SPS plugin", async () => {

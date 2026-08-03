@@ -8,6 +8,7 @@
     "keygen": "node scripts/generate-signing-key.mjs",
     "verify:deployment": "node scripts/verify-deployment.mjs",
     "verify:staging-evidence": "node scripts/validate-staging-evidence.mjs",
+    "verify:oauth-evidence": "node scripts/validate-full-oauth-evidence.mjs",
     "smoke:staging": "node scripts/smoke-staging.mjs",
     "smoke:oauth": "node scripts/smoke-oauth-interactive.mjs",
     "attest:release": "node scripts/create-release-attestation.mjs",

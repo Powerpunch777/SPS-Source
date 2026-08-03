@@ -4,7 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { validateFullOAuthEvidence } from "./smoke-oauth-interactive.mjs";
 import { validateStagingEvidence } from "./validate-staging-evidence.mjs";
-import { selectDeployment, wranglerCollection } from "./version-selection.mjs";
+import { selectCurrentDeployment, wranglerCollection } from "./version-selection.mjs";
 
 const pinned = {
   production: { url: "https://auth.redongames.com", databaseId: "9d1caea5-6043-40a7-93dc-273157b2e445", databaseName: "sps-identity", worker: "sps-identity", config: "wrangler.toml" },
@@ -77,11 +77,11 @@ export async function verifyRemoteReleaseAttestation(attestation, options) {
     if (productionHealth[field] !== attestation.health?.[field]) throw new Error(`Remote production health ${field} does not match the attestation.`);
     if (stagingHealth[field] !== attestation.stagingEvidence?.health?.[field]) throw new Error(`Remote staging health ${field} does not match the attestation.`);
   }
-  selectDeployment(remoteDeployments(pinned.production), {
+  selectCurrentDeployment(remoteDeployments(pinned.production), {
     deploymentId: attestation.cloudflareDeploymentId,
     versionId: attestation.versionId,
   });
-  selectDeployment(remoteDeployments(pinned.staging), {
+  selectCurrentDeployment(remoteDeployments(pinned.staging), {
     deploymentId: attestation.stagingEvidence.cloudflareDeploymentId,
     versionId: attestation.stagingEvidence.versionId,
   });

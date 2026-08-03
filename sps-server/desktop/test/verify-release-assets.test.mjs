@@ -15,11 +15,22 @@ test("verifies every immutable release byte against the exact Source tuple", asy
   try {
     const matrix = JSON.parse(await readFile(new URL("../../release/support-matrix.json", import.meta.url), "utf8"));
     const sourceRevision = "a".repeat(40);
+    const installerName = `SPS-Desktop-Setup-${matrix.candidate.desktopVersion}.exe`;
+    const installerContent = Buffer.from("installer");
+    const challenge = {
+      schemaVersion: 1,
+      desktopVersion: matrix.candidate.desktopVersion,
+      sourceRevision,
+      installerSha256: hash(installerContent),
+      releaseNonce: "9".repeat(64),
+      generatedAt: "2026-08-04T00:00:00.000Z",
+    };
     const files = {
-      [`SPS-Desktop-Setup-${matrix.candidate.desktopVersion}.exe`]: Buffer.from("installer"),
+      [installerName]: installerContent,
       [`SPS-Desktop-Setup-${matrix.candidate.desktopVersion}.exe.blockmap`]: Buffer.from("blockmap"),
       "latest.yml": Buffer.from("metadata"),
       "sps-agent-runtime-packs.json": Buffer.from("catalog"),
+      "sps-release-challenge.json": Buffer.from(`${JSON.stringify(challenge)}\n`),
       "SPS-Agent-Runtime-Pack-codex-win.zip": Buffer.from("runtime"),
     };
     for (const [name, content] of Object.entries(files)) await writeFile(path.join(root, name), content);
@@ -34,10 +45,11 @@ test("verifies every immutable release byte against the exact Source tuple", asy
         pluginSdk: { revision: matrix.candidate.pluginSdk.revision, dirty: false },
       },
       artifacts: {
-        installer: artifact(`SPS-Desktop-Setup-${matrix.candidate.desktopVersion}.exe`, true),
+        installer: artifact(installerName, true),
         updateMetadata: artifact("latest.yml"),
         blockmap: artifact(`SPS-Desktop-Setup-${matrix.candidate.desktopVersion}.exe.blockmap`),
         agentRuntimeCatalog: artifact("sps-agent-runtime-packs.json"),
+        releaseChallenge: artifact("sps-release-challenge.json", true),
         agentRuntimePacks: [artifact("SPS-Agent-Runtime-Pack-codex-win.zip", true)],
       },
     };
@@ -46,6 +58,9 @@ test("verifies every immutable release byte against the exact Source tuple", asy
     assert.equal(result.manifest.baseline.sourceRevision, sourceRevision);
     await writeFile(path.join(root, "latest.yml"), "tampered");
     await assert.rejects(() => verifyReleaseAssets({ assetsDirectory: root, sourceRevision, requireAuthenticode: false }), /hash mismatch/);
+    await writeFile(path.join(root, "latest.yml"), files["latest.yml"]);
+    await writeFile(path.join(root, "unexpected.txt"), "unexpected");
+    await assert.rejects(() => verifyReleaseAssets({ assetsDirectory: root, sourceRevision, requireAuthenticode: false, requireExactFileSet: true }), /unexpected immutable assets/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

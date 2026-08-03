@@ -25,7 +25,9 @@ Google OAuth needs a Web application redirect URI for each environment.
 Production uses `https://auth.redongames.com/v1/oauth/google/callback`; staging
 uses `https://auth-staging.redongames.com/v1/oauth/google/callback`.
 
-Generate one key pair per environment. The ignored files live under
+For a new environment, generate one key pair exactly once. Existing Production
+keys must be restored from backup, not regenerated during an ordinary release.
+The generator refuses to overwrite either file. The ignored files live under
 `.secrets/staging/` and `.secrets/production/`; never reuse the staging key in
 Production:
 
@@ -80,8 +82,9 @@ The 302 check is named `oauthConfigurationSmoke`; it is not full OAuth. A
 human completes a real Google sign-in separately. Set the exact values printed
 by the staging deployment, then run `npm run smoke:oauth`; the command opens the
 browser, exchanges and revokes the resulting session, and writes token-free,
-hashed-subject evidence. Stable attestation requires that full OAuth evidence
-in addition to the direct-D1 protocol evidence.
+hashed-subject evidence. It also verifies the issued access token against the
+staging JWKS. Production Bridge and Final deployment both require this full
+OAuth evidence in addition to the direct-D1 protocol evidence.
 
 Production requires recent evidence from the exact Source revision. First
 deploy the compatibility Bridge and keep its three IDs. Then deploy Final while
@@ -92,6 +95,7 @@ declaring that exact Bridge as the only supported rollback target:
   -Environment Production `
   -GoogleClientId <production-web-client-id> `
   -StagingEvidencePath <staging-evidence.json> `
+  -FullOAuthEvidencePath <staging-full-oauth-evidence.json> `
   -StagingDeploymentId <staging-worker-deployment-id> `
   -StagingVersionId <staging-worker-version-id> `
   -StagingReleaseId <staging-sps-release-id> `
@@ -102,6 +106,7 @@ declaring that exact Bridge as the only supported rollback target:
   -Environment Production `
   -GoogleClientId <production-web-client-id> `
   -StagingEvidencePath <staging-evidence.json> `
+  -FullOAuthEvidencePath <staging-full-oauth-evidence.json> `
   -StagingDeploymentId <staging-worker-deployment-id> `
   -StagingVersionId <staging-worker-version-id> `
   -StagingReleaseId <staging-sps-release-id> `
@@ -111,6 +116,11 @@ declaring that exact Bridge as the only supported rollback target:
   -BridgeReleaseId <production-bridge-release-id> `
   -ConfirmProduction
 ```
+
+Normal deployment uploads the Google and RSA signing secrets additively but
+omits the versioned replay secret. Cloudflare therefore preserves the replay
+key initialized by `initialize-replay-key.ps1`; changing it requires a new
+version name and the explicit rotation procedure above.
 
 Migration `0003` keeps the old plaintext replay table for Worker rollback and
 adds the encrypted v2 table. Migration `0004` assigns a unique safe family root

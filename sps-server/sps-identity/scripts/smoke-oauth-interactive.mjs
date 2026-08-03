@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -14,6 +14,48 @@ function randomValue(bytes = 32) {
 
 function sha256(value, encoding = "hex") {
   return createHash("sha256").update(value).digest(encoding);
+}
+
+function decodeJsonSegment(segment, label) {
+  try {
+    return JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
+  } catch {
+    throw new Error(`SPS access token has an invalid ${label}.`);
+  }
+}
+
+export function verifyAccessTokenJwt(token, {
+  jwks,
+  issuer,
+  audience = "sps-core",
+  now = Date.now(),
+} = {}) {
+  const segments = typeof token === "string" ? token.split(".") : [];
+  if (segments.length !== 3) throw new Error("SPS access token is not a JWT.");
+  const header = decodeJsonSegment(segments[0], "header");
+  const payload = decodeJsonSegment(segments[1], "payload");
+  if (header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) {
+    throw new Error("SPS access token uses an unsupported signing header.");
+  }
+  const key = (Array.isArray(jwks?.keys) ? jwks.keys : []).find((candidate) => (
+    candidate?.kid === header.kid && candidate?.kty === "RSA" && candidate?.alg === "RS256"
+  ));
+  if (!key) throw new Error("SPS access token signing key is absent from JWKS.");
+  const valid = verifySignature(
+    "RSA-SHA256",
+    Buffer.from(`${segments[0]}.${segments[1]}`, "utf8"),
+    createPublicKey({ key, format: "jwk" }),
+    Buffer.from(segments[2], "base64url"),
+  );
+  if (!valid) throw new Error("SPS access token RSA signature is invalid.");
+  const nowSeconds = Math.floor(now / 1000);
+  if (payload.iss !== issuer.replace(/\/$/, "") || payload.aud !== audience) {
+    throw new Error("SPS access token issuer or audience is invalid.");
+  }
+  if (!Number.isSafeInteger(payload.exp) || payload.exp <= nowSeconds) {
+    throw new Error("SPS access token is expired or has no valid expiry.");
+  }
+  return { header, payload };
 }
 
 function openBrowser(url) {
@@ -94,7 +136,12 @@ export function validateFullOAuthEvidence(evidence, {
   if (!evidence.releaseId || (releaseId && evidence.releaseId !== releaseId)) throw new Error("Full OAuth evidence SPS release ID does not match.");
   if (!SHA256.test(evidence.accountSubjectHash ?? "")) throw new Error("Full OAuth evidence must contain only a hashed account subject.");
   if (typeof evidence.accessToken === "string" || typeof evidence.refreshToken === "string") throw new Error("Full OAuth evidence must not contain tokens.");
-  if (evidence.checks?.googleSignIn !== true || evidence.checks?.tokenExchange !== true || evidence.checks?.revoke !== true) throw new Error("Full OAuth evidence is missing a required end-to-end check.");
+  if (evidence.checks?.googleSignIn !== true
+      || evidence.checks?.tokenExchange !== true
+      || evidence.checks?.accessTokenSignature !== true
+      || evidence.checks?.revoke !== true) {
+    throw new Error("Full OAuth evidence is missing a required end-to-end check.");
+  }
   const completedAt = Date.parse(evidence.completedAt ?? "");
   if (!Number.isFinite(completedAt) || completedAt > now + 5 * 60 * 1000 || now - completedAt > maxAgeMs) throw new Error("Full OAuth evidence is expired or invalid.");
   return evidence;
@@ -136,6 +183,12 @@ export async function runInteractiveOAuthSmoke({
     idempotency_key: randomValue(),
   }, 200);
   if (!pair?.access_token || !pair?.refresh_token || !pair?.account?.subject) throw new Error("Full OAuth token exchange returned an incomplete account session.");
+  const jwksResponse = await fetch(`${identityUrl}/.well-known/jwks.json`, { redirect: "error" });
+  if (!jwksResponse.ok) throw new Error(`SPS staging JWKS returned ${jwksResponse.status}.`);
+  verifyAccessTokenJwt(pair.access_token, {
+    jwks: await jwksResponse.json(),
+    issuer: identityUrl,
+  });
   await jsonPost(identityUrl, "/v1/desktop/revoke", { refresh_token: pair.refresh_token }, 204);
   const evidence = {
     schemaVersion: 1,
@@ -148,7 +201,7 @@ export async function runInteractiveOAuthSmoke({
     releaseId,
     accountSubjectHash: sha256(pair.account.subject),
     completedAt: new Date().toISOString(),
-    checks: { googleSignIn: true, tokenExchange: true, revoke: true },
+    checks: { googleSignIn: true, tokenExchange: true, accessTokenSignature: true, revoke: true },
   };
   validateFullOAuthEvidence(evidence, { sourceRevision, cloudflareDeploymentId, versionId, releaseId });
   await mkdir(path.dirname(evidencePath), { recursive: true });
