@@ -87,6 +87,21 @@ Public Plugin SDK `146/146`, Team Workplane 전체 검사와 Core SPS 경계·�
 production UI build가 통과했다. Core UI 초기 진입 번들은 `1,316,112` bytes로
 `1,500,000` bytes 예산 안에 있다.
 
+같은 `0.4.112` 후보로 아래 실제 Electron 검증도 모두 통과했다.
+
+- 격리된 첫 실행·로그인 bootstrap
+- 패키지된 Workspace surface
+- 외부 SDK 플러그인의 격리 Preview, 패키징, Preview renderer 장애 격리
+- Host 플러그인의 설치, 활성화, 비활성화, 재활성화, 제거 취소와 제거 확인
+
+NSIS 설치본과 업데이트 metadata, 두 Agent Runtime Pack, release manifest를
+한 빌드에서 생성했고 패키지 내부 Owner Host runtime과 Marketplace MCP smoke도
+통과했다. 로컬 설치본은 `SPS-Desktop-Setup-0.4.112.exe`, SHA-256은
+`a2f77db5442455e9cbc750186fbf4ededf8852141fa5503abac511ab67b9054a`다.
+이 산출물은 사용자 미추적 파일이 있는 개발 작업 폴더에서 만들어져 manifest가
+`sourceDirty: true`이고 Authenticode가 `NotSigned`이므로 Local candidate
+증거일 뿐 Stable 게시물로 사용할 수 없다.
+
 Core upstream 전체 테스트는 Windows 명령줄 배치 실행까지 가능해졌지만,
 Unix `sh`와 실행 권한을 가정하는 기존 Paperclip 테스트 20개가 Windows에서
 실패한다. 이 항목은 SPS 후보 통과로 간주하지 않으며 upstream 호환성 부채로
