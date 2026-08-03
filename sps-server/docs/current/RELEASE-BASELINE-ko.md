@@ -82,10 +82,18 @@ blockmap, `latest.yml`, 릴리스 manifest와 Agent Runtime Pack 목록은 동�
 
 ## 현재 0.4.112의 증거 상태
 
-2026-08-03 로컬 검증에서 Desktop `306/306`, Desktop Node `39/39`,
-Public Plugin SDK `146/146`, Team Workplane 전체 검사와 Core SPS 경계·타입·
-production UI build가 통과했다. Core UI 초기 진입 번들은 `1,316,112` bytes로
-`1,500,000` bytes 예산 안에 있다.
+2026-08-03 로컬 검증에서 Desktop `310/310`, Desktop Node `39/39`,
+SPS Identity `12/12`, Public Plugin SDK `146/146`, Team Workplane 전체 검사와
+Core SPS 경계·타입·production UI build가 통과했다. Core UI 초기 진입 번들은
+`1,316,112` bytes로 `1,500,000` bytes 예산 안에 있다.
+
+GitHub Linux checkout과 같은 Git clone 조건의 Node 22 컨테이너에서도 Core의
+전체 `pnpm typecheck -> pnpm test:run -> pnpm build`가 종료 코드 0으로
+통과했다. 실행 시간은 866초였다. 컨테이너를 root로 실행해 embedded Postgres를
+요구하는 일부 테스트는 자체 조건에 따라 skip됐으므로, 최종 증거는 새
+`core-full-regression` Ubuntu CI job의 비-root 결과여야 한다. SPS Identity의
+token rotation, revoke, one-time code replay, D1 failure, 동시 요청 검사도 같은
+공통 release verification workflow에 포함됐다.
 
 같은 `0.4.112` 후보로 아래 실제 Electron 검증도 모두 통과했다.
 
@@ -102,10 +110,10 @@ NSIS 설치본과 업데이트 metadata, 두 Agent Runtime Pack, release manifes
 `sourceDirty: true`이고 Authenticode가 `NotSigned`이므로 Local candidate
 증거일 뿐 Stable 게시물로 사용할 수 없다.
 
-Core upstream 전체 테스트는 Windows 명령줄 배치 실행까지 가능해졌지만,
-Unix `sh`와 실행 권한을 가정하는 기존 Paperclip 테스트 20개가 Windows에서
-실패한다. 이 항목은 SPS 후보 통과로 간주하지 않으며 upstream 호환성 부채로
-기록한다. SPS가 소유한 Core 경계 검사는 별도로 모두 통과했다.
+Windows 작업 폴더를 그대로 Linux 컨테이너에 복사하면 CRLF 때문에 Unix shell
+테스트가 실패한다. 이는 Git clone으로 재현되지 않았으며 제품 결함으로 세지
+않는다. Core 전체 회귀의 기준 환경은 Ubuntu CI checkout이고, Windows 제품
+경계는 별도의 Desktop, Node, 패키지된 Electron E2E가 담당한다.
 
 아직 같은 최종 Source revision을 사용한 Host/Member 물리 2대 증거와
 Windows 코드 서명 결과가 없으므로 `0.4.112`는 계속

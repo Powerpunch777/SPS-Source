@@ -1,7 +1,11 @@
-# SPS Plugin Platform 내부 검증 도구
+# SPS Plugin Platform 보관된 계약 fixture
 
-이 디렉터리는 SPS Core 저장소 안에서 사용하는 플러그인 호환성·패키지·Registry
-검증 도구다. 외부 플러그인 작성자는 공개 저장소
+> **Retired:** 이 디렉터리는 제품 런타임이나 Plugin 개발 SDK가 아니다.
+> 과거 Extension Profile·Registry 테스트 벡터를 회귀 확인하기 위해서만
+> 보관한다. 신규 개발과 수정은 공개 `@sonparkserver/plugin-sdk`에서 한다.
+
+이 디렉터리는 과거 SPS 내부 플러그인 호환성·패키지·Registry 계약 fixture다.
+Desktop과 Core는 이 package에 의존하지 않는다. 외부 플러그인 작성자는 공개 저장소
 [`sps-plugin-sdk`](https://github.com/Powerpunch777/sps-plugin-sdk)를 사용한다.
 
 ## 이 도구가 다루는 것
@@ -16,14 +20,11 @@
 그런 업무 규칙은 각 Plugin이 정의하며, SPS Core는 기술적 primitive와 package
 lifecycle만 제공한다.
 
-## 개발 원칙
+## 보관 원칙
 
-- 외부 Plugin 작성 경험은 public SDK와 같은 계약을 따라야 한다.
-- manifest 선언은 권한 부여가 아니다. Host 경로, CLI 계정, Secret, Plugin 설치·활성화는
-  별도 검증과 명시적 Host 동작이 필요하다.
-- 내부 도구의 변경은 public SDK에 반영 가능한지 먼저 검토한다.
-- 제품 경계는
-  [PRODUCT-ARCHITECTURE-ko.md](../docs/current/PRODUCT-ARCHITECTURE-ko.md)를 따른다.
+- 새 runtime 코드나 authoring API를 추가하지 않는다.
+- public SDK 또는 Core 계약을 변경할 때 기존 fixture가 여전히 필요한지만 확인한다.
+- 더 이상 참조되지 않는 fixture는 별도 정리 변경에서 삭제한다.
 
 ## 확인
 
@@ -33,4 +34,4 @@ npm test
 ```
 
 새 Plugin 작성, Local Development Registry 테스트, release metadata 생성 방법은
-공개 SDK의 README를 따른다.
+공개 SDK의 README만 따른다.

@@ -100,11 +100,31 @@ export function findingsFromPnpmAudit(report, source = "core") {
 }
 
 function validatePolicy(policy) {
-  if (policy?.schemaVersion !== 1) throw new Error("Security audit policy schemaVersion must be 1.");
+  if (policy?.schemaVersion !== 2) throw new Error("Security audit policy schemaVersion must be 2.");
   if (!Array.isArray(policy.blockSeverities) || policy.blockSeverities.length === 0) {
     throw new Error("Security audit policy must define blocked severities.");
   }
+  if (!Array.isArray(policy.reviewSeverities) || policy.reviewSeverities.length === 0) {
+    throw new Error("Security audit policy must define reviewed severities.");
+  }
   if (!Array.isArray(policy.exceptions)) throw new Error("Security audit policy exceptions must be an array.");
+  if (!Array.isArray(policy.reviews)) throw new Error("Security audit policy reviews must be an array.");
+}
+
+function matchingPolicyEntry(entries, finding) {
+  return entries.find((candidate) => (
+    candidate.source === finding.source
+    && candidate.advisoryId === finding.advisoryId
+    && candidate.module === finding.module
+    && candidate.severity === finding.severity
+  ));
+}
+
+function expiryRejection(entry, now, label) {
+  const expiresAt = Date.parse(`${entry.expiresOn}T23:59:59.999Z`);
+  if (!Number.isFinite(expiresAt)) return `${label} has an invalid expiry date`;
+  if (expiresAt < now.getTime()) return `${label} expired on ${entry.expiresOn}`;
+  return null;
 }
 
 export function evaluateSecurityAudit({ findings, policy, now = new Date() }) {
@@ -115,29 +135,46 @@ export function evaluateSecurityAudit({ findings, policy, now = new Date() }) {
   const rejected = [];
 
   for (const finding of blocked) {
-    const exception = policy.exceptions.find((candidate) => (
-      candidate.source === finding.source
-      && candidate.advisoryId === finding.advisoryId
-      && candidate.module === finding.module
-      && candidate.severity === finding.severity
-    ));
+    const exception = matchingPolicyEntry(policy.exceptions, finding);
     if (!exception) {
       rejected.push({ finding, reason: "no approved exception" });
       continue;
     }
-    const expiresAt = Date.parse(`${exception.expiresOn}T23:59:59.999Z`);
-    if (!Number.isFinite(expiresAt) || expiresAt < now.getTime()) {
-      rejected.push({ finding, reason: `exception expired on ${exception.expiresOn}` });
+    const expiryReason = expiryRejection(exception, now, "exception");
+    if (expiryReason) {
+      rejected.push({ finding, reason: expiryReason });
       continue;
     }
     approved.push({ finding, exception });
+  }
+
+  const reviewSeverities = new Set(policy.reviewSeverities);
+  const reviewRequired = findings.filter((finding) => reviewSeverities.has(finding.severity));
+  const reviewed = [];
+  const reviewRejected = [];
+  for (const finding of reviewRequired) {
+    const review = matchingPolicyEntry(policy.reviews, finding);
+    if (!review) {
+      reviewRejected.push({ finding, reason: "no current path review" });
+      continue;
+    }
+    const expiryReason = expiryRejection(review, now, "review");
+    if (expiryReason) {
+      reviewRejected.push({ finding, reason: expiryReason });
+      continue;
+    }
+    reviewed.push({ finding, review });
   }
 
   const activeKeys = new Set(blocked.map((finding) => `${finding.source}:${finding.advisoryId}:${finding.module}`));
   const staleExceptions = policy.exceptions.filter((exception) => (
     !activeKeys.has(`${exception.source}:${exception.advisoryId}:${exception.module}`)
   ));
-  return { blocked, approved, rejected, staleExceptions };
+  const activeReviewKeys = new Set(reviewRequired.map((finding) => `${finding.source}:${finding.advisoryId}:${finding.module}`));
+  const staleReviews = policy.reviews.filter((review) => (
+    !activeReviewKeys.has(`${review.source}:${review.advisoryId}:${review.module}`)
+  ));
+  return { blocked, approved, rejected, reviewRequired, reviewed, reviewRejected, staleExceptions, staleReviews };
 }
 
 export async function runSpsSecurityAudit({ now = new Date() } = {}) {
@@ -156,11 +193,18 @@ export async function runSpsSecurityAudit({ now = new Date() } = {}) {
   for (const { finding, exception } of result.approved) {
     process.stdout.write(`EXCEPTED ${finding.severity} ${finding.source}:${finding.module} ${finding.advisoryId} until ${exception.expiresOn}.\n`);
   }
+  for (const { finding, review } of result.reviewed) {
+    process.stdout.write(`REVIEWED ${finding.severity} ${finding.source}:${finding.module} ${finding.advisoryId} until ${review.expiresOn}.\n`);
+  }
   for (const exception of result.staleExceptions) {
     process.stdout.write(`STALE EXCEPTION ${exception.source}:${exception.module} ${exception.advisoryId}.\n`);
   }
-  if (result.rejected.length > 0) {
-    const details = result.rejected.map(({ finding, reason }) => (
+  for (const review of result.staleReviews) {
+    process.stdout.write(`STALE REVIEW ${review.source}:${review.module} ${review.advisoryId}.\n`);
+  }
+  const rejected = [...result.rejected, ...result.reviewRejected];
+  if (rejected.length > 0) {
+    const details = rejected.map(({ finding, reason }) => (
       `${finding.severity} ${finding.source}:${finding.module} ${finding.advisoryId}: ${finding.title} (${reason})`
     ));
     throw new Error(`SPS dependency security gate failed:\n${details.join("\n")}`);

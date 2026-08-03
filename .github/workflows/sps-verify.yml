@@ -74,6 +74,39 @@ jobs:
           pnpm check:sps-ui-bundle
           pnpm test:sps-ui-bundle
 
+  core-full-regression:
+    name: SPS Core full Linux regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: external/sps-core
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@11.9.0
+
+      - name: Install Core dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck every Core workspace
+        run: pnpm typecheck
+
+      - name: Run the complete Core test suite
+        run: pnpm test:run
+
+      - name: Build every Core workspace
+        run: pnpm build
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest
@@ -132,6 +165,24 @@ jobs:
       - name: Rebuild and verify SPS Plugin Discovery
         working-directory: sps-server/sps-plugin-discovery
         run: npm run check
+
+  identity:
+    name: SPS Identity contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Verify sign-in, token rotation, revocation, and concurrency
+        working-directory: sps-server/sps-identity
+        run: npm test
 
   plugin-kit:
     name: SPS Plugin Kit and Registry

@@ -8,8 +8,9 @@ import {
 } from "../scripts/security-audit.mjs";
 
 const basePolicy = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   blockSeverities: ["critical", "high"],
+  reviewSeverities: ["moderate"],
   exceptions: [{
     source: "core",
     advisoryId: "123",
@@ -17,6 +18,14 @@ const basePolicy = {
     severity: "high",
     expiresOn: "2026-09-30",
     reason: "Test-only exception.",
+  }],
+  reviews: [{
+    source: "core",
+    advisoryId: "456",
+    module: "http-server",
+    severity: "moderate",
+    expiresOn: "2026-09-30",
+    reason: "Affected server path is not used.",
   }],
 };
 
@@ -50,6 +59,19 @@ test("rejects a new critical or high advisory and reports stale exceptions", () 
   });
   assert.equal(result.rejected.length, 1);
   assert.equal(result.staleExceptions.length, 1);
+});
+
+test("requires an exact, current review for moderate advisories", () => {
+  const finding = { source: "core", advisoryId: "456", module: "http-server", severity: "moderate", title: "path issue" };
+  const accepted = evaluateSecurityAudit({ findings: [finding], policy: basePolicy, now: new Date("2026-08-03T00:00:00Z") });
+  assert.equal(accepted.reviewed.length, 1);
+  assert.equal(accepted.reviewRejected.length, 0);
+
+  const missing = evaluateSecurityAudit({ findings: [{ ...finding, advisoryId: "new" }], policy: basePolicy });
+  assert.match(missing.reviewRejected[0].reason, /no current path review/);
+
+  const expired = evaluateSecurityAudit({ findings: [finding], policy: basePolicy, now: new Date("2026-10-01T00:00:00Z") });
+  assert.match(expired.reviewRejected[0].reason, /expired/);
 });
 
 test("rejects a nonzero audit command even when it writes valid-looking JSON", async () => {

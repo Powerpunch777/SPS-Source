@@ -444,11 +444,11 @@ export function createSpsIdentityWorker({ fetchImpl = fetch } = {}) {
           const jwk = await publicJwk(env);
           return json({ keys: [{ ...jwk, use: "sig", alg: "RS256", kid: requireEnv(env, "SPS_IDENTITY_KEY_ID") }] });
         }
-        if (request.method === "GET" && url.pathname === "/v1/desktop/authorize") return authorize(request, env);
-        if (request.method === "GET" && url.pathname === "/v1/oauth/google/callback") return googleCallback(request, env, fetchImpl);
-        if (request.method === "POST" && url.pathname === "/v1/desktop/token") return token(request, env);
-        if (request.method === "POST" && url.pathname === "/v1/desktop/refresh") return refresh(request, env);
-        if (request.method === "POST" && url.pathname === "/v1/desktop/revoke") return revoke(request, env);
+        if (request.method === "GET" && url.pathname === "/v1/desktop/authorize") return await authorize(request, env);
+        if (request.method === "GET" && url.pathname === "/v1/oauth/google/callback") return await googleCallback(request, env, fetchImpl);
+        if (request.method === "POST" && url.pathname === "/v1/desktop/token") return await token(request, env);
+        if (request.method === "POST" && url.pathname === "/v1/desktop/refresh") return await refresh(request, env);
+        if (request.method === "POST" && url.pathname === "/v1/desktop/revoke") return await revoke(request, env);
         return error("Not found.", 404);
       } catch (reason) {
         console.error("SPS Identity request failed", reason);

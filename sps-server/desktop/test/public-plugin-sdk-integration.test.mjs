@@ -10,7 +10,7 @@ const spsServerRoot = path.resolve(desktopRoot, "..");
 const workspaceRoot = path.resolve(spsServerRoot, "..");
 
 test("uses the pinned public SDK instead of the retired in-product plugin platform", async () => {
-  const [desktopPackage, packageLock, sdkPackage, gitmodules, npmrc, stagingSource, catalogSource, smokeSource, workerHostSmokeSource] = await Promise.all([
+  const [desktopPackage, packageLock, sdkPackage, gitmodules, npmrc, stagingSource, catalogSource, smokeSource, workerHostSmokeSource, rootReadme, retiredReadme] = await Promise.all([
     readFile(path.join(desktopRoot, "package.json"), "utf8").then(JSON.parse),
     readFile(path.join(desktopRoot, "package-lock.json"), "utf8").then(JSON.parse),
     readFile(path.join(workspaceRoot, "external", "sps-plugin-sdk", "package.json"), "utf8").then(JSON.parse),
@@ -20,6 +20,8 @@ test("uses the pinned public SDK instead of the retired in-product plugin platfo
     readFile(path.join(desktopRoot, "src", "registry-source-catalog.mjs"), "utf8"),
     readFile(path.join(desktopRoot, "scripts", "smoke-packaged-owner-host-runtime.mjs"), "utf8"),
     readFile(path.join(desktopRoot, "scripts", "smoke-public-plugin-worker-host.mjs"), "utf8"),
+    readFile(path.join(workspaceRoot, "README.md"), "utf8"),
+    readFile(path.join(spsServerRoot, "plugin-platform", "README-ko.md"), "utf8"),
   ]);
 
   assert.equal(desktopPackage.dependencies["@sonparkserver/plugin-sdk"], "file:../../external/sps-plugin-sdk");
@@ -43,4 +45,8 @@ test("uses the pinned public SDK instead of the retired in-product plugin platfo
   assert.match(workerHostSmokeSource, /sps\.runtimes\.list/);
   assert.match(workerHostSmokeSource, /@sonparkserver\/plugin-sdk\/worker/);
   assert.doesNotMatch(workerHostSmokeSource, /from\s+["']@paperclipai\//);
+  assert.doesNotMatch(rootReadme, /Set-Location \.\\sps-server\\plugin-platform/);
+  assert.match(rootReadme, /external\\sps-plugin-sdk/);
+  assert.match(retiredReadme, /Retired:/);
+  assert.match(retiredReadme, /제품 런타임이나 Plugin 개발 SDK가 아니다/);
 });

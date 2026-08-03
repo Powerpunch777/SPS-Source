@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, createSign } from "node:crypto";
+import { createHash, generateKeyPairSync, createSign } from "node:crypto";
 import test from "node:test";
 import {
   createSpsIdentityWorker,
@@ -7,6 +7,140 @@ import {
   SPS_DESKTOP_SIGN_IN_TTL_MS,
   verifyGoogleIdToken,
 } from "../src/worker.mjs";
+
+const DEVICE_ID = "sps-desktop-device-1234";
+const PROFILE = {
+  subject: "google-subject",
+  email: "person@example.com",
+  name: "Person Example",
+  picture: null,
+};
+
+function hash(value) {
+  return createHash("sha256").update(value).digest("base64url");
+}
+
+function createSigningEnv() {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return {
+    GOOGLE_CLIENT_ID: "google-client",
+    SPS_IDENTITY_ISSUER: "https://auth.example",
+    SPS_IDENTITY_AUDIENCE: "sps-core",
+    SPS_IDENTITY_KEY_ID: "identity-test",
+    SPS_IDENTITY_PRIVATE_KEY_PEM: privateKey.export({ type: "pkcs8", format: "pem" }),
+  };
+}
+
+class FakeD1 {
+  constructor(seed = {}) {
+    this.tables = new Map(Object.entries(seed).map(([name, rows]) => [name, rows.map((row) => ({ ...row }))]));
+    this.fail = null;
+    this.readBarrier = null;
+  }
+
+  failWhen(predicate) {
+    this.fail = predicate;
+    return this;
+  }
+
+  prepare(sql) {
+    return new FakeStatement(this, sql);
+  }
+
+  rows(table) {
+    if (!this.tables.has(table)) this.tables.set(table, []);
+    return this.tables.get(table);
+  }
+
+  maybeFail(sql, operation) {
+    if (this.fail?.(sql, operation)) throw new Error("simulated D1 failure");
+  }
+}
+
+class FakeStatement {
+  constructor(db, sql) {
+    this.db = db;
+    this.sql = sql;
+    this.values = [];
+  }
+
+  bind(...values) {
+    this.values = values;
+    return this;
+  }
+
+  async first() {
+    this.db.maybeFail(this.sql, "first");
+    const table = this.sql.match(/FROM (\w+)/i)?.[1];
+    const rows = this.db.rows(table);
+    const row = rows.find((candidate) => candidate.code_hash === this.values[0] || candidate.token_hash === this.values[0] || candidate.subject === this.values[0]);
+    if (this.db.readBarrier) await this.db.readBarrier();
+    return row ? { ...row } : null;
+  }
+
+  async run() {
+    this.db.maybeFail(this.sql, "run");
+    const deleteMatch = this.sql.match(/DELETE FROM (\w+)/i);
+    if (deleteMatch) {
+      const table = deleteMatch[1];
+      const rows = this.db.rows(table);
+      const before = rows.length;
+      const [first, second, third] = this.values;
+      const kept = rows.filter((row) => {
+        if (this.sql.includes("expires_at <= ?")) return !(Number(row.expires_at) <= Number(first));
+        if (table === "authorization_codes") {
+          return this.sql.includes("AND device_id")
+            ? !(row.code_hash === first && row.device_id === second && Number(row.expires_at) === Number(third))
+            : row.code_hash !== first;
+        }
+        if (table === "refresh_tokens") {
+          return this.sql.includes("AND device_id")
+            ? !(row.token_hash === first && row.device_id === second && Number(row.expires_at) === Number(third))
+            : row.token_hash !== first;
+        }
+        return true;
+      });
+      this.db.tables.set(table, kept);
+      return { success: true, meta: { changes: before - kept.length } };
+    }
+    const insertMatch = this.sql.match(/INSERT INTO (\w+)/i);
+    if (insertMatch) {
+      const table = insertMatch[1];
+      const columns = this.sql.match(/\(([^)]+)\)/)?.[1].split(",").map((value) => value.trim()) ?? [];
+      const row = Object.fromEntries(columns.map((column, index) => [column, this.values[index]]));
+      const rows = this.db.rows(table);
+      const existing = rows.findIndex((candidate) => candidate[columns[0]] === row[columns[0]]);
+      if (existing >= 0 && this.sql.includes("ON CONFLICT")) rows[existing] = { ...rows[existing], ...row };
+      else rows.push(row);
+      return { success: true, meta: { changes: 1 } };
+    }
+    return { success: true, meta: { changes: 0 } };
+  }
+}
+
+function request(path, body) {
+  return new Request(`https://auth.example${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function responseBody(response) {
+  return response.json();
+}
+
+function seedRefresh(db, refreshToken = "refresh-token") {
+  db.rows("identity_users").push({ ...PROFILE, created_at: 1, updated_at: 1 });
+  db.rows("refresh_tokens").push({
+    token_hash: hash(refreshToken),
+    subject: PROFILE.subject,
+    device_id: DEVICE_ID,
+    expires_at: Date.now() + 60_000,
+    created_at: Date.now(),
+  });
+  return refreshToken;
+}
 
 test("keeps the central SPS Desktop sign-in request valid for fifteen minutes", () => {
   assert.equal(SPS_DESKTOP_SIGN_IN_TTL_MS, 15 * 60 * 1000);
@@ -30,6 +164,174 @@ test("rejects malformed desktop device requests before touching identity storage
   }), {});
   assert.equal(response.status, 400);
   assert.match((await response.json()).error, /device ID/i);
+});
+
+test("rotates refresh tokens and rejects the previous token", async () => {
+  const env = createSigningEnv();
+  const db = new FakeD1();
+  const worker = createSpsIdentityWorker();
+  const oldToken = seedRefresh(db);
+
+  const first = await worker.fetch(request("/v1/desktop/refresh", {
+    refresh_token: oldToken,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  assert.equal(first.status, 200);
+  const firstBody = await responseBody(first);
+  assert.notEqual(firstBody.refresh_token, oldToken);
+
+  const replay = await worker.fetch(request("/v1/desktop/refresh", {
+    refresh_token: oldToken,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  assert.equal(replay.status, 401);
+  assert.match((await responseBody(replay)).error, /invalid|already used/i);
+});
+
+test("rejects a revoked refresh token", async () => {
+  const env = createSigningEnv();
+  const db = new FakeD1();
+  const worker = createSpsIdentityWorker();
+  const refreshToken = seedRefresh(db);
+
+  const revoked = await worker.fetch(request("/v1/desktop/revoke", { refresh_token: refreshToken }), { ...env, DB: db });
+  assert.equal(revoked.status, 204);
+  const replay = await worker.fetch(request("/v1/desktop/refresh", {
+    refresh_token: refreshToken,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  assert.equal(replay.status, 401);
+});
+
+test("consumes an authorization code once and rejects reuse", async () => {
+  const env = createSigningEnv();
+  const db = new FakeD1();
+  const worker = createSpsIdentityWorker();
+  const code = "authorization-code-once";
+  const verifier = "desktop-verifier";
+  db.rows("authorization_codes").push({
+    code_hash: hash(code),
+    ...PROFILE,
+    device_id: DEVICE_ID,
+    code_challenge: hash(verifier),
+    expires_at: Date.now() + 60_000,
+  });
+
+  const first = await worker.fetch(request("/v1/desktop/token", {
+    code,
+    code_verifier: verifier,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  assert.equal(first.status, 200);
+  const replay = await worker.fetch(request("/v1/desktop/token", {
+    code,
+    code_verifier: verifier,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  assert.equal(replay.status, 401);
+  assert.match((await responseBody(replay)).error, /invalid|already used/i);
+});
+
+test("fails closed when D1 cannot rotate a refresh token", async () => {
+  const env = createSigningEnv();
+  const db = new FakeD1();
+  const worker = createSpsIdentityWorker();
+  const refreshToken = seedRefresh(db);
+  db.failWhen((sql, operation) => operation === "run" && sql.includes("DELETE FROM refresh_tokens WHERE token_hash = ? AND device_id"));
+
+  const response = await worker.fetch(request("/v1/desktop/refresh", {
+    refresh_token: refreshToken,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  assert.equal(response.status, 500);
+  assert.match((await responseBody(response)).error, /could not complete/i);
+});
+
+test("allows only one concurrent refresh rotation", async () => {
+  const env = createSigningEnv();
+  const db = new FakeD1();
+  const worker = createSpsIdentityWorker();
+  const refreshToken = seedRefresh(db);
+  let reads = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let bothRead;
+  const bothReadPromise = new Promise((resolve) => { bothRead = resolve; });
+  db.readBarrier = async () => {
+    reads += 1;
+    if (reads === 2) bothRead();
+    await gate;
+  };
+
+  const firstRequest = worker.fetch(request("/v1/desktop/refresh", {
+    refresh_token: refreshToken,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  const secondRequest = worker.fetch(request("/v1/desktop/refresh", {
+    refresh_token: refreshToken,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  await bothReadPromise;
+  release();
+  const responses = await Promise.all([firstRequest, secondRequest]);
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 401]);
+});
+
+test("fails closed when D1 cannot consume an authorization code", async () => {
+  const env = createSigningEnv();
+  const db = new FakeD1();
+  const worker = createSpsIdentityWorker();
+  const code = "authorization-code-storage-failure";
+  const verifier = "desktop-verifier";
+  db.rows("authorization_codes").push({
+    code_hash: hash(code),
+    ...PROFILE,
+    device_id: DEVICE_ID,
+    code_challenge: hash(verifier),
+    expires_at: Date.now() + 60_000,
+  });
+  db.failWhen((sql, operation) => operation === "run" && sql.includes("DELETE FROM authorization_codes WHERE code_hash = ? AND device_id"));
+
+  const response = await worker.fetch(request("/v1/desktop/token", {
+    code,
+    code_verifier: verifier,
+    device_id: DEVICE_ID,
+  }), { ...env, DB: db });
+  assert.equal(response.status, 500);
+  assert.match((await responseBody(response)).error, /could not complete/i);
+});
+
+test("allows only one concurrent authorization-code exchange", async () => {
+  const env = createSigningEnv();
+  const db = new FakeD1();
+  const worker = createSpsIdentityWorker();
+  const code = "authorization-code-race";
+  const verifier = "desktop-verifier";
+  db.rows("authorization_codes").push({
+    code_hash: hash(code),
+    ...PROFILE,
+    device_id: DEVICE_ID,
+    code_challenge: hash(verifier),
+    expires_at: Date.now() + 60_000,
+  });
+  let reads = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let bothRead;
+  const bothReadPromise = new Promise((resolve) => { bothRead = resolve; });
+  db.readBarrier = async () => {
+    reads += 1;
+    if (reads === 2) bothRead();
+    await gate;
+  };
+
+  const body = { code, code_verifier: verifier, device_id: DEVICE_ID };
+  const firstRequest = worker.fetch(request("/v1/desktop/token", body), { ...env, DB: db });
+  const secondRequest = worker.fetch(request("/v1/desktop/token", body), { ...env, DB: db });
+  await bothReadPromise;
+  release();
+  const responses = await Promise.all([firstRequest, secondRequest]);
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 401]);
 });
 
 test("cleans expired identity records when a new Desktop sign-in starts", async () => {

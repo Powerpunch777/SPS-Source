@@ -23,11 +23,13 @@ The Catalog is not a separate application. It is the discovery area inside `Sett
 
 ```text
 external/sps-core/       Private SPS product Core (tracked from its stable main branch)
+external/sps-plugin-sdk/ Public plugin authoring SDK and CLI (pinned submodule)
 sps-server/              SPS Desktop, Host, Node, plugin runtime, and first-party extensions
-sps-plugin-sdk/          Public plugin authoring SDK and CLI
-sps-official-extensions/ Signed first-party extension distribution source
-redon-games-website/     Redon Games public website
 ```
+
+The signed Official Extensions registry and the Redon Games website are
+separate sibling repositories; they are not product-source directories in this
+private repository.
 
 ## Product Documents
 
@@ -48,9 +50,19 @@ The product runtime lives in the private `SPS-Core` repository. The public
 not a product runtime, release channel, or support surface.
 
 ```powershell
-Set-Location .\sps-server\plugin-platform
+Set-Location .\external\sps-plugin-sdk
+npm test
+
+Set-Location ..\..\sps-server\desktop
 npm test
 
 Set-Location ..\sps-room-chat
 npm run check
+
+Set-Location ..\sps-identity
+npm test
 ```
+
+`sps-server/plugin-platform` is a retired internal contract-fixture suite. It
+is not a product dependency or a plugin authoring entry point. New plugin work
+must use the pinned public SDK under `external/sps-plugin-sdk`.
