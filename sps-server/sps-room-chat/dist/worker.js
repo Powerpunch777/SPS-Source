@@ -13570,9 +13570,21 @@ function workspaceGitExcludePath(workingDirectory) {
     return null;
   }
 }
+function writeRoomAttachmentGitIgnore(workingDirectory) {
+  const resolvedRoot = path3.resolve(workingDirectory);
+  const attachmentRoot = roomAttachmentWorkspaceRoot(resolvedRoot);
+  ensureDirectoryTreeWithoutLinks(resolvedRoot, attachmentRoot);
+  const ignorePath = path3.join(attachmentRoot, ".gitignore");
+  rejectLinkOrNonFile(ignorePath, "Room attachment .gitignore");
+  fs2.writeFileSync(ignorePath, "*\n!.gitignore\n", {
+    encoding: "utf8",
+    flag: fs2.existsSync(ignorePath) ? "w" : "wx"
+  });
+  return ignorePath;
+}
 function excludeWorkspaceRoomAttachments(workingDirectory) {
   const excludePath = workspaceGitExcludePath(workingDirectory);
-  if (!excludePath) return null;
+  if (!excludePath) return writeRoomAttachmentGitIgnore(workingDirectory);
   const rule = ".sps/room-attachments/";
   fs2.mkdirSync(path3.dirname(excludePath), { recursive: true });
   const verifiedPath = workspaceGitExcludePath(workingDirectory);
@@ -13639,6 +13651,7 @@ function mergeRoomAttachments(...groups) {
   return [...byId.values()];
 }
 async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDirectory, network) {
+  if (!Array.isArray(attachments) || attachments.length === 0) return [];
   const workspaceRoot = path3.resolve(String(workingDirectory || "").trim());
   const cacheRoot = roomAttachmentWorkspaceRoot(workspaceRoot);
   const { maxFileBytes, maxRequestBytes } = roomAttachmentByteLimits();

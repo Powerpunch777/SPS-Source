@@ -95,6 +95,13 @@ assert.match(imagePreviewTurn, /SYSTEM-PROVIDED ROOM RESPONSE CONTRACT/);
 assert.match(imagePreviewTurn, /final response must embed at least one relevant image/);
 assert.match(imagePreviewTurn, /!\[description\]\(<C:\/absolute\/path\/to\/image\.png>\)/);
 assert.match(imagePreviewTurn, /Do not merely say that an image is shown/);
+const emptyWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-empty-attachments-"));
+assert.deepEqual(
+  await stageRoomAttachments("http://127.0.0.1:3100", "room-empty", [], emptyWorkspace),
+  []
+);
+assert.equal(fs.existsSync(path.join(emptyWorkspace, ".sps")), false);
+fs.rmSync(emptyWorkspace, { recursive: true, force: true });
 const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-room-workspace-"));
 fs.mkdirSync(path.join(workspace, ".git", "info"), { recursive: true });
 const staged = await stageRoomAttachments("http://127.0.0.1:3100", "room-attachment", attachments, workspace);
@@ -112,14 +119,18 @@ const externalGitMetadata = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-exte
 const gitFileWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-git-file-"));
 fs.writeFileSync(path.join(gitFileWorkspace, ".git"), `gitdir: ${externalGitMetadata}\n`, "utf8");
 assert.equal(workspaceGitExcludePath(gitFileWorkspace), null);
-assert.equal(excludeWorkspaceRoomAttachments(gitFileWorkspace), null);
+const gitFileFallback = excludeWorkspaceRoomAttachments(gitFileWorkspace);
+assert.equal(gitFileFallback, path.join(gitFileWorkspace, ".sps", "room-attachments", ".gitignore"));
+assert.equal(fs.readFileSync(gitFileFallback, "utf8"), "*\n!.gitignore\n");
 assert.equal(fs.existsSync(path.join(externalGitMetadata, "info", "exclude")), false);
 fs.rmSync(gitFileWorkspace, { recursive: true, force: true });
 
 const linkedGitWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-linked-git-"));
 fs.symlinkSync(externalGitMetadata, path.join(linkedGitWorkspace, ".git"), process.platform === "win32" ? "junction" : "dir");
 assert.equal(workspaceGitExcludePath(linkedGitWorkspace), null);
-assert.equal(excludeWorkspaceRoomAttachments(linkedGitWorkspace), null);
+const linkedGitFallback = excludeWorkspaceRoomAttachments(linkedGitWorkspace);
+assert.equal(linkedGitFallback, path.join(linkedGitWorkspace, ".sps", "room-attachments", ".gitignore"));
+assert.equal(fs.readFileSync(linkedGitFallback, "utf8"), "*\n!.gitignore\n");
 assert.equal(fs.existsSync(path.join(externalGitMetadata, "info", "exclude")), false);
 fs.rmSync(linkedGitWorkspace, { recursive: true, force: true });
 
@@ -127,7 +138,9 @@ const linkedInfoWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-link
 fs.mkdirSync(path.join(linkedInfoWorkspace, ".git"), { recursive: true });
 fs.symlinkSync(externalGitMetadata, path.join(linkedInfoWorkspace, ".git", "info"), process.platform === "win32" ? "junction" : "dir");
 assert.equal(workspaceGitExcludePath(linkedInfoWorkspace), null);
-assert.equal(excludeWorkspaceRoomAttachments(linkedInfoWorkspace), null);
+const linkedInfoFallback = excludeWorkspaceRoomAttachments(linkedInfoWorkspace);
+assert.equal(linkedInfoFallback, path.join(linkedInfoWorkspace, ".sps", "room-attachments", ".gitignore"));
+assert.equal(fs.readFileSync(linkedInfoFallback, "utf8"), "*\n!.gitignore\n");
 assert.equal(fs.existsSync(path.join(externalGitMetadata, "exclude")), false);
 fs.rmSync(linkedInfoWorkspace, { recursive: true, force: true });
 fs.rmSync(externalGitMetadata, { recursive: true, force: true });
