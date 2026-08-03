@@ -7,6 +7,7 @@
   "main": "src/main.mjs",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/ensure-electron-runtime.mjs",
     "sync:desktop-node": "node scripts/sync-local-desktop-node.mjs",
     "docs:candidate": "node scripts/current-candidate-doc.mjs",
     "docs:candidate:check": "node scripts/current-candidate-doc.mjs --check",
