@@ -9,6 +9,8 @@ import {
 } from "../src/worker.mjs";
 
 const DEVICE_ID = "sps-desktop-device-1234";
+const IDEMPOTENCY_KEY = "identity-request-key-1234567890abcdef";
+const SECOND_IDEMPOTENCY_KEY = "identity-request-key-fedcba0987654321";
 const PROFILE = {
   subject: "google-subject",
   email: "person@example.com",
@@ -36,6 +38,7 @@ class FakeD1 {
     this.tables = new Map(Object.entries(seed).map(([name, rows]) => [name, rows.map((row) => ({ ...row }))]));
     this.fail = null;
     this.readBarrier = null;
+    this.batchTail = Promise.resolve();
   }
 
   failWhen(predicate) {
@@ -48,6 +51,10 @@ class FakeD1 {
   }
 
   async batch(statements) {
+    let release;
+    const prior = this.batchTail;
+    this.batchTail = new Promise((resolve) => { release = resolve; });
+    await prior;
     const snapshot = new Map([...this.tables].map(([name, rows]) => [name, rows.map((row) => ({ ...row }))]));
     try {
       const results = [];
@@ -56,6 +63,8 @@ class FakeD1 {
     } catch (reason) {
       this.tables = snapshot;
       throw reason;
+    } finally {
+      release();
     }
   }
 
@@ -95,16 +104,22 @@ class FakeStatement {
 
   async run() {
     this.db.maybeFail(this.sql, "run");
-    const updateMatch = this.sql.match(/UPDATE (\w+) SET consumed_at = \?, replay_key = \? WHERE (\w+) = \?/i);
+    const updateMatch = this.sql.match(/UPDATE (\w+) SET consumed_at = \?, replay_key = \?, consumption_id = \?(?:, family_id = COALESCE\(family_id, \?\))? WHERE (\w+) = \?/i);
     if (updateMatch) {
       const [, table, keyColumn] = updateMatch;
-      const [consumedAt, replayKey, key, deviceId, expiresAt] = this.values;
+      const hasFamily = this.sql.includes("family_id = COALESCE");
+      const [consumedAt, replayKey, consumptionId] = this.values;
+      const familyId = hasFamily ? this.values[3] : null;
+      const valueOffset = hasFamily ? 4 : 3;
+      const [key, deviceId, expiresAt] = this.values.slice(valueOffset);
       let changes = 0;
       for (const row of this.db.rows(table)) {
         if (row[keyColumn] === key && row.device_id === deviceId
           && Number(row.expires_at) === Number(expiresAt) && row.consumed_at == null) {
           row.consumed_at = consumedAt;
           row.replay_key = replayKey;
+          row.consumption_id = consumptionId;
+          if (hasFamily && !row.family_id) row.family_id = familyId;
           changes += 1;
         }
       }
@@ -118,6 +133,7 @@ class FakeStatement {
       const [first, second, third] = this.values;
       const kept = rows.filter((row) => {
         if (this.sql.includes("expires_at <= ?")) return !(Number(row.expires_at) <= Number(first));
+        if (this.sql.includes("family_id = ?")) return row.family_id !== first;
         if (table === "authorization_codes") {
           return this.sql.includes("AND device_id")
             ? !(row.code_hash === first && row.device_id === second && Number(row.expires_at) === Number(third))
@@ -139,21 +155,24 @@ class FakeStatement {
       if (this.sql.includes("SELECT 1 FROM")) {
         const sourceTable = this.sql.match(/SELECT 1 FROM (\w+) WHERE/i)?.[1];
         const sourceKeyColumn = this.sql.match(/WHERE (\w+) = \?/i)?.[1];
-        const source = this.db.rows(sourceTable).find((row) => row[sourceKeyColumn] === this.values[5]
-          && row.device_id === this.values[6]
-          && Number(row.expires_at) === Number(this.values[7])
-          && Number(row.consumed_at) === Number(this.values[this.values.length - 2])
-          && row.replay_key === this.values[this.values.length - 1]);
+        const prefixLength = table === "refresh_tokens" ? 6 : 8;
+        const source = this.db.rows(sourceTable).find((row) => row[sourceKeyColumn] === this.values[prefixLength]
+          && row.device_id === this.values[prefixLength + 1]
+          && Number(row.expires_at) === Number(this.values[prefixLength + 2])
+          && row.consumption_id === this.values[prefixLength + 3]);
         if (!source) return { success: true, meta: { changes: 0 } };
         if (table === "refresh_tokens") {
+          if (this.db.rows(table).some((row) => row.token_hash === this.values[0])) throw new Error("D1 primary key conflict");
           this.db.rows(table).push({
             token_hash: this.values[0], subject: this.values[1], device_id: this.values[2],
-            expires_at: this.values[3], created_at: this.values[4],
+            expires_at: this.values[3], created_at: this.values[4], family_id: this.values[5],
           });
         } else {
+          if (this.db.rows(table).some((row) => row.replay_key === this.values[0])) throw new Error("D1 primary key conflict");
           this.db.rows(table).push({
-            replay_key: this.values[0], request_hash: this.values[1], response_json: this.values[2],
-            expires_at: this.values[3], created_at: this.values[4],
+            replay_key: this.values[0], request_hash: this.values[1], idempotency_key_hash: this.values[2],
+            consumption_id: this.values[3], response_ciphertext: this.values[4], family_id: this.values[5],
+            expires_at: this.values[6], created_at: this.values[7],
           });
         }
         return { success: true, meta: { changes: 1 } };
@@ -190,6 +209,7 @@ function seedRefresh(db, refreshToken = "refresh-token") {
     device_id: DEVICE_ID,
     expires_at: Date.now() + 60_000,
     created_at: Date.now(),
+    family_id: "refresh-family-1234",
   });
   return refreshToken;
 }
@@ -218,7 +238,7 @@ test("rejects malformed desktop device requests before touching identity storage
   assert.match((await response.json()).error, /device ID/i);
 });
 
-test("rotates refresh tokens and safely replays the same response for ten minutes", async () => {
+test("rotates refresh tokens and permits only a nonce-bound short retry", async () => {
   const env = createSigningEnv();
   const db = new FakeD1();
   const worker = createSpsIdentityWorker();
@@ -227,23 +247,27 @@ test("rotates refresh tokens and safely replays the same response for ten minute
   const first = await worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: oldToken,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(first.status, 200);
   const firstBody = await responseBody(first);
   assert.notEqual(firstBody.refresh_token, oldToken);
   const replayRecord = db.rows("identity_replay_results")[0];
   assert.ok(replayRecord.expires_at > Date.now());
-  assert.ok(replayRecord.expires_at <= Date.now() + 10 * 60 * 1000);
+  assert.ok(replayRecord.expires_at <= Date.now() + 60 * 1000);
+  assert.equal(Object.hasOwn(replayRecord, "response_json"), false);
+  assert.doesNotMatch(replayRecord.response_ciphertext, new RegExp(firstBody.refresh_token));
 
   const replay = await worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: oldToken,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(replay.status, 200);
   assert.deepEqual(await responseBody(replay), firstBody);
 });
 
-test("rejects a replay with a different device request while preserving the original response", async () => {
+test("revokes a refresh family when a consumed token is replayed with another nonce", async () => {
   const env = createSigningEnv();
   const db = new FakeD1();
   const worker = createSpsIdentityWorker();
@@ -251,19 +275,19 @@ test("rejects a replay with a different device request while preserving the orig
   const first = await worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: oldToken,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   const firstBody = await responseBody(first);
   const mismatched = await worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: oldToken,
-    device_id: "sps-other-device-5678",
+    device_id: DEVICE_ID,
+    idempotency_key: SECOND_IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(mismatched.status, 401);
-  assert.match((await responseBody(mismatched)).error, /already used/i);
-  const retry = await worker.fetch(request("/v1/desktop/refresh", {
-    refresh_token: oldToken,
-    device_id: DEVICE_ID,
-  }), { ...env, DB: db });
-  assert.deepEqual(await responseBody(retry), firstBody);
+  assert.match((await responseBody(mismatched)).error, /reuse was detected/i);
+  assert.equal(db.rows("refresh_tokens").filter((row) => row.family_id === "refresh-family-1234").length, 0);
+  assert.equal(db.rows("identity_replay_results").length, 0);
+  assert.ok(firstBody.refresh_token);
 });
 
 test("rejects a revoked refresh token", async () => {
@@ -277,6 +301,7 @@ test("rejects a revoked refresh token", async () => {
   const replay = await worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: refreshToken,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(replay.status, 401);
 });
@@ -299,12 +324,14 @@ test("consumes an authorization code once and rejects reuse", async () => {
     code,
     code_verifier: verifier,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(first.status, 200);
   const replay = await worker.fetch(request("/v1/desktop/token", {
     code,
     code_verifier: verifier,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(replay.status, 200);
 });
@@ -319,6 +346,7 @@ test("fails closed when D1 cannot rotate a refresh token", async () => {
   const response = await worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: refreshToken,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(response.status, 500);
   assert.match((await responseBody(response)).error, /could not complete/i);
@@ -327,6 +355,7 @@ test("fails closed when D1 cannot rotate a refresh token", async () => {
   const retry = await worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: refreshToken,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(retry.status, 200);
 });
@@ -350,10 +379,12 @@ test("allows only one concurrent refresh rotation", async () => {
   const firstRequest = worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: refreshToken,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   const secondRequest = worker.fetch(request("/v1/desktop/refresh", {
     refresh_token: refreshToken,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   await bothReadPromise;
   release();
@@ -380,6 +411,7 @@ test("fails closed when D1 cannot consume an authorization code", async () => {
     code,
     code_verifier: verifier,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(response.status, 500);
   assert.match((await responseBody(response)).error, /could not complete/i);
@@ -390,6 +422,7 @@ test("fails closed when D1 cannot consume an authorization code", async () => {
     code,
     code_verifier: verifier,
     device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(retry.status, 200);
 });
@@ -418,7 +451,7 @@ test("allows only one concurrent authorization-code exchange", async () => {
     await gate;
   };
 
-  const body = { code, code_verifier: verifier, device_id: DEVICE_ID };
+  const body = { code, code_verifier: verifier, device_id: DEVICE_ID, idempotency_key: IDEMPOTENCY_KEY };
   const firstRequest = worker.fetch(request("/v1/desktop/token", body), { ...env, DB: db });
   const secondRequest = worker.fetch(request("/v1/desktop/token", body), { ...env, DB: db });
   await bothReadPromise;

@@ -11,7 +11,8 @@ const AUTHORIZATION_CODE_TTL_MS = 5 * 60 * 1000;
 export const SPS_DESKTOP_SIGN_IN_TTL_MS = 15 * 60 * 1000;
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const IDENTITY_REPLAY_TTL_MS = 10 * 60 * 1000;
+const IDENTITY_REPLAY_TTL_MS = 60 * 1000;
+const IDENTITY_REPLAY_ENCRYPTION_CONTEXT = "sps-identity-replay-v1";
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -81,6 +82,10 @@ function validPkceChallenge(value) {
 
 function validDeviceId(value) {
   return /^[A-Za-z0-9._:-]{16,160}$/.test(text(value));
+}
+
+function validIdempotencyKey(value) {
+  return /^[A-Za-z0-9_-]{32,160}$/.test(text(value));
 }
 
 export function isLoopbackRedirectUri(value) {
@@ -270,25 +275,65 @@ async function createTokenPair(env, profile, deviceId) {
   };
 }
 
-function replayResponse(record, requestHash, invalidMessage) {
-  if (!record) return null;
-  if (record.request_hash !== requestHash) return error(invalidMessage, 401);
+async function replayEncryptionKey(env) {
+  const material = new TextEncoder().encode(
+    `${IDENTITY_REPLAY_ENCRYPTION_CONTEXT}\0${requireEnv(env, "SPS_IDENTITY_PRIVATE_KEY_PEM")}`,
+  );
+  const digest = await crypto.subtle.digest("SHA-256", material);
+  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+async function encryptReplayResponse(env, replayKey, value) {
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(iv);
+  const plaintext = new TextEncoder().encode(JSON.stringify(value));
+  const additionalData = new TextEncoder().encode(replayKey);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData },
+    await replayEncryptionKey(env),
+    plaintext,
+  );
+  return `${base64UrlEncode(iv)}.${base64UrlEncode(new Uint8Array(ciphertext))}`;
+}
+
+async function decryptReplayResponse(env, replayKey, value) {
+  const [encodedIv, encodedCiphertext, ...extra] = text(value).split(".");
+  if (!encodedIv || !encodedCiphertext || extra.length) throw new Error("SPS Identity replay record is invalid.");
   try {
-    return json(JSON.parse(record.response_json));
+    const additionalData = new TextEncoder().encode(replayKey);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64UrlDecode(encodedIv), additionalData },
+      await replayEncryptionKey(env),
+      base64UrlDecode(encodedCiphertext),
+    );
+    return JSON.parse(new TextDecoder().decode(plaintext));
   } catch {
-    throw new Error("SPS Identity replay record is invalid.");
+    throw new Error("SPS Identity replay record could not be decrypted.");
   }
 }
 
-async function findReplay(env, replayKey, requestHash, invalidMessage) {
+async function findReplay(env, replayKey) {
   const record = await env.DB.prepare(
-    "SELECT request_hash, response_json, expires_at FROM identity_replay_results WHERE replay_key = ?",
+    "SELECT request_hash, idempotency_key_hash, consumption_id, response_ciphertext, family_id, expires_at FROM identity_replay_results WHERE replay_key = ?",
   ).bind(replayKey).first();
   if (record && Number(record.expires_at) <= Date.now()) {
     await env.DB.prepare("DELETE FROM identity_replay_results WHERE replay_key = ?").bind(replayKey).run();
     return null;
   }
-  return replayResponse(record, requestHash, invalidMessage);
+  return record;
+}
+
+async function replayResult(env, replayKey, requestHash, idempotencyKeyHash) {
+  const record = await findReplay(env, replayKey);
+  if (!record) return { kind: "missing", record: null };
+  if (record.request_hash !== requestHash || record.idempotency_key_hash !== idempotencyKeyHash) {
+    return { kind: "mismatch", record };
+  }
+  return {
+    kind: "response",
+    record,
+    response: json(await decryptReplayResponse(env, replayKey, record.response_ciphertext)),
+  };
 }
 
 async function consumeAndPersistPair(env, {
@@ -299,36 +344,59 @@ async function consumeAndPersistPair(env, {
   sourceExpiresAt,
   replayKey,
   requestHash,
+  idempotencyKeyHash,
+  consumptionId,
+  familyId,
   pair,
   responseExpiresAt,
   now,
 }) {
   const sourcePredicate = `${sourceKeyColumn} = ? AND device_id = ? AND expires_at = ?`;
   const sourceValues = [sourceKey, sourceDeviceId, sourceExpiresAt];
+  const sourceUpdate = sourceTable === "refresh_tokens"
+    ? `UPDATE ${sourceTable} SET consumed_at = ?, replay_key = ?, consumption_id = ?, family_id = COALESCE(family_id, ?) WHERE ${sourcePredicate} AND consumed_at IS NULL`
+    : `UPDATE ${sourceTable} SET consumed_at = ?, replay_key = ?, consumption_id = ? WHERE ${sourcePredicate} AND consumed_at IS NULL`;
+  const sourceUpdateValues = sourceTable === "refresh_tokens"
+    ? [now, replayKey, consumptionId, familyId, ...sourceValues]
+    : [now, replayKey, consumptionId, ...sourceValues];
+  const encryptedResponse = await encryptReplayResponse(env, replayKey, pair.body);
   const results = await env.DB.batch([
+    env.DB.prepare(sourceUpdate).bind(...sourceUpdateValues),
     env.DB.prepare(
-      `UPDATE ${sourceTable} SET consumed_at = ?, replay_key = ? WHERE ${sourcePredicate} AND consumed_at IS NULL`,
-    ).bind(now, replayKey, ...sourceValues),
-    env.DB.prepare(
-      `INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at) `
-      + `SELECT ?, ?, ?, ?, ? WHERE EXISTS (`
-      + `SELECT 1 FROM ${sourceTable} WHERE ${sourcePredicate} AND consumed_at = ? AND replay_key = ?)`,
+      `INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at, family_id) `
+      + `SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (`
+      + `SELECT 1 FROM ${sourceTable} WHERE ${sourcePredicate} AND consumption_id = ?)`,
     ).bind(
-      pair.refreshHash, pair.body.account.subject, sourceDeviceId, pair.refreshExpiresAt, now,
-      ...sourceValues, now, replayKey,
+      pair.refreshHash, pair.body.account.subject, sourceDeviceId, pair.refreshExpiresAt, now, familyId,
+      ...sourceValues, consumptionId,
     ),
     env.DB.prepare(
-      "INSERT INTO identity_replay_results (replay_key, request_hash, response_json, expires_at, created_at) "
-      + `SELECT ?, ?, ?, ?, ? WHERE EXISTS (`
-      + `SELECT 1 FROM ${sourceTable} WHERE ${sourcePredicate} AND consumed_at = ? AND replay_key = ?)`,
+      "INSERT INTO identity_replay_results (replay_key, request_hash, idempotency_key_hash, consumption_id, response_ciphertext, family_id, expires_at, created_at) "
+      + `SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (`
+      + `SELECT 1 FROM ${sourceTable} WHERE ${sourcePredicate} AND consumption_id = ?)`,
     ).bind(
-      replayKey, requestHash, JSON.stringify(pair.body), responseExpiresAt, now,
-      ...sourceValues, now, replayKey,
+      replayKey, requestHash, idempotencyKeyHash, consumptionId, encryptedResponse, familyId, responseExpiresAt, now,
+      ...sourceValues, consumptionId,
     ),
   ]);
-  if (Number(results?.[0]?.meta?.changes ?? 0) === 1) return json(pair.body);
-  return (await findReplay(env, replayKey, requestHash, "SPS credential was already used."))
-    || error("SPS credential was already used.", 401);
+  if (Number(results?.[0]?.meta?.changes ?? 0) === 1) {
+    return { kind: "response", record: null, response: json(pair.body) };
+  }
+  return replayResult(env, replayKey, requestHash, idempotencyKeyHash);
+}
+
+async function revokeRefreshFamily(env, familyId, tokenHash) {
+  if (text(familyId)) {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM refresh_tokens WHERE family_id = ?").bind(familyId),
+      env.DB.prepare("DELETE FROM identity_replay_results WHERE family_id = ?").bind(familyId),
+    ]);
+    return;
+  }
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM refresh_tokens WHERE token_hash = ?").bind(tokenHash),
+    env.DB.prepare("DELETE FROM identity_replay_results WHERE replay_key = ?").bind(`refresh-token:${tokenHash}`),
+  ]);
 }
 
 async function readJson(request) {
@@ -434,15 +502,18 @@ async function token(request, env) {
   const code = text(body.code);
   const verifier = text(body.code_verifier);
   const deviceId = text(body.device_id);
-  if (!code || !verifier || !validDeviceId(deviceId)) {
-    return error("Authorization code, PKCE verifier, and device ID are required.");
+  const idempotencyKey = text(body.idempotency_key);
+  if (!code || !verifier || !validDeviceId(deviceId) || !validIdempotencyKey(idempotencyKey)) {
+    return error("Authorization code, PKCE verifier, device ID, and idempotency key are required.");
   }
   await cleanupExpiredIdentityRecords(env);
   const codeHash = await sha256Base64Url(code);
   const requestHash = await sha256Base64Url(`${deviceId}:${verifier}`);
+  const idempotencyKeyHash = await sha256Base64Url(idempotencyKey);
   const replayKey = `authorization-code:${codeHash}`;
-  const replay = await findReplay(env, replayKey, requestHash, "SPS authorization code was already used.");
-  if (replay) return replay;
+  const replay = await replayResult(env, replayKey, requestHash, idempotencyKeyHash);
+  if (replay.kind === "response") return replay.response;
+  if (replay.kind === "mismatch") return error("SPS authorization code was already used.", 401);
   const record = await env.DB.prepare("SELECT * FROM authorization_codes WHERE code_hash = ?").bind(codeHash).first();
   if (!record) return error("SPS authorization code is invalid or expired.", 401);
   if (Number(record.expires_at) <= Date.now()) {
@@ -466,23 +537,36 @@ async function token(request, env) {
     sourceExpiresAt: record.expires_at,
     replayKey,
     requestHash,
+    idempotencyKeyHash,
+    consumptionId: randomUrlValue(24),
+    familyId: randomUrlValue(24),
     pair,
     responseExpiresAt: Math.min(Number(record.expires_at), consumedAt + IDENTITY_REPLAY_TTL_MS),
     now: consumedAt,
-  });
+  }).then((result) => result.kind === "response"
+    ? result.response
+    : error("SPS authorization code was already used.", 401));
 }
 
 async function refresh(request, env) {
   const body = await readJson(request);
   const refreshToken = text(body.refresh_token);
   const deviceId = text(body.device_id);
-  if (!refreshToken || !validDeviceId(deviceId)) return error("Refresh token and device ID are required.");
+  const idempotencyKey = text(body.idempotency_key);
+  if (!refreshToken || !validDeviceId(deviceId) || !validIdempotencyKey(idempotencyKey)) {
+    return error("Refresh token, device ID, and idempotency key are required.");
+  }
   await cleanupExpiredIdentityRecords(env);
   const hash = await sha256Base64Url(refreshToken);
   const requestHash = await sha256Base64Url(`${deviceId}:${hash}`);
+  const idempotencyKeyHash = await sha256Base64Url(idempotencyKey);
   const replayKey = `refresh-token:${hash}`;
-  const replay = await findReplay(env, replayKey, requestHash, "SPS refresh token was already used.");
-  if (replay) return replay;
+  const replay = await replayResult(env, replayKey, requestHash, idempotencyKeyHash);
+  if (replay.kind === "response") return replay.response;
+  if (replay.kind === "mismatch") {
+    await revokeRefreshFamily(env, replay.record.family_id, hash);
+    return error("SPS refresh token reuse was detected. Sign in again.", 401);
+  }
   const record = await env.DB.prepare("SELECT * FROM refresh_tokens WHERE token_hash = ?").bind(hash).first();
   if (!record) return error("SPS refresh token is invalid or expired.", 401);
   if (Number(record.expires_at) <= Date.now()) {
@@ -490,6 +574,10 @@ async function refresh(request, env) {
     return error("SPS refresh token is invalid or expired.", 401);
   }
   if (record.device_id !== deviceId) return error("SPS refresh token belongs to another device.", 401);
+  if (record.consumed_at != null) {
+    await revokeRefreshFamily(env, record.family_id, hash);
+    return error("SPS refresh token reuse was detected. Sign in again.", 401);
+  }
   const profile = await env.DB.prepare("SELECT * FROM identity_users WHERE subject = ?").bind(record.subject).first();
   if (!profile) return error("SPS account is unavailable.", 401);
   const pair = await createTokenPair(env, {
@@ -499,7 +587,8 @@ async function refresh(request, env) {
     picture: profile.picture || null,
   }, record.device_id);
   const consumedAt = Date.now();
-  return consumeAndPersistPair(env, {
+  const familyId = text(record.family_id) || randomUrlValue(24);
+  const result = await consumeAndPersistPair(env, {
     sourceTable: "refresh_tokens",
     sourceKeyColumn: "token_hash",
     sourceKey: hash,
@@ -507,10 +596,18 @@ async function refresh(request, env) {
     sourceExpiresAt: record.expires_at,
     replayKey,
     requestHash,
+    idempotencyKeyHash,
+    consumptionId: randomUrlValue(24),
+    familyId,
     pair,
     responseExpiresAt: Math.min(Number(record.expires_at), consumedAt + IDENTITY_REPLAY_TTL_MS),
     now: consumedAt,
   });
+  if (result.kind === "response") return result.response;
+  if (result.kind === "mismatch") {
+    await revokeRefreshFamily(env, result.record.family_id || familyId, hash);
+  }
+  return error("SPS refresh token reuse was detected. Sign in again.", 401);
 }
 
 async function revoke(request, env) {
@@ -518,10 +615,8 @@ async function revoke(request, env) {
   const refreshToken = text(body.refresh_token);
   if (refreshToken) {
     const hash = await sha256Base64Url(refreshToken);
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM refresh_tokens WHERE token_hash = ?").bind(hash),
-      env.DB.prepare("DELETE FROM identity_replay_results WHERE replay_key = ?").bind(`refresh-token:${hash}`),
-    ]);
+    const record = await env.DB.prepare("SELECT family_id FROM refresh_tokens WHERE token_hash = ?").bind(hash).first();
+    await revokeRefreshFamily(env, record?.family_id, hash);
   }
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }

@@ -33,9 +33,11 @@ After Wrangler is authenticated, run
 prompts for the Google web-client secret without writing it to a file, uploads
 the RSA key material from the ignored `.secrets/` folder, applies all pending
 D1 migrations, and deploys the Worker. Successful code and refresh exchanges
-retain an idempotent response for at most 10 minutes so a lost Desktop response
-can be retried without keeping plaintext refresh credentials long-term. Finish
-with `npm run verify:deployment`.
+retain an AES-GCM-encrypted response for at most 60 seconds. Desktop retries a
+lost response once with the same high-entropy idempotency key. Reuse with a
+different key revokes the active refresh-token family and requires sign-in
+again. D1 stores refresh-token hashes rather than plaintext refresh tokens.
+Finish with `npm run verify:deployment`.
 
 Never commit the Google secret, RSA private key, D1 database contents, or a
 Desktop refresh token.

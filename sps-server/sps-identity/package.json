@@ -11,6 +11,11 @@
     "dev": "wrangler dev"
   },
   "devDependencies": {
+    "miniflare": "^4.20260730.0",
     "wrangler": "^4.31.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260730.1": true
   }
 }

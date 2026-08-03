@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildSpsIdentityAuthorizationUrl,
+  createSpsIdentityIdempotencyKey,
   createSpsIdentityPkce,
   DEFAULT_SPS_DESKTOP_SIGN_IN_TIMEOUT_MS,
   isExpiredSpsDesktopRefreshToken,
@@ -27,6 +28,10 @@ test("builds a central SPS Identity authorization request with Desktop PKCE", ()
   assert.equal(url.pathname, "/v1/desktop/authorize");
   assert.equal(url.searchParams.get("code_challenge_method"), "S256");
   assert.equal(url.searchParams.get("device_id"), "desktop-device-1234");
+});
+
+test("creates a high-entropy SPS Identity idempotency key", () => {
+  assert.equal(createSpsIdentityIdempotencyKey((size) => Buffer.alloc(size, 9)).length, 43);
 });
 
 test("permits HTTPS identity services and loopback-only HTTP for development", () => {
@@ -67,6 +72,7 @@ test("exchanges a one-time SPS code with its PKCE verifier", async () => {
   assert.equal(requestBody.code, "sps-code");
   assert.equal(requestBody.device_id, "desktop-device-1234");
   assert.match(requestBody.code_verifier, /^[A-Za-z0-9_-]+$/);
+  assert.match(requestBody.idempotency_key, /^[A-Za-z0-9_-]{43}$/);
 });
 
 test("bounds a stalled SPS Identity refresh request", async () => {
@@ -83,4 +89,27 @@ test("bounds a stalled SPS Identity refresh request", async () => {
     }),
     /SPS Identity request timed out/,
   );
+});
+
+test("retries a lost refresh response once with the same idempotency key", async () => {
+  const requests = [];
+  const account = await refreshSpsDesktopIdentity({
+    identityUrl: "https://auth.redongames.com",
+    refreshToken: "refresh-token",
+    deviceId: "desktop-device-1234",
+    randomBytes: (size) => Buffer.alloc(size, 5),
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      if (requests.length === 1) throw new TypeError("response lost");
+      return new Response(JSON.stringify({
+        access_token: "next-access-token",
+        refresh_token: "next-refresh-token",
+        expires_in: 900,
+        account: { subject: "sps-user", email: "person@example.com", name: "SPS Person" },
+      }), { status: 200 });
+    },
+  });
+  assert.equal(account.refreshToken, "next-refresh-token");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].idempotency_key, requests[1].idempotency_key);
 });
