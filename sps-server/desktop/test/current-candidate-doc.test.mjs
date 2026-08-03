@@ -22,7 +22,8 @@ test("renders candidate identity separately from physical test evidence", async 
   const document = renderCurrentCandidateDocument(matrix);
   assert.ok(document.includes(`| SPS Desktop | \`${matrix.candidate.desktopVersion}\` |`));
   assert.match(document, new RegExp(matrix.candidate.core.revision));
-  assert.match(document, /does not claim that physical multi-computer testing/);
+  assert.match(document, /Physical multi-computer evidence must name that same Source revision and tuple/);
+  assert.match(document, /evidence from an older candidate cannot be reused/);
 });
 
 test("check mode rejects a stale generated document", async () => {

@@ -49,7 +49,7 @@ ${extensions}
 
 ## Evidence Boundary
 
-This document identifies the exact source candidate. It does not claim that physical multi-computer testing performed for an older candidate also applies to this one. Candidate-specific test reports must name the same Desktop version and source revisions before they can be used as release evidence.
+This document identifies the supported Desktop, Core, SDK, and extension tuple. The final SPS Source revision is fixed only by the immutable release tag and its generated \`sps-release-manifest.json\`. Physical multi-computer evidence must name that same Source revision and tuple; evidence from an older candidate cannot be reused.
 `;
 }
 
