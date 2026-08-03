@@ -27,6 +27,11 @@ async function jsonRequest(fetchImpl, identityUrl, pathname, body, expectedStatu
 export async function runIdentityStagingSmoke({
   identityUrl,
   database = "sps-identity-staging",
+  databaseId,
+  deploymentId,
+  releaseId,
+  versionId,
+  runOAuthConfigurationSmoke = false,
   sourceRevision,
   fetchImpl = fetch,
   seedAuthorizationCode,
@@ -58,7 +63,18 @@ export async function runIdentityStagingSmoke({
     assert.equal(health.status, "ok");
     assert.equal(health.service, "sps-identity");
     assert.equal(health.source_revision, sourceRevision);
+    if (releaseId) assert.equal(health.release_id, releaseId);
+    if (health.protocol_version !== null && health.protocol_version !== undefined) assert.equal(health.protocol_version, "2");
+    if (health.rollback_floor !== null && health.rollback_floor !== undefined) assert.equal(health.rollback_floor, "bridge-v2");
+    assert.equal(health.rollout_phase, "bridge");
     checks.health = true;
+
+    if (runOAuthConfigurationSmoke) {
+      const oauthResponse = await fetchImpl(new URL("/v1/desktop/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%2Foauth2%2Fcallback&state=smoke&code_challenge=smoke&code_challenge_method=S256&device_id=smoke", `${normalizedIdentityUrl}/`), { redirect: "manual" });
+      assert.equal(oauthResponse.status, 302);
+      assert.match(oauthResponse.headers.get("location") ?? "", /^https:\/\/(accounts\.google\.com|oauth2\.google\.com)\//);
+      checks.oauthConfigurationSmoke = true;
+    }
 
     for (const flow of flows) {
       await seedAuthorizationCode({
@@ -137,8 +153,30 @@ export async function runIdentityStagingSmoke({
       status: "passed",
       identityUrl: normalizedIdentityUrl,
       database,
+      databaseId,
+      databaseName: database,
+      cloudflareDeploymentId: deploymentId,
+      releaseId,
+      versionId,
       sourceRevision,
       replayKeyVersion: health.replay_key_version,
+      protocolVersion: health.protocol_version,
+      rollbackFloor: health.rollback_floor,
+      rolloutPhase: health.rollout_phase,
+      health: {
+        status: health.status,
+        service: health.service,
+        source_revision: health.source_revision,
+        replay_key_version: health.replay_key_version,
+        protocol_version: health.protocol_version,
+        rollback_floor: health.rollback_floor,
+        rollout_phase: health.rollout_phase,
+        release_id: health.release_id,
+        version_id: health.version_id,
+      },
+      directD1ProtocolSmoke: true,
+      oauthConfigurationSmoke: runOAuthConfigurationSmoke,
+      fullOAuthSmoke: false,
       generatedAt,
       checks,
     };
@@ -163,6 +201,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const identityUrl = String(process.env.SPS_IDENTITY_URL ?? "https://auth-staging.redongames.com").replace(/\/$/, "");
   const configPath = String(process.env.SPS_IDENTITY_WRANGLER_CONFIG ?? "wrangler.staging.toml");
   const database = String(process.env.SPS_IDENTITY_D1_DATABASE ?? "sps-identity-staging");
+  const databaseId = String(process.env.SPS_IDENTITY_D1_DATABASE_ID ?? "");
+  const deploymentId = String(process.env.SPS_IDENTITY_DEPLOYMENT_ID ?? "");
+  const releaseId = String(process.env.SPS_IDENTITY_RELEASE_ID ?? "");
+  const versionId = String(process.env.SPS_IDENTITY_VERSION_ID ?? "");
+  if (!databaseId || !deploymentId || !versionId || !releaseId) throw new Error("Staging smoke requires the pinned D1 database ID, Cloudflare deployment ID, SPS release ID, and immutable Worker version ID.");
   const sourceRoot = path.resolve(process.cwd(), "..", "..");
   const sourceRevision = String(process.env.SPS_IDENTITY_SOURCE_REVISION
     ?? execFileSync("git", ["-C", sourceRoot, "rev-parse", "HEAD"], { encoding: "utf8" })).trim();
@@ -200,6 +243,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   await runIdentityStagingSmoke({
     identityUrl,
     database,
+    databaseId,
+    deploymentId,
+    releaseId,
+    versionId,
+    runOAuthConfigurationSmoke: true,
     sourceRevision,
     seedAuthorizationCode,
     cleanup,

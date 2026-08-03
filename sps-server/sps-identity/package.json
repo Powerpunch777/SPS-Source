@@ -9,6 +9,8 @@
     "verify:deployment": "node scripts/verify-deployment.mjs",
     "verify:staging-evidence": "node scripts/validate-staging-evidence.mjs",
     "smoke:staging": "node scripts/smoke-staging.mjs",
+    "smoke:oauth": "node scripts/smoke-oauth-interactive.mjs",
+    "attest:release": "node scripts/create-release-attestation.mjs",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },

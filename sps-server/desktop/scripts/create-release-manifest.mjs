@@ -117,6 +117,10 @@ export async function createSpsReleaseManifest({
         file: `${expectedInstaller}.blockmap`,
         sha256: await sha256(path.join(distRoot, `${expectedInstaller}.blockmap`)),
       },
+      agentRuntimeCatalog: {
+        file: "sps-agent-runtime-packs.json",
+        sha256: await sha256(path.join(distRoot, "sps-agent-runtime-packs.json")),
+      },
       agentRuntimePacks: await runtimePackArtifacts(distRoot),
     },
   };

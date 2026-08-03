@@ -32,6 +32,9 @@ function createSigningEnv() {
     SPS_IDENTITY_PRIVATE_KEY_PEM: privateKey.export({ type: "pkcs8", format: "pem" }),
     SPS_IDENTITY_REPLAY_KEY_VERSION: "v1",
     SPS_IDENTITY_REPLAY_KEY_V1: "identity-test-replay-key-material-32-bytes",
+    SPS_IDENTITY_PROTOCOL_VERSION: "2",
+    SPS_IDENTITY_ROLLBACK_FLOOR: "bridge-v2",
+    SPS_IDENTITY_ROLLOUT_PHASE: "bridge",
   };
 }
 

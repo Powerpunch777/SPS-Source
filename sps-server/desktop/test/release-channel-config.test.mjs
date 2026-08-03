@@ -54,26 +54,37 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(workflow, /GH_TOKEN:\s*\$\{\{ secrets\.SPS_DESKTOP_RELEASES_TOKEN \}\}/);
   assert.match(workflow, /SPS_DESKTOP_RELEASES_TOKEN is required/);
   assert.match(workflow, /tags:\s*\r?\n\s*- "v\*"/);
-  assert.match(workflow, /\$expectedTag = "v\$\(\$manifest\.version\)"/);
+  assert.match(workflow, /name: Prepare SPS Desktop Release/);
   assert.match(workflow, /submodules: recursive/);
   assert.match(workflow, /SPS_SOURCE_READ_TOKEN/);
   assert.match(workflow, /verify:\s*\r?\n\s*uses: \.\/\.github\/workflows\/sps-verify\.yml/);
-  assert.match(workflow, /build-sign-and-publish:\s*\r?\n\s*needs: verify/);
+  assert.match(workflow, /build-sign-and-stage:\s*\r?\n\s*name: Build, sign, and stage immutable Desktop assets/);
   assert.match(workflow, /npm run release:win/);
   assert.match(workflow, /SPS_REQUIRE_CLEAN_RELEASE:\s*"1"/);
   assert.match(workflow, /SPS_RELEASE_STATUS:\s*"stable"/);
-  assert.match(workflow, /Verify physical Host and Member release evidence/);
-  assert.match(workflow, /secrets\.SPS_PHYSICAL_RELEASE_EVIDENCE_JSON/);
-  assert.match(workflow, /SPS_PHYSICAL_EVIDENCE_PATH = \$evidencePath/);
-  assert.match(workflow, /verify-physical-release-evidence\.mjs/);
   assert.match(workflow, /sps-release-manifest\.json/);
-  assert.match(workflow, /SPS-Agent-Runtime-Pack-\*\.zip/);
   assert.match(workflow, /sps-agent-runtime-packs\.json/);
   assert.match(workflow, /Get-AuthenticodeSignature/);
-  assert.match(workflow, /gh release create \$tag --repo \$releaseRepo --target main/);
-  assert.match(workflow, /gh release edit \$tag --repo \$releaseRepo --draft=false --prerelease=false --latest/);
-  assert.doesNotMatch(workflow, /--clobber/);
+  assert.match(workflow, /GitHub did not verify the release tag signature/);
+  assert.match(workflow, /pinned SPS Core revision must be reachable from its main branch/);
+  assert.match(workflow, /verify-release-assets\.mjs/);
+  assert.match(workflow, /gh release create \$tag --repo Powerpunch777\/SPS-Desktop-Releases --draft/);
+  assert.doesNotMatch(workflow, /--draft=false/);
   assert.doesNotMatch(workflow, /GH_TOKEN:\s*\$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+
+  const publishWorkflow = await readFile(
+    path.join(repositoryDirectory, ".github", "workflows", "sps-desktop-publish.yml"),
+    "utf8",
+  );
+  assert.match(publishWorkflow, /workflow_dispatch:/);
+  assert.match(publishWorkflow, /gh release download/);
+  assert.match(publishWorkflow, /ref: \$\{\{ inputs\.tag \}\}/);
+  assert.match(publishWorkflow, /verify-release-assets\.mjs/);
+  assert.match(publishWorkflow, /verify-release-attestation\.mjs/);
+  assert.match(publishWorkflow, /pinned Plugin SDK revision must be reachable from its main branch/);
+  assert.match(publishWorkflow, /gh release edit "\$\{\{ inputs\.tag \}\}" --repo .* --draft=false/);
+  assert.doesNotMatch(publishWorkflow, /electron-builder|npm run release:win/);
+  assert.doesNotMatch(publishWorkflow, /gh release upload|--clobber/);
 });
 
 test("release verification includes every bundled SPS plugin", async () => {

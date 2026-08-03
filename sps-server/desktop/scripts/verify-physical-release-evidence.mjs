@@ -21,9 +21,16 @@ export const REQUIRED_PHYSICAL_SCENARIOS = [
   "networkRecovery",
   "nodeAndRuntimeRevocation",
   "emptyHostRestore",
+  "freshInstall",
+  "previousStableUpgrade",
 ];
 
-export function validatePhysicalReleaseEvidence(evidence, { candidate, sourceRevision }) {
+export function validatePhysicalReleaseEvidence(evidence, {
+  candidate,
+  sourceRevision,
+  now = Date.now(),
+  maxAgeMs = 7 * 24 * 60 * 60 * 1000,
+}) {
   const errors = [];
   if (evidence?.schemaVersion !== 1) errors.push("Physical release evidence schemaVersion must be 1.");
   if (evidence?.candidate?.desktopVersion !== candidate.desktopVersion) {
@@ -38,9 +45,15 @@ export function validatePhysicalReleaseEvidence(evidence, { candidate, sourceRev
   if (!GIT_REVISION.test(sourceRevision) || evidence?.candidate?.sourceRevision !== sourceRevision) {
     errors.push("Physical release evidence source revision does not match the release commit.");
   }
-  if (!Number.isFinite(Date.parse(evidence?.completedAt ?? ""))) {
+  const completedAt = Date.parse(evidence?.completedAt ?? "");
+  if (!Number.isFinite(completedAt) || completedAt > now + 5 * 60 * 1000 || now - completedAt > maxAgeMs) {
     errors.push("Physical release evidence requires a valid completedAt timestamp.");
   }
+  const installer = evidence?.installer;
+  if (installer?.version !== candidate.desktopVersion) errors.push("Physical evidence installer version does not match the candidate.");
+  if (!Number.isSafeInteger(installer?.sizeBytes) || installer.sizeBytes <= 0) errors.push("Physical evidence requires the final installer size.");
+  if (!SHA256.test(installer?.sha256 ?? "")) errors.push("Physical evidence requires the final installer SHA-256.");
+  if (installer?.signatureStatus !== "Valid") errors.push("Physical evidence requires a valid Windows Authenticode signature.");
   const hostFingerprint = evidence?.devices?.hostFingerprint;
   const memberFingerprint = evidence?.devices?.memberFingerprint;
   if (!SHA256.test(hostFingerprint ?? "") || !SHA256.test(memberFingerprint ?? "")) {
@@ -107,7 +120,7 @@ async function gitRevision() {
   return stdout.trim();
 }
 
-export async function verifyPhysicalReleaseEvidence({ evidencePath, sourceRevision } = {}) {
+export async function verifyPhysicalReleaseEvidence({ evidencePath, sourceRevision, installerPath } = {}) {
   const matrix = JSON.parse(await readFile(path.join(spsServerRoot, "release", "support-matrix.json"), "utf8"));
   const candidate = matrix.candidate;
   const resolvedSourceRevision = sourceRevision
@@ -127,6 +140,21 @@ export async function verifyPhysicalReleaseEvidence({ evidencePath, sourceRevisi
     throw error;
   }
   const errors = validatePhysicalReleaseEvidence(evidence, { candidate, sourceRevision: resolvedSourceRevision });
+  const resolvedInstallerPath = installerPath ?? process.env.SPS_FINAL_INSTALLER_PATH?.trim();
+  if (resolvedInstallerPath) {
+    let installer;
+    try { installer = await readFile(resolvedInstallerPath); } catch { throw new Error(`Final installer is missing: ${resolvedInstallerPath}`); }
+    const actualSha256 = createHash("sha256").update(installer).digest("hex");
+    if (evidence.installer?.sizeBytes !== installer.length || evidence.installer?.sha256 !== actualSha256) {
+      errors.push("Physical evidence does not describe the exact installer bytes being released.");
+    }
+    const escapedPath = resolvedInstallerPath.replaceAll("'", "''");
+    const { stdout: signatureStatus } = await execFileAsync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-Command",
+      `(Get-AuthenticodeSignature -LiteralPath '${escapedPath}').Status`,
+    ], { windowsHide: true });
+    if (signatureStatus.trim() !== "Valid") errors.push("The final installer Authenticode signature is not Valid.");
+  }
   if (errors.length > 0) throw new Error(errors.join("\n"));
   return resolvedEvidencePath;
 }

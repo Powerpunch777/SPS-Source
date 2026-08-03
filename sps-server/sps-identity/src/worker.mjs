@@ -658,6 +658,12 @@ export function createSpsIdentityWorker({ fetchImpl = fetch } = {}) {
             service: "sps-identity",
             replay_key_version: replayKey.activeVersion,
             source_revision: text(env.SPS_IDENTITY_SOURCE_REVISION) || null,
+            deployment_id: text(env.SPS_IDENTITY_DEPLOYMENT_ID) || null,
+            version_id: text(env.SPS_IDENTITY_VERSION_ID) || null,
+            release_id: text(env.SPS_IDENTITY_RELEASE_ID) || null,
+            protocol_version: text(env.SPS_IDENTITY_PROTOCOL_VERSION) || null,
+            rollback_floor: text(env.SPS_IDENTITY_ROLLBACK_FLOOR) || null,
+            rollout_phase: text(env.SPS_IDENTITY_ROLLOUT_PHASE) || null,
           });
         }
         if (request.method === "GET" && url.pathname === "/.well-known/jwks.json") {

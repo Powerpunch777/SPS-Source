@@ -16,6 +16,9 @@ export function isExpiredSpsDesktopRefreshToken(error) {
     "refresh_token_expired",
     "refresh_token_reused",
     "legacy_refresh_token",
+    "device_mismatch",
+    "refresh_token_device_mismatch",
+    "account_unavailable",
   ].includes(code)) return true;
   const message = error instanceof Error ? error.message : String(error ?? "");
   return /(?:refresh[\s_-]*token).*(?:invalid|expired)|(?:invalid|expired).*(?:refresh[\s_-]*token)/i.test(message);

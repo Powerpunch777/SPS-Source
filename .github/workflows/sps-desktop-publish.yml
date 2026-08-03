@@ -1,0 +1,113 @@
+name: Publish SPS Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft tag prepared by Prepare SPS Desktop Release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-publish:
+    runs-on: windows-latest
+    environment: sps-production
+    env:
+      GH_TOKEN: ${{ secrets.SPS_DESKTOP_RELEASES_TOKEN }}
+      SOURCE_GITHUB_TOKEN: ${{ github.token }}
+      SPS_IDENTITY_RELEASE_ATTESTATION_JSON: ${{ secrets.SPS_IDENTITY_RELEASE_ATTESTATION_JSON }}
+      SPS_PHYSICAL_RELEASE_EVIDENCE_JSON: ${{ secrets.SPS_PHYSICAL_RELEASE_EVIDENCE_JSON }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.SPS_CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.SPS_CLOUDFLARE_ACCOUNT_ID }}
+      SPS_IDENTITY_EXPECTED_PRODUCTION_DEPLOYMENT_ID: ${{ secrets.SPS_IDENTITY_EXPECTED_PRODUCTION_DEPLOYMENT_ID }}
+      SPS_IDENTITY_EXPECTED_PRODUCTION_VERSION_ID: ${{ secrets.SPS_IDENTITY_EXPECTED_PRODUCTION_VERSION_ID }}
+      SPS_IDENTITY_EXPECTED_STAGING_DEPLOYMENT_ID: ${{ secrets.SPS_IDENTITY_EXPECTED_STAGING_DEPLOYMENT_ID }}
+      SPS_IDENTITY_EXPECTED_STAGING_VERSION_ID: ${{ secrets.SPS_IDENTITY_EXPECTED_STAGING_VERSION_ID }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sps-server/sps-identity/package-lock.json
+
+      - name: Require exact release inputs and protected secrets
+        shell: pwsh
+        run: |
+          if ($env:SPS_IDENTITY_RELEASE_ATTESTATION_JSON.Length -eq 0) { throw "Identity attestation secret is required." }
+          if ($env:SPS_PHYSICAL_RELEASE_EVIDENCE_JSON.Length -eq 0) { throw "Physical evidence secret is required." }
+          if ($env:CLOUDFLARE_API_TOKEN.Length -eq 0 -or $env:CLOUDFLARE_ACCOUNT_ID.Length -eq 0) { throw "Cloudflare verification credentials are required." }
+          if ($env:SPS_IDENTITY_EXPECTED_PRODUCTION_DEPLOYMENT_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_PRODUCTION_VERSION_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_STAGING_DEPLOYMENT_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_STAGING_VERSION_ID.Length -eq 0) { throw "Exact Identity deployment/version IDs are required." }
+          if ("${{ inputs.tag }}" -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "The publish tag is invalid." }
+          if ($env:GITHUB_REF_TYPE -eq "branch") { Write-Output "workflow_dispatch uses an explicit tag checkout below." }
+          $tagCommit = (git rev-list -n 1 "${{ inputs.tag }}").Trim()
+          if ($tagCommit -ne (git rev-parse HEAD).Trim()) { throw "The checked-out Source revision does not match the release tag." }
+          git fetch origin main
+          git merge-base --is-ancestor origin/main $tagCommit
+          if ($LASTEXITCODE -ne 0) { throw "Release tags must descend from origin/main." }
+          if ((git -C external/sps-core rev-parse --is-shallow-repository).Trim() -eq "true") { git -C external/sps-core fetch --unshallow origin main } else { git -C external/sps-core fetch origin main }
+          git -C external/sps-core merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw "The pinned SPS Core revision must be reachable from its main branch." }
+          if ((git -C external/sps-plugin-sdk rev-parse --is-shallow-repository).Trim() -eq "true") { git -C external/sps-plugin-sdk fetch --unshallow origin main } else { git -C external/sps-plugin-sdk fetch origin main }
+          git -C external/sps-plugin-sdk merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw "The pinned Plugin SDK revision must be reachable from its main branch." }
+          $headers = @{ Authorization = "Bearer $env:SOURCE_GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
+          $tagRef = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/ref/tags/${{ inputs.tag }}"
+          if ($tagRef.object.type -ne "tag") { throw "Stable releases require a signed annotated Git tag." }
+          $tagObject = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/tags/$($tagRef.object.sha)"
+          if ($tagObject.verification.verified -ne $true) { throw "GitHub did not verify the release tag signature." }
+
+      - name: Download the existing draft assets without rebuilding
+        shell: pwsh
+        run: |
+          $draft = gh release view "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --json isDraft,tagName | ConvertFrom-Json
+          if (-not $draft.isDraft -or $draft.tagName -ne "${{ inputs.tag }}") { throw "The requested immutable draft release is unavailable." }
+          gh release download "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --dir release-assets
+          if ($LASTEXITCODE -ne 0) { throw "Could not download the immutable draft assets." }
+
+      - name: Verify the immutable draft manifest, hashes, and signature
+        shell: pwsh
+        run: |
+          $env:SPS_RELEASE_ASSETS_DIRECTORY = (Resolve-Path "release-assets").Path
+          $env:SPS_SOURCE_REVISION = (git rev-parse HEAD).Trim()
+          node sps-server/desktop/scripts/verify-release-assets.mjs
+
+      - name: Verify physical Host and Member evidence against the exact downloaded installer
+        shell: pwsh
+        run: |
+          $path = Join-Path $PWD "physical-evidence.json"
+          [IO.File]::WriteAllText($path, $env:SPS_PHYSICAL_RELEASE_EVIDENCE_JSON, [Text.UTF8Encoding]::new($false))
+          $manifest = Get-Content -Raw -Encoding utf8 "release-assets/sps-release-manifest.json" | ConvertFrom-Json
+          $installer = Get-Item (Join-Path "release-assets" $manifest.artifacts.installer.file)
+          if (-not $installer) { throw "Draft release installer is missing." }
+          $env:SPS_PHYSICAL_EVIDENCE_PATH = $path
+          $env:SPS_FINAL_INSTALLER_PATH = $installer.FullName
+          node sps-server/desktop/scripts/verify-physical-release-evidence.mjs
+
+      - name: Verify production Identity remotely and require full OAuth evidence
+        shell: pwsh
+        working-directory: sps-server/sps-identity
+        run: |
+          npm ci
+          $attestation = Join-Path $env:RUNNER_TEMP "identity-attestation.json"
+          [IO.File]::WriteAllText($attestation, $env:SPS_IDENTITY_RELEASE_ATTESTATION_JSON, [Text.UTF8Encoding]::new($false))
+          $env:SPS_IDENTITY_ATTESTATION_PATH = $attestation
+          $env:SPS_IDENTITY_EXPECTED_SOURCE_SHA = (git -C ..\.. rev-parse HEAD).Trim()
+          node scripts/verify-release-attestation.mjs $attestation
+
+      - name: Publish the same downloaded bytes
+        shell: pwsh
+        run: |
+          $draft = gh release view "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --json isDraft | ConvertFrom-Json
+          if (-not $draft.isDraft) { throw "The release is no longer a draft; refusing to republish." }
+          gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish the verified immutable draft." }

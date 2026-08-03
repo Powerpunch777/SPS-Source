@@ -25,6 +25,12 @@ function validEvidence() {
       pluginSdkRevision: candidate.pluginSdk.revision,
     },
     completedAt: "2026-08-02T00:00:00.000Z",
+    installer: {
+      version: candidate.desktopVersion,
+      sizeBytes: 12345,
+      sha256: "6".repeat(64),
+      signatureStatus: "Valid",
+    },
     devices: {
       hostFingerprint: "4".repeat(64),
       memberFingerprint: "5".repeat(64),
@@ -42,8 +48,10 @@ function validEvidence() {
   };
 }
 
+const verificationNow = Date.parse("2026-08-03T00:00:00.000Z");
+
 test("accepts candidate-specific evidence from two physical devices", () => {
-  assert.deepEqual(validatePhysicalReleaseEvidence(validEvidence(), { candidate, sourceRevision }), []);
+  assert.deepEqual(validatePhysicalReleaseEvidence(validEvidence(), { candidate, sourceRevision, now: verificationNow }), []);
 });
 
 test("rejects checkbox-only, stale, or single-device release evidence", () => {
@@ -52,7 +60,7 @@ test("rejects checkbox-only, stale, or single-device release evidence", () => {
   evidence.devices.memberFingerprint = evidence.devices.hostFingerprint;
   evidence.artifacts[0].sha256 = "0".repeat(64);
   evidence.scenarios.networkRecovery.artifactNames = [];
-  const errors = validatePhysicalReleaseEvidence(evidence, { candidate, sourceRevision });
+  const errors = validatePhysicalReleaseEvidence(evidence, { candidate, sourceRevision, now: verificationNow });
   assert.ok(errors.some((error) => error.includes("Core revision")));
   assert.ok(errors.some((error) => error.includes("two distinct devices")));
   assert.ok(errors.some((error) => error.includes("does not match its SHA-256")));
@@ -64,6 +72,6 @@ test("keeps embedded evidence below the Windows secret environment limit", () =>
   const oversizedContent = Buffer.alloc((12 * 1024) + 1, "A");
   evidence.artifacts[0].contentBase64 = oversizedContent.toString("base64");
   evidence.artifacts[0].sha256 = createHash("sha256").update(oversizedContent).digest("hex");
-  const errors = validatePhysicalReleaseEvidence(evidence, { candidate, sourceRevision });
+  const errors = validatePhysicalReleaseEvidence(evidence, { candidate, sourceRevision, now: verificationNow });
   assert.ok(errors.some((error) => error.includes("12288 bytes")));
 });
