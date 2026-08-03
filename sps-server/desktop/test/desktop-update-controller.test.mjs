@@ -6,7 +6,7 @@ import { createSpsDesktopUpdateController } from "../src/desktop-update-controll
 function app({ packaged = true } = {}) {
   return {
     isPackaged: packaged,
-    getVersion: () => "0.4.111",
+    getVersion: () => "0.4.112",
   };
 }
 
@@ -55,8 +55,8 @@ test("owns update status and preserves safe install shutdown order", async () =>
   });
 
   await controller.initialize();
-  autoUpdater.emit("update-available", { version: "0.4.112" });
-  autoUpdater.emit("update-downloaded", { version: "0.4.112" });
+  autoUpdater.emit("update-available", { version: "0.4.113" });
+  autoUpdater.emit("update-downloaded", { version: "0.4.113" });
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(controller.getStatus().state, "ready");

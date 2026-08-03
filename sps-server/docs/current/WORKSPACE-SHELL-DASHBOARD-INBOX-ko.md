@@ -243,7 +243,7 @@ SPS는 다음 구현 자산을 재사용한다.
 - SPS Desktop `0.4.95`
 - 공개 SDK `@sonparkserver/plugin-sdk` `0.4.0`
 - Plugin Discovery & Builder `0.3.3`
-- SPS Team Workplane `0.3.91`
+- SPS Team Workplane `0.3.92`
 
 검증 결과는 다음과 같다.
 

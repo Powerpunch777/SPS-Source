@@ -40,6 +40,11 @@ jobs:
       - name: Typecheck SPS Core server
         run: pnpm --filter @paperclipai/server run typecheck
 
+      - name: Enforce SPS compatibility namespace
+        run: |
+          pnpm check:sps-compat-boundary
+          pnpm test:sps-compat-boundary
+
       - name: Test SPS-branded first-admin setup
         run: pnpm --filter @paperclipai/ui exec vitest run src/App.test.tsx
 
@@ -63,6 +68,11 @@ jobs:
 
       - name: Build the SPS browser UI
         run: pnpm --filter @paperclipai/ui run build
+
+      - name: Enforce SPS browser entry bundle budget
+        run: |
+          pnpm check:sps-ui-bundle
+          pnpm test:sps-ui-bundle
 
   room-plugin:
     name: SPS Room workplane

@@ -36,7 +36,7 @@ Use this shape:
 {
   "schemaVersion": 1,
   "candidate": {
-    "desktopVersion": "0.4.111",
+    "desktopVersion": "0.4.112",
     "sourceRevision": "<40-character Git revision>",
     "coreRevision": "<40-character Git revision>",
     "pluginSdkRevision": "<40-character Git revision>"

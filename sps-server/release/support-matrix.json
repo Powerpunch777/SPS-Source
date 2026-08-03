@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "candidate": {
     "status": "development-candidate",
-    "desktopVersion": "0.4.111",
+    "desktopVersion": "0.4.112",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
-      "revision": "d4f28188ce4b11eed09c1b3ed7c0dcbf4e911632"
+      "revision": "08ed7d71f53e120b7617a1e9e9176f02b9756c9b"
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",
@@ -51,7 +51,7 @@
       {
         "id": "local.room-chat",
         "package": "sps-room-chat",
-        "version": "0.3.91",
+        "version": "0.3.92",
         "profile": "1.0",
         "pluginApi": 1
       }

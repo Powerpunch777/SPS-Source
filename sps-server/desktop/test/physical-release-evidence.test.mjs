@@ -8,7 +8,7 @@ import {
 
 const sourceRevision = "1".repeat(40);
 const candidate = {
-  desktopVersion: "0.4.111",
+  desktopVersion: "0.4.112",
   core: { revision: "2".repeat(40) },
   pluginSdk: { revision: "3".repeat(40) },
 };

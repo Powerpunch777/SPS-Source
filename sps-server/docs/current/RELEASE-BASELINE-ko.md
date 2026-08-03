@@ -1,6 +1,6 @@
 # SPS Desktop 배포 기준
 
-최종 갱신: 2026-08-02
+최종 갱신: 2026-08-03
 
 기계가 읽는 후보 기준은
 [`../../release/support-matrix.json`](../../release/support-matrix.json)이며,
@@ -15,8 +15,8 @@
 | 항목 | 값 |
 | --- | --- |
 | 상태 | `development-candidate` |
-| SPS Desktop | `0.4.111` |
-| SPS Core | `d4f28188ce4b11eed09c1b3ed7c0dcbf4e911632` |
+| SPS Desktop | `0.4.112` |
+| SPS Core | `08ed7d71f53e120b7617a1e9e9176f02b9756c9b` |
 | Plugin SDK | `@sonparkserver/plugin-sdk@0.11.0` |
 | Plugin API | `1` |
 | Extension Profile | `1.0`, `2.0` |
@@ -43,7 +43,8 @@ blockmap, `latest.yml`, 릴리스 manifest와 Agent Runtime Pack 목록은 동�
 
 재사용 워크플로 `.github/workflows/sps-verify.yml`이 모두 통과해야 한다.
 
-- SPS Core 타입 검사, 인증·Node·Marketplace 경계, UI production build
+- SPS Core 타입 검사, 인증·Node·Marketplace 경계, Paperclip 호환 계층 검사,
+  UI production build와 초기 번들 예산 검사
 - Public Plugin SDK와 모든 번들 플러그인 검사
 - SPS Desktop과 Desktop Node 테스트
 - 실제 Electron을 실행하는 네 Windows E2E
@@ -79,13 +80,20 @@ blockmap, `latest.yml`, 릴리스 manifest와 Agent Runtime Pack 목록은 동�
   버전으로 게시한다.
 - 이미 존재하는 stable 태그는 수정하지 않고 새 버전을 만든다.
 
-## 현재 0.4.111의 증거 상태
+## 현재 0.4.112의 증거 상태
 
-2026-08-02 로컬 검증에서 Desktop 테스트 `296/296`, 후보 패키징, 그리고
-네 Electron E2E가 통과했다. 이 결과는 자동 경로가 동작한다는 개발 증거다.
+2026-08-03 로컬 검증에서 Desktop `306/306`, Desktop Node `39/39`,
+Public Plugin SDK `146/146`, Team Workplane 전체 검사와 Core SPS 경계·타입·
+production UI build가 통과했다. Core UI 초기 진입 번들은 `1,316,112` bytes로
+`1,500,000` bytes 예산 안에 있다.
+
+Core upstream 전체 테스트는 Windows 명령줄 배치 실행까지 가능해졌지만,
+Unix `sh`와 실행 권한을 가정하는 기존 Paperclip 테스트 20개가 Windows에서
+실패한다. 이 항목은 SPS 후보 통과로 간주하지 않으며 upstream 호환성 부채로
+기록한다. SPS가 소유한 Core 경계 검사는 별도로 모두 통과했다.
 
 아직 같은 최종 Source revision을 사용한 Host/Member 물리 2대 증거와
-Windows 코드 서명 결과가 없으므로 `0.4.111`은 계속
+Windows 코드 서명 결과가 없으므로 `0.4.112`는 계속
 `development-candidate`다. GitHub Actions 실행도 계정 결제 또는 spending
 limit 문제로 runner가 시작되지 않으면 통과로 간주하지 않는다.
 

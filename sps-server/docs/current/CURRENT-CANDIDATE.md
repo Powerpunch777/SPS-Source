@@ -7,8 +7,8 @@
 | Item | Value |
 | --- | --- |
 | Status | `development-candidate` |
-| SPS Desktop | `0.4.111` |
-| SPS Core | [`d4f28188ce4b11eed09c1b3ed7c0dcbf4e911632`](https://github.com/Powerpunch777/SPS-Core/commit/d4f28188ce4b11eed09c1b3ed7c0dcbf4e911632) |
+| SPS Desktop | `0.4.112` |
+| SPS Core | [`08ed7d71f53e120b7617a1e9e9176f02b9756c9b`](https://github.com/Powerpunch777/SPS-Core/commit/08ed7d71f53e120b7617a1e9e9176f02b9756c9b) |
 | Plugin SDK | `@sonparkserver/plugin-sdk@0.11.0` ([`4e23934dd0164132b9ba6d637d7687e97ad27f86`](https://github.com/Powerpunch777/sps-plugin-sdk/commit/4e23934dd0164132b9ba6d637d7687e97ad27f86)) |
 | Extension profiles | `1.0`, `2.0` |
 | Plugin API | `1` |
@@ -22,7 +22,7 @@
 | --- | --- | --- | --- |
 | `sps.default-memory` | `0.1.0` | `1.0` | `1` |
 | `sps.plugin-discovery` | `0.4.0` | `2.0` | `1` |
-| `local.room-chat` | `0.3.91` | `1.0` | `1` |
+| `local.room-chat` | `0.3.92` | `1.0` | `1` |
 
 ## Evidence Boundary
 
