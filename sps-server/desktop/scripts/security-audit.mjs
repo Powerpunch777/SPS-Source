@@ -99,16 +99,93 @@ export function findingsFromPnpmAudit(report, source = "core") {
   }));
 }
 
-function validatePolicy(policy) {
-  if (policy?.schemaVersion !== 2) throw new Error("Security audit policy schemaVersion must be 2.");
-  if (!Array.isArray(policy.blockSeverities) || policy.blockSeverities.length === 0) {
-    throw new Error("Security audit policy must define blocked severities.");
+const allowedSeverities = new Set(["critical", "high", "moderate", "low", "info"]);
+
+function policyIdentity(entry) {
+  return `${entry.source}\u0000${entry.advisoryId}\u0000${entry.module}`;
+}
+
+function requireNonEmptyString(value, field, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${label}.${field} must be a non-empty string.`);
   }
-  if (!Array.isArray(policy.reviewSeverities) || policy.reviewSeverities.length === 0) {
-    throw new Error("Security audit policy must define reviewed severities.");
+}
+
+function requireStrictDate(value, field, label) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${label}.${field} must use YYYY-MM-DD.`);
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+  ) {
+    throw new Error(`${label}.${field} is not a valid calendar date.`);
+  }
+}
+
+function validateSeverityList(value, field) {
+  if (!Array.isArray(value) || value.length === 0 || value.some((severity) => (
+    typeof severity !== "string" || !allowedSeverities.has(severity)
+  ))) {
+    throw new Error(`Security audit policy ${field} must contain only known severities.`);
+  }
+  if (new Set(value).size !== value.length) {
+    throw new Error(`Security audit policy ${field} must not contain duplicate severities.`);
+  }
+  return new Set(value);
+}
+
+function validatePolicyEntries(entries, label, allowedSeveritySet) {
+  const identities = new Set();
+  for (const [index, entry] of entries.entries()) {
+    const entryLabel = `${label}[${index}]`;
+    if (!isRecord(entry)) throw new Error(`${entryLabel} must be an object.`);
+    for (const field of ["source", "advisoryId", "module", "severity", "reason"]) {
+      requireNonEmptyString(entry[field], field, entryLabel);
+    }
+    if (!allowedSeverities.has(entry.severity)) {
+      throw new Error(`${entryLabel}.severity is not a known severity.`);
+    }
+    if (!allowedSeveritySet.has(entry.severity)) {
+      throw new Error(`${entryLabel}.severity conflicts with its policy severity list.`);
+    }
+    requireStrictDate(entry.reviewedOn, "reviewedOn", entryLabel);
+    requireStrictDate(entry.expiresOn, "expiresOn", entryLabel);
+    if (entry.reviewedOn > entry.expiresOn) {
+      throw new Error(`${entryLabel}.reviewedOn must not be after expiresOn.`);
+    }
+    const identity = policyIdentity(entry);
+    if (identities.has(identity)) {
+      throw new Error(`${entryLabel} duplicates policy identity ${identity.replaceAll("\u0000", ":")}.`);
+    }
+    identities.add(identity);
+  }
+  return identities;
+}
+
+function validatePolicy(policy) {
+  if (!isRecord(policy) || policy.schemaVersion !== 2) {
+    throw new Error("Security audit policy schemaVersion must be 2.");
   }
   if (!Array.isArray(policy.exceptions)) throw new Error("Security audit policy exceptions must be an array.");
   if (!Array.isArray(policy.reviews)) throw new Error("Security audit policy reviews must be an array.");
+  const blockedSeverities = validateSeverityList(policy.blockSeverities, "blockSeverities");
+  const reviewSeverities = validateSeverityList(policy.reviewSeverities, "reviewSeverities");
+  for (const severity of blockedSeverities) {
+    if (reviewSeverities.has(severity)) {
+      throw new Error(`Security audit policy severity ${severity} cannot be both blocked and reviewed.`);
+    }
+  }
+  const exceptionIdentities = validatePolicyEntries(policy.exceptions, "exceptions", blockedSeverities);
+  const reviewIdentities = validatePolicyEntries(policy.reviews, "reviews", reviewSeverities);
+  for (const identity of exceptionIdentities) {
+    if (reviewIdentities.has(identity)) {
+      throw new Error(`Security audit policy identity ${identity.replaceAll("\u0000", ":")} cannot be both an exception and a review.`);
+    }
+  }
 }
 
 function matchingPolicyEntry(entries, finding) {
@@ -121,9 +198,9 @@ function matchingPolicyEntry(entries, finding) {
 }
 
 function expiryRejection(entry, now, label) {
-  const expiresAt = Date.parse(`${entry.expiresOn}T23:59:59.999Z`);
-  if (!Number.isFinite(expiresAt)) return `${label} has an invalid expiry date`;
-  if (expiresAt < now.getTime()) return `${label} expired on ${entry.expiresOn}`;
+  const today = now.toISOString().slice(0, 10);
+  if (entry.reviewedOn > today) return `${label} is not active until ${entry.reviewedOn}`;
+  if (entry.expiresOn < today) return `${label} expired on ${entry.expiresOn}`;
   return null;
 }
 

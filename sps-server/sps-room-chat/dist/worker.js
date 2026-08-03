@@ -13348,10 +13348,16 @@ function terminalRoomJobPatchFromState(job, state) {
 }
 
 // src/room-attachments.js
+import { randomUUID as randomUUID2 } from "node:crypto";
 import fs2 from "node:fs";
 import os from "node:os";
 import path3 from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 var ROOM_ATTACHMENT_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1e3;
+var DEFAULT_ROOM_ATTACHMENT_MAX_FILE_BYTES = 100 * 1024 * 1024;
+var DEFAULT_ROOM_ATTACHMENT_MAX_REQUEST_BYTES = 512 * 1024 * 1024;
+var SAFE_ATTACHMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,159}$/;
 var ROOM_RESPONSE_CONTRACT = [
   "SYSTEM-PROVIDED ROOM RESPONSE CONTRACT:",
   "- When the current request asks to show or preview an existing Workspace image, the final response must embed at least one relevant image with Markdown image syntax and a verified absolute local path.",
@@ -13406,18 +13412,30 @@ function roomAttachmentName(attachment) {
 }
 function safeAttachmentFilename(filename) {
   const basename = path3.basename(String(filename || "attachment"));
-  const cleaned = basename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().slice(0, 120);
-  return cleaned || "attachment";
+  let cleaned = basename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().slice(0, 120);
+  cleaned = cleaned.replace(/[. ]+$/g, "");
+  if (!cleaned || cleaned === "." || cleaned === "..") return "attachment";
+  if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(cleaned)) cleaned = `_${cleaned}`;
+  return cleaned;
 }
-function safeAttachmentPathSegment(value) {
-  return String(value || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "unknown";
+function safeAttachmentPathSegment(value, label = "Attachment id") {
+  const segment = String(value || "").trim();
+  if (!SAFE_ATTACHMENT_ID.test(segment)) {
+    throw new Error(`${label} must contain only letters, numbers, underscores, or hyphens.`);
+  }
+  return segment;
 }
 function attachmentContentPath2(attachment) {
   const contentPath = textParam4(attachment, "contentPath");
   return contentPath || `/api/attachments/${encodeURIComponent(textParam4(attachment, "id"))}/content`;
 }
 function roomAttachmentContentUrl(apiUrl, attachment, loopbackSPSApiUrl2) {
-  return new URL(attachmentContentPath2(attachment), `${loopbackSPSApiUrl2(apiUrl)}/`).toString();
+  const base = new URL(`${loopbackSPSApiUrl2(apiUrl)}/`);
+  const contentUrl = new URL(attachmentContentPath2(attachment), base);
+  if (contentUrl.origin !== base.origin || !contentUrl.pathname.startsWith("/api/attachments/")) {
+    throw new Error("The SPS attachment content URL must stay on the local SPS attachment API.");
+  }
+  return contentUrl.toString();
 }
 function isCodexImageAttachment(attachment) {
   const contentType = textParam4(attachment, "contentType").toLowerCase();
@@ -13440,6 +13458,88 @@ function roomAttachmentWorkspaceRoot(workingDirectory) {
     throw new Error("The Room attachment staging path must stay inside the selected Project Workspace.");
   }
   return attachmentRoot;
+}
+function positiveByteLimit(name, fallback) {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer byte count.`);
+  }
+  return value;
+}
+function roomAttachmentByteLimits() {
+  return {
+    maxFileBytes: positiveByteLimit("SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES", DEFAULT_ROOM_ATTACHMENT_MAX_FILE_BYTES),
+    maxRequestBytes: positiveByteLimit("SPS_ROOM_ATTACHMENT_MAX_REQUEST_BYTES", DEFAULT_ROOM_ATTACHMENT_MAX_REQUEST_BYTES)
+  };
+}
+function pathIsContained(root, candidate) {
+  const relative = path3.relative(root, candidate);
+  return relative === "" || !relative.startsWith(`..${path3.sep}`) && relative !== ".." && !path3.isAbsolute(relative);
+}
+function realpath(target) {
+  return fs2.realpathSync.native ? fs2.realpathSync.native(target) : fs2.realpathSync(target);
+}
+function ensureDirectoryTreeWithoutLinks(workspaceRoot, targetDirectory) {
+  const resolvedRoot = path3.resolve(workspaceRoot);
+  const resolvedTarget = path3.resolve(targetDirectory);
+  if (!pathIsContained(resolvedRoot, resolvedTarget)) {
+    throw new Error("The Room attachment staging directory escaped the selected Project Workspace.");
+  }
+  const rootStats = fs2.lstatSync(resolvedRoot);
+  if (!rootStats.isDirectory()) throw new Error("The selected Project Workspace is not a directory.");
+  const realRoot = realpath(resolvedRoot);
+  let cursor = resolvedRoot;
+  const relative = path3.relative(resolvedRoot, resolvedTarget);
+  for (const segment of relative.split(path3.sep).filter(Boolean)) {
+    cursor = path3.join(cursor, segment);
+    if (fs2.existsSync(cursor)) {
+      const stats = fs2.lstatSync(cursor);
+      if (stats.isSymbolicLink()) throw new Error("Room attachment staging cannot use a symlink or junction.");
+      if (!stats.isDirectory()) throw new Error("A Room attachment staging path component is not a directory.");
+    } else {
+      fs2.mkdirSync(cursor);
+    }
+    if (!pathIsContained(realRoot, realpath(cursor))) {
+      throw new Error("The Room attachment staging directory escaped through a filesystem link.");
+    }
+  }
+  return { realRoot, realDirectory: realpath(resolvedTarget) };
+}
+function rejectLinkOrNonFile(target, label) {
+  if (!fs2.existsSync(target)) return;
+  const stats = fs2.lstatSync(target);
+  if (stats.isSymbolicLink()) throw new Error(`${label} cannot be a symlink or junction.`);
+  if (!stats.isFile()) throw new Error(`${label} must be a regular file.`);
+}
+async function streamAttachmentResponse(response, target, { declaredBytes, maxFileBytes, remainingRequestBytes }) {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxFileBytes) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw new Error(`The attached file exceeds the ${maxFileBytes} byte file limit.`);
+  }
+  if (Number.isFinite(contentLength) && contentLength > remainingRequestBytes) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw new Error("The attached files exceed the Room request byte limit.");
+  }
+  let receivedBytes = 0;
+  const limiter = new Transform({
+    transform(chunk, _encoding, callback) {
+      receivedBytes += chunk.length;
+      if (receivedBytes > maxFileBytes) return callback(new Error(`The attached file exceeds the ${maxFileBytes} byte file limit.`));
+      if (receivedBytes > remainingRequestBytes) return callback(new Error("The attached files exceed the Room request byte limit."));
+      callback(null, chunk);
+    }
+  });
+  const source = response.body ? Readable.fromWeb(response.body) : Readable.from([]);
+  await pipeline(source, limiter, fs2.createWriteStream(target, { flags: "wx" }));
+  if (declaredBytes > 0 && receivedBytes !== declaredBytes) {
+    throw new Error(`The attached file size did not match SPS metadata (${receivedBytes} received, ${declaredBytes} declared).`);
+  }
+  return receivedBytes;
 }
 function workspaceGitExcludePath(workingDirectory) {
   const dotGitPath = path3.join(workingDirectory, ".git");
@@ -13519,24 +13619,50 @@ function mergeRoomAttachments(...groups) {
 async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDirectory, network) {
   const workspaceRoot = path3.resolve(String(workingDirectory || "").trim());
   const cacheRoot = roomAttachmentWorkspaceRoot(workspaceRoot);
+  const { maxFileBytes, maxRequestBytes } = roomAttachmentByteLimits();
+  ensureDirectoryTreeWithoutLinks(workspaceRoot, cacheRoot);
   excludeWorkspaceRoomAttachments(workspaceRoot);
   cleanupRoomAttachmentCache(cacheRoot);
-  const roomDirectory = path3.join(cacheRoot, safeAttachmentPathSegment(roomIssueId));
+  const roomDirectory = path3.join(cacheRoot, safeAttachmentPathSegment(roomIssueId, "Room id"));
+  ensureDirectoryTreeWithoutLinks(workspaceRoot, roomDirectory);
   const staged = [];
+  let requestBytes = 0;
   for (const attachment of attachments) {
     const attachmentId = textParam4(attachment, "id");
     if (!attachmentId) throw new Error("An attached file did not have a SPS attachment id.");
+    const declaredBytes = Number(attachment?.byteSize) || 0;
+    if (declaredBytes < 0 || !Number.isSafeInteger(declaredBytes)) throw new Error("SPS attachment size metadata is invalid.");
+    if (declaredBytes > maxFileBytes) throw new Error(`The attached file exceeds the ${maxFileBytes} byte file limit.`);
+    if (requestBytes + declaredBytes > maxRequestBytes) throw new Error("The attached files exceed the Room request byte limit.");
     const directory = path3.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
+    const { realRoot, realDirectory } = ensureDirectoryTreeWithoutLinks(workspaceRoot, directory);
     const localPath = path3.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
-    const partialPath = `${localPath}.partial`;
+    if (!pathIsContained(realDirectory, path3.resolve(localPath))) throw new Error("The Room attachment filename escaped its staging directory.");
+    rejectLinkOrNonFile(localPath, "The staged Room attachment");
+    const partialPath = `${localPath}.${randomUUID2()}.partial`;
     const response = await network.fetchImpl(roomAttachmentContentUrl(apiUrl, attachment, network.loopbackSPSApiUrl), { headers: network.spsDesktopAccessHeaders() });
     if (!response.ok) throw new Error(`Could not read attached file ${roomAttachmentName(attachment)} (HTTP ${response.status}).`);
-    fs2.mkdirSync(directory, { recursive: true });
-    fs2.writeFileSync(partialPath, Buffer.from(await response.arrayBuffer()));
-    fs2.rmSync(localPath, { force: true });
-    fs2.renameSync(partialPath, localPath);
+    let receivedBytes;
+    try {
+      receivedBytes = await streamAttachmentResponse(response, partialPath, {
+        declaredBytes,
+        maxFileBytes,
+        remainingRequestBytes: maxRequestBytes - requestBytes
+      });
+      rejectLinkOrNonFile(localPath, "The staged Room attachment");
+      fs2.rmSync(localPath, { force: true });
+      fs2.renameSync(partialPath, localPath);
+      const finalStats = fs2.lstatSync(localPath);
+      if (finalStats.isSymbolicLink() || !finalStats.isFile() || !pathIsContained(realRoot, realpath(localPath))) {
+        fs2.rmSync(localPath, { force: true });
+        throw new Error("The staged Room attachment escaped its filesystem boundary.");
+      }
+    } finally {
+      fs2.rmSync(partialPath, { force: true });
+    }
+    requestBytes += receivedBytes;
     fs2.utimesSync(directory, /* @__PURE__ */ new Date(), /* @__PURE__ */ new Date());
-    staged.push({ ...attachment, localPath, isImage: isCodexImageAttachment(attachment) });
+    staged.push({ ...attachment, byteSize: receivedBytes, localPath, isImage: isCodexImageAttachment(attachment) });
   }
   return staged;
 }
@@ -14075,8 +14201,8 @@ function createCollaborationReadiness({
 // src/room-memory-runtime.js
 function createRoomMemoryRuntime(deps) {
   const {
-    asRecord: asRecord8,
-    textParam: textParam7,
+    asRecord: asRecord9,
+    textParam: textParam8,
     listParam: listParam3,
     parseState: parseState2,
     serializeState: serializeState2,
@@ -14119,10 +14245,10 @@ function createRoomMemoryRuntime(deps) {
   async function fetchRoomMemory2(pathname, options = {}) {
     const runtime = roomMemoryRuntime2();
     const url = new URL(pathname, runtime.baseUrl);
-    for (const [key, value] of Object.entries(asRecord8(options.searchParams))) {
+    for (const [key, value] of Object.entries(asRecord9(options.searchParams))) {
       if (value !== void 0 && value !== null && String(value).trim() !== "") url.searchParams.set(key, String(value));
     }
-    const headers = { accept: "application/json", ...asRecord8(options.headers) };
+    const headers = { accept: "application/json", ...asRecord9(options.headers) };
     if (runtime.token) headers["x-sidecar-token"] = runtime.token;
     const response = await fetch(url, { method: options.method ?? "GET", headers, body: options.body });
     const body = await response.text();
@@ -14151,8 +14277,8 @@ function createRoomMemoryRuntime(deps) {
     return [...itemsById.values()].sort((left, right) => Number(right.score || 0) - Number(left.score || 0)).slice(0, limit);
   }
   async function proposeRoomMemory2(roomContext, input) {
-    const content = textParam7(input, "content");
-    const scope = textParam7(input, "scope", "project") || "project";
+    const content = textParam8(input, "content");
+    const scope = textParam8(input, "scope", "project") || "project";
     if (!content || content.length > 4e3) throw new Error("Memory candidate content must be between 1 and 4000 characters.");
     if (!(/* @__PURE__ */ new Set(["company", "project", "agent", "task", "artifact", "user"])).has(scope)) throw new Error("Invalid memory candidate scope.");
     const candidate = await fetchRoomMemory2("/memory/candidates", {
@@ -14161,7 +14287,7 @@ function createRoomMemoryRuntime(deps) {
       body: JSON.stringify({
         content,
         scope,
-        type: textParam7(input, "type", "learning") || "learning",
+        type: textParam8(input, "type", "learning") || "learning",
         tags: listParam3(input, "tags").slice(0, 12),
         companyId: roomContext.companyId,
         projectId: roomContext.projectId ?? null,
@@ -14193,7 +14319,7 @@ function createRoomMemoryRuntime(deps) {
             if (!Number.isInteger(version) || version < 1) continue;
             const markerScope = { scopeKind: "issue", scopeId: room.id, stateKey: lifecycleReconcileKey };
             const marker = await ctx.state.get(markerScope);
-            const deliveredVersion = Number(asRecord8(marker)?.checkpointVersion ?? 0);
+            const deliveredVersion = Number(asRecord9(marker)?.checkpointVersion ?? 0);
             if (deliveredVersion >= version) continue;
             await publishRoomMemoryLifecycle2(ctx, company.id, room.id, "room.checkpoint", latest);
             summary.checkpointsPublished += 1;
@@ -14230,9 +14356,9 @@ function createRoomMemoryRuntime(deps) {
     });
   }
   function nativeCompactionEventId2(message) {
-    const params = asRecord8(message?.params);
-    const threadId = textParam7(params, "threadId");
-    const turnId = textParam7(params, "turnId");
+    const params = asRecord9(message?.params);
+    const threadId = textParam8(params, "threadId");
+    const turnId = textParam8(params, "turnId");
     return threadId && turnId ? `${threadId}:${turnId}` : "";
   }
   async function appendNativeCompactionOutsideInvocation2(apiUrl, issueId, event) {
@@ -14257,7 +14383,7 @@ function createRoomMemoryRuntime(deps) {
     const threadCompaction = message?.method === "thread/compacted";
     if (!itemCompaction && !threadCompaction) return false;
     const eventId = nativeCompactionEventId2(message);
-    const threadId = textParam7(asRecord8(message?.params), "threadId");
+    const threadId = textParam8(asRecord9(message?.params), "threadId");
     const context = activeThreadContexts2.get(threadId);
     if (!eventId || !context || manualCodexCompactionThreads2.has(threadId) || recordedNativeCompactionEvents2.has(eventId)) return false;
     recordedNativeCompactionEvents2.add(eventId);
@@ -14267,7 +14393,7 @@ function createRoomMemoryRuntime(deps) {
           id: eventId,
           kind: "codex_native_auto",
           threadId,
-          turnId: textParam7(asRecord8(message?.params), "turnId"),
+          turnId: textParam8(asRecord9(message?.params), "turnId"),
           occurredAt: now2(),
           note: "Codex compacted its internal context automatically. SPS conversation and checkpoints remain the durable Room record."
         });
@@ -14342,9 +14468,181 @@ function createRoomMemoryRuntime(deps) {
   };
 }
 
+// src/room-activity.js
+function asRecord7(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function textParam6(params, key, fallback = "") {
+  const value = asRecord7(params)[key];
+  return value === void 0 || value === null ? fallback : String(value).trim();
+}
+function beginRoomActivity(state, kind, jobId = null, sourceCommentId = null) {
+  const timestamp = now();
+  state.runtime ??= {};
+  state.runtime.activity = {
+    status: "working",
+    kind,
+    jobId,
+    sourceCommentId,
+    turnId: null,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    steps: [{ id: "turn", type: "turn", label: "\uC694\uCCAD \uBD84\uC11D \uC911", status: "working", updatedAt: timestamp }],
+    error: null
+  };
+  return state.runtime.activity;
+}
+function roomActivityLabel(type, status) {
+  const base = {
+    reasoning: "\uC694\uCCAD \uBD84\uC11D",
+    plan: "\uC791\uC5C5 \uACC4\uD68D \uC815\uB9AC",
+    commandExecution: "\uB3C4\uAD6C \uC2E4\uD589",
+    fileChange: "\uD30C\uC77C \uBCC0\uACBD \uD655\uC778",
+    mcpToolCall: "\uC5F0\uACB0 \uB3C4\uAD6C \uC0AC\uC6A9",
+    dynamicToolCall: "SPS \uC791\uC5C5 \uB3C4\uAD6C \uC0AC\uC6A9",
+    collabAgentToolCall: "\uD611\uC5C5 Agent \uB3C4\uAD6C \uC0AC\uC6A9",
+    webSearch: "\uC6F9 \uAC80\uC0C9",
+    imageView: "\uC774\uBBF8\uC9C0 \uD655\uC778",
+    agentMessage: "\uC751\uB2F5 \uC791\uC131"
+  }[type] ?? "\uC791\uC5C5 \uC9C4\uD589";
+  return status === "completed" ? `${base} \uC644\uB8CC` : `${base} \uC911`;
+}
+function applyRoomActivityEvent(state, event) {
+  const activity = state.runtime?.activity;
+  if (!activity || activity.status !== "working") return false;
+  const params = event?.params ?? {};
+  const timestamp = now();
+  if (event?.method === "turn/started") {
+    activity.turnId = params.turnId ?? activity.turnId;
+    activity.updatedAt = timestamp;
+    return true;
+  }
+  if (!["item/started", "item/completed"].includes(event?.method) || !params.item?.type) return false;
+  const status = event.method === "item/completed" ? "completed" : "working";
+  const item = params.item;
+  const id = item.id ?? `${item.type}:${params.turnId ?? activity.steps.length}`;
+  const index = activity.steps.findIndex((step) => step.id === id);
+  const priorStep = index >= 0 ? activity.steps[index] : null;
+  const reasoningSummary = item.type === "reasoning" && Array.isArray(item.summary) ? item.summary.map((entry) => String(entry || "").trim()).filter(Boolean).join("\n").slice(0, 1800) : priorStep?.summary ?? null;
+  const nextStep = {
+    id,
+    type: item.type,
+    label: roomActivityLabel(item.type, status),
+    status,
+    updatedAt: timestamp,
+    ...reasoningSummary ? { summary: reasoningSummary } : {}
+  };
+  if (index >= 0) activity.steps[index] = nextStep;
+  else activity.steps.push(nextStep);
+  activity.steps = activity.steps.slice(-12);
+  activity.turnId = params.turnId ?? activity.turnId;
+  activity.updatedAt = timestamp;
+  return true;
+}
+function applyNativeSessionActivityEvent(state, event) {
+  const activity = state.runtime?.activity;
+  if (!activity || activity.status !== "working" || !event?.runId) return false;
+  activity.turnId = event.runId;
+  activity.updatedAt = now();
+  if (event.eventType === "status") {
+    const step = {
+      id: "agent-session-status",
+      type: "status",
+      label: String(event.message || "Agent run status updated").trim().slice(0, 180),
+      status: "working",
+      updatedAt: activity.updatedAt
+    };
+    const index = activity.steps.findIndex((candidate) => candidate.id === step.id);
+    if (index >= 0) activity.steps[index] = step;
+    else activity.steps.push(step);
+    return true;
+  }
+  if (event.eventType !== "chunk") return false;
+  const payload = asRecord7(event.payload);
+  const nestedPayload = asRecord7(payload.payload);
+  const toolName = textParam6(payload, "currentToolName") || textParam6(nestedPayload, "toolName");
+  const eventType = textParam6(payload, "eventType") || textParam6(nestedPayload, "type") || "progress";
+  const summary = (textParam6(payload, "lastAssistantSnippet") || textParam6(event, "message") || textParam6(payload, "message")).slice(0, 900);
+  const label = toolName ? `Using ${toolName}` : eventType === "reasoning" ? "Reviewing context" : eventType === "assistant" ? "Preparing the response" : "Agent work in progress";
+  activity.steps.push({
+    id: `agent-session:${event.seq ?? activity.steps.length}`,
+    type: toolName ? "tool" : eventType,
+    label,
+    status: "working",
+    updatedAt: activity.updatedAt,
+    ...summary ? { summary } : {}
+  });
+  activity.steps = activity.steps.slice(-20);
+  return true;
+}
+function finishRoomActivity(state, status, error = null) {
+  const activity = state.runtime?.activity;
+  if (!activity) return;
+  activity.status = status;
+  activity.error = error ? String(error instanceof Error ? error.message : error).slice(0, 180) : null;
+  activity.updatedAt = now();
+}
+function roomReasoningSummary(state) {
+  const summaries = (state.runtime?.activity?.steps ?? []).filter((step) => step.type === "reasoning" && step.summary).map((step) => step.summary).filter((summary, index, all) => all.indexOf(summary) === index);
+  return summaries.join("\n\n").slice(0, 3600);
+}
+function throttledActivityReporter({ state, applyEvent, persistState, persistSummary, finalSummary, publish = null }) {
+  let writes = Promise.resolve();
+  let lastPersistedAt = 0;
+  let persistTimer = null;
+  let dirty = false;
+  const persist = (changeSummary) => {
+    lastPersistedAt = Date.now();
+    dirty = false;
+    writes = writes.then(() => persistState(changeSummary)).catch(() => {
+    });
+  };
+  const schedulePersist = () => {
+    const remaining = Math.max(0, 1e3 - (Date.now() - lastPersistedAt));
+    if (remaining === 0) return persist(persistSummary);
+    if (persistTimer !== null) return;
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      persist(persistSummary);
+    }, remaining);
+  };
+  return {
+    report(event) {
+      if (!applyEvent(state, event)) return;
+      dirty = true;
+      publish?.(state.runtime?.activity ?? null);
+      schedulePersist();
+    },
+    flush() {
+      if (persistTimer !== null) {
+        clearTimeout(persistTimer);
+        persistTimer = null;
+      }
+      if (dirty) persist(finalSummary);
+      return writes;
+    }
+  };
+}
+function createRoomActivityRuntime({ emitRoomEvent: emitRoomEvent2, saveRoomState: saveRoomState2, saveRoomStateDurably: saveRoomStateDurably2 }) {
+  const reporter = ({ ctx, apiUrl, companyId, issueId, state, native, outsideInvocation }) => throttledActivityReporter({
+    state,
+    applyEvent: native ? applyNativeSessionActivityEvent : applyRoomActivityEvent,
+    persistState: outsideInvocation ? (changeSummary) => saveRoomStateDurably2(apiUrl, companyId, issueId, state, changeSummary) : (changeSummary) => saveRoomState2(ctx, companyId, issueId, state, changeSummary),
+    persistSummary: native ? "Update native Agent Session activity" : "Update Room activity",
+    finalSummary: native ? "Persist final native Agent Session activity" : "Persist final Room activity",
+    publish: outsideInvocation ? null : (activity) => emitRoomEvent2(ctx, companyId, issueId, { type: "activity", activity })
+  });
+  return {
+    roomActivityReporter: (ctx, companyId, issueId, state) => reporter({ ctx, companyId, issueId, state, native: false, outsideInvocation: false }),
+    nativeRoomActivityReporter: (ctx, companyId, issueId, state) => reporter({ ctx, companyId, issueId, state, native: true, outsideInvocation: false }),
+    roomActivityReporterOutsideInvocation: (apiUrl, companyId, issueId, state) => reporter({ apiUrl, companyId, issueId, state, native: false, outsideInvocation: true }),
+    nativeRoomActivityReporterOutsideInvocation: (apiUrl, companyId, issueId, state) => reporter({ apiUrl, companyId, issueId, state, native: true, outsideInvocation: true })
+  };
+}
+
 // src/worker.js
 import { execFileSync } from "node:child_process";
-import { createHash, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash, randomUUID as randomUUID3 } from "node:crypto";
 import fs3 from "node:fs";
 import os2 from "node:os";
 import path4 from "node:path";
@@ -14435,19 +14733,19 @@ var pluginCtx = null;
 var codexClients = /* @__PURE__ */ new Map();
 var testCodexClient = null;
 var testAgyClientFactory = null;
-function asRecord7(value) {
+function asRecord8(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
-function textParam6(params, key, fallback = "") {
-  const value = asRecord7(params)[key];
+function textParam7(params, key, fallback = "") {
+  const value = asRecord8(params)[key];
   return value === void 0 || value === null ? fallback : String(value).trim();
 }
 function rawTextParam(params, key, fallback = "") {
-  const value = asRecord7(params)[key];
+  const value = asRecord8(params)[key];
   return value === void 0 || value === null ? fallback : String(value);
 }
 function listParam2(params, key) {
-  const value = asRecord7(params)[key];
+  const value = asRecord8(params)[key];
   return Array.isArray(value) ? value.map((entry) => String(entry).trim()).filter(Boolean) : [];
 }
 var {
@@ -14463,8 +14761,8 @@ var {
   appendCheckpoint,
   publishRoomMemoryLifecycle
 } = createRoomMemoryRuntime({
-  asRecord: asRecord7,
-  textParam: textParam6,
+  asRecord: asRecord8,
+  textParam: textParam7,
   listParam: listParam2,
   parseState,
   serializeState,
@@ -14491,14 +14789,14 @@ function normalizedTaskTypeKey2(value, fallback = "") {
   return TASK_TYPE_KEY_PATTERN2.test(key) ? key : fallback;
 }
 function configuredEnvironmentValue(agent, name) {
-  const value = asRecord7(asRecord7(agent?.adapterConfig).env)[name];
+  const value = asRecord8(asRecord8(agent?.adapterConfig).env)[name];
   if (typeof value === "string") return value.trim();
-  return textParam6(asRecord7(value), "value");
+  return textParam7(asRecord8(value), "value");
 }
 function configuredEnvironment(agent) {
   const env = {};
-  for (const [key, raw] of Object.entries(asRecord7(asRecord7(agent?.adapterConfig).env))) {
-    const value = typeof raw === "string" ? raw.trim() : textParam6(asRecord7(raw), "value");
+  for (const [key, raw] of Object.entries(asRecord8(asRecord8(agent?.adapterConfig).env))) {
+    const value = typeof raw === "string" ? raw.trim() : textParam7(asRecord8(raw), "value");
     if (value) env[key] = value;
   }
   return env;
@@ -14539,8 +14837,8 @@ function localCodexAccounts(homeDirectory = os2.homedir()) {
   }).filter((account) => account.hasAuth).sort((left, right) => left.directoryName === ".codex" ? -1 : right.directoryName === ".codex" ? 1 : left.label.localeCompare(right.label));
 }
 function applyCodexAccountToAdapterConfig(agent, account) {
-  const adapterConfig = asRecord7(agent?.adapterConfig);
-  const existingEnv = asRecord7(adapterConfig.env);
+  const adapterConfig = asRecord8(agent?.adapterConfig);
+  const existingEnv = asRecord8(adapterConfig.env);
   return {
     ...adapterConfig,
     codexAccount: account.directoryName,
@@ -14604,7 +14902,7 @@ function roomRuntimeWithRoomSafety(agent, runtime) {
   return { ...runtime, sandbox: "read-only", approvalPolicy: "never" };
 }
 function isRoomCliRuntimeAgent(agent) {
-  const adapterType = textParam6(agent, "adapterType");
+  const adapterType = textParam7(agent, "adapterType");
   return adapterType === "codex_local" || adapterType === "antigravity_local";
 }
 function effectiveRoomMessageMode(agent, requestedMode = "agent") {
@@ -14630,13 +14928,13 @@ function roomModeAllowsTool(mode, toolName) {
   ])).has(toolName);
 }
 function agentRoomRuntime(runtime, agent) {
-  const adapterConfig = asRecord7(agent?.adapterConfig);
-  if (textParam6(agent, "adapterType") === "antigravity_local") {
+  const adapterConfig = asRecord8(agent?.adapterConfig);
+  if (textParam7(agent, "adapterType") === "antigravity_local") {
     return {
       kind: "agy_print",
       enabled: runtime.enableAgyRooms,
-      command: textParam6(adapterConfig, "command", "agy"),
-      model: textParam6(adapterConfig, "model", "auto") || "auto",
+      command: textParam7(adapterConfig, "command", "agy"),
+      model: textParam7(adapterConfig, "model", "auto") || "auto",
       sandbox: adapterConfig.sandbox === true,
       timeoutMs: Math.max(0, Number(adapterConfig.timeoutSec) || 0) * 1e3,
       extraArgs: Array.isArray(adapterConfig.extraArgs) ? adapterConfig.extraArgs : [],
@@ -14647,8 +14945,8 @@ function agentRoomRuntime(runtime, agent) {
     kind: "codex_app_server",
     enabled: runtime.enableCodexRooms,
     command: runtime.command,
-    model: textParam6(adapterConfig, "model", "") || runtime.model,
-    reasoningEffort: textParam6(adapterConfig, "modelReasoningEffort", textParam6(adapterConfig, "reasoningEffort", "")) || null,
+    model: textParam7(adapterConfig, "model", "") || runtime.model,
+    reasoningEffort: textParam7(adapterConfig, "modelReasoningEffort", textParam7(adapterConfig, "reasoningEffort", "")) || null,
     codexHome: runtime.codexHome,
     sandbox: runtime.codexSandbox,
     approvalPolicy: runtime.codexApprovalPolicy
@@ -14666,21 +14964,21 @@ function roomRuntimeDisabledResult(agentRuntime) {
   };
 }
 function resolveCodexHomeForAgent(runtime, agent) {
-  const configuredAccount = textParam6(asRecord7(agent?.adapterConfig), "codexAccount");
+  const configuredAccount = textParam7(asRecord8(agent?.adapterConfig), "codexAccount");
   if (/^\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(configuredAccount)) {
     return path4.join(os2.homedir(), configuredAccount);
   }
-  return configuredEnvironmentValue(agent, "CODEX_HOME") || runtime.codexHome || textParam6(process.env, "CODEX_HOME") || null;
+  return configuredEnvironmentValue(agent, "CODEX_HOME") || runtime.codexHome || textParam7(process.env, "CODEX_HOME") || null;
 }
 function codexClientKey(runtime, agent) {
   return JSON.stringify({ command: runtime.command, codexHome: resolveCodexHomeForAgent(runtime, agent) });
 }
 function roomThreadIdForCodexRuntime(state, runtime, agent, currentInstructionsFingerprint = agentInstructionsFingerprint(agent)) {
-  const threadId = textParam6(state?.runtime, "codexThreadId") || null;
+  const threadId = textParam7(state?.runtime, "codexThreadId") || null;
   if (!threadId) return null;
-  const previousInstructionsFingerprint = textParam6(state?.runtime, "instructionsFingerprint") || null;
+  const previousInstructionsFingerprint = textParam7(state?.runtime, "instructionsFingerprint") || null;
   if (!previousInstructionsFingerprint || previousInstructionsFingerprint !== currentInstructionsFingerprint) return null;
-  const previousAccountKey = textParam6(state?.runtime, "codexAccountKey") || null;
+  const previousAccountKey = textParam7(state?.runtime, "codexAccountKey") || null;
   const selectedAccountKey = codexClientKey(runtime, agent);
   const hasExplicitHome = Boolean(resolveCodexHomeForAgent(runtime, agent));
   if (previousAccountKey && previousAccountKey !== selectedAccountKey) return null;
@@ -14708,19 +15006,19 @@ function isLongLivedRoom(issue) {
   return isAgentRoom(issue) || isLegacyRoleRoom(issue);
 }
 function isHiredAgent(agent) {
-  const builtIn = asRecord7(asRecord7(agent?.metadata).paperclipBuiltInAgent);
+  const builtIn = asRecord8(asRecord8(agent?.metadata).paperclipBuiltInAgent);
   return Boolean(
-    agent?.id && agent?.name && agent.status !== "terminated" && !textParam6(builtIn, "key")
+    agent?.id && agent?.name && agent.status !== "terminated" && !textParam7(builtIn, "key")
   );
 }
 function isTaskWorkerAgent(agent) {
   return isHiredAgent(agent) && isWorkplaneWorker(agent);
 }
 function agentWorkingDirectory(agent) {
-  return textParam6(asRecord7(agent?.adapterConfig), "cwd");
+  return textParam7(asRecord8(agent?.adapterConfig), "cwd");
 }
 function agentInstructionsPath(agent) {
-  const instructionsPath = textParam6(asRecord7(agent?.adapterConfig), "instructionsFilePath");
+  const instructionsPath = textParam7(asRecord8(agent?.adapterConfig), "instructionsFilePath");
   return instructionsPath && path4.isAbsolute(instructionsPath) ? instructionsPath : "";
 }
 function loadAgentInstructions(agent) {
@@ -14738,9 +15036,9 @@ function loadAgentInstructions(agent) {
 function agentInstructionsFingerprint(agent, instructions = loadAgentInstructions(agent)) {
   return createHash("sha256").update(JSON.stringify({
     version: 1,
-    agentId: textParam6(agent, "id"),
-    agentName: textParam6(agent, "name"),
-    agentRole: textParam6(agent, "role"),
+    agentId: textParam7(agent, "id"),
+    agentName: textParam7(agent, "name"),
+    agentRole: textParam7(agent, "role"),
     instructions
   }), "utf8").digest("hex");
 }
@@ -14899,7 +15197,7 @@ async function resolveRoomWorkspace(ctx, companyId, issue, agent, state) {
   const workspaces = await listProjectWorkspaces(ctx, companyId, issue.projectId);
   if (workspaces === null) return { workspace: null, workspaces: null, legacy: true };
   const profile = await loadProjectWorkspaceProfile(ctx, issue.projectId, workspaces);
-  const currentId = textParam6(asRecord7(state?.workspace), "projectWorkspaceId");
+  const currentId = textParam7(asRecord8(state?.workspace), "projectWorkspaceId");
   const profileSelectedWorkspace = profileWorkspace(workspaces, profile, { agentId: agent?.id });
   const workspace = profileSelectedWorkspace ?? workspaces.find((entry) => entry.id === currentId) ?? chooseDefaultWorkspace(agent, workspaces, profile);
   return { workspace: workspace ?? null, workspaces, profile, legacy: false };
@@ -14908,7 +15206,7 @@ async function ensureRoomWorkspaceBinding(ctx, companyId, issue, agent, state) {
   const resolved = await resolveRoomWorkspace(ctx, companyId, issue, agent, state);
   if (!resolved.workspace) return { state, resolved, changed: false };
   const nextBinding = workspaceBinding(resolved.workspace);
-  const currentBinding = asRecord7(state.workspace);
+  const currentBinding = asRecord8(state.workspace);
   const changed = currentBinding.projectWorkspaceId !== nextBinding.projectWorkspaceId || currentBinding.kind !== nextBinding.kind || currentBinding.name !== nextBinding.name || Object.hasOwn(state, "workingDirectory");
   if (!changed) return { state, resolved, changed: false };
   state.workspace = nextBinding;
@@ -14929,8 +15227,8 @@ async function resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state) 
   throw new Error("The Room Workspace is unavailable. Select a registered Project Workspace before starting a Room turn.");
 }
 function agentSessionContextMatches(session, expectedContext) {
-  const context = asRecord7(session?.context);
-  return textParam6(context, "projectId") === textParam6(expectedContext, "projectId") && textParam6(context, "projectWorkspaceId") === textParam6(expectedContext, "projectWorkspaceId") && !textParam6(context, "issueId");
+  const context = asRecord8(session?.context);
+  return textParam7(context, "projectId") === textParam7(expectedContext, "projectId") && textParam7(context, "projectWorkspaceId") === textParam7(expectedContext, "projectWorkspaceId") && !textParam7(context, "issueId");
 }
 async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   const binding = await ensureRoomWorkspaceBinding(ctx, companyId, issue, agent, state);
@@ -14943,7 +15241,7 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
     projectWorkspaceId: workspace.id
   };
   const sessions = await ctx.agents.sessions.list(agent.id, companyId);
-  const persistedSessionId = textParam6(state.runtime, "agentSessionId");
+  const persistedSessionId = textParam7(state.runtime, "agentSessionId");
   let session = sessions.find((candidate) => candidate.sessionId === persistedSessionId) ?? null;
   if (session && !agentSessionContextMatches(session, context)) {
     await ctx.agents.sessions.close(session.sessionId, companyId);
@@ -14964,7 +15262,7 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   state.runtime.lastRunId = session.lastRunId ?? state.runtime.lastRunId ?? null;
   state.runtime.lastError = session.lastError ?? null;
   state.runtime.codexThreadId = null;
-  state.runtime.model = textParam6(asRecord7(agent.adapterConfig), "model") || null;
+  state.runtime.model = textParam7(asRecord8(agent.adapterConfig), "model") || null;
   state.runtime.updatedAt = now();
   delete state.runtime.codexAccountKey;
   delete state.runtime.codexHome;
@@ -14977,19 +15275,19 @@ async function ensureNativeRoomSession(ctx, companyId, issue, agent, state) {
   };
 }
 function nativeSessionResultText(event) {
-  const payload = asRecord7(event?.payload);
+  const payload = asRecord8(event?.payload);
   if (event?.eventType === "error") {
-    const message = textParam6(payload, "error") || textParam6(payload, "errorCode") || textParam6(event, "message") || "The Agent Session run failed.";
+    const message = textParam7(payload, "error") || textParam7(payload, "errorCode") || textParam7(event, "message") || "The Agent Session run failed.";
     const error = new Error(message);
-    const resultRecord2 = asRecord7(payload.resultJson);
-    error.code = textParam6(payload, "errorCode") || textParam6(resultRecord2, "errorCode") || null;
-    error.errorFamily = textParam6(payload, "errorFamily") || textParam6(resultRecord2, "errorFamily") || null;
-    error.retryNotBefore = textParam6(payload, "retryNotBefore") || textParam6(resultRecord2, "retryNotBefore") || null;
+    const resultRecord2 = asRecord8(payload.resultJson);
+    error.code = textParam7(payload, "errorCode") || textParam7(resultRecord2, "errorCode") || null;
+    error.errorFamily = textParam7(payload, "errorFamily") || textParam7(resultRecord2, "errorFamily") || null;
+    error.retryNotBefore = textParam7(payload, "retryNotBefore") || textParam7(resultRecord2, "retryNotBefore") || null;
     throw error;
   }
   const result = payload.resultJson;
-  const resultRecord = asRecord7(result);
-  const text4 = typeof result === "string" ? result : textParam6(resultRecord, "summary") || textParam6(resultRecord, "message") || textParam6(resultRecord, "output");
+  const resultRecord = asRecord8(result);
+  const text4 = typeof result === "string" ? result : textParam7(resultRecord, "summary") || textParam7(resultRecord, "message") || textParam7(resultRecord, "output");
   if (!text4) throw new Error("The Agent Session completed without an assistant message.");
   return enforceUtf8Text(text4, "Agent Session output");
 }
@@ -15423,7 +15721,7 @@ async function paperclipJsonDirect(apiUrl, apiPath, { method = "GET", body, oper
     }
   }
   if (!response.ok) {
-    const detail = typeof result === "string" ? result : textParam6(asRecord7(result), "error") || responseText;
+    const detail = typeof result === "string" ? result : textParam7(asRecord8(result), "error") || responseText;
     const error = new Error(`SPS ${operation} failed (HTTP ${response.status})${detail ? `: ${String(detail).slice(0, 400)}` : "."}`);
     error.status = response.status;
     throw error;
@@ -15433,7 +15731,7 @@ async function paperclipJsonDirect(apiUrl, apiPath, { method = "GET", body, oper
 function directArrayPayload(value, keys = []) {
   if (Array.isArray(value)) return value;
   for (const key of keys) {
-    if (Array.isArray(asRecord7(value)[key])) return asRecord7(value)[key];
+    if (Array.isArray(asRecord8(value)[key])) return asRecord8(value)[key];
   }
   return [];
 }
@@ -15648,6 +15946,9 @@ async function updateRoomWorkStateOutsideInvocation(roomContext, patch, changeSu
     });
   });
 }
+async function saveRoomStateDurably(apiUrl, companyId, issueId, state, changeSummary) {
+  return saveRoomStateOutsideInvocation(apiUrl, issueId, state, changeSummary);
+}
 function roomStreamChannel(issueId) {
   return `room:${issueId}`;
 }
@@ -15665,7 +15966,7 @@ function emitRoomEvent(ctx, companyId, issueId, event) {
   }
 }
 async function createRoomJob(ctx, input) {
-  const job = roomJobData({ ...input, id: randomUUID2(), status: "queued", requestedAt: now() });
+  const job = roomJobData({ ...input, id: randomUUID3(), status: "queued", requestedAt: now() });
   if (ctx.entities?.upsert) {
     await ctx.entities.upsert({
       entityType: ROOM_JOB_ENTITY_TYPE,
@@ -15702,7 +16003,7 @@ async function listRoomJobs(ctx, issueId) {
     scopeId: issueId,
     limit: 100
   });
-  return records.map((record) => roomJobData(asRecord7(record.data))).filter((job) => job.id && job.roomIssueId === issueId);
+  return records.map((record) => roomJobData(asRecord8(record.data))).filter((job) => job.id && job.roomIssueId === issueId);
 }
 async function activeRoomJob(ctx, issueId) {
   const jobs = await listRoomJobs(ctx, issueId);
@@ -15716,7 +16017,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
       completedAt: now(),
       error: quotaError,
       payload: {
-        ...asRecord7(job.payload),
+        ...asRecord8(job.payload),
         retryRuntime: null,
         quotaRetryAt: null,
         quotaError
@@ -15745,9 +16046,9 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
   }
   const current = Date.now();
   const retryAt = providerQuotaRetryAtFromError(error, current);
-  const priorAttempt = Math.max(0, Number(asRecord7(job.payload).quotaRetryAttempt) || 0);
+  const priorAttempt = Math.max(0, Number(asRecord8(job.payload).quotaRetryAttempt) || 0);
   const payload = {
-    ...asRecord7(job.payload),
+    ...asRecord8(job.payload),
     retryRuntime: "agy",
     quotaRetryAt: retryAt,
     quotaRetryAttempt: priorAttempt + 1,
@@ -15761,7 +16062,7 @@ async function scheduleRoomProviderQuotaRetry(ctx, { runtime, job, issue, state,
     payload
   });
   state.pendingTurn = {
-    ...asRecord7(state.pendingTurn),
+    ...asRecord8(state.pendingTurn),
     kind: queuedJob.kind,
     jobId: queuedJob.id,
     sourceCommentId: queuedJob.sourceCommentId ?? null,
@@ -15808,13 +16109,13 @@ async function launchDueRoomProviderQuotaRetry(ctx, job, current = Date.now()) {
       }
     }
   }
-  const retryAt = new Date(textParam6(asRecord7(job.payload), "quotaRetryAt") || 0).getTime();
+  const retryAt = new Date(textParam7(asRecord8(job.payload), "quotaRetryAt") || 0).getTime();
   if (!Number.isFinite(retryAt) || retryAt > current) return { launched: false, reason: "not_due" };
   if (activeRoomMessageJobs.has(job.roomIssueId)) return { launched: false, reason: "room_busy" };
   const { issue, agent } = await requireRoom(ctx, job.companyId, job.roomIssueId);
   const state = await loadRoomState(ctx, job.companyId, issue, agent);
-  if (textParam6(state.pendingTurn, "jobId") !== job.id) return { launched: false, reason: "pending_turn_changed" };
-  state.pendingTurn = { ...asRecord7(state.pendingTurn), startedAt: now(), retryAt: null, retryRuntime: "agy" };
+  if (textParam7(state.pendingTurn, "jobId") !== job.id) return { launched: false, reason: "pending_turn_changed" };
+  state.pendingTurn = { ...asRecord8(state.pendingTurn), startedAt: now(), retryAt: null, retryRuntime: "agy" };
   beginRoomActivity(state, job.kind, job.id, job.sourceCommentId ?? null);
   state.runtime.activity.steps.push({ id: `quota-retry-${Date.now()}`, type: "runtime", label: "Retrying queued Room turn with Agy", status: "working", updatedAt: now() });
   await saveRoomState(ctx, job.companyId, issue.id, state, "Start due Agy provider quota Room retry");
@@ -15828,7 +16129,7 @@ async function reconcileRoomProviderQuotaRetries(ctx, options = {}) {
     const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
     const summary = { scanned: 0, launched: 0, waiting: 0, failed: 0 };
     for (const record of records) {
-      const job = roomJobData(asRecord7(record.data));
+      const job = roomJobData(asRecord8(record.data));
       if (!isRoomProviderQuotaRetryJob(job)) continue;
       summary.scanned += 1;
       try {
@@ -15857,8 +16158,8 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
   const jobs = await listRoomJobs(ctx, ownerRoom.id);
   const agent = await ctx.agents.get(agentRoomAgentId(ownerRoom), companyId);
   const ownerState = await loadRoomState(ctx, companyId, ownerRoom, agent);
-  const pendingJobId = textParam6(ownerState.pendingTurn, "jobId");
-  const notifiedJobId = textParam6(asRecord7(taskState.ownerNotification), "jobId");
+  const pendingJobId = textParam7(ownerState.pendingTurn, "jobId");
+  const notifiedJobId = textParam7(asRecord8(taskState.ownerNotification), "jobId");
   const job = jobs.find((candidate) => candidate.kind === "task_owner_report" && candidate.taskIssueId === task.id && (isRoomProviderQuotaRetryJob(candidate) || pendingJobId && candidate.id === pendingJobId));
   const resolvedJobId = job?.id || (pendingJobId && pendingJobId === notifiedJobId ? pendingJobId : "");
   if (!resolvedJobId) return false;
@@ -15867,10 +16168,10 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
       status: "cancelled",
       completedAt: now(),
       error: `Task moved to ${task.status}; the queued owner report is no longer current.`,
-      payload: { ...asRecord7(job.payload), quotaRetryAt: null }
+      payload: { ...asRecord8(job.payload), quotaRetryAt: null }
     });
   }
-  if (textParam6(ownerState.pendingTurn, "jobId") === resolvedJobId) {
+  if (textParam7(ownerState.pendingTurn, "jobId") === resolvedJobId) {
     ownerState.pendingTurn = null;
     ownerState.runtime ??= {};
     ownerState.runtime.quotaRetry = {
@@ -15884,13 +16185,13 @@ async function cancelResolvedTaskOwnerQuotaRetry(ctx, { companyId, task, taskSta
     await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Release resolved Task owner report quota retry");
   }
   taskState.review = {
-    ...asRecord7(taskState.review),
+    ...asRecord8(taskState.review),
     status: "user_reviewed",
     reviewedAt: now(),
     updatedAt: now()
   };
   taskState.ownerNotification = {
-    ...asRecord7(taskState.ownerNotification),
+    ...asRecord8(taskState.ownerNotification),
     status: "completed",
     taskStatus: task.status,
     jobId: resolvedJobId,
@@ -15913,8 +16214,8 @@ async function roomHasActiveWork(ctx, issueId, state) {
   let jobs = await listRoomJobs(ctx, issueId);
   jobs = await reconcileRoomJobLedger(ctx, issueId, state, jobs);
   const persistedJob = jobs.find((job) => ACTIVE_ROOM_JOB_STATUSES.has(job.status)) ?? null;
-  const pendingKind = textParam6(asRecord7(state?.pendingTurn), "kind");
-  const activityStatus = textParam6(asRecord7(state?.runtime?.activity), "status");
+  const pendingKind = textParam7(asRecord8(state?.pendingTurn), "kind");
+  const activityStatus = textParam7(asRecord8(state?.runtime?.activity), "status");
   const stateBusy = Boolean(pendingKind) || ["working", "finishing"].includes(activityStatus);
   if (processJob && !persistedJob && !stateBusy) {
     if (activeRoomMessageJobs.get(issueId) === processJob) activeRoomMessageJobs.delete(issueId);
@@ -16040,9 +16341,9 @@ async function prepareRoomOperatingBrief(ctx, { companyId, issue, state, agent =
   return { workState, tasks, text: buildRoomOperatingBrief(workState, tasks, roomAgent) };
 }
 function buildRoomRecoveryContext(state, comments, excludedCommentId = "") {
-  const checkpoint = asRecord7(state?.checkpoint);
+  const checkpoint = asRecord8(state?.checkpoint);
   const checkpointSummary = trimRoomContext(checkpoint.summary, 1e4);
-  const checkpointSourceId = textParam6(checkpoint, "sourceCommentId");
+  const checkpointSourceId = textParam7(checkpoint, "sourceCommentId");
   const excludedId = String(excludedCommentId || "").trim();
   const ordered = mostRecentComments(comments, Number.MAX_SAFE_INTEGER).filter((comment) => comment?.id !== excludedId && String(comment?.body || "").trim());
   let candidates = ordered;
@@ -16055,7 +16356,7 @@ function buildRoomRecoveryContext(state, comments, excludedCommentId = "") {
   let used = checkpointSummary.length;
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     const comment = candidates[index];
-    const timestamp = textParam6(comment, "createdAt") || "unknown time";
+    const timestamp = textParam7(comment, "createdAt") || "unknown time";
     const body = trimRoomContext(comment?.body, ROOM_CONTEXT_RECOVERY_ENTRY_LIMIT);
     const entry = `[${timestamp} | comment ${comment.id || "unknown"}]
 ${body}`;
@@ -16080,7 +16381,7 @@ ${selected.join("\n\n---\n\n") || "No earlier Room comments were available."}`,
 }
 async function prepareCodexRoomTurn(ctx, { companyId, issue, state, threadId, currentText, excludedCommentId = "" }) {
   const operating = await prepareRoomOperatingBrief(ctx, { companyId, issue, state });
-  if (textParam6(state?.runtime, "contextHydratedThreadId") === threadId) {
+  if (textParam7(state?.runtime, "contextHydratedThreadId") === threadId) {
     return {
       text: `${operating.text}
 
@@ -16107,7 +16408,7 @@ ${currentText}`,
 }
 async function prepareNativeRoomTurn(ctx, { companyId, issue, state, sessionId, currentText, excludedCommentId = "" }) {
   const operating = await prepareRoomOperatingBrief(ctx, { companyId, issue, state });
-  if (textParam6(state?.runtime, "contextHydratedNativeSessionId") === sessionId) {
+  if (textParam7(state?.runtime, "contextHydratedNativeSessionId") === sessionId) {
     return {
       text: `${operating.text}
 
@@ -16171,10 +16472,10 @@ function errorDiagnosticText(error) {
 ${data}`;
 }
 function isProviderQuotaError(error) {
-  return textParam6(error, "code") === PROVIDER_QUOTA_ERROR_CODE || textParam6(error, "errorFamily") === PROVIDER_QUOTA_ERROR_CODE || PROVIDER_QUOTA_ERROR_RE.test(errorDiagnosticText(error));
+  return textParam7(error, "code") === PROVIDER_QUOTA_ERROR_CODE || textParam7(error, "errorFamily") === PROVIDER_QUOTA_ERROR_CODE || PROVIDER_QUOTA_ERROR_RE.test(errorDiagnosticText(error));
 }
 function providerQuotaRetryAtFromError(error, current = Date.now()) {
-  const requestedAt = new Date(textParam6(error, "retryNotBefore") || 0).getTime();
+  const requestedAt = new Date(textParam7(error, "retryNotBefore") || 0).getTime();
   return new Date(Math.max(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS, Number.isFinite(requestedAt) ? requestedAt : 0)).toISOString();
 }
 function roomToolContext(runtime, companyId, issue, agent, mode = "agent", workspaceProfile = null) {
@@ -16193,7 +16494,7 @@ function roomToolContext(runtime, companyId, issue, agent, mode = "agent", works
     mode: roomMessageMode(mode),
     // Dynamic CLI tool calls outlive the plugin invocation. Carry the durable
     // Project routing decision into that call instead of reading plugin storage.
-    workspaceProfile: asRecord7(workspaceProfile)
+    workspaceProfile: asRecord8(workspaceProfile)
   };
 }
 function workplaneIdentityForRoomContext(roomContext) {
@@ -16202,7 +16503,7 @@ function workplaneIdentityForRoomContext(roomContext) {
     name: roomContext?.agentName,
     role: roomContext?.workplaneRole || roomContext?.agentRole,
     adapterConfig: {
-      workplane: asRecord7(roomContext?.workplanePolicy)
+      workplane: asRecord8(roomContext?.workplanePolicy)
     }
   });
 }
@@ -16225,15 +16526,15 @@ function parseAgyFallbackEnvelope(text4) {
   } catch {
     return { type: "final", message: raw };
   }
-  const record = asRecord7(value);
-  if (textParam6(record, "type") === "tool_call") {
+  const record = asRecord8(value);
+  if (textParam7(record, "type") === "tool_call") {
     return {
       type: "tool_call",
-      name: textParam6(record, "name"),
-      arguments: asRecord7(record.arguments)
+      name: textParam7(record, "name"),
+      arguments: asRecord8(record.arguments)
     };
   }
-  if (textParam6(record, "type") === "final" && textParam6(record, "message")) {
+  if (textParam7(record, "type") === "final" && textParam7(record, "message")) {
     return { type: "final", message: rawTextParam(record, "message").trim() };
   }
   return { type: "final", message: raw };
@@ -16292,7 +16593,7 @@ async function runAgyRoomFallback(ctx, {
     extraArgs: fallbackRuntime.extraArgs,
     requestTimeoutMs: fallbackRuntime.timeoutMs
   });
-  const syntheticThreadId = `agy-fallback-${randomUUID2()}`;
+  const syntheticThreadId = `agy-fallback-${randomUUID3()}`;
   const fallbackWorkspaces = await listProjectWorkspaces(ctx, companyId, issue.projectId);
   const fallbackWorkspaceProfile = await loadProjectWorkspaceProfile(ctx, issue.projectId, fallbackWorkspaces);
   const fallbackMode = isWorkerOnlyRoomAgent(agent) ? "ask" : mode;
@@ -16309,7 +16610,7 @@ async function runAgyRoomFallback(ctx, {
       const envelope = parseAgyFallbackEnvelope(turnResultText(turn));
       if (envelope.type === "final") {
         return {
-          items: [{ id: `message-agy-fallback-${randomUUID2()}`, type: "agentMessage", text: enforceUtf8Text(envelope.message, "Agy fallback final response") }],
+          items: [{ id: `message-agy-fallback-${randomUUID3()}`, type: "agentMessage", text: enforceUtf8Text(envelope.message, "Agy fallback final response") }],
           provider: "agy",
           fallbackFrom: "codex",
           turnId: started.turnId
@@ -16326,7 +16627,7 @@ async function runAgyRoomFallback(ctx, {
           namespace,
           tool,
           arguments: envelope.arguments,
-          callId: `agy-fallback-call-${randomUUID2()}`
+          callId: `agy-fallback-call-${randomUUID3()}`
         }
       });
       const resultText = response?.contentItems?.map((item) => item?.text || "").join("\n").trim() || "{}";
@@ -16350,7 +16651,7 @@ function codexCompletionWithAgyFallback(ctx, input) {
       model: input.runtime.agyFallbackModel || "gemini-3.1-pro-high",
       at: now()
     };
-    const activity = asRecord7(input.state.runtime.activity);
+    const activity = asRecord8(input.state.runtime.activity);
     if (Array.isArray(activity.steps)) {
       activity.steps.push({ id: `agy-fallback-${Date.now()}`, type: "runtime", label: "Codex quota reached; continuing with Agy", status: "working", updatedAt: now() });
       activity.updatedAt = now();
@@ -16423,8 +16724,8 @@ async function openThread(ctx, runtime, state, companyId, issue, agent) {
   }
   const client = await getCodexClient(ctx, roomRuntime, agent);
   state.runtime ??= {};
-  const storedThreadId = textParam6(state.runtime, "codexThreadId") || null;
-  const storedInstructionsFingerprint = textParam6(state.runtime, "instructionsFingerprint") || null;
+  const storedThreadId = textParam7(state.runtime, "codexThreadId") || null;
+  const storedInstructionsFingerprint = textParam7(state.runtime, "instructionsFingerprint") || null;
   const instructionsChanged = Boolean(storedThreadId) && storedInstructionsFingerprint !== instructionsFingerprint;
   if (instructionsChanged) {
     state.runtime.lastThreadRotation = {
@@ -16510,18 +16811,18 @@ async function handleWorkspaceProfileAccess(_ctx, _params, actionCtx) {
 }
 async function handleWorkspaceProfileSave(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const projectId = textParam6(params, "projectId");
+  const projectId = textParam7(params, "projectId");
   if (!projectId) throw new Error("projectId is required.");
   const project = await ctx.projects.get(projectId, companyId);
   if (!project) throw new Error("Project was not found.");
   const workspaces = await listProjectWorkspaces(ctx, companyId, projectId);
   if (!Array.isArray(workspaces)) throw new Error("Project Workspace access is unavailable.");
-  const profile = await saveProjectWorkspaceProfile(ctx, projectId, asRecord7(params).profile, workspaces);
+  const profile = await saveProjectWorkspaceProfile(ctx, projectId, asRecord8(params).profile, workspaces);
   return { ok: true, profile };
 }
 async function handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const projectId = textParam6(params, "projectId");
+  const projectId = textParam7(params, "projectId");
   const cwd = rawTextParam(params, "cwd").trim();
   const repoUrl = rawTextParam(params, "repoUrl").trim();
   if (!projectId) throw new Error("projectId is required.");
@@ -16535,7 +16836,7 @@ async function handleWorkspaceProfileCreateWorkspace(ctx, params, actionCtx) {
     ...cwd ? { cwd } : {},
     ...repoUrl ? { repoUrl } : {},
     sourceType: cwd ? "local_path" : "git_repo",
-    isPrimary: asRecord7(params).isPrimary === true
+    isPrimary: asRecord8(params).isPrimary === true
   }, companyId);
   if (!created) throw new Error("SPS could not create the Project Workspace.");
   const workspaces = await listProjectWorkspaces(ctx, companyId, projectId);
@@ -16551,196 +16852,12 @@ function turnResultText(turn) {
   if (!text4) throw new Error("The Room runtime completed without an assistant message.");
   return enforceUtf8Text(text4, "Room runtime output");
 }
-function beginRoomActivity(state, kind, jobId = null, sourceCommentId = null) {
-  const timestamp = now();
-  state.runtime ??= {};
-  state.runtime.activity = {
-    status: "working",
-    kind,
-    jobId,
-    sourceCommentId,
-    turnId: null,
-    startedAt: timestamp,
-    updatedAt: timestamp,
-    steps: [{ id: "turn", type: "turn", label: "\uC694\uCCAD\uC744 \uBD84\uC11D\uD558\uB294 \uC911", status: "working", updatedAt: timestamp }],
-    error: null
-  };
-  return state.runtime.activity;
-}
-function roomActivityLabel(type, status) {
-  const base = {
-    reasoning: "\uC694\uCCAD \uBD84\uC11D",
-    plan: "\uC791\uC5C5 \uACC4\uD68D \uC815\uB9AC",
-    commandExecution: "\uB3C4\uAD6C \uC2E4\uD589",
-    fileChange: "\uD30C\uC77C \uBCC0\uACBD \uD655\uC778",
-    mcpToolCall: "\uC5F0\uACB0 \uB3C4\uAD6C \uC0AC\uC6A9",
-    dynamicToolCall: "SPS \uC791\uC5C5 \uB3C4\uAD6C \uC0AC\uC6A9",
-    collabAgentToolCall: "\uD611\uC5C5 Agent \uB3C4\uAD6C \uC0AC\uC6A9",
-    webSearch: "\uC6F9 \uAC80\uC0C9",
-    imageView: "\uC774\uBBF8\uC9C0 \uD655\uC778",
-    agentMessage: "\uB2F5\uBCC0 \uC791\uC131"
-  }[type] ?? "\uC791\uC5C5 \uC9C4\uD589";
-  return status === "completed" ? `${base} \uC644\uB8CC` : `${base} \uC911`;
-}
-function applyRoomActivityEvent(state, event) {
-  const activity = state.runtime?.activity;
-  if (!activity || activity.status !== "working") return false;
-  const params = event?.params ?? {};
-  const timestamp = now();
-  if (event?.method === "turn/started") {
-    activity.turnId = params.turnId ?? activity.turnId;
-    activity.updatedAt = timestamp;
-    return true;
-  }
-  if (!["item/started", "item/completed"].includes(event?.method) || !params.item?.type) return false;
-  const status = event.method === "item/completed" ? "completed" : "working";
-  const item = params.item;
-  const id = item.id ?? `${item.type}:${params.turnId ?? activity.steps.length}`;
-  const index = activity.steps.findIndex((step) => step.id === id);
-  const priorStep = index >= 0 ? activity.steps[index] : null;
-  const reasoningSummary = item.type === "reasoning" && Array.isArray(item.summary) ? item.summary.map((entry) => String(entry || "").trim()).filter(Boolean).join("\n").slice(0, 1800) : priorStep?.summary ?? null;
-  const nextStep = {
-    id,
-    type: item.type,
-    label: roomActivityLabel(item.type, status),
-    status,
-    updatedAt: timestamp,
-    ...reasoningSummary ? { summary: reasoningSummary } : {}
-  };
-  if (index >= 0) activity.steps[index] = nextStep;
-  else activity.steps.push(nextStep);
-  activity.steps = activity.steps.slice(-12);
-  activity.turnId = params.turnId ?? activity.turnId;
-  activity.updatedAt = timestamp;
-  return true;
-}
-function applyNativeSessionActivityEvent(state, event) {
-  const activity = state.runtime?.activity;
-  if (!activity || activity.status !== "working" || !event?.runId) return false;
-  activity.turnId = event.runId;
-  activity.updatedAt = now();
-  if (event.eventType === "status") {
-    const step = {
-      id: "agent-session-status",
-      type: "status",
-      label: String(event.message || "Agent run status updated").trim().slice(0, 180),
-      status: "working",
-      updatedAt: activity.updatedAt
-    };
-    const index = activity.steps.findIndex((candidate) => candidate.id === step.id);
-    if (index >= 0) activity.steps[index] = step;
-    else activity.steps.push(step);
-    return true;
-  }
-  if (event.eventType !== "chunk") return false;
-  const payload = asRecord7(event.payload);
-  const nestedPayload = asRecord7(payload.payload);
-  const toolName = textParam6(payload, "currentToolName") || textParam6(nestedPayload, "toolName");
-  const eventType = textParam6(payload, "eventType") || textParam6(nestedPayload, "type") || "progress";
-  const summary = (textParam6(payload, "lastAssistantSnippet") || textParam6(event, "message") || textParam6(payload, "message")).slice(0, 900);
-  const label = toolName ? `Using ${toolName}` : eventType === "reasoning" ? "Reviewing context" : eventType === "assistant" ? "Preparing the response" : "Agent work in progress";
-  activity.steps.push({
-    id: `agent-session:${event.seq ?? activity.steps.length}`,
-    type: toolName ? "tool" : eventType,
-    label,
-    status: "working",
-    updatedAt: activity.updatedAt,
-    ...summary ? { summary } : {}
-  });
-  activity.steps = activity.steps.slice(-20);
-  return true;
-}
-function finishRoomActivity(state, status, error = null) {
-  const activity = state.runtime?.activity;
-  if (!activity) return;
-  activity.status = status;
-  activity.error = error ? String(error instanceof Error ? error.message : error).slice(0, 180) : null;
-  activity.updatedAt = now();
-}
-function roomReasoningSummary(state) {
-  const summaries = (state.runtime?.activity?.steps ?? []).filter((step) => step.type === "reasoning" && step.summary).map((step) => step.summary).filter((summary, index, all) => all.indexOf(summary) === index);
-  return summaries.join("\n\n").slice(0, 3600);
-}
-function roomActivityReporter(ctx, companyId, issueId, state) {
-  let writes = Promise.resolve();
-  let lastPersistedAt = 0;
-  let persistTimer = null;
-  let dirty = false;
-  const persist = (changeSummary) => {
-    lastPersistedAt = Date.now();
-    dirty = false;
-    writes = writes.then(() => saveRoomState(ctx, companyId, issueId, state, changeSummary)).catch(() => {
-    });
-  };
-  const schedulePersist = () => {
-    const remaining = Math.max(0, 1e3 - (Date.now() - lastPersistedAt));
-    if (remaining === 0) {
-      persist("Update Room activity");
-      return;
-    }
-    if (persistTimer !== null) return;
-    persistTimer = setTimeout(() => {
-      persistTimer = null;
-      persist("Update Room activity");
-    }, remaining);
-  };
-  return {
-    report(event) {
-      if (!applyRoomActivityEvent(state, event)) return;
-      dirty = true;
-      emitRoomEvent(ctx, companyId, issueId, { type: "activity", activity: state.runtime?.activity ?? null });
-      schedulePersist();
-    },
-    flush() {
-      if (persistTimer !== null) {
-        clearTimeout(persistTimer);
-        persistTimer = null;
-      }
-      if (dirty) persist("Persist final Room activity");
-      return writes;
-    }
-  };
-}
-function nativeRoomActivityReporter(ctx, companyId, issueId, state) {
-  let writes = Promise.resolve();
-  let lastPersistedAt = 0;
-  let persistTimer = null;
-  let dirty = false;
-  const persist = (changeSummary) => {
-    lastPersistedAt = Date.now();
-    dirty = false;
-    writes = writes.then(() => saveRoomState(ctx, companyId, issueId, state, changeSummary)).catch(() => {
-    });
-  };
-  const schedulePersist = () => {
-    const remaining = Math.max(0, 1e3 - (Date.now() - lastPersistedAt));
-    if (remaining === 0) {
-      persist("Update native Agent Session activity");
-      return;
-    }
-    if (persistTimer !== null) return;
-    persistTimer = setTimeout(() => {
-      persistTimer = null;
-      persist("Update native Agent Session activity");
-    }, remaining);
-  };
-  return {
-    report(event) {
-      if (!applyNativeSessionActivityEvent(state, event)) return;
-      dirty = true;
-      emitRoomEvent(ctx, companyId, issueId, { type: "activity", activity: state.runtime?.activity ?? null });
-      schedulePersist();
-    },
-    flush() {
-      if (persistTimer !== null) {
-        clearTimeout(persistTimer);
-        persistTimer = null;
-      }
-      if (dirty) persist("Persist final native Agent Session activity");
-      return writes;
-    }
-  };
-}
+var {
+  roomActivityReporter,
+  nativeRoomActivityReporter,
+  roomActivityReporterOutsideInvocation,
+  nativeRoomActivityReporterOutsideInvocation
+} = createRoomActivityRuntime({ emitRoomEvent, saveRoomState, saveRoomStateDurably });
 async function getActiveTasks(ctx, companyId, projectId, roomIssueId) {
   if (!projectId) return [];
   const issues = await ctx.issues.list({ companyId, projectId, limit: 200 });
@@ -16785,7 +16902,7 @@ function gitStatusLabel(code) {
 function workspaceGitChanges(workspace) {
   const cwd = String(workspace?.cwd ?? workspace?.path ?? "").trim();
   const name = String(workspace?.name ?? "Workspace");
-  const kind = String(asRecord7(workspace?.metadata).kind ?? "implementation");
+  const kind = String(asRecord8(workspace?.metadata).kind ?? "implementation");
   if (!cwd || !fs3.existsSync(cwd)) {
     return { id: workspace?.id ?? null, name, kind, available: false, files: [] };
   }
@@ -17000,7 +17117,7 @@ async function handleCodexServerRequest(ctx, request) {
   const roomContext = activeThreadContexts.get(params.threadId);
   if (!roomContext) throw new Error("Codex tool call does not belong to an active Room.");
   const name = `${params.namespace || ""}.${params.tool || ""}`.replace(/^\./, "");
-  const args = asRecord7(params.arguments);
+  const args = asRecord8(params.arguments);
   let content;
   try {
     const toolApi = dynamicRoomToolApi(ctx, roomContext);
@@ -17013,7 +17130,7 @@ async function handleCodexServerRequest(ctx, request) {
       });
     } else if (name === "paperclip.memory_search") {
       const memoryAccess = workplaneIdentityForRoomContext(roomContext).memoryAccess;
-      const query = textParam6(args, "query");
+      const query = textParam7(args, "query");
       const limit = Math.max(1, Math.min(Number(args.limit) || 5, 10));
       if (memoryAccess === "none") {
         content = JSON.stringify({ ok: false, code: "memory_read_disabled", message: "This Agent's Organization policy does not allow SPS memory search." });
@@ -17070,7 +17187,7 @@ async function handleCodexServerRequest(ctx, request) {
             workplaneKind: identity.kind,
             status: agent.status,
             adapterType: agent.adapterType ?? null,
-            maxConcurrentRuns: Number(asRecord7(asRecord7(agent.runtimeConfig).heartbeat).maxConcurrentRuns) || 1
+            maxConcurrentRuns: Number(asRecord8(asRecord8(agent.runtimeConfig).heartbeat).maxConcurrentRuns) || 1
           };
         }), null, 2);
       }
@@ -17095,22 +17212,22 @@ async function handleCodexServerRequest(ctx, request) {
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_ASSIGN)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_assign_tasks", message: "This Lead is not configured to assign Worker Tasks." });
       } else {
-        const title = enforceTaskContractText(textParam6(args, "title"), "Task title");
-        const description = enforceTaskContractText(textParam6(args, "description"), "Task description");
-        const assigneeAgentId = textParam6(args, "assigneeAgentId");
-        const requestedTaskType = textParam6(args, "taskType", "implementation");
+        const title = enforceTaskContractText(textParam7(args, "title"), "Task title");
+        const description = enforceTaskContractText(textParam7(args, "description"), "Task description");
+        const assigneeAgentId = textParam7(args, "assigneeAgentId");
+        const requestedTaskType = textParam7(args, "taskType", "implementation");
         const taskType = normalizedTaskTypeKey2(requestedTaskType);
-        const maturity = textParam6(args, "maturity");
+        const maturity = textParam7(args, "maturity");
         const affectedPaths = listParam2(args, "affectedPaths");
         const designReferences = listParam2(args, "designReferences");
         const acceptanceCriteria = listParam2(args, "acceptanceCriteria");
         const verification = listParam2(args, "verification");
         const blockedByIssueIds = [...new Set(listParam2(args, "blockedByIssueIds"))];
-        const requestedProjectWorkspaceId = textParam6(args, "projectWorkspaceId");
+        const requestedProjectWorkspaceId = textParam7(args, "projectWorkspaceId");
         const projectWorkspaces = await toolApi.listProjectWorkspaces();
         const companyAgents = await toolApi.listAgents();
         const selectedWorker = companyAgents.find((candidate) => candidate.id === assigneeAgentId) ?? null;
-        const workspaceProfile = normalizeWorkspaceProfile(asRecord7(roomContext.workspaceProfile), projectWorkspaces);
+        const workspaceProfile = normalizeWorkspaceProfile(asRecord8(roomContext.workspaceProfile), projectWorkspaces);
         const taskWorkspace = chooseTaskWorkspace(
           projectWorkspaces,
           taskType,
@@ -17245,7 +17362,7 @@ ${error.message}`);
       if (!roomContext.projectId) {
         content = JSON.stringify({ ok: false, code: "missing_project" });
       } else {
-        const task = await toolApi.getProjectTask(textParam6(args, "taskId"));
+        const task = await toolApi.getProjectTask(textParam7(args, "taskId"));
         const [stateDocument, comments] = await Promise.all([
           toolApi.getDocument(task.id, TASK_ROOM_STATE_KEY),
           toolApi.listComments(task.id)
@@ -17263,9 +17380,9 @@ ${error.message}`);
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_ASSIGN)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_start_tasks" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam6(args, "taskId"));
-        const dispatch = asRecord7(state.dispatch);
-        const workerAgentId = textParam6(state, "workerAgentId") || task.assigneeAgentId;
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam7(args, "taskId"));
+        const dispatch = asRecord8(state.dispatch);
+        const workerAgentId = textParam7(state, "workerAgentId") || task.assigneeAgentId;
         const companyAgents = await toolApi.listAgents();
         const selectedWorker = companyAgents.find((candidate) => candidate.id === workerAgentId && isTaskWorkerAgent(candidate));
         if (task.status !== "blocked" || dispatch.status !== "waiting_for_worker" || dispatch.reason !== "worker_paused_before_start") {
@@ -17327,8 +17444,8 @@ ${error.message}`);
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_REVIEW)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_post_feedback" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam6(args, "taskId"));
-        const message = enforceTaskContractText(textParam6(args, "message"), "Task feedback");
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam7(args, "taskId"));
+        const message = enforceTaskContractText(textParam7(args, "message"), "Task feedback");
         if (!message) {
           content = JSON.stringify({ ok: false, code: "feedback_message_required" });
         } else if (!["in_review", "blocked", "done"].includes(task.status)) {
@@ -17342,19 +17459,19 @@ ${error.message}`);
           const feedbackBody = `## ${roomContext.agentName} Feedback
 ${message}`;
           const previousStateBody = serializeState(state);
-          const previousReview = asRecord7(state.review);
-          const previousNotification = asRecord7(state.ownerNotification);
+          const previousReview = asRecord8(state.review);
+          const previousNotification = asRecord8(state.ownerNotification);
           const feedbackAt = now();
-          const priorReportCommentId = textParam6(previousReview, "workerReportCommentId") || textParam6(previousNotification, "reportCommentId");
-          const priorReportFingerprint = textParam6(previousReview, "workerReportFingerprint") || textParam6(previousNotification, "reportFingerprint");
+          const priorReportCommentId = textParam7(previousReview, "workerReportCommentId") || textParam7(previousNotification, "reportCommentId");
+          const priorReportFingerprint = textParam7(previousReview, "workerReportFingerprint") || textParam7(previousNotification, "reportFingerprint");
           if (priorReportCommentId || priorReportFingerprint || Object.keys(previousNotification).length > 0) {
             const history = Array.isArray(state.reviewHistory) ? state.reviewHistory : [];
             state.reviewHistory = [...history, {
               outcome: "correction_requested",
               workerReportCommentId: priorReportCommentId || null,
               workerReportFingerprint: priorReportFingerprint || null,
-              ownerNotificationStatus: textParam6(previousNotification, "status") || null,
-              ownerNotificationResultCommentId: textParam6(previousNotification, "resultCommentId") || null,
+              ownerNotificationStatus: textParam7(previousNotification, "status") || null,
+              ownerNotificationResultCommentId: textParam7(previousNotification, "resultCommentId") || null,
               closedAt: feedbackAt
             }].slice(-20);
           }
@@ -17371,7 +17488,7 @@ ${message}`;
           };
           delete state.ownerNotification;
           state.dispatch = {
-            ...asRecord7(state.dispatch),
+            ...asRecord8(state.dispatch),
             status: "feedback_pending",
             reason: null,
             updatedAt: feedbackAt
@@ -17404,10 +17521,10 @@ ${message}`;
             });
             throw error;
           }
-          const comment = asRecord7(restarted?.comment);
-          state.review.feedbackCommentId = textParam6(comment, "id") || null;
+          const comment = asRecord8(restarted?.comment);
+          state.review.feedbackCommentId = textParam7(comment, "id") || null;
           state.dispatch = {
-            ...asRecord7(state.dispatch),
+            ...asRecord8(state.dispatch),
             status: "ready",
             feedbackRestartedAt: feedbackAt,
             updatedAt: now()
@@ -17435,7 +17552,7 @@ ${message}`;
               status: restarted.status,
               assigneeAgentId: restarted.assigneeAgentId ?? null
             },
-            commentId: textParam6(comment, "id") || null,
+            commentId: textParam7(comment, "id") || null,
             correctionRound
           }, null, 2);
         }
@@ -17446,9 +17563,9 @@ ${message}`;
       } else if (!roomHasWorkplaneCapability(roomContext, WORKPLANE_CAPABILITIES.TASK_COMPLETE)) {
         content = JSON.stringify({ ok: false, code: "agent_cannot_complete_tasks" });
       } else {
-        const { task, state } = await toolApi.getOwnedTaskRoom(textParam6(args, "taskId"));
-        const reviewSummary = enforceTaskContractText(textParam6(args, "reviewSummary"), "Task review summary");
-        const workerReportCommentId = textParam6(asRecord7(state.review), "workerReportCommentId");
+        const { task, state } = await toolApi.getOwnedTaskRoom(textParam7(args, "taskId"));
+        const reviewSummary = enforceTaskContractText(textParam7(args, "reviewSummary"), "Task review summary");
+        const workerReportCommentId = textParam7(asRecord8(state.review), "workerReportCommentId");
         if (task.status !== "in_review") {
           content = JSON.stringify({ ok: false, code: "task_not_in_review", status: task.status, message: "Only an in_review Task can be technically verified and marked done." });
         } else if (!workerReportCommentId) {
@@ -17457,7 +17574,7 @@ ${message}`;
           content = JSON.stringify({ ok: false, code: "review_summary_required" });
         } else {
           const completed = await toolApi.updateIssue(task.id, { status: "done" });
-          const previousReview = { ...asRecord7(state.review) };
+          const previousReview = { ...asRecord8(state.review) };
           delete previousReview.acceptedByAgentId;
           delete previousReview.acceptedByAgentName;
           delete previousReview.acceptedAt;
@@ -17521,8 +17638,8 @@ ${message}`;
   return { success: true, contentItems: [{ type: "inputText", text: content }] };
 }
 async function handleRoomView(ctx, params) {
-  const companyId = textParam6(params, "companyId");
-  const issueId = textParam6(params, "issueId");
+  const companyId = textParam7(params, "companyId");
+  const issueId = textParam7(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const [state, workState, checkpointDocument, nativeCompactionsDocument, comments, runtime, initialJobs] = await Promise.all([
@@ -17536,7 +17653,7 @@ async function handleRoomView(ctx, params) {
   ]);
   let jobs = initialJobs;
   const roomRuntime = agentRoomRuntime(runtime, agent);
-  const pendingJobId = textParam6(state.pendingTurn, "jobId");
+  const pendingJobId = textParam7(state.pendingTurn, "jobId");
   const pendingJob = jobs.find((job) => job.id === pendingJobId) ?? null;
   if (pendingJob && ["starting", "working"].includes(pendingJob.status) && !activeRoomMessageJobs.has(issue.id)) {
     const interrupted = await updateRoomJob(ctx, pendingJob, {
@@ -17585,24 +17702,24 @@ async function handleRoomView(ctx, params) {
   };
 }
 async function handleCodexAccountsView(ctx, params) {
-  const companyId = textParam6(params, "companyId");
+  const companyId = textParam7(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const [agents, runtime] = await Promise.all([
     ctx.agents.list({ companyId, limit: 200 }),
     getRuntimeConfig(ctx)
   ]);
   const accounts = localCodexAccounts();
-  const defaultHome = runtime.codexHome || textParam6(process.env, "CODEX_HOME") || path4.join(os2.homedir(), ".codex");
+  const defaultHome = runtime.codexHome || textParam7(process.env, "CODEX_HOME") || path4.join(os2.homedir(), ".codex");
   return {
     accounts: accounts.map(({ id, label, directoryName, home }) => ({ id, label, directoryName, home })),
-    agents: agents.filter(isHiredAgent).filter((agent) => textParam6(agent, "adapterType") === "codex_local").map((agent) => {
+    agents: agents.filter(isHiredAgent).filter((agent) => textParam7(agent, "adapterType") === "codex_local").map((agent) => {
       const effectiveHome = configuredEnvironmentValue(agent, "CODEX_HOME") || defaultHome;
       const selected = accounts.find((account) => normalizeCodexHome(account.home) === normalizeCodexHome(effectiveHome));
       return {
         id: agent.id,
         name: agent.name,
         role: agent.role ?? "general",
-        model: textParam6(asRecord7(agent.adapterConfig), "model", "Default") || "Default",
+        model: textParam7(asRecord8(agent.adapterConfig), "model", "Default") || "Default",
         selectedAccountId: selected?.id ?? null,
         effectiveHome,
         usesExplicitAccount: Boolean(configuredEnvironmentValue(agent, "CODEX_HOME"))
@@ -17612,21 +17729,21 @@ async function handleCodexAccountsView(ctx, params) {
 }
 var WORKPLANE_ROLE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 function normalizeWorkplaneRoleId(value) {
-  const roleId = textParam6({ value }, "value").toLowerCase().replace(/\s+/g, "-");
+  const roleId = textParam7({ value }, "value").toLowerCase().replace(/\s+/g, "-");
   if (!WORKPLANE_ROLE_ID_RE.test(roleId)) {
     throw new Error("Workplane role ID must use lowercase letters, numbers, and hyphens and start with a letter.");
   }
   return roleId;
 }
 function normalizeWorkplaneMemoryAccess(value) {
-  const memoryAccess = textParam6({ value }, "value").toLowerCase();
+  const memoryAccess = textParam7({ value }, "value").toLowerCase();
   if (!(/* @__PURE__ */ new Set(["read_write", "read", "none"])).has(memoryAccess)) {
     throw new Error("Workplane memory access must be read_write, read, or none.");
   }
   return memoryAccess;
 }
 function normalizeWorkplaneReviewMode(value) {
-  const reviewMode = textParam6({ value }, "value").toLowerCase();
+  const reviewMode = textParam7({ value }, "value").toLowerCase();
   if (!(/* @__PURE__ */ new Set(["automatic", "manual"])).has(reviewMode)) {
     throw new Error("Workplane review mode must be automatic or manual.");
   }
@@ -17640,13 +17757,13 @@ function organizationAgentSummary(agent) {
     name: agent.name,
     paperclipRole: agent.role ?? "general",
     adapterType: agent.adapterType ?? null,
-    model: textParam6(asRecord7(agent.adapterConfig), "model") || null,
+    model: textParam7(asRecord8(agent.adapterConfig), "model") || null,
     status: agent.status ?? null,
     workplane: identity
   };
 }
 async function handleOrganizationSettingsView(ctx, params) {
-  const companyId = textParam6(params, "companyId");
+  const companyId = textParam7(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const agents = await ctx.agents.list({ companyId, limit: 200 });
   const hiredAgents = agents.filter(isHiredAgent);
@@ -17665,24 +17782,24 @@ async function handleOrganizationSettingsView(ctx, params) {
 }
 async function handleOrganizationAgentPolicySave(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const agentId = textParam6(params, "agentId");
-  const kind = textParam6(params, "kind").toLowerCase();
+  const agentId = textParam7(params, "agentId");
+  const kind = textParam7(params, "kind").toLowerCase();
   if (!agentId) throw new Error("agentId is required.");
   if (!(/* @__PURE__ */ new Set(["lead", "worker", "hybrid"])).has(kind)) {
     throw new Error("Workplane kind must be lead, worker, or hybrid.");
   }
-  const roleId = normalizeWorkplaneRoleId(textParam6(params, "roleId", kind));
+  const roleId = normalizeWorkplaneRoleId(textParam7(params, "roleId", kind));
   const requestedTargets = [...new Set(listParam2(params, "assignableRoleIds").map(normalizeWorkplaneRoleId))];
   const assignableRoleIds = kind === "worker" ? [] : requestedTargets.length ? requestedTargets : ["worker", "hybrid"];
   const agent = await ctx.agents.get(agentId, companyId);
   if (!isHiredAgent(agent)) throw new Error("Only a hired Agent can receive a Workplane role.");
   const existingIdentity = resolveAgentWorkplaneIdentity(agent);
-  const memoryAccess = normalizeWorkplaneMemoryAccess(textParam6(params, "memoryAccess", existingIdentity.memoryAccess));
-  const reviewMode = normalizeWorkplaneReviewMode(textParam6(params, "reviewMode", existingIdentity.reviewMode));
+  const memoryAccess = normalizeWorkplaneMemoryAccess(textParam7(params, "memoryAccess", existingIdentity.memoryAccess));
+  const reviewMode = normalizeWorkplaneReviewMode(textParam7(params, "reviewMode", existingIdentity.reviewMode));
   const adapterConfig = {
-    ...asRecord7(agent.adapterConfig),
+    ...asRecord8(agent.adapterConfig),
     workplane: {
-      ...asRecord7(asRecord7(agent.adapterConfig).workplane),
+      ...asRecord8(asRecord8(agent.adapterConfig).workplane),
       roleId,
       kind,
       assignableRoleIds,
@@ -17712,7 +17829,7 @@ async function handleOrganizationCollaborationReadiness(_ctx, _params, actionCtx
 }
 async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const templateId = textParam6(params, "templateId");
+  const templateId = textParam7(params, "templateId");
   if (!templateId) throw new Error("templateId is required.");
   const agents = (await ctx.agents.list({ companyId, limit: 200 })).filter(isHiredAgent);
   const preview = resolveOrganizationTemplate(templateId, agents);
@@ -17727,9 +17844,9 @@ async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
     const agent = agentsById.get(assignment.agentId);
     if (!agent) continue;
     const adapterConfig = {
-      ...asRecord7(agent.adapterConfig),
+      ...asRecord8(agent.adapterConfig),
       workplane: {
-        ...asRecord7(asRecord7(agent.adapterConfig).workplane),
+        ...asRecord8(asRecord8(agent.adapterConfig).workplane),
         ...assignment.policy
       }
     };
@@ -17752,13 +17869,13 @@ async function handleOrganizationTemplateApply(ctx, params, actionCtx) {
 }
 async function handleCodexAccountSelect(ctx, params, actionCtx) {
   const companyId = requireAgentConfigurationAction(actionCtx);
-  const agentId = textParam6(params, "agentId");
-  const accountId = textParam6(params, "accountId");
+  const agentId = textParam7(params, "agentId");
+  const accountId = textParam7(params, "accountId");
   if (!agentId || !accountId) throw new Error("agentId and accountId are required.");
   const account = localCodexAccounts().find((candidate) => candidate.id === accountId);
   if (!account) throw new Error("The selected Codex account is no longer signed in on this computer. Refresh the account list and choose an available account.");
   const agent = await ctx.agents.get(agentId, companyId);
-  if (!isHiredAgent(agent) || textParam6(agent, "adapterType") !== "codex_local") {
+  if (!isHiredAgent(agent) || textParam7(agent, "adapterType") !== "codex_local") {
     throw new Error("Only a Codex CLI Agent can be assigned a Codex account.");
   }
   const runtime = await getRuntimeConfig(ctx);
@@ -17772,8 +17889,8 @@ async function handleCodexAccountSelect(ctx, params, actionCtx) {
   };
 }
 async function handleRoomTaskSummary(ctx, params) {
-  const companyId = textParam6(params, "companyId");
-  const issueId = textParam6(params, "issueId");
+  const companyId = textParam7(params, "companyId");
+  const issueId = textParam7(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const room = await ctx.issues.get(issueId, companyId);
   if (!isAgentRoom(room) || !room.projectId) return { room: null, tasks: [], activeTaskCount: 0, referencedFiles: [] };
@@ -17804,7 +17921,7 @@ async function handleRoomTaskSummary(ctx, params) {
 async function handleRoomWorkspaceView(ctx, params) {
   const roomView = await handleRoomView(ctx, params);
   const taskSummary = await handleRoomTaskSummary(ctx, params);
-  const companyId = textParam6(params, "companyId");
+  const companyId = textParam7(params, "companyId");
   const projectId = roomView.room.projectId;
   const project = projectId ? await ctx.projects.get(projectId, companyId) : null;
   const agent = await ctx.agents.get(roomView.room.agentId, companyId);
@@ -17881,8 +17998,8 @@ function projectTaskSummary(issue, project, parentRoom = null) {
   };
 }
 async function handleProjectWorkplaneView(ctx, params) {
-  const companyId = textParam6(params, "companyId");
-  const projectId = textParam6(params, "projectId");
+  const companyId = textParam7(params, "companyId");
+  const projectId = textParam7(params, "projectId");
   if (!companyId || !projectId) throw new Error("companyId and projectId are required.");
   const project = await ctx.projects.get(projectId, companyId);
   if (!project) throw new Error("Project was not found.");
@@ -17930,7 +18047,7 @@ async function handleProjectWorkplaneView(ctx, params) {
   };
 }
 async function handleTeamWorkplaneDashboard(ctx, params) {
-  const companyId = textParam6(params, "companyId");
+  const companyId = textParam7(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
   const [projects, issues] = await Promise.all([
     ctx.projects.list({ companyId, limit: 200 }),
@@ -17958,9 +18075,9 @@ async function handleTeamWorkplaneDashboard(ctx, params) {
   };
 }
 async function handleProjectTasksView(ctx, params) {
-  const companyId = textParam6(params, "companyId");
+  const companyId = textParam7(params, "companyId");
   if (!companyId) throw new Error("companyId is required.");
-  const selectedProjectId = textParam6(params, "projectId");
+  const selectedProjectId = textParam7(params, "projectId");
   const projects = await ctx.projects.list({ companyId, limit: 200 });
   const projectSummaries = projects.map((project) => ({ id: project.id, name: project.name ?? project.slug ?? project.id }));
   if (!selectedProjectId) {
@@ -17995,8 +18112,8 @@ async function handleProjectTasksView(ctx, params) {
   };
 }
 async function handleTaskRoomView(ctx, params) {
-  const companyId = textParam6(params, "companyId");
-  const issueId = textParam6(params, "issueId");
+  const companyId = textParam7(params, "companyId");
+  const issueId = textParam7(params, "issueId");
   if (!companyId || !issueId) throw new Error("companyId and issueId are required.");
   const task = await ctx.issues.get(issueId, companyId);
   if (!task || !task.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -18032,8 +18149,8 @@ async function handleTaskOwnerFeedback(ctx, params, actionCtx) {
   if (!runtime.enabled) {
     return { ok: false, code: "codex_rooms_disabled", message: "Enable the Codex Room runtime before requesting owner feedback." };
   }
-  const issueId = textParam6(params, "issueId");
-  const message = textParam6(params, "message");
+  const issueId = textParam7(params, "issueId");
+  const message = textParam7(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A feedback request is required." };
   const task = await ctx.issues.get(issueId, companyId);
   if (!task || !task.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -18065,10 +18182,10 @@ ${message}`, companyId);
 }
 async function handleRoomBootstrap(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
-  const issueId = textParam6(params, "issueId");
+  const issueId = textParam7(params, "issueId");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
-  const requestedWorkspaceId = textParam6(params, "workspaceId");
-  const requestedWorkingDirectory = textParam6(params, "workingDirectory");
+  const requestedWorkspaceId = textParam7(params, "workspaceId");
+  const requestedWorkingDirectory = textParam7(params, "workingDirectory");
   const state = await loadRoomState(ctx, companyId, issue, agent);
   const resolved = await resolveRoomWorkspace(ctx, companyId, issue, agent, state);
   if (!Array.isArray(resolved.workspaces) || !resolved.workspaces.length) {
@@ -18146,8 +18263,8 @@ async function handleRoomSend(ctx, params, actionCtx) {
   if (!runtime.enabled) {
     return { ok: false, code: "codex_rooms_disabled", message: "Codex Room runtime is disabled. Configure and enable it before sending a live message." };
   }
-  const issueId = textParam6(params, "issueId");
-  const message = textParam6(params, "message");
+  const issueId = textParam7(params, "issueId");
+  const message = textParam7(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A Room message is required." };
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const state = await loadRoomState(ctx, companyId, issue, agent);
@@ -18172,7 +18289,7 @@ async function handleRoomCompact(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
   if (!runtime.enabled) return { ok: false, code: "codex_rooms_disabled", message: "Codex Room runtime is disabled." };
-  const issueId = textParam6(params, "issueId");
+  const issueId = textParam7(params, "issueId");
   return queueRoom(issueId, async () => {
     const { issue, agent } = await requireRoom(ctx, companyId, issueId);
     const state = await loadRoomState(ctx, companyId, issue, agent);
@@ -18237,7 +18354,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
     state = await loadRoomState(ctx, companyId, issue, agent);
     if (state.pendingTurn?.jobId !== job.id) return;
     if (isRoomCliRuntimeAgent(agent)) {
-      if (textParam6(agent, "adapterType") === "codex_local" && textParam6(asRecord7(job.payload), "retryRuntime") === "agy") {
+      if (textParam7(agent, "adapterType") === "codex_local" && textParam7(asRecord8(job.payload), "retryRuntime") === "agy") {
         const workingDirectory3 = isWorkerOnlyRoomAgent(agent) ? workerRoomSandboxDirectory(companyId, issue, agent) : await resolveRoomWorkingDirectory(ctx, companyId, issue, agent, state);
         job = await updateRoomJob(ctx, job, { status: "working" });
         await saveRoomState(ctx, companyId, issue.id, state, "Bind Agy fallback runtime for queued Room Job");
@@ -18251,7 +18368,7 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
           issue,
           state,
           sessionId: fallbackSessionId,
-          currentText: roomTurnText(textParam6(job.payload, "message"), stagedAttachments3, textParam6(job.payload, "retryOfCommentId")),
+          currentText: roomTurnText(textParam7(job.payload, "message"), stagedAttachments3, textParam7(job.payload, "retryOfCommentId")),
           excludedCommentId: job.sourceCommentId
         });
         const turn2 = await runAgyRoomFallback(ctx, {
@@ -18271,12 +18388,12 @@ async function runDurableRoomMessage(ctx, { companyId, runtime, job: initialJob 
 ${durableRoomJobResultText(job, turn2)}`, companyId);
         state.runtime.updatedAt = now();
         state.runtime.lastError = null;
-        state.runtime.quotaRetry = { ...asRecord7(state.runtime.quotaRetry), status: "resolved", resolvedAt: now(), resultCommentId: assistantComment3.id ?? null };
+        state.runtime.quotaRetry = { ...asRecord8(state.runtime.quotaRetry), status: "resolved", resolvedAt: now(), resultCommentId: assistantComment3.id ?? null };
         state.lastCommentId = assistantComment3.id ?? job.sourceCommentId ?? null;
         state.pendingTurn = null;
         finishRoomActivity(state, "completed");
         await saveRoomState(ctx, companyId, issue.id, state, "Persist completed Agy quota retry Room Job");
-        job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment3.id ?? null, payload: { ...asRecord7(job.payload), quotaRetryAt: null } });
+        job = await updateRoomJob(ctx, job, { status: "completed", completedAt: now(), resultCommentId: assistantComment3.id ?? null, payload: { ...asRecord8(job.payload), quotaRetryAt: null } });
         emitRoomEvent(ctx, companyId, issue.id, { type: "completed", job, activity: state.runtime.activity });
         await publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom: issue, job });
         return job;
@@ -18293,7 +18410,7 @@ ${durableRoomJobResultText(job, turn2)}`, companyId);
         issue,
         state,
         threadId,
-        currentText: roomTurnText(textParam6(job.payload, "message"), stagedAttachments2, textParam6(job.payload, "retryOfCommentId")),
+        currentText: roomTurnText(textParam7(job.payload, "message"), stagedAttachments2, textParam7(job.payload, "retryOfCommentId")),
         excludedCommentId: job.sourceCommentId
       });
       const started2 = await startRoomTurn(
@@ -18349,7 +18466,7 @@ ${durableRoomJobResultText(job, turn)}`, companyId);
       issue,
       state,
       sessionId: session.sessionId,
-      currentText: roomTurnText(textParam6(job.payload, "message"), stagedAttachments, textParam6(job.payload, "retryOfCommentId")),
+      currentText: roomTurnText(textParam7(job.payload, "message"), stagedAttachments, textParam7(job.payload, "retryOfCommentId")),
       excludedCommentId: job.sourceCommentId
     });
     const started = await startNativeAgentSessionTurn(ctx, {
@@ -18573,7 +18690,7 @@ async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initi
     ownerState = await loadRoomState(ctx, companyId, ownerRoom, agent);
     if (ownerState.pendingTurn?.jobId !== job.id) return;
     const comments = await ctx.issues.listComments(task.id, companyId);
-    if (textParam6(agent, "adapterType") === "codex_local") {
+    if (textParam7(agent, "adapterType") === "codex_local") {
       const { client, threadId, roomRuntime, workingDirectory } = await openThread(ctx, runtime, ownerState, companyId, ownerRoom, agent);
       job = await updateRoomJob(ctx, job, { status: "working" });
       await saveRoomState(ctx, companyId, ownerRoom.id, ownerState, "Bind Codex app-server thread for Task feedback Job");
@@ -18586,7 +18703,7 @@ async function runDurableTaskOwnerFeedback(ctx, { companyId, runtime, job: initi
         `Task: ${task.identifier ?? task.id} ${task.title}`,
         `Task state: ${JSON.stringify(taskState)}`,
         `Recent Task comments: ${mostRecentComments(comments, 12).map((comment) => comment.body).join("\n---\n")}`,
-        `User request: ${textParam6(job.payload, "message")}`
+        `User request: ${textParam7(job.payload, "message")}`
       ].join("\n\n");
       const prepared2 = await prepareCodexRoomTurn(ctx, {
         companyId,
@@ -18647,7 +18764,7 @@ ${turnResultText(turn)}`, companyId);
       `Task: ${task.identifier ?? task.id} ${task.title}`,
       `Task state: ${JSON.stringify(taskState)}`,
       `Recent Task comments: ${mostRecentComments(comments, 12).map((comment) => comment.body).join("\n---\n")}`,
-      `User request: ${textParam6(job.payload, "message")}`
+      `User request: ${textParam7(job.payload, "message")}`
     ].join("\n\n");
     const prepared = await prepareNativeRoomTurn(ctx, {
       companyId,
@@ -18769,11 +18886,11 @@ async function runQueuedRoomJobs(ctx) {
   const runtime = await getRuntimeConfig(ctx);
   const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
   for (const record of records) {
-    const job = roomJobData(asRecord7(record.data));
+    const job = roomJobData(asRecord8(record.data));
     if (job.status !== "queued" || !job.id || !job.companyId || !job.roomIssueId) continue;
     summary.scanned += 1;
     if (isRoomProviderQuotaRetryJob(job)) {
-      const retryAt = new Date(textParam6(asRecord7(job.payload), "quotaRetryAt") || 0).getTime();
+      const retryAt = new Date(textParam7(asRecord8(job.payload), "quotaRetryAt") || 0).getTime();
       if (Number.isFinite(retryAt) && retryAt > Date.now()) {
         summary.waiting += 1;
         continue;
@@ -18812,10 +18929,10 @@ async function runQueuedRoomJobs(ctx) {
 async function handleRoomSendJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const issueId = textParam6(params, "issueId");
-  const message = textParam6(params, "message");
+  const issueId = textParam7(params, "issueId");
+  const message = textParam7(params, "message");
   const attachmentIds = attachmentIdsParam(params);
-  const retryOfCommentId = textParam6(params, "retryOfCommentId");
+  const retryOfCommentId = textParam7(params, "retryOfCommentId");
   if (!message && !attachmentIds.length) return { ok: false, code: "message_required", message: "Write a message or attach at least one file." };
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const validatedRetryOfCommentId = await validateRoomRetrySource(ctx, companyId, issue.id, retryOfCommentId);
@@ -18839,7 +18956,7 @@ async function handleRoomSendJob(ctx, params, actionCtx) {
 async function handleRoomCompactJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const issueId = textParam6(params, "issueId");
+  const issueId = textParam7(params, "issueId");
   const { issue, agent } = await requireRoom(ctx, companyId, issueId);
   const state = await loadRoomState(ctx, companyId, issue, agent);
   if (await roomHasActiveWork(ctx, issue.id, state)) return { ok: false, code: "room_busy", message: `${agent.name} is already working in this Room.` };
@@ -18859,8 +18976,8 @@ async function handleRoomCompactJob(ctx, params, actionCtx) {
 async function handleTaskOwnerFeedbackJob(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
   const runtime = await getRuntimeConfig(ctx);
-  const taskId = textParam6(params, "issueId");
-  const message = textParam6(params, "message");
+  const taskId = textParam7(params, "issueId");
+  const message = textParam7(params, "message");
   if (!message) return { ok: false, code: "message_required", message: "A feedback request is required." };
   const task = await ctx.issues.get(taskId, companyId);
   if (!task?.parentId) throw new Error("Task Room is available only on a child Task issue.");
@@ -18888,11 +19005,11 @@ ${message}`, companyId);
   return { ok: true, accepted: true, queued: true, taskId: task.id, ownerAgent: agent.name, jobId: job.id };
 }
 function taskStatusTransition(event) {
-  const payload = asRecord7(event?.payload);
-  const patch = asRecord7(payload.patch);
+  const payload = asRecord8(event?.payload);
+  const patch = asRecord8(payload.patch);
   return {
-    previousStatus: textParam6(asRecord7(payload._previous), "status"),
-    nextStatus: textParam6(payload, "status") || textParam6(patch, "status")
+    previousStatus: textParam7(asRecord8(payload._previous), "status"),
+    nextStatus: textParam7(payload, "status") || textParam7(patch, "status")
   };
 }
 var TASK_BOUNDARY_REPORT_MIN_CHARS = 220;
@@ -18906,7 +19023,7 @@ function taskReportFingerprint(body) {
   return `${text4.length}:${(hash >>> 0).toString(16)}`;
 }
 function taskCommentAgentId(comment) {
-  return textParam6(comment, "authorAgentId") || textParam6(comment, "derivedAuthorAgentId");
+  return textParam7(comment, "authorAgentId") || textParam7(comment, "derivedAuthorAgentId");
 }
 function taskBoundaryReportKind(body) {
   const text4 = String(body || "").trim();
@@ -18936,15 +19053,15 @@ function isSubstantiveTaskBoundaryReport(body, kind) {
   return utf8EvidenceGroups.filter((pattern) => pattern.test(text4)).length >= 2;
 }
 function taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) {
-  const review = asRecord7(taskState?.review);
-  const correctionHistory = (Array.isArray(taskState?.reviewHistory) ? taskState.reviewHistory : []).map(asRecord7).filter((entry) => textParam6(entry, "outcome") === "correction_requested");
-  const feedbackCommentId = textParam6(review, "feedbackCommentId");
-  const hasCorrectionBoundary = textParam6(review, "status") === "correction_requested" || Boolean(feedbackCommentId) || correctionHistory.length > 0;
+  const review = asRecord8(taskState?.review);
+  const correctionHistory = (Array.isArray(taskState?.reviewHistory) ? taskState.reviewHistory : []).map(asRecord8).filter((entry) => textParam7(entry, "outcome") === "correction_requested");
+  const feedbackCommentId = textParam7(review, "feedbackCommentId");
+  const hasCorrectionBoundary = textParam7(review, "status") === "correction_requested" || Boolean(feedbackCommentId) || correctionHistory.length > 0;
   if (!hasCorrectionBoundary) return true;
   const feedbackComment = feedbackCommentId ? mostRecentComments(comments, Number.MAX_SAFE_INTEGER).find((candidate) => candidate?.id === feedbackCommentId) : null;
   const cutoffCandidates = [
     feedbackComment?.createdAt,
-    textParam6(review, "status") === "correction_requested" ? review.updatedAt : null,
+    textParam7(review, "status") === "correction_requested" ? review.updatedAt : null,
     ...correctionHistory.map((entry) => entry.closedAt)
   ].map((value) => Date.parse(String(value || ""))).filter(Number.isFinite);
   if (!cutoffCandidates.length) return false;
@@ -18952,7 +19069,7 @@ function taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) {
   return Number.isFinite(reportCreatedAt) && reportCreatedAt > Math.max(...cutoffCandidates);
 }
 function latestTaskBoundaryReport(comments, taskState, expectedKind = null) {
-  const workerAgentId = textParam6(taskState, "workerAgentId");
+  const workerAgentId = textParam7(taskState, "workerAgentId");
   return mostRecentComments(comments, 100).slice().reverse().map((comment) => ({
     comment,
     kind: taskBoundaryReportKind(comment?.body),
@@ -18961,12 +19078,12 @@ function latestTaskBoundaryReport(comments, taskState, expectedKind = null) {
   })).find(({ comment, kind, authorAgentId }) => kind && (!expectedKind || kind === expectedKind) && authorAgentId === workerAgentId && taskReportBelongsToCurrentReviewCycle(comment, comments, taskState) && isSubstantiveTaskBoundaryReport(comment?.body, kind)) ?? null;
 }
 function taskBoundaryAlreadyReported(taskState, report) {
-  const review = asRecord7(taskState?.review);
-  const notification = asRecord7(taskState?.ownerNotification);
-  const priorReportId = textParam6(notification, "reportCommentId") || textParam6(review, "workerReportCommentId");
-  const priorFingerprint = textParam6(notification, "reportFingerprint") || textParam6(review, "workerReportFingerprint");
-  const notificationStatus = textParam6(notification, "status");
-  const manualReportPosted = notificationStatus === "manual_pending" && Boolean(textParam6(notification, "roomReportCommentId"));
+  const review = asRecord8(taskState?.review);
+  const notification = asRecord8(taskState?.ownerNotification);
+  const priorReportId = textParam7(notification, "reportCommentId") || textParam7(review, "workerReportCommentId");
+  const priorFingerprint = textParam7(notification, "reportFingerprint") || textParam7(review, "workerReportFingerprint");
+  const notificationStatus = textParam7(notification, "status");
+  const manualReportPosted = notificationStatus === "manual_pending" && Boolean(textParam7(notification, "roomReportCommentId"));
   return (["working", "completed"].includes(notificationStatus) || manualReportPosted) && (priorReportId === report.comment.id || priorFingerprint && priorFingerprint === report.fingerprint);
 }
 async function recordManualTaskOwnerReview(ctx, { companyId, eventId, task, taskState, ownerRoom, report }) {
@@ -19031,7 +19148,7 @@ async function recordManualTaskOwnerReview(ctx, { companyId, eventId, task, task
 async function publishTaskOwnerReportInbox(ctx, input) {
   if (!ctx.inbox?.publish || !input?.task || !input?.ownerRoom) return { skipped: true, reason: "inbox_unavailable" };
   const task = input.task;
-  const reportCommentId = textParam6(input, "reportCommentId");
+  const reportCommentId = textParam7(input, "reportCommentId");
   if (!reportCommentId) return { skipped: true, reason: "report_comment_missing" };
   const isBlocker = task.status === "blocked";
   const projectQuery = task.projectId ? `?project=${encodeURIComponent(task.projectId)}&room=${encodeURIComponent(input.ownerRoom.id)}` : `?room=${encodeURIComponent(input.ownerRoom.id)}`;
@@ -19049,8 +19166,8 @@ async function publishTaskOwnerReportInbox(ctx, input) {
         taskIssueId: task.id,
         ownerRoomIssueId: input.ownerRoom.id,
         reportCommentId,
-        reportFingerprint: textParam6(input, "reportFingerprint") || null,
-        roomReportCommentId: textParam6(input, "roomReportCommentId") || null
+        reportFingerprint: textParam7(input, "reportFingerprint") || null,
+        roomReportCommentId: textParam7(input, "roomReportCommentId") || null
       }
     });
     return { ok: true, ...result };
@@ -19072,8 +19189,8 @@ async function publishDeliveredTaskOwnerReportInbox(ctx, { companyId, ownerRoom,
     companyId,
     task,
     ownerRoom,
-    reportCommentId: textParam6(asRecord7(job.payload), "reportCommentId"),
-    reportFingerprint: textParam6(asRecord7(job.payload), "reportFingerprint"),
+    reportCommentId: textParam7(asRecord8(job.payload), "reportCommentId"),
+    reportFingerprint: textParam7(asRecord8(job.payload), "reportFingerprint"),
     roomReportCommentId: job.resultCommentId ?? null
   });
 }
@@ -19108,7 +19225,7 @@ async function taskOwnerRoomResultVisibilityOutsideInvocation({ apiUrl, task, ex
   if (expectedStatus !== "in_review") return { publish: true };
   try {
     const taskState = await latestTaskRoomStateOutsideInvocation(apiUrl, task, null);
-    const reviewStatus = textParam6(asRecord7(taskState?.review), "status");
+    const reviewStatus = textParam7(asRecord8(taskState?.review), "status");
     if (reviewStatus === "correction_requested") {
       return { publish: false, reason: "task_feedback_continues_in_task_room" };
     }
@@ -19142,7 +19259,7 @@ function normalizeTaskOwnerCompletionReport(message) {
 function activeRoomProcessBlocksOwnerReport(ownerState, existingJob, activeProcessJob) {
   if (!activeProcessJob) return false;
   if (ownerState?.pendingTurn || existingJob) return true;
-  return ["working", "finishing"].includes(textParam6(ownerState?.runtime?.activity, "status"));
+  return ["working", "finishing"].includes(textParam7(ownerState?.runtime?.activity, "status"));
 }
 async function runAutomaticTaskOwnerReport(ctx, { companyId, eventId, taskIssueId, ownerRoomIssueId, expectedStatus, reportCommentId, reportFingerprint }) {
   const task = await ctx.issues.get(taskIssueId, companyId);
@@ -19230,21 +19347,21 @@ function sortedIssueRuns(runs) {
   return [...Array.isArray(runs) ? runs : []].sort((left, right) => issueRunTimestamp(right) - issueRunTimestamp(left));
 }
 function issueRunErrorFamily(run) {
-  const result = asRecord7(run?.resultJson);
-  return textParam6(run, "errorFamily") || textParam6(result, "errorFamily") || textParam6(run, "errorCode");
+  const result = asRecord8(run?.resultJson);
+  return textParam7(run, "errorFamily") || textParam7(result, "errorFamily") || textParam7(run, "errorCode");
 }
 function isProviderQuotaRun(run) {
   return issueRunErrorFamily(run) === PROVIDER_QUOTA_ERROR_CODE;
 }
 function issueRunRetryNotBefore(run) {
-  const result = asRecord7(run?.resultJson);
-  const value = textParam6(run, "retryNotBefore") || textParam6(result, "retryNotBefore") || textParam6(result, "providerQuotaRetryNotBefore") || textParam6(result, "transientRetryNotBefore");
+  const result = asRecord8(run?.resultJson);
+  const value = textParam7(run, "retryNotBefore") || textParam7(result, "retryNotBefore") || textParam7(result, "providerQuotaRetryNotBefore") || textParam7(result, "transientRetryNotBefore");
   const timestamp = new Date(value || 0).getTime();
   return Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toISOString() : null;
 }
 function providerQuotaRecoveryAction(action) {
-  const evidence = asRecord7(action?.evidence);
-  return textParam6(evidence, "latestRunErrorCode") === PROVIDER_QUOTA_ERROR_CODE || textParam6(evidence, "latestRunErrorFamily") === PROVIDER_QUOTA_ERROR_CODE;
+  const evidence = asRecord8(action?.evidence);
+  return textParam7(evidence, "latestRunErrorCode") === PROVIDER_QUOTA_ERROR_CODE || textParam7(evidence, "latestRunErrorFamily") === PROVIDER_QUOTA_ERROR_CODE;
 }
 function nextProviderQuotaRetryAt(run, current = Date.now()) {
   const requested = issueRunRetryNotBefore(run);
@@ -19252,38 +19369,38 @@ function nextProviderQuotaRetryAt(run, current = Date.now()) {
   return new Date(Math.max(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS, Number.isFinite(requestedAt) ? requestedAt : 0)).toISOString();
 }
 function providerQuotaRetryState(run, currentState = {}, current = Date.now()) {
-  const runId = textParam6(run, "runId") || textParam6(run, "id");
-  const previous = asRecord7(currentState);
-  const sameRun = textParam6(previous, "lastFailedRunId") === runId;
+  const runId = textParam7(run, "runId") || textParam7(run, "id");
+  const previous = asRecord8(currentState);
+  const sameRun = textParam7(previous, "lastFailedRunId") === runId;
   return {
     ...previous,
-    status: sameRun && textParam6(previous, "status") ? textParam6(previous, "status") : "waiting",
+    status: sameRun && textParam7(previous, "status") ? textParam7(previous, "status") : "waiting",
     provider: "agy",
     intervalMinutes: 30,
-    lastFailedRunId: runId || textParam6(previous, "lastFailedRunId") || null,
-    nextRetryAt: sameRun && textParam6(previous, "nextRetryAt") ? textParam6(previous, "nextRetryAt") : nextProviderQuotaRetryAt(run, current),
+    lastFailedRunId: runId || textParam7(previous, "lastFailedRunId") || null,
+    nextRetryAt: sameRun && textParam7(previous, "nextRetryAt") ? textParam7(previous, "nextRetryAt") : nextProviderQuotaRetryAt(run, current),
     attempt: sameRun ? Math.max(0, Number(previous.attempt) || 0) : Math.max(0, Number(previous.attempt) || 0) + 1,
-    lastWakeRunId: sameRun ? textParam6(previous, "lastWakeRunId") || null : null,
-    updatedAt: sameRun && textParam6(previous, "updatedAt") ? textParam6(previous, "updatedAt") : now()
+    lastWakeRunId: sameRun ? textParam7(previous, "lastWakeRunId") || null : null,
+    updatedAt: sameRun && textParam7(previous, "updatedAt") ? textParam7(previous, "updatedAt") : now()
   };
 }
 function workerRuntimeRecoveryAction(task, taskState) {
-  const action = asRecord7(task?.activeRecoveryAction);
-  const workerAgentId = textParam6(taskState, "workerAgentId");
-  const cause = textParam6(action, "cause");
-  const returnedWorkerId = textParam6(action, "returnOwnerAgentId") || textParam6(action, "previousOwnerAgentId");
-  if (!textParam6(action, "id") || !workerAgentId) return null;
-  if (textParam6(action, "kind") !== "stranded_assigned_issue") return null;
+  const action = asRecord8(task?.activeRecoveryAction);
+  const workerAgentId = textParam7(taskState, "workerAgentId");
+  const cause = textParam7(action, "cause");
+  const returnedWorkerId = textParam7(action, "returnOwnerAgentId") || textParam7(action, "previousOwnerAgentId");
+  if (!textParam7(action, "id") || !workerAgentId) return null;
+  if (textParam7(action, "kind") !== "stranded_assigned_issue") return null;
   if (!TASK_WORKER_RUNTIME_RECOVERY_CAUSES.has(cause)) return null;
   if (returnedWorkerId !== workerAgentId) return null;
   return action;
 }
 function recoveryWorkerAgentId(task) {
-  const action = asRecord7(task?.activeRecoveryAction);
-  const cause = textParam6(action, "cause");
-  const workerAgentId = textParam6(action, "returnOwnerAgentId") || textParam6(action, "previousOwnerAgentId");
-  if (!textParam6(action, "id") || !workerAgentId) return "";
-  if (textParam6(action, "kind") !== "stranded_assigned_issue") return "";
+  const action = asRecord8(task?.activeRecoveryAction);
+  const cause = textParam7(action, "cause");
+  const workerAgentId = textParam7(action, "returnOwnerAgentId") || textParam7(action, "previousOwnerAgentId");
+  if (!textParam7(action, "id") || !workerAgentId) return "";
+  if (textParam7(action, "kind") !== "stranded_assigned_issue") return "";
   if (!TASK_WORKER_RUNTIME_RECOVERY_CAUSES.has(cause)) return "";
   return workerAgentId;
 }
@@ -19338,15 +19455,15 @@ async function recoverLegacyTaskRoomState(ctx, event, task) {
   return state;
 }
 function workerRuntimeRecoveryFailure(action) {
-  const evidence = asRecord7(action?.evidence);
-  return textParam6(evidence, "latestRunErrorCode") || textParam6(action, "cause") || "runtime_unavailable";
+  const evidence = asRecord8(action?.evidence);
+  return textParam7(evidence, "latestRunErrorCode") || textParam7(action, "cause") || "runtime_unavailable";
 }
 function workerRuntimeRecoveryAlreadyReported(taskState, actionId) {
-  const notification = asRecord7(taskState?.ownerNotification);
-  return textParam6(notification, "kind") === "runtime_block" && textParam6(notification, "recoveryActionId") === actionId && ["working", "completed", "queued"].includes(textParam6(notification, "status"));
+  const notification = asRecord8(taskState?.ownerNotification);
+  return textParam7(notification, "kind") === "runtime_block" && textParam7(notification, "recoveryActionId") === actionId && ["working", "completed", "queued"].includes(textParam7(notification, "status"));
 }
 function workerRuntimeBlockOwnerPrompt(task, taskState, worker, action) {
-  const evidence = asRecord7(action?.evidence);
+  const evidence = asRecord8(action?.evidence);
   return [
     "AUTOMATIC WORKER RUNTIME BLOCK REPORT.",
     "A Worker could not complete its assigned Task because its local runtime failed before it could submit a Worker blocker report.",
@@ -19354,10 +19471,10 @@ function workerRuntimeBlockOwnerPrompt(task, taskState, worker, action) {
     "Report the blocker to the user in this long-lived Agent Room: identify the affected Task, the exact runtime failure class, the impact, and the smallest next step. Do not create any Task approval or question interaction. Usually the next step is restoring the runtime or quota and then manually resuming the Worker before the owner moves the Task back to todo.",
     `Task: ${task.identifier ?? task.id} ${task.title}`,
     `Task status: ${task.status}`,
-    `Assigned Worker: ${worker?.name ?? textParam6(taskState, "workerAgentId")}`,
+    `Assigned Worker: ${worker?.name ?? textParam7(taskState, "workerAgentId")}`,
     `Runtime failure class: ${workerRuntimeRecoveryFailure(action)}`,
-    `Recovery cause: ${textParam6(action, "cause")}`,
-    `Last failed run: ${textParam6(evidence, "latestRunId") || "unknown"}`,
+    `Recovery cause: ${textParam7(action, "cause")}`,
+    `Last failed run: ${textParam7(evidence, "latestRunId") || "unknown"}`,
     `Task description:
 ${trimRoomContext(task.description, 12e3) || "No description."}`,
     `Task Room state:
@@ -19500,16 +19617,16 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
   if (existing) return { scheduled: false, reason: "worker_runtime_recovery_in_progress", completion: existing };
   const completion = (async () => {
     const runtime = await getRuntimeConfig(ctx);
-    const workerAgentId = textParam6(taskState, "workerAgentId");
+    const workerAgentId = textParam7(taskState, "workerAgentId");
     const worker = await ctx.agents.get(workerAgentId, event.companyId).catch(() => null);
     if (providerQuotaRecoveryAction(recoveryAction)) {
-      const evidence = asRecord7(recoveryAction.evidence);
+      const evidence = asRecord8(recoveryAction.evidence);
       const failedRun = {
-        runId: textParam6(evidence, "latestRunId"),
+        runId: textParam7(evidence, "latestRunId"),
         errorCode: PROVIDER_QUOTA_ERROR_CODE,
         resultJson: {
           errorFamily: PROVIDER_QUOTA_ERROR_CODE,
-          retryNotBefore: textParam6(evidence, "retryNotBefore") || null
+          retryNotBefore: textParam7(evidence, "retryNotBefore") || null
         }
       };
       await paperclipJsonDirect(runtime.spsApiUrl, `/api/issues/${encodeURIComponent(task.id)}/recovery-actions/resolve`, {
@@ -19542,7 +19659,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
         format: "markdown",
         changeSummary: "Record Worker provider quota block with automatic retry disabled"
       });
-      const eventId2 = textParam6(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
+      const eventId2 = textParam7(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
       return runAutomaticWorkerRuntimeBlockReport(ctx, {
         companyId: event.companyId,
         eventId: eventId2,
@@ -19553,7 +19670,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
         recoveryAction
       });
     }
-    if (textParam6(worker, "status") === "error") {
+    if (textParam7(worker, "status") === "error") {
       await paperclipJsonDirect(runtime.spsApiUrl, `/api/agents/${encodeURIComponent(workerAgentId)}/pause`, {
         method: "POST",
         body: {},
@@ -19572,7 +19689,7 @@ async function normalizeWorkerRuntimeRecovery(ctx, event, task, taskState) {
     });
     await updateIssueDirect(runtime.spsApiUrl, task.id, { status: "blocked" });
     await updateIssueDirect(runtime.spsApiUrl, task.id, { assigneeAgentId: workerAgentId, assigneeUserId: null });
-    const eventId = textParam6(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
+    const eventId = textParam7(event, "eventId") || `${task.id}:runtime:${recoveryAction.id}`;
     return runAutomaticWorkerRuntimeBlockReport(ctx, {
       companyId: event.companyId,
       eventId,
@@ -19610,14 +19727,14 @@ async function writeProviderQuotaRetryState(ctx, companyId, task, taskState, cha
   });
 }
 function issueExecutionAutomaticallyRetries(task) {
-  return asRecord7(asRecord7(task?.executionPolicy).failure).automaticRetry === true;
+  return asRecord8(asRecord8(task?.executionPolicy).failure).automaticRetry === true;
 }
 function taskExecutionPolicyWithAutomaticRetry(task, automaticRetry) {
-  const policy = asRecord7(task?.executionPolicy);
-  const failure = asRecord7(policy.failure);
+  const policy = asRecord8(task?.executionPolicy);
+  const failure = asRecord8(policy.failure);
   return {
     ...policy,
-    mode: textParam6(policy, "mode") || "normal",
+    mode: textParam7(policy, "mode") || "normal",
     stages: Array.isArray(policy.stages) ? policy.stages : [],
     failure: {
       ...failure,
@@ -19630,7 +19747,7 @@ function taskExecutionPolicyWithAutomaticRetry(task, automaticRetry) {
 }
 async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskState) {
   const wasAutomatic = issueExecutionAutomaticallyRetries(task);
-  const priorQuotaRetry = asRecord7(taskState?.quotaRetry);
+  const priorQuotaRetry = asRecord8(taskState?.quotaRetry);
   const hadQuotaRetry = Object.keys(priorQuotaRetry).length > 0;
   const executionPolicy = taskExecutionPolicyWithAutomaticRetry(task, false);
   if (wasAutomatic) {
@@ -19638,10 +19755,10 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
     task.executionPolicy = executionPolicy;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduledRuns = runs.filter((run) => textParam6(run, "status") === "scheduled_retry");
-  const desiredStatus = textParam6(task, "status");
+  const scheduledRuns = runs.filter((run) => textParam7(run, "status") === "scheduled_retry");
+  const desiredStatus = textParam7(task, "status");
   for (const run of scheduledRuns) {
-    const runId = textParam6(run, "runId") || textParam6(run, "id");
+    const runId = textParam7(run, "runId") || textParam7(run, "id");
     if (!runId) continue;
     await paperclipJsonDirect(runtime.spsApiUrl, `/api/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
@@ -19658,7 +19775,7 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
     taskState.quotaRetry = {
       ...priorQuotaRetry,
       status: "disabled",
-      provider: textParam6(priorQuotaRetry, "provider") || "agy",
+      provider: textParam7(priorQuotaRetry, "provider") || "agy",
       automaticRetry: false,
       scheduledRunId: null,
       nextRetryAt: null,
@@ -19669,10 +19786,10 @@ async function disableTaskAutomaticRetry(ctx, runtime, companyId, task, taskStat
   return { changed: wasAutomatic || hadQuotaRetry || scheduledRuns.length > 0, cancelledRuns: scheduledRuns.length };
 }
 async function cancelResolvedTaskWorkerQuotaRetry(ctx, { companyId, task, taskState }) {
-  const desiredStatus = textParam6(task, "status");
+  const desiredStatus = textParam7(task, "status");
   if (!TASK_WORKER_RETRY_STOP_STATUSES.has(desiredStatus)) return false;
   const wasAutomatic = issueExecutionAutomaticallyRetries(task);
-  const quotaRetry = asRecord7(taskState?.quotaRetry);
+  const quotaRetry = asRecord8(taskState?.quotaRetry);
   const hadQuotaRetry = Boolean(Object.keys(quotaRetry).length);
   if (!wasAutomatic && !hadQuotaRetry) return false;
   const runtime = await getRuntimeConfig(ctx);
@@ -19682,9 +19799,9 @@ async function cancelResolvedTaskWorkerQuotaRetry(ctx, { companyId, task, taskSt
     task.executionPolicy = executionPolicy;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduledRuns = runs.filter((run) => textParam6(run, "status") === "scheduled_retry");
+  const scheduledRuns = runs.filter((run) => textParam7(run, "status") === "scheduled_retry");
   for (const run of scheduledRuns) {
-    const runId = textParam6(run, "runId") || textParam6(run, "id");
+    const runId = textParam7(run, "runId") || textParam7(run, "id");
     if (!runId) continue;
     await paperclipJsonDirect(runtime.spsApiUrl, `/api/heartbeat-runs/${encodeURIComponent(runId)}/cancel`, {
       method: "POST",
@@ -19719,9 +19836,9 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
   const document = await ctx.issues.documents.get(task.id, TASK_ROOM_STATE_KEY, companyId);
   const taskState = parseState(document?.body);
   if (!taskState || taskState.kind !== "task_room") return { outcome: "skipped", reason: "task_room_state_missing" };
-  const workerAgentId = textParam6(taskState, "workerAgentId") || textParam6(task, "assigneeAgentId");
+  const workerAgentId = textParam7(taskState, "workerAgentId") || textParam7(task, "assigneeAgentId");
   const worker = agentsById.get(workerAgentId);
-  if (!worker || textParam6(worker, "adapterType") !== "antigravity_local") {
+  if (!worker || textParam7(worker, "adapterType") !== "antigravity_local") {
     return { outcome: "skipped", reason: "not_agy_worker" };
   }
   if (!AUTOMATIC_PROVIDER_QUOTA_RETRY_ENABLED) {
@@ -19733,18 +19850,18 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     task.executionPolicy = TASK_ROOM_EXECUTION_POLICY;
   }
   const runs = sortedIssueRuns(await listIssueRunsDirect(runtime.spsApiUrl, task.id));
-  const scheduled = runs.find((run) => textParam6(run, "status") === "scheduled_retry");
+  const scheduled = runs.find((run) => textParam7(run, "status") === "scheduled_retry");
   if (scheduled) {
-    const nextRetryAt = textParam6(scheduled, "scheduledRetryAt") || issueRunRetryNotBefore(scheduled);
-    const previous = asRecord7(taskState.quotaRetry);
-    if (textParam6(previous, "status") !== "core_scheduled" || textParam6(previous, "scheduledRunId") !== (textParam6(scheduled, "runId") || textParam6(scheduled, "id")) || textParam6(previous, "nextRetryAt") !== nextRetryAt) {
+    const nextRetryAt = textParam7(scheduled, "scheduledRetryAt") || issueRunRetryNotBefore(scheduled);
+    const previous = asRecord8(taskState.quotaRetry);
+    if (textParam7(previous, "status") !== "core_scheduled" || textParam7(previous, "scheduledRunId") !== (textParam7(scheduled, "runId") || textParam7(scheduled, "id")) || textParam7(previous, "nextRetryAt") !== nextRetryAt) {
       taskState.quotaRetry = {
         ...previous,
         status: "core_scheduled",
         provider: "agy",
         intervalMinutes: 30,
-        lastFailedRunId: textParam6(scheduled, "retryOfRunId") || textParam6(previous, "lastFailedRunId") || null,
-        scheduledRunId: textParam6(scheduled, "runId") || textParam6(scheduled, "id") || null,
+        lastFailedRunId: textParam7(scheduled, "retryOfRunId") || textParam7(previous, "lastFailedRunId") || null,
+        scheduledRunId: textParam7(scheduled, "runId") || textParam7(scheduled, "id") || null,
         nextRetryAt: nextRetryAt || new Date(current + PROVIDER_QUOTA_RETRY_INTERVAL_MS).toISOString(),
         updatedAt: now()
       };
@@ -19754,20 +19871,20 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
   }
   const latest = runs[0];
   if (!latest) return { outcome: "skipped", reason: "no_runs" };
-  const latestStatus = textParam6(latest, "status");
+  const latestStatus = textParam7(latest, "status");
   if (["queued", "running"].includes(latestStatus)) {
-    if (taskState.quotaRetry && textParam6(taskState.quotaRetry, "status") !== "executing") {
-      taskState.quotaRetry = { ...asRecord7(taskState.quotaRetry), status: "executing", activeRunId: textParam6(latest, "runId") || textParam6(latest, "id") || null, updatedAt: now() };
+    if (taskState.quotaRetry && textParam7(taskState.quotaRetry, "status") !== "executing") {
+      taskState.quotaRetry = { ...asRecord8(taskState.quotaRetry), status: "executing", activeRunId: textParam7(latest, "runId") || textParam7(latest, "id") || null, updatedAt: now() };
       await writeProviderQuotaRetryState(ctx, companyId, task, taskState, "Record active provider quota retry run");
     }
     return { outcome: "executing" };
   }
   if (!isProviderQuotaRun(latest)) {
-    if (taskState.quotaRetry && textParam6(taskState.quotaRetry, "status") !== "resolved") {
+    if (taskState.quotaRetry && textParam7(taskState.quotaRetry, "status") !== "resolved") {
       taskState.quotaRetry = {
-        ...asRecord7(taskState.quotaRetry),
+        ...asRecord8(taskState.quotaRetry),
         status: "resolved",
-        resolvedByRunId: textParam6(latest, "runId") || textParam6(latest, "id") || null,
+        resolvedByRunId: textParam7(latest, "runId") || textParam7(latest, "id") || null,
         resolvedRunStatus: latestStatus || null,
         nextRetryAt: null,
         updatedAt: now()
@@ -19776,7 +19893,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     }
     return { outcome: "resolved", runStatus: latestStatus || null };
   }
-  const previousQuotaRetry = JSON.stringify(asRecord7(taskState.quotaRetry));
+  const previousQuotaRetry = JSON.stringify(asRecord8(taskState.quotaRetry));
   taskState.quotaRetry = providerQuotaRetryState(latest, taskState.quotaRetry, current);
   const retryAt = new Date(taskState.quotaRetry.nextRetryAt || 0).getTime();
   if (!Number.isFinite(retryAt) || retryAt > current) {
@@ -19785,7 +19902,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     }
     return { outcome: "waiting", nextRetryAt: taskState.quotaRetry.nextRetryAt };
   }
-  if (["paused", "error"].includes(textParam6(worker, "status"))) {
+  if (["paused", "error"].includes(textParam7(worker, "status"))) {
     taskState.quotaRetry = {
       ...taskState.quotaRetry,
       status: "waiting_for_worker",
@@ -19795,16 +19912,16 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
     await writeProviderQuotaRetryState(ctx, companyId, task, taskState, "Defer provider quota retry while the assigned Worker is unavailable");
     return { outcome: "waiting_for_worker", nextRetryAt: taskState.quotaRetry.nextRetryAt };
   }
-  const failedRunId = textParam6(latest, "runId") || textParam6(latest, "id");
+  const failedRunId = textParam7(latest, "runId") || textParam7(latest, "id");
   let wakeRunId = null;
-  if (textParam6(task, "status") === "blocked" && textParam6(taskState.quotaRetry, "holdReason") === "provider_quota") {
+  if (textParam7(task, "status") === "blocked" && textParam7(taskState.quotaRetry, "holdReason") === "provider_quota") {
     const activated = await updateIssueDirect(runtime.spsApiUrl, task.id, {
       status: "todo",
       assigneeAgentId: workerAgentId,
       assigneeUserId: null,
       executionPolicy: TASK_ROOM_EXECUTION_POLICY
     });
-    wakeRunId = textParam6(activated, "executionRunId") || `assignment:${Date.now()}`;
+    wakeRunId = textParam7(activated, "executionRunId") || `assignment:${Date.now()}`;
   } else {
     const wake = await paperclipJsonDirect(runtime.spsApiUrl, `/api/agents/${encodeURIComponent(workerAgentId)}/wakeup`, {
       method: "POST",
@@ -19817,7 +19934,7 @@ async function reconcileProviderQuotaTask(ctx, runtime, companyId, task, agentsB
       },
       operation: "Worker provider quota retry wakeup"
     });
-    wakeRunId = textParam6(wake, "id") || textParam6(wake, "runId") || null;
+    wakeRunId = textParam7(wake, "id") || textParam7(wake, "runId") || null;
   }
   taskState.quotaRetry = {
     ...taskState.quotaRetry,
@@ -19909,7 +20026,7 @@ async function handleTaskStatusUpdated(ctx, event) {
   if (taskState.workerAgentId !== task.assigneeAgentId) {
     return { scheduled: false, reason: "task_worker_assignment_mismatch" };
   }
-  const eventAgentId = event.actorType === "agent" ? event.actorId : textParam6(asRecord7(event.payload), "agentId");
+  const eventAgentId = event.actorType === "agent" ? event.actorId : textParam7(asRecord8(event.payload), "agentId");
   if (nextStatus === "done" && eventAgentId && eventAgentId === taskState.workerAgentId) {
     return continueTaskOwnerReportAfterStatusNormalization(ctx, event, {
       task,
@@ -19949,7 +20066,7 @@ async function handleTaskStatusUpdated(ctx, event) {
       completion: existingReport
     };
   }
-  const persistedOwnerReport = (await listRoomJobs(ctx, ownerRoomIssueId)).find((job) => job.kind === "task_owner_report" && job.taskIssueId === task.id && ACTIVE_ROOM_JOB_STATUSES.has(job.status) && (job.id === textParam6(asRecord7(taskState.ownerNotification), "jobId") || textParam6(asRecord7(job.payload), "reportCommentId") === report.comment.id));
+  const persistedOwnerReport = (await listRoomJobs(ctx, ownerRoomIssueId)).find((job) => job.kind === "task_owner_report" && job.taskIssueId === task.id && ACTIVE_ROOM_JOB_STATUSES.has(job.status) && (job.id === textParam7(asRecord8(taskState.ownerNotification), "jobId") || textParam7(asRecord8(job.payload), "reportCommentId") === report.comment.id));
   if (persistedOwnerReport) {
     return {
       scheduled: false,
@@ -19960,7 +20077,7 @@ async function handleTaskStatusUpdated(ctx, event) {
     };
   }
   if (taskBoundaryAlreadyReported(taskState, report)) return { scheduled: false, reason: "duplicate_worker_report" };
-  const eventId = textParam6(event, "eventId") || `${task.id}:${previousStatus}:${nextStatus || task.status}:${report.comment.id}`;
+  const eventId = textParam7(event, "eventId") || `${task.id}:${previousStatus}:${nextStatus || task.status}:${report.comment.id}`;
   if (processedTaskOwnerReportEvents.has(eventId)) return { scheduled: false, reason: "duplicate_event" };
   processedTaskOwnerReportEvents.add(eventId);
   if (processedTaskOwnerReportEvents.size > 1e3) processedTaskOwnerReportEvents.delete(processedTaskOwnerReportEvents.values().next().value);
@@ -20045,13 +20162,13 @@ async function continueTaskOwnerReportAfterStatusNormalization(ctx, event, input
   await ctx.issues.update(input.task.id, { status: input.status }, event.companyId);
   const followUp = await handleTaskStatusUpdated(ctx, {
     ...event,
-    eventId: `${textParam6(event, "eventId") || randomUUID2()}:normalized:${input.status}`,
+    eventId: `${textParam7(event, "eventId") || randomUUID3()}:normalized:${input.status}`,
     eventType: "plugin.task-owner-status-normalized",
     occurredAt: now(),
     entityId: input.task.id,
     entityType: "issue",
     payload: {
-      ...asRecord7(event.payload),
+      ...asRecord8(event.payload),
       status: input.status,
       _previous: { status: input.previousStatus }
     }
@@ -20071,7 +20188,7 @@ async function continueTaskOwnerReportAfterStatusNormalization(ctx, event, input
 async function reconcileTaskOwnerReportBoundaries(ctx, options = {}) {
   if (activeTaskOwnerBoundaryReconcile) return activeTaskOwnerBoundaryReconcile;
   const operation = (async () => {
-    const runId = textParam6(options, "runId") || `task-owner-boundary-reconcile:${Date.now()}`;
+    const runId = textParam7(options, "runId") || `task-owner-boundary-reconcile:${Date.now()}`;
     const summary = { runId, companies: 0, scanned: 0, scheduled: 0, healthy: 0, skipped: 0, failed: 0 };
     const companies = await ctx.companies.list({ limit: 200 });
     summary.companies = companies.length;
@@ -20118,7 +20235,7 @@ async function reconcileTaskOwnerReportBoundaries(ctx, options = {}) {
 }
 async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
   const companyId = requireUserAction(actionCtx);
-  const taskId = textParam6(params, "issueId") || textParam6(params, "taskId");
+  const taskId = textParam7(params, "issueId") || textParam7(params, "taskId");
   if (!taskId) throw new Error("issueId is required.");
   const task = await ctx.issues.get(taskId, companyId);
   if (!task?.parentId) throw new Error("Task owner report reconciliation is available only on a child Task issue.");
@@ -20154,7 +20271,7 @@ async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
     eventType: "plugin.action",
     occurredAt,
     actorType: "user",
-    actorId: textParam6(asRecord7(actionCtx?.actor), "id") || null,
+    actorId: textParam7(asRecord8(actionCtx?.actor), "id") || null,
     companyId,
     entityId: task.id,
     entityType: "issue",
@@ -20168,14 +20285,14 @@ async function handleTaskOwnerReportReconcile(ctx, params, actionCtx) {
 }
 function reconcileTaskOwnerNotificationStateForJob(taskState, job) {
   if (job?.kind !== "task_owner_report" || !job?.taskIssueId || ACTIVE_ROOM_JOB_STATUSES.has(job.status)) return false;
-  const notification = asRecord7(taskState?.ownerNotification);
-  if (textParam6(notification, "jobId") !== job.id || textParam6(notification, "status") !== "working") return false;
+  const notification = asRecord8(taskState?.ownerNotification);
+  if (textParam7(notification, "jobId") !== job.id || textParam7(notification, "status") !== "working") return false;
   const completed = job.status === "completed";
   taskState.ownerNotification = {
     ...notification,
     status: completed ? "completed" : "failed",
     resultCommentId: job.resultCommentId ?? notification.resultCommentId ?? null,
-    ...completed ? {} : { error: textParam6(job, "error") || `Task owner report Job ended with status ${job.status}.` },
+    ...completed ? {} : { error: textParam7(job, "error") || `Task owner report Job ended with status ${job.status}.` },
     updatedAt: now()
   };
   return true;
@@ -20205,7 +20322,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
   if (!ctx.entities?.list) return summary;
   const records = await ctx.entities.list({ entityType: ROOM_JOB_ENTITY_TYPE, limit: 500 });
   for (const record of records) {
-    const job = roomJobData(asRecord7(record.data));
+    const job = roomJobData(asRecord8(record.data));
     if (!job.id || !job.companyId || !job.roomIssueId) continue;
     summary.scanned += 1;
     if (!ACTIVE_ROOM_JOB_STATUSES.has(job.status)) {
@@ -20223,7 +20340,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
     try {
       const { issue, agent } = await requireRoom(ctx, job.companyId, job.roomIssueId);
       const state = await loadRoomState(ctx, job.companyId, issue, agent);
-      if (isRoomProviderQuotaRetryJob(job) && textParam6(state.pendingTurn, "jobId") === job.id) {
+      if (isRoomProviderQuotaRetryJob(job) && textParam7(state.pendingTurn, "jobId") === job.id) {
         await launchDueRoomProviderQuotaRetry(ctx, job).catch(() => null);
         continue;
       }
@@ -20236,7 +20353,7 @@ async function reconcileInterruptedRoomJobs(ctx) {
         };
       }
       const reconciled = await updateRoomJob(ctx, job, patch);
-      if (textParam6(state.pendingTurn, "jobId") === job.id) {
+      if (textParam7(state.pendingTurn, "jobId") === job.id) {
         state.pendingTurn = null;
         finishRoomActivity(state, "failed", reconciled.error);
         await saveRoomState(ctx, job.companyId, issue.id, state, "Mark interrupted Room Job during startup reconciliation");
@@ -20265,10 +20382,10 @@ async function reconcileInterruptedRoomJobs(ctx) {
   return summary;
 }
 function workplaneReconciliationHasActivity(input) {
-  const roomMemorySummary = asRecord7(input?.roomMemorySummary);
-  const interruptedRoomJobSummary = asRecord7(input?.interruptedRoomJobSummary);
-  const ownerSummary = asRecord7(input?.ownerSummary);
-  const queuedRoomJobSummary = asRecord7(input?.queuedRoomJobSummary);
+  const roomMemorySummary = asRecord8(input?.roomMemorySummary);
+  const interruptedRoomJobSummary = asRecord8(input?.interruptedRoomJobSummary);
+  const ownerSummary = asRecord8(input?.ownerSummary);
+  const queuedRoomJobSummary = asRecord8(input?.queuedRoomJobSummary);
   return Number(roomMemorySummary.checkpointsPublished || 0) > 0 || Number(roomMemorySummary.compactionsPublished || 0) > 0 || Number(roomMemorySummary.failed || 0) > 0 || Number(interruptedRoomJobSummary.reconciled || 0) > 0 || Number(interruptedRoomJobSummary.retired || 0) > 0 || Number(interruptedRoomJobSummary.failed || 0) > 0 || Number(ownerSummary.scheduled || 0) > 0 || Number(ownerSummary.failed || 0) > 0 || Number(queuedRoomJobSummary.started || 0) > 0 || Number(queuedRoomJobSummary.completed || 0) > 0 || Number(queuedRoomJobSummary.failed || 0) > 0;
 }
 var plugin = definePlugin({

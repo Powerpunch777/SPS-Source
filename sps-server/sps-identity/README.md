@@ -23,7 +23,7 @@ npm test
    public JWK as `SPS_IDENTITY_PUBLIC_JWK`, then put the private PEM in the
    Worker secret named `SPS_IDENTITY_PRIVATE_KEY_PEM`.
 3. Run the deployment helper below. It creates the D1 database if needed,
-   applies the migration, stores the secrets, and attaches
+   applies all pending D1 migrations, stores the secrets, and attaches
    `auth.redongames.com` during the Worker deploy.
 
 ## Safe deployment helper
@@ -31,8 +31,11 @@ npm test
 After Wrangler is authenticated, run
 `./scripts/publish-identity.ps1 -GoogleClientId <web-client-id>`. The script
 prompts for the Google web-client secret without writing it to a file, uploads
-the RSA key material from the ignored `.secrets/` folder, applies the D1
-migration, and deploys the Worker. Finish with `npm run verify:deployment`.
+the RSA key material from the ignored `.secrets/` folder, applies all pending
+D1 migrations, and deploys the Worker. Successful code and refresh exchanges
+retain an idempotent response for at most 10 minutes so a lost Desktop response
+can be retried without keeping plaintext refresh credentials long-term. Finish
+with `npm run verify:deployment`.
 
 Never commit the Google secret, RSA private key, D1 database contents, or a
 Desktop refresh token.

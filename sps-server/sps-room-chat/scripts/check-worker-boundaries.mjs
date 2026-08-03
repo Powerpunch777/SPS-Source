@@ -11,7 +11,7 @@ if (lineCount > 8000) {
   errors.push(`src/worker.js has ${lineCount} lines; split another domain before exceeding the 8,000-line budget.`);
 }
 
-for (const modulePath of ["./room-state.js", "./workspace-profile.js", "./room-job-policy.js", "./room-attachments.js", "./collaboration-readiness.js", "./room-memory-runtime.js"]) {
+for (const modulePath of ["./room-state.js", "./workspace-profile.js", "./room-job-policy.js", "./room-attachments.js", "./collaboration-readiness.js", "./room-memory-runtime.js", "./room-activity.js"]) {
   if (!worker.includes(`from "${modulePath}"`)) errors.push(`src/worker.js must use ${modulePath}.`);
 }
 
@@ -60,6 +60,11 @@ for (const functionName of [
   "reconcileRoomMemoryLifecycle",
   "recordNativeCodexCompaction",
   "appendCheckpoint",
+  "beginRoomActivity",
+  "applyRoomActivityEvent",
+  "applyNativeSessionActivityEvent",
+  "finishRoomActivity",
+  "roomReasoningSummary",
 ]) {
   if (new RegExp(`(?:^|\\n)function\\s+${functionName}\\s*\\(`).test(worker)) {
     errors.push(`${functionName} must remain in its focused policy module.`);

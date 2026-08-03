@@ -11,6 +11,7 @@ const AUTHORIZATION_CODE_TTL_MS = 5 * 60 * 1000;
 export const SPS_DESKTOP_SIGN_IN_TTL_MS = 15 * 60 * 1000;
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const IDENTITY_REPLAY_TTL_MS = 10 * 60 * 1000;
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -240,7 +241,7 @@ async function exchangeGoogleCode({ env, fetchImpl, code, verifier, nonce }) {
   });
 }
 
-async function issueTokenPair(env, profile, deviceId) {
+async function createTokenPair(env, profile, deviceId) {
   const accessToken = await signAccessToken(env, {
     sub: profile.subject,
     email: profile.email,
@@ -251,21 +252,83 @@ async function issueTokenPair(env, profile, deviceId) {
   const refreshToken = randomUrlValue(48);
   const refreshHash = await sha256Base64Url(refreshToken);
   const now = Date.now();
-  await env.DB.prepare(
-    "INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).bind(refreshHash, profile.subject, deviceId, now + REFRESH_TOKEN_TTL_MS, now).run();
   return {
-    access_token: accessToken,
-    token_type: "Bearer",
-    expires_in: ACCESS_TOKEN_TTL_SECONDS,
-    refresh_token: refreshToken,
-    account: {
-      subject: profile.subject,
-      email: profile.email,
-      name: profile.name,
-      picture: profile.picture ?? null,
+    body: {
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: ACCESS_TOKEN_TTL_SECONDS,
+      refresh_token: refreshToken,
+      account: {
+        subject: profile.subject,
+        email: profile.email,
+        name: profile.name,
+        picture: profile.picture ?? null,
+      },
     },
+    refreshHash,
+    refreshExpiresAt: now + REFRESH_TOKEN_TTL_MS,
   };
+}
+
+function replayResponse(record, requestHash, invalidMessage) {
+  if (!record) return null;
+  if (record.request_hash !== requestHash) return error(invalidMessage, 401);
+  try {
+    return json(JSON.parse(record.response_json));
+  } catch {
+    throw new Error("SPS Identity replay record is invalid.");
+  }
+}
+
+async function findReplay(env, replayKey, requestHash, invalidMessage) {
+  const record = await env.DB.prepare(
+    "SELECT request_hash, response_json, expires_at FROM identity_replay_results WHERE replay_key = ?",
+  ).bind(replayKey).first();
+  if (record && Number(record.expires_at) <= Date.now()) {
+    await env.DB.prepare("DELETE FROM identity_replay_results WHERE replay_key = ?").bind(replayKey).run();
+    return null;
+  }
+  return replayResponse(record, requestHash, invalidMessage);
+}
+
+async function consumeAndPersistPair(env, {
+  sourceTable,
+  sourceKeyColumn,
+  sourceKey,
+  sourceDeviceId,
+  sourceExpiresAt,
+  replayKey,
+  requestHash,
+  pair,
+  responseExpiresAt,
+  now,
+}) {
+  const sourcePredicate = `${sourceKeyColumn} = ? AND device_id = ? AND expires_at = ?`;
+  const sourceValues = [sourceKey, sourceDeviceId, sourceExpiresAt];
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE ${sourceTable} SET consumed_at = ?, replay_key = ? WHERE ${sourcePredicate} AND consumed_at IS NULL`,
+    ).bind(now, replayKey, ...sourceValues),
+    env.DB.prepare(
+      `INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at) `
+      + `SELECT ?, ?, ?, ?, ? WHERE EXISTS (`
+      + `SELECT 1 FROM ${sourceTable} WHERE ${sourcePredicate} AND consumed_at = ? AND replay_key = ?)`,
+    ).bind(
+      pair.refreshHash, pair.body.account.subject, sourceDeviceId, pair.refreshExpiresAt, now,
+      ...sourceValues, now, replayKey,
+    ),
+    env.DB.prepare(
+      "INSERT INTO identity_replay_results (replay_key, request_hash, response_json, expires_at, created_at) "
+      + `SELECT ?, ?, ?, ?, ? WHERE EXISTS (`
+      + `SELECT 1 FROM ${sourceTable} WHERE ${sourcePredicate} AND consumed_at = ? AND replay_key = ?)`,
+    ).bind(
+      replayKey, requestHash, JSON.stringify(pair.body), responseExpiresAt, now,
+      ...sourceValues, now, replayKey,
+    ),
+  ]);
+  if (Number(results?.[0]?.meta?.changes ?? 0) === 1) return json(pair.body);
+  return (await findReplay(env, replayKey, requestHash, "SPS credential was already used."))
+    || error("SPS credential was already used.", 401);
 }
 
 async function readJson(request) {
@@ -283,6 +346,7 @@ async function cleanupExpiredIdentityRecords(env) {
     env.DB.prepare("DELETE FROM oauth_states WHERE expires_at <= ?").bind(now).run(),
     env.DB.prepare("DELETE FROM authorization_codes WHERE expires_at <= ?").bind(now).run(),
     env.DB.prepare("DELETE FROM refresh_tokens WHERE expires_at <= ?").bind(now).run(),
+    env.DB.prepare("DELETE FROM identity_replay_results WHERE expires_at <= ?").bind(now).run(),
   ]).catch((reason) => {
     // Cleanup is opportunistic: a transient D1 failure must not block sign-in.
     console.warn("SPS Identity cleanup failed", reason);
@@ -375,6 +439,10 @@ async function token(request, env) {
   }
   await cleanupExpiredIdentityRecords(env);
   const codeHash = await sha256Base64Url(code);
+  const requestHash = await sha256Base64Url(`${deviceId}:${verifier}`);
+  const replayKey = `authorization-code:${codeHash}`;
+  const replay = await findReplay(env, replayKey, requestHash, "SPS authorization code was already used.");
+  if (replay) return replay;
   const record = await env.DB.prepare("SELECT * FROM authorization_codes WHERE code_hash = ?").bind(codeHash).first();
   if (!record) return error("SPS authorization code is invalid or expired.", 401);
   if (Number(record.expires_at) <= Date.now()) {
@@ -383,16 +451,25 @@ async function token(request, env) {
   }
   if ((await sha256Base64Url(verifier)) !== record.code_challenge) return error("SPS PKCE verification failed.", 401);
   if (record.device_id !== deviceId) return error("SPS authorization code belongs to another device.", 401);
-  const consumed = await env.DB.prepare(
-    "DELETE FROM authorization_codes WHERE code_hash = ? AND device_id = ? AND expires_at = ?",
-  ).bind(codeHash, deviceId, record.expires_at).run();
-  if (Number(consumed.meta?.changes ?? 0) !== 1) return error("SPS authorization code was already used.", 401);
-  return json(await issueTokenPair(env, {
+  const pair = await createTokenPair(env, {
     subject: record.subject,
     email: record.email,
     name: record.name,
     picture: record.picture || null,
-  }, record.device_id));
+  }, record.device_id);
+  const consumedAt = Date.now();
+  return consumeAndPersistPair(env, {
+    sourceTable: "authorization_codes",
+    sourceKeyColumn: "code_hash",
+    sourceKey: codeHash,
+    sourceDeviceId: deviceId,
+    sourceExpiresAt: record.expires_at,
+    replayKey,
+    requestHash,
+    pair,
+    responseExpiresAt: Math.min(Number(record.expires_at), consumedAt + IDENTITY_REPLAY_TTL_MS),
+    now: consumedAt,
+  });
 }
 
 async function refresh(request, env) {
@@ -402,6 +479,10 @@ async function refresh(request, env) {
   if (!refreshToken || !validDeviceId(deviceId)) return error("Refresh token and device ID are required.");
   await cleanupExpiredIdentityRecords(env);
   const hash = await sha256Base64Url(refreshToken);
+  const requestHash = await sha256Base64Url(`${deviceId}:${hash}`);
+  const replayKey = `refresh-token:${hash}`;
+  const replay = await findReplay(env, replayKey, requestHash, "SPS refresh token was already used.");
+  if (replay) return replay;
   const record = await env.DB.prepare("SELECT * FROM refresh_tokens WHERE token_hash = ?").bind(hash).first();
   if (!record) return error("SPS refresh token is invalid or expired.", 401);
   if (Number(record.expires_at) <= Date.now()) {
@@ -409,25 +490,38 @@ async function refresh(request, env) {
     return error("SPS refresh token is invalid or expired.", 401);
   }
   if (record.device_id !== deviceId) return error("SPS refresh token belongs to another device.", 401);
-  const rotated = await env.DB.prepare(
-    "DELETE FROM refresh_tokens WHERE token_hash = ? AND device_id = ? AND expires_at = ?",
-  ).bind(hash, deviceId, record.expires_at).run();
-  if (Number(rotated.meta?.changes ?? 0) !== 1) return error("SPS refresh token was already used.", 401);
   const profile = await env.DB.prepare("SELECT * FROM identity_users WHERE subject = ?").bind(record.subject).first();
   if (!profile) return error("SPS account is unavailable.", 401);
-  return json(await issueTokenPair(env, {
+  const pair = await createTokenPair(env, {
     subject: profile.subject,
     email: profile.email,
     name: profile.name,
     picture: profile.picture || null,
-  }, record.device_id));
+  }, record.device_id);
+  const consumedAt = Date.now();
+  return consumeAndPersistPair(env, {
+    sourceTable: "refresh_tokens",
+    sourceKeyColumn: "token_hash",
+    sourceKey: hash,
+    sourceDeviceId: deviceId,
+    sourceExpiresAt: record.expires_at,
+    replayKey,
+    requestHash,
+    pair,
+    responseExpiresAt: Math.min(Number(record.expires_at), consumedAt + IDENTITY_REPLAY_TTL_MS),
+    now: consumedAt,
+  });
 }
 
 async function revoke(request, env) {
   const body = await readJson(request);
   const refreshToken = text(body.refresh_token);
   if (refreshToken) {
-    await env.DB.prepare("DELETE FROM refresh_tokens WHERE token_hash = ?").bind(await sha256Base64Url(refreshToken)).run();
+    const hash = await sha256Base64Url(refreshToken);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM refresh_tokens WHERE token_hash = ?").bind(hash),
+      env.DB.prepare("DELETE FROM identity_replay_results WHERE replay_key = ?").bind(`refresh-token:${hash}`),
+    ]);
   }
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }

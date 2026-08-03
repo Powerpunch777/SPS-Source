@@ -38,14 +38,14 @@ globalThis.fetch = async (url) => {
         id: "image-attachment",
         originalFilename: "mockup.png",
         contentType: "image/png",
-        byteSize: 42,
+        byteSize: Buffer.byteLength("image bytes"),
         contentPath: "/api/attachments/image-attachment/content"
       },
       {
         id: "brief-attachment",
         originalFilename: "brief.md",
         contentType: "text/markdown",
-        byteSize: 84,
+        byteSize: Buffer.byteLength("design brief"),
         contentPath: "/api/attachments/brief-attachment/content"
       }
     ]), { status: 200 });
@@ -55,6 +55,15 @@ globalThis.fetch = async (url) => {
   }
   if (/\/api\/attachments\/image-attachment\/content$/.test(href)) {
     return new Response("image bytes", { status: 200 });
+  }
+  if (/\/api\/attachments\/size-mismatch\/content$/.test(href)) {
+    return new Response("tiny", { status: 200 });
+  }
+  if (/\/api\/attachments\/oversized-content\/content$/.test(href)) {
+    return new Response("123456789", { status: 200 });
+  }
+  if (/\/api\/attachments\/dot-filename\/content$/.test(href)) {
+    return new Response("safe", { status: 200 });
   }
   assert.fail(`Unexpected attachment request: ${href}`);
 };
@@ -97,6 +106,66 @@ const gitExclude = workspaceGitExcludePath(workspace);
 assert.ok(gitExclude);
 assert.match(fs.readFileSync(gitExclude, "utf8"), /^\.sps\/room-attachments\/$/m);
 fs.rmSync(workspace, { recursive: true, force: true });
+
+const hostileWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-hostile-"));
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", ".", [attachments[0]], hostileWorkspace),
+  /Room id must contain only/
+);
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{ ...attachments[0], id: ".." }], hostileWorkspace),
+  /Attachment id must contain only/
+);
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{
+    ...attachments[0],
+    id: "external-content",
+    contentPath: "https://example.invalid/api/attachments/external-content/content"
+  }], hostileWorkspace),
+  /must stay on the local SPS attachment API/
+);
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{
+    ...attachments[0],
+    id: "size-mismatch",
+    byteSize: 99,
+    contentPath: "/api/attachments/size-mismatch/content"
+  }], hostileWorkspace),
+  /size did not match SPS metadata/
+);
+const dotFilename = await stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{
+  ...attachments[0],
+  id: "dot-filename",
+  originalFilename: "..",
+  byteSize: Buffer.byteLength("safe"),
+  contentPath: "/api/attachments/dot-filename/content"
+}], hostileWorkspace);
+assert.equal(path.basename(dotFilename[0].localPath), "attachment");
+
+const previousFileLimit = process.env.SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES;
+process.env.SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES = "8";
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{
+    ...attachments[0],
+    id: "oversized-content",
+    byteSize: 0,
+    contentPath: "/api/attachments/oversized-content/content"
+  }], hostileWorkspace),
+  /exceeds the 8 byte file limit/
+);
+if (previousFileLimit === undefined) delete process.env.SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES;
+else process.env.SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES = previousFileLimit;
+fs.rmSync(hostileWorkspace, { recursive: true, force: true });
+
+const linkedWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-link-"));
+const linkTarget = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-outside-"));
+fs.symlinkSync(linkTarget, path.join(linkedWorkspace, ".sps"), process.platform === "win32" ? "junction" : "dir");
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [attachments[0]], linkedWorkspace),
+  /cannot use a symlink or junction/
+);
+fs.rmSync(linkedWorkspace, { recursive: true, force: true });
+fs.rmSync(linkTarget, { recursive: true, force: true });
 
 const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-room-cache-"));
 const staleDirectory = path.join(cacheRoot, "room", "stale");

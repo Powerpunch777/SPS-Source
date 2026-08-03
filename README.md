@@ -63,6 +63,6 @@ Set-Location ..\sps-identity
 npm test
 ```
 
-`sps-server/plugin-platform` is a retired internal contract-fixture suite. It
-is not a product dependency or a plugin authoring entry point. New plugin work
-must use the pinned public SDK under `external/sps-plugin-sdk`.
+The retired internal `sps-server/plugin-platform` copy has been removed. Plugin
+authoring, conformance, packaging, Registry publishing, and templates all come
+from the pinned public SDK under `external/sps-plugin-sdk`.

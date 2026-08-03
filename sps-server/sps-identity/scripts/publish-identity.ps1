@@ -34,8 +34,14 @@ try {
   $GoogleClientId | npx wrangler secret put GOOGLE_CLIENT_ID
   $GoogleClientSecret | npx wrangler secret put GOOGLE_CLIENT_SECRET
   Get-Content -LiteralPath ".secrets\sps-identity-private.pem" -Raw | npx wrangler secret put SPS_IDENTITY_PRIVATE_KEY_PEM
-  npx wrangler d1 execute sps-identity --remote --file migrations\0001_identity.sql
+  npx wrangler d1 migrations apply sps-identity --remote
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not apply SPS Identity D1 migrations. The Worker was not deployed."
+  }
   npx wrangler deploy --keep-vars --domain auth.redongames.com
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not deploy SPS Identity."
+  }
 } finally {
   [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
   Remove-Variable GoogleClientSecret -ErrorAction SilentlyContinue

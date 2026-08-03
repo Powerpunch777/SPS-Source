@@ -1,8 +1,14 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 const ROOM_ATTACHMENT_CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_ROOM_ATTACHMENT_MAX_FILE_BYTES = 100 * 1024 * 1024;
+const DEFAULT_ROOM_ATTACHMENT_MAX_REQUEST_BYTES = 512 * 1024 * 1024;
+const SAFE_ATTACHMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,159}$/;
 const ROOM_RESPONSE_CONTRACT = [
   "SYSTEM-PROVIDED ROOM RESPONSE CONTRACT:",
   "- When the current request asks to show or preview an existing Workspace image, the final response must embed at least one relevant image with Markdown image syntax and a verified absolute local path.",
@@ -65,12 +71,19 @@ export function roomAttachmentName(attachment) {
 
 export function safeAttachmentFilename(filename) {
   const basename = path.basename(String(filename || "attachment"));
-  const cleaned = basename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().slice(0, 120);
-  return cleaned || "attachment";
+  let cleaned = basename.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().slice(0, 120);
+  cleaned = cleaned.replace(/[. ]+$/g, "");
+  if (!cleaned || cleaned === "." || cleaned === "..") return "attachment";
+  if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(cleaned)) cleaned = `_${cleaned}`;
+  return cleaned;
 }
 
-export function safeAttachmentPathSegment(value) {
-  return String(value || "unknown").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "unknown";
+export function safeAttachmentPathSegment(value, label = "Attachment id") {
+  const segment = String(value || "").trim();
+  if (!SAFE_ATTACHMENT_ID.test(segment)) {
+    throw new Error(`${label} must contain only letters, numbers, underscores, or hyphens.`);
+  }
+  return segment;
 }
 
 export function attachmentContentPath(attachment) {
@@ -79,7 +92,12 @@ export function attachmentContentPath(attachment) {
 }
 
 function roomAttachmentContentUrl(apiUrl, attachment, loopbackSPSApiUrl) {
-  return new URL(attachmentContentPath(attachment), `${loopbackSPSApiUrl(apiUrl)}/`).toString();
+  const base = new URL(`${loopbackSPSApiUrl(apiUrl)}/`);
+  const contentUrl = new URL(attachmentContentPath(attachment), base);
+  if (contentUrl.origin !== base.origin || !contentUrl.pathname.startsWith("/api/attachments/")) {
+    throw new Error("The SPS attachment content URL must stay on the local SPS attachment API.");
+  }
+  return contentUrl.toString();
 }
 
 export function isCodexImageAttachment(attachment) {
@@ -107,6 +125,93 @@ export function roomAttachmentWorkspaceRoot(workingDirectory) {
     throw new Error("The Room attachment staging path must stay inside the selected Project Workspace.");
   }
   return attachmentRoot;
+}
+
+function positiveByteLimit(name, fallback) {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer byte count.`);
+  }
+  return value;
+}
+
+function roomAttachmentByteLimits() {
+  return {
+    maxFileBytes: positiveByteLimit("SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES", DEFAULT_ROOM_ATTACHMENT_MAX_FILE_BYTES),
+    maxRequestBytes: positiveByteLimit("SPS_ROOM_ATTACHMENT_MAX_REQUEST_BYTES", DEFAULT_ROOM_ATTACHMENT_MAX_REQUEST_BYTES),
+  };
+}
+
+function pathIsContained(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function realpath(target) {
+  return fs.realpathSync.native ? fs.realpathSync.native(target) : fs.realpathSync(target);
+}
+
+function ensureDirectoryTreeWithoutLinks(workspaceRoot, targetDirectory) {
+  const resolvedRoot = path.resolve(workspaceRoot);
+  const resolvedTarget = path.resolve(targetDirectory);
+  if (!pathIsContained(resolvedRoot, resolvedTarget)) {
+    throw new Error("The Room attachment staging directory escaped the selected Project Workspace.");
+  }
+  const rootStats = fs.lstatSync(resolvedRoot);
+  if (!rootStats.isDirectory()) throw new Error("The selected Project Workspace is not a directory.");
+  const realRoot = realpath(resolvedRoot);
+  let cursor = resolvedRoot;
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment);
+    if (fs.existsSync(cursor)) {
+      const stats = fs.lstatSync(cursor);
+      if (stats.isSymbolicLink()) throw new Error("Room attachment staging cannot use a symlink or junction.");
+      if (!stats.isDirectory()) throw new Error("A Room attachment staging path component is not a directory.");
+    } else {
+      fs.mkdirSync(cursor);
+    }
+    if (!pathIsContained(realRoot, realpath(cursor))) {
+      throw new Error("The Room attachment staging directory escaped through a filesystem link.");
+    }
+  }
+  return { realRoot, realDirectory: realpath(resolvedTarget) };
+}
+
+function rejectLinkOrNonFile(target, label) {
+  if (!fs.existsSync(target)) return;
+  const stats = fs.lstatSync(target);
+  if (stats.isSymbolicLink()) throw new Error(`${label} cannot be a symlink or junction.`);
+  if (!stats.isFile()) throw new Error(`${label} must be a regular file.`);
+}
+
+async function streamAttachmentResponse(response, target, { declaredBytes, maxFileBytes, remainingRequestBytes }) {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxFileBytes) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`The attached file exceeds the ${maxFileBytes} byte file limit.`);
+  }
+  if (Number.isFinite(contentLength) && contentLength > remainingRequestBytes) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error("The attached files exceed the Room request byte limit.");
+  }
+  let receivedBytes = 0;
+  const limiter = new Transform({
+    transform(chunk, _encoding, callback) {
+      receivedBytes += chunk.length;
+      if (receivedBytes > maxFileBytes) return callback(new Error(`The attached file exceeds the ${maxFileBytes} byte file limit.`));
+      if (receivedBytes > remainingRequestBytes) return callback(new Error("The attached files exceed the Room request byte limit."));
+      callback(null, chunk);
+    },
+  });
+  const source = response.body ? Readable.fromWeb(response.body) : Readable.from([]);
+  await pipeline(source, limiter, fs.createWriteStream(target, { flags: "wx" }));
+  if (declaredBytes > 0 && receivedBytes !== declaredBytes) {
+    throw new Error(`The attached file size did not match SPS metadata (${receivedBytes} received, ${declaredBytes} declared).`);
+  }
+  return receivedBytes;
 }
 
 export function workspaceGitExcludePath(workingDirectory) {
@@ -193,24 +298,50 @@ export function mergeRoomAttachments(...groups) {
 export async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDirectory, network) {
   const workspaceRoot = path.resolve(String(workingDirectory || "").trim());
   const cacheRoot = roomAttachmentWorkspaceRoot(workspaceRoot);
+  const { maxFileBytes, maxRequestBytes } = roomAttachmentByteLimits();
+  ensureDirectoryTreeWithoutLinks(workspaceRoot, cacheRoot);
   excludeWorkspaceRoomAttachments(workspaceRoot);
   cleanupRoomAttachmentCache(cacheRoot);
-  const roomDirectory = path.join(cacheRoot, safeAttachmentPathSegment(roomIssueId));
+  const roomDirectory = path.join(cacheRoot, safeAttachmentPathSegment(roomIssueId, "Room id"));
+  ensureDirectoryTreeWithoutLinks(workspaceRoot, roomDirectory);
   const staged = [];
+  let requestBytes = 0;
   for (const attachment of attachments) {
     const attachmentId = textParam(attachment, "id");
     if (!attachmentId) throw new Error("An attached file did not have a SPS attachment id.");
+    const declaredBytes = Number(attachment?.byteSize) || 0;
+    if (declaredBytes < 0 || !Number.isSafeInteger(declaredBytes)) throw new Error("SPS attachment size metadata is invalid.");
+    if (declaredBytes > maxFileBytes) throw new Error(`The attached file exceeds the ${maxFileBytes} byte file limit.`);
+    if (requestBytes + declaredBytes > maxRequestBytes) throw new Error("The attached files exceed the Room request byte limit.");
     const directory = path.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
+    const { realRoot, realDirectory } = ensureDirectoryTreeWithoutLinks(workspaceRoot, directory);
     const localPath = path.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
-    const partialPath = `${localPath}.partial`;
+    if (!pathIsContained(realDirectory, path.resolve(localPath))) throw new Error("The Room attachment filename escaped its staging directory.");
+    rejectLinkOrNonFile(localPath, "The staged Room attachment");
+    const partialPath = `${localPath}.${randomUUID()}.partial`;
     const response = await network.fetchImpl(roomAttachmentContentUrl(apiUrl, attachment, network.loopbackSPSApiUrl), { headers: network.spsDesktopAccessHeaders() });
     if (!response.ok) throw new Error(`Could not read attached file ${roomAttachmentName(attachment)} (HTTP ${response.status}).`);
-    fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(partialPath, Buffer.from(await response.arrayBuffer()));
-    fs.rmSync(localPath, { force: true });
-    fs.renameSync(partialPath, localPath);
+    let receivedBytes;
+    try {
+      receivedBytes = await streamAttachmentResponse(response, partialPath, {
+        declaredBytes,
+        maxFileBytes,
+        remainingRequestBytes: maxRequestBytes - requestBytes,
+      });
+      rejectLinkOrNonFile(localPath, "The staged Room attachment");
+      fs.rmSync(localPath, { force: true });
+      fs.renameSync(partialPath, localPath);
+      const finalStats = fs.lstatSync(localPath);
+      if (finalStats.isSymbolicLink() || !finalStats.isFile() || !pathIsContained(realRoot, realpath(localPath))) {
+        fs.rmSync(localPath, { force: true });
+        throw new Error("The staged Room attachment escaped its filesystem boundary.");
+      }
+    } finally {
+      fs.rmSync(partialPath, { force: true });
+    }
+    requestBytes += receivedBytes;
     fs.utimesSync(directory, new Date(), new Date());
-    staged.push({ ...attachment, localPath, isImage: isCodexImageAttachment(attachment) });
+    staged.push({ ...attachment, byteSize: receivedBytes, localPath, isImage: isCodexImageAttachment(attachment) });
   }
   return staged;
 }

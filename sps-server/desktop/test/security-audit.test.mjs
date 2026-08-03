@@ -16,6 +16,7 @@ const basePolicy = {
     advisoryId: "123",
     module: "router",
     severity: "high",
+    reviewedOn: "2026-08-01",
     expiresOn: "2026-09-30",
     reason: "Test-only exception.",
   }],
@@ -24,6 +25,7 @@ const basePolicy = {
     advisoryId: "456",
     module: "http-server",
     severity: "moderate",
+    reviewedOn: "2026-08-01",
     expiresOn: "2026-09-30",
     reason: "Affected server path is not used.",
   }],
@@ -72,6 +74,51 @@ test("requires an exact, current review for moderate advisories", () => {
 
   const expired = evaluateSecurityAudit({ findings: [finding], policy: basePolicy, now: new Date("2026-10-01T00:00:00Z") });
   assert.match(expired.reviewRejected[0].reason, /expired/);
+});
+
+test("rejects missing, blank, malformed, or impossible policy dates and reasons", () => {
+  const finding = { source: "core", advisoryId: "123", module: "router", severity: "high", title: "RSC issue" };
+  for (const mutate of [
+    (policy) => { delete policy.exceptions[0].reason; },
+    (policy) => { policy.exceptions[0].reason = "   "; },
+    (policy) => { policy.exceptions[0].reviewedOn = "2026-8-01"; },
+    (policy) => { policy.exceptions[0].reviewedOn = "2026-02-30"; },
+    (policy) => { policy.exceptions[0].expiresOn = "2026-09-31"; },
+    (policy) => { policy.exceptions[0].reviewedOn = "2026-10-01"; },
+  ]) {
+    const policy = structuredClone(basePolicy);
+    mutate(policy);
+    assert.throws(() => evaluateSecurityAudit({ findings: [finding], policy }), /policy|exceptions/);
+  }
+});
+
+test("rejects duplicate identities, cross-list conflicts, and severity conflicts", () => {
+  const duplicate = structuredClone(basePolicy);
+  duplicate.exceptions.push({ ...duplicate.exceptions[0], severity: "critical" });
+  assert.throws(() => evaluateSecurityAudit({ findings: [], policy: duplicate }), /duplicates policy identity/);
+
+  const crossList = structuredClone(basePolicy);
+  crossList.reviews.push({ ...crossList.exceptions[0], severity: "moderate" });
+  assert.throws(() => evaluateSecurityAudit({ findings: [], policy: crossList }), /both an exception and a review/);
+
+  const exceptionSeverity = structuredClone(basePolicy);
+  exceptionSeverity.exceptions[0].severity = "moderate";
+  assert.throws(() => evaluateSecurityAudit({ findings: [], policy: exceptionSeverity }), /conflicts with its policy severity list/);
+
+  const overlap = structuredClone(basePolicy);
+  overlap.reviewSeverities.push("high");
+  assert.throws(() => evaluateSecurityAudit({ findings: [], policy: overlap }), /both blocked and reviewed/);
+});
+
+test("rejects a review that is not active yet", () => {
+  const policy = structuredClone(basePolicy);
+  policy.reviews[0].reviewedOn = "2026-08-04";
+  const result = evaluateSecurityAudit({
+    findings: [{ source: "core", advisoryId: "456", module: "http-server", severity: "moderate", title: "path issue" }],
+    policy,
+    now: new Date("2026-08-03T00:00:00Z"),
+  });
+  assert.match(result.reviewRejected[0].reason, /not active/);
 });
 
 test("rejects a nonzero audit command even when it writes valid-looking JSON", async () => {

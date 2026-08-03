@@ -13,6 +13,7 @@
       "advisoryId": "1124282",
       "module": "react-router",
       "severity": "high",
+      "reviewedOn": "2026-08-03",
       "expiresOn": "2026-09-30",
       "reason": "SPS uses React Router in browser SPA mode and does not enable React Server Components. Upgrade to React Router 8 only after the Core UI compatibility migration is verified."
     }
