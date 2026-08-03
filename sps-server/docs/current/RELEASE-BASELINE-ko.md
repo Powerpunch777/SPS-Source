@@ -16,7 +16,7 @@
 | --- | --- |
 | 상태 | `development-candidate` |
 | SPS Desktop | `0.4.112` |
-| SPS Core | `08ed7d71f53e120b7617a1e9e9176f02b9756c9b` |
+| SPS Core | `3fee634ee5bc57f8dd9ff2a7b511d91439b35b02` |
 | Plugin SDK | `@sonparkserver/plugin-sdk@0.11.0` |
 | Plugin API | `1` |
 | Extension Profile | `1.0`, `2.0` |
