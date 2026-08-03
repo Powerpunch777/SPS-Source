@@ -8,7 +8,10 @@ import {
   resolveSpsReleaseBaseline,
   validateSpsSupportMatrix,
 } from "../scripts/release-baseline.mjs";
-import { createSpsReleaseManifest } from "../scripts/create-release-manifest.mjs";
+import {
+  assertSpsReleaseBaselineUnchanged,
+  createSpsReleaseManifest,
+} from "../scripts/create-release-manifest.mjs";
 import { writeSpsUpdateMetadata } from "../scripts/write-update-metadata.mjs";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +44,26 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
   assert.deepEqual(
     baseline.bundledExtensions.map((extension) => [extension.id, extension.version]),
     [["sps.default-memory", "0.1.0"], ["sps.plugin-discovery", "0.4.0"], ["local.room-chat", "0.3.92"]],
+  );
+});
+
+test("rejects a repository mutation after the release baseline is captured", () => {
+  const baseline = {
+    status: "development-candidate",
+    desktopVersion: "0.4.113",
+    sourceRevision: "a".repeat(40),
+    sourceDirty: false,
+    core: { repository: "Powerpunch777/SPS-Core", revision: "b".repeat(40), dirty: false },
+    pluginSdk: { repository: "Powerpunch777/sps-plugin-sdk", revision: "c".repeat(40), dirty: false },
+    bundledExtensions: [{ id: "local.room-chat", version: "0.3.92" }],
+  };
+  assert.doesNotThrow(() => assertSpsReleaseBaselineUnchanged(baseline, structuredClone(baseline)));
+
+  const changed = structuredClone(baseline);
+  changed.sourceDirty = true;
+  assert.throws(
+    () => assertSpsReleaseBaselineUnchanged(baseline, changed),
+    /changed during packaging/,
   );
 });
 

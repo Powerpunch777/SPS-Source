@@ -2,9 +2,13 @@ import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveSpsReleaseBaseline } from "./release-baseline.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
+const spsServerRoot = path.resolve(desktopRoot, "..");
+const workspaceRoot = path.resolve(spsServerRoot, "..");
+const coreRoot = path.join(workspaceRoot, "external", "sps-core");
 
 function yamlScalar(source, key) {
   const match = source.match(new RegExp(`^${key}:\\s*['"]?([^\\r\\n'"]+)['"]?\\s*$`, "m"));
@@ -43,12 +47,38 @@ async function runtimePackArtifacts(distRoot) {
   }));
 }
 
+export function assertSpsReleaseBaselineUnchanged(expected, current) {
+  const comparable = (baseline) => ({
+    status: baseline?.status,
+    desktopVersion: baseline?.desktopVersion,
+    sourceRevision: baseline?.sourceRevision,
+    sourceDirty: baseline?.sourceDirty,
+    core: baseline?.core,
+    pluginSdk: baseline?.pluginSdk,
+    bundledExtensions: baseline?.bundledExtensions,
+  });
+  if (JSON.stringify(comparable(expected)) !== JSON.stringify(comparable(current))) {
+    throw new Error("SPS release baseline changed during packaging. Rebuild from a clean, fixed Source revision.");
+  }
+}
+
 export async function createSpsReleaseManifest({
   runtimeRoot = path.join(desktopRoot, ".owner-host-runtime"),
   distRoot = path.join(desktopRoot, "dist"),
   outputPath = path.join(distRoot, "sps-release-manifest.json"),
+  verifyCurrentRepository = false,
 } = {}) {
   const baseline = JSON.parse(await readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8"));
+  if (verifyCurrentRepository) {
+    const currentBaseline = await resolveSpsReleaseBaseline({
+      workspaceRoot,
+      desktopRoot,
+      spsServerRoot,
+      coreRoot,
+      builtAt: baseline.builtAt,
+    });
+    assertSpsReleaseBaselineUnchanged(baseline, currentBaseline);
+  }
   const updateMetadataPath = path.join(distRoot, "latest.yml");
   const updateMetadata = await readFile(updateMetadataPath, "utf8");
   const metadataVersion = yamlScalar(updateMetadata, "version");
@@ -96,6 +126,6 @@ export async function createSpsReleaseManifest({
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const distRoot = process.argv[2] ? path.resolve(process.argv[2]) : path.join(desktopRoot, "dist");
-  await createSpsReleaseManifest({ distRoot });
+  await createSpsReleaseManifest({ distRoot, verifyCurrentRepository: true });
   console.log(`Created SPS release manifest: ${path.join(distRoot, "sps-release-manifest.json")}`);
 }
