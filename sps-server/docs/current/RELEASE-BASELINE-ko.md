@@ -15,7 +15,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 상태 | `development-candidate` |
-| SPS Desktop | `0.4.114` |
+| SPS Desktop | `0.4.115` |
 | SPS Source | 최종 패키지의 `sps-release-manifest.json`에서 고정 |
 | SPS Core | `3fee634ee5bc57f8dd9ff2a7b511d91439b35b02` |
 | Plugin SDK | `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`) |
@@ -76,7 +76,7 @@ Host와 Member 역할을 서로 다른 실제 Windows 컴퓨터에서 검증해�
 - 설치 파일, blockmap, `latest.yml`, manifest, Runtime Pack 목록은 같은 버전이어야 한다.
 - 이미 존재하는 Stable 태그는 수정하지 않고 새 버전을 만든다.
 
-## 0.4.113 이전 로컬 증거 스냅샷
+## 0.4.113 및 0.4.114 이전 로컬 증거 스냅샷
 
 아래 결과는 Source `86e5d8da27b3eb9f4c3e67d60798b0018c620546`, 위 표의 Core와
 SDK revision으로 만든 깨끗한 작업 트리에서 확인한 과거 스냅샷이다. 이후 Identity 배포
@@ -107,6 +107,14 @@ MCP smoke를 검증했다. 생성된 로컬 설치 후보는 다음과 같다.
 - manifest: `sourceDirty: false`, `coreDirty: false`, `sdkDirty: false`
 - Authenticode: `NotSigned`
 
+`0.4.114`는 Source `759a6150ded4fd30ad38aa0f242187fa1cf27fde`에서 새로
+패키징되었고 Desktop `321/321`, Identity `21/21`, Node `39/39`, SDK
+`146/146` 및 네 가지 packaged Electron E2E를 통과했다. 설치본은
+`274,199,295` bytes, SHA-256
+`d7945d3730d2e1703108c995e417852e29af2a91cd43953064529cc4707ec2bc`였지만,
+이후 legacy session 보존과 실제 staging 배포 계약이 추가되어 현재 후보의 증거로
+재사용하지 않는다.
+
 Core 전체 `pnpm test:run`을 Windows에서 실행하면 상속된 Unix CLI/Docker 테스트
 픽스처 12개 파일의 63개 테스트가 실패한다. 주요 원인은 확장자 없는 shell fixture를
 Windows에서 직접 실행하는 가정이며 SPS Desktop 제품 경로의 회귀로 분류하지 않는다.
@@ -119,12 +127,13 @@ Stable 자동 게이트를 통과한 것으로 기록하지 않는다.
 2. 동일한 최종 Source HEAD의 GitHub Actions 전체 성공 증거가 없다.
 3. 동일 후보로 수행한 Host/Member 물리 2대 증거가 없다.
 4. 설치 파일이 Windows 코드 서명되지 않았다.
-5. Identity additive migration `0003_refresh_reuse_protection.sql`과 새 Worker를 배포하고,
-   staging에서 token/refresh/retry/reuse/revoke를 확인한 뒤 legacy session 정리를
-   명시적으로 완료해야 한다.
+5. Identity additive migration `0003_refresh_reuse_protection.sql`과
+   `0004_legacy_refresh_family_roots.sql`을 별도 staging D1에 적용하고, 자동
+   token/refresh/retry/reuse/family-revoke/revoke smoke 증거를 만든 뒤 같은 Source
+   revision을 production에 배포하고 finalization을 명시적으로 완료해야 한다.
 6. 최종 Source/Core/SDK/Plugin tuple을 불변 태그와 게시 manifest에 그대로 보존해야 한다.
 
-따라서 `0.4.114`는 `development-candidate`이다. `0.4.113`의 로컬 E2E 증거는
+따라서 `0.4.115`는 `development-candidate`이다. 이전 후보의 로컬 E2E 증거는
 보안 변경 후 후보에 재사용할 수 없으며 일반 사용자용 Stable로 게시해서는 안 된다.
 
 ## 설치와 데이터
