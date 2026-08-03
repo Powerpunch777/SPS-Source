@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const preloadPath = new URL("../src/preload.cjs", import.meta.url);
 const mainPath = new URL("../src/main.mjs", import.meta.url);
 const accountControllerPath = new URL("../src/desktop-account-controller.mjs", import.meta.url);
+const registryControllerPath = new URL("../src/desktop-registry-controller.mjs", import.meta.url);
 const rendererPath = new URL("../renderer/renderer.mjs", import.meta.url);
 const workspacePreloadPath = new URL("../src/workspace-preload.cjs", import.meta.url);
 const registryPreloadPath = new URL("../src/registry-preload.cjs", import.meta.url);
@@ -175,17 +176,19 @@ test("normalizes the readable SPS code before direct invite acceptance", async (
 });
 
 test("keeps the Registry window on a narrow Owner-only preload bridge", async () => {
-  const [main, registryPreload, registryHtml] = await Promise.all([
+  const [main, registryController, registryPreload, registryHtml] = await Promise.all([
     readFile(mainPath, "utf8"),
+    readFile(registryControllerPath, "utf8"),
     readFile(registryPreloadPath, "utf8"),
     readFile(registryHtmlPath, "utf8"),
   ]);
 
   assert.match(main, /async function showRegistryWindow\(\{ sourceId = null \} = \{\}\) \{[\s\S]*?assertRegistryOwner\(\);[\s\S]*?registry-preload\.cjs/);
-  assert.match(main, /ipcMain\.handle\("desktop:registry-list-sources"/);
-  assert.match(main, /ipcMain\.handle\("desktop:registry-stage-release"/);
-  assert.match(main, /ipcMain\.handle\("desktop:registry-list-stages"/);
-  assert.match(main, /ipcMain\.handle\("desktop:registry-enable-stage"/);
+  assert.match(main, /registerDesktopRegistryIpc\(\{/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:registry-list-sources"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:registry-stage-release"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:registry-list-stages"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:registry-enable-stage"/);
   assert.match(registryPreload, /contextBridge\.exposeInMainWorld\("spsRegistry"/);
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-add-source"/);
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:registry-stage-release"/);
@@ -199,10 +202,10 @@ test("keeps the Registry window on a narrow Owner-only preload bridge", async ()
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-update-preview-environment"/);
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-list-preview-diagnostics"/);
   assert.match(registryPreload, /ipcRenderer\.invoke\("desktop:developer-clear-preview-diagnostics"/);
-  assert.match(main, /ipcMain\.handle\("desktop:developer-reload-ui"/);
-  assert.match(main, /ipcMain\.handle\("desktop:developer-restart-worker"/);
-  assert.match(main, /ipcMain\.handle\("desktop:developer-preview-state"/);
-  assert.match(main, /ipcMain\.handle\("desktop:developer-update-preview-environment"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:developer-reload-ui"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:developer-restart-worker"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:developer-preview-state"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:developer-update-preview-environment"/);
   assert.match(main, /\/plugins\/\$\{encodeURIComponent\(pluginId\)\}\/worker\/restart/);
   assert.match(main, /assertRegistryWindowEvent\(event\)/);
   assert.doesNotMatch(registryPreload, /nodeIntegration|require\("node:/);

@@ -163,6 +163,7 @@ import {
   developerDiagnosticFromPreview,
   listDeveloperDiagnostics,
 } from "./developer-diagnostics.mjs";
+import { registerDesktopRegistryIpc } from "./desktop-registry-controller.mjs";
 import { assessSpsPluginCompatibility } from "./plugin-compatibility.mjs";
 import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
@@ -4441,94 +4442,32 @@ function registerIpc() {
     await showRegistryWindow({ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE.id });
     return { opened: true };
   });
-  ipcMain.handle("desktop:registry-list-sources", async (event) => {
-    assertRegistryWindowEvent(event);
-    return await listRegistrySources();
-  });
-  ipcMain.handle("desktop:registry-choose-local-source", async (event) => {
-    assertRegistryWindowEvent(event);
-    return await chooseDesktopLocalRegistryFolder();
-  });
-  ipcMain.handle("desktop:registry-add-source", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await addDesktopRegistrySource(input);
-  });
-  ipcMain.handle("desktop:registry-remove-source", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await removeDesktopRegistrySource(input?.sourceId);
-  });
-  ipcMain.handle("desktop:registry-inspect-source", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await inspectDesktopRegistrySource(input?.sourceId);
-  });
-  ipcMain.handle("desktop:registry-stage-release", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await stageDesktopRegistryRelease(input);
-  });
-  ipcMain.handle("desktop:registry-enable-stage", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await enableDesktopRegistryStage(input?.stageId);
-  });
-  ipcMain.handle("desktop:registry-list-stages", async (event) => {
-    assertRegistryWindowEvent(event);
-    return await listDesktopRegistryStages();
-  });
-  ipcMain.handle("desktop:developer-list-projects", async (event) => {
-    assertRegistryWindowEvent(event);
-    return await listDesktopDeveloperProjects();
-  });
-  ipcMain.handle("desktop:developer-choose-project-folder", async (event) => {
-    assertRegistryWindowEvent(event);
-    return await chooseDesktopDeveloperProjectFolder();
-  });
-  ipcMain.handle("desktop:developer-connect-project", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await connectDesktopDeveloperProject(input);
-  });
-  ipcMain.handle("desktop:developer-inspect-project", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await inspectDesktopDeveloperProject(input?.projectId);
-  });
-  ipcMain.handle("desktop:developer-run-gates", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await runDesktopDeveloperGates(input?.projectId);
-  });
-  ipcMain.handle("desktop:developer-apply-candidate", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await applyDesktopDeveloperCandidate(input?.projectId);
-  });
-  ipcMain.handle("desktop:developer-rollback-project", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await rollbackDesktopDeveloperProject(input?.projectId);
-  });
-  ipcMain.handle("desktop:developer-reload-ui", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await reloadDesktopDeveloperUi(input?.projectId);
-  });
-  ipcMain.handle("desktop:developer-restart-worker", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await restartDesktopDeveloperWorker(input?.projectId);
-  });
-  ipcMain.handle("desktop:developer-list-preview-diagnostics", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await listDesktopPluginPreviewDiagnostics(input);
-  });
-  ipcMain.handle("desktop:developer-clear-preview-diagnostics", async (event) => {
-    assertRegistryWindowEvent(event);
-    return await clearDesktopPluginPreviewDiagnostics();
-  });
-  ipcMain.handle("desktop:developer-preview-state", async (event) => {
-    assertRegistryWindowEvent(event);
-    assertRegistryOwner();
-    return publicDesktopPluginPreviewState();
-  });
-  ipcMain.handle("desktop:developer-update-preview-environment", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await updateDesktopPluginPreviewEnvironment(input);
-  });
-  ipcMain.handle("desktop:developer-remove-project", async (event, input) => {
-    assertRegistryWindowEvent(event);
-    return await removeDesktopDeveloperProject(input?.projectId);
+  registerDesktopRegistryIpc({
+    ipcMain,
+    assertRegistryWindowEvent,
+    assertRegistryOwner,
+    listRegistrySources,
+    chooseDesktopLocalRegistryFolder,
+    addDesktopRegistrySource,
+    removeDesktopRegistrySource,
+    inspectDesktopRegistrySource,
+    stageDesktopRegistryRelease,
+    enableDesktopRegistryStage,
+    listDesktopRegistryStages,
+    listDesktopDeveloperProjects,
+    chooseDesktopDeveloperProjectFolder,
+    connectDesktopDeveloperProject,
+    inspectDesktopDeveloperProject,
+    runDesktopDeveloperGates,
+    applyDesktopDeveloperCandidate,
+    rollbackDesktopDeveloperProject,
+    reloadDesktopDeveloperUi,
+    restartDesktopDeveloperWorker,
+    listDesktopPluginPreviewDiagnostics,
+    clearDesktopPluginPreviewDiagnostics,
+    publicDesktopPluginPreviewState,
+    updateDesktopPluginPreviewEnvironment,
+    removeDesktopDeveloperProject,
   });
   ipcMain.handle("desktop:start-sps-account", async () => await startDesktopAccountSignIn());
   ipcMain.handle("desktop:sign-out-sps-account", async () => await signOutDesktopAccount());

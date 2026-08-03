@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 const mainPath = path.resolve(import.meta.dirname, "..", "src", "main.mjs");
+const registryControllerPath = path.resolve(import.meta.dirname, "..", "src", "desktop-registry-controller.mjs");
 const previewPreloadPath = path.resolve(import.meta.dirname, "..", "src", "plugin-preview-preload.cjs");
 
 test("Desktop accepts only its own Preview process and promotes after the window loads", async () => {
@@ -42,7 +43,10 @@ test("Desktop injects only a normalized per-build fixture into its isolated Prev
 });
 
 test("Desktop persists SDK v1-safe development diagnostics without coupling Preview failures to the main Workspace", async () => {
-  const source = await readFile(mainPath, "utf8");
+  const [source, registryController] = await Promise.all([
+    readFile(mainPath, "utf8"),
+    readFile(registryControllerPath, "utf8"),
+  ]);
   assert.match(source, /appendDeveloperDiagnostic/);
   assert.match(source, /developerDiagnosticFromPreview/);
   assert.match(source, /developerDiagnosticFromGate/);
@@ -51,6 +55,6 @@ test("Desktop persists SDK v1-safe development diagnostics without coupling Prev
   assert.match(source, /PREVIEW_PLUGIN_READY/);
   assert.match(source, /PREVIEW_RENDERER_LOAD_FAILED/);
   assert.match(source, /PREVIEW_WORKER_RESTART_FAILED/);
-  assert.match(source, /ipcMain\.handle\("desktop:developer-list-preview-diagnostics"/);
-  assert.match(source, /ipcMain\.handle\("desktop:developer-clear-preview-diagnostics"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:developer-list-preview-diagnostics"/);
+  assert.match(registryController, /ipcMain\.handle\("desktop:developer-clear-preview-diagnostics"/);
 });
