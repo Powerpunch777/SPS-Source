@@ -7,6 +7,7 @@ process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
 const {
   attachmentIdsParam,
   cleanupRoomAttachmentCache,
+  excludeWorkspaceRoomAttachments,
   isCodexImageAttachment,
   mergeRoomAttachments,
   resolveRoomAttachments,
@@ -106,6 +107,30 @@ const gitExclude = workspaceGitExcludePath(workspace);
 assert.ok(gitExclude);
 assert.match(fs.readFileSync(gitExclude, "utf8"), /^\.sps\/room-attachments\/$/m);
 fs.rmSync(workspace, { recursive: true, force: true });
+
+const externalGitMetadata = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-external-git-"));
+const gitFileWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-git-file-"));
+fs.writeFileSync(path.join(gitFileWorkspace, ".git"), `gitdir: ${externalGitMetadata}\n`, "utf8");
+assert.equal(workspaceGitExcludePath(gitFileWorkspace), null);
+assert.equal(excludeWorkspaceRoomAttachments(gitFileWorkspace), null);
+assert.equal(fs.existsSync(path.join(externalGitMetadata, "info", "exclude")), false);
+fs.rmSync(gitFileWorkspace, { recursive: true, force: true });
+
+const linkedGitWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-linked-git-"));
+fs.symlinkSync(externalGitMetadata, path.join(linkedGitWorkspace, ".git"), process.platform === "win32" ? "junction" : "dir");
+assert.equal(workspaceGitExcludePath(linkedGitWorkspace), null);
+assert.equal(excludeWorkspaceRoomAttachments(linkedGitWorkspace), null);
+assert.equal(fs.existsSync(path.join(externalGitMetadata, "info", "exclude")), false);
+fs.rmSync(linkedGitWorkspace, { recursive: true, force: true });
+
+const linkedInfoWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-linked-info-"));
+fs.mkdirSync(path.join(linkedInfoWorkspace, ".git"), { recursive: true });
+fs.symlinkSync(externalGitMetadata, path.join(linkedInfoWorkspace, ".git", "info"), process.platform === "win32" ? "junction" : "dir");
+assert.equal(workspaceGitExcludePath(linkedInfoWorkspace), null);
+assert.equal(excludeWorkspaceRoomAttachments(linkedInfoWorkspace), null);
+assert.equal(fs.existsSync(path.join(externalGitMetadata, "exclude")), false);
+fs.rmSync(linkedInfoWorkspace, { recursive: true, force: true });
+fs.rmSync(externalGitMetadata, { recursive: true, force: true });
 
 const hostileWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-hostile-"));
 await assert.rejects(

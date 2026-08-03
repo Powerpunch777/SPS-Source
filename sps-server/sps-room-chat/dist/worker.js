@@ -13542,24 +13542,46 @@ async function streamAttachmentResponse(response, target, { declaredBytes, maxFi
   return receivedBytes;
 }
 function workspaceGitExcludePath(workingDirectory) {
-  const dotGitPath = path3.join(workingDirectory, ".git");
-  if (!fs2.existsSync(dotGitPath)) return null;
-  const stats = fs2.statSync(dotGitPath);
-  if (stats.isDirectory()) return path3.join(dotGitPath, "info", "exclude");
-  if (!stats.isFile()) return null;
-  const match = fs2.readFileSync(dotGitPath, "utf8").match(/^gitdir:\s*(.+)\s*$/im);
-  return match ? path3.join(path3.resolve(workingDirectory, match[1]), "info", "exclude") : null;
+  try {
+    const resolvedRoot = path3.resolve(workingDirectory);
+    if (!fs2.existsSync(resolvedRoot)) return null;
+    const rootStats = fs2.lstatSync(resolvedRoot);
+    if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) return null;
+    const realRoot = realpath(resolvedRoot);
+    const dotGitPath = path3.join(resolvedRoot, ".git");
+    if (!fs2.existsSync(dotGitPath)) return null;
+    const dotGitStats = fs2.lstatSync(dotGitPath);
+    if (!dotGitStats.isDirectory() || dotGitStats.isSymbolicLink()) return null;
+    if (!pathIsContained(realRoot, realpath(dotGitPath))) return null;
+    const infoPath = path3.join(dotGitPath, "info");
+    if (fs2.existsSync(infoPath)) {
+      const infoStats = fs2.lstatSync(infoPath);
+      if (!infoStats.isDirectory() || infoStats.isSymbolicLink()) return null;
+      if (!pathIsContained(realRoot, realpath(infoPath))) return null;
+    }
+    const excludePath = path3.join(infoPath, "exclude");
+    if (fs2.existsSync(excludePath)) {
+      const excludeStats = fs2.lstatSync(excludePath);
+      if (!excludeStats.isFile() || excludeStats.isSymbolicLink()) return null;
+      if (!pathIsContained(realRoot, realpath(excludePath))) return null;
+    }
+    return excludePath;
+  } catch {
+    return null;
+  }
 }
 function excludeWorkspaceRoomAttachments(workingDirectory) {
   const excludePath = workspaceGitExcludePath(workingDirectory);
   if (!excludePath) return null;
   const rule = ".sps/room-attachments/";
-  const existing = fs2.existsSync(excludePath) ? fs2.readFileSync(excludePath, "utf8") : "";
-  if (existing.split(/\r?\n/).some((line) => line.trim().replace(/\\/g, "/") === rule)) return excludePath;
   fs2.mkdirSync(path3.dirname(excludePath), { recursive: true });
-  fs2.appendFileSync(excludePath, `${existing && !existing.endsWith("\n") ? "\n" : ""}${rule}
+  const verifiedPath = workspaceGitExcludePath(workingDirectory);
+  if (!verifiedPath || path3.resolve(verifiedPath) !== path3.resolve(excludePath)) return null;
+  const existing = fs2.existsSync(verifiedPath) ? fs2.readFileSync(verifiedPath, "utf8") : "";
+  if (existing.split(/\r?\n/).some((line) => line.trim().replace(/\\/g, "/") === rule)) return verifiedPath;
+  fs2.appendFileSync(verifiedPath, `${existing && !existing.endsWith("\n") ? "\n" : ""}${rule}
 `, "utf8");
-  return excludePath;
+  return verifiedPath;
 }
 function cleanupRoomAttachmentCache(root = roomAttachmentCacheRoot(), nowMs = Date.now()) {
   if (!fs2.existsSync(root)) return [];
