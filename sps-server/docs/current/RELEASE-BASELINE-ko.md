@@ -5,10 +5,10 @@
 기계가 읽는 후보 기준은
 [`../../release/support-matrix.json`](../../release/support-matrix.json)이며,
 사람이 확인하는 현재 후보 표는 자동 생성 문서인
-[`CURRENT-CANDIDATE.md`](CURRENT-CANDIDATE.md)다.
+[`CURRENT-CANDIDATE.md`](CURRENT-CANDIDATE.md)이다.
 
-이 문서는 배포 정책을 설명한다. 문서에 테스트 결과를 적었다는 이유만으로
-개발 후보가 stable 릴리스가 되지는 않는다.
+이 문서는 배포 정책과 현재 후보의 검증 증거를 설명한다. 자동 테스트가 통과했다는
+이유만으로 개발 후보를 Stable 릴리스로 승격하지 않는다.
 
 ## 현재 후보
 
@@ -16,119 +16,116 @@
 | --- | --- |
 | 상태 | `development-candidate` |
 | SPS Desktop | `0.4.112` |
+| SPS Source | `374e58b83615361ae2931bff5ac5f66ae2a1949e` |
 | SPS Core | `3fee634ee5bc57f8dd9ff2a7b511d91439b35b02` |
-| Plugin SDK | `@sonparkserver/plugin-sdk@0.11.0` |
+| Plugin SDK | `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`) |
 | Plugin API | `1` |
 | Extension Profile | `1.0`, `2.0` |
 | 운영체제 | Windows 10/11 x64 |
 | 원격 연결 | Tailscale |
 
-정확한 SDK revision과 번들 플러그인 버전은 `CURRENT-CANDIDATE.md`를 따른다.
+정확한 번들 플러그인 버전은 `CURRENT-CANDIDATE.md`를 따른다.
 
 ## 배포 채널
 
-| 채널 | 용도 | 자동 업데이트 | 요구사항 |
+| 채널 | 용도 | 자동 업데이트 | 요구 사항 |
 | --- | --- | --- | --- |
-| Stable | 제한된 실제 사용자 배포 | 사용 | 전체 자동 게이트, 같은 후보의 물리 2대 증거, 유효한 Windows 코드 서명 |
-| Preview | 설치와 첫 실행 검증 | 사용 안 함 | 개발 후보 표시, 별도 Preview 저장소, 실제 작업 데이터 사용 금지 |
-| Local candidate | 개발·패키징·E2E | 사용 안 함 | 로컬 검증 전용, 공개 배포 증거로 승격하지 않음 |
+| Stable | 제한된 실제 사용자 배포 | 사용 | 전체 자동 게이트, 동일 후보 물리 2대 증거, 유효한 Windows 코드 서명 |
+| Preview | 설치와 첫 실행 검증 | 사용 안 함 | 개발 후보 표시, 별도 저장소, 실제 작업 데이터 사용 금지 |
+| Local candidate | 개발, 패키징, E2E | 사용 안 함 | 로컬 검증 전용이며 공개 배포 증거로 단독 사용 불가 |
 
 Stable은 `Powerpunch777/SPS-Desktop-Releases`에만 게시한다. 설치 파일,
 blockmap, `latest.yml`, 릴리스 manifest와 Agent Runtime Pack 목록은 동일한
-빌드에서 생성되어야 하며 기존 태그의 파일을 덮어쓰지 않는다.
+빌드에서 생성해야 하며 기존 태그의 파일을 덮어쓰지 않는다.
 
 ## Stable 승격 게이트
 
 ### 1. 자동 검증
 
-재사용 워크플로 `.github/workflows/sps-verify.yml`이 모두 통과해야 한다.
+`.github/workflows/sps-verify.yml`의 모든 필수 작업이 통과해야 한다.
 
-- SPS Core 타입 검사, 인증·Node·Marketplace 경계, Paperclip 호환 계층 검사,
-  UI production build와 초기 번들 예산 검사
+- Ubuntu에서 Core 전체 `typecheck -> test:run -> build`
+- SPS Core 호환 경계, 인증, Node, Marketplace, Hub 경계와 UI production build
 - Public Plugin SDK와 모든 번들 플러그인 검사
-- SPS Desktop과 Desktop Node 테스트
-- 실제 Electron을 실행하는 네 Windows E2E
-  - 첫 실행 및 로그인 화면
-  - 패키지된 Workspace surface
-  - 격리 Plugin Preview
-  - Host 플러그인 설치·활성화·비활성화·제거 생명주기
+- SPS Identity의 로그인, 토큰 회전, 폐기, 재사용과 동시성 검사
+- Windows Desktop, Desktop Node와 네 가지 실제 Electron E2E
+- 의존성 보안 감사와 후보 tuple 일치 검사
 
-릴리스 workflow는 이 재사용 검증 job이 끝나기 전에는 서명·게시 job을
-시작할 수 없다.
+릴리스 workflow는 재사용 검증 workflow가 성공하기 전에는 서명과 게시를
+시작하지 않는다. GitHub Actions가 결제 또는 spending limit 문제로 시작되지 않은
+경우는 통과로 간주하지 않는다.
 
-### 2. 같은 후보의 물리 2대 증거
+### 2. 동일 후보 물리 2대 증거
 
-자동 테스트와 별도로 Host와 Member 두 실제 Windows 컴퓨터에서 아래를
-확인해야 한다.
+Host와 Member 역할을 서로 다른 실제 Windows 컴퓨터에서 검증해야 한다.
 
 - 초대와 참여
-- 원격 Agent Runtime 실행
-- Host Source 편집
+- Member 컴퓨터의 허용된 Agent Runtime 실행
+- Host Source 접근과 수정
 - 네트워크 단절 후 복구
-- Node와 Runtime 권한 철회
-- 빈 Host로의 복원
+- Node, Runtime, 사용자 권한 철회
+- 빈 Host로 Workspace export 복원
 
-증거의 Desktop, Core, SDK, Source revision은 게시할 후보와 정확히 같아야
-한다. 과거 후보의 물리 테스트는 새 후보에 재사용할 수 없다.
+증거의 Desktop, Source, Core, SDK revision은 게시할 후보와 정확히 같아야 한다.
+과거 후보에서 얻은 물리 테스트 결과는 재사용하지 않는다.
 
 ### 3. 서명과 불변 게시
 
-- 코드 서명 인증서로 설치 파일을 서명한다.
-- Windows Authenticode 상태가 `Valid`인지 다시 확인한다.
-- 설치 파일의 SHA-256과 릴리스 manifest를 게시한다.
-- 설치 파일, blockmap, `latest.yml`, manifest, Runtime Pack 목록을 같은
-  버전으로 게시한다.
-- 이미 존재하는 stable 태그는 수정하지 않고 새 버전을 만든다.
+- Windows Authenticode 상태가 `Valid`인 설치 파일만 Stable로 게시한다.
+- 설치 파일 SHA-256과 릴리스 manifest를 함께 게시한다.
+- 설치 파일, blockmap, `latest.yml`, manifest, Runtime Pack 목록은 같은 버전이어야 한다.
+- 이미 존재하는 Stable 태그는 수정하지 않고 새 버전을 만든다.
 
-## 현재 0.4.112의 증거 상태
+## 0.4.112 정확 후보 로컬 증거
 
-2026-08-03 로컬 검증에서 Desktop `310/310`, Desktop Node `39/39`,
-SPS Identity `12/12`, Public Plugin SDK `146/146`, Team Workplane 전체 검사와
-Core SPS 경계·타입·production UI build가 통과했다. Core UI 초기 진입 번들은
-`1,316,112` bytes로 `1,500,000` bytes 예산 안에 있다.
+아래 결과는 위 표의 정확한 Source, Core, SDK revision으로 만든 깨끗한 작업 트리에서
+확인했다.
 
-GitHub Linux checkout과 같은 Git clone 조건의 Node 22 컨테이너에서도 Core의
-전체 `pnpm typecheck -> pnpm test:run -> pnpm build`가 종료 코드 0으로
-통과했다. 실행 시간은 866초였다. 컨테이너를 root로 실행해 embedded Postgres를
-요구하는 일부 테스트는 자체 조건에 따라 skip됐으므로, 최종 증거는 새
-`core-full-regression` Ubuntu CI job의 비-root 결과여야 한다. SPS Identity의
-token rotation, revoke, one-time code replay, D1 failure, 동시 요청 검사도 같은
-공통 release verification workflow에 포함됐다.
+| 검사 | 결과 |
+| --- | --- |
+| Desktop 단위/계약 테스트 | `313/313` 통과 |
+| Desktop Node | `39/39` 통과 |
+| SPS Identity | `13/13` 통과 |
+| Public Plugin SDK | `146/146` 통과 |
+| Room Workplane 전체 검사 | 통과 |
+| Default Memory 및 Plugin Discovery | 통과 |
+| Core 전체 workspace build | Windows에서 통과 |
+| 의존성 보안 감사 | 통과, 기록된 정확 예외 5건 |
+| Electron 첫 실행/로그인 bootstrap | 통과 |
+| Electron Workspace surfaces | 통과 |
+| Electron 격리 Plugin Preview | 통과 |
+| Electron Host plugin lifecycle | 통과 |
 
-같은 `0.4.112` 후보로 아래 실제 Electron 검증도 모두 통과했다.
+패키징은 번들 플러그인을 소스에서 다시 빌드하고, Owner Host runtime과 Marketplace
+MCP smoke를 검증했다. 생성된 로컬 설치 후보는 다음과 같다.
 
-- 격리된 첫 실행·로그인 bootstrap
-- 패키지된 Workspace surface
-- 외부 SDK 플러그인의 격리 Preview, 패키징, Preview renderer 장애 격리
-- Host 플러그인의 설치, 활성화, 비활성화, 재활성화, 제거 취소와 제거 확인
+- 파일: `SPS-Desktop-Setup-0.4.112.exe`
+- 크기: `274,193,873` bytes
+- SHA-256: `54b80379c1257274c5492bdc44e25a94a829f0ca561056ccd618b7b356872350`
+- manifest: `sourceDirty: false`, `coreDirty: false`, `sdkDirty: false`
+- Authenticode: `NotSigned`
 
-NSIS 설치본과 업데이트 metadata, 두 Agent Runtime Pack, release manifest를
-한 빌드에서 생성했고 패키지 내부 Owner Host runtime과 Marketplace MCP smoke도
-통과했다. 로컬 설치본은 `SPS-Desktop-Setup-0.4.112.exe`, SHA-256은
-`a2f77db5442455e9cbc750186fbf4ededf8852141fa5503abac511ab67b9054a`다.
-이 산출물은 사용자 미추적 파일이 있는 개발 작업 폴더에서 만들어져 manifest가
-`sourceDirty: true`이고 Authenticode가 `NotSigned`이므로 Local candidate
-증거일 뿐 Stable 게시물로 사용할 수 없다.
+Core 전체 `pnpm test:run`을 Windows에서 실행하면 상속된 Unix CLI/Docker 테스트
+픽스처 12개 파일의 63개 테스트가 실패한다. 주요 원인은 확장자 없는 shell fixture를
+Windows에서 직접 실행하는 가정이며 SPS Desktop 제품 경로의 회귀로 분류하지 않는다.
+Core 전체 회귀의 정식 기준 환경은 Ubuntu CI이고, 정확 후보의 해당 job 성공 전에는
+Stable 자동 게이트를 통과한 것으로 기록하지 않는다.
 
-Windows 작업 폴더를 그대로 Linux 컨테이너에 복사하면 CRLF 때문에 Unix shell
-테스트가 실패한다. 이는 Git clone으로 재현되지 않았으며 제품 결함으로 세지
-않는다. Core 전체 회귀의 기준 환경은 Ubuntu CI checkout이고, Windows 제품
-경계는 별도의 Desktop, Node, 패키지된 Electron E2E가 담당한다.
+## 현재 Stable 차단 조건
 
-아직 같은 최종 Source revision을 사용한 Host/Member 물리 2대 증거와
-Windows 코드 서명 결과가 없으므로 `0.4.112`는 계속
-`development-candidate`다. GitHub Actions 실행도 계정 결제 또는 spending
-limit 문제로 runner가 시작되지 않으면 통과로 간주하지 않는다.
+1. 정확 후보의 GitHub Actions 전체 성공 증거가 없다.
+2. 정확 후보로 수행한 Host/Member 물리 2대 증거가 없다.
+3. 설치 파일이 Windows 코드 서명되지 않았다.
+
+따라서 `0.4.112`는 계속 `development-candidate`이다. 내부 코드, 패키징과 로컬
+Electron E2E는 검증됐지만 일반 사용자용 Stable로 게시해서는 안 된다.
 
 ## 설치와 데이터
 
-- 일반 제거는 SPS Desktop 실행 파일만 제거하고 Owner Vault를 자동 삭제하지
-  않는다.
+- 일반 제거는 SPS Desktop 실행 파일만 제거하고 Owner Vault를 자동 삭제하지 않는다.
 - 재설치 전 Host는 Vault export를 만들어야 한다.
-- 로그인 세션, CLI 로그인, Tailscale 상태는 Vault 복원과 별도로 다시 확인할
-  수 있다.
-- 완전 삭제와 Member 제거는 제품의 별도 삭제 정책과 감사 기록 규칙을 따른다.
+- 완전 삭제는 제품의 별도 삭제 정책과 감사 기록 규칙을 따른다.
+- Workspace import는 빈 Host에만 허용한다.
 
 Preview 운영 규칙은
-[`RELEASE-AND-PREVIEW-POLICY-ko.md`](RELEASE-AND-PREVIEW-POLICY-ko.md)를
-따른다.
+[`RELEASE-AND-PREVIEW-POLICY-ko.md`](RELEASE-AND-PREVIEW-POLICY-ko.md)를 따른다.
