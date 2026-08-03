@@ -15,7 +15,7 @@
 | 항목 | 값 |
 | --- | --- |
 | 상태 | `development-candidate` |
-| SPS Desktop | `0.4.113` |
+| SPS Desktop | `0.4.114` |
 | SPS Source | 최종 패키지의 `sps-release-manifest.json`에서 고정 |
 | SPS Core | `3fee634ee5bc57f8dd9ff2a7b511d91439b35b02` |
 | Plugin SDK | `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`) |
@@ -76,17 +76,18 @@ Host와 Member 역할을 서로 다른 실제 Windows 컴퓨터에서 검증해�
 - 설치 파일, blockmap, `latest.yml`, manifest, Runtime Pack 목록은 같은 버전이어야 한다.
 - 이미 존재하는 Stable 태그는 수정하지 않고 새 버전을 만든다.
 
-## 0.4.112 이전 로컬 증거 스냅샷
+## 0.4.113 이전 로컬 증거 스냅샷
 
-아래 결과는 Source `374e58b83615361ae2931bff5ac5f66ae2a1949e`, 위 표의 Core와
-SDK revision으로 만든 깨끗한 작업 트리에서 확인한 과거 스냅샷이다. 이후 보안과 문서
-커밋으로 PR HEAD가 이동했으므로 이 스냅샷을 최종 후보의 CI·물리 증거와 결합할 수 없다.
+아래 결과는 Source `86e5d8da27b3eb9f4c3e67d60798b0018c620546`, 위 표의 Core와
+SDK revision으로 만든 깨끗한 작업 트리에서 확인한 과거 스냅샷이다. 이후 Identity 배포
+호환성과 응답 유실 보완으로 PR HEAD가 이동했으므로 이 스냅샷을 최종 후보의
+CI·물리 증거와 결합할 수 없다.
 
 | 검사 | 결과 |
 | --- | --- |
-| Desktop 단위/계약 테스트 | `313/313` 통과 |
+| Desktop 단위/계약 테스트 | `320/320` 통과 |
 | Desktop Node | `39/39` 통과 |
-| SPS Identity | `13/13` 통과 |
+| SPS Identity | `15/15` 통과 |
 | Public Plugin SDK | `146/146` 통과 |
 | Room Workplane 전체 검사 | 통과 |
 | Default Memory 및 Plugin Discovery | 통과 |
@@ -100,9 +101,9 @@ SDK revision으로 만든 깨끗한 작업 트리에서 확인한 과거 스냅�
 패키징은 번들 플러그인을 소스에서 다시 빌드하고, Owner Host runtime과 Marketplace
 MCP smoke를 검증했다. 생성된 로컬 설치 후보는 다음과 같다.
 
-- 파일: `SPS-Desktop-Setup-0.4.112.exe`
-- 크기: `274,193,873` bytes
-- SHA-256: `54b80379c1257274c5492bdc44e25a94a829f0ca561056ccd618b7b356872350`
+- 파일: `SPS-Desktop-Setup-0.4.113.exe`
+- 크기: `274,172,902` bytes
+- SHA-256: `c538e75b44011da5a1edac36995646a2617bc7a2d7c7295a2035ecc0dff070da`
 - manifest: `sourceDirty: false`, `coreDirty: false`, `sdkDirty: false`
 - Authenticode: `NotSigned`
 
@@ -118,10 +119,12 @@ Stable 자동 게이트를 통과한 것으로 기록하지 않는다.
 2. 동일한 최종 Source HEAD의 GitHub Actions 전체 성공 증거가 없다.
 3. 동일 후보로 수행한 Host/Member 물리 2대 증거가 없다.
 4. 설치 파일이 Windows 코드 서명되지 않았다.
-5. Identity migration `0003_refresh_reuse_protection.sql`을 배포하고 staging smoke로
-   nonce 재시도와 refresh-token family 폐기를 확인해야 한다.
+5. Identity additive migration `0003_refresh_reuse_protection.sql`과 새 Worker를 배포하고,
+   staging에서 token/refresh/retry/reuse/revoke를 확인한 뒤 legacy session 정리를
+   명시적으로 완료해야 한다.
+6. 최종 Source/Core/SDK/Plugin tuple을 불변 태그와 게시 manifest에 그대로 보존해야 한다.
 
-따라서 `0.4.113`은 `development-candidate`이다. `0.4.112`의 로컬 E2E 증거는
+따라서 `0.4.114`는 `development-candidate`이다. `0.4.113`의 로컬 E2E 증거는
 보안 변경 후 후보에 재사용할 수 없으며 일반 사용자용 Stable로 게시해서는 안 된다.
 
 ## 설치와 데이터

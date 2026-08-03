@@ -30,7 +30,7 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
     coreRoot,
     builtAt: "2026-07-28T00:00:00.000Z",
   });
-  assert.equal(baseline.desktopVersion, "0.4.113");
+  assert.equal(baseline.desktopVersion, "0.4.114");
   assert.equal(baseline.core.revision, "3fee634ee5bc57f8dd9ff2a7b511d91439b35b02");
   assert.equal(baseline.pluginSdk.repository, "Powerpunch777/sps-plugin-sdk");
   assert.equal(baseline.pluginSdk.revision, "4e23934dd0164132b9ba6d637d7687e97ad27f86");
@@ -50,7 +50,7 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
 test("rejects a repository mutation after the release baseline is captured", () => {
   const baseline = {
     status: "development-candidate",
-    desktopVersion: "0.4.113",
+    desktopVersion: "0.4.114",
     sourceRevision: "a".repeat(40),
     sourceDirty: false,
     core: { repository: "Powerpunch777/SPS-Core", revision: "b".repeat(40), dirty: false },
