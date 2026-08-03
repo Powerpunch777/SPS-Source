@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync, createSign } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, createSign } from "node:crypto";
 import test from "node:test";
 import {
   createSpsIdentityWorker,
@@ -7,6 +7,7 @@ import {
   SPS_DESKTOP_SIGN_IN_TTL_MS,
   verifyGoogleIdToken,
 } from "../src/worker.mjs";
+import { verifyOAuthEvidenceReceipt } from "../scripts/smoke-oauth-interactive.mjs";
 
 const DEVICE_ID = "sps-desktop-device-1234";
 const IDEMPOTENCY_KEY = "identity-request-key-1234567890abcdef";
@@ -160,7 +161,7 @@ class FakeStatement {
       if (this.sql.includes("SELECT 1 FROM")) {
         const sourceTable = this.sql.match(/SELECT 1 FROM (\w+) WHERE/i)?.[1];
         const sourceKeyColumn = this.sql.match(/WHERE (\w+) = \?/i)?.[1];
-        const prefixLength = table === "refresh_tokens" ? 6 : 8;
+        const prefixLength = table === "refresh_tokens" ? 9 : 8;
         const source = this.db.rows(sourceTable).find((row) => row[sourceKeyColumn] === this.values[prefixLength]
           && row.device_id === this.values[prefixLength + 1]
           && Number(row.expires_at) === Number(this.values[prefixLength + 2])
@@ -171,6 +172,8 @@ class FakeStatement {
           this.db.rows(table).push({
             token_hash: this.values[0], subject: this.values[1], device_id: this.values[2],
             expires_at: this.values[3], created_at: this.values[4], family_id: this.values[5],
+            google_verified_at: this.values[6], oauth_evidence_nonce: this.values[7],
+            oauth_evidence_deployment_id: this.values[8],
           });
         } else {
           if (this.db.rows(table).some((row) => row.replay_key === this.values[0])) throw new Error("D1 primary key conflict");
@@ -354,6 +357,76 @@ test("consumes an authorization code once and rejects reuse", async () => {
     idempotency_key: IDEMPOTENCY_KEY,
   }), { ...env, DB: db });
   assert.equal(replay.status, 200);
+});
+
+test("issues a Worker-signed receipt only for a Google-verified evidence authorization code", async () => {
+  const env = {
+    ...createSigningEnv(),
+    SPS_IDENTITY_SOURCE_REVISION: "a".repeat(40),
+    SPS_IDENTITY_RELEASE_ID: "staging-release",
+    CF_VERSION_METADATA: { id: "staging-version", tag: "test", timestamp: new Date().toISOString() },
+  };
+  const db = new FakeD1();
+  const worker = createSpsIdentityWorker();
+  const code = "google-verified-evidence-code";
+  const verifier = "desktop-verifier";
+  const evidenceNonce = "n".repeat(43);
+  db.rows("authorization_codes").push({
+    code_hash: hash(code),
+    ...PROFILE,
+    device_id: DEVICE_ID,
+    code_challenge: hash(verifier),
+    expires_at: Date.now() + 60_000,
+    google_verified_at: Date.now(),
+    oauth_evidence_nonce: evidenceNonce,
+    oauth_evidence_deployment_id: "staging-deployment",
+  });
+  const response = await worker.fetch(request("/v1/desktop/token", {
+    code,
+    code_verifier: verifier,
+    device_id: DEVICE_ID,
+    idempotency_key: IDEMPOTENCY_KEY,
+  }), { ...env, DB: db });
+  assert.equal(response.status, 200);
+  const body = await responseBody(response);
+  const publicJwk = {
+    ...createPublicKey(env.SPS_IDENTITY_PRIVATE_KEY_PEM).export({ format: "jwk" }),
+    kid: env.SPS_IDENTITY_KEY_ID,
+    alg: "RS256",
+  };
+  assert.equal(body.oauth_evidence_receipt, undefined);
+  const revoked = await worker.fetch(request("/v1/desktop/revoke", { refresh_token: body.refresh_token }), { ...env, DB: db });
+  assert.equal(revoked.status, 200);
+  const revocation = await responseBody(revoked);
+  const receipt = verifyOAuthEvidenceReceipt(revocation.oauth_evidence_receipt, {
+    jwks: { keys: [publicJwk] },
+    issuer: env.SPS_IDENTITY_ISSUER,
+    sourceRevision: env.SPS_IDENTITY_SOURCE_REVISION,
+    cloudflareDeploymentId: "staging-deployment",
+    versionId: env.CF_VERSION_METADATA.id,
+    releaseId: env.SPS_IDENTITY_RELEASE_ID,
+    evidenceNonce,
+    accountSubjectHash: hash(PROFILE.subject),
+  });
+  assert.equal(receipt.payload.scope, "sps.release.oauth-evidence");
+
+  const unverifiedCode = "unverified-evidence-code";
+  db.rows("authorization_codes").push({
+    code_hash: hash(unverifiedCode),
+    ...PROFILE,
+    device_id: DEVICE_ID,
+    code_challenge: hash(verifier),
+    expires_at: Date.now() + 60_000,
+    oauth_evidence_nonce: evidenceNonce,
+    oauth_evidence_deployment_id: "staging-deployment",
+  });
+  const rejected = await worker.fetch(request("/v1/desktop/token", {
+    code: unverifiedCode,
+    code_verifier: verifier,
+    device_id: DEVICE_ID,
+    idempotency_key: SECOND_IDEMPOTENCY_KEY,
+  }), { ...env, DB: db });
+  assert.equal(rejected.status, 401);
 });
 
 test("fails closed when D1 cannot rotate a refresh token", async () => {

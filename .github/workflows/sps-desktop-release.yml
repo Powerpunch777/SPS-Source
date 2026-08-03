@@ -23,6 +23,8 @@ jobs:
       SOURCE_GITHUB_TOKEN: ${{ github.token }}
       WIN_CSC_LINK: ${{ secrets.SPS_WINDOWS_CSC_LINK }}
       WIN_CSC_KEY_PASSWORD: ${{ secrets.SPS_WINDOWS_CSC_KEY_PASSWORD }}
+      SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON: ${{ secrets.SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON }}
+      SPS_REQUIRE_TRUSTED_PHYSICAL_DEVICES: "1"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -57,6 +59,7 @@ jobs:
           if ($tagObject.verification.verified -ne $true) { throw "GitHub did not verify the release tag signature." }
           if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) { throw "Windows signing secrets are required." }
           if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw "SPS_DESKTOP_RELEASES_TOKEN is required." }
+          if ([string]::IsNullOrWhiteSpace($env:SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON)) { throw "Protected Host and Member physical device enrollments are required before creating the release challenge." }
 
       - name: Reject an existing immutable release
         shell: pwsh

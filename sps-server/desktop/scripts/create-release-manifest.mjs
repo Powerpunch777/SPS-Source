@@ -9,6 +9,22 @@ const desktopRoot = path.resolve(scriptDirectory, "..");
 const spsServerRoot = path.resolve(desktopRoot, "..");
 const workspaceRoot = path.resolve(spsServerRoot, "..");
 const coreRoot = path.join(workspaceRoot, "external", "sps-core");
+const DEVICE_FINGERPRINT = /^[0-9a-f]{64}$/;
+
+function protectedDeviceFingerprints(value, required) {
+  let parsed = value;
+  if (typeof parsed === "string" && parsed.trim()) {
+    try { parsed = JSON.parse(parsed); } catch { throw new Error("Protected SPS physical device enrollment JSON is invalid."); }
+  }
+  const valid = DEVICE_FINGERPRINT.test(parsed?.host ?? "")
+    && DEVICE_FINGERPRINT.test(parsed?.member ?? "")
+    && parsed.host !== parsed.member;
+  if (!valid) {
+    if (required) throw new Error("Stable release preparation requires distinct protected Host and Member device fingerprints.");
+    return null;
+  }
+  return { host: parsed.host, member: parsed.member };
+}
 
 function yamlScalar(source, key) {
   const match = source.match(new RegExp(`^${key}:\\s*['"]?([^\\r\\n'"]+)['"]?\\s*$`, "m"));
@@ -67,6 +83,8 @@ export async function createSpsReleaseManifest({
   distRoot = path.join(desktopRoot, "dist"),
   outputPath = path.join(distRoot, "sps-release-manifest.json"),
   verifyCurrentRepository = false,
+  trustedDeviceFingerprints = process.env.SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON,
+  requireTrustedDevices = process.env.SPS_REQUIRE_TRUSTED_PHYSICAL_DEVICES === "1",
 } = {}) {
   const baseline = JSON.parse(await readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8"));
   if (verifyCurrentRepository) {
@@ -110,6 +128,8 @@ export async function createSpsReleaseManifest({
     releaseNonce: randomBytes(32).toString("hex"),
     generatedAt: new Date().toISOString(),
   };
+  const enrolledDevices = protectedDeviceFingerprints(trustedDeviceFingerprints, requireTrustedDevices);
+  if (enrolledDevices) challenge.trustedDeviceFingerprints = enrolledDevices;
   await writeFile(challengePath, `${JSON.stringify(challenge, null, 2)}\n`, "utf8");
   const challengeStats = await stat(challengePath);
   const manifest = {

@@ -10,6 +10,7 @@ const AUTHORIZATION_CODE_TTL_MS = 5 * 60 * 1000;
 // has already discarded.
 export const SPS_DESKTOP_SIGN_IN_TTL_MS = 15 * 60 * 1000;
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+const OAUTH_EVIDENCE_RECEIPT_TTL_SECONDS = 24 * 60 * 60;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const IDENTITY_REPLAY_TTL_MS = 60 * 1000;
 const IDENTITY_REPLAY_ENCRYPTION_CONTEXT = "sps-identity-replay";
@@ -88,6 +89,14 @@ function validIdempotencyKey(value) {
   return /^[A-Za-z0-9_-]{32,160}$/.test(text(value));
 }
 
+function validEvidenceNonce(value) {
+  return /^[A-Za-z0-9_-]{43,128}$/.test(text(value));
+}
+
+function validDeploymentId(value) {
+  return /^[A-Za-z0-9-]{8,128}$/.test(text(value));
+}
+
 export function isLoopbackRedirectUri(value) {
   try {
     const url = new URL(value);
@@ -162,6 +171,50 @@ async function signAccessToken(env, claims) {
     jti: randomUrlValue(20),
     scope: "sps.core.session",
     ...claims,
+  };
+  const encodedHeader = base64UrlEncode(new TextEncoder().encode(JSON.stringify(header)));
+  const encodedPayload = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+  const signed = `${encodedHeader}.${encodedPayload}`;
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    await importSigningKey(env),
+    new TextEncoder().encode(signed),
+  );
+  return `${signed}.${base64UrlEncode(new Uint8Array(signature))}`;
+}
+
+async function signOAuthEvidenceReceipt(env, record) {
+  const now = Math.floor(Date.now() / 1000);
+  const versionId = text(env.CF_VERSION_METADATA?.id) || text(env.SPS_IDENTITY_VERSION_ID);
+  const sourceRevision = requireEnv(env, "SPS_IDENTITY_SOURCE_REVISION");
+  const releaseId = requireEnv(env, "SPS_IDENTITY_RELEASE_ID");
+  if (!versionId) throw new Error("SPS Identity OAuth evidence requires Cloudflare version metadata.");
+  if (!validEvidenceNonce(record.oauth_evidence_nonce) || !validDeploymentId(record.oauth_evidence_deployment_id)) {
+    throw new Error("SPS Identity OAuth evidence binding is invalid.");
+  }
+  if (!Number.isFinite(Number(record.google_verified_at)) || Number(record.google_verified_at) <= 0
+      || !Number.isFinite(Number(record.revoked_at)) || Number(record.revoked_at) < Number(record.google_verified_at)) {
+    throw new Error("SPS Identity OAuth evidence has no verified and revoked session lifecycle.");
+  }
+  const header = { alg: "RS256", typ: "sps-oauth-evidence+jwt", kid: requireEnv(env, "SPS_IDENTITY_KEY_ID") };
+  const payload = {
+    iss: requireEnv(env, "SPS_IDENTITY_ISSUER").replace(/\/$/, ""),
+    aud: "sps-release-oauth-evidence",
+    iat: now,
+    nbf: now - 5,
+    exp: now + OAUTH_EVIDENCE_RECEIPT_TTL_SECONDS,
+    jti: randomUrlValue(20),
+    scope: "sps.release.oauth-evidence",
+    source_revision: sourceRevision,
+    cloudflare_deployment_id: record.oauth_evidence_deployment_id,
+    version_id: versionId,
+    release_id: releaseId,
+    evidence_nonce: record.oauth_evidence_nonce,
+    account_subject_hash: await sha256Base64Url(record.subject),
+    device_id_hash: await sha256Base64Url(record.device_id),
+    google_verified_at: Number(record.google_verified_at),
+    revoked_at: Number(record.revoked_at),
+    event: "google-oauth-session-revoked",
   };
   const encodedHeader = base64UrlEncode(new TextEncoder().encode(JSON.stringify(header)));
   const encodedPayload = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
@@ -375,11 +428,14 @@ async function consumeAndPersistPair(env, {
   const results = await env.DB.batch([
     env.DB.prepare(sourceUpdate).bind(...sourceUpdateValues),
     env.DB.prepare(
-      `INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at, family_id) `
-      + `SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (`
+      `INSERT INTO refresh_tokens (token_hash, subject, device_id, expires_at, created_at, family_id, google_verified_at, oauth_evidence_nonce, oauth_evidence_deployment_id) `
+      + `SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (`
       + `SELECT 1 FROM ${sourceTable} WHERE ${sourcePredicate} AND consumption_id = ?)`,
     ).bind(
       pair.refreshHash, pair.body.account.subject, sourceDeviceId, pair.refreshExpiresAt, now, familyId,
+      pair.oauthEvidence?.googleVerifiedAt ?? null,
+      pair.oauthEvidence?.nonce ?? null,
+      pair.oauthEvidence?.deploymentId ?? null,
       ...sourceValues, consumptionId,
     ),
     env.DB.prepare(
@@ -441,9 +497,18 @@ async function authorize(request, env) {
   const state = text(url.searchParams.get("state"));
   const desktopChallenge = text(url.searchParams.get("code_challenge"));
   const deviceId = text(url.searchParams.get("device_id"));
+  const evidenceNonce = text(url.searchParams.get("evidence_nonce"));
+  const evidenceDeploymentId = text(url.searchParams.get("evidence_deployment_id"));
   if (!isLoopbackRedirectUri(redirectUri)) return error("SPS Desktop callback must be a loopback URI.");
   if (!state || state.length > 512 || !validPkceChallenge(desktopChallenge) || !validDeviceId(deviceId)) {
     return error("Invalid SPS Desktop authorization request.");
+  }
+  if (Boolean(evidenceNonce) !== Boolean(evidenceDeploymentId)
+      || (evidenceNonce && (!validEvidenceNonce(evidenceNonce) || !validDeploymentId(evidenceDeploymentId)))) {
+    return error("Invalid SPS OAuth evidence request.");
+  }
+  if (evidenceNonce && text(env.SPS_IDENTITY_ROLLOUT_PHASE) !== "bridge") {
+    return error("SPS OAuth release evidence is available only from the staging Bridge rollout.");
   }
   await cleanupExpiredIdentityRecords(env);
   const stateId = randomUrlValue(30);
@@ -451,8 +516,8 @@ async function authorize(request, env) {
   const googleChallenge = await sha256Base64Url(googleVerifier);
   const googleNonce = randomUrlValue(30);
   await env.DB.prepare(
-    "INSERT INTO oauth_states (id, desktop_redirect_uri, desktop_state, desktop_code_challenge, google_code_verifier, google_nonce, device_id, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(stateId, redirectUri, state, desktopChallenge, googleVerifier, googleNonce, deviceId, Date.now() + SPS_DESKTOP_SIGN_IN_TTL_MS).run();
+    "INSERT INTO oauth_states (id, desktop_redirect_uri, desktop_state, desktop_code_challenge, google_code_verifier, google_nonce, device_id, expires_at, oauth_evidence_nonce, oauth_evidence_deployment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(stateId, redirectUri, state, desktopChallenge, googleVerifier, googleNonce, deviceId, Date.now() + SPS_DESKTOP_SIGN_IN_TTL_MS, evidenceNonce || null, evidenceDeploymentId || null).run();
   const googleUrl = new URL(GOOGLE_AUTHORIZATION_ENDPOINT);
   googleUrl.search = new URLSearchParams({
     client_id: requireEnv(env, "GOOGLE_CLIENT_ID"),
@@ -494,7 +559,7 @@ async function googleCallback(request, env, fetchImpl) {
   ).bind(profile.subject, profile.email, profile.name, profile.picture, now, now).run();
   const code = randomUrlValue(36);
   await env.DB.prepare(
-    "INSERT INTO authorization_codes (code_hash, subject, email, name, picture, device_id, code_challenge, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO authorization_codes (code_hash, subject, email, name, picture, device_id, code_challenge, expires_at, google_verified_at, oauth_evidence_nonce, oauth_evidence_deployment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).bind(
     await sha256Base64Url(code),
     profile.subject,
@@ -504,6 +569,9 @@ async function googleCallback(request, env, fetchImpl) {
     state.device_id,
     state.desktop_code_challenge,
     now + AUTHORIZATION_CODE_TTL_MS,
+    now,
+    state.oauth_evidence_nonce || null,
+    state.oauth_evidence_deployment_id || null,
   ).run();
   const desktopRedirect = new URL(state.desktop_redirect_uri);
   desktopRedirect.searchParams.set("code", code);
@@ -542,6 +610,16 @@ async function token(request, env) {
     name: record.name,
     picture: record.picture || null,
   }, record.device_id);
+  if (record.oauth_evidence_nonce) {
+    if (!Number.isFinite(Number(record.google_verified_at)) || Number(record.google_verified_at) <= 0) {
+      return error("SPS OAuth evidence requires a Google-verified authorization code.", 401);
+    }
+    pair.oauthEvidence = {
+      googleVerifiedAt: Number(record.google_verified_at),
+      nonce: record.oauth_evidence_nonce,
+      deploymentId: record.oauth_evidence_deployment_id,
+    };
+  }
   const consumedAt = Date.now();
   return consumeAndPersistPair(env, {
     sourceTable: "authorization_codes",
@@ -640,8 +718,12 @@ async function revoke(request, env) {
   const refreshToken = text(body.refresh_token);
   if (refreshToken) {
     const hash = await sha256Base64Url(refreshToken);
-    const record = await env.DB.prepare("SELECT family_id FROM refresh_tokens WHERE token_hash = ?").bind(hash).first();
+    const record = await env.DB.prepare("SELECT family_id, subject, device_id, google_verified_at, oauth_evidence_nonce, oauth_evidence_deployment_id FROM refresh_tokens WHERE token_hash = ?").bind(hash).first();
     await revokeRefreshFamily(env, record?.family_id, hash);
+    if (record?.oauth_evidence_nonce) {
+      const receipt = await signOAuthEvidenceReceipt(env, { ...record, revoked_at: Date.now() });
+      return json({ revoked: true, oauth_evidence_receipt: receipt });
+    }
   }
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }
@@ -659,7 +741,7 @@ export function createSpsIdentityWorker({ fetchImpl = fetch } = {}) {
             replay_key_version: replayKey.activeVersion,
             source_revision: text(env.SPS_IDENTITY_SOURCE_REVISION) || null,
             deployment_id: text(env.SPS_IDENTITY_DEPLOYMENT_ID) || null,
-            version_id: text(env.SPS_IDENTITY_VERSION_ID) || null,
+            version_id: text(env.CF_VERSION_METADATA?.id) || text(env.SPS_IDENTITY_VERSION_ID) || null,
             release_id: text(env.SPS_IDENTITY_RELEASE_ID) || null,
             protocol_version: text(env.SPS_IDENTITY_PROTOCOL_VERSION) || null,
             rollback_floor: text(env.SPS_IDENTITY_ROLLBACK_FLOOR) || null,

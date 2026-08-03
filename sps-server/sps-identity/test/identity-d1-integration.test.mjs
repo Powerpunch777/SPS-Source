@@ -67,6 +67,7 @@ async function createIdentityRuntime({ includeLegacyBackfill = true } = {}) {
     "0003_refresh_reuse_protection.sql",
   ];
   if (includeLegacyBackfill) migrations.push("0004_legacy_refresh_family_roots.sql");
+  migrations.push("0005_oauth_evidence_receipts.sql");
   for (const migration of migrations) await applyMigration(db, migration);
   return { mf, db };
 }

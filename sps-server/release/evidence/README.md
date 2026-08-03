@@ -1,9 +1,19 @@
 # SPS Physical Release Evidence
 
 Stable SPS Desktop releases require evidence from two real Windows devices for
-the exact signed installer. The Prepare workflow publishes a draft-only
-`sps-release-challenge.json` containing a random 256-bit nonce bound to the
-Desktop version, Source revision, and installer SHA-256.
+the exact signed installer. Before creating a release tag, initialize one key
+on each supervised test device and store their two printed fingerprints in the
+protected `sps-production` Environment secret
+`SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON`:
+
+```json
+{"host":"<64 hex characters>","member":"<64 hex characters>"}
+```
+
+The Prepare workflow refuses to build without that enrollment and publishes a
+draft-only `sps-release-challenge.json` containing a random 256-bit nonce bound
+to the Desktop version, Source revision, installer SHA-256, and both enrolled
+device fingerprints.
 
 Complete every scenario before signing the evidence:
 
@@ -26,7 +36,7 @@ sign the same file on both devices. Each device owns a local Ed25519 key that is
 never included in the evidence:
 
 ```powershell
-# Run once on each test device.
+# Run once on each supervised test device, before preparing the release.
 Set-Location sps-server/desktop
 npm run release:init-device-key
 
@@ -39,9 +49,12 @@ npm run release:sign-device-evidence -- host-signed.json final-evidence.json mem
 
 The signatures cover the release nonce, candidate tuple, installer tuple,
 completion timestamp, every artifact digest, and every scenario result. The
-Stable gate rejects altered results, reused nonce evidence, invalid signatures,
-or two signatures from the same device key. This is application-level device
-identity evidence, not TPM hardware attestation.
+Stable gate rejects altered results, a challenge from unenrolled keys, invalid
+signatures, or two signatures from the same device key. Successful publication
+changes the release from draft to public, so the same candidate challenge
+cannot be published again; failed pre-publication attempts may safely retry the
+same candidate evidence. This is protected-enrollment application identity,
+not TPM hardware attestation.
 
 Use this unsigned starting shape:
 

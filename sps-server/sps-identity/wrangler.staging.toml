@@ -3,6 +3,9 @@ main = "src/worker.mjs"
 compatibility_date = "2026-07-24"
 workers_dev = true
 
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "sps-identity-staging"

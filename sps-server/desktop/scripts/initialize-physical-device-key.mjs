@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { publicKeyFingerprint } from "./verify-physical-release-evidence.mjs";
 
 const defaultPath = path.join(
   process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"),
@@ -32,4 +33,5 @@ if (process.platform === "win32") {
   });
 }
 console.log(`Created the device-local SPS physical evidence key: ${outputPath}`);
+console.log(`Protected-enrollment fingerprint: ${publicKeyFingerprint(identity.publicKeyPem)}`);
 console.log("Keep this private key on this Windows device and never include it in release evidence.");

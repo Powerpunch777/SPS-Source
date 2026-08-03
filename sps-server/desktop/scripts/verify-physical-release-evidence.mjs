@@ -32,7 +32,7 @@ function canonicalJson(value) {
   return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
 }
 
-function publicKeyFingerprint(publicKeyPem) {
+export function publicKeyFingerprint(publicKeyPem) {
   const key = createPublicKey(publicKeyPem);
   if (key.asymmetricKeyType !== "ed25519") throw new Error("Physical evidence device keys must use Ed25519.");
   return createHash("sha256").update(key.export({ type: "spki", format: "der" })).digest("hex");
@@ -119,6 +119,7 @@ export function validatePhysicalReleaseEvidence(evidence, {
   candidate,
   sourceRevision,
   releaseChallenge,
+  trustedDeviceFingerprints,
   now = Date.now(),
   maxAgeMs = 7 * 24 * 60 * 60 * 1000,
 }) {
@@ -154,6 +155,16 @@ export function validatePhysicalReleaseEvidence(evidence, {
   }
   if (!SHA256.test(evidence?.releaseNonce ?? "") || evidence.releaseNonce !== releaseChallenge?.releaseNonce) {
     errors.push("Physical release evidence is not bound to the release challenge nonce.");
+  }
+  for (const role of DEVICE_ROLES) {
+    const trusted = trustedDeviceFingerprints?.[role];
+    if (!SHA256.test(trusted ?? "")
+        || releaseChallenge?.trustedDeviceFingerprints?.[role] !== trusted) {
+      errors.push(`Physical release challenge is not bound to the protected ${role} device enrollment.`);
+    }
+  }
+  if (trustedDeviceFingerprints?.host && trustedDeviceFingerprints.host === trustedDeviceFingerprints.member) {
+    errors.push("Protected Host and Member enrollments must use distinct device keys.");
   }
 
   const artifacts = Array.isArray(evidence?.artifacts) ? evidence.artifacts : [];
@@ -213,6 +224,12 @@ export function validatePhysicalReleaseEvidence(evidence, {
   if (host?.fingerprint && member?.fingerprint && host.fingerprint === member.fingerprint) {
     errors.push("Physical release evidence must use two distinct signed device identities.");
   }
+  if (host?.fingerprint && host.fingerprint !== trustedDeviceFingerprints?.host) {
+    errors.push("Physical release Host signature does not match the protected device enrollment.");
+  }
+  if (member?.fingerprint && member.fingerprint !== trustedDeviceFingerprints?.member) {
+    errors.push("Physical release Member signature does not match the protected device enrollment.");
+  }
   return errors;
 }
 
@@ -244,7 +261,18 @@ export async function verifyPhysicalReleaseEvidence({ evidencePath, sourceRevisi
   if (!resolvedChallengePath) throw new Error("The immutable SPS release challenge path is required.");
   let releaseChallenge;
   try { releaseChallenge = JSON.parse(await readFile(resolvedChallengePath, "utf8")); } catch { throw new Error(`Release challenge is missing or invalid: ${resolvedChallengePath}`); }
-  const errors = validatePhysicalReleaseEvidence(evidence, { candidate, sourceRevision: resolvedSourceRevision, releaseChallenge });
+  let trustedDeviceFingerprints;
+  try {
+    trustedDeviceFingerprints = JSON.parse(String(process.env.SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON ?? ""));
+  } catch {
+    throw new Error("Protected SPS physical device enrollment JSON is missing or invalid.");
+  }
+  const errors = validatePhysicalReleaseEvidence(evidence, {
+    candidate,
+    sourceRevision: resolvedSourceRevision,
+    releaseChallenge,
+    trustedDeviceFingerprints,
+  });
   const resolvedInstallerPath = installerPath ?? process.env.SPS_FINAL_INSTALLER_PATH?.trim();
   if (resolvedInstallerPath) {
     let installer;

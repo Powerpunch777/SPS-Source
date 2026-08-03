@@ -30,7 +30,7 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
     coreRoot,
     builtAt: "2026-07-28T00:00:00.000Z",
   });
-  assert.equal(baseline.desktopVersion, "0.4.117");
+  assert.equal(baseline.desktopVersion, "0.4.118");
   assert.equal(baseline.core.revision, "3fee634ee5bc57f8dd9ff2a7b511d91439b35b02");
   assert.equal(baseline.pluginSdk.repository, "Powerpunch777/sps-plugin-sdk");
   assert.equal(baseline.pluginSdk.revision, "4e23934dd0164132b9ba6d637d7687e97ad27f86");
@@ -50,7 +50,7 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
 test("rejects a repository mutation after the release baseline is captured", () => {
   const baseline = {
     status: "development-candidate",
-    desktopVersion: "0.4.117",
+    desktopVersion: "0.4.118",
     sourceRevision: "a".repeat(40),
     sourceDirty: false,
     core: { repository: "Powerpunch777/SPS-Core", revision: "b".repeat(40), dirty: false },
@@ -97,7 +97,8 @@ test("creates a hash manifest only when latest.yml points to the exact installer
       }],
     })}`, "utf8");
 
-    const manifest = await createSpsReleaseManifest({ runtimeRoot, distRoot });
+    const trustedDeviceFingerprints = { host: "1".repeat(64), member: "2".repeat(64) };
+    const manifest = await createSpsReleaseManifest({ runtimeRoot, distRoot, trustedDeviceFingerprints, requireTrustedDevices: true });
     assert.equal(manifest.artifacts.installer.file, "SPS-Desktop-Setup-0.4.79.exe");
     assert.match(manifest.artifacts.installer.sha256, /^[0-9a-f]{64}$/);
     assert.equal(manifest.artifacts.releaseChallenge.file, "sps-release-challenge.json");
@@ -105,6 +106,7 @@ test("creates a hash manifest only when latest.yml points to the exact installer
     assert.equal(challenge.sourceRevision, "a".repeat(40));
     assert.equal(challenge.installerSha256, manifest.artifacts.installer.sha256);
     assert.match(challenge.releaseNonce, /^[0-9a-f]{64}$/);
+    assert.deepEqual(challenge.trustedDeviceFingerprints, trustedDeviceFingerprints);
     assert.deepEqual(manifest.artifacts.agentRuntimePacks.map((pack) => [pack.id, pack.file]), [
       ["codex-acp", "SPS-Agent-Runtime-Pack-codex-acp-0.4.79.zip"],
     ]);
@@ -115,7 +117,7 @@ test("creates a hash manifest only when latest.yml points to the exact installer
       "",
     ].join("\n"), "utf8");
     await assert.rejects(
-      () => createSpsReleaseManifest({ runtimeRoot, distRoot }),
+      () => createSpsReleaseManifest({ runtimeRoot, distRoot, trustedDeviceFingerprints, requireTrustedDevices: true }),
       /does not match SPS-Desktop-Setup-0\.4\.79\.exe/,
     );
   } finally {

@@ -17,6 +17,7 @@ export function validateReleaseAttestation(attestation, {
   productionVersionId,
   stagingDeploymentId,
   stagingVersionId,
+  stagingJwks,
   now = Date.now(),
 } = {}) {
   if (attestation?.schemaVersion !== 2 || attestation?.status !== "passed" || attestation?.environment !== "production") throw new Error("Identity release attestation is not a successful production schema-v2 result.");
@@ -38,6 +39,7 @@ export function validateReleaseAttestation(attestation, {
     cloudflareDeploymentId: stagingDeploymentId,
     versionId: stagingVersionId,
     releaseId: attestation.stagingEvidence.releaseId,
+    jwks: stagingJwks,
     now,
   });
   return attestation;
@@ -70,9 +72,11 @@ function productionFinalizationState() {
 }
 
 export async function verifyRemoteReleaseAttestation(attestation, options) {
-  validateReleaseAttestation(attestation, options);
   const productionHealth = await health(pinned.production.url);
   const stagingHealth = await health(pinned.staging.url);
+  const stagingJwksResponse = await fetch(`${pinned.staging.url}/.well-known/jwks.json`, { redirect: "error" });
+  if (!stagingJwksResponse.ok) throw new Error(`Identity JWKS failed at ${pinned.staging.url}: ${stagingJwksResponse.status}`);
+  validateReleaseAttestation(attestation, { ...options, stagingJwks: await stagingJwksResponse.json() });
   for (const field of ["status", "service", "source_revision", "replay_key_version", "protocol_version", "rollback_floor", "rollout_phase", "release_id"]) {
     if (productionHealth[field] !== attestation.health?.[field]) throw new Error(`Remote production health ${field} does not match the attestation.`);
     if (stagingHealth[field] !== attestation.stagingEvidence?.health?.[field]) throw new Error(`Remote staging health ${field} does not match the attestation.`);

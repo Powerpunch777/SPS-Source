@@ -82,9 +82,13 @@ The 302 check is named `oauthConfigurationSmoke`; it is not full OAuth. A
 human completes a real Google sign-in separately. Set the exact values printed
 by the staging deployment, then run `npm run smoke:oauth`; the command opens the
 browser, exchanges and revokes the resulting session, and writes token-free,
-hashed-subject evidence. It also verifies the issued access token against the
-staging JWKS. Production Bridge and Final deployment both require this full
-OAuth evidence in addition to the direct-D1 protocol evidence.
+hashed-subject evidence. After the resulting refresh session is revoked, the
+staging Worker issues an RSA-signed receipt bound to its Source revision,
+Cloudflare version metadata, newest deployment ID, SPS release ID, account
+hash, and a fresh smoke nonce. Validation re-fetches staging health, the active
+Cloudflare deployment list, and JWKS; boolean-only JSON cannot pass. Production
+Bridge and Final deployment both require this full OAuth evidence in addition
+to the direct-D1 protocol evidence.
 
 Production requires recent evidence from the exact Source revision. First
 deploy the compatibility Bridge and keep its three IDs. Then deploy Final while
@@ -128,6 +132,10 @@ to every active legacy refresh token, so users are not logged out during the
 rollout. As a second safety net, an unbackfilled active token receives a family
 root during its first atomic rotation. An already-consumed token whose lineage
 cannot be reconstructed is rejected without deleting its row.
+Migration `0005` additively carries an optional OAuth evidence nonce and
+deployment binding through the Google callback into the one-time authorization
+code. Previous Workers ignore those nullable columns, preserving Bridge
+rollback compatibility.
 
 Finalization reads the legacy replay table and refuses to run until its real
 maximum expiry has elapsed. It does not accept a manual "TTL elapsed" checkbox:

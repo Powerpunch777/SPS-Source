@@ -24,6 +24,7 @@ test("verifies every immutable release byte against the exact Source tuple", asy
       installerSha256: hash(installerContent),
       releaseNonce: "9".repeat(64),
       generatedAt: "2026-08-04T00:00:00.000Z",
+      trustedDeviceFingerprints: { host: "1".repeat(64), member: "2".repeat(64) },
     };
     const files = {
       [installerName]: installerContent,
@@ -59,6 +60,7 @@ test("verifies every immutable release byte against the exact Source tuple", asy
     await writeFile(path.join(root, "latest.yml"), "tampered");
     await assert.rejects(() => verifyReleaseAssets({ assetsDirectory: root, sourceRevision, requireAuthenticode: false }), /hash mismatch/);
     await writeFile(path.join(root, "latest.yml"), files["latest.yml"]);
+    await verifyReleaseAssets({ assetsDirectory: root, sourceRevision, requireAuthenticode: false, requireExactFileSet: true });
     await writeFile(path.join(root, "unexpected.txt"), "unexpected");
     await assert.rejects(() => verifyReleaseAssets({ assetsDirectory: root, sourceRevision, requireAuthenticode: false, requireExactFileSet: true }), /unexpected immutable assets/);
   } finally {

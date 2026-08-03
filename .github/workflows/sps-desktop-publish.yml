@@ -20,6 +20,7 @@ jobs:
       SOURCE_GITHUB_TOKEN: ${{ github.token }}
       SPS_IDENTITY_RELEASE_ATTESTATION_JSON: ${{ secrets.SPS_IDENTITY_RELEASE_ATTESTATION_JSON }}
       SPS_PHYSICAL_RELEASE_EVIDENCE_JSON: ${{ secrets.SPS_PHYSICAL_RELEASE_EVIDENCE_JSON }}
+      SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON: ${{ secrets.SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.SPS_CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.SPS_CLOUDFLARE_ACCOUNT_ID }}
       SPS_IDENTITY_EXPECTED_PRODUCTION_DEPLOYMENT_ID: ${{ secrets.SPS_IDENTITY_EXPECTED_PRODUCTION_DEPLOYMENT_ID }}
@@ -45,6 +46,7 @@ jobs:
         run: |
           if ($env:SPS_IDENTITY_RELEASE_ATTESTATION_JSON.Length -eq 0) { throw "Identity attestation secret is required." }
           if ($env:SPS_PHYSICAL_RELEASE_EVIDENCE_JSON.Length -eq 0) { throw "Physical evidence secret is required." }
+          if ($env:SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON.Length -eq 0) { throw "Protected Host and Member device enrollment is required." }
           if ($env:CLOUDFLARE_API_TOKEN.Length -eq 0 -or $env:CLOUDFLARE_ACCOUNT_ID.Length -eq 0) { throw "Cloudflare verification credentials are required." }
           if ($env:SPS_IDENTITY_EXPECTED_PRODUCTION_DEPLOYMENT_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_PRODUCTION_VERSION_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_STAGING_DEPLOYMENT_ID.Length -eq 0 -or $env:SPS_IDENTITY_EXPECTED_STAGING_VERSION_ID.Length -eq 0) { throw "Exact Identity deployment/version IDs are required." }
           if ("${{ inputs.tag }}" -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw "The publish tag is invalid." }
@@ -137,3 +139,13 @@ jobs:
           if (($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($current | ConvertTo-Json -Depth 6 -Compress)) { throw "Draft release assets changed after verification; refusing publication." }
           gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw "Could not publish the verified immutable draft." }
+          $published = gh api $releaseApi | ConvertFrom-Json
+          $publishedSnapshot = [ordered]@{
+            releaseId = $published.id
+            tagName = $published.tag_name
+            assets = @($published.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
+          }
+          if ($published.draft -or ($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($publishedSnapshot | ConvertTo-Json -Depth 6 -Compress)) {
+            gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft --latest=false
+            throw "Published release identity changed during publication and was returned to draft quarantine."
+          }

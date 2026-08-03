@@ -18,11 +18,16 @@ test("Identity CI installs the locked Miniflare dependencies before tests", asyn
 test("Identity migrations preserve the previous Worker and backfill active legacy sessions", async () => {
   const migration3 = await readFile(path.join(identityRoot, "migrations", "0003_refresh_reuse_protection.sql"), "utf8");
   const migration4 = await readFile(path.join(identityRoot, "migrations", "0004_legacy_refresh_family_roots.sql"), "utf8");
+  const migration5 = await readFile(path.join(identityRoot, "migrations", "0005_oauth_evidence_receipts.sql"), "utf8");
   assert.match(migration3, /CREATE TABLE identity_replay_results_v2/);
   assert.doesNotMatch(migration3, /DROP TABLE|DROP INDEX/i);
   assert.match(migration4, /SET family_id = 'legacy-root:' \|\| token_hash/);
   assert.match(migration4, /family_id IS NULL AND consumed_at IS NULL/);
   assert.doesNotMatch(migration4, /DELETE FROM/i);
+  assert.match(migration5, /ALTER TABLE oauth_states ADD COLUMN oauth_evidence_nonce/);
+  assert.match(migration5, /ALTER TABLE authorization_codes ADD COLUMN google_verified_at/);
+  assert.match(migration5, /ALTER TABLE refresh_tokens ADD COLUMN oauth_evidence_nonce/);
+  assert.doesNotMatch(migration5, /DROP TABLE|DELETE FROM/i);
 });
 
 test("Identity deployment requires real staging evidence and never overwrites replay keys", async () => {
@@ -38,6 +43,7 @@ test("Identity deployment requires real staging evidence and never overwrites re
   assert.match(stagingConfig, /name = "sps-identity-staging"/);
   assert.match(stagingConfig, /database_name = "sps-identity-staging"/);
   assert.match(stagingConfig, /auth-staging\.redongames\.com/);
+  assert.match(stagingConfig, /\[version_metadata\][\s\S]*binding = "CF_VERSION_METADATA"/);
   assert.match(publish, /ValidateSet\("Staging", "Production"\)/);
   assert.match(publish, /npm run smoke:staging/);
   assert.match(publish, /npm run verify:staging-evidence/);
@@ -72,6 +78,8 @@ test("Identity deployment requires real staging evidence and never overwrites re
   assert.doesNotMatch(finalizeSql, /DELETE FROM refresh_tokens WHERE family_id IS NULL;/);
   assert.match(verify, /healthBody\?\.source_revision !== sourceRevision/);
   assert.match(worker, /SPS_IDENTITY_REPLAY_KEY_\$\{version\.toUpperCase\(\)\}/);
+  assert.match(worker, /sps-oauth-evidence\+jwt/);
+  assert.match(worker, /CF_VERSION_METADATA/);
   assert.doesNotMatch(
     worker.slice(worker.indexOf("async function replayEncryptionKey"), worker.indexOf("async function encryptReplayResponse")),
     /SPS_IDENTITY_PRIVATE_KEY_PEM/,

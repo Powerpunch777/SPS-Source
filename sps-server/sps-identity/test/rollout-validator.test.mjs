@@ -5,9 +5,52 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { deploymentHasVersion, selectCurrentDeployment, selectDeployment, selectVersionByTag, wranglerCollection } from "../scripts/version-selection.mjs";
-import { validateFullOAuthEvidence, verifyAccessTokenJwt } from "../scripts/smoke-oauth-interactive.mjs";
+import { validateFullOAuthEvidence, verifyAccessTokenJwt, verifyOAuthEvidenceReceipt } from "../scripts/smoke-oauth-interactive.mjs";
 import { validateReleaseAttestation } from "../scripts/verify-release-attestation.mjs";
 import { validateSigningMaterial } from "../scripts/validate-signing-material.mjs";
+
+function oauthEvidenceFixture({ sourceRevision = "a".repeat(40), completedAt = "2026-08-03T10:00:00.000Z" } = {}) {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = { ...publicKey.export({ format: "jwk" }), kid: "identity-test", alg: "RS256" };
+  const evidence = {
+    schemaVersion: 2,
+    status: "passed",
+    environment: "staging",
+    identityUrl: "https://auth-staging.redongames.com",
+    sourceRevision,
+    cloudflareDeploymentId: "staging-deployment",
+    versionId: "staging-version",
+    releaseId: "staging-release",
+    evidenceNonce: "n".repeat(43),
+    accountSubjectHash: "b".repeat(43),
+    completedAt,
+    checks: { googleSignIn: true, tokenExchange: true, accessTokenSignature: true, revoke: true },
+  };
+  const nowSeconds = Math.floor(Date.parse(completedAt) / 1000);
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "sps-oauth-evidence+jwt", kid: jwk.kid })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({
+    iss: evidence.identityUrl,
+    aud: "sps-release-oauth-evidence",
+    iat: nowSeconds,
+    nbf: nowSeconds - 5,
+    exp: nowSeconds + 24 * 60 * 60,
+    jti: "receipt-id",
+    scope: "sps.release.oauth-evidence",
+    source_revision: evidence.sourceRevision,
+    cloudflare_deployment_id: evidence.cloudflareDeploymentId,
+    version_id: evidence.versionId,
+    release_id: evidence.releaseId,
+    evidence_nonce: evidence.evidenceNonce,
+    account_subject_hash: evidence.accountSubjectHash,
+    device_id_hash: "d".repeat(43),
+    google_verified_at: Date.parse(completedAt),
+    revoked_at: Date.parse(completedAt) + 1_000,
+    event: "google-oauth-session-revoked",
+  })).toString("base64url");
+  const signed = `${header}.${payload}`;
+  evidence.receiptJwt = `${signed}.${sign("RSA-SHA256", Buffer.from(signed), privateKey).toString("base64url")}`;
+  return { evidence, jwks: { keys: [jwk] } };
+}
 
 test("selects the exact Cloudflare version annotation instead of list order", () => {
   const selected = selectVersionByTag([
@@ -73,21 +116,21 @@ test("rejects a public JWK that does not match the deployment private PEM", asyn
 });
 
 test("full OAuth evidence is token-free and independently validated", () => {
-  const evidence = {
-    schemaVersion: 1,
-    status: "passed",
-    environment: "staging",
-    identityUrl: "https://auth-staging.redongames.com",
-    sourceRevision: "a".repeat(40),
-    cloudflareDeploymentId: "staging-deployment-1",
-    versionId: "staging-version-1",
-    releaseId: "staging-release-1",
-    accountSubjectHash: "b".repeat(64),
-    completedAt: "2026-08-03T10:00:00.000Z",
-    checks: { googleSignIn: true, tokenExchange: true, accessTokenSignature: true, revoke: true },
-  };
-  assert.equal(validateFullOAuthEvidence(evidence, { sourceRevision: "a".repeat(40), now: Date.parse("2026-08-03T11:00:00.000Z") }), evidence);
-  assert.throws(() => validateFullOAuthEvidence({ ...evidence, refreshToken: "secret" }, { sourceRevision: "a".repeat(40), now: Date.parse("2026-08-03T11:00:00.000Z") }), /tokens/);
+  const { evidence, jwks } = oauthEvidenceFixture();
+  const options = { sourceRevision: "a".repeat(40), jwks, now: Date.parse("2026-08-03T11:00:00.000Z") };
+  assert.equal(validateFullOAuthEvidence(evidence, options), evidence);
+  assert.equal(verifyOAuthEvidenceReceipt(evidence.receiptJwt, {
+    ...options,
+    issuer: evidence.identityUrl,
+    cloudflareDeploymentId: evidence.cloudflareDeploymentId,
+    versionId: evidence.versionId,
+    releaseId: evidence.releaseId,
+    evidenceNonce: evidence.evidenceNonce,
+    accountSubjectHash: evidence.accountSubjectHash,
+  }).payload.source_revision, evidence.sourceRevision);
+  assert.throws(() => validateFullOAuthEvidence({ ...evidence, refreshToken: "secret" }, options), /tokens/);
+  assert.throws(() => validateFullOAuthEvidence({ ...evidence, sourceRevision: "c".repeat(40) }, options), /Source SHA/);
+  assert.throws(() => validateFullOAuthEvidence({ ...evidence, receiptJwt: `${evidence.receiptJwt.slice(0, -2)}AA` }, options), /signature/);
 });
 
 test("release attestation binds final production and bridge staging to exact Cloudflare IDs", () => {
@@ -115,19 +158,7 @@ test("release attestation binds final production and bridge staging to exact Clo
     generatedAt,
     checks: { health: true, oauthConfigurationSmoke: true, token: true, tokenRetry: true, refresh: true, refreshRetry: true, reuse: true, familyRevoke: true, revoke: true },
   };
-  const fullOAuthEvidence = {
-    schemaVersion: 1,
-    status: "passed",
-    environment: "staging",
-    identityUrl: "https://auth-staging.redongames.com",
-    sourceRevision,
-    cloudflareDeploymentId: "staging-deployment",
-    versionId: "staging-version",
-    releaseId: "staging-release",
-    accountSubjectHash: "b".repeat(64),
-    completedAt: generatedAt,
-    checks: { googleSignIn: true, tokenExchange: true, accessTokenSignature: true, revoke: true },
-  };
+  const { evidence: fullOAuthEvidence, jwks: stagingJwks } = oauthEvidenceFixture({ sourceRevision, completedAt: generatedAt });
   const attestation = {
     schemaVersion: 2,
     status: "passed",
@@ -149,6 +180,7 @@ test("release attestation binds final production and bridge staging to exact Clo
     productionVersionId: "production-version",
     stagingDeploymentId: "staging-deployment",
     stagingVersionId: "staging-version",
+    stagingJwks,
     now: Date.parse("2026-08-03T11:00:00.000Z"),
   }), attestation);
   assert.throws(() => validateReleaseAttestation({ ...attestation, deploymentId: "ambiguous" }, {
@@ -157,6 +189,7 @@ test("release attestation binds final production and bridge staging to exact Clo
     productionVersionId: "production-version",
     stagingDeploymentId: "staging-deployment",
     stagingVersionId: "staging-version",
+    stagingJwks,
     now: Date.parse("2026-08-03T11:00:00.000Z"),
   }), /ambiguous/);
 });

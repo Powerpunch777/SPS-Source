@@ -59,6 +59,11 @@ export async function verifyReleaseAssets({
       || !Number.isFinite(Date.parse(challenge.generatedAt ?? ""))) {
     throw new Error("Release challenge does not match the immutable candidate tuple.");
   }
+  if (requireExactFileSet && (!/^[0-9a-f]{64}$/.test(challenge?.trustedDeviceFingerprints?.host ?? "")
+      || !/^[0-9a-f]{64}$/.test(challenge?.trustedDeviceFingerprints?.member ?? "")
+      || challenge.trustedDeviceFingerprints.host === challenge.trustedDeviceFingerprints.member)) {
+    throw new Error("Immutable release challenge lacks distinct protected Host and Member enrollments.");
+  }
   if (requireExactFileSet) {
     const expectedFiles = new Set([
       "sps-release-manifest.json",
