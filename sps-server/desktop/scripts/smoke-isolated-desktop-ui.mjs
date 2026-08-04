@@ -148,6 +148,8 @@ const child = spawn(
     cwd: isPackagedCandidate ? path.dirname(electronBinary) : desktopRoot,
     env: {
       ...process.env,
+      SPS_DESKTOP_E2E: "1",
+      SPS_DESKTOP_E2E_USER_DATA_DIR: userData,
       SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
     },
     stdio: "ignore",

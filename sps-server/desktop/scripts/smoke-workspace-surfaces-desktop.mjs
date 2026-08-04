@@ -355,6 +355,7 @@ try {
     env: {
       ...process.env,
       SPS_IDENTITY_URL: identityUrl,
+      SPS_DESKTOP_E2E_USER_DATA_DIR: userDataDirectory,
       SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
       SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1",
       SPS_DESKTOP_E2E: "1",
