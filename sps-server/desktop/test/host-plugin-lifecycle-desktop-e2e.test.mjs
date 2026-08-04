@@ -43,6 +43,7 @@ test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketpl
 
 test("required Host lifecycle E2E uses a deterministic ACP fixture with Marketplace MCP injection", async () => {
   const fixture = await readFile(fixturePath, "utf8");
+  const main = await readFile(path.join(desktopRoot, "src", "main.mjs"), "utf8");
   const manifest = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8"));
   assert.match(fixture, /session\/new/);
   assert.match(fixture, /sps-marketplace/);
@@ -51,6 +52,8 @@ test("required Host lifecycle E2E uses a deterministic ACP fixture with Marketpl
   assert.match(fixture, /search_marketplace_plugins/);
   assert.match(fixture, /search_marketplace_plugins result:/);
   assert.match(fixture, /agent_message_chunk/);
+  assert.match(main, /SPS_MARKETPLACE_MCP_ENTRY:\s*path\.join\(/);
+  assert.match(main, /"@sps",\s*\n\s*"mcp-server"/);
   assert.doesNotMatch(manifest.scripts["test:e2e:host-plugin-lifecycle"], /--live-agent/);
   assert.match(manifest.scripts["test:e2e:host-plugin-lifecycle:live"], /--live-agent/);
 });

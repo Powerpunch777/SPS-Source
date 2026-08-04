@@ -1490,6 +1490,18 @@ async function ensureOwnerHostManager() {
             : {}),
           SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
           SPS_MARKETPLACE_CATALOG_PATH: discoveryCatalog.catalogPath,
+          ...(materializedRuntime
+            ? {
+              SPS_MARKETPLACE_MCP_ENTRY: path.join(
+                materializedRuntime,
+                "node_modules",
+                "@sps",
+                "mcp-server",
+                "dist",
+                "marketplace-assistant-stdio.js",
+              ),
+            }
+            : {}),
           // Keep the neutral Core free of a preselected workflow or memory
           // strategy. Refresh any already-installed first-party optional
           // package so an earlier Desktop path cannot leave a stale error in
