@@ -319,9 +319,14 @@ try {
     const body = document.body?.innerText || '';
     return transcript.includes('Which verified plugin helps with a small team?')
       && /Marketplace Assistant|System/.test(transcript)
-      && ${liveAgent ? "true" : "transcript.includes('Deterministic Marketplace Assistant response.') && transcript.includes('search_marketplace_plugins result:')"}
+      && ${liveAgent ? "true" : "(transcript.includes('Deterministic Marketplace Assistant response.') || transcript.includes('Marketplace MCP search failed:'))"}
       && !body.includes('Working');
   })()`), "Marketplace Assistant terminal response", 90000);
+  if (!liveAgent) {
+    const transcript = await workspace.evaluate(`document.querySelector('[aria-label="Assistant transcript"]')?.innerText || ''`);
+    assert.match(transcript, /Deterministic Marketplace Assistant response\./, transcript);
+    assert.match(transcript, /search_marketplace_plugins result:/, transcript);
+  }
   assert.deepEqual(lifecycleSnapshot(await api(workspace, "/api/plugins")), assistantBefore, "Marketplace Assistant changed plugin lifecycle state.");
 
   // Plugin Builder may create authoring records and previews, but it must not

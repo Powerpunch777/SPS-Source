@@ -78,12 +78,14 @@ async function searchMarketplace() {
       name: "search_marketplace_plugins",
       arguments: { q: "small team", limit: 5 },
     });
-    if (toolResult.isError) throw new Error("search_marketplace_plugins returned an MCP error.");
-    const text = toolResult.content
+    const text = (Array.isArray(toolResult.content) ? toolResult.content : [])
       .filter((item) => item.type === "text")
       .map((item) => item.text)
       .join("\n")
       .trim();
+    if (toolResult.isError) {
+      throw new Error(`search_marketplace_plugins returned an MCP error${text ? `: ${text}` : "."}`);
+    }
     if (!text) throw new Error("search_marketplace_plugins returned no readable result.");
     return text;
   } catch (error) {

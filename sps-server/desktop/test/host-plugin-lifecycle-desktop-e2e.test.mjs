@@ -51,6 +51,7 @@ test("required Host lifecycle E2E uses a deterministic ACP fixture with Marketpl
   assert.match(fixture, /request\("tools\/call"/);
   assert.match(fixture, /search_marketplace_plugins/);
   assert.match(fixture, /search_marketplace_plugins result:/);
+  assert.match(fixture, /returned an MCP error\$\{text/);
   assert.match(fixture, /agent_message_chunk/);
   assert.match(main, /SPS_MARKETPLACE_MCP_ENTRY:\s*path\.join\(/);
   assert.match(main, /"@sps",\s*\n\s*"mcp-server"/);
