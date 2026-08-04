@@ -107,6 +107,9 @@ jobs:
       - name: Build every Core workspace
         run: pnpm build
 
+      - name: Require clean Linux catalog build
+        run: git diff --exit-code -- packages/skills-catalog/generated/catalog.json packages/teams-catalog/generated/catalog.json
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest
@@ -259,6 +262,9 @@ jobs:
       - name: Prepare Owner Host runtime for Desktop E2E
         working-directory: sps-server/desktop
         run: npm run prepare:owner-host-runtime
+
+      - name: Require clean Windows catalog build
+        run: git -C external/sps-core diff --exit-code -- packages/skills-catalog/generated/catalog.json packages/teams-catalog/generated/catalog.json
 
       - name: Build unpacked Windows Desktop for E2E
         working-directory: sps-server/desktop

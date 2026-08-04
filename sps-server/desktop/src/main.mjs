@@ -257,6 +257,7 @@ const TEAM_WORKPLANE_SYNC_RETRY_MS = 30_000;
 // This is never persisted. It separates the visible SPS Desktop Workspace from
 // a normal browser pointed at the loopback Owner Host.
 const ownerHostDesktopAccessToken = createSpsDesktopAccessToken();
+const ownerHostAgentJwtSecret = randomBytes(48).toString("base64url");
 let ownerHostCompanies = [];
 let pluginRuntimeStatus = {
   state: "checking",
@@ -1257,6 +1258,7 @@ function ownerHostTeamEnvironment() {
     identityUrl: configuredDesktopIdentityUrl(),
     teamAccessEnabled: Boolean(state.teamAccess?.enabled),
     authSecret: credentials?.authSecret,
+    agentJwtSecret: ownerHostAgentJwtSecret,
   });
 }
 

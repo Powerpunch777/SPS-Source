@@ -35,7 +35,7 @@ export function validateReleaseAttestation(attestation, {
   if (attestation.databaseId !== pinned.production.databaseId || attestation.databaseName !== pinned.production.databaseName) throw new Error("Identity production D1 target is not pinned.");
   if (attestation.deploymentId !== undefined) throw new Error("Identity attestation must use cloudflareDeploymentId, not the ambiguous deploymentId field.");
   if (attestation.cloudflareDeploymentId !== productionDeploymentId || attestation.versionId !== productionVersionId || !attestation.releaseId) throw new Error("Production Identity IDs do not match the protected release inputs.");
-  if (attestation.health?.status !== "ok" || attestation.health?.service !== "sps-identity" || attestation.health?.source_revision !== sourceRevision || attestation.health?.release_id !== attestation.releaseId || !/^v[1-9][0-9]*$/.test(attestation.health?.replay_key_version ?? "") || attestation.health?.protocol_version !== "2" || attestation.health?.rollback_floor !== "bridge-v2" || attestation.health?.rollout_phase !== "final") throw new Error("Identity production health is missing the final rollout contract.");
+  if (attestation.health?.status !== "ok" || attestation.health?.service !== "sps-identity" || attestation.health?.source_revision !== sourceRevision || attestation.health?.version_id !== productionVersionId || attestation.health?.release_id !== attestation.releaseId || !/^v[1-9][0-9]*$/.test(attestation.health?.replay_key_version ?? "") || attestation.health?.protocol_version !== "2" || attestation.health?.rollback_floor !== "bridge-v2" || attestation.health?.rollout_phase !== "final") throw new Error("Identity production health is missing the final rollout contract.");
   validateStagingEvidence(attestation.stagingEvidence, {
     sourceRevision,
     expectedDeploymentId: stagingDeploymentId,
@@ -97,7 +97,7 @@ export async function verifyRemoteReleaseAttestation(attestation, options) {
     productionJwks: await productionJwksResponse.json(),
     stagingJwks: await stagingJwksResponse.json(),
   });
-  for (const field of ["status", "service", "source_revision", "replay_key_version", "protocol_version", "rollback_floor", "rollout_phase", "release_id"]) {
+  for (const field of ["status", "service", "source_revision", "version_id", "replay_key_version", "protocol_version", "rollback_floor", "rollout_phase", "release_id"]) {
     if (productionHealth[field] !== attestation.health?.[field]) throw new Error(`Remote production health ${field} does not match the attestation.`);
     if (stagingHealth[field] !== attestation.stagingEvidence?.health?.[field]) throw new Error(`Remote staging health ${field} does not match the attestation.`);
   }

@@ -5,6 +5,7 @@ import test from "node:test";
 
 const desktopRoot = path.resolve(import.meta.dirname, "..");
 const harnessPath = path.join(desktopRoot, "scripts", "smoke-host-plugin-lifecycle-desktop.mjs");
+const fixturePath = path.join(desktopRoot, "scripts", "fixtures", "deterministic-marketplace-acp.mjs");
 
 test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketplace/Builder side-effect free", async () => {
   const harness = await readFile(harnessPath, "utf8");
@@ -26,6 +27,9 @@ test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketpl
   assert.match(harness, /Apply this exact reviewed plugin version/);
   assert.match(harness, /assistantLifecycleUnchanged/);
   assert.match(harness, /Marketplace Assistant message send/);
+  assert.match(harness, /deterministic-marketplace-acp\.mjs/);
+  assert.match(harness, /Deterministic Marketplace Assistant response/);
+  assert.match(harness, /--live-agent/);
   assert.match(harness, /Plugin Builder surface/);
   assert.match(harness, /lifecycleBeforeWorkspaceActions/);
   assert.match(harness, /Review update/);
@@ -35,4 +39,14 @@ test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketpl
   assert.doesNotMatch(harness, /fetch\([^\n]+\/api\/plugins\/(?:install|enable|disable|uninstall)/i, "Lifecycle mutation must not be performed by API from the E2E harness.");
   assert.doesNotMatch(harness, /method:\s*["'](?:POST|PUT|DELETE)["'][^\n]+plugins/i, "The harness must reserve lifecycle changes for visible UI controls.");
   assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
+});
+
+test("required Host lifecycle E2E uses a deterministic ACP fixture with Marketplace MCP injection", async () => {
+  const fixture = await readFile(fixturePath, "utf8");
+  const manifest = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8"));
+  assert.match(fixture, /session\/new/);
+  assert.match(fixture, /sps-marketplace/);
+  assert.match(fixture, /agent_message_chunk/);
+  assert.doesNotMatch(manifest.scripts["test:e2e:host-plugin-lifecycle"], /--live-agent/);
+  assert.match(manifest.scripts["test:e2e:host-plugin-lifecycle:live"], /--live-agent/);
 });

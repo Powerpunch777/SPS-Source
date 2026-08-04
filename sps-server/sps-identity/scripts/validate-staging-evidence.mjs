@@ -38,6 +38,7 @@ export function validateStagingEvidence(evidence, {
   if (evidence.health?.status !== "ok"
       || evidence.health?.service !== "sps-identity"
       || evidence.health?.source_revision !== evidence.sourceRevision
+      || evidence.health?.version_id !== evidence.versionId
       || evidence.health?.release_id !== evidence.releaseId
       || evidence.health?.replay_key_version !== evidence.replayKeyVersion
       || evidence.health?.protocol_version !== evidence.protocolVersion

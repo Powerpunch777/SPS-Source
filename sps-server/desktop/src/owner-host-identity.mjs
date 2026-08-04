@@ -39,22 +39,27 @@ export function spsOwnerHostIdentityEnvironment(identityUrl, environment = proce
   };
 }
 
-export function spsOwnerHostRuntimeEnvironment({ identityUrl, teamAccessEnabled, authSecret, environment } = {}) {
+export function spsOwnerHostRuntimeEnvironment({ identityUrl, teamAccessEnabled, authSecret, agentJwtSecret, environment } = {}) {
   const identity = spsOwnerHostIdentityEnvironment(identityUrl, environment);
+  const agentSecret = String(agentJwtSecret ?? "").trim();
+  if (!agentSecret) {
+    throw new Error("SPS Owner Host Agent runtime credentials are unavailable.");
+  }
+  const runtimeIdentity = {
+    ...identity,
+    PAPERCLIP_AGENT_JWT_SECRET: agentSecret,
+  };
   // SPS Desktop always authenticates the local Host account. Enabling a team
   // adds only the Tailscale-facing secrets and proxy trust, not a separate
   // sign-in model.
-  if (!teamAccessEnabled) return identity;
+  if (!teamAccessEnabled) return runtimeIdentity;
   const secret = String(authSecret ?? "").trim();
   if (!secret) {
     throw new Error("Private team access credentials are unavailable in Windows secure storage.");
   }
   return {
-    ...identity,
+    ...runtimeIdentity,
     SPS_AUTH_SECRET: secret,
-    // The Core's signed Agent-run protocol remains a separate runtime input.
-    // Keep it in the Owner Vault with the private-team credential.
-    PAPERCLIP_AGENT_JWT_SECRET: secret,
     TRUST_PROXY: "loopback",
   };
 }

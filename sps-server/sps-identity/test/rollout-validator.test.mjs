@@ -165,7 +165,7 @@ test("release attestation binds final production and bridge staging to exact Clo
     protocolVersion: "2",
     rollbackFloor: "bridge-v2",
     rolloutPhase: "bridge",
-    health: { status: "ok", service: "sps-identity", source_revision: sourceRevision, release_id: "staging-release", replay_key_version: "v1", protocol_version: "2", rollback_floor: "bridge-v2", rollout_phase: "bridge" },
+    health: { status: "ok", service: "sps-identity", source_revision: sourceRevision, version_id: "staging-version", release_id: "staging-release", replay_key_version: "v1", protocol_version: "2", rollback_floor: "bridge-v2", rollout_phase: "bridge" },
     directD1ProtocolSmoke: true,
     oauthConfigurationSmoke: true,
     fullOAuthSmoke: false,
@@ -187,7 +187,7 @@ test("release attestation binds final production and bridge staging to exact Clo
     cloudflareDeploymentId: "production-deployment",
     versionId: "production-version",
     releaseId: "production-release",
-    health: { status: "ok", service: "sps-identity", source_revision: sourceRevision, release_id: "production-release", replay_key_version: "v1", protocol_version: "2", rollback_floor: "bridge-v2", rollout_phase: "final" },
+    health: { status: "ok", service: "sps-identity", source_revision: sourceRevision, version_id: "production-version", release_id: "production-release", replay_key_version: "v1", protocol_version: "2", rollback_floor: "bridge-v2", rollout_phase: "final" },
     stagingEvidence,
     fullOAuthEvidence,
   };
@@ -211,6 +211,19 @@ test("release attestation binds final production and bridge staging to exact Clo
     stagingJwks,
     now: Date.parse("2026-08-03T11:00:00.000Z"),
   }), /ambiguous/);
+  assert.throws(() => validateReleaseAttestation({
+    ...attestation,
+    health: { ...attestation.health, version_id: "wrong-version" },
+  }, {
+    sourceRevision,
+    productionDeploymentId: "production-deployment",
+    productionVersionId: "production-version",
+    stagingDeploymentId: "staging-deployment",
+    stagingVersionId: "staging-version",
+    productionJwks,
+    stagingJwks,
+    now: Date.parse("2026-08-03T11:00:00.000Z"),
+  }), /final rollout contract/);
   assert.throws(() => validateReleaseAttestation(attestation, {
     sourceRevision,
     productionDeploymentId: "production-deployment",

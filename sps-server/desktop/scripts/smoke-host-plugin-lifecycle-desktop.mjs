@@ -14,6 +14,8 @@ const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
+const liveAgent = process.argv.includes("--live-agent");
+const deterministicAcp = path.join(desktopRoot, "scripts", "fixtures", "deterministic-marketplace-acp.mjs");
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const textOf = (error) => error instanceof Error ? error.message : String(error);
 const encoded = (value) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
@@ -21,6 +23,7 @@ const encoded = (value) => Buffer.from(typeof value === "string" ? value : JSON.
 if (process.platform !== "win32") throw new Error("Host plugin lifecycle Desktop E2E targets Windows.");
 if (packagedBinary) await access(packagedBinary);
 else await access(sourceElectron);
+if (!liveAgent) await access(deterministicAcp);
 
 async function freePort() {
   return await new Promise((resolve, reject) => {
@@ -269,15 +272,20 @@ try {
   company = Array.isArray(companies) ? companies[0] : null;
   assert.ok(company?.id && company?.issuePrefix, `Owner Host did not create a Workspace: ${JSON.stringify(companies)}`);
   const agents = await api(workspace, `/api/companies/${company.id}/agents`);
-  if (!Array.isArray(agents) || agents.length === 0) await api(workspace, `/api/companies/${company.id}/agents`, {
+  const lifecycleAgentName = liveAgent ? "Lifecycle Live Agent" : "Lifecycle Deterministic Agent";
+  let lifecycleAgent = Array.isArray(agents) ? agents.find((agent) => agent.name === lifecycleAgentName) : null;
+  if (!lifecycleAgent) lifecycleAgent = await api(workspace, `/api/companies/${company.id}/agents`, {
     method: "POST",
     body: {
-      name: "Lifecycle E2E Agent",
+      name: lifecycleAgentName,
       role: "engineer",
       adapterType: "codex_local",
-      adapterConfig: { engine: "acp" },
+      adapterConfig: liveAgent
+        ? { engine: "acp" }
+        : { engine: "acp", agentCommand: `"${process.execPath}" "${deterministicAcp}"` },
     },
   });
+  assert.ok(lifecycleAgent?.id, "Host plugin lifecycle E2E could not create its Agent.");
 
   const before = lifecycleSnapshot(await api(workspace, "/api/plugins"));
   await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/company/settings/instance/plugins`)})`);
@@ -296,7 +304,7 @@ try {
   const assistantBefore = lifecycleSnapshot(await api(workspace, "/api/plugins"));
   const assistantAgent = await workspace.evaluate(`(() => {
     const select = document.querySelector('#marketplace-assistant-agent');
-    const option = [...(select?.options || [])].find((entry) => entry.value);
+    const option = [...(select?.options || [])].find((entry) => entry.value === ${JSON.stringify(lifecycleAgent.id)});
     return select && option ? option.value : null;
   })()`);
   assert.ok(assistantAgent, "Marketplace Assistant did not expose an allowed Agent.");
@@ -311,6 +319,7 @@ try {
     const body = document.body?.innerText || '';
     return transcript.includes('Which verified plugin helps with a small team?')
       && /Marketplace Assistant|System/.test(transcript)
+      && ${liveAgent ? "true" : "transcript.includes('Deterministic Marketplace Assistant response.')"}
       && !body.includes('Working');
   })()`), "Marketplace Assistant terminal response", 90000);
   assert.deepEqual(lifecycleSnapshot(await api(workspace, "/api/plugins")), assistantBefore, "Marketplace Assistant changed plugin lifecycle state.");
@@ -418,6 +427,11 @@ try {
     }
   }
   if (output.trim()) diagnostics.push(`app-output:\n${output.trim()}`);
+  const diagnosticsPath = process.env.SPS_DESKTOP_E2E_DIAGNOSTICS_PATH?.trim();
+  if (diagnosticsPath) {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(diagnosticsPath, `${textOf(error)}\n${diagnostics.join("\n")}\n`, "utf8").catch(() => undefined);
+  }
   throw new Error(`${textOf(error)}\n${diagnostics.join("\n")}`);
 } finally {
   const cdp = workspace ?? setup;

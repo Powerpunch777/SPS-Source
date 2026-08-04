@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing draft tag prepared by Prepare SPS Desktop Release
+        description: Existing prepared tag, including an immutable publication awaiting verification resume
         required: true
         type: string
 
@@ -70,30 +70,34 @@ jobs:
           $tagObject = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/tags/$($tagRef.object.sha)"
           if ($tagObject.verification.verified -ne $true) { throw "GitHub did not verify the release tag signature." }
 
-      - name: Download the existing draft assets without rebuilding
+      - name: Download the exact prepared assets without rebuilding
         shell: pwsh
         run: |
           $releaseApi = "repos/Powerpunch777/SPS-Desktop-Releases/releases/tags/${{ inputs.tag }}"
-          $draft = gh api $releaseApi | ConvertFrom-Json
-          if (-not $draft.draft -or $draft.tag_name -ne "${{ inputs.tag }}") { throw "The requested immutable draft release is unavailable." }
-          if (@($draft.assets).Count -eq 0 -or @($draft.assets | Where-Object { $_.digest -notmatch '^sha256:[0-9a-f]{64}$' }).Count -gt 0) { throw "Every draft asset must expose a GitHub SHA-256 digest." }
+          $release = gh api $releaseApi | ConvertFrom-Json
+          if ($release.tag_name -ne "${{ inputs.tag }}") { throw "The requested prepared release is unavailable." }
+          $resumeImmutable = (-not $release.draft -and $release.immutable -eq $true)
+          if (-not $release.draft -and -not $resumeImmutable) { throw "A published mutable release cannot enter the Stable verification path." }
+          if (@($release.assets).Count -eq 0 -or @($release.assets | Where-Object { $_.digest -notmatch '^sha256:[0-9a-f]{64}$' }).Count -gt 0) { throw "Every prepared asset must expose a GitHub SHA-256 digest." }
           $before = [ordered]@{
-            releaseId = $draft.id
-            tagName = $draft.tag_name
-            assets = @($draft.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
+            releaseId = $release.id
+            tagName = $release.tag_name
+            assets = @($release.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
           }
           gh release download "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --dir release-assets
-          if ($LASTEXITCODE -ne 0) { throw "Could not download the immutable draft assets." }
-          $afterDraft = gh api $releaseApi | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Could not download the prepared release assets." }
+          $afterRelease = gh api $releaseApi | ConvertFrom-Json
           $after = [ordered]@{
-            releaseId = $afterDraft.id
-            tagName = $afterDraft.tag_name
-            assets = @($afterDraft.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
+            releaseId = $afterRelease.id
+            tagName = $afterRelease.tag_name
+            assets = @($afterRelease.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
           }
-          if (($before | ConvertTo-Json -Depth 6 -Compress) -ne ($after | ConvertTo-Json -Depth 6 -Compress)) { throw "Draft release assets changed while they were being downloaded." }
+          if (($before | ConvertTo-Json -Depth 6 -Compress) -ne ($after | ConvertTo-Json -Depth 6 -Compress)) { throw "Prepared release assets changed while they were being downloaded." }
+          if ($afterRelease.draft -ne $release.draft -or $afterRelease.immutable -ne $release.immutable) { throw "Release publication state changed while assets were being downloaded." }
           [IO.File]::WriteAllText((Join-Path $PWD "release-asset-snapshot.json"), ($after | ConvertTo-Json -Depth 6 -Compress), [Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText((Join-Path $PWD "release-publication-state.json"), ([ordered]@{ resumeImmutable = $resumeImmutable } | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
 
-      - name: Verify the immutable draft manifest, hashes, and signature
+      - name: Verify the prepared manifest, hashes, and signature
         shell: pwsh
         run: |
           $env:SPS_RELEASE_ASSETS_DIRECTORY = (Resolve-Path "release-assets").Path
@@ -129,18 +133,27 @@ jobs:
         shell: pwsh
         run: |
           $releaseApi = "repos/Powerpunch777/SPS-Desktop-Releases/releases/tags/${{ inputs.tag }}"
-          $draft = gh api $releaseApi | ConvertFrom-Json
-          if (-not $draft.draft) { throw "The release is no longer a draft; refusing to republish." }
-          if (@($draft.assets).Count -eq 0 -or @($draft.assets | Where-Object { $_.digest -notmatch '^sha256:[0-9a-f]{64}$' }).Count -gt 0) { throw "Every verified draft asset must retain its GitHub SHA-256 digest." }
+          $release = gh api $releaseApi | ConvertFrom-Json
+          if (@($release.assets).Count -eq 0 -or @($release.assets | Where-Object { $_.digest -notmatch '^sha256:[0-9a-f]{64}$' }).Count -gt 0) { throw "Every verified asset must retain its GitHub SHA-256 digest." }
           $current = [ordered]@{
-            releaseId = $draft.id
-            tagName = $draft.tag_name
-            assets = @($draft.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
+            releaseId = $release.id
+            tagName = $release.tag_name
+            assets = @($release.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
           }
           $snapshot = Get-Content -Raw -Encoding utf8 "release-asset-snapshot.json" | ConvertFrom-Json
-          if (($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($current | ConvertTo-Json -Depth 6 -Compress)) { throw "Draft release assets changed after verification; refusing publication." }
-          gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft=false --latest
-          if ($LASTEXITCODE -ne 0) { throw "Could not publish the verified immutable draft." }
+          if (($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($current | ConvertTo-Json -Depth 6 -Compress)) { throw "Release assets changed after verification; refusing publication." }
+          if (-not $release.draft -and $release.immutable -ne $true) {
+            gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft=true --latest=false
+            throw "The release became mutable before Stable verification and was quarantined when possible."
+          }
+          if ($release.draft) {
+            $immutable = gh api -H "X-GitHub-Api-Version: 2026-03-10" repos/Powerpunch777/SPS-Desktop-Releases/immutable-releases | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $immutable.enabled -ne $true) { throw "Immutable releases were disabled immediately before publication; the verified draft remains unpublished." }
+            gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft=false --latest
+            if ($LASTEXITCODE -ne 0) { throw "Could not publish the verified immutable draft." }
+          } else {
+            Write-Output "Resuming attestation verification for the already-published immutable release."
+          }
           $published = gh api $releaseApi | ConvertFrom-Json
           $publishedSnapshot = [ordered]@{
             releaseId = $published.id
@@ -148,6 +161,9 @@ jobs:
             assets = @($published.assets | Sort-Object name | ForEach-Object { [ordered]@{ id = $_.id; name = $_.name; size = $_.size; digest = $_.digest; updatedAt = $_.updated_at } })
           }
           if ($published.draft -or $published.immutable -ne $true -or ($snapshot | ConvertTo-Json -Depth 6 -Compress) -ne ($publishedSnapshot | ConvertTo-Json -Depth 6 -Compress)) {
+            if (-not $published.draft -and $published.immutable -ne $true) {
+              gh release edit "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases --draft=true --latest=false
+            }
             throw "Published release is not the exact immutable release that was verified before publication."
           }
           gh release verify "${{ inputs.tag }}" --repo Powerpunch777/SPS-Desktop-Releases

@@ -17,9 +17,15 @@ test("enables the SPS Identity bridge for every Owner Host", () => {
   const local = spsOwnerHostRuntimeEnvironment({
     identityUrl: "https://app.redongames.com",
     teamAccessEnabled: false,
+    agentJwtSecret: "agent-secret",
   });
   assert.equal(local.SPS_AUTH_IDENTITY_ENABLED, "true");
   assert.equal(local.SPS_AUTH_SECRET, undefined);
+  assert.equal(local.PAPERCLIP_AGENT_JWT_SECRET, "agent-secret");
+  assert.throws(() => spsOwnerHostRuntimeEnvironment({
+    identityUrl: "https://app.redongames.com",
+    teamAccessEnabled: false,
+  }), /Agent runtime credentials/);
 });
 
 test("allows loopback HTTP Identity only for an explicit isolated Desktop E2E", () => {
@@ -52,12 +58,14 @@ test("adds private-team runtime credentials only when team access is enabled", (
     identityUrl: "https://app.redongames.com",
     teamAccessEnabled: true,
     authSecret: "team-secret",
+    agentJwtSecret: "agent-secret",
   });
   assert.equal(environment.SPS_AUTH_SECRET, "team-secret");
-  assert.equal(environment.PAPERCLIP_AGENT_JWT_SECRET, "team-secret");
+  assert.equal(environment.PAPERCLIP_AGENT_JWT_SECRET, "agent-secret");
   assert.equal(environment.TRUST_PROXY, "loopback");
   assert.throws(() => spsOwnerHostRuntimeEnvironment({
     identityUrl: "https://app.redongames.com",
     teamAccessEnabled: true,
+    agentJwtSecret: "agent-secret",
   }), /Private team access credentials/);
 });

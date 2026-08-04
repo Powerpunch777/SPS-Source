@@ -83,6 +83,7 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(publishWorkflow, /verify-release-assets\.mjs/);
   assert.match(publishWorkflow, /SPS_REQUIRE_EXACT_RELEASE_ASSET_SET/);
   assert.match(publishWorkflow, /release-asset-snapshot\.json/);
+  assert.match(publishWorkflow, /release-publication-state\.json/);
   assert.match(workflow, /SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON/);
   assert.match(workflow, /SPS_REQUIRE_TRUSTED_PHYSICAL_DEVICES/);
   assert.match(publishWorkflow, /SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON/);
@@ -90,11 +91,13 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(publishWorkflow, /verify-release-attestation\.mjs/);
   assert.match(publishWorkflow, /pinned Plugin SDK revision must be reachable from its main branch/);
   assert.match(publishWorkflow, /gh release edit "\$\{\{ inputs\.tag \}\}" --repo .* --draft=false/);
+  assert.match(publishWorkflow, /Resuming attestation verification for the already-published immutable release/);
+  assert.match(publishWorkflow, /disabled immediately before publication/);
+  assert.match(publishWorkflow, /--draft=true --latest=false/);
   assert.match(publishWorkflow, /immutable-releases/);
   assert.match(publishWorkflow, /\$published\.immutable -ne \$true/);
   assert.match(publishWorkflow, /gh release verify "\$\{\{ inputs\.tag \}\}"/);
   assert.match(publishWorkflow, /gh release verify-asset/);
-  assert.doesNotMatch(publishWorkflow, /--draft --latest=false/);
   assert.doesNotMatch(publishWorkflow, /electron-builder|npm run release:win/);
   assert.doesNotMatch(publishWorkflow, /gh release upload|--clobber/);
   assert.match(workflow, /merge-base --is-ancestor \$env:GITHUB_SHA origin\/main/);

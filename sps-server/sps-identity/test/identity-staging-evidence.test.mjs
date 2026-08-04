@@ -21,6 +21,7 @@ function evidence(overrides = {}) {
       status: "ok",
       service: "sps-identity",
       source_revision: "source-revision",
+      version_id: "staging-version-1",
       release_id: "sps-staging-bridge-1",
       replay_key_version: "v1",
       protocol_version: "2",
@@ -72,4 +73,7 @@ test("rejects production, stale, incomplete, and wrong-revision evidence", () =>
   assert.throws(() => validateStagingEvidence(evidence({ checks: { health: true } }), {
     sourceRevision: "source-revision", now,
   }), /missing a required smoke check/);
+  assert.throws(() => validateStagingEvidence(evidence({ health: { ...evidence().health, version_id: "wrong-version" } }), {
+    sourceRevision: "source-revision", now,
+  }), /health does not match/);
 });
