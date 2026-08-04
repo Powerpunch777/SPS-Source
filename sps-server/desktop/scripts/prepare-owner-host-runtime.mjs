@@ -64,6 +64,37 @@ async function copyRuntimePackageClosure({ sourceNodeModules, targetNodeModules,
   }
 }
 
+async function repairOwnerHostAcpxRuntimeClosure(runtimeRoot) {
+  const sourceAcpxPackage = await realpath(path.join(
+    coreRoot,
+    "packages",
+    "adapter-utils",
+    "node_modules",
+    "acpx",
+  ));
+  const sourceAcpxNodeModules = path.dirname(sourceAcpxPackage);
+  const targetAcpxNodeModules = path.join(runtimeRoot, "node_modules", "acpx", "node_modules");
+  const sdkPackageName = "@agentclientprotocol/sdk";
+  await requireFile(
+    path.join(sourceAcpxNodeModules, sdkPackageName, "package.json"),
+    "SPS Core acpx is missing its Agent Client Protocol SDK dependency.",
+  );
+  await copyRuntimePackageClosure({
+    sourceNodeModules: sourceAcpxNodeModules,
+    targetNodeModules: targetAcpxNodeModules,
+    packageNames: [sdkPackageName],
+  });
+  const [acpxManifest, sdkManifest] = await Promise.all([
+    readFile(path.join(runtimeRoot, "node_modules", "acpx", "package.json"), "utf8").then(JSON.parse),
+    readFile(path.join(targetAcpxNodeModules, sdkPackageName, "package.json"), "utf8").then(JSON.parse),
+  ]);
+  return {
+    acpxVersion: acpxManifest.version,
+    sdkVersion: sdkManifest.version,
+    sdkPackage: "node_modules/acpx/node_modules/@agentclientprotocol/sdk/package.json",
+  };
+}
+
 async function writeAgentRuntimePackWrapper({ packRoot, command, entry }) {
   const binRoot = path.join(packRoot, "bin");
   await mkdir(binRoot, { recursive: true });
@@ -655,6 +686,7 @@ await run(
 );
 
 await normalizeWorkspacePackageExports(runtimeRoot);
+const acpxRuntimeCompatibility = await repairOwnerHostAcpxRuntimeClosure(runtimeRoot);
 const windowsPostgresUnicodePathCompatibility = await installWindowsPostgresUnicodePathCompatibility(runtimeRoot);
 const serverUiDist = path.join(coreRoot, "server", "ui-dist");
 await requireFile(path.join(serverUiDist, "index.html"), "SPS Owner Host static UI is missing after the Core build.");
@@ -685,6 +717,7 @@ await writeFile(
     rebuiltBundledPlugins,
     pluginDeveloperKit,
     agentRuntimePacks,
+    acpxRuntimeCompatibility,
     windowsPostgresUnicodePathCompatibility,
     version: process.env.npm_package_version || "development",
     releaseBaseline,

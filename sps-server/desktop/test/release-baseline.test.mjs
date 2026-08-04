@@ -23,6 +23,7 @@ const coreRoot = path.join(workspaceRoot, "external", "sps-core");
 test("pins the development candidate to the checked-out Desktop, Core, and bundled extensions", async () => {
   const matrix = JSON.parse(await readFile(path.join(spsServerRoot, "release", "support-matrix.json"), "utf8"));
   assert.deepEqual(validateSpsSupportMatrix(matrix), []);
+  const candidate = matrix.candidate;
   const baseline = await resolveSpsReleaseBaseline({
     workspaceRoot,
     desktopRoot,
@@ -30,20 +31,20 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
     coreRoot,
     builtAt: "2026-07-28T00:00:00.000Z",
   });
-  assert.equal(baseline.desktopVersion, "0.4.119");
-  assert.equal(baseline.core.revision, "f32b80c0cea82f1476050c2b1d9e90630da992d8");
-  assert.equal(baseline.pluginSdk.repository, "Powerpunch777/sps-plugin-sdk");
-  assert.equal(baseline.pluginSdk.revision, "4e23934dd0164132b9ba6d637d7687e97ad27f86");
-  assert.equal(baseline.pluginSdk.package, "@sonparkserver/plugin-sdk");
-  assert.equal(baseline.pluginSdk.version, "0.11.0");
+  assert.equal(baseline.desktopVersion, candidate.desktopVersion);
+  assert.equal(baseline.core.revision, candidate.core.revision);
+  assert.equal(baseline.pluginSdk.repository, candidate.pluginSdk.repository);
+  assert.equal(baseline.pluginSdk.revision, candidate.pluginSdk.revision);
+  assert.equal(baseline.pluginSdk.package, candidate.pluginSdk.package);
+  assert.equal(baseline.pluginSdk.version, candidate.pluginSdk.version);
   assert.equal(typeof baseline.pluginSdk.dirty, "boolean");
-  assert.deepEqual(baseline.extensionProfile, { version: "2.0", pluginApi: 1 });
-  assert.deepEqual(baseline.extensionProfiles, ["1.0", "2.0"]);
-  assert.equal(baseline.update.channel, "latest");
-  assert.equal(baseline.update.repository, "Powerpunch777/SPS-Desktop-Releases");
+  assert.deepEqual(baseline.extensionProfile, candidate.extensionProfile);
+  assert.deepEqual(baseline.extensionProfiles, candidate.extensionProfiles);
+  assert.equal(baseline.update.channel, candidate.update.channel);
+  assert.equal(baseline.update.repository, candidate.update.repository);
   assert.deepEqual(
     baseline.bundledExtensions.map((extension) => [extension.id, extension.version]),
-    [["sps.default-memory", "0.1.0"], ["sps.plugin-discovery", "0.4.0"], ["local.room-chat", "0.3.92"]],
+    candidate.bundledExtensions.map((extension) => [extension.id, extension.version]),
   );
 });
 

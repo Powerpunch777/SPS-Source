@@ -26,6 +26,8 @@ GitHub immutable releases are enabled for `Powerpunch777/SPS-Desktop-Releases` a
 
 The required Host lifecycle E2E uses a deterministic ACP fixture and verifies the real Marketplace MCP injection without depending on a paid model account. A separate manually dispatched, non-blocking live Codex ACP canary preserves real-provider diagnostics; it is observability evidence, not a Stable gate.
 
+The packaged `0.4.120` Owner Host runtime also repairs pnpm's deployed ACPX dependency closure, records the bundled ACPX and Agent Client Protocol SDK versions, and fails package verification unless `acpx/runtime` imports successfully through the bundled Node runtime. The deterministic packaged Host lifecycle E2E passed with Marketplace Assistant after this check; this is local candidate evidence and does not replace the exact signed-installer two-device Stable evidence.
+
 ## Stable gates
 
 Stable publication requires all of the following for the same Source commit:

@@ -79,6 +79,22 @@ test("keeps the Marketplace MCP stdio runtime in the Owner Host package contract
   assert.match(verifierScript, /node_modules\/\@sps\/mcp-server\/dist\/marketplace-assistant-stdio\.js/);
 });
 
+test("repairs and verifies the deployed ACPX dependency closure", async () => {
+  const buildScript = await readFile(path.join(desktopDirectory, "scripts", "prepare-owner-host-runtime.mjs"), "utf8");
+  const verifierScript = await readFile(
+    path.join(desktopDirectory, "scripts", "verify-packaged-owner-host-runtime.mjs"),
+    "utf8",
+  );
+
+  assert.match(buildScript, /repairOwnerHostAcpxRuntimeClosure/);
+  assert.match(buildScript, /node_modules", "acpx", "node_modules/);
+  assert.match(buildScript, /@agentclientprotocol\/sdk/);
+  assert.match(buildScript, /acpxRuntimeCompatibility/);
+  assert.match(verifierScript, /node_modules\/acpx\/node_modules\/@agentclientprotocol\/sdk\/package\.json/);
+  assert.match(verifierScript, /await import\('acpx\/runtime'\)/);
+  assert.match(verifierScript, /ACPX dependency closure contract/);
+});
+
 test("runs the bundled Marketplace MCP protocol in every Windows package pipeline", async () => {
   const packageManifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
   const smokeScript = await readFile(

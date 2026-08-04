@@ -1,4 +1,5 @@
 import { access, readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { materializeSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
@@ -27,6 +28,7 @@ const requiredFiles = [
   "node_modules/@paperclipai/server/package.json",
   "node_modules/@sps/mcp-server/package.json",
   "node_modules/@sps/mcp-server/dist/marketplace-assistant-stdio.js",
+  "node_modules/acpx/node_modules/@agentclientprotocol/sdk/package.json",
   "node_modules/@embedded-postgres/windows-x64/dist/index.js",
 ];
 
@@ -62,6 +64,35 @@ if (
 if (!Array.isArray(runtimeManifest.agentRuntimePacks) || runtimeManifest.agentRuntimePacks.length < 2) {
   throw new Error("The packaged SPS Owner Host runtime is missing its explicit Agent Runtime pack contract.");
 }
+
+if (
+  !runtimeManifest.acpxRuntimeCompatibility?.acpxVersion
+  || !runtimeManifest.acpxRuntimeCompatibility?.sdkVersion
+  || runtimeManifest.acpxRuntimeCompatibility?.sdkPackage
+    !== "node_modules/acpx/node_modules/@agentclientprotocol/sdk/package.json"
+) {
+  throw new Error("The packaged SPS Owner Host runtime is missing its ACPX dependency closure contract.");
+}
+
+await new Promise((resolve, reject) => {
+  const child = spawn(path.join(runtimeRoot, "bin", "node.exe"), [
+    "--input-type=module",
+    "--eval",
+    "await import('acpx/runtime')",
+  ], {
+    cwd: runtimeRoot,
+    stdio: ["ignore", "ignore", "pipe"],
+    windowsHide: true,
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.once("error", reject);
+  child.once("exit", (code) => {
+    if (code === 0) resolve();
+    else reject(new Error(`The packaged SPS Owner Host ACPX runtime cannot load (${code}): ${stderr.trim()}`));
+  });
+});
 
 if (
   runtimeManifest.windowsPostgresUnicodePathCompatibility?.version !== "18.1.0-beta.16"
