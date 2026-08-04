@@ -121,7 +121,9 @@ test("release verification includes every bundled SPS plugin", async () => {
   assert.match(workflow, /working-directory: sps-server\/sps-room-chat/);
   assert.match(workflow, /working-directory: external\/sps-plugin-sdk/);
   assert.match(workflow, /working-directory: sps-server\/desktop-node/);
-  assert.match(workflow, /core-full-regression:[\s\S]*?pnpm typecheck[\s\S]*?pnpm test:run[\s\S]*?pnpm build/);
+  assert.match(workflow, /core-full-regression:[\s\S]*?pnpm test:run:general/);
+  assert.match(workflow, /core-full-regression:[\s\S]*?pnpm test:run:serialized/);
+  assert.match(workflow, /core-full-build:[\s\S]*?pnpm typecheck[\s\S]*?pnpm build/);
   assert.match(workflow, /identity:[\s\S]*?working-directory: sps-server\/sps-identity[\s\S]*?run: npm test/);
 });
 

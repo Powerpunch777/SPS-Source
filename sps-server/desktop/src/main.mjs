@@ -5,6 +5,7 @@ import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveSpsE2eUserDataDirectory } from "./e2e-user-data.mjs";
 import {
   cancelSpsNodeCommands,
   createNodeIdentity,
@@ -203,15 +204,8 @@ import { synchronizeSpsTeamWorkplaneConfig } from "./bundled-workplane-config.mj
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function configureIsolatedE2eUserData() {
-  if (process.env.SPS_DESKTOP_E2E !== "1") return;
-  const configured = String(process.env.SPS_DESKTOP_E2E_USER_DATA_DIR ?? "").trim();
-  if (!configured) return;
-  const temporaryRoot = path.resolve(os.tmpdir());
-  const target = path.resolve(configured);
-  const relative = path.relative(temporaryRoot, target);
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("SPS Desktop E2E user data must be an isolated directory below the operating-system temp folder.");
-  }
+  const target = resolveSpsE2eUserDataDirectory();
+  if (!target) return;
   // Chromium's --user-data-dir does not change Electron's app userData path.
   // Set both in E2E so an automated run can never reuse a person's live Host.
   app.setPath("userData", target);
