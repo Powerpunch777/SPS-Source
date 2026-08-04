@@ -10,6 +10,8 @@ const sourceRoot = path.resolve(identityRoot, "..", "..");
 test("Identity CI installs the locked Miniflare dependencies before tests", async () => {
   const workflow = await readFile(path.join(sourceRoot, ".github", "workflows", "sps-verify.yml"), "utf8");
   const job = workflow.slice(workflow.indexOf("  identity:"), workflow.indexOf("  plugin-kit:"));
+  assert.match(job, /node-version:\s*\[22, 24, 26\]/);
+  assert.match(job, /node-version:\s*\$\{\{ matrix\.node-version \}\}/);
   assert.match(job, /cache:\s*npm/);
   assert.match(job, /cache-dependency-path:\s*sps-server\/sps-identity\/package-lock\.json/);
   assert.ok(job.indexOf("run: npm ci") < job.indexOf("run: npm test"));

@@ -78,6 +78,7 @@ test("release workflow requires the official Desktop release publishing token", 
     "utf8",
   );
   assert.match(publishWorkflow, /workflow_dispatch:/);
+  assert.match(publishWorkflow, /concurrency:\s*\r?\n\s*group: sps-stable-publish\s*\r?\n\s*cancel-in-progress: false/);
   assert.match(publishWorkflow, /gh release download/);
   assert.match(publishWorkflow, /ref: \$\{\{ inputs\.tag \}\}/);
   assert.match(publishWorkflow, /verify-release-assets\.mjs/);
@@ -94,10 +95,14 @@ test("release workflow requires the official Desktop release publishing token", 
   assert.match(publishWorkflow, /Resuming attestation verification for the already-published immutable release/);
   assert.match(publishWorkflow, /disabled immediately before publication/);
   assert.match(publishWorkflow, /--draft=true --latest=false/);
+  assert.match(publishWorkflow, /published mutable release was quarantined before Stable verification/i);
   assert.match(publishWorkflow, /immutable-releases/);
   assert.match(publishWorkflow, /\$published\.immutable -ne \$true/);
   assert.match(publishWorkflow, /gh release verify "\$\{\{ inputs\.tag \}\}"/);
   assert.match(publishWorkflow, /gh release verify-asset/);
+  assert.match(publishWorkflow, /releases\/latest/);
+  assert.match(publishWorkflow, /\$latest\.tag_name -ne "\$\{\{ inputs\.tag \}\}"/);
+  assert.match(publishWorkflow, /latest does not point to the exact immutable Stable release/);
   assert.doesNotMatch(publishWorkflow, /electron-builder|npm run release:win/);
   assert.doesNotMatch(publishWorkflow, /gh release upload|--clobber/);
   assert.match(workflow, /merge-base --is-ancestor \$env:GITHUB_SHA origin\/main/);

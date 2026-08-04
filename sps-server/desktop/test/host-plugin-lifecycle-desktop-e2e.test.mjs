@@ -46,6 +46,10 @@ test("required Host lifecycle E2E uses a deterministic ACP fixture with Marketpl
   const manifest = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8"));
   assert.match(fixture, /session\/new/);
   assert.match(fixture, /sps-marketplace/);
+  assert.match(fixture, /spawn\(marketplaceServer\.command/);
+  assert.match(fixture, /request\("tools\/call"/);
+  assert.match(fixture, /search_marketplace_plugins/);
+  assert.match(fixture, /search_marketplace_plugins result:/);
   assert.match(fixture, /agent_message_chunk/);
   assert.doesNotMatch(manifest.scripts["test:e2e:host-plugin-lifecycle"], /--live-agent/);
   assert.match(manifest.scripts["test:e2e:host-plugin-lifecycle:live"], /--live-agent/);

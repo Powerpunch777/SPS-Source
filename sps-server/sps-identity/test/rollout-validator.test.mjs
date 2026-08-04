@@ -145,7 +145,11 @@ test("full OAuth evidence is token-free and independently validated", () => {
   }).payload.source_revision, evidence.sourceRevision);
   assert.throws(() => validateFullOAuthEvidence({ ...evidence, refreshToken: "secret" }, options), /tokens/);
   assert.throws(() => validateFullOAuthEvidence({ ...evidence, sourceRevision: "c".repeat(40) }, options), /Source SHA/);
-  assert.throws(() => validateFullOAuthEvidence({ ...evidence, receiptJwt: `${evidence.receiptJwt.slice(0, -2)}AA` }, options), /signature/);
+  const tamperedParts = evidence.receiptJwt.split(".");
+  const tamperedSignature = Buffer.from(tamperedParts[2], "base64url");
+  tamperedSignature[0] ^= 0x01;
+  tamperedParts[2] = tamperedSignature.toString("base64url");
+  assert.throws(() => validateFullOAuthEvidence({ ...evidence, receiptJwt: tamperedParts.join(".") }, options), /signature/);
 });
 
 test("release attestation binds final production and bridge staging to exact Cloudflare IDs", () => {

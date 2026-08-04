@@ -1,7 +1,8 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { writeGeneratedFileAtomic } from "./generated-file-writer.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
@@ -28,18 +29,6 @@ await Promise.all(
 );
 const versionPlaceholder = "__SPS_ROOM_PLUGIN_VERSION__";
 const synchronizeVersion = (source) => source.replaceAll(versionPlaceholder, version);
-const transientWriteErrors = new Set(["EACCES", "EBUSY", "EPERM", "UNKNOWN"]);
-async function writeGeneratedFile(path, contents) {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await writeFile(path, contents, "utf8");
-      return;
-    } catch (error) {
-      if (attempt >= 5 || !transientWriteErrors.has(error?.code)) throw error;
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50 * (attempt + 1)));
-    }
-  }
-}
 const manifest = synchronizeVersion(await readFile(resolve(root, "src", "manifest.js"), "utf8"));
 const workerPath = resolve(root, "dist", "worker.js");
 const worker = synchronizeVersion(await readFile(workerPath, "utf8"));
@@ -47,8 +36,8 @@ if (manifest.includes(versionPlaceholder) || worker.includes(versionPlaceholder)
   throw new Error("Room Chat manifest version was not synchronized.");
 }
 await Promise.all([
-  writeGeneratedFile(resolve(root, "dist", "manifest.js"), manifest),
-  writeGeneratedFile(workerPath, worker)
+  writeGeneratedFileAtomic(resolve(root, "dist", "manifest.js"), manifest),
+  writeGeneratedFileAtomic(workerPath, worker)
 ]);
 
 console.log(`Bundled Room worker with its SDK, synchronized v${version}, and copied ${files.length} support files.`);

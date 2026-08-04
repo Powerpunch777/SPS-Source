@@ -170,8 +170,12 @@ jobs:
         run: npm run check
 
   identity:
-    name: SPS Identity contracts
+    name: SPS Identity contracts (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24, 26]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -180,7 +184,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: sps-server/sps-identity/package-lock.json
 

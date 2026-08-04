@@ -319,7 +319,7 @@ try {
     const body = document.body?.innerText || '';
     return transcript.includes('Which verified plugin helps with a small team?')
       && /Marketplace Assistant|System/.test(transcript)
-      && ${liveAgent ? "true" : "transcript.includes('Deterministic Marketplace Assistant response.')"}
+      && ${liveAgent ? "true" : "transcript.includes('Deterministic Marketplace Assistant response.') && transcript.includes('search_marketplace_plugins result:')"}
       && !body.includes('Working');
   })()`), "Marketplace Assistant terminal response", 90000);
   assert.deepEqual(lifecycleSnapshot(await api(workspace, "/api/plugins")), assistantBefore, "Marketplace Assistant changed plugin lifecycle state.");
