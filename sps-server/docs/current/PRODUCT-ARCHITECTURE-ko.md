@@ -14,6 +14,22 @@ Members may join through Tailscale and use approved Agent runtimes on their
 own computers. Browser access is not a supported product path; the Desktop
 application is the client.
 
+### Local and Tailscale trust boundary
+
+The Host local API is reached through the SPS Desktop application. A direct
+`.ts.net` value in the `Host` header is only a hostname claim; it is not proof
+that the request passed through Tailscale Serve. Tokenless loopback access is
+allowed only when structured Tailscale Serve provenance is present, including
+the trusted Serve identity and loopback connection context. Forwarded-host
+text alone never creates that provenance.
+
+This boundary treats native processes running as the same local user as part
+of the trusted local threat boundary. A malicious local process can still
+forge local headers, so stronger separation would require OS-level or
+cryptographic process attestation. Tailscale transport and Serve identity
+protect the remote path; they do not provide that stronger local-process
+isolation.
+
 ## Product Boundary
 
 ### SPS Core owns the reusable technical foundation
