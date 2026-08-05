@@ -304,7 +304,10 @@ try {
   const assistantBefore = lifecycleSnapshot(await api(workspace, "/api/plugins"));
   const assistantAgent = await workspace.evaluate(`(() => {
     const select = document.querySelector('#marketplace-assistant-agent');
-    const option = [...(select?.options || [])].find((entry) => entry.value === ${JSON.stringify(lifecycleAgent.id)});
+    const option = [...(select?.options || [])].find((entry) => {
+      const label = (entry.textContent || '').split(' · ')[0].trim();
+      return label === ${JSON.stringify(lifecycleAgentName)};
+    });
     return select && option ? option.value : null;
   })()`);
   assert.ok(assistantAgent, "Marketplace Assistant did not expose an allowed Agent.");
