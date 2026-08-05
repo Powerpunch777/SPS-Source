@@ -5,6 +5,10 @@ Any new `critical` or `high` advisory fails verification. Every `moderate`
 advisory also needs an exact, non-expired path review; an unreviewed or expired
 moderate finding fails the same gate.
 
+The current result is **policy gate passed**, not "no vulnerabilities found."
+It includes one reviewed High exception and three reviewed Moderate findings,
+all expiring on 2026-09-30.
+
 Temporary exceptions live in
 [`release/security-audit-policy.json`](../../release/security-audit-policy.json).
 An exception must match the package manager source, advisory ID, module, and

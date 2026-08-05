@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "candidate": {
     "status": "development-candidate",
-    "desktopVersion": "0.4.128",
+    "desktopVersion": "0.4.129",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
-      "revision": "f05ff0b0d73c2063fd27fae91f9d348a1014fc23"
+      "revision": "387f98d0c5412be5cf71e488bd5bd8812f279c2e"
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",
@@ -26,7 +26,8 @@
         "windows-10-x64",
         "windows-11-x64"
       ],
-      "remoteTransport": "tailscale"
+      "remoteTransport": "tailscale",
+      "minimumRemoteTransportVersion": "1.52.0"
     },
     "update": {
       "channel": "latest",

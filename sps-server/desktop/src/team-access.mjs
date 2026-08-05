@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 
 const TAILNET_SUFFIX = ".ts.net";
+export const SPS_MINIMUM_TAILSCALE_VERSION = "1.52.0";
 
 function asTrimmedString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -42,6 +43,55 @@ export function parseSpsTailscaleStatus(raw) {
     deviceName: asTrimmedString(status?.Self?.HostName) || hostname,
     httpsAvailable: Array.isArray(status?.CertDomains) && status.CertDomains.length > 0,
   };
+}
+
+function parseNumericVersion(value) {
+  const match = asTrimmedString(value).match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/i);
+  if (!match) return null;
+  const parts = match.slice(1).map(Number);
+  return parts.every(Number.isSafeInteger) ? parts : null;
+}
+
+function compareNumericVersions(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+export function parseSpsTailscaleVersion(raw) {
+  let versionData;
+  try {
+    versionData = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    throw new Error("Tailscale returned invalid version data.");
+  }
+  const reported = [versionData?.majorMinorPatch, versionData?.short]
+    .filter((value) => asTrimmedString(value));
+  const parsedVersions = reported.map(parseNumericVersion);
+  if (parsedVersions.length === 0 || parsedVersions.some((value) => !value)) {
+    throw new Error("Tailscale returned invalid version data.");
+  }
+  const parsed = parsedVersions[0];
+  if (parsedVersions.some((value) => compareNumericVersions(parsed, value) !== 0)) {
+    throw new Error("Tailscale returned conflicting version data.");
+  }
+  return {
+    version: `${parsed[0]}.${parsed[1]}.${parsed[2]}`,
+    supported: compareNumericVersions(parsed, parseNumericVersion(SPS_MINIMUM_TAILSCALE_VERSION)) >= 0,
+  };
+}
+
+export function requireSupportedSpsTailscaleVersion(versionData) {
+  const result = typeof versionData?.supported === "boolean"
+    ? versionData
+    : parseSpsTailscaleVersion(versionData);
+  if (!result.supported) {
+    throw new Error(
+      `SPS private team access requires Tailscale ${SPS_MINIMUM_TAILSCALE_VERSION} or later. Update Tailscale and try again (installed: ${result.version}).`,
+    );
+  }
+  return result;
 }
 
 export function buildSpsTailscaleServeInvocation({ ownerHostUrl }) {
@@ -132,11 +182,16 @@ export async function inspectSpsTailscale(options = {}) {
   return parseSpsTailscaleStatus(await execute("tailscale", ["status", "--json"], options));
 }
 
+export async function inspectSpsTailscaleVersion(options = {}) {
+  return parseSpsTailscaleVersion(await execute("tailscale", ["version", "--json"], options));
+}
+
 export async function inspectSpsTailscaleServe(options = {}) {
   return parseSpsTailscaleServeStatus(await execute("tailscale", ["serve", "status", "--json"], options));
 }
 
 export async function enableSpsTailscaleServe({ ownerHostUrl, ...options }) {
+  requireSupportedSpsTailscaleVersion(await inspectSpsTailscaleVersion(options));
   const before = await inspectSpsTailscaleServe(options);
   if (!isEmptySpsTailscaleServeStatus(before)) {
     throw new Error(
@@ -161,6 +216,7 @@ export async function enableSpsTailscaleServe({ ownerHostUrl, ...options }) {
 }
 
 export async function reconcileSpsTailscaleServe({ hostname, ownerHostUrl, ...options }) {
+  requireSupportedSpsTailscaleVersion(await inspectSpsTailscaleVersion(options));
   const before = await inspectSpsTailscaleServe(options);
   if (hasSpsTailscaleServeHandler({ status: before, hostname, ownerHostUrl })) {
     return { changed: false, serve: before };

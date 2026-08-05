@@ -14,6 +14,11 @@ Members may join through Tailscale and use approved Agent runtimes on their
 own computers. Browser access is not a supported product path; the Desktop
 application is the client.
 
+The initial remote transport contract requires Tailscale `1.52.0` or later.
+SPS checks the installed version before creating or repairing a Serve route.
+Tagged devices do not receive Tailscale user identity headers, so they are not
+supported as human Member clients in this first release.
+
 ### Local and Tailscale trust boundary
 
 The Host local API is reached through the SPS Desktop application. A direct

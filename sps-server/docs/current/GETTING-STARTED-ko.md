@@ -7,7 +7,7 @@
 - Windows 10 또는 11 x64 컴퓨터
 - SPS Desktop 설치 파일
 - SPS Identity에 사용할 Google 계정
-- 다른 컴퓨터와 함께 쓸 경우, 각 컴퓨터의 Tailscale 연결
+- 다른 컴퓨터와 함께 쓸 경우, 각 컴퓨터의 Tailscale `1.52.0` 이상 연결
 
 실제 작업은 Official release를 사용한다. Preview는 설치와 첫 실행 확인 전용이다.
 채널 차이는 [RELEASE-AND-PREVIEW-POLICY-ko.md](RELEASE-AND-PREVIEW-POLICY-ko.md)를
@@ -47,6 +47,11 @@ SPS Workspace는 빈 작업 공간으로 시작한다. 기본 Task 보드, Room,
 Member는 Host의 실제 폴더 경로를 고르거나 바꿀 수 없다. CLI 로그인, API 키,
 로컬 AI 모델은 각 Node의 컴퓨터에 남는다.
 
+SPS는 비공개 팀 접근을 켜거나 복구하기 전에 Tailscale 버전을 확인한다. `1.52.0`
+미만이거나 버전 정보를 읽을 수 없으면 Serve 설정을 변경하지 않고 업데이트 안내와
+함께 중단한다. Tailscale의 tagged device에는 사용자 identity header가 제공되지
+않으므로 첫 출시에서 사람 Member 컴퓨터로 사용할 수 없다.
+
 ## 프로젝트 폴더
 
 Host만 로컬 프로젝트 폴더를 Workspace Source로 지정한다. Source는 폴더 사본이
@@ -56,7 +61,7 @@ Host만 로컬 프로젝트 폴더를 Workspace Source로 지정한다. Source�
 ## 문제가 생기면
 
 - 로그인 문제: Google 계정, SPS Identity 연결, 시스템 시간, 네트워크를 확인한다.
-- Member 연결 문제: Tailscale 상태와 전체 SPS 초대 코드를 확인한다.
+- Member 연결 문제: Tailscale이 `1.52.0` 이상인지, 연결 상태와 전체 SPS 초대 코드를 확인한다.
 - Agent가 보이지 않음: Node 등록·승인과 해당 Runtime의 로컬 로그인을 확인한다.
 - Plugin이 보이지 않음: Host가 설치했는지와 Workspace 활성화 상태를 확인한다.
 - 데이터 이전: [DATA-AND-RECOVERY-ko.md](DATA-AND-RECOVERY-ko.md)를 먼저 읽는다.

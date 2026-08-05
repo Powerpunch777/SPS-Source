@@ -102,6 +102,9 @@ export function validateSpsSupportMatrix(matrix) {
     errors.push("Support matrix operating systems are required.");
   }
   if (candidate.platform?.remoteTransport !== "tailscale") errors.push("The first SPS release requires Tailscale.");
+  if (candidate.platform?.minimumRemoteTransportVersion !== "1.52.0") {
+    errors.push("The first SPS release requires Tailscale 1.52.0 or later.");
+  }
   if (!Array.isArray(candidate.bundledExtensions)) {
     errors.push("Support matrix bundledExtensions must be an array.");
   } else {
@@ -227,6 +230,7 @@ export async function resolveSpsReleaseBaseline({
     platform: {
       operatingSystems: [...candidate.platform.operatingSystems],
       remoteTransport: candidate.platform.remoteTransport,
+      minimumRemoteTransportVersion: candidate.platform.minimumRemoteTransportVersion,
     },
     update: { ...candidate.update },
     bundledExtensions: candidate.bundledExtensions.map((extension) => ({ ...extension })),

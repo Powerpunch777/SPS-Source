@@ -42,6 +42,7 @@ test("pins the development candidate to the checked-out Desktop, Core, and bundl
   assert.deepEqual(baseline.extensionProfiles, candidate.extensionProfiles);
   assert.equal(baseline.update.channel, candidate.update.channel);
   assert.equal(baseline.update.repository, candidate.update.repository);
+  assert.equal(baseline.platform.minimumRemoteTransportVersion, "1.52.0");
   assert.deepEqual(
     baseline.bundledExtensions.map((extension) => [extension.id, extension.version]),
     candidate.bundledExtensions.map((extension) => [extension.id, extension.version]),

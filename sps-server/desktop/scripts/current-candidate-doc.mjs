@@ -39,6 +39,7 @@ export function renderCurrentCandidateDocument(matrix) {
 | Plugin API | \`${candidate.extensionProfile.pluginApi}\` |
 | Operating systems | ${renderList(candidate.platform.operatingSystems)} |
 | Remote transport | \`${candidate.platform.remoteTransport}\` |
+| Minimum remote transport version | \`${candidate.platform.minimumRemoteTransportVersion}\` |
 | Update channel | \`${candidate.update.channel}\` from \`${candidate.update.repository}\` |
 
 ## Bundled Extensions

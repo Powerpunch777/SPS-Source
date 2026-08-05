@@ -7,13 +7,14 @@
 | Item | Value |
 | --- | --- |
 | Status | `development-candidate` |
-| SPS Desktop | `0.4.128` |
-| SPS Core | [`f05ff0b0d73c2063fd27fae91f9d348a1014fc23`](https://github.com/Powerpunch777/SPS-Core/commit/f05ff0b0d73c2063fd27fae91f9d348a1014fc23) |
+| SPS Desktop | `0.4.129` |
+| SPS Core | [`387f98d0c5412be5cf71e488bd5bd8812f279c2e`](https://github.com/Powerpunch777/SPS-Core/commit/387f98d0c5412be5cf71e488bd5bd8812f279c2e) |
 | Plugin SDK | `@sonparkserver/plugin-sdk@0.11.0` ([`4e23934dd0164132b9ba6d637d7687e97ad27f86`](https://github.com/Powerpunch777/sps-plugin-sdk/commit/4e23934dd0164132b9ba6d637d7687e97ad27f86)) |
 | Extension profiles | `1.0`, `2.0` |
 | Plugin API | `1` |
 | Operating systems | `windows-10-x64`, `windows-11-x64` |
 | Remote transport | `tailscale` |
+| Minimum remote transport version | `1.52.0` |
 | Update channel | `latest` from `Powerpunch777/SPS-Desktop-Releases` |
 
 ## Bundled Extensions
