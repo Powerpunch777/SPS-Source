@@ -3,6 +3,10 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveSpsReleaseBaseline } from "./release-baseline.mjs";
+import {
+  readSpsOwnerHostRuntimePackage,
+  SPS_REQUEST_HOSTNAME_RUNTIME_PATH,
+} from "../src/owner-host-runtime-package.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -85,6 +89,7 @@ export async function createSpsReleaseManifest({
   verifyCurrentRepository = false,
   trustedDeviceFingerprints = process.env.SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON,
   requireTrustedDevices = process.env.SPS_REQUIRE_TRUSTED_PHYSICAL_DEVICES === "1",
+  ownerHostRuntimePackageRoot = path.join(distRoot, "win-unpacked", "resources", "sps-owner-host-runtime-package"),
 } = {}) {
   const baseline = JSON.parse(await readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8"));
   if (verifyCurrentRepository) {
@@ -132,9 +137,18 @@ export async function createSpsReleaseManifest({
   if (enrolledDevices) challenge.trustedDeviceFingerprints = enrolledDevices;
   await writeFile(challengePath, `${JSON.stringify(challenge, null, 2)}\n`, "utf8");
   const challengeStats = await stat(challengePath);
+  const ownerHostRuntime = await readSpsOwnerHostRuntimePackage(ownerHostRuntimePackageRoot);
   const manifest = {
     schemaVersion: 1,
     baseline,
+    ownerHostRuntime: {
+      archive: ownerHostRuntime.manifest.archive,
+      runtimeManifestSha256: ownerHostRuntime.manifest.runtime.manifestSha256,
+      requestHostnameModule: {
+        relativePath: SPS_REQUEST_HOSTNAME_RUNTIME_PATH,
+        sha256: ownerHostRuntime.manifest.runtime.criticalFiles[SPS_REQUEST_HOSTNAME_RUNTIME_PATH],
+      },
+    },
     artifacts: {
       installer: {
         file: expectedInstaller,

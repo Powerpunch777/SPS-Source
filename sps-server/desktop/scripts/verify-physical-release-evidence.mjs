@@ -4,6 +4,10 @@ import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  TAILSCALE_SERVE_EVIDENCE_ARTIFACT_NAME,
+  validateTailscaleServeReleaseEvidence,
+} from "./tailscale-serve-release-evidence.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -40,7 +44,7 @@ export function publicKeyFingerprint(publicKeyPem) {
 
 export function physicalEvidenceSigningPayload(evidence, device) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     releaseNonce: evidence.releaseNonce,
     role: device.role,
     fingerprint: device.fingerprint,
@@ -120,11 +124,12 @@ export function validatePhysicalReleaseEvidence(evidence, {
   sourceRevision,
   releaseChallenge,
   trustedDeviceFingerprints,
+  ownerHostRuntime,
   now = Date.now(),
   maxAgeMs = 7 * 24 * 60 * 60 * 1000,
 }) {
   const errors = [];
-  if (evidence?.schemaVersion !== 2) errors.push("Physical release evidence schemaVersion must be 2.");
+  if (evidence?.schemaVersion !== 3) errors.push("Physical release evidence schemaVersion must be 3.");
   if (evidence?.candidate?.desktopVersion !== candidate.desktopVersion) {
     errors.push("Physical release evidence Desktop version does not match the support matrix.");
   }
@@ -169,6 +174,7 @@ export function validatePhysicalReleaseEvidence(evidence, {
 
   const artifacts = Array.isArray(evidence?.artifacts) ? evidence.artifacts : [];
   const artifactNames = new Set();
+  const artifactContents = new Map();
   let artifactBytes = 0;
   for (const artifact of artifacts) {
     if (!artifact?.name || artifactNames.has(artifact.name) || !SHA256.test(artifact?.sha256 ?? "")) {
@@ -196,6 +202,7 @@ export function validatePhysicalReleaseEvidence(evidence, {
       continue;
     }
     artifactBytes += content.length;
+    artifactContents.set(artifact.name, content);
     const actualSha256 = createHash("sha256").update(content).digest("hex");
     if (actualSha256 !== artifact.sha256) {
       errors.push(`Physical evidence artifact ${artifact.name} does not match its SHA-256 digest.`);
@@ -204,6 +211,29 @@ export function validatePhysicalReleaseEvidence(evidence, {
   if (artifactNames.size === 0) errors.push("Physical release evidence requires at least one hashed artifact.");
   if (artifactBytes > MAX_EMBEDDED_ARTIFACT_BYTES) {
     errors.push(`Physical release evidence embeds more than ${MAX_EMBEDDED_ARTIFACT_BYTES} bytes of artifacts.`);
+  }
+  const serveArtifact = artifactContents.get(TAILSCALE_SERVE_EVIDENCE_ARTIFACT_NAME);
+  if (!serveArtifact) {
+    errors.push(`Physical release evidence requires ${TAILSCALE_SERVE_EVIDENCE_ARTIFACT_NAME}.`);
+  } else {
+    let serveEvidence;
+    try {
+      serveEvidence = JSON.parse(serveArtifact.toString("utf8").replace(/^\uFEFF/, ""));
+    } catch {
+      errors.push("Physical release Serve evidence artifact is not valid JSON.");
+    }
+    if (serveEvidence) {
+      errors.push(...validateTailscaleServeReleaseEvidence(serveEvidence, {
+        candidate,
+        sourceRevision,
+        installer,
+        ownerHostRuntime,
+        releaseChallenge,
+        requireStable: true,
+        now,
+        maxAgeMs,
+      }));
+    }
   }
 
   for (const scenarioName of REQUIRED_PHYSICAL_SCENARIOS) {
@@ -216,6 +246,9 @@ export function validatePhysicalReleaseEvidence(evidence, {
     if (references.length === 0 || references.some((name) => !artifactNames.has(name))) {
       errors.push(`Physical release scenario ${scenarioName} must reference hashed evidence artifacts.`);
     }
+  }
+  if (!evidence?.scenarios?.hostMemberJoin?.artifactNames?.includes(TAILSCALE_SERVE_EVIDENCE_ARTIFACT_NAME)) {
+    errors.push(`Physical release scenario hostMemberJoin must reference ${TAILSCALE_SERVE_EVIDENCE_ARTIFACT_NAME}.`);
   }
   const host = evidence?.devices?.host;
   const member = evidence?.devices?.member;
@@ -261,6 +294,10 @@ export async function verifyPhysicalReleaseEvidence({ evidencePath, sourceRevisi
   if (!resolvedChallengePath) throw new Error("The immutable SPS release challenge path is required.");
   let releaseChallenge;
   try { releaseChallenge = JSON.parse(await readFile(resolvedChallengePath, "utf8")); } catch { throw new Error(`Release challenge is missing or invalid: ${resolvedChallengePath}`); }
+  const releaseManifestPath = process.env.SPS_RELEASE_MANIFEST_PATH?.trim();
+  if (!releaseManifestPath) throw new Error("The immutable SPS release manifest path is required.");
+  let releaseManifest;
+  try { releaseManifest = JSON.parse(await readFile(releaseManifestPath, "utf8")); } catch { throw new Error(`Release manifest is missing or invalid: ${releaseManifestPath}`); }
   let trustedDeviceFingerprints;
   try {
     trustedDeviceFingerprints = JSON.parse(String(process.env.SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON ?? ""));
@@ -272,6 +309,7 @@ export async function verifyPhysicalReleaseEvidence({ evidencePath, sourceRevisi
     sourceRevision: resolvedSourceRevision,
     releaseChallenge,
     trustedDeviceFingerprints,
+    ownerHostRuntime: releaseManifest.ownerHostRuntime,
   });
   const resolvedInstallerPath = installerPath ?? process.env.SPS_FINAL_INSTALLER_PATH?.trim();
   if (resolvedInstallerPath) {

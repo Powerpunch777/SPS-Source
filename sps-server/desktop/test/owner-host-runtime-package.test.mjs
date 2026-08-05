@@ -9,6 +9,7 @@ import {
   materializeSpsOwnerHostRuntimePackage,
   readSpsOwnerHostRuntimePackage,
   SPS_OWNER_HOST_RUNTIME_ARCHIVE,
+  SPS_REQUEST_HOSTNAME_RUNTIME_PATH,
 } from "../src/owner-host-runtime-package.mjs";
 
 async function writeFile(root, relative, content = relative) {
@@ -28,6 +29,7 @@ async function createRuntime(root) {
     writeFile(root, "dist/index.js", "export {};\n"),
     writeFile(root, "ui-dist/index.html", "<title>SPS</title>\n"),
     writeFile(root, "node_modules/tsx/dist/loader.mjs", "export {};\n"),
+    writeFile(root, SPS_REQUEST_HOSTNAME_RUNTIME_PATH, "export const requestHostname = () => 'localhost';\n"),
   ]);
 }
 
@@ -39,8 +41,9 @@ test("packages, verifies, materializes, and reuses one Owner Host runtime archiv
   try {
     await createRuntime(runtimeRoot);
     const created = await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
-    assert.equal(created.runtime.fileCount, 9);
+    assert.equal(created.runtime.fileCount, 10);
     assert.match(created.archive.sha256, /^[a-f0-9]{64}$/);
+    assert.match(created.runtime.criticalFiles[SPS_REQUEST_HOSTNAME_RUNTIME_PATH], /^[a-f0-9]{64}$/);
     const inspected = await readSpsOwnerHostRuntimePackage(packageRoot);
     assert.equal(inspected.manifest.archive.sha256, created.archive.sha256);
     assert.equal(await materializeSpsOwnerHostRuntimePackage({ packageRoot, targetRuntimeRoot: targetRoot }), targetRoot);
@@ -48,6 +51,12 @@ test("packages, verifies, materializes, and reuses one Owner Host runtime archiv
     assert.equal(await fs.readFile(path.join(targetRoot, "dist", "index.js"), "utf8"), "export {};\n");
     assert.equal(await materializeSpsOwnerHostRuntimePackage({ packageRoot, targetRuntimeRoot: targetRoot }), targetRoot);
     assert.equal((await fs.stat(path.join(targetRoot, "dist", "index.js"))).mtimeMs, firstWrite);
+    await fs.writeFile(path.join(targetRoot, SPS_REQUEST_HOSTNAME_RUNTIME_PATH), "tampered", "utf8");
+    await materializeSpsOwnerHostRuntimePackage({ packageRoot, targetRuntimeRoot: targetRoot });
+    assert.equal(
+      await fs.readFile(path.join(targetRoot, SPS_REQUEST_HOSTNAME_RUNTIME_PATH), "utf8"),
+      "export const requestHostname = () => 'localhost';\n",
+    );
   } finally {
     await fs.rm(temporary, { recursive: true, force: true });
   }

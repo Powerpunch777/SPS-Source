@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -98,9 +99,37 @@ test("creates a hash manifest only when latest.yml points to the exact installer
         archive: "SPS-Agent-Runtime-Pack-codex-acp-0.4.79.zip",
       }],
     })}`, "utf8");
+    const ownerHostRuntimePackageRoot = path.join(root, "owner-host-runtime-package");
+    await mkdir(ownerHostRuntimePackageRoot);
+    const ownerHostArchive = Buffer.from("owner-host-runtime");
+    const moduleSha256 = "4".repeat(64);
+    await writeFile(path.join(ownerHostRuntimePackageRoot, "sps-owner-host-runtime.tgz"), ownerHostArchive);
+    await writeFile(path.join(ownerHostRuntimePackageRoot, "sps-owner-host-runtime-package.json"), JSON.stringify({
+      format: 1,
+      kind: "sps-owner-host-runtime",
+      archive: {
+        file: "sps-owner-host-runtime.tgz",
+        sizeBytes: ownerHostArchive.length,
+        sha256: createHash("sha256").update(ownerHostArchive).digest("hex"),
+      },
+      runtime: {
+        fileCount: 1,
+        sizeBytes: 1,
+        manifestSha256: "5".repeat(64),
+        criticalFiles: {
+          "node_modules/@paperclipai/server/dist/middleware/request-hostname.js": moduleSha256,
+        },
+      },
+    }), "utf8");
 
     const trustedDeviceFingerprints = { host: "1".repeat(64), member: "2".repeat(64) };
-    const manifest = await createSpsReleaseManifest({ runtimeRoot, distRoot, trustedDeviceFingerprints, requireTrustedDevices: true });
+    const manifest = await createSpsReleaseManifest({
+      runtimeRoot,
+      distRoot,
+      trustedDeviceFingerprints,
+      requireTrustedDevices: true,
+      ownerHostRuntimePackageRoot,
+    });
     assert.equal(manifest.artifacts.installer.file, "SPS-Desktop-Setup-0.4.79.exe");
     assert.match(manifest.artifacts.installer.sha256, /^[0-9a-f]{64}$/);
     assert.equal(manifest.artifacts.releaseChallenge.file, "sps-release-challenge.json");
@@ -112,6 +141,7 @@ test("creates a hash manifest only when latest.yml points to the exact installer
     assert.deepEqual(manifest.artifacts.agentRuntimePacks.map((pack) => [pack.id, pack.file]), [
       ["codex-acp", "SPS-Agent-Runtime-Pack-codex-acp-0.4.79.zip"],
     ]);
+    assert.equal(manifest.ownerHostRuntime.requestHostnameModule.sha256, moduleSha256);
 
     await writeFile(path.join(distRoot, "latest.yml"), [
       "version: 0.4.79",

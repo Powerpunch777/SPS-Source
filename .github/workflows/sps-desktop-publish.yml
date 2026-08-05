@@ -124,6 +124,7 @@ jobs:
           $env:SPS_PHYSICAL_EVIDENCE_PATH = $path
           $env:SPS_FINAL_INSTALLER_PATH = $installer.FullName
           $env:SPS_RELEASE_CHALLENGE_PATH = (Resolve-Path "release-assets/sps-release-challenge.json").Path
+          $env:SPS_RELEASE_MANIFEST_PATH = (Resolve-Path "release-assets/sps-release-manifest.json").Path
           node sps-server/desktop/scripts/verify-physical-release-evidence.mjs
 
       - name: Verify production Identity remotely and require full OAuth evidence

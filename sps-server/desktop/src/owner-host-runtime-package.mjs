@@ -6,6 +6,7 @@ import { c as createTar, t as listTar, x as extractTar } from "tar";
 
 export const SPS_OWNER_HOST_RUNTIME_ARCHIVE = "sps-owner-host-runtime.tgz";
 export const SPS_OWNER_HOST_RUNTIME_PACKAGE_MANIFEST = "sps-owner-host-runtime-package.json";
+export const SPS_REQUEST_HOSTNAME_RUNTIME_PATH = "node_modules/@paperclipai/server/dist/middleware/request-hostname.js";
 const MATERIALIZED_MARKER = ".sps-runtime-materialized.json";
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_RUNTIME_BYTES = 3 * 1024 * 1024 * 1024;
@@ -20,7 +21,9 @@ const REQUIRED_RUNTIME_FILES = [
   "dist/index.js",
   "ui-dist/index.html",
   "node_modules/tsx/dist/loader.mjs",
+  SPS_REQUEST_HOSTNAME_RUNTIME_PATH,
 ];
+const CRITICAL_RUNTIME_FILES = [SPS_REQUEST_HOSTNAME_RUNTIME_PATH];
 
 function asPositiveInteger(value, label, maximum) {
   if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
@@ -92,10 +95,29 @@ function validatePackageManifest(value) {
   if (!/^[a-f0-9]{64}$/.test(value.runtime?.manifestSha256 || "")) {
     throw new Error("SPS Owner Host runtime manifest identity is invalid.");
   }
+  if (!value.runtime?.criticalFiles || typeof value.runtime.criticalFiles !== "object" || Array.isArray(value.runtime.criticalFiles)) {
+    throw new Error("SPS Owner Host runtime critical-file identity is invalid.");
+  }
+  for (const relative of CRITICAL_RUNTIME_FILES) {
+    if (!/^[a-f0-9]{64}$/.test(value.runtime.criticalFiles[relative] || "")) {
+      throw new Error(`SPS Owner Host runtime critical-file identity is invalid: ${relative}`);
+    }
+  }
   asPositiveInteger(value.archive.sizeBytes, "archive size", MAX_ARCHIVE_BYTES);
   asPositiveInteger(value.runtime.fileCount, "file count", MAX_RUNTIME_FILES);
   asPositiveInteger(value.runtime.sizeBytes, "expanded size", MAX_RUNTIME_BYTES);
   return value;
+}
+
+async function criticalRuntimeFilesMatch(runtimeRoot, expected) {
+  try {
+    for (const relative of CRITICAL_RUNTIME_FILES) {
+      if (await sha256File(path.join(runtimeRoot, relative)) !== expected?.[relative]) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function readSpsOwnerHostRuntimePackage(packageRoot, { fsApi = fs } = {}) {
@@ -189,6 +211,10 @@ export async function createSpsOwnerHostRuntimePackage({
       fileCount: runtime.files.length,
       sizeBytes: runtime.totalBytes,
       manifestSha256: await sha256File(runtimeManifestPath),
+      criticalFiles: Object.fromEntries(await Promise.all(CRITICAL_RUNTIME_FILES.map(async (relative) => [
+        relative,
+        await sha256File(path.join(runtimeRoot, relative)),
+      ]))),
     },
   };
   await fsApi.writeFile(
@@ -204,6 +230,7 @@ async function runtimeIsReady(targetRuntimeRoot, packageManifest, { fsApi = fs }
     const marker = JSON.parse((await fsApi.readFile(path.join(targetRuntimeRoot, MATERIALIZED_MARKER), "utf8")).replace(/^\uFEFF/, ""));
     if (marker.archiveSha256 !== packageManifest.archive.sha256) return false;
     if (await sha256File(path.join(targetRuntimeRoot, "sps-owner-host-runtime.json")) !== packageManifest.runtime.manifestSha256) return false;
+    if (!await criticalRuntimeFilesMatch(targetRuntimeRoot, packageManifest.runtime.criticalFiles)) return false;
     await Promise.all(REQUIRED_RUNTIME_FILES.map((relative) => fsApi.access(path.join(targetRuntimeRoot, relative))));
     return true;
   } catch {
@@ -273,10 +300,12 @@ export async function materializeSpsOwnerHostRuntimePackage({
       },
     });
     const expanded = await collectRuntimeFiles(stagingRoot, { fsApi });
+    const criticalFilesMatch = await criticalRuntimeFilesMatch(stagingRoot, runtimePackage.manifest.runtime.criticalFiles);
     if (
       expanded.files.length !== runtimePackage.manifest.runtime.fileCount
       || expanded.totalBytes !== runtimePackage.manifest.runtime.sizeBytes
       || await sha256File(path.join(stagingRoot, "sps-owner-host-runtime.json")) !== runtimePackage.manifest.runtime.manifestSha256
+      || !criticalFilesMatch
     ) {
       throw new Error("SPS Owner Host runtime failed post-extraction verification.");
     }

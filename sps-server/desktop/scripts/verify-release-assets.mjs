@@ -18,6 +18,19 @@ function safeArtifactName(value) {
   return typeof value === "string" && value === path.basename(value) && !value.includes("..") && value.length > 0;
 }
 
+function verifyOwnerHostRuntimeIdentity(value) {
+  const sha256 = /^[0-9a-f]{64}$/;
+  if (value?.archive?.file !== "sps-owner-host-runtime.tgz"
+      || !Number.isSafeInteger(value.archive.sizeBytes)
+      || value.archive.sizeBytes <= 0
+      || !sha256.test(value.archive.sha256 ?? "")
+      || !sha256.test(value.runtimeManifestSha256 ?? "")
+      || value.requestHostnameModule?.relativePath !== "node_modules/@paperclipai/server/dist/middleware/request-hostname.js"
+      || !sha256.test(value.requestHostnameModule?.sha256 ?? "")) {
+    throw new Error("Release manifest Owner Host runtime identity is invalid.");
+  }
+}
+
 async function verifyArtifact(root, artifact, { requireSize = false } = {}) {
   if (!safeArtifactName(artifact?.file) || !/^[0-9a-f]{64}$/.test(artifact?.sha256 ?? "")) throw new Error("Release manifest contains an invalid artifact contract.");
   const filePath = path.join(root, artifact.file);
@@ -44,6 +57,7 @@ export async function verifyReleaseAssets({
   if (!expectedSource || manifest.baseline?.sourceRevision !== expectedSource) throw new Error("Release manifest Source SHA does not match the release tag.");
   if (manifest.baseline?.sourceDirty !== false || manifest.baseline?.core?.dirty !== false || manifest.baseline?.pluginSdk?.dirty !== false) throw new Error("Release manifest was not produced from clean repositories.");
   if (manifest.baseline?.core?.revision !== matrix.candidate.core.revision || manifest.baseline?.pluginSdk?.revision !== matrix.candidate.pluginSdk.revision) throw new Error("Release manifest Core or Plugin SDK revision does not match the support matrix.");
+  verifyOwnerHostRuntimeIdentity(manifest.ownerHostRuntime);
   const installerPath = await verifyArtifact(root, manifest.artifacts?.installer, { requireSize: true });
   await verifyArtifact(root, manifest.artifacts?.updateMetadata);
   await verifyArtifact(root, manifest.artifacts?.blockmap);

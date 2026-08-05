@@ -1,106 +1,91 @@
-# SPS Desktop 베타 수동 검증 런북
+# SPS Desktop 베타 수동 검증 절차
 
 최종 갱신: 2026-08-05
 
-대상 후보는 [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md)의 정확한 Desktop,
-Core, Plugin SDK 튜플이다. 이 런북은 자동 회귀 테스트를 대신하지 않는다. 설치된
-Desktop을 실제 사용자처럼 조작해 로그인, Host/Member 경계, Tailscale, Node,
-Workspace Source, 플러그인 수명주기와 재시작 복구를 확인한다.
+이 절차는 [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md)에 적힌 정확한
+Desktop, Core, Plugin SDK 조합을 두 대의 Windows PC에서 검증한다. 이전
+후보, 소스 실행본, 오래 실행 중인 서버의 결과는 현재 후보 증거로
+재사용하지 않는다.
 
-## 증거 원칙
+## 기본 원칙
 
-- 기존 작업물 대신 별도 QA Workspace와 임시 Source를 사용한다.
-- 설치본 SHA-256과 manifest의 Source/Core/SDK SHA를 먼저 고정한다.
-- 이전 후보, 소스 체크아웃, 기존에 실행 중인 서버의 결과를 현재 후보 증거로
-  재사용하지 않는다.
-- 각 단계에 Host/Member, UTC 시작·종료 시각, 결과, 원본 오류와 필요한 화면을
-  기록한다.
-- 실패를 고치면 영향을 받은 단계와 패키징을 새 후보에서 다시 수행한다.
+- 두 PC 모두 같은 후보 설치본을 사용한다.
+- 시작 전에 설치본 SHA-256과 Source/Core/SDK SHA를 고정한다.
+- Host와 Member는 각자 미리 등록한 Ed25519 장치 키를 사용한다.
+- 기록에는 이름, 이메일, 컴퓨터명, IP, Tailnet hostname, 토큰, 절대경로,
+  프로젝트 내용을 넣지 않는다.
+- 실패를 수정했다면 영향을 받은 단계부터 같은 후보로 다시 실행한다.
 
 ## 준비
 
-- Windows 10/11 x64 Host 1대와 Member 1대
-- 서로 다른 SPS Identity/Google 계정
-- 양쪽에 동일한 후보 설치본
-- 양쪽에 Tailscale `1.52.0` 이상과 사용자 계정 로그인
-- Host가 선택할 수 있는 빈 QA 폴더
-- 실행에 필요한 Runtime과 Node 승인
+- Windows 10/11 x64 Host 한 대와 Member 한 대
+- 서로 다른 SPS 계정
+- 두 PC 모두 Tailscale 안정판 `1.52.0` 이상
+- Authenticode가 `Valid`인 동일 설치본
+- 보호된 Environment에 사전 등록된 Host/Member 장치 키 fingerprint
+- 릴리스 초안의 `sps-release-challenge.json`
 
-`tailscale version --json` 원본을 양쪽에서 저장한다. Tagged device에는 사용자
-identity header가 제공되지 않으므로 사람 Member 검증에 사용하지 않는다.
+Tagged device에는 사람의 Tailscale identity header가 없으므로 Member
+검증에 사용하지 않는다.
 
-## 1. 설치와 첫 실행
+## 1. 설치와 계정
 
-1. 양쪽 컴퓨터에 후보 설치본을 새로 설치한다.
-2. 이전 Stable이 있다면 별도 순서에서 같은 후보로 업그레이드한다.
-3. Google 로그인 후 Host는 Host 만들기, Member는 Host 참여하기를 확인한다.
-4. 일반 브라우저에서 Host 주소를 열어 Workspace가 노출되지 않는지 확인한다.
+1. 두 PC에 후보를 새로 설치한다.
+2. 별도 순서에서 이전 Stable에서 후보로 업데이트한다.
+3. Host는 새 Workspace를 만들고 Member는 전체 SPS2 초대코드로 참여한다.
+4. 일반 브라우저에서 Workspace가 열리지 않는지 확인한다.
 
-통과 기준:
+## 2. Tailscale Serve 증거
 
-- 로그인과 Workspace 전환이 무한 대기하지 않는다.
-- 브라우저 직접 접근은 차단되고 Desktop만 Workspace를 연다.
-- 새 Workspace는 Room, Task, 역할, 메모리 정책을 임의로 만들지 않는다.
-
-## 2. Workspace와 초기 Assistant
-
-1. Host가 QA Workspace를 만든다.
-2. Initial Assistant를 하나 등록한다.
-3. 앱을 완전히 종료한 뒤 다시 연다.
-
-통과 기준:
-
-- Workspace와 Initial Assistant가 복구된다.
-- Marketplace Assistant의 검색·추천만으로 플러그인 상태가 바뀌지 않는다.
-- 플러그인 설치와 활성화는 Host의 명시적 UI 동작으로만 끝난다.
-
-## 3. Tailscale Serve와 Member
-
-1. Host가 비공개 팀 접근을 켠다.
-2. Serve가 연결된 정확한 후보 포트를 기록한다.
-3. Member PC에서 Serve URL로 정상 요청을 보낸다.
-4. Host loopback에 `.ts.net` Host와 조작 헤더를 직접 보내 거부되는지 확인한다.
-5. 전체 SPS2 초대 코드로 Member를 참여시키고 Node를 등록·승인한다.
-
-Serve 증거에는 다음을 함께 남긴다.
-
-- 후보 설치본 SHA-256과 Source/Core/SDK SHA
-- `tailscale version --json`
-- Serve hostname, 경로와 후보 포트
-- 다른 PC의 성공 응답
-- 직접 `.ts.net` Host 요청의 거부 응답
-- UTC 시각과 원본 출력
+1. 두 PC의 `tailscale version --json` 원본을 비공개 capture에 저장한다.
+2. 후보 설치본에 포함된 Owner Host runtime archive와 실제 로딩한
+   `request-hostname.js`의 SHA-256을 계산한다.
+3. 비공개 관측 config에 runtime/module 경로와 manifest SHA, release nonce,
+   두 Tailscale 버전 파일, 출력 capture 경로를 넣고 추적되는
+   `tailscale-serve-observation-server.mjs`를 실행한다. 서버는 runtime과
+   모듈 바이트를 직접 해시하며 다르면 시작하지 않는다.
+4. Member PC에서 임시 Serve 경로로 HTTPS 요청을 보낸다.
+5. Host loopback에서 `.ts.net` Host만 직접 주장한 요청을 보낸다.
+6. 관측 서버가 두 요청의 실제 HTTP 상태와 응답 본문을 비공개 capture에
+   Base64로 직접 저장할 때까지 기다린다. capture를 손으로 만들지 않는다.
+7. `release:create-serve-evidence`로 익명화된 공개 증거를 만든다.
+8. `release:verify-serve-evidence`로 스키마와 후보 결속을 확인한다.
+9. 임시 Serve 경로와 포트를 제거하고 기존 설정이 유지되는지 확인한다.
 
 통과 기준:
 
-- Tailscale `1.52.0` 미만이나 버전 판독 실패 시 Serve 설정을 바꾸지 않는다.
-- Member 요청에는 완전한 Serve provenance가 있고 직접 위조 요청은 거부된다.
-- 취소, 만료, 잘린 초대 코드는 거부된다.
-- 승인 전 Node 실행은 거부되고 승인 후에만 가능하다.
-- Member에게 Host 설정, 플러그인 수명주기, 로컬 Source 선택이 노출되지 않는다.
+- Member 요청은 실제 HTTP `200`, `source=tailscale-serve`다.
+- 직접 Host 위조는 실제 HTTP `403`, `source=direct`다.
+- 증거는 설치본, runtime archive, `request-hostname.js`, release nonce의
+  SHA와 정확히 결속된다.
+- 공개 증거에는 개인정보나 로컬 경로가 없다.
+- 단독 Serve 검증은 구조 확인일 뿐이다. Stable 판정은 아래 Host/Member
+  서명이 포함된 물리 증거 검증에서만 가능하다.
 
-## 4. Runtime과 Workspace Source
+## 3. Node, Runtime, Source
 
-1. Host가 Runtime의 출처와 SHA-256을 확인한다.
-2. 등록하지 않은 Runtime 실행이 거절되는지 확인한다.
-3. Host만 로컬 QA 폴더를 Workspace Source로 지정한다.
-4. 승인된 Member Node에만 Source route를 부여한다.
-5. Member Node가 marker 파일을 쓰고 읽는 임시 실행을 완료한다.
-6. Host가 Source 접근을 철회한 뒤 같은 실행을 다시 시도한다.
+1. Member Node를 등록하고 Host가 허용한 Agent Runtime만 부여한다.
+2. Host만 Workspace Source 폴더를 지정한다.
+3. Member Agent가 Host Source 안의 marker 파일을 읽고 수정한다.
+4. Runtime 또는 Source 권한을 철회하고 같은 실행이 거부되는지 확인한다.
+5. 네트워크를 끊었다 복구한 뒤 중복 실행 없이 다시 동작하는지 확인한다.
 
-통과 기준:
+## 4. 백업과 복원
 
-- API 키, CLI 홈과 로컬 모델은 해당 Node 컴퓨터에 남는다.
-- Member는 Host의 실제 경로를 선택하거나 변경할 수 없다.
-- 허용된 파일만 바뀌며 철회 후 재실행은 fail-closed 한다.
-- 실행 기록과 오류가 UI에 남는다.
+1. Host 데이터를 내보낸다.
+2. 비어 있는 새 Host에만 복원한다.
+3. 프로젝트 작업물은 유지되고 SPS 내부 비밀·실행 상태는 복원 규칙에
+   맞게 제외되는지 확인한다.
 
-## 5. 재시작과 정리
+## 5. 증거 서명
 
-1. Host와 Member 앱을 완전히 종료하고 다시 연다.
-2. Node, Workspace, 플러그인과 철회 상태가 복구되는지 확인한다.
-3. 임시 Workspace, Source route, 테스트 파일과 계정을 제거한다.
-4. 원래 Tailscale Serve 구성이 그대로인지 확인한다.
+1. 익명화된 Serve 증거를 `tailscale-serve-evidence.json` artifact로 넣는다.
+2. `hostMemberJoin` 시나리오가 이 artifact를 참조하게 한다.
+3. Host가 물리 증거를 서명한다.
+4. Member가 같은 파일을 두 번째로 서명한다.
+5. 최종 JSON을 보호된 `SPS_PHYSICAL_RELEASE_EVIDENCE_JSON`에 저장한다.
 
-Stable 판정은 이 런북 외에도 코드 서명, Identity 운영 배포, Linux Core 전체 shard,
-불변 GitHub Release와 동일 서명 설치본의 2대 검증을 모두 요구한다.
+Stable 게이트는 같은 release nonce, 설치본 SHA, Source/Core/SDK 튜플,
+runtime/module SHA, 두 장치 fingerprint와 서명을 모두 다시 검증한다.
+코드 서명, Identity 운영 배포, Linux Core 전체 shard, 불변 GitHub Release가
+모두 완료되기 전에는 Stable로 표시하지 않는다.

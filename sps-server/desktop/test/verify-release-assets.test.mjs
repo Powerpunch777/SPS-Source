@@ -45,6 +45,14 @@ test("verifies every immutable release byte against the exact Source tuple", asy
         core: { revision: matrix.candidate.core.revision, dirty: false },
         pluginSdk: { revision: matrix.candidate.pluginSdk.revision, dirty: false },
       },
+      ownerHostRuntime: {
+        archive: { file: "sps-owner-host-runtime.tgz", sizeBytes: 123, sha256: "4".repeat(64) },
+        runtimeManifestSha256: "5".repeat(64),
+        requestHostnameModule: {
+          relativePath: "node_modules/@paperclipai/server/dist/middleware/request-hostname.js",
+          sha256: "6".repeat(64),
+        },
+      },
       artifacts: {
         installer: artifact(installerName, true),
         updateMetadata: artifact("latest.yml"),

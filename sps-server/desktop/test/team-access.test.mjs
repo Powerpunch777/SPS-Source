@@ -59,6 +59,13 @@ test("requires the post-1.52 Tailscale Serve contract", () => {
     version: "1.52.0",
     supported: true,
   });
+  assert.deepEqual(parseSpsTailscaleVersion({ short: "v1.52.0+windows.1" }), {
+    version: "1.52.0",
+    supported: true,
+  });
+  assert.throws(() => parseSpsTailscaleVersion({ short: "1.52.0-beta.1" }), /invalid version data/);
+  assert.throws(() => parseSpsTailscaleVersion({ short: "v1.52.0-rc1" }), /invalid version data/);
+  assert.throws(() => requireSupportedSpsTailscaleVersion({ supported: true, version: "999.0.0" }), /invalid version data/);
   assert.throws(
     () => requireSupportedSpsTailscaleVersion({ short: "1.51.1" }),
     /requires Tailscale 1\.52\.0 or later.*installed: 1\.51\.1/,
@@ -222,6 +229,19 @@ test("fails closed before changing Serve when Tailscale is too old", async () =>
   await assert.rejects(
     enableSpsTailscaleServe({ ownerHostUrl: "http://127.0.0.1:31310", execFileImpl }),
     /requires Tailscale 1\.52\.0 or later/,
+  );
+  assert.deepEqual(commands, [["version", "--json"]]);
+});
+
+test("fails closed before changing Serve for a prerelease Tailscale build", async () => {
+  const commands = [];
+  const execFileImpl = (_command, args, _options, callback) => {
+    commands.push(args);
+    callback(null, JSON.stringify({ majorMinorPatch: "1.52.0-beta.1" }), "");
+  };
+  await assert.rejects(
+    enableSpsTailscaleServe({ ownerHostUrl: "http://127.0.0.1:31310", execFileImpl }),
+    /invalid version data/,
   );
   assert.deepEqual(commands, [["version", "--json"]]);
 });

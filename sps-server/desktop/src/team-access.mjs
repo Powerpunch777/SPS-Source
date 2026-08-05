@@ -46,7 +46,7 @@ export function parseSpsTailscaleStatus(raw) {
 }
 
 function parseNumericVersion(value) {
-  const match = asTrimmedString(value).match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/i);
+  const match = asTrimmedString(value).match(/^v?(\d+)\.(\d+)\.(\d+)(?:\+[0-9a-z.-]+)?$/i);
   if (!match) return null;
   const parts = match.slice(1).map(Number);
   return parts.every(Number.isSafeInteger) ? parts : null;
@@ -83,9 +83,10 @@ export function parseSpsTailscaleVersion(raw) {
 }
 
 export function requireSupportedSpsTailscaleVersion(versionData) {
-  const result = typeof versionData?.supported === "boolean"
-    ? versionData
-    : parseSpsTailscaleVersion(versionData);
+  return assertSupportedSpsTailscaleVersion(parseSpsTailscaleVersion(versionData));
+}
+
+function assertSupportedSpsTailscaleVersion(result) {
   if (!result.supported) {
     throw new Error(
       `SPS private team access requires Tailscale ${SPS_MINIMUM_TAILSCALE_VERSION} or later. Update Tailscale and try again (installed: ${result.version}).`,
@@ -191,7 +192,7 @@ export async function inspectSpsTailscaleServe(options = {}) {
 }
 
 export async function enableSpsTailscaleServe({ ownerHostUrl, ...options }) {
-  requireSupportedSpsTailscaleVersion(await inspectSpsTailscaleVersion(options));
+  assertSupportedSpsTailscaleVersion(await inspectSpsTailscaleVersion(options));
   const before = await inspectSpsTailscaleServe(options);
   if (!isEmptySpsTailscaleServeStatus(before)) {
     throw new Error(
@@ -216,7 +217,7 @@ export async function enableSpsTailscaleServe({ ownerHostUrl, ...options }) {
 }
 
 export async function reconcileSpsTailscaleServe({ hostname, ownerHostUrl, ...options }) {
-  requireSupportedSpsTailscaleVersion(await inspectSpsTailscaleVersion(options));
+  assertSupportedSpsTailscaleVersion(await inspectSpsTailscaleVersion(options));
   const before = await inspectSpsTailscaleServe(options);
   if (hasSpsTailscaleServeHandler({ status: before, hostname, ownerHostUrl })) {
     return { changed: false, serve: before };

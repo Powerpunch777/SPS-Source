@@ -12,13 +12,65 @@ const candidate = {
   desktopVersion: "0.4.112",
   core: { revision: "2".repeat(40) },
   pluginSdk: { revision: "3".repeat(40) },
+  platform: { minimumRemoteTransportVersion: "1.52.0" },
 };
+const ownerHostRuntime = {
+  archive: { file: "sps-owner-host-runtime.tgz", sizeBytes: 54321, sha256: "4".repeat(64) },
+  runtimeManifestSha256: "5".repeat(64),
+  requestHostnameModule: {
+    relativePath: "node_modules/@paperclipai/server/dist/middleware/request-hostname.js",
+    sha256: "7".repeat(64),
+  },
+};
+
+function serveEvidence() {
+  return {
+    schemaVersion: 1,
+    evidenceType: "sps-tailscale-serve",
+    status: "stable",
+    releaseNonce: "8".repeat(64),
+    completedAt: "2026-08-02T00:00:00.000Z",
+    candidate: {
+      desktopVersion: candidate.desktopVersion,
+      sourceRevision,
+      coreRevision: candidate.core.revision,
+      pluginSdkRevision: candidate.pluginSdk.revision,
+    },
+    installer: {
+      version: candidate.desktopVersion,
+      sizeBytes: 12345,
+      sha256: "6".repeat(64),
+      signatureStatus: "Valid",
+    },
+    runtime: {
+      archiveSizeBytes: ownerHostRuntime.archive.sizeBytes,
+      archiveSha256: ownerHostRuntime.archive.sha256,
+      runtimeManifestSha256: ownerHostRuntime.runtimeManifestSha256,
+      requestHostnameModuleSha256: ownerHostRuntime.requestHostnameModule.sha256,
+    },
+    transport: {
+      minimumVersion: "1.52.0",
+      hostVersion: "1.98.8",
+      memberVersion: "1.98.4",
+      servePath: "/__sps-release-transport",
+      backendPort: 31311,
+    },
+    observations: {
+      member: { httpStatus: 200, responseSha256: "a".repeat(64), accepted: true, source: "tailscale-serve", peer: "loopback", identityPresent: true },
+      directSpoof: { httpStatus: 403, responseSha256: "b".repeat(64), accepted: false, source: "direct", peer: "loopback", identityPresent: false },
+    },
+    commands: [
+      "member: GET https://<tailnet-host>/__sps-release-transport",
+      "host: GET http://127.0.0.1:31311/__sps-release-transport with Host=<tailnet-host> and no Serve headers",
+    ],
+  };
+}
 
 function validEvidence() {
   const artifactName = "two-device-session-log";
   const artifactContent = Buffer.from('{"result":"pass","devices":2}', "utf8");
   const evidence = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     releaseNonce: "8".repeat(64),
     candidate: {
       desktopVersion: candidate.desktopVersion,
@@ -39,12 +91,18 @@ function validEvidence() {
       mediaType: "application/json",
       contentBase64: artifactContent.toString("base64"),
       sha256: createHash("sha256").update(artifactContent).digest("hex"),
+    }, {
+      name: "tailscale-serve-evidence.json",
+      mediaType: "application/json",
+      contentBase64: Buffer.from(JSON.stringify(serveEvidence()), "utf8").toString("base64"),
+      sha256: createHash("sha256").update(Buffer.from(JSON.stringify(serveEvidence()), "utf8")).digest("hex"),
     }],
     scenarios: Object.fromEntries(REQUIRED_PHYSICAL_SCENARIOS.map((name) => [
       name,
       { status: "pass", artifactNames: [artifactName] },
     ])),
   };
+  evidence.scenarios.hostMemberJoin.artifactNames.push("tailscale-serve-evidence.json");
   for (const role of ["host", "member"]) {
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     evidence.devices[role] = createPhysicalDeviceAttestation(evidence, {
@@ -78,6 +136,7 @@ function validationOptions(evidence) {
     sourceRevision,
     releaseChallenge: releaseChallenge(evidence),
     trustedDeviceFingerprints: releaseChallenge(evidence).trustedDeviceFingerprints,
+    ownerHostRuntime,
     now: verificationNow,
   };
 }
