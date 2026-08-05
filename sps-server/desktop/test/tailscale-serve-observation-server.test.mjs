@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   createServeCaptureRecorder,
+  readObservationJson,
   sanitizedServeObservation,
   startTailscaleServeObservationServer,
 } from "../scripts/tailscale-serve-observation-server.mjs";
@@ -35,6 +36,17 @@ test("sanitizes a Serve identity without retaining user or host data", () => {
     },
   });
   assert.doesNotMatch(JSON.stringify(observation), /private|tailnet|example/);
+});
+
+test("reads Windows PowerShell UTF-8 BOM observation files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "sps-serve-json-"));
+  const jsonPath = path.join(root, "version.json");
+  try {
+    await writeFile(jsonPath, `\uFEFF${JSON.stringify({ short: "1.98.8" })}`, "utf8");
+    assert.deepEqual(await readObservationJson(jsonPath), { short: "1.98.8" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("keeps a direct request rejected and anonymous", () => {

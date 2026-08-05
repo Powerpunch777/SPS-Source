@@ -17,6 +17,10 @@ async function sha256File(filePath) {
   return createHash("sha256").update(await readFile(filePath)).digest("hex");
 }
 
+export async function readObservationJson(filePath) {
+  return JSON.parse((await readFile(path.resolve(filePath), "utf8")).replace(/^\uFEFF/, ""));
+}
+
 function responseCapture(httpStatus, body) {
   return {
     httpStatus,
@@ -154,7 +158,7 @@ export async function startTailscaleServeObservationServer({
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const configPath = process.argv[2];
   if (!configPath) throw new Error("Usage: tailscale-serve-observation-server.mjs <private-config.json>");
-  const config = JSON.parse((await readFile(path.resolve(configPath), "utf8")).replace(/^\uFEFF/, ""));
+  const config = await readObservationJson(configPath);
   const runtimeArchiveSha256 = await sha256File(path.resolve(config.runtimeArchivePath));
   if (runtimeArchiveSha256 !== config.expectedRuntimeArchiveSha256) {
     throw new Error("The observed Owner Host runtime archive does not match the release manifest.");
@@ -164,8 +168,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     releaseNonce: config.releaseNonce,
     servePath: config.servePath,
     backendPort: Number(config.port),
-    hostTailscaleVersion: JSON.parse(await readFile(path.resolve(config.hostTailscaleVersionPath), "utf8")),
-    memberTailscaleVersion: JSON.parse(await readFile(path.resolve(config.memberTailscaleVersionPath), "utf8")),
+    hostTailscaleVersion: await readObservationJson(config.hostTailscaleVersionPath),
+    memberTailscaleVersion: await readObservationJson(config.memberTailscaleVersionPath),
     runtimeArchiveSha256,
     requestHostnameModuleSha256: config.expectedModuleSha256,
     onComplete: () => process.stdout.write(`${JSON.stringify({ captureComplete: true })}\n`),
