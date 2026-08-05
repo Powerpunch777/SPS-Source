@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
+const hostReadyTimeoutMs = Number(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS || 360_000);
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const liveAgent = process.argv.includes("--live-agent");
 const deterministicAcp = path.join(desktopRoot, "scripts", "fixtures", "deterministic-marketplace-acp.mjs");
@@ -266,7 +267,7 @@ try {
   await waitPage(setup, (current) => /Create|Server/.test(current.text), "Owner Host choice");
   await clickText(setup, ["#create-owner-server", "Create Owner Host", "Create Server", "Create"], "Create Owner Host");
 
-  workspace = await cdpFor(await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", 240000));
+  workspace = await cdpFor(await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", hostReadyTimeoutMs));
   await waitPage(workspace, (current) => /Workspace|Dashboard/.test(current.text), "Workspace UI", 90000);
   const companies = await api(workspace, "/api/companies");
   company = Array.isArray(companies) ? companies[0] : null;

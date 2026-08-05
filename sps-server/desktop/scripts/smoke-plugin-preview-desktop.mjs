@@ -14,6 +14,7 @@ import { inspectPluginArchive } from "@sonparkserver/plugin-sdk/registry/archive
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
+const hostReadyTimeoutMs = Number(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS || 360_000);
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const sdkRoot = path.join(desktopRoot, "node_modules", "@sonparkserver", "plugin-sdk");
 const sdkCliPath = path.join(sdkRoot, "cli", "sps-plugin.mjs");
@@ -268,7 +269,7 @@ try {
   await waitPage(setup, (page) => page.text.includes("Create") || page.text.includes("Server"), "Owner Host choice");
   await setup.evaluate("document.querySelector('#create-owner-server')?.click()");
 
-  workspaceTarget = await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", 240_000);
+  workspaceTarget = await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", hostReadyTimeoutMs);
   workspace = await cdpFor(workspaceTarget);
   await waitPage(workspace, (page) => page.text.includes("Workspace") || page.text.includes("Dashboard"), "Workspace UI", 90_000);
   const companies = await workspaceApi(workspace, "/api/companies");

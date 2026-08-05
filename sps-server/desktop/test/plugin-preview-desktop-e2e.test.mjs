@@ -12,6 +12,8 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   const manifest = JSON.parse(packageJson);
   assert.equal(manifest.scripts["test:e2e:plugin-preview"], "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs");
   assert.match(harness, /SPS_DESKTOP_E2E_BINARY/);
+  assert.match(harness, /SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS/);
+  assert.match(harness, /360_000/);
   assert.match(harness, /sourceElectron/);
   assert.match(harness, /mockIdentity/);
   assert.match(harness, /openPluginRegistries/);

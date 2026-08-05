@@ -10,6 +10,8 @@ const fixturePath = path.join(desktopRoot, "scripts", "fixtures", "deterministic
 test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketplace/Builder side-effect free", async () => {
   const harness = await readFile(harnessPath, "utf8");
   assert.match(harness, /SPS_DESKTOP_E2E_BINARY/);
+  assert.match(harness, /SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS/);
+  assert.match(harness, /360_000/);
   assert.match(harness, /mockIdentity/);
   assert.match(harness, /#start-sps-account|Sign in/);
   assert.match(harness, /#create-owner-server|Create/);
