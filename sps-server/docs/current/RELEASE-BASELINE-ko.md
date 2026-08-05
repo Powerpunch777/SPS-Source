@@ -7,7 +7,7 @@ The current candidate is `0.4.127` and remains `development-candidate`. It is no
 ## Candidate tuple
 
 - Desktop: `0.4.127`
-- Core: `fda9cfa54ed0ed09fc274dd6f1665d246e60b977`
+- Core: `fda9cfa542faf47a666cd6698a18d67b77d4e6e0`
 - Plugin SDK: `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`)
 - Platform: Windows 10/11 x64
 - Remote transport: Tailscale
