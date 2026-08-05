@@ -2,12 +2,12 @@
 
 Last reviewed: 2026-08-05
 
-The current candidate is `0.4.126` and remains `development-candidate`. It is not a Stable release.
+The current candidate is `0.4.127` and remains `development-candidate`. It is not a Stable release.
 
 ## Candidate tuple
 
-- Desktop: `0.4.126`
-- Core: `5a2d69aebf3e82e7062a4f247effeaee52458a26`
+- Desktop: `0.4.127`
+- Core: `fda9cfa54ed0ed09fc274dd6f1665d246e60b977`
 - Plugin SDK: `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`)
 - Platform: Windows 10/11 x64
 - Remote transport: Tailscale
@@ -16,7 +16,7 @@ The current candidate is `0.4.126` and remains `development-candidate`. It is no
 
 ## Identity rollout state
 
-Production has not received a code or D1 migration rollout from this candidate. It does have a prior replay-secret change deployment, so the earlier phrase "Production Worker and DB were unchanged" is incomplete. The current production health endpoint still exposes only the legacy health contract and must not be treated as a `0.4.126` attestation.
+Production has not received a code or D1 migration rollout from this candidate. It does have a prior replay-secret change deployment, so the earlier phrase "Production Worker and DB were unchanged" is incomplete. The current production health endpoint still exposes only the legacy health contract and must not be treated as a `0.4.127` attestation.
 
 The staging hostname currently does not resolve. Staging and Production migrations `0001` through `0006`, environment-specific RSA files, and the Bridge/Final/finalization rollout remain external setup work. Therefore no real staging OAuth or Worker deployment evidence exists yet. The code requires exact staging URL, D1 ID/name, newest Worker deployment ID, Cloudflare version metadata, replay-key version, Source SHA, protocol version, rollback floor, and a Worker-signed OAuth receipt before production verification can pass. Both staging and production health must report the exact Cloudflare `version_id`; runtime receipts and health fail closed without Cloudflare's version-metadata binding, and Final verification requires one exact Worker version to receive 100% of traffic.
 
@@ -26,7 +26,7 @@ GitHub immutable releases are enabled for `Powerpunch777/SPS-Desktop-Releases` a
 
 The required Host lifecycle E2E uses a deterministic ACP fixture that connects to the injected Marketplace MCP stdio server, calls `search_marketplace_plugins`, and returns the tool result in the visible assistant transcript without depending on a paid model account. It also verifies that the read-only conversation did not change plugin lifecycle state. A separate manually dispatched, non-blocking live Codex ACP canary preserves real-provider diagnostics; it is observability evidence, not a Stable gate.
 
-The packaged `0.4.126` Owner Host runtime retains the ACPX dependency-closure checks from `0.4.120`. Core catalog generation, installation, and installed-file audit share one canonical UTF-8/LF byte contract, so fresh LF clones and existing Windows CRLF checkouts produce the same manifest and update status. Private Tailscale requests no longer gain a hostname identity from `X-Forwarded-Host` or a direct `.ts.net` Host claim alone: tokenless loopback access requires the structured Tailscale Serve source, identity, and loopback connection context. Electron E2E fails closed when its isolated user-data directory is missing, outside the operating-system temporary root, or redirected through a link. The Linux Core regression gate is split into bounded general and serialized shards, excludes generated `dist` test copies, and requires the serialized Core job in the legacy required check. A valid short-lived local Agent JWT may cross only the loopback `/api` transport gate; normal browser surfaces remain blocked and the request still passes the existing actor, run, company, and Marketplace session scope checks.
+The packaged `0.4.127` Owner Host runtime retains the ACPX dependency-closure checks from `0.4.120`. Core catalog generation, installation, and installed-file audit share one canonical UTF-8/LF byte contract, so fresh LF clones and existing Windows CRLF checkouts produce the same manifest and update status. Private Tailscale requests no longer gain a hostname identity from `X-Forwarded-Host` or a direct `.ts.net` Host claim alone: tokenless loopback access requires the structured Tailscale Serve source, identity, and loopback connection context. Electron E2E fails closed when its isolated user-data directory is missing, outside the operating-system temporary root, or redirected through a link. The Linux Core regression gate is split into bounded general and serialized shards, excludes generated `dist` test copies, and requires the serialized Core job in the legacy required check. A valid short-lived local Agent JWT may cross only the loopback `/api` transport gate; normal browser surfaces remain blocked and the request still passes the existing actor, run, company, and Marketplace session scope checks.
 
 The transport statement above is intentionally precise: a direct `.ts.net`
 `Host` header on a loopback connection is not Serve provenance. Only the
@@ -55,7 +55,7 @@ The following are explicit release blockers, not completed code-test claims:
   substitute for the full Linux shard evidence.
 
 Until these conditions have fresh evidence for the same candidate tuple,
-`0.4.126` remains a development candidate and must not be described as
+`0.4.127` remains a development candidate and must not be described as
 Stable.
 
 ## Stable gates
@@ -73,4 +73,4 @@ Stable publication requires all of the following for the same Source commit:
 9. The annotated release tag already belongs to `main`, is verified by GitHub, and the pinned Core and Plugin SDK revisions are reachable from their own `main` branches.
 10. Publication uses an `sps-production` Environment with protected `main`, a required non-author reviewer, and protected release, Identity, Cloudflare, and physical-device evidence secrets.
 
-Evidence and installer bytes from `0.4.125` or earlier cannot be reused after the request provenance contract changed in `0.4.126`.
+Evidence and installer bytes from `0.4.126` or earlier cannot be reused because `0.4.127` pins the complete request-provenance regression contract to the final Core revision.
