@@ -3,6 +3,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  tailscaleServeChallengeForReleaseNonce,
+  tailscaleServePathForReleaseNonce,
+} from "./tailscale-serve-release-evidence.mjs";
 
 function headerValue(request, name) {
   const value = request.headers[String(name).toLowerCase()];
@@ -69,9 +73,10 @@ export function createServeCaptureRecorder({
   };
 }
 
-export function sanitizedServeObservation(identity) {
+export function sanitizedServeObservation(identity, challenge) {
   return {
     accepted: identity?.source === "tailscale-serve",
+    challenge,
     parsedIdentity: {
       source: identity?.source ?? "unknown",
       peer: identity?.peer ?? "unknown",
@@ -84,6 +89,7 @@ export async function startTailscaleServeObservationServer({
   modulePath,
   expectedModuleSha256,
   port,
+  releaseNonce,
   servePath,
   captureRecorder,
 } = {}) {
@@ -95,21 +101,37 @@ export async function startTailscaleServeObservationServer({
     throw new Error("The loaded request-hostname module does not match the release manifest.");
   }
   if (!Number.isSafeInteger(port) || (port !== 0 && port < 1024) || port > 65535) throw new Error("Observation server port is invalid.");
-  if (!/^\/__sps-[a-z0-9-]{1,80}$/.test(String(servePath ?? ""))) throw new Error("Observation Serve path is invalid.");
+  const challenge = tailscaleServeChallengeForReleaseNonce(releaseNonce);
+  if (servePath !== tailscaleServePathForReleaseNonce(releaseNonce)) throw new Error("Observation Serve path is not derived from the release nonce.");
   const { requestHostIdentity } = await import(pathToFileURL(resolvedModulePath).href);
   if (typeof requestHostIdentity !== "function") throw new Error("The packaged request-hostname module has no requestHostIdentity export.");
 
+  const observedKinds = new Set();
   const server = createServer((request, response) => {
     if (request.url !== servePath) {
       response.writeHead(404, { "content-type": "application/json" });
       response.end(JSON.stringify({ accepted: false, error: "not-found" }));
       return;
     }
+    if (request.method !== "GET") {
+      response.writeHead(405, { "content-type": "application/json", allow: "GET" });
+      response.end(JSON.stringify({ accepted: false, error: "method-not-allowed" }));
+      return;
+    }
     const identity = requestHostIdentity({
       header: (name) => headerValue(request, name),
       socket: request.socket,
     });
-    const observation = sanitizedServeObservation(identity);
+    const observation = sanitizedServeObservation(identity, challenge);
+    const observationKind = observation.accepted && observation.parsedIdentity.source === "tailscale-serve"
+      ? "member"
+      : (!observation.accepted && observation.parsedIdentity.source === "direct" ? "direct" : null);
+    if (observationKind && observedKinds.has(observationKind)) {
+      response.writeHead(409, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify({ accepted: false, error: "challenge-already-used" }));
+      return;
+    }
+    if (observationKind) observedKinds.add(observationKind);
     const httpStatus = observation.accepted ? 200 : 403;
     const body = JSON.stringify(observation);
     response.writeHead(httpStatus, {
@@ -152,6 +174,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     modulePath: config.modulePath,
     expectedModuleSha256: config.expectedModuleSha256,
     port: Number(config.port),
+    releaseNonce: config.releaseNonce,
     servePath: config.servePath,
     captureRecorder,
   });

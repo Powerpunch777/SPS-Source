@@ -44,18 +44,24 @@ Tagged device에는 사람의 Tailscale identity header가 없으므로 Member
    두 Tailscale 버전 파일, 출력 capture 경로를 넣고 추적되는
    `tailscale-serve-observation-server.mjs`를 실행한다. 서버는 runtime과
    모듈 바이트를 직접 해시하며 다르면 시작하지 않는다.
-4. Member PC에서 임시 Serve 경로로 HTTPS 요청을 보낸다.
-5. Host loopback에서 `.ts.net` Host만 직접 주장한 요청을 보낸다.
-6. 관측 서버가 두 요청의 실제 HTTP 상태와 응답 본문을 비공개 capture에
+4. 관측 서버가 release nonce에서 만든 임시 Serve 경로를 그대로 사용한다.
+   임의 경로나 고정 경로를 입력하지 않는다.
+5. Member PC에서 해당 경로로 `GET` HTTPS 요청을 한 번 보낸다.
+6. Host loopback에서 같은 경로에 `.ts.net` Host만 직접 주장한 `GET`
+   요청을 한 번 보낸다.
+7. 관측 서버가 두 요청의 실제 HTTP 상태와 nonce 파생 challenge가 포함된
+   응답 본문을 비공개 capture에
    Base64로 직접 저장할 때까지 기다린다. capture를 손으로 만들지 않는다.
-7. `release:create-serve-evidence`로 익명화된 공개 증거를 만든다.
-8. `release:verify-serve-evidence`로 스키마와 후보 결속을 확인한다.
-9. 임시 Serve 경로와 포트를 제거하고 기존 설정이 유지되는지 확인한다.
+8. `release:create-serve-evidence`로 익명화된 공개 증거를 만든다.
+9. `release:verify-serve-evidence`로 스키마와 후보 결속을 확인한다.
+10. 임시 Serve 경로와 포트를 제거하고 기존 설정이 유지되는지 확인한다.
 
 통과 기준:
 
 - Member 요청은 실제 HTTP `200`, `source=tailscale-serve`다.
 - 직접 Host 위조는 실제 HTTP `403`, `source=direct`다.
+- 두 응답은 release nonce에서 파생된 같은 challenge를 포함하고, Member와
+  직접 위조 관측은 각각 한 번만 기록된다.
 - 증거는 설치본, runtime archive, `request-hostname.js`, release nonce의
   SHA와 정확히 결속된다.
 - 공개 증거에는 개인정보나 로컬 경로가 없다.
@@ -81,11 +87,14 @@ Tagged device에는 사람의 Tailscale identity header가 없으므로 Member
 
 1. 익명화된 Serve 증거를 `tailscale-serve-evidence.json` artifact로 넣는다.
 2. `hostMemberJoin` 시나리오가 이 artifact를 참조하게 한다.
-3. Host가 물리 증거를 서명한다.
-4. Member가 같은 파일을 두 번째로 서명한다.
+3. Host가 장치 서명 필드를 제외한 물리 증거 문서 전체를 서명한다.
+4. Member가 같은 전체 문서를 두 번째로 서명한다.
 5. 최종 JSON을 보호된 `SPS_PHYSICAL_RELEASE_EVIDENCE_JSON`에 저장한다.
 
 Stable 게이트는 같은 release nonce, 설치본 SHA, Source/Core/SDK 튜플,
 runtime/module SHA, 두 장치 fingerprint와 서명을 모두 다시 검증한다.
+패키징 전후 개인정보 게이트는 이전 원본 capture와 로그를 제거하고,
+이메일, 실제 Tailnet hostname, loopback 외 IP, 절대 Windows 경로가 남으면
+패키징을 중단한다.
 코드 서명, Identity 운영 배포, Linux Core 전체 shard, 불변 GitHub Release가
 모두 완료되기 전에는 Stable로 표시하지 않는다.

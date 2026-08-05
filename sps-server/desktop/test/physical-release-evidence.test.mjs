@@ -6,6 +6,10 @@ import {
   createPhysicalDeviceAttestation,
   validatePhysicalReleaseEvidence,
 } from "../scripts/verify-physical-release-evidence.mjs";
+import {
+  tailscaleServeChallengeForReleaseNonce,
+  tailscaleServePathForReleaseNonce,
+} from "../scripts/tailscale-serve-release-evidence.mjs";
 
 const sourceRevision = "1".repeat(40);
 const candidate = {
@@ -24,11 +28,14 @@ const ownerHostRuntime = {
 };
 
 function serveEvidence() {
+  const releaseNonce = "8".repeat(64);
+  const challenge = tailscaleServeChallengeForReleaseNonce(releaseNonce);
+  const servePath = tailscaleServePathForReleaseNonce(releaseNonce);
   return {
     schemaVersion: 1,
     evidenceType: "sps-tailscale-serve",
     status: "stable",
-    releaseNonce: "8".repeat(64),
+    releaseNonce,
     completedAt: "2026-08-02T00:00:00.000Z",
     candidate: {
       desktopVersion: candidate.desktopVersion,
@@ -52,16 +59,16 @@ function serveEvidence() {
       minimumVersion: "1.52.0",
       hostVersion: "1.98.8",
       memberVersion: "1.98.4",
-      servePath: "/__sps-release-transport",
+      servePath,
       backendPort: 31311,
     },
     observations: {
-      member: { httpStatus: 200, responseSha256: "a".repeat(64), accepted: true, source: "tailscale-serve", peer: "loopback", identityPresent: true },
-      directSpoof: { httpStatus: 403, responseSha256: "b".repeat(64), accepted: false, source: "direct", peer: "loopback", identityPresent: false },
+      member: { httpStatus: 200, responseSha256: "a".repeat(64), challenge, accepted: true, source: "tailscale-serve", peer: "loopback", identityPresent: true },
+      directSpoof: { httpStatus: 403, responseSha256: "b".repeat(64), challenge, accepted: false, source: "direct", peer: "loopback", identityPresent: false },
     },
     commands: [
-      "member: GET https://<tailnet-host>/__sps-release-transport",
-      "host: GET http://127.0.0.1:31311/__sps-release-transport with Host=<tailnet-host> and no Serve headers",
+      `member: GET https://<tailnet-host>${servePath}`,
+      `host: GET http://127.0.0.1:31311${servePath} with Host=<tailnet-host> and no Serve headers`,
     ],
   };
 }
@@ -185,4 +192,25 @@ test("rejects unsigned, nonce-swapped, or post-signature evidence edits", () => 
   challenge.releaseNonce = "9".repeat(64);
   assert.ok(validatePhysicalReleaseEvidence(nonceSwap, { ...validationOptions(nonceSwap), releaseChallenge: challenge })
     .some((error) => error.includes("challenge nonce")));
+});
+
+test("rejects unknown fields and non-portable artifact names", () => {
+  const evidence = validEvidence();
+  evidence.ownerEmail = "owner@example.com";
+  evidence.devices.host.note = "unsigned metadata";
+  evidence.artifacts[0].privatePath = "C:\\private\\capture.json";
+  evidence.artifacts[0].name = "Two device log.json";
+  evidence.scenarios.hostMemberJoin.comment = "unsigned scenario note";
+  const errors = validatePhysicalReleaseEvidence(evidence, validationOptions(evidence));
+  assert.ok(errors.filter((error) => error.includes("unsupported fields")).length >= 4);
+  assert.ok(errors.some((error) => error.includes("unique name and SHA-256")));
+  assert.ok(errors.some((error) => error.includes("device signature is invalid")));
+});
+
+test("signs embedded artifact content rather than only its digest field", () => {
+  const evidence = validEvidence();
+  evidence.artifacts[0].contentBase64 = Buffer.from("different content", "utf8").toString("base64");
+  const errors = validatePhysicalReleaseEvidence(evidence, validationOptions(evidence));
+  assert.ok(errors.some((error) => error.includes("does not match its SHA-256")));
+  assert.ok(errors.some((error) => error.includes("device signature is invalid")));
 });

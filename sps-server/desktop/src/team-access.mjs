@@ -46,7 +46,7 @@ export function parseSpsTailscaleStatus(raw) {
 }
 
 function parseNumericVersion(value) {
-  const match = asTrimmedString(value).match(/^v?(\d+)\.(\d+)\.(\d+)(?:\+[0-9a-z.-]+)?$/i);
+  const match = asTrimmedString(value).match(/^v?(\d+)\.(\d+)\.(\d+)(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i);
   if (!match) return null;
   const parts = match.slice(1).map(Number);
   return parts.every(Number.isSafeInteger) ? parts : null;

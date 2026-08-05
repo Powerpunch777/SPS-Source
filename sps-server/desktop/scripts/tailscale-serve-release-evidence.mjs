@@ -9,6 +9,15 @@ const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const TAILSCALE_SERVE_EVIDENCE_ARTIFACT_NAME = "tailscale-serve-evidence.json";
 
+export function tailscaleServeChallengeForReleaseNonce(releaseNonce) {
+  if (!SHA256.test(String(releaseNonce ?? ""))) throw new Error("Serve evidence release nonce is invalid.");
+  return createHash("sha256").update(`sps-tailscale-serve:${releaseNonce}`, "utf8").digest("hex");
+}
+
+export function tailscaleServePathForReleaseNonce(releaseNonce) {
+  return `/__sps-release-${tailscaleServeChallengeForReleaseNonce(releaseNonce).slice(0, 32)}`;
+}
+
 function canonicalBase64(value, label) {
   if (typeof value !== "string" || value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
     throw new Error(`${label} is not canonical Base64.`);
@@ -51,16 +60,25 @@ function responseObservation(response, expected) {
   } catch {
     throw new Error(`${expected.label} response body is not JSON.`);
   }
+  const responseErrors = [];
+  exactKeys(parsed, ["accepted", "challenge", "parsedIdentity"], `${expected.label} response`, responseErrors);
+  exactKeys(parsed?.parsedIdentity, ["source", "peer", "identity"], `${expected.label} response identity`, responseErrors);
+  if (parsed?.parsedIdentity?.identity !== null) {
+    exactKeys(parsed?.parsedIdentity?.identity, ["present"], `${expected.label} response identity marker`, responseErrors);
+  }
+  if (responseErrors.length > 0) throw new Error(responseErrors.join("\n"));
   const observation = {
     httpStatus: response?.httpStatus,
     responseSha256: createHash("sha256").update(content).digest("hex"),
+    challenge: parsed?.challenge,
     accepted: parsed?.accepted,
     source: parsed?.parsedIdentity?.source,
     peer: parsed?.parsedIdentity?.peer,
-    identityPresent: Boolean(parsed?.parsedIdentity?.identity),
+    identityPresent: parsed?.parsedIdentity?.identity?.present === true,
   };
   if (observation.httpStatus !== expected.httpStatus
       || observation.accepted !== expected.accepted
+      || observation.challenge !== expected.challenge
       || observation.source !== expected.source
       || observation.peer !== "loopback"
       || observation.identityPresent !== expected.identityPresent) {
@@ -114,6 +132,10 @@ export function createTailscaleServeReleaseEvidence({
   if (capture.releaseNonce !== releaseChallenge.releaseNonce) {
     throw new Error("Private Serve capture is not bound to this release challenge nonce.");
   }
+  const expectedChallenge = tailscaleServeChallengeForReleaseNonce(releaseChallenge.releaseNonce);
+  if (capture.servePath !== tailscaleServePathForReleaseNonce(releaseChallenge.releaseNonce)) {
+    throw new Error("Private Serve capture path is not derived from this release challenge nonce.");
+  }
   const hostVersion = normalizedVersion(capture.hostTailscaleVersion, "Host");
   const memberVersion = normalizedVersion(capture.memberTailscaleVersion, "Member");
   if (capture.runtimeArchiveSha256 !== runtime.archive?.sha256
@@ -154,6 +176,7 @@ export function createTailscaleServeReleaseEvidence({
     observations: {
       member: responseObservation(capture.memberResponse, {
         label: "Member Serve",
+        challenge: expectedChallenge,
         httpStatus: 200,
         accepted: true,
         source: "tailscale-serve",
@@ -161,6 +184,7 @@ export function createTailscaleServeReleaseEvidence({
       }),
       directSpoof: responseObservation(capture.directSpoofResponse, {
         label: "Direct spoof",
+        challenge: expectedChallenge,
         httpStatus: 403,
         accepted: false,
         source: "direct",
@@ -199,7 +223,7 @@ export function validateTailscaleServeReleaseEvidence(evidence, {
   exactKeys(evidence?.transport, ["minimumVersion", "hostVersion", "memberVersion", "servePath", "backendPort"], "Serve transport", errors);
   exactKeys(evidence?.observations, ["member", "directSpoof"], "Serve observations", errors);
   for (const name of ["member", "directSpoof"]) {
-    exactKeys(evidence?.observations?.[name], ["httpStatus", "responseSha256", "accepted", "source", "peer", "identityPresent"], `Serve ${name} observation`, errors);
+    exactKeys(evidence?.observations?.[name], ["httpStatus", "responseSha256", "challenge", "accepted", "source", "peer", "identityPresent"], `Serve ${name} observation`, errors);
   }
   if (evidence?.schemaVersion !== 1 || evidence?.evidenceType !== "sps-tailscale-serve") errors.push("Serve evidence schema identity is invalid.");
   if (!new Set(["development-smoke", "stable"]).has(evidence?.status)) errors.push("Serve evidence status is invalid.");
@@ -249,18 +273,27 @@ export function validateTailscaleServeReleaseEvidence(evidence, {
       errors.push(`Serve evidence ${role} Tailscale version is unsupported or invalid.`);
     }
   }
+  let expectedChallenge = "";
+  let expectedServePath = "";
+  try {
+    expectedChallenge = tailscaleServeChallengeForReleaseNonce(evidence?.releaseNonce);
+    expectedServePath = tailscaleServePathForReleaseNonce(evidence?.releaseNonce);
+  } catch {
+    // The release nonce validation above reports the primary error.
+  }
   if (!safeServePath(evidence?.transport?.servePath)
+      || evidence?.transport?.servePath !== expectedServePath
       || !Number.isSafeInteger(evidence?.transport?.backendPort)
       || evidence.transport.backendPort < 1024
       || evidence.transport.backendPort > 65535) {
     errors.push("Serve evidence route contract is invalid.");
   }
   const member = evidence?.observations?.member;
-  if (member?.httpStatus !== 200 || member?.accepted !== true || member?.source !== "tailscale-serve" || member?.peer !== "loopback" || member?.identityPresent !== true || !SHA256.test(member?.responseSha256 ?? "")) {
+  if (member?.httpStatus !== 200 || member?.challenge !== expectedChallenge || member?.accepted !== true || member?.source !== "tailscale-serve" || member?.peer !== "loopback" || member?.identityPresent !== true || !SHA256.test(member?.responseSha256 ?? "")) {
     errors.push("Serve evidence Member observation is invalid.");
   }
   const direct = evidence?.observations?.directSpoof;
-  if (direct?.httpStatus !== 403 || direct?.accepted !== false || direct?.source !== "direct" || direct?.peer !== "loopback" || direct?.identityPresent !== false || !SHA256.test(direct?.responseSha256 ?? "")) {
+  if (direct?.httpStatus !== 403 || direct?.challenge !== expectedChallenge || direct?.accepted !== false || direct?.source !== "direct" || direct?.peer !== "loopback" || direct?.identityPresent !== false || !SHA256.test(direct?.responseSha256 ?? "")) {
     errors.push("Serve evidence direct-spoof observation is invalid.");
   }
   if (member?.responseSha256 && member.responseSha256 === direct?.responseSha256) errors.push("Serve evidence responses must be distinct.");

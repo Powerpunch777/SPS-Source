@@ -65,6 +65,9 @@ test("requires the post-1.52 Tailscale Serve contract", () => {
   });
   assert.throws(() => parseSpsTailscaleVersion({ short: "1.52.0-beta.1" }), /invalid version data/);
   assert.throws(() => parseSpsTailscaleVersion({ short: "v1.52.0-rc1" }), /invalid version data/);
+  assert.throws(() => parseSpsTailscaleVersion({ short: "1.52.0+..." }), /invalid version data/);
+  assert.throws(() => parseSpsTailscaleVersion({ short: "1.52.0+." }), /invalid version data/);
+  assert.throws(() => parseSpsTailscaleVersion({ short: "1.52.0+windows..1" }), /invalid version data/);
   assert.throws(() => requireSupportedSpsTailscaleVersion({ supported: true, version: "999.0.0" }), /invalid version data/);
   assert.throws(
     () => requireSupportedSpsTailscaleVersion({ short: "1.51.1" }),

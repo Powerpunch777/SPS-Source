@@ -104,6 +104,8 @@ test("runs the bundled Marketplace MCP protocol in every Windows package pipelin
 
   for (const scriptName of ["package:win", "release:win", "package:candidate:win"]) {
     assert.match(packageManifest.scripts[scriptName], /smoke:packaged-marketplace-mcp-runtime/);
+    assert.match(packageManifest.scripts[scriptName], /release:clean-evidence/);
+    assert.match(packageManifest.scripts[scriptName], /release:verify-evidence-privacy/);
   }
   assert.match(smokeScript, /new StdioClientTransport/);
   assert.match(smokeScript, /command: process\.platform === "win32" \? "node\.exe"/);

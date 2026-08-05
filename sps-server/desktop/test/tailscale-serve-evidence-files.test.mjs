@@ -6,6 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import { createTailscaleServeEvidenceFile } from "../scripts/create-tailscale-serve-evidence.mjs";
 import { verifyTailscaleServeEvidenceFile } from "../scripts/verify-tailscale-serve-evidence.mjs";
+import {
+  tailscaleServeChallengeForReleaseNonce,
+  tailscaleServePathForReleaseNonce,
+} from "../scripts/tailscale-serve-release-evidence.mjs";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -24,6 +28,8 @@ test("file generator rehashes installer, archive, and loaded module bytes", asyn
     const outputPath = path.join(root, "evidence.json");
     const sourceRevision = "1".repeat(40);
     const releaseNonce = "8".repeat(64);
+    const responseChallenge = tailscaleServeChallengeForReleaseNonce(releaseNonce);
+    const servePath = tailscaleServePathForReleaseNonce(releaseNonce);
     const manifest = {
       baseline: {
         desktopVersion: "0.4.131",
@@ -44,13 +50,14 @@ test("file generator rehashes installer, archive, and loaded module bytes", asyn
     const challenge = { schemaVersion: 1, desktopVersion: "0.4.131", sourceRevision, installerSha256: sha256(installer), releaseNonce };
     const encoded = (accepted, source, identity) => Buffer.from(JSON.stringify({
       accepted,
+      challenge: responseChallenge,
       parsedIdentity: { source, peer: "loopback", identity },
     })).toString("base64");
     const capture = {
       schemaVersion: 1,
       releaseNonce,
       completedAt: new Date().toISOString(),
-      servePath: "/__sps-release-transport",
+      servePath,
       backendPort: 31311,
       hostTailscaleVersion: { short: "1.98.8" },
       memberTailscaleVersion: { short: "1.98.4" },

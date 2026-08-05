@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateTailscaleServeReleaseEvidence } from "./tailscale-serve-release-evidence.mjs";
+import { assertReleaseEvidencePrivacy } from "./release-evidence-privacy.mjs";
 
 async function readJson(filePath, label) {
   try {
@@ -23,7 +24,10 @@ export async function verifyTailscaleServeEvidenceFile({
   if (!evidencePath || !releaseManifestPath || !releaseChallengePath) {
     throw new Error("Serve evidence, release manifest, and release challenge paths are required.");
   }
-  const evidence = await readJson(path.resolve(evidencePath), "Serve evidence");
+  const resolvedEvidencePath = path.resolve(evidencePath);
+  const rawEvidence = await readFile(resolvedEvidencePath, "utf8");
+  assertReleaseEvidencePrivacy(rawEvidence, "Serve evidence");
+  const evidence = await readJson(resolvedEvidencePath, "Serve evidence");
   const releaseManifest = await readJson(path.resolve(releaseManifestPath), "Release manifest");
   const releaseChallenge = await readJson(path.resolve(releaseChallengePath), "Release challenge");
   const errors = validateTailscaleServeReleaseEvidence(evidence, {

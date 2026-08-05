@@ -62,7 +62,7 @@ npm run release:verify-serve-evidence -- tailscale-serve-evidence.json dist/sps-
   "expectedRuntimeArchiveSha256": "<manifest archive SHA-256>",
   "releaseNonce": "<release challenge nonce>",
   "port": 31311,
-  "servePath": "/__sps-release-transport",
+  "servePath": "/__sps-release-<first 32 hex characters of the nonce challenge>",
   "captureOutputPath": "<private capture output>",
   "hostTailscaleVersionPath": "<Host tailscale version --json output>",
   "memberTailscaleVersionPath": "<Member tailscale version --json output>"
@@ -77,7 +77,7 @@ test session:
   "schemaVersion": 1,
   "releaseNonce": "<nonce from sps-release-challenge.json>",
   "completedAt": "<ISO-8601 timestamp>",
-  "servePath": "/__sps-release-transport",
+  "servePath": "/__sps-release-<first 32 hex characters of the nonce challenge>",
   "backendPort": 31311,
   "hostTailscaleVersion": { "short": "<stable version>" },
   "memberTailscaleVersion": { "short": "<stable version>" },
@@ -87,6 +87,12 @@ test session:
   "directSpoofResponse": { "httpStatus": 403, "responseBodyBase64": "<actual response>" }
 }
 ```
+
+The observation route is derived from `SHA-256("sps-tailscale-serve:" +
+releaseNonce)`. It accepts only `GET` and records the real Serve request and the
+direct-spoof request once each. Both response bodies contain that derived
+challenge, so copying a response or adding a nonce to a later JSON file does not
+create valid evidence.
 
 The Serve evidence schema rejects unknown fields, so public evidence cannot
 carry an email, machine name, IP address, Tailnet hostname, or absolute path.
@@ -112,10 +118,12 @@ npm run release:sign-device-evidence -- unsigned.json host-signed.json host
 npm run release:sign-device-evidence -- host-signed.json final-evidence.json member
 ```
 
-The signatures cover the release nonce, candidate tuple, installer tuple,
-completion timestamp, every artifact digest, and every scenario result. This
-includes the digest of `tailscale-serve-evidence.json`, so the Host and Member
-signatures bind the sanitized Serve proof to the same release nonce. The
+The signatures cover the complete evidence document except the device
+attestations themselves, including the release nonce, candidate and installer
+tuples, completion timestamp, full embedded artifact bytes, and every scenario
+result. Unknown fields and non-portable artifact names are rejected. This binds
+the sanitized `tailscale-serve-evidence.json` proof to the same release nonce.
+The
 Stable gate rejects altered results, a challenge from unenrolled keys, invalid
 signatures, or two signatures from the same device key. Successful publication
 changes the release from draft to public, so the same candidate challenge
@@ -173,3 +181,9 @@ Use this unsigned starting shape:
 Do not commit the final evidence. Store its compact JSON in the protected
 `SPS_PHYSICAL_RELEASE_EVIDENCE_JSON` GitHub Actions secret. The Publish workflow
 rechecks both signatures against the exact downloaded challenge and installer.
+
+Every Windows package pipeline removes all earlier public evidence plus every private Serve capture and
+then runs the release-evidence privacy gate before and after packaging. The
+gate allows only the current candidate's public evidence JSON and rejects raw
+logs, temporary scripts, email addresses, real Tailnet hostnames, non-loopback
+IP addresses, and absolute Windows paths.

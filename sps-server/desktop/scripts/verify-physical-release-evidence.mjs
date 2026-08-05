@@ -18,6 +18,7 @@ const GIT_REVISION = /^[0-9a-f]{40}$/;
 const MAX_EMBEDDED_ARTIFACT_BYTES = 12 * 1024;
 const EVIDENCE_MEDIA_TYPES = new Set(["application/json", "text/plain"]);
 const DEVICE_ROLES = new Set(["host", "member"]);
+const ARTIFACT_NAME = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 
 export const REQUIRED_PHYSICAL_SCENARIOS = [
   "hostMemberJoin",
@@ -36,6 +37,20 @@ function canonicalJson(value) {
   return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
 }
 
+function exactKeys(value, expected, label, errors) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    errors.push(`${label} must be an object.`);
+    return false;
+  }
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+    errors.push(`${label} contains missing or unsupported fields.`);
+    return false;
+  }
+  return true;
+}
+
 export function publicKeyFingerprint(publicKeyPem) {
   const key = createPublicKey(publicKeyPem);
   if (key.asymmetricKeyType !== "ed25519") throw new Error("Physical evidence device keys must use Ed25519.");
@@ -43,21 +58,14 @@ export function publicKeyFingerprint(publicKeyPem) {
 }
 
 export function physicalEvidenceSigningPayload(evidence, device) {
+  const { devices: _deviceAttestations, ...signedEvidence } = evidence ?? {};
   return {
-    schemaVersion: 3,
-    releaseNonce: evidence.releaseNonce,
-    role: device.role,
-    fingerprint: device.fingerprint,
-    signedAt: device.signedAt,
-    candidate: evidence.candidate,
-    installer: evidence.installer,
-    completedAt: evidence.completedAt,
-    artifacts: (Array.isArray(evidence.artifacts) ? evidence.artifacts : []).map((artifact) => ({
-      name: artifact.name,
-      mediaType: artifact.mediaType,
-      sha256: artifact.sha256,
-    })).sort((left, right) => String(left.name).localeCompare(String(right.name))),
-    scenarios: evidence.scenarios,
+    evidence: signedEvidence,
+    device: {
+      role: device.role,
+      fingerprint: device.fingerprint,
+      signedAt: device.signedAt,
+    },
   };
 }
 
@@ -85,6 +93,7 @@ export function createPhysicalDeviceAttestation(evidence, {
 
 function validateDeviceAttestation(evidence, device, role, completedAt) {
   const errors = [];
+  exactKeys(device, ["role", "publicKeyPem", "fingerprint", "signedAt", "signatureAlgorithm", "signatureBase64"], `Physical evidence ${role} device`, errors);
   if (device?.role !== role || device?.signatureAlgorithm !== "ed25519") {
     errors.push(`Physical evidence ${role} device attestation has an invalid role or algorithm.`);
     return errors;
@@ -129,6 +138,11 @@ export function validatePhysicalReleaseEvidence(evidence, {
   maxAgeMs = 7 * 24 * 60 * 60 * 1000,
 }) {
   const errors = [];
+  exactKeys(evidence, ["schemaVersion", "releaseNonce", "candidate", "completedAt", "installer", "devices", "artifacts", "scenarios"], "Physical release evidence", errors);
+  exactKeys(evidence?.candidate, ["desktopVersion", "sourceRevision", "coreRevision", "pluginSdkRevision"], "Physical release candidate", errors);
+  exactKeys(evidence?.installer, ["version", "sizeBytes", "sha256", "signatureStatus"], "Physical release installer", errors);
+  exactKeys(evidence?.devices, ["host", "member"], "Physical release devices", errors);
+  exactKeys(evidence?.scenarios, REQUIRED_PHYSICAL_SCENARIOS, "Physical release scenarios", errors);
   if (evidence?.schemaVersion !== 3) errors.push("Physical release evidence schemaVersion must be 3.");
   if (evidence?.candidate?.desktopVersion !== candidate.desktopVersion) {
     errors.push("Physical release evidence Desktop version does not match the support matrix.");
@@ -177,7 +191,8 @@ export function validatePhysicalReleaseEvidence(evidence, {
   const artifactContents = new Map();
   let artifactBytes = 0;
   for (const artifact of artifacts) {
-    if (!artifact?.name || artifactNames.has(artifact.name) || !SHA256.test(artifact?.sha256 ?? "")) {
+    exactKeys(artifact, ["name", "mediaType", "contentBase64", "sha256"], "Physical evidence artifact", errors);
+    if (!ARTIFACT_NAME.test(artifact?.name ?? "") || artifactNames.has(artifact.name) || !SHA256.test(artifact?.sha256 ?? "")) {
       errors.push("Every physical evidence artifact needs a unique name and SHA-256 digest.");
       continue;
     }
@@ -238,12 +253,15 @@ export function validatePhysicalReleaseEvidence(evidence, {
 
   for (const scenarioName of REQUIRED_PHYSICAL_SCENARIOS) {
     const scenario = evidence?.scenarios?.[scenarioName];
+    exactKeys(scenario, ["status", "artifactNames"], `Physical release scenario ${scenarioName}`, errors);
     if (scenario?.status !== "pass") {
       errors.push(`Physical release scenario ${scenarioName} must pass.`);
       continue;
     }
     const references = Array.isArray(scenario.artifactNames) ? scenario.artifactNames : [];
-    if (references.length === 0 || references.some((name) => !artifactNames.has(name))) {
+    if (references.length === 0
+        || new Set(references).size !== references.length
+        || references.some((name) => !ARTIFACT_NAME.test(name) || !artifactNames.has(name))) {
       errors.push(`Physical release scenario ${scenarioName} must reference hashed evidence artifacts.`);
     }
   }

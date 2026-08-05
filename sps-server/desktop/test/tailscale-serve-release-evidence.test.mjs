@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createTailscaleServeReleaseEvidence,
+  tailscaleServeChallengeForReleaseNonce,
+  tailscaleServePathForReleaseNonce,
   validateTailscaleServeReleaseEvidence,
 } from "../scripts/tailscale-serve-release-evidence.mjs";
 
@@ -34,12 +36,14 @@ const releaseChallenge = {
   installerSha256: "7".repeat(64),
   releaseNonce: "8".repeat(64),
 };
+const challenge = tailscaleServeChallengeForReleaseNonce(releaseChallenge.releaseNonce);
+const servePath = tailscaleServePathForReleaseNonce(releaseChallenge.releaseNonce);
 
 function encodedResponse({ accepted, source, identity }) {
   return Buffer.from(JSON.stringify({
     accepted,
+    challenge,
     parsedIdentity: { source, peer: "loopback", identity },
-    request: { email: "private@example.com", absolutePath: "C:\\private\\runtime" },
   }), "utf8").toString("base64");
 }
 
@@ -48,7 +52,7 @@ function capture() {
     schemaVersion: 1,
     releaseNonce: "8".repeat(64),
     completedAt,
-    servePath: "/__sps-release-transport",
+    servePath,
     backendPort: 31311,
     hostTailscaleVersion: { short: "1.98.8" },
     memberTailscaleVersion: { short: "1.98.4" },
@@ -56,7 +60,7 @@ function capture() {
     requestHostnameModuleSha256: "6".repeat(64),
     memberResponse: {
       httpStatus: 200,
-      responseBodyBase64: encodedResponse({ accepted: true, source: "tailscale-serve", identity: { userLogin: "private@example.com" } }),
+      responseBodyBase64: encodedResponse({ accepted: true, source: "tailscale-serve", identity: { present: true } }),
     },
     directSpoofResponse: {
       httpStatus: 403,
@@ -154,4 +158,26 @@ test("rejects a capture copied from another release challenge", () => {
     releaseChallenge,
     installerSignatureStatus: "Valid",
   }), /not bound to this release challenge nonce/);
+});
+
+test("rejects a capture whose route or response was not challenged by the release nonce", () => {
+  const wrongPath = capture();
+  wrongPath.servePath = "/__sps-release-transport";
+  assert.throws(() => createTailscaleServeReleaseEvidence({
+    capture: wrongPath,
+    releaseManifest,
+    releaseChallenge,
+    installerSignatureStatus: "Valid",
+  }), /path is not derived/);
+
+  const wrongResponse = capture();
+  const body = JSON.parse(Buffer.from(wrongResponse.memberResponse.responseBodyBase64, "base64").toString("utf8"));
+  body.challenge = "9".repeat(64);
+  wrongResponse.memberResponse.responseBodyBase64 = Buffer.from(JSON.stringify(body), "utf8").toString("base64");
+  assert.throws(() => createTailscaleServeReleaseEvidence({
+    capture: wrongResponse,
+    releaseManifest,
+    releaseChallenge,
+    installerSignatureStatus: "Valid",
+  }), /transport contract/);
 });

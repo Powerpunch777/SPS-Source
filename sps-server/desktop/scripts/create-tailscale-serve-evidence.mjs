@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createTailscaleServeReleaseEvidence } from "./tailscale-serve-release-evidence.mjs";
+import { assertReleaseEvidencePrivacy } from "./release-evidence-privacy.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -86,7 +87,9 @@ export async function createTailscaleServeEvidenceFile({
     releaseChallenge,
     installerSignatureStatus: await authenticodeStatusFn(resolvedInstallerPath),
   });
-  await writeFile(path.resolve(outputPath), `${JSON.stringify(evidence, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  const serialized = `${JSON.stringify(evidence, null, 2)}\n`;
+  assertReleaseEvidencePrivacy(serialized, "Generated Serve evidence");
+  await writeFile(path.resolve(outputPath), serialized, { encoding: "utf8", mode: 0o600 });
   return evidence;
 }
 

@@ -58,7 +58,7 @@ test("packages, verifies, materializes, and reuses one Owner Host runtime archiv
       "export const requestHostname = () => 'localhost';\n",
     );
   } finally {
-    await fs.rm(temporary, { recursive: true, force: true });
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -82,7 +82,7 @@ test("serializes archive creation for large Windows node_modules trees", async (
     assert.equal(capturedOptions.linkCache.get("existing"), undefined);
     assert.equal(capturedOptions.linkCache.set("file", "target"), capturedOptions.linkCache);
   } finally {
-    await fs.rm(temporary, { recursive: true, force: true });
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -99,7 +99,7 @@ test("rejects a tampered Owner Host runtime archive before extraction", async ()
       /size does not match|SHA-256 verification/i,
     );
   } finally {
-    await fs.rm(temporary, { recursive: true, force: true });
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -141,7 +141,7 @@ test("keeps a failed extraction out of the final runtime path", async () => {
     }), /simulated extraction failure/);
     await assert.rejects(fs.access(targetRoot));
   } finally {
-    await fs.rm(temporary, { recursive: true, force: true });
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -160,6 +160,6 @@ test("serializes concurrent materialization into one verified runtime", async ()
     assert.deepEqual(results, [targetRoot, targetRoot]);
     assert.equal(await fs.readFile(path.join(targetRoot, "bin", "node.exe"), "utf8"), "node");
   } finally {
-    await fs.rm(temporary, { recursive: true, force: true });
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
