@@ -59,6 +59,78 @@ test("fails privacy verification for stale or sensitive public evidence", async 
   }
 });
 
+test("detects and removes mixed-case candidate artifact names", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "sps-evidence-privacy-"));
+  try {
+    await writeFile(path.join(root, "SPS-CANDIDATE-MEMBER.JSON"), '{"email":"owner@example.com"}', "utf8");
+
+    const errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("SPS-CANDIDATE-MEMBER.JSON: only the current candidate")));
+
+    const removed = await cleanObsoleteCandidateEvidence({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.deepEqual(removed, ["SPS-CANDIDATE-MEMBER.JSON"]);
+    assert.deepEqual(await readdir(root), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("requires strict UTF-8 JSON and accepts one UTF-8 BOM", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "sps-evidence-privacy-"));
+  const evidence = path.join(root, "sps-candidate-serve-evidence-0.4.133.json");
+  try {
+    await writeFile(evidence, Buffer.from(`\ufeff{"email":"owner@example.com"}`, "utf16le"));
+    let errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("must use valid UTF-8 encoding")));
+
+    const utf16be = Buffer.from(`\ufeff{"email":"owner@example.com"}`, "utf16le");
+    utf16be.swap16();
+    await writeFile(evidence, utf16be);
+    errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("must use valid UTF-8 encoding")));
+
+    await writeFile(evidence, Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x22, 0x7d]));
+    errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("must use valid UTF-8 encoding")));
+
+    await writeFile(evidence, Buffer.from('{"value":"\\u0000"}', "utf8"));
+    errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("must not contain NUL characters")));
+
+    await writeFile(evidence, Buffer.from('{"value":"\ufffd"}', "utf8"));
+    errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("must not contain replacement characters")));
+
+    await writeFile(evidence, Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('{"safe":{"value":"public"}}', "utf8"),
+    ]));
+    assert.deepEqual(await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" }), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parses JSON before recursively inspecting keys and string values", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "sps-evidence-privacy-"));
+  const evidence = path.join(root, "sps-candidate-serve-evidence-0.4.133.json");
+  try {
+    await writeFile(evidence, '{"nested":[{"owner":"owner@example.com"}]}', "utf8");
+    let errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("email address")));
+
+    await writeFile(evidence, '{"owner@example.com":"redacted"}', "utf8");
+    errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("email address")));
+
+    await writeFile(evidence, '{"broken":', "utf8");
+    errors = await verifyCandidateEvidenceDirectoryPrivacy({ distDirectory: root, currentVersion: "0.4.133" });
+    assert.ok(errors.some((error) => error.includes("must contain valid JSON")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects raw candidate files and linked candidate evidence", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "sps-evidence-privacy-"));
   const outside = await mkdtemp(path.join(tmpdir(), "sps-evidence-private-target-"));

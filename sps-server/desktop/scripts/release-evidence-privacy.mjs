@@ -1,9 +1,69 @@
 import { readdir, readFile, rm } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 
-const PUBLIC_SERVE_EVIDENCE = /^sps-candidate-serve-evidence-(\d+\.\d+\.\d+)\.json$/;
 const CANDIDATE_ARTIFACT_PREFIX = "sps-candidate-";
+const UTF8_BOM = Uint8Array.from([0xef, 0xbb, 0xbf]);
+
+function isCandidateArtifactName(name) {
+  return name.toLowerCase().startsWith(CANDIDATE_ARTIFACT_PREFIX);
+}
+
+function currentPublicEvidenceName(currentVersion) {
+  return `sps-candidate-serve-evidence-${currentVersion}.json`;
+}
+
+function startsWithUtf8Bom(bytes) {
+  return bytes.length >= UTF8_BOM.length
+    && UTF8_BOM.every((value, index) => bytes[index] === value);
+}
+
+function collectJsonStrings(value, strings) {
+  if (typeof value === "string") {
+    strings.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectJsonStrings(item, strings);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) {
+      strings.push(key);
+      collectJsonStrings(item, strings);
+    }
+  }
+}
+
+function decodePublicEvidenceJson(bytes) {
+  const offset = startsWithUtf8Bom(bytes) ? UTF8_BOM.length : 0;
+  let contents;
+  try {
+    contents = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(offset));
+  } catch {
+    throw new Error("must use valid UTF-8 encoding");
+  }
+  if (contents.includes("\0")) throw new Error("must not contain NUL characters");
+  if (contents.includes("\ufffd")) throw new Error("must not contain replacement characters");
+
+  let document;
+  try {
+    document = JSON.parse(contents);
+  } catch {
+    throw new Error("must contain valid JSON");
+  }
+
+  const strings = [];
+  collectJsonStrings(document, strings);
+  if (strings.some((value) => value.includes("\0"))) {
+    throw new Error("must not contain NUL characters");
+  }
+  if (strings.some((value) => value.includes("\ufffd"))) {
+    throw new Error("must not contain replacement characters");
+  }
+  return strings.join("\n");
+}
 
 function candidateIpAddresses(text) {
   const source = String(text ?? "");
@@ -47,11 +107,11 @@ export async function cleanObsoleteCandidateEvidence({ distDirectory, currentVer
     throw error;
   });
   const removed = [];
+  const allowedPublicEvidence = currentPublicEvidenceName(currentVersion);
   for (const entry of entries) {
-    if (!entry.name.startsWith(CANDIDATE_ARTIFACT_PREFIX)) continue;
-    const publicMatch = PUBLIC_SERVE_EVIDENCE.exec(entry.name);
+    if (!isCandidateArtifactName(entry.name)) continue;
     const retainCurrentPublicEvidence = entry.isFile()
-      && publicMatch?.[1] === currentVersion
+      && entry.name === allowedPublicEvidence
       && !removeCurrentPublic;
     if (retainCurrentPublicEvidence) continue;
     await rm(path.join(directory, entry.name), { force: true, recursive: true });
@@ -67,20 +127,24 @@ export async function verifyCandidateEvidenceDirectoryPrivacy({ distDirectory, c
     throw error;
   });
   const errors = [];
+  const allowedPublicEvidence = currentPublicEvidenceName(currentVersion);
   for (const entry of entries) {
-    if (!entry.name.startsWith(CANDIDATE_ARTIFACT_PREFIX)) continue;
+    if (!isCandidateArtifactName(entry.name)) continue;
     if (!entry.isFile()) {
       errors.push(`${entry.name}: candidate evidence must be a regular file`);
       continue;
     }
-    const publicMatch = PUBLIC_SERVE_EVIDENCE.exec(entry.name);
-    if (!publicMatch || publicMatch[1] !== currentVersion) {
+    if (entry.name !== allowedPublicEvidence) {
       errors.push(`${entry.name}: only the current candidate public evidence is allowed`);
       continue;
     }
-    const contents = await readFile(path.join(directory, entry.name), "utf8");
-    const findings = releaseEvidencePrivacyFindings(contents);
-    if (findings.length > 0) errors.push(`${entry.name}: contains ${findings.join(", ")}`);
+    try {
+      const privacyText = decodePublicEvidenceJson(await readFile(path.join(directory, entry.name)));
+      const findings = releaseEvidencePrivacyFindings(privacyText);
+      if (findings.length > 0) errors.push(`${entry.name}: contains ${findings.join(", ")}`);
+    } catch (error) {
+      errors.push(`${entry.name}: ${error.message}`);
+    }
   }
   return errors;
 }
