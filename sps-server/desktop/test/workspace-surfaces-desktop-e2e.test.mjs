@@ -14,6 +14,7 @@ test("ships a packaged Desktop Workspace Surfaces E2E harness", async () => {
     "SPS_DESKTOP_E2E_BINARY",
     "SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE",
     "SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY",
+    "parseE2eHostReadyTimeout",
     "generateKeyPairSync",
     "/.well-known/jwks.json",
     "/v1/desktop/authorize",
