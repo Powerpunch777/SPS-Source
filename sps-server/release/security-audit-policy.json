@@ -7,17 +7,7 @@
   "reviewSeverities": [
     "moderate"
   ],
-  "exceptions": [
-    {
-      "source": "core",
-      "advisoryId": "1124282",
-      "module": "react-router",
-      "severity": "high",
-      "reviewedOn": "2026-08-03",
-      "expiresOn": "2026-09-30",
-      "reason": "SPS uses React Router in browser SPA mode and does not enable React Server Components. Upgrade to React Router 8 only after the Core UI compatibility migration is verified."
-    }
-  ],
+  "exceptions": [],
   "reviews": [
     {
       "source": "core",
@@ -27,15 +17,6 @@
       "reviewedOn": "2026-08-03",
       "expiresOn": "2026-09-30",
       "reason": "The affected esbuild 0.18 path is transitive through drizzle-kit and better-auth tooling. SPS does not expose the esbuild development server in its packaged runtime. Reassess when the upstream database toolchain is upgraded."
-    },
-    {
-      "source": "core",
-      "advisoryId": "1119428",
-      "module": "@anthropic-ai/sdk",
-      "severity": "moderate",
-      "reviewedOn": "2026-08-03",
-      "expiresOn": "2026-09-30",
-      "reason": "The package is transitive through the Claude Agent SDK. SPS does not configure the SDK local-filesystem Memory Tool; Claude execution remains behind the ACP adapter and SPS Source grants."
     },
     {
       "source": "core",

@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.134",
+  "version": "0.4.135",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
@@ -49,6 +49,9 @@
   "devDependencies": {
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3"
+  },
+  "overrides": {
+    "js-yaml": "4.3.1"
   },
   "build": {
     "appId": "ai.sps.desktop",

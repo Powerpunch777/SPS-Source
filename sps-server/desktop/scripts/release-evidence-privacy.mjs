@@ -4,6 +4,7 @@ import path from "node:path";
 import { TextDecoder } from "node:util";
 
 const CANDIDATE_ARTIFACT_PREFIX = "sps-candidate-";
+const MAX_PUBLIC_EVIDENCE_BYTES = 8 * 1024;
 const UTF8_BOM = Uint8Array.from([0xef, 0xbb, 0xbf]);
 
 function isCandidateArtifactName(name) {
@@ -37,7 +38,13 @@ function collectJsonStrings(value, strings) {
 }
 
 function decodePublicEvidenceJson(bytes) {
+  if (bytes.length > MAX_PUBLIC_EVIDENCE_BYTES) {
+    throw new Error(`must be at most ${MAX_PUBLIC_EVIDENCE_BYTES} bytes`);
+  }
   const offset = startsWithUtf8Bom(bytes) ? UTF8_BOM.length : 0;
+  if (startsWithUtf8Bom(bytes.subarray(offset))) {
+    throw new Error("must contain at most one UTF-8 BOM");
+  }
   let contents;
   try {
     contents = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(offset));
@@ -46,12 +53,20 @@ function decodePublicEvidenceJson(bytes) {
   }
   if (contents.includes("\0")) throw new Error("must not contain NUL characters");
   if (contents.includes("\ufffd")) throw new Error("must not contain replacement characters");
+  const rawFindings = releaseEvidencePrivacyFindings(contents);
+  if (rawFindings.length > 0) {
+    throw new Error(`contains ${rawFindings.join(", ")}`);
+  }
 
   let document;
   try {
     document = JSON.parse(contents);
   } catch {
     throw new Error("must contain valid JSON");
+  }
+  const canonicalContents = `${JSON.stringify(document, null, 2)}\n`;
+  if (contents !== canonicalContents) {
+    throw new Error("must use canonical JSON without duplicate keys");
   }
 
   const strings = [];
@@ -62,7 +77,10 @@ function decodePublicEvidenceJson(bytes) {
   if (strings.some((value) => value.includes("\ufffd"))) {
     throw new Error("must not contain replacement characters");
   }
-  return strings.join("\n");
+  const parsedFindings = releaseEvidencePrivacyFindings(strings.join("\n"));
+  if (parsedFindings.length > 0) {
+    throw new Error(`contains ${parsedFindings.join(", ")}`);
+  }
 }
 
 function candidateIpAddresses(text) {
@@ -139,9 +157,7 @@ export async function verifyCandidateEvidenceDirectoryPrivacy({ distDirectory, c
       continue;
     }
     try {
-      const privacyText = decodePublicEvidenceJson(await readFile(path.join(directory, entry.name)));
-      const findings = releaseEvidencePrivacyFindings(privacyText);
-      if (findings.length > 0) errors.push(`${entry.name}: contains ${findings.join(", ")}`);
+      decodePublicEvidenceJson(await readFile(path.join(directory, entry.name)));
     } catch (error) {
       errors.push(`${entry.name}: ${error.message}`);
     }
