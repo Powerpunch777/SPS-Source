@@ -1,4 +1,4 @@
-import { createPublicKey, verify } from "node:crypto";
+import { constants, createPublicKey, publicEncrypt, verify } from "node:crypto";
 import { createServer } from "node:http";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -6,15 +6,21 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildSpsWindowsSmbMappingRequest,
+  formatSpsWindowsNetUseError,
   buildHeartbeatMessage,
   buildSignedRequestMessage,
   assertSpsNodeCommandRuntime,
   buildSpsNodeRuntimeEnvironment,
   cancelSpsNodeCommands,
   checkSpsNodeCommandLease,
+  checkSpsPluginNodeRunLease,
   disconnectSpsNode,
   canonicalJson,
   claimSpsNodeCommand,
+  claimSpsPluginNodeRun,
+  appendSpsPluginNodeRunEvent,
+  completeSpsPluginNodeRun,
   createNodeIdentity,
   createSignedNodeRequest,
   executeSpsNodeCommand,
@@ -30,13 +36,17 @@ import {
   resolveSpsNodeCodexHome,
   resolveSpsNodeInvocation,
   resolveSpsNodeWorkspace,
+  isSpsHostSharedWorkspacePath,
+  openSpsHostProjectShare,
   scanLocalCapabilities,
   scanLocalRunnerProfiles,
   sendSpsNodeHeartbeat,
+  spsMarketplaceMcpRuntimeEnvironment,
   SpsHubRequestError,
 } from "../src/index.mjs";
 import { createHash } from "node:crypto";
 import { parseLmStudioModels, parseOllamaModels } from "../src/capability-scan.mjs";
+import { sealSpsHostProjectShareCredential } from "../../desktop/src/host-project-share.mjs";
 
 async function startMockHub() {
   const events = [];
@@ -85,6 +95,9 @@ async function startMockHub() {
 
 test("generates an Ed25519 identity and signs the shared heartbeat message", () => {
   const identity = createNodeIdentity();
+  assert.equal(identity.transportAlgorithm, "rsa-oaep-sha256");
+  assert.match(identity.transportPublicKeyPem, /BEGIN PUBLIC KEY/);
+  assert.match(identity.transportPrivateKeyPem, /BEGIN PRIVATE KEY/);
   const heartbeat = createSignedHeartbeat({
     identity,
     nodeId: "00000000-0000-4000-8000-000000000001",
@@ -274,26 +287,178 @@ test("runs any supported npm CLI wrapper through node.exe without a command shel
   ]);
 });
 
-test("requires an explicit workspace mapping for every project-bound command", async () => {
+test("requires a Host-issued shared project folder for every Member project command", async () => {
   await assert.rejects(
     resolveSpsNodeWorkspace(
       { projectId: "project-1" },
-      { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
+      { connectionKind: "remote", defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
     ),
-    /No local workspace is configured for SPS project project-1/,
+    /Owner Host must configure an SPS shared project folder/,
   );
 });
 
-test("uses the Node owner's project mapping instead of the default workspace", async () => {
+test("uses the Owner Host's project source mapping instead of the default workspace", async () => {
   const projectWorkspace = process.cwd();
   const resolved = await resolveSpsNodeWorkspace(
     { projectId: "project-1" },
     {
+      connectionKind: "owner-host",
       defaultWorkspacePath: "C:\\must-not-be-used",
       projectWorkspaces: { "project-1": projectWorkspace },
     },
   );
   assert.equal(resolved, projectWorkspace);
+});
+
+test("accepts only a Host-issued Windows UNC path for a Member project command", async () => {
+  const hostShare = "\\\\sps-host\\sps-project-1";
+  assert.equal(isSpsHostSharedWorkspacePath(hostShare, "win32"), true);
+  assert.equal(isSpsHostSharedWorkspacePath("C:\\member\\project", "win32"), false);
+
+  const resolved = await resolveSpsNodeWorkspace(
+    { projectId: "project-1", cwdHint: hostShare },
+    { connectionKind: "remote", defaultWorkspacePath: "", projectWorkspaces: {} },
+    {
+      platform: "win32",
+      resolvePath: (value) => value,
+      stat: async () => ({ isDirectory: () => true }),
+    },
+  );
+  assert.equal(resolved, hostShare);
+});
+
+test("formats Windows Host Source connection failures without leaking localized output", () => {
+  assert.equal(
+    formatSpsWindowsNetUseError(Buffer.from("System error 86 has occurred.")),
+    "Windows rejected the SPS Host Source credential (system error 86). Ask the Host to revoke and grant Source access again.",
+  );
+  assert.equal(
+    formatSpsWindowsNetUseError(Buffer.from("System error 1219 has occurred.")),
+    "Windows already has a connection to this SPS Host with different credentials (system error 1219). Close that connection and retry.",
+  );
+  assert.equal(
+    formatSpsWindowsNetUseError(Buffer.from("unclassified localized output")),
+    "Windows could not connect the SPS Host project share.",
+  );
+});
+
+test("keeps the Host Source password out of the Windows process arguments", () => {
+  const password = "sps-secret-password-1234";
+  const request = buildSpsWindowsSmbMappingRequest([
+    "use",
+    "\\\\main-computer.tailnet.ts.net\\SPS_source",
+    "/user:main-computer\\spsws_node",
+    "*",
+  ], password);
+  assert.equal(request.action, "map");
+  assert.equal(request.localPath, "");
+  assert.equal(Buffer.from(request.password, "base64").toString("utf8"), password);
+  assert.equal(JSON.stringify([
+    "powershell.exe",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+  ]).includes(password), false);
+  assert.deepEqual(
+    buildSpsWindowsSmbMappingRequest(["use", "\\\\main-computer\\SPS_source", "/delete", "/y"]),
+    {
+      action: "remove",
+      sharePath: Buffer.from("\\\\main-computer\\SPS_source", "utf8").toString("base64"),
+      localPath: "",
+      username: "",
+      password: "",
+    },
+  );
+  assert.equal(
+    Buffer.from(buildSpsWindowsSmbMappingRequest([
+      "use",
+      "\\\\main-computer\\SPS_source",
+      "/local:Z:",
+      "/delete",
+      "/y",
+    ]).localPath, "base64").toString("utf8"),
+    "Z:",
+  );
+});
+
+test("opens a Host project share only from a Node-sealed credential and removes it after the command", async () => {
+  const identity = createNodeIdentity();
+  const sharePath = "\\\\sps-host.tailnet.ts.net\\SPS_Project_1";
+  const password = "pA4%8m_Q4-J9nZ5r!B6c";
+  const envelope = publicEncrypt(
+    {
+      key: identity.transportPublicKeyPem,
+      padding: constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
+    },
+    Buffer.from(JSON.stringify({
+      version: 1,
+      sharePath,
+      username: "SPS-HOST\\spsws_node_1",
+      password,
+    }), "utf8"),
+  ).toString("base64");
+  const calls = [];
+  const mounted = await openSpsHostProjectShare({
+    kind: "sps_host_share",
+    shareId: "share-1",
+    sharePath,
+    credentialAlgorithm: "rsa-oaep-sha256",
+    credentialEnvelope: envelope,
+  }, identity.transportPrivateKeyPem, {
+    platform: "win32",
+    expectedSharePath: sharePath,
+    runNetUse: async (args, stdin) => {
+      calls.push({ args, stdin });
+      return args.includes("/delete") ? null : { localPath: "Z:\\" };
+    },
+  });
+  assert.equal(mounted.sharePath, sharePath);
+  assert.equal(mounted.workspacePath, "Z:\\");
+  assert.deepEqual(calls[0], {
+    args: ["use", sharePath, "/user:SPS-HOST\\spsws_node_1", "*"],
+    stdin: password,
+  });
+  assert.equal(JSON.stringify(calls[0].args).includes(password), false);
+  await mounted.close();
+  assert.deepEqual(calls[1], {
+    args: ["use", sharePath, "/local:Z:", "/delete", "/y"],
+    stdin: undefined,
+  });
+});
+
+test("opens a hybrid Host project-share envelope that exceeds direct RSA payload limits", async () => {
+  const identity = createNodeIdentity();
+  const sharePath = "\\\\main-computer.tail1725c2.ts.net\\SPS_f7987a5dffb6430893d2bfaf72d18d74";
+  const password = "pA4%8m_Q4-J9nZ5r!B6c";
+  const envelope = sealSpsHostProjectShareCredential({
+    sharePath,
+    hostAccountName: "MAIN-COMPUTER",
+    transportPublicKey: identity.transportPublicKeyPem,
+    username: "spsws_b6bc1dc2d7e748",
+    password,
+  });
+  const calls = [];
+  const mounted = await openSpsHostProjectShare({
+    kind: "sps_host_share",
+    shareId: "share-hybrid-1",
+    sharePath,
+    credentialAlgorithm: "rsa-oaep-sha256+a256gcm",
+    credentialEnvelope: envelope,
+  }, identity.transportPrivateKeyPem, {
+    platform: "win32",
+    expectedSharePath: sharePath,
+    runNetUse: async (args, stdin) => {
+      calls.push({ args, stdin });
+      return args.includes("/delete") ? null : { localPath: "Y:\\" };
+    },
+  });
+  assert.deepEqual(calls[0], {
+    args: ["use", sharePath, "/user:MAIN-COMPUTER\\spsws_b6bc1dc2d7e748", "*"],
+    stdin: password,
+  });
+  await mounted.close();
 });
 
 test("resolves only a signed-in local Codex profile selected by the Hub", async () => {
@@ -376,6 +541,60 @@ test("executes a local Node process and returns streamed output through the sign
   }
 });
 
+test("executes a plugin-owned run through the Host Source route and plugin queue lifecycle", async () => {
+  const events = [];
+  const completions = [];
+  const sourceClaims = [];
+  let routeClosed = false;
+  const result = await executeSpsNodeCommand({
+    command: {
+      id: "plugin-run-1",
+      pluginKey: "sps.example-workplane",
+      subjectKey: "build:1",
+      projectId: null,
+      workspaceSourceId: "source-1",
+      cwdHint: "\\\\sps-host\\source-1",
+      command: "agy",
+      runtimeKind: "agy_cli",
+      args: ["-e", "process.stdout.write('plugin run output\\n')"],
+      env: {},
+      stdin: null,
+      lastEventSeq: 0,
+    },
+    hubUrl: "https://sps.example.test",
+    nodeId: "member-node-1",
+    identity: createNodeIdentity(),
+    accessToken: "board-token",
+    profile: { connectionKind: "remote", defaultWorkspacePath: "C:\\Members\\must-not-be-used" },
+    claimWorkspaceSourceRoute: async (input) => {
+      sourceClaims.push(input);
+      return { sourceId: "source-1", sharePath: "\\\\sps-host\\source-1", credentialEnvelope: "sealed" };
+    },
+    openWorkspaceSourceRoute: async (route) => {
+      assert.equal(route.sourceId, "source-1");
+      return { workspacePath: process.cwd(), close: async () => { routeClosed = true; } };
+    },
+    resolveWorkspace: async () => { throw new Error("mapped Source must bypass the UNC resolver"); },
+    resolveInvocation: async () => ({
+      executable: process.execPath,
+      args: ["-e", "process.stdout.write(process.env.SPS_WORKSPACE_PATH + '\\n')"],
+    }),
+    checkCommandLease: async () => ({ active: true, status: "running" }),
+    appendCommandEvent: async (input) => { events.push(input); },
+    completeCommand: async (input) => { completions.push(input); return { id: input.commandId, status: input.completion.status }; },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.workspace, process.cwd());
+  assert.equal(sourceClaims.length, 1);
+  assert.equal(sourceClaims[0].sourceId, "source-1");
+  assert.equal(events.map((event) => event.body).join(""), `${process.cwd()}\n`);
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].commandId, "plugin-run-1");
+  assert.equal(completions[0].completion.status, "succeeded");
+  assert.equal(routeClosed, true);
+});
+
 test("rejects remote command paths and mismatched runtime commands", () => {
   assert.throws(
     () => assertSpsNodeCommandRuntime({ runtimeKind: "codex_cli", command: "powershell.exe" }),
@@ -401,6 +620,129 @@ test("passes only runtime-safe environment variables to a local CLI", () => {
   assert.equal(environment.OPENAI_API_KEY, undefined);
   assert.equal(environment.CODEX_HOME, undefined);
   assert.equal(environment.CUSTOM_SECRET, undefined);
+});
+
+test("injects trusted local Marketplace MCP runtime paths after Hub environment filtering", () => {
+  const environment = {
+    ...buildSpsNodeRuntimeEnvironment(
+      {
+        SPS_MARKETPLACE_MCP_NODE: "C:\\hub-controlled\\node.exe",
+        SPS_MARKETPLACE_MCP_ENTRY: "C:\\hub-controlled\\assistant.js",
+        PAPERCLIP_API_KEY: "agent-token",
+      },
+      {
+        USERPROFILE: "C:\\Users\\member",
+        SPS_MARKETPLACE_MCP_NODE: "C:\\host\\should-not-leak-from-host-env",
+      },
+    ),
+    ...spsMarketplaceMcpRuntimeEnvironment({
+      nodeCommand: "C:\\SPS\\resources\\sps-owner-host-runtime\\bin\\node.exe",
+      entryPath: "C:\\SPS\\resources\\sps-owner-host-runtime\\node_modules\\@sps\\mcp-server\\dist\\marketplace-assistant-stdio.js",
+    }),
+  };
+
+  assert.equal(environment.SPS_MARKETPLACE_MCP_NODE, "C:\\SPS\\resources\\sps-owner-host-runtime\\bin\\node.exe");
+  assert.equal(environment.SPS_MARKETPLACE_MCP_ENTRY, "C:\\SPS\\resources\\sps-owner-host-runtime\\node_modules\\@sps\\mcp-server\\dist\\marketplace-assistant-stdio.js");
+  assert.equal(environment.PAPERCLIP_API_KEY, "agent-token");
+});
+
+test("leaves ordinary command environment unchanged when no Marketplace MCP runtime is available", () => {
+  const environment = {
+    ...buildSpsNodeRuntimeEnvironment(
+      { PAPERCLIP_API_KEY: "agent-token", TERM: "xterm" },
+      { Path: "C:\\bin", USERPROFILE: "C:\\Users\\member" },
+    ),
+    ...spsMarketplaceMcpRuntimeEnvironment(null),
+  };
+
+  assert.deepEqual(environment, {
+    Path: "C:\\bin",
+    USERPROFILE: "C:\\Users\\member",
+    PAPERCLIP_API_KEY: "agent-token",
+    TERM: "xterm",
+  });
+});
+
+test("injects the local Marketplace MCP runtime into spawn env without allowing Hub values to replace it", async () => {
+  const hub = await startMockHub();
+  const nodeCommand = path.resolve(os.tmpdir(), "sps-marketplace-mcp-node.exe");
+  const entryPath = path.resolve(os.tmpdir(), "sps-marketplace-mcp-entry.mjs");
+  try {
+    const result = await executeSpsNodeCommand({
+      command: {
+        id: "marketplace-mcp-runtime",
+        projectId: null,
+        command: "agy",
+        runtimeKind: "agy_cli",
+        args: [],
+        env: {
+          SPS_MARKETPLACE_MCP_NODE: "C:\\hub\\must-not-win.exe",
+          SPS_MARKETPLACE_MCP_ENTRY: "C:\\hub\\must-not-win.mjs",
+        },
+        stdin: null,
+        lastEventSeq: 0,
+      },
+      hubUrl: hub.hubUrl,
+      nodeId: "node-marketplace-mcp",
+      identity: createNodeIdentity(),
+      accessToken: "board-token",
+      profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
+      marketplaceMcpRuntime: { nodeCommand, entryPath },
+      resolveInvocation: async () => ({
+        executable: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write(JSON.stringify({ node: process.env.SPS_MARKETPLACE_MCP_NODE, entry: process.env.SPS_MARKETPLACE_MCP_ENTRY }))",
+        ],
+      }),
+      hostEnvironment: {},
+    });
+
+    assert.equal(result.exitCode, 0);
+    const output = JSON.parse(hub.events.map((event) => event.body.body).join(""));
+    assert.deepEqual(output, { node: nodeCommand, entry: entryPath });
+  } finally {
+    await hub.close();
+  }
+});
+
+test("does not add Marketplace MCP runtime variables to a normal command", async () => {
+  const hub = await startMockHub();
+  try {
+    const result = await executeSpsNodeCommand({
+      command: {
+        id: "normal-command-without-marketplace-mcp",
+        projectId: null,
+        command: "agy",
+        runtimeKind: "agy_cli",
+        args: [],
+        env: {
+          SPS_MARKETPLACE_MCP_NODE: "C:\\hub\\must-not-forward.exe",
+          SPS_MARKETPLACE_MCP_ENTRY: "C:\\hub\\must-not-forward.mjs",
+        },
+        stdin: null,
+        lastEventSeq: 0,
+      },
+      hubUrl: hub.hubUrl,
+      nodeId: "node-normal-command",
+      identity: createNodeIdentity(),
+      accessToken: "board-token",
+      profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
+      resolveInvocation: async () => ({
+        executable: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write(JSON.stringify({ node: process.env.SPS_MARKETPLACE_MCP_NODE, entry: process.env.SPS_MARKETPLACE_MCP_ENTRY }))",
+        ],
+      }),
+      hostEnvironment: {},
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(hub.events.map((event) => event.body.body).join("")), {});
+  } finally {
+    await hub.close();
+  }
 });
 
 test("cancels a running local command when this Desktop Node disconnects", async () => {
@@ -513,6 +855,8 @@ test("uses the Hub API for registration and signed heartbeats", async () => {
   });
   assert.equal(requests[0].url, "https://sps.example.test/api/companies/company-1/sps-nodes");
   assert.equal(requests[1].url, "https://sps.example.test/api/sps-nodes/node-1/heartbeat");
+  assert.equal(requests[0].options.headers.origin, "https://sps.example.test");
+  assert.equal(requests[1].options.headers.origin, "https://sps.example.test");
   assert.equal(JSON.parse(requests[0].options.body).privateKeyPem, undefined);
   assert.equal(JSON.parse(requests[0].options.body).runners[0].profileLabel, "Personal");
   assert.equal(JSON.parse(requests[1].options.body).signature.length > 0, true);
@@ -537,11 +881,11 @@ test("checks Hub health before any sign-in or Node registration", async () => {
   assert.equal(requests[0].options.headers.authorization, undefined);
 });
 
-test("preserves Hub denial status when a Node heartbeat is rejected", async () => {
+test("preserves Hub denial status and code when a Node heartbeat is rejected", async () => {
   const identity = createNodeIdentity();
   await assert.rejects(
     sendSpsNodeHeartbeat({
-      fetchImpl: async () => new Response(JSON.stringify({ error: "This SPS Node has been revoked" }), {
+      fetchImpl: async () => new Response(JSON.stringify({ error: "This SPS Node has been revoked", code: "sps_node_revoked" }), {
         status: 403,
         headers: { "content-type": "application/json" },
       }),
@@ -551,7 +895,8 @@ test("preserves Hub denial status when a Node heartbeat is rejected", async () =
     }),
     (error) => error instanceof SpsHubRequestError
       && error.status === 403
-      && error.message === "This SPS Node has been revoked",
+      && error.message === "This SPS Node has been revoked"
+      && error.code === "sps_node_revoked",
   );
 });
 
@@ -591,6 +936,57 @@ test("claims Node commands through a signed Board-authenticated request", async 
   const body = JSON.parse(requests[0].options.body);
   assert.equal(typeof body.signature, "string");
   assert.equal(body.privateKeyPem, undefined);
+});
+
+test("uses a separate signed queue for workflow-neutral plugin runs", async () => {
+  const identity = createNodeIdentity();
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith("/claim-next")) return new Response(null, { status: 204 });
+    if (url.endsWith("/lease")) {
+      return new Response(JSON.stringify({ active: true, status: "running" }), { status: 200 });
+    }
+    if (url.endsWith("/events")) return new Response(null, { status: 204 });
+    return new Response(JSON.stringify({ id: "run-1", status: "succeeded" }), { status: 200 });
+  };
+  const input = {
+    fetchImpl,
+    hubUrl: "https://sps.example.test",
+    nodeId: "node-1",
+    identity,
+    accessToken: "board-token",
+  };
+
+  assert.equal(await claimSpsPluginNodeRun(input), null);
+  await appendSpsPluginNodeRunEvent({
+    ...input,
+    commandId: "run-1",
+    sequence: 1,
+    stream: "stdout",
+    body: "ready\n",
+  });
+  assert.deepEqual(await checkSpsPluginNodeRunLease({ ...input, commandId: "run-1" }), {
+    active: true,
+    status: "running",
+  });
+  await completeSpsPluginNodeRun({
+    ...input,
+    commandId: "run-1",
+    completion: { status: "succeeded", exitCode: 0, signal: null, timedOut: false, error: null },
+  });
+
+  assert.deepEqual(requests.map((request) => request.url), [
+    "https://sps.example.test/api/sps-nodes/node-1/plugin-runs/claim-next",
+    "https://sps.example.test/api/sps-nodes/node-1/plugin-runs/run-1/events",
+    "https://sps.example.test/api/sps-nodes/node-1/plugin-runs/run-1/lease",
+    "https://sps.example.test/api/sps-nodes/node-1/plugin-runs/run-1/complete",
+  ]);
+  for (const request of requests) {
+    const body = JSON.parse(request.options.body);
+    assert.equal(typeof body.signature, "string");
+    assert.equal(body.privateKeyPem, undefined);
+  }
 });
 
 test("checks the signed command lease before a long-running local command continues", async () => {

@@ -3,10 +3,23 @@ import { buildHeartbeatMessage, buildSignedRequestMessage, canonicalJson } from 
 
 export function createNodeIdentity() {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const transport = createNodeTransportIdentity();
   return {
     algorithm: "ed25519",
     publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
     privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    ...transport,
+  };
+}
+
+// The Ed25519 identity signs Node requests. Project-share credentials need a
+// separate encryption key so the Hub can persist only a Node-sealed envelope.
+export function createNodeTransportIdentity() {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return {
+    transportAlgorithm: "rsa-oaep-sha256",
+    transportPublicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+    transportPrivateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
   };
 }
 

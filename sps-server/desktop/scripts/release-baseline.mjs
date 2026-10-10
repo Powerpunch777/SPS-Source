@@ -77,9 +77,21 @@ export function validateSpsSupportMatrix(matrix) {
   if (!SEMVER.test(candidate.pluginSdk?.version ?? "")) {
     errors.push("Support matrix plugin SDK version must be SemVer.");
   }
-  if (!PROFILE_VERSION.test(candidate.extensionProfile?.version ?? "")) errors.push("Support matrix extension profile version is invalid.");
+  if (!PROFILE_VERSION.test(candidate.extensionProfile?.version ?? "")) errors.push("Support matrix default extension profile version is invalid.");
   if (!Number.isSafeInteger(candidate.extensionProfile?.pluginApi) || candidate.extensionProfile.pluginApi < 1) {
     errors.push("Support matrix plugin API must be a positive integer.");
+  }
+  const extensionProfiles = Array.isArray(candidate.extensionProfiles)
+    ? candidate.extensionProfiles
+    : [candidate.extensionProfile?.version];
+  if (extensionProfiles.length === 0 || extensionProfiles.some((version) => !PROFILE_VERSION.test(version ?? ""))) {
+    errors.push("Support matrix extensionProfiles must contain valid profile versions.");
+  }
+  if (new Set(extensionProfiles).size !== extensionProfiles.length) {
+    errors.push("Support matrix extensionProfiles must not contain duplicates.");
+  }
+  if (!extensionProfiles.includes(candidate.extensionProfile?.version)) {
+    errors.push("Support matrix default extension profile must be included in extensionProfiles.");
   }
   if (candidate.update?.channel !== "latest") errors.push("The unified SPS Desktop must use the latest update channel.");
   if (candidate.update?.trust !== "official-release") errors.push("The SPS Desktop update trust must be official-release.");
@@ -90,6 +102,9 @@ export function validateSpsSupportMatrix(matrix) {
     errors.push("Support matrix operating systems are required.");
   }
   if (candidate.platform?.remoteTransport !== "tailscale") errors.push("The first SPS release requires Tailscale.");
+  if (candidate.platform?.minimumRemoteTransportVersion !== "1.52.0") {
+    errors.push("The first SPS release requires Tailscale 1.52.0 or later.");
+  }
   if (!Array.isArray(candidate.bundledExtensions)) {
     errors.push("Support matrix bundledExtensions must be an array.");
   } else {
@@ -211,9 +226,11 @@ export async function resolveSpsReleaseBaseline({
     core: { ...candidate.core, dirty: coreDirty },
     pluginSdk: { ...candidate.pluginSdk, dirty: pluginSdkDirty },
     extensionProfile: { ...candidate.extensionProfile },
+    extensionProfiles: [...(candidate.extensionProfiles ?? [candidate.extensionProfile.version])],
     platform: {
       operatingSystems: [...candidate.platform.operatingSystems],
       remoteTransport: candidate.platform.remoteTransport,
+      minimumRemoteTransportVersion: candidate.platform.minimumRemoteTransportVersion,
     },
     update: { ...candidate.update },
     bundledExtensions: candidate.bundledExtensions.map((extension) => ({ ...extension })),

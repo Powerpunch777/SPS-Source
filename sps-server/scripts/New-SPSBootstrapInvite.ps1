@@ -59,7 +59,7 @@ if (-not (Test-Path -LiteralPath $SPSConfigPath -PathType Leaf)) {
 
 Push-Location $corePath
 try {
-  & npx.cmd --yes pnpm@9.15.4 paperclipai auth bootstrap-ceo --config $SPSConfigPath
+  & npx.cmd --yes pnpm@11.9.0 paperclipai auth bootstrap-ceo --config $SPSConfigPath
   if ($LASTEXITCODE -ne 0) {
     throw "SPS bootstrap invite command failed with exit code $LASTEXITCODE."
   }

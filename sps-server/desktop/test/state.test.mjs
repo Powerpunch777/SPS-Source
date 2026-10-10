@@ -14,17 +14,35 @@ test("adds private team access fields without discarding a v1 Desktop profile", 
       nodeId: "node-1",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 9);
+    assert.equal(state.version, 11);
     assert.equal(state.profile.hubUrl, "https://app.example.test");
     assert.equal(state.nodeId, "node-1");
     assert.equal(state.teamAccess, null);
     assert.equal(state.encryptedTeamCredentials, null);
     assert.equal(state.encryptedDesktopAccount, null);
+    assert.equal(state.encryptedHostProjectShareSecrets, null);
     assert.equal(state.desktopAccountLastAttempt, null);
     assert.equal(state.desktopDeviceId, null);
     assert.equal(state.encryptedDesktopGoogleClientSecret, undefined);
     assert.deepEqual(state.accountConnections, {});
     assert.equal(state.ownerHostOwnerSubject, null);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loads a valid state file written with a Windows UTF-8 BOM", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-"));
+  try {
+    await fs.writeFile(path.join(root, "sps-desktop-state.json"), `\uFEFF${JSON.stringify({
+      version: 11,
+      profile: { hubUrl: "https://app.example.test", displayName: "Member PC" },
+      nodeId: "node-bom",
+    })}`, "utf8");
+
+    const state = await loadState(root);
+    assert.equal(state.profile.hubUrl, "https://app.example.test");
+    assert.equal(state.nodeId, "node-bom");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -91,7 +109,7 @@ test("retires legacy per-machine Google OAuth credentials during migration", asy
       encryptedDesktopGoogleClientSecret: "legacy-secret",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 9);
+    assert.equal(state.version, 11);
     assert.equal(state.desktopGoogleClientId, undefined);
     assert.equal(state.encryptedDesktopGoogleClientSecret, undefined);
   } finally {

@@ -1,4 +1,4 @@
-name: Release SPS Desktop
+name: Prepare SPS Desktop Release
 
 on:
   push:
@@ -9,16 +9,26 @@ permissions:
   contents: read
 
 jobs:
-  build-sign-and-publish:
+  verify:
+    uses: ./.github/workflows/sps-verify.yml
+    secrets: inherit
+
+  build-sign-and-stage:
+    name: Build, sign, and stage immutable Desktop assets
+    needs: verify
     runs-on: windows-latest
+    environment: sps-production
     env:
       GH_TOKEN: ${{ secrets.SPS_DESKTOP_RELEASES_TOKEN }}
+      SOURCE_GITHUB_TOKEN: ${{ github.token }}
       WIN_CSC_LINK: ${{ secrets.SPS_WINDOWS_CSC_LINK }}
       WIN_CSC_KEY_PASSWORD: ${{ secrets.SPS_WINDOWS_CSC_KEY_PASSWORD }}
-
+      SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON: ${{ secrets.SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON }}
+      SPS_REQUIRE_TRUSTED_PHYSICAL_DEVICES: "1"
     steps:
       - uses: actions/checkout@v5
         with:
+          fetch-depth: 0
           submodules: recursive
           token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
 
@@ -26,96 +36,89 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            sps-server/desktop/package-lock.json
-            external/sps-plugin-sdk/package-lock.json
+          cache-dependency-path: sps-server/desktop/package-lock.json
 
-      - name: Install pinned pnpm for SPS Core
-        run: npm install --global pnpm@9.15.4
-
-      - name: Install SPS Core dependencies
-        working-directory: external/sps-core
-        run: pnpm install --frozen-lockfile
-
-      - name: Build SPS Core release prerequisites
-        working-directory: external/sps-core
-        run: |
-          pnpm --filter @paperclipai/plugin-sdk run build
-          pnpm --filter "@paperclipai/adapter-*" run build
-          pnpm --filter @paperclipai/hermes-paperclip-adapter run build
-          pnpm --filter paperclipai run build
-
-      - name: Verify release tag and signing credentials
+      - name: Verify tag ancestry and signing credentials
         shell: pwsh
-        working-directory: sps-server/desktop
         run: |
-          $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
-          $expectedTag = "v$($manifest.version)"
-          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
-            throw "Release tag must be $expectedTag, but was $env:GITHUB_REF_NAME."
-          }
-          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) {
-            throw "SPS Windows signing secrets are required. Refusing to publish an unsigned Desktop release."
-          }
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            throw "SPS_DESKTOP_RELEASES_TOKEN is required to publish to the separate Desktop release channel."
-          }
+          git fetch origin main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Release tags must already belong to origin/main." }
+          if ((git -C external/sps-core rev-parse --is-shallow-repository).Trim() -eq "true") { git -C external/sps-core fetch --unshallow origin main } else { git -C external/sps-core fetch origin main }
+          git -C external/sps-core merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw "The pinned SPS Core revision must be reachable from its main branch." }
+          if ((git -C external/sps-plugin-sdk rev-parse --is-shallow-repository).Trim() -eq "true") { git -C external/sps-plugin-sdk fetch --unshallow origin main } else { git -C external/sps-plugin-sdk fetch origin main }
+          git -C external/sps-plugin-sdk merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw "The pinned Plugin SDK revision must be reachable from its main branch." }
+          $manifest = Get-Content -Raw -Encoding utf8 sps-server/desktop/package.json | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -ne "v$($manifest.version)") { throw "Release tag does not match Desktop version." }
+          $headers = @{ Authorization = "Bearer $env:SOURCE_GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
+          $tagRef = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:GITHUB_REF_NAME"
+          if ($tagRef.object.type -ne "tag") { throw "Stable releases require a signed annotated Git tag." }
+          $tagObject = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/tags/$($tagRef.object.sha)"
+          if ($tagObject.verification.verified -ne $true) { throw "GitHub did not verify the release tag signature." }
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) { throw "Windows signing secrets are required." }
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw "SPS_DESKTOP_RELEASES_TOKEN is required." }
+          if ([string]::IsNullOrWhiteSpace($env:SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON)) { throw "Protected Host and Member physical device enrollments are required before creating the release challenge." }
 
-      - name: Reject an existing immutable Desktop release
+      - name: Reject an existing immutable release
         shell: pwsh
-        working-directory: sps-server/desktop
         run: |
-          $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
-          $tag = "v$($manifest.version)"
-          $releaseRepo = "Powerpunch777/SPS-Desktop-Releases"
-          gh release view $tag --repo $releaseRepo *> $null
-          if ($LASTEXITCODE -eq 0) {
-            throw "SPS Desktop release $tag already exists. Release artifacts are immutable; bump the version."
-          }
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag --repo Powerpunch777/SPS-Desktop-Releases *> $null
+          if ($LASTEXITCODE -eq 0) { throw "The release already exists and is immutable." }
 
       - name: Install Desktop dependencies
         working-directory: sps-server/desktop
         run: npm ci
 
-      - name: Run Desktop tests
+      - name: Run Desktop tests and security gate
         working-directory: sps-server/desktop
-        run: npm test -- --test-concurrency=1
+        run: |
+          npm run audit:release
+          npm run audit:development
+          npm run docs:security:check
+          npm test -- --test-concurrency=1
 
-      - name: Run Desktop Node tests
-        working-directory: sps-server/desktop-node
-        run: npm test -- --test-concurrency=1
-
-      - name: Build and sign the immutable release candidate
+      - name: Build and sign the immutable candidate
         working-directory: sps-server/desktop
         env:
           SPS_REQUIRE_CLEAN_RELEASE: "1"
           SPS_RELEASE_STATUS: "stable"
         run: npm run release:win
 
-      - name: Verify installer signature and release manifest
+      - name: Verify signed candidate bytes
         shell: pwsh
-        working-directory: sps-server/desktop
         run: |
-          $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
-          $installer = Join-Path $PWD "dist\SPS-Desktop-Setup-$($manifest.version).exe"
-          $signature = Get-AuthenticodeSignature -LiteralPath $installer
-          if ($signature.Status -ne "Valid") {
-            throw "Signed SPS Desktop installer verification failed: $($signature.Status)"
-          }
-          $releaseManifest = Get-Content -Raw -Encoding utf8 "dist\sps-release-manifest.json" | ConvertFrom-Json
-          if ($releaseManifest.baseline.desktopVersion -ne $manifest.version) {
-            throw "Release manifest version does not match the Desktop package."
-          }
+          $version = (Get-Content -Raw -Encoding utf8 sps-server/desktop/package.json | ConvertFrom-Json).version
+          $installer = "sps-server/desktop/dist/SPS-Desktop-Setup-$version.exe"
+          if ((Get-AuthenticodeSignature $installer).Status -ne "Valid") { throw "Candidate installer is not Authenticode signed." }
+          if (-not (Test-Path "sps-server/desktop/dist/sps-release-manifest.json")) { throw "Release manifest is missing." }
+          $env:SPS_RELEASE_ASSETS_DIRECTORY = (Resolve-Path "sps-server/desktop/dist").Path
+          $env:SPS_SOURCE_REVISION = $env:GITHUB_SHA
+          node sps-server/desktop/scripts/verify-release-assets.mjs
 
-      - name: Publish the verified stable release
+      - name: Upload the exact candidate as a draft release
         shell: pwsh
-        working-directory: sps-server/desktop
         run: |
-          $manifest = Get-Content -Raw -Encoding utf8 package.json | ConvertFrom-Json
-          $tag = "v$($manifest.version)"
-          $releaseRepo = "Powerpunch777/SPS-Desktop-Releases"
-          $installer = "dist\SPS-Desktop-Setup-$($manifest.version).exe"
-          $blockmap = "$installer.blockmap"
-          gh release create $tag --repo $releaseRepo --target main --title "SPS Desktop $($manifest.version)" --draft --notes "Signed Windows stable release. See sps-release-manifest.json for the exact Desktop, Core, Extension Profile, and artifact hashes."
-          gh release upload $tag --repo $releaseRepo $installer $blockmap "dist\latest.yml" "dist\sps-release-manifest.json"
-          gh release edit $tag --repo $releaseRepo --draft=false --prerelease=false --latest
+          $tag = $env:GITHUB_REF_NAME
+          gh release create $tag --repo Powerpunch777/SPS-Desktop-Releases --draft --title "SPS Desktop $tag" --notes "Prepared immutable assets. Publish only through the separate workflow_dispatch gate."
+          if ($LASTEXITCODE -ne 0) { throw "Could not create the immutable draft release." }
+          $version = (Get-Content -Raw -Encoding utf8 sps-server/desktop/package.json | ConvertFrom-Json).version
+          $assets = @(
+            "sps-server/desktop/dist/SPS-Desktop-Setup-$version.exe",
+            "sps-server/desktop/dist/SPS-Desktop-Setup-$version.exe.blockmap",
+            "sps-server/desktop/dist/latest.yml",
+            "sps-server/desktop/dist/sps-release-manifest.json",
+            "sps-server/desktop/dist/sps-release-challenge.json",
+            "sps-server/desktop/dist/sps-agent-runtime-packs.json"
+          )
+          $releaseManifest = Get-Content -Raw -Encoding utf8 "sps-server/desktop/dist/sps-release-manifest.json" | ConvertFrom-Json
+          foreach ($pack in @($releaseManifest.artifacts.agentRuntimePacks)) {
+            $assets += "sps-server/desktop/dist/$($pack.file)"
+          }
+          gh release upload $tag --repo Powerpunch777/SPS-Desktop-Releases @assets
+          if ($LASTEXITCODE -ne 0) {
+            gh release delete $tag --repo Powerpunch777/SPS-Desktop-Releases --yes --cleanup-tag
+            throw "Could not upload every immutable draft asset; the incomplete draft was removed."
+          }

@@ -7,6 +7,8 @@ SPS is moving from a Paperclip-compatible implementation to a product model wher
 ## Current Contract
 
 Read [docs/current/README.md](docs/current/README.md) before changing product behavior.
+The current product decision record is
+[docs/current/PRODUCT-ARCHITECTURE-ko.md](docs/current/PRODUCT-ARCHITECTURE-ko.md).
 
 Core owns:
 
@@ -21,6 +23,10 @@ Plugins own:
 - people and Agent access policy
 - Room, Task, Lead/Worker, and review workflows
 - memory strategies, external tools, and domain-specific development Packs
+
+Provider-specific Agent runtimes are optional Desktop packs, not implicit Core
+payloads. See [Agent Runtime Packs](docs/current/AGENT-RUNTIME-PACKS.md) for
+the Host-selected Codex/Claude delivery and verification flow.
 
 ## Source Map
 

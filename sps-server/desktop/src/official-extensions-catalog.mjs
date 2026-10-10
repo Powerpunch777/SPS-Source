@@ -11,6 +11,7 @@ function publicCatalogRelease(release) {
     visibility: release.visibility,
     ...(release.catalog ? { catalog: { ...release.catalog } } : {}),
     ...(release.capabilities ? { capabilities: [...release.capabilities] } : {}),
+    ...(release.compatibility ? { compatibility: { ...release.compatibility } } : {}),
     publisherId: release.publisherId,
     ...(release.publisherProfile ? { publisherProfile: { ...release.publisherProfile } } : {}),
     artifact: {

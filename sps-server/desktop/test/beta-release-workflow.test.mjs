@@ -18,6 +18,8 @@ test("keeps the unsigned Desktop candidate inside Actions and outside the update
   assert.match(manifest.scripts["package:candidate:win"], /electron-builder --win nsis --publish never/);
   assert.match(manifest.scripts["package:candidate:win"], /create-release-manifest\.mjs/);
   assert.match(workflow, /workflow_dispatch/);
+  assert.match(workflow, /verify:\s*\r?\n\s*uses: \.\/\.github\/workflows\/sps-verify\.yml/);
+  assert.match(workflow, /build-and-publish-beta:[\s\S]*?needs: verify/);
   assert.doesNotMatch(workflow, /desktop-beta-v\*/);
   assert.doesNotMatch(workflow, /SPS_DESKTOP_RELEASES_TOKEN/);
   assert.doesNotMatch(workflow, /gh release/);
@@ -31,4 +33,17 @@ test("keeps the unsigned Desktop candidate inside Actions and outside the update
   assert.match(workflow, /npm run package:candidate:win/);
   assert.match(workflow, /actions\/upload-artifact@v4/);
   assert.match(workflow, /sps-release-manifest\.json/);
+  assert.match(workflow, /SPS-Agent-Runtime-Pack-\*\.zip/);
+  assert.match(workflow, /sps-agent-runtime-packs\.json/);
+});
+
+test("requires the complete SPS verification gate before packaging a pilot", async () => {
+  const workflow = await readFile(
+    path.join(repositoryDirectory, ".github", "workflows", "sps-desktop-pilot.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /verify:\s*\r?\n\s*uses: \.\/\.github\/workflows\/sps-verify\.yml/);
+  assert.match(workflow, /package-pilot:[\s\S]*?needs: verify/);
+  assert.match(workflow, /npm run package:candidate:win/);
 });

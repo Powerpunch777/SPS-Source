@@ -3,6 +3,8 @@ const $ = (selector) => document.querySelector(selector);
 let latestStatus = null;
 let ownerHostRecoveryTimer = null;
 let memberInviteCode = null;
+let pendingJoinHub = null;
+let workspaceOpenError = null;
 const OWNER_HOST_RECOVERY_INTERVAL_MS = 2_000;
 
 function account(status) {
@@ -80,7 +82,10 @@ function renderServerChoice(status) {
 
 function renderOwnerServer(status) {
   const desktopAccount = account(status);
-  const visible = desktopAccount.signedIn === true && isOwnerHost(status) && ownerHostReady(status);
+  // Server controls now live in the Owner Host Workspace at
+  // Settings > SPS Server. Keep this setup-window section hidden so a Host
+  // never has two competing server-management surfaces.
+  const visible = false;
   show($("#owner-server-screen"), visible);
   if (!visible) return;
 
@@ -117,21 +122,52 @@ function renderOwnerServer(status) {
       : "Workspace에서 회사를 만든 뒤 팀 접근을 활성화할 수 있습니다.";
   $("#member-invite-code").value = memberInviteCode ?? "";
   $("#copy-member-invite").disabled = !memberInviteCode;
+  const packs = Array.isArray(status?.agentRuntimePacks) ? status.agentRuntimePacks : [];
+  const list = $("#agent-runtime-pack-list");
+  list.replaceChildren(...packs.map((pack) => {
+    const row = document.createElement("div");
+    row.className = "runtime-pack-row";
+    const name = document.createElement("strong");
+    name.textContent = `${pack.label} ${pack.version}`;
+    const detail = document.createElement("span");
+    detail.textContent = pack.complete ? pack.commands.join(", ") : "Incomplete";
+    row.append(name, detail);
+    return row;
+  }));
+  if (packs.length === 0) {
+    const empty = document.createElement("span");
+    empty.textContent = "No optional runtime packs installed. Existing local CLIs remain available.";
+    list.append(empty);
+  }
 }
 
 function renderWorkspace(status) {
   const hasProfile = Boolean(status?.profile) && account(status).signedIn === true;
   const local = isOwnerHost(status);
   const ready = local ? ownerHostReady(status) : Boolean(status.signedIn);
-  const visible = hasProfile && !ready;
+  const showingLocalFolders = local && ready && status?.setupMode === true;
+  // The main window can be reopened from the tray while its Workspace is
+  // already running. Keep a recovery screen visible in that state.
+  const visible = hasProfile && !showingLocalFolders;
   show($("#workspace-screen"), visible);
   if (!visible) return;
   const complete = $("#complete-server-access");
   const check = $("#check-server-access");
+  const openWorkspace = $("#open-workspace-retry");
   $("#workspace-eyebrow").textContent = local ? "THIS COMPUTER'S SPS SERVER" : "SPS SERVER";
   if (local && !ready) {
     $("#workspace-title").textContent = "SPS Server를 시작하는 중";
     $("#workspace-detail").textContent = status?.ownerHost?.lastError ?? "Owner Vault와 기본 서비스가 준비되면 Workspace를 자동으로 엽니다.";
+    show(openWorkspace, false);
+    show(complete, false);
+    show(check, false);
+    return;
+  }
+  if (ready) {
+    $("#workspace-title").textContent = "SPS Workspace is ready";
+    $("#workspace-detail").textContent = workspaceOpenError
+      ?? "Your SPS Server is running. Open the Workspace to continue.";
+    show(openWorkspace, true);
     show(complete, false);
     show(check, false);
     return;
@@ -139,8 +175,70 @@ function renderWorkspace(status) {
   if (!local && !status.signedIn) {
     $("#workspace-title").textContent = "서버 접근을 확인하세요";
     $("#workspace-detail").textContent = "브라우저에서 초대를 수락한 같은 SPS 계정으로 이 SPS Server 접근을 확인합니다.";
+    show(openWorkspace, false);
     show(complete, true);
     show(check, Boolean(status.pendingAuth));
+  }
+}
+
+function renderLocalFolders(status) {
+  const hasProfile = Boolean(status?.profile) && account(status).signedIn === true;
+  const local = isOwnerHost(status);
+  const ready = local ? ownerHostReady(status) : Boolean(status.signedIn);
+  const visible = hasProfile && local && ready && status?.setupMode === true;
+  show($("#local-folders-screen"), visible);
+  if (!visible) return;
+
+  const profile = status.profile ?? {};
+  $("#default-workspace-path").value = profile.defaultWorkspacePath ?? "";
+  $("#clear-default-workspace").disabled = !profile.defaultWorkspacePath;
+
+  const mappings = profile.projectWorkspaces ?? {};
+  const list = $("#project-folder-list");
+  const projects = Array.isArray(status.projects) ? status.projects : [];
+  list.replaceChildren(...projects.map((project) => {
+    const row = document.createElement("article");
+    row.className = "project-folder-row";
+
+    const copy = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = project.name;
+    const detail = document.createElement("span");
+    detail.textContent = mappings[project.id] || "No Host source folder selected";
+    copy.append(title, detail);
+
+    const actions = document.createElement("div");
+    actions.className = "project-folder-actions";
+    const choose = document.createElement("button");
+    choose.type = "button";
+    choose.className = "secondary-action compact-action";
+    choose.dataset.action = "choose";
+    choose.dataset.projectId = project.id;
+    choose.textContent = "Choose folder";
+    const share = document.createElement("button");
+    share.type = "button";
+    share.className = "secondary-action compact-action";
+    share.dataset.action = "share";
+    share.dataset.projectId = project.id;
+    share.textContent = "Share with Member";
+    share.disabled = !mappings[project.id];
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "text-action inline-action";
+    clear.dataset.action = "clear";
+    clear.dataset.projectId = project.id;
+    clear.textContent = "Clear";
+    clear.disabled = !mappings[project.id];
+    actions.append(choose, share, clear);
+    row.append(copy, actions);
+    return row;
+  }));
+
+  if (projects.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-project-folders";
+    empty.textContent = "No SPS projects are available for this account yet.";
+    list.append(empty);
   }
 }
 
@@ -150,6 +248,7 @@ function render(status) {
   renderServerChoice(status);
   renderOwnerServer(status);
   renderWorkspace(status);
+  renderLocalFolders(status);
   setPending(Boolean(account(status).pending));
   syncOwnerHostRecovery(status);
 }
@@ -160,8 +259,15 @@ async function refreshStatus() {
   const workspaceReady = account(status).signedIn
     && status?.profile
     && (isOwnerHost(status) ? ownerHostReady(status) : Boolean(status.signedIn));
-  if (workspaceReady) {
-    await window.spsDesktop.openWorkspace();
+  if (workspaceReady && status?.setupMode !== true) {
+    try {
+      await window.spsDesktop.openWorkspace();
+      workspaceOpenError = null;
+    } catch (error) {
+      workspaceOpenError = error instanceof Error ? error.message : "SPS Workspace could not open.";
+      render(status);
+      setNotice(workspaceOpenError, true);
+    }
   }
 }
 
@@ -202,6 +308,11 @@ $("#enable-private-team").addEventListener("click", () => run(async () => {
   setNotice("팀 접근을 활성화했습니다. 이제 전체 SPS2 초대 코드를 만들 수 있습니다.");
 }));
 
+$("#install-agent-runtime-pack").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.installAgentRuntimePack();
+  setNotice("Agent Runtime pack installation finished. Restart the Owner Host before running an Agent that uses it.");
+}));
+
 $("#create-member-invite").addEventListener("click", () => run(async () => {
   const invite = await window.spsDesktop.createMemberInvite();
   memberInviteCode = invite.code;
@@ -222,10 +333,19 @@ $("#owner-open-workspace").addEventListener("click", () => run(async () => {
   await window.spsDesktop.openWorkspace();
 }));
 
-$("#create-owner-server").addEventListener("click", () => run(async () => {
-  setNotice("이 컴퓨터에 SPS Server와 Owner Vault를 준비하고 있습니다.");
-  await window.spsDesktop.createOwnerServer();
+$("#open-workspace-retry").addEventListener("click", () => run(async () => {
+  workspaceOpenError = null;
   await window.spsDesktop.openWorkspace();
+}));
+
+$("#create-owner-server").addEventListener("click", () => run(async () => {
+  setNotice("이 컴퓨터에 SPS Server와 Owner Vault를 준비하고 있습니다. 첫 실행은 몇 분 걸릴 수 있습니다.");
+  await window.spsDesktop.createOwnerServer();
+}));
+
+$("#restore-owner-server").addEventListener("click", () => run(async () => {
+  setNotice("Transfer bundle을 검증하고 새 Owner Host에 복원합니다.");
+  await window.spsDesktop.restoreOwnerServer();
 }));
 
 $("#show-join-server").addEventListener("click", () => {
@@ -236,8 +356,14 @@ $("#show-join-server").addEventListener("click", () => {
 
 $("#join-server-form").addEventListener("submit", (event) => run(async () => {
   event.preventDefault();
-  await window.spsDesktop.joinServer({ code: $("#invite-code").value });
-  setNotice("브라우저에서 초대를 수락한 뒤 이 창에서 서버 접근을 계속하세요.");
+  const result = await window.spsDesktop.joinServer({
+    code: $("#invite-code").value,
+    hub: pendingJoinHub ?? undefined,
+  });
+  pendingJoinHub = null;
+  setNotice(result?.direct
+    ? "Invitation accepted. This computer is waiting for Host Node approval."
+    : "Complete the invitation in your browser, then return here to continue.");
 }));
 
 $("#complete-server-access").addEventListener("click", () => run(async () => {
@@ -251,10 +377,47 @@ $("#check-server-access").addEventListener("click", () => run(async () => {
   setNotice("SPS Server 접근을 확인했습니다.");
 }));
 
+$("#choose-default-workspace").addEventListener("click", () => run(async () => {
+  const workspacePath = await window.spsDesktop.chooseProjectWorkspace();
+  if (!workspacePath) return;
+  await window.spsDesktop.saveDefaultWorkspace({ workspacePath });
+  setNotice("Default local task folder saved.");
+}));
+
+$("#clear-default-workspace").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.saveDefaultWorkspace({ workspacePath: "" });
+  setNotice("Default local task folder cleared.");
+}));
+
+$("#project-folder-list").addEventListener("click", (event) => run(async () => {
+  const button = event.target.closest("button[data-project-id]");
+  if (!button) return;
+  const projectId = button.dataset.projectId;
+  if (!projectId) throw new Error("The SPS project folder selection is incomplete.");
+  if (button.dataset.action === "clear") {
+    await window.spsDesktop.saveProjectWorkspace({ projectId, workspacePath: "" });
+    setNotice("Project folder cleared.");
+    return;
+  }
+  if (button.dataset.action === "share") {
+    await window.spsDesktop.manageHostProjectSource({ projectId });
+    setNotice("Project source access updated for the selected SPS Member Node.");
+    return;
+  }
+  const workspacePath = await window.spsDesktop.chooseProjectWorkspace();
+  if (!workspacePath) return;
+  await window.spsDesktop.saveProjectWorkspace({ projectId, workspacePath });
+  setNotice("Project source folder saved on this Owner Host.");
+}));
+
+$("#open-workspace-from-folders").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.openWorkspace();
+}));
+
 window.spsDesktop.onDesktopAccountChanged((status) => {
   render(status);
-  if (account(status).signedIn) {
-    setNotice("SPS account is confirmed. Choose whether this computer creates or joins an SPS Server.");
+  if (account(status).signedIn && !status?.profile) {
+    setNotice("SPS 계정 확인이 완료되었습니다. 이 컴퓨터에서 서버를 만들지, 기존 서버에 참여할지 선택하세요.");
   } else if (account(status).lastAttempt?.status === "failed") {
     setNotice(account(status).lastAttempt.error ?? "SPS sign-in did not finish.", true);
   }
@@ -263,13 +426,19 @@ window.spsDesktop.onDesktopAccountChanged((status) => {
 window.spsDesktop.readyForJoinLink().then((join) => {
   if (!join) return;
   $("#invite-code").value = join.code;
+  pendingJoinHub = join.hub ?? null;
   $("#join-server-form").hidden = false;
+  $("#invite-code").focus();
+  if (join.error) queueMicrotask(() => setNotice(join.error, true));
   setNotice("초대 코드가 입력되었습니다. SPS 로그인 후 참여를 계속하세요.");
 });
 
 window.spsDesktop.onJoinLink((join) => {
   $("#invite-code").value = join.code;
+  pendingJoinHub = join.hub ?? null;
   $("#join-server-form").hidden = false;
+  $("#invite-code").focus();
+  if (join.error) queueMicrotask(() => setNotice(join.error, true));
   setNotice("초대 코드가 입력되었습니다. 참여를 계속하세요.");
 });
 

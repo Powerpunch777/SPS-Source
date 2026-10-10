@@ -28,6 +28,7 @@ function publicCatalogSnapshot(catalog, refreshedAt) {
         visibility: release.visibility,
         ...(release.catalog ? { catalog: { ...release.catalog } } : {}),
         ...(release.capabilities ? { capabilities: [...release.capabilities] } : {}),
+        ...(release.compatibility ? { compatibility: { ...release.compatibility } } : {}),
         publisherId: release.publisherId,
         ...(release.publisherProfile ? { publisherProfile: { ...release.publisherProfile } } : {}),
       }))
@@ -41,7 +42,7 @@ export async function readSpsDiscoveryCatalog({ ownerVaultRoot, fsApi = fs } = {
     const raw = await fsApi.readFile(layout.catalogPath, "utf8");
     const value = JSON.parse(raw);
     if (value?.schemaVersion !== DISCOVERY_CATALOG_SCHEMA_VERSION || !Array.isArray(value.releases)) {
-      throw new Error("SPS Plugin Discovery catalog cache is invalid.");
+      throw new Error("SPS Marketplace catalog cache is invalid.");
     }
     return { available: true, path: layout.catalogPath, catalog: value };
   } catch (error) {
@@ -51,8 +52,8 @@ export async function readSpsDiscoveryCatalog({ ownerVaultRoot, fsApi = fs } = {
 }
 
 /**
- * Desktop, not the Agent-facing plugin, verifies the official Registry. The
- * worker receives only this read-only, public metadata snapshot.
+ * Desktop verifies the official Registry once. Core Marketplace and the
+ * optional Discovery plugin receive only this read-only public snapshot.
  */
 export async function refreshSpsDiscoveryCatalog({
   ownerVaultRoot,

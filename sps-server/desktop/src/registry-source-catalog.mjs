@@ -55,6 +55,13 @@ function publicRelease(release) {
   return safe;
 }
 
+function normalizedReleaseCompatibility(compatibility) {
+  return {
+    ...compatibility,
+    extensionProfile: compatibility?.extensionProfile ?? "1.0",
+  };
+}
+
 function assertSourceList(value) {
   if (!isPlainObject(value) || value.schemaVersion !== REGISTRY_SOURCES_SCHEMA_VERSION || !Array.isArray(value.sources)) {
     throw new Error("Registry source configuration is invalid.");
@@ -282,7 +289,7 @@ async function inspectRemoteRegistrySource(source, { fetchImpl }) {
           visibility: record.visibility,
           ...(record.catalog === undefined ? {} : { catalog: { ...record.catalog } }),
           ...(record.capabilities === undefined ? {} : { capabilities: [...record.capabilities] }),
-          compatibility: { ...record.compatibility },
+          compatibility: normalizedReleaseCompatibility(record.compatibility),
           permissionsDigest: record.permissionsDigest,
           publisherId: record.publisher.id,
           ...(publisherProfiles.has(record.publisher.id) ? { publisherProfile: { ...publisherProfiles.get(record.publisher.id) } } : {}),
@@ -321,6 +328,7 @@ export async function inspectRegistrySource(source, { fetchImpl = fetch, fsApi =
       warning: "Local Registry indexes are trusted because this Owner selected the folder.",
       releases: local.releases.map((release) => ({
         ...release,
+        compatibility: normalizedReleaseCompatibility(release.compatibility),
         artifact: {
           sha256: release.artifactSha256,
           sizeBytes: release.artifactSizeBytes,

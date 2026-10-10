@@ -21,7 +21,7 @@
         <div class="screen-copy">
           <p class="eyebrow">SONPARKSERVER</p>
           <h1 id="account-title">SPS에 로그인</h1>
-          <p>SPS 계정은 나를 식별합니다. 지금은 Google로 로그인하며, 회사·프로젝트·Room·기억 데이터는 이 계정이 아니라 SPS Server에 저장됩니다.</p>
+          <p>SPS 계정은 나를 식별합니다. 지금은 Google로 로그인하며, 회사·Workspace·플러그인 데이터는 이 계정이 아니라 SPS Server에 저장됩니다.</p>
         </div>
         <button id="start-sps-account" class="primary-action google-action" type="button">
           <span class="google-mark" aria-hidden="true">G</span>
@@ -43,19 +43,24 @@
         <div class="screen-copy">
           <p class="eyebrow">SPS DESKTOP</p>
           <h1 id="server-choice-title">어디에서 시작할까요?</h1>
-          <p>SPS Server가 회사, 프로젝트, Rooms, Tasks, 장기기억과 컴퓨터 권한을 소유합니다. SPS 계정은 그 서버에 접근할 사람을 구분합니다.</p>
+          <p>SPS Server가 회사, Workspace, 플러그인 데이터와 컴퓨터 연결을 보관합니다. SPS 계정은 그 서버에 접근할 사람을 구분합니다.</p>
         </div>
         <p id="server-data-note" class="server-data-note"></p>
         <div class="choice-grid">
           <button id="create-owner-server" class="choice-card" type="button">
             <span class="choice-icon" aria-hidden="true">+</span>
             <strong>이 컴퓨터에 서버 만들기</strong>
-            <span>개인 또는 소규모 팀의 SPS Server를 만듭니다. 처음에는 이 컴퓨터 안에서 오프라인으로 동작합니다.</span>
+            <span>개인 또는 소규모 팀의 SPS Server를 만듭니다. 로그인한 SPS 계정이 이 컴퓨터의 Host를 관리합니다.</span>
           </button>
           <button id="show-join-server" class="choice-card" type="button">
             <span class="choice-icon" aria-hidden="true">&#8594;</span>
             <strong>기존 서버에 참여하기</strong>
             <span>초대 코드를 사용해 기존 SPS Server에 연결합니다. 회사와 Agent 권한은 초대받은 계정의 멤버십을 따릅니다.</span>
+          </button>
+          <button id="restore-owner-server" class="choice-card" type="button">
+            <span class="choice-icon" aria-hidden="true">&#8635;</span>
+            <strong>서버 백업에서 복원하기</strong>
+            <span>데이터가 없는 새 Host에서만 복원합니다. 기존 서버와 병합하거나 덮어쓰지 않습니다.</span>
           </button>
         </div>
         <form id="join-server-form" class="join-form" hidden>
@@ -97,6 +102,12 @@
           <button id="create-member-invite" class="primary-action" type="button">새 팀원 초대 만들기</button>
           <p>전체 <strong>SPS2-...</strong> 코드를 그대로 전달하세요. 새 컴퓨터에는 짧은 SPS 코드만으로 서버 주소를 알 수 없습니다.</p>
         </div>
+        <div class="configuration-form runtime-pack-form">
+          <label>Agent Runtime Packs</label>
+          <div id="agent-runtime-pack-list" class="runtime-pack-list"></div>
+          <p>Provider runtimes are optional. Download and extract a release pack, then choose its folder. SPS never downloads one implicitly.</p>
+          <button id="install-agent-runtime-pack" class="secondary-action" type="button">Install extracted runtime pack</button>
+        </div>
         <div class="workspace-actions owner-server-actions">
           <button id="owner-open-workspace" class="secondary-action" type="button">Workspace 열기</button>
         </div>
@@ -107,13 +118,38 @@
         <div class="screen-copy">
           <p class="eyebrow" id="workspace-eyebrow">SPS SERVER</p>
           <h1 id="workspace-title">SPS Workspace 준비 중</h1>
-          <p id="workspace-detail">서버에서 프로젝트, Rooms, Tasks와 Agents를 엽니다.</p>
+          <p id="workspace-detail">서버에서 Workspace와 활성 플러그인을 여는 중입니다.</p>
         </div>
         <div class="workspace-actions">
+          <button id="open-workspace-retry" class="primary-action" type="button" hidden>Open SPS Workspace</button>
           <button id="complete-server-access" class="secondary-action" type="button" hidden>서버 접근 계속</button>
           <button id="check-server-access" class="secondary-action" type="button" hidden>브라우저에서 완료했어요</button>
         </div>
         <p class="subtle-note">확인이 끝나면 SPS Workspace가 자동으로 열립니다.</p>
+      </section>
+
+      <section id="local-folders-screen" class="screen local-folders-screen" aria-labelledby="local-folders-title" hidden>
+        <div class="screen-copy">
+          <p class="eyebrow">OWNER HOST</p>
+          <h1 id="local-folders-title">Host project folders</h1>
+          <p>Only the Owner Host chooses a project's source folder. Member computers receive an SPS-managed shared path only while they are approved to run that project's Task.</p>
+        </div>
+        <div class="configuration-form">
+          <label for="default-workspace-path">Default Host folder for non-project work</label>
+          <div class="input-row">
+            <input id="default-workspace-path" readonly placeholder="No default folder selected" />
+            <button id="choose-default-workspace" class="secondary-action" type="button">Choose folder</button>
+          </div>
+          <button id="clear-default-workspace" class="text-action inline-action" type="button">Clear default folder</button>
+        </div>
+        <div class="configuration-form">
+          <label>Project source folders</label>
+          <div id="project-folder-list" class="project-folder-list"></div>
+          <p>These folders remain on this Host. SPS never asks a Member to choose or replace a project's source folder.</p>
+        </div>
+        <div class="workspace-actions local-folders-actions">
+          <button id="open-workspace-from-folders" class="primary-action" type="button">Open SPS Workspace</button>
+        </div>
       </section>
 
       <p id="notice" class="notice" role="status" aria-live="polite"></p>

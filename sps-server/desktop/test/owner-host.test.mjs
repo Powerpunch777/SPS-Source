@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   createSpsOwnerHostManager,
+  materializeStableSpsOwnerHostNode,
   materializeSpsOwnerHostRuntime,
   resolveSpsOwnerHostRuntime,
   spsOwnerHostBundledNodePath,
@@ -30,6 +31,38 @@ test("starts an internal Owner Host when its runtime is available", async () => 
 
   assert.equal((await manager.start()).state, "running");
   assert.equal((await manager.stop()).state, "stopped");
+});
+
+test("uses a caller-provided environment boundary instead of inheriting production secrets", async () => {
+  let healthy = false;
+  let spawnedEnvironment = null;
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.kill = () => { healthy = false; child.exitCode = 0; child.emit("exit", 0); };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310",
+    baseEnvironment: { PATH: "C:/safe-tools" },
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({
+      command: "node",
+      args: ["host.mjs"],
+      cwd: "C:/sps",
+      environment: { SPS_DESKTOP_PLUGIN_RUNTIME: "preview" },
+    }),
+    spawn: (_command, _args, options) => {
+      spawnedEnvironment = options.env;
+      healthy = true;
+      return child;
+    },
+    delay: async () => {},
+  });
+
+  assert.equal((await manager.start()).state, "running");
+  assert.equal(spawnedEnvironment.PATH, "C:/safe-tools");
+  assert.equal(spawnedEnvironment.SPS_DESKTOP_PLUGIN_RUNTIME, "preview");
+  assert.equal(spawnedEnvironment.OPENAI_API_KEY, undefined);
+  assert.equal(spawnedEnvironment.SPS_PRODUCTION_SECRET, undefined);
+  await manager.stop();
 });
 
 test("recovers an owned Host that becomes healthy after a bounded startup wait", async () => {
@@ -111,7 +144,85 @@ test("prefers the bundled Node runtime for packaged Owner Host dependencies", as
   assert.deepEqual(runtime.environment, {
     PAPERCLIP_HOME: "C:/SPS Vault",
     PAPERCLIP_CONFIG: "C:/SPS Vault/config.json",
+    PAPERCLIP_INSTANCE_ID: "sps-desktop-owner",
   });
+});
+
+test("uses one stable packaged Node path across Desktop updates", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-node-"));
+  const runtimeRoot = path.join(temporaryRoot, "runtime-0.4.106");
+  const stableRoot = path.join(temporaryRoot, "stable");
+  try {
+    await fs.mkdir(path.join(runtimeRoot, "bin"), { recursive: true });
+    await fs.mkdir(path.join(runtimeRoot, "dist"), { recursive: true });
+    await fs.writeFile(path.join(runtimeRoot, "dist", "index.js"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(runtimeRoot, "sps-owner-host-bootstrap.mjs"), "export {};\n", "utf8");
+    await fs.writeFile(path.join(runtimeRoot, "bin", "node.exe"), "node-v1", "utf8");
+
+    const first = await materializeStableSpsOwnerHostNode({ runtimeRoot, stableRoot, platform: "win32" });
+    const second = await materializeStableSpsOwnerHostNode({ runtimeRoot, stableRoot, platform: "win32" });
+    assert.equal(first, path.join(stableRoot, "node.exe"));
+    assert.equal(second, first);
+    assert.equal(await fs.readFile(first, "utf8"), "node-v1");
+
+    await fs.writeFile(first, "tampered", "utf8");
+    const repaired = await materializeStableSpsOwnerHostNode({ runtimeRoot, stableRoot, platform: "win32" });
+    assert.equal(repaired, first);
+    assert.equal(await fs.readFile(repaired, "utf8"), "node-v1");
+
+    await fs.writeFile(path.join(runtimeRoot, "bin", "node.exe"), "node-v2", "utf8");
+    const refreshed = await materializeStableSpsOwnerHostNode({ runtimeRoot, stableRoot, platform: "win32" });
+    assert.equal(refreshed, first);
+    assert.equal(await fs.readFile(refreshed, "utf8"), "node-v2");
+
+    const runtime = await resolveSpsOwnerHostRuntime({
+      packagedRuntimeRoots: [runtimeRoot],
+      stableNodeCommand: refreshed,
+    });
+    assert.equal(runtime.command, refreshed);
+    assert.equal(runtime.environment.ELECTRON_RUN_AS_NODE, undefined);
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("uses a distinct validated instance identity for an isolated preview runtime", async () => {
+  const files = new Set([
+    "C:/runtime/dist/index.js",
+    "C:/runtime/sps-owner-host-bootstrap.mjs",
+    "C:/core/cli/src/index.ts",
+    "C:/core/node_modules/.pnpm/tsx@4.0.0/node_modules/tsx/dist/loader.mjs",
+    "C:/core/node_modules/.pnpm/tsx@4.0.0/node_modules/tsx/dist/preflight.cjs",
+  ]);
+  const fsApi = {
+    access: async (entry) => {
+      if (!files.has(String(entry).replaceAll("\\", "/"))) throw new Error("missing");
+    },
+    readdir: async () => [{ name: "tsx@4.0.0", isDirectory: () => true }],
+  };
+
+  const packaged = await resolveSpsOwnerHostRuntime({
+    packagedRuntimeRoots: ["C:/runtime"],
+    instanceId: "preview.project_01",
+    fsApi,
+  });
+  const development = await resolveSpsOwnerHostRuntime({
+    coreRoots: ["C:/core"],
+    instanceId: "preview.project_01",
+    fsApi,
+  });
+
+  assert.equal(packaged.environment.PAPERCLIP_INSTANCE_ID, "preview.project_01");
+  assert.deepEqual(development.args.slice(-2), ["--instance", "preview.project_01"]);
+});
+
+test("rejects unsafe Owner Host instance identities", async () => {
+  for (const instanceId of ["", "preview id", "../preview", "preview/one", "a".repeat(65), 7]) {
+    await assert.rejects(
+      resolveSpsOwnerHostRuntime({ instanceId }),
+      /instanceId must be 1-64 ASCII letters, digits, dots, underscores, or hyphens/,
+    );
+  }
 });
 
 test("keeps the Electron-as-Node fallback for an older packaged runtime", async () => {

@@ -2,17 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { SPS_SERVER_ACCESS_MODE, resolveSpsServerAccess } from "../src/server-access-model.mjs";
 
-test("keeps local-only Owner Hosts offline and computer-trusted", () => {
+test("requires SPS account authentication for loopback Owner Hosts", () => {
   const access = resolveSpsServerAccess({
     profile: { connectionKind: "owner-host" },
     teamAccess: null,
   });
 
   assert.deepEqual(access, {
-    mode: SPS_SERVER_ACCESS_MODE.LOCAL_TRUSTED,
+    mode: SPS_SERVER_ACCESS_MODE.AUTHENTICATED_HOST,
     dataOwner: "server",
     requiresMembership: false,
-    offlineCapable: true,
     serverRole: "host",
   });
 });

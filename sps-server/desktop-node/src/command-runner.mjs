@@ -4,8 +4,10 @@ import path from "node:path";
 import {
   appendSpsNodeCommandEvent,
   checkSpsNodeCommandLease,
+  claimSpsWorkspaceSourceRoute,
   completeSpsNodeCommand,
 } from "./hub-client.mjs";
+import { openSpsWorkspaceSourceRoute } from "./host-project-share.mjs";
 
 const OUTPUT_CHUNK_LIMIT = 48 * 1024;
 const COMMAND_LEASE_CHECK_INTERVAL_MS = 2_000;
@@ -87,6 +89,23 @@ export function buildSpsNodeRuntimeEnvironment(commandEnvironment, hostEnvironme
   };
 }
 
+export function spsMarketplaceMcpRuntimeEnvironment(runtime, environment = {}) {
+  const output = { ...environment };
+  if (!runtime) return output;
+  const nodeCommand = typeof runtime.nodeCommand === "string" ? runtime.nodeCommand.trim() : "";
+  const entryPath = typeof runtime.entryPath === "string" ? runtime.entryPath.trim() : "";
+  if (!path.isAbsolute(nodeCommand) || !path.isAbsolute(entryPath)) {
+    throw new Error("SPS Desktop Marketplace MCP runtime paths must be absolute local paths.");
+  }
+  const pathKey = Object.keys(output).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  output[pathKey] = [path.dirname(nodeCommand), output[pathKey]].filter(Boolean).join(path.delimiter);
+  // These values always come from the local Desktop installation. Hub input
+  // is filtered before this merge and therefore cannot replace either path.
+  output.SPS_MARKETPLACE_MCP_NODE = nodeCommand;
+  output.SPS_MARKETPLACE_MCP_ENTRY = entryPath;
+  return output;
+}
+
 async function listSignedInCodexProfiles(homeRoot) {
   const entries = await fs.readdir(homeRoot, { withFileTypes: true }).catch(() => []);
   const candidates = entries
@@ -149,24 +168,54 @@ export function assertSpsNodeCommandRuntime(command) {
   }
 }
 
-export async function resolveSpsNodeWorkspace(command, profile) {
+export function isSpsHostSharedWorkspacePath(value, platform = process.platform) {
+  if (platform !== "win32" || typeof value !== "string") return false;
+  // Only a UNC share can represent a Host-owned workspace on a Member Node.
+  // Drive letters are local to the Member and must never be supplied by it.
+  return /^\\\\[^\\/:*?"<>|]+\\[^\\/:*?"<>|]+(?:\\|$)/.test(value.trim());
+}
+
+export async function resolveSpsNodeWorkspace(command, profile, options = {}) {
   const projectId = typeof command?.projectId === "string" && command.projectId.trim()
     ? command.projectId
     : null;
-  // A project-bound command must never fall back to this computer's default
-  // folder. Each project is explicitly mapped by the Node owner so a remote
-  // Agent cannot accidentally work in another repository.
-  const configured = projectId
-    ? profile.projectWorkspaces?.[projectId]
+  const workspaceSourceId = typeof command?.workspaceSourceId === "string" && command.workspaceSourceId.trim()
+    ? command.workspaceSourceId.trim()
+    : null;
+  const connectionKind = typeof profile?.connectionKind === "string" ? profile.connectionKind : "remote";
+  const hostIssuedCwd = typeof command?.cwdHint === "string" ? command.cwdHint.trim() : "";
+  const configuredSource = workspaceSourceId
+    ? (profile?.workspaceSources ?? []).find((source) => source?.id === workspaceSourceId) ?? null
+    : null;
+  // Project source folders are selected once by the Owner Host. A Member may
+  // run only in the Host-provided UNC share, never in an arbitrary mapping in
+  // its own Desktop state. The Owner Host retains its direct source mapping.
+  const configured = workspaceSourceId
+    ? connectionKind === "owner-host"
+      ? configuredSource?.sourcePath || hostIssuedCwd
+      : isSpsHostSharedWorkspacePath(hostIssuedCwd, options.platform)
+        ? hostIssuedCwd
+        : ""
+    : projectId
+    ? connectionKind === "owner-host"
+      ? profile.projectWorkspaces?.[projectId] || hostIssuedCwd
+      : isSpsHostSharedWorkspacePath(hostIssuedCwd, options.platform)
+        ? hostIssuedCwd
+        : ""
     : profile.defaultWorkspacePath;
-  if (projectId && (!configured || !configured.trim())) {
-    throw new Error(`No local workspace is configured for SPS project ${projectId}. Choose its folder in SPS Desktop before this Agent runs.`);
+  if ((projectId || workspaceSourceId) && (!configured || !configured.trim())) {
+    if (workspaceSourceId) {
+      throw new Error(`Workspace Source ${workspaceSourceId} is not available to this Member Node. The Host must configure an SPS shared source folder before this runtime runs.`);
+    }
+    throw new Error(`SPS project ${projectId} is not available to this Member Node. The Owner Host must configure an SPS shared project folder before this Agent runs.`);
   }
   if (!configured || !configured.trim()) {
     throw new Error("No local workspace is configured for this SPS project. Set a default workspace folder in SPS Desktop.");
   }
-  const workspace = path.resolve(configured.trim());
-  const info = await fs.stat(workspace).catch(() => null);
+  const resolvePath = options.resolvePath ?? path.resolve;
+  const stat = options.stat ?? fs.stat;
+  const workspace = resolvePath(configured.trim());
+  const info = await stat(workspace).catch(() => null);
   if (!info?.isDirectory()) throw new Error(`Configured workspace is not a directory: ${workspace}`);
   return workspace;
 }
@@ -346,8 +395,14 @@ export async function executeSpsNodeCommand({
   sessionCookie,
   profile,
   resolveInvocation = resolveSpsNodeInvocation,
+  resolveWorkspace = resolveSpsNodeWorkspace,
+  openWorkspaceSourceRoute = openSpsWorkspaceSourceRoute,
+  claimWorkspaceSourceRoute = claimSpsWorkspaceSourceRoute,
   checkCommandLease = checkSpsNodeCommandLease,
+  appendCommandEvent = appendSpsNodeCommandEvent,
+  completeCommand = completeSpsNodeCommand,
   hostEnvironment = process.env,
+  marketplaceMcpRuntime = null,
 }) {
   assertSpsNodeCommandRuntime(command);
   const cancellationGeneration = commandCancellationGeneration;
@@ -357,7 +412,7 @@ export async function executeSpsNodeCommand({
     for (const body of outputChunks(raw)) {
       if (!body) continue;
       const eventSequence = ++sequence;
-      outputQueue = outputQueue.then(() => appendSpsNodeCommandEvent({
+      outputQueue = outputQueue.then(() => appendCommandEvent({
         hubUrl,
         nodeId,
         identity,
@@ -381,18 +436,49 @@ export async function executeSpsNodeCommand({
   let leaseCheckInFlight = false;
   let leaseCancellationError = null;
   let lastLeaseConfirmedAt = Date.now();
+  let hostProjectShareSession = null;
   const activeRun = { child: null, cancellationError: null };
   activeCommands.set(command.id, activeRun);
   try {
     const prepared = await withCommandPreflightTimeout(async () => {
       throwIfCommandCancelled(activeRun, cancellationGeneration);
-      const workspace = await resolveSpsNodeWorkspace(command, profile);
+      const ownerHasLocalSource = typeof command.workspaceSourceId === "string"
+        && command.workspaceSourceId.trim()
+        && profile?.connectionKind === "owner-host"
+        && Array.isArray(profile?.workspaceSources)
+        && profile.workspaceSources.some((source) => source?.id === command.workspaceSourceId && typeof source?.sourcePath === "string" && source.sourcePath.trim());
+      const workspaceAccess = typeof command.workspaceSourceId === "string" && command.workspaceSourceId.trim() && !ownerHasLocalSource
+        ? await claimWorkspaceSourceRoute({
+          hubUrl,
+          nodeId,
+          sourceId: command.workspaceSourceId,
+          identity,
+          accessToken,
+          sessionCookie,
+        })
+        : command.workspaceAccess ?? null;
+      hostProjectShareSession = await openWorkspaceSourceRoute(
+        workspaceAccess,
+        identity?.transportPrivateKeyPem ?? null,
+        { expectedSharePath: command.cwdHint ?? null },
+      );
+      const workspace = hostProjectShareSession?.workspacePath
+        ? path.resolve(hostProjectShareSession.workspacePath)
+        : await resolveWorkspace(command, profile);
+      const workspaceInfo = await fs.stat(workspace).catch(() => null);
+      if (!workspaceInfo?.isDirectory()) {
+        throw new Error(`Configured workspace is not a directory: ${workspace}`);
+      }
       throwIfCommandCancelled(activeRun, cancellationGeneration);
       // The Hub process may be bound to localhost on its own computer. A member
       // Node must use the Hub URL it connected to, never that host-local address.
       const environment = {
-        ...buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
+        ...spsMarketplaceMcpRuntimeEnvironment(
+          marketplaceMcpRuntime,
+          buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
+        ),
         PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
+        SPS_WORKSPACE_PATH: workspace,
       };
       if (command.runtimeKind === "codex_cli") {
         environment.CODEX_HOME = await resolveSpsNodeCodexHome(command, hostEnvironment);
@@ -478,7 +564,7 @@ export async function executeSpsNodeCommand({
     if (leaseTimer) clearInterval(leaseTimer);
     leaseCancellationError ??= activeRun.cancellationError;
     await outputQueue;
-    await completeSpsNodeCommand({
+    await completeCommand({
       hubUrl,
       nodeId,
       identity,
@@ -498,7 +584,7 @@ export async function executeSpsNodeCommand({
     if (timeout) clearTimeout(timeout);
     if (leaseTimer) clearInterval(leaseTimer);
     await outputQueue.catch(() => undefined);
-    await completeSpsNodeCommand({
+    await completeCommand({
       hubUrl,
       nodeId,
       identity,
@@ -515,6 +601,7 @@ export async function executeSpsNodeCommand({
     }).catch(() => undefined);
     throw error;
   } finally {
+    await hostProjectShareSession?.close().catch(() => undefined);
     activeCommands.delete(command.id);
   }
 }

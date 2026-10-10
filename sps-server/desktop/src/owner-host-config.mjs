@@ -90,7 +90,7 @@ export function createSpsOwnerHostConfig({ vaultRoot, serverPort, databasePort, 
     },
     logging: { mode: "file", logDir: layout.logDir },
     server: {
-      deploymentMode: "local_trusted",
+      deploymentMode: "authenticated",
       exposure: "private",
       bind: "loopback",
       host: "127.0.0.1",
@@ -150,7 +150,7 @@ export function configureSpsOwnerHostPrivateTeamAccess(config, { hostname, now =
   };
 }
 
-export function configureSpsOwnerHostLocalOnly(config, { now = new Date() } = {}) {
+export function configureSpsOwnerHostAuthenticatedLocal(config, { now = new Date() } = {}) {
   const server = config?.server;
   if (!server?.port) throw new Error("SPS Owner Host config has no server port.");
   return {
@@ -158,7 +158,7 @@ export function configureSpsOwnerHostLocalOnly(config, { now = new Date() } = {}
     $meta: nextConfigMetadata(config, now),
     server: {
       ...server,
-      deploymentMode: "local_trusted",
+      deploymentMode: "authenticated",
       exposure: "private",
       bind: "loopback",
       host: "127.0.0.1",
@@ -170,6 +170,42 @@ export function configureSpsOwnerHostLocalOnly(config, { now = new Date() } = {}
       baseUrlMode: "auto",
       publicBaseUrl: undefined,
       disableSignUp: false,
+    },
+  };
+}
+
+export function rebaseSpsOwnerHostConfigPaths(config, { vaultRoot, now = new Date() } = {}) {
+  if (!config || typeof config !== "object") throw new Error("SPS Owner Host config is required.");
+  if (!vaultRoot) throw new Error("SPS Owner Host vault root is required.");
+  const layout = ownerHostVaultLayout(vaultRoot);
+  return {
+    ...config,
+    $meta: nextConfigMetadata(config, now),
+    database: {
+      ...(config.database ?? {}),
+      embeddedPostgresDataDir: layout.databaseDir,
+      backup: {
+        ...(config.database?.backup ?? {}),
+        dir: layout.backupDir,
+      },
+    },
+    logging: {
+      ...(config.logging ?? {}),
+      logDir: layout.logDir,
+    },
+    storage: {
+      ...(config.storage ?? {}),
+      localDisk: {
+        ...(config.storage?.localDisk ?? {}),
+        baseDir: layout.storageDir,
+      },
+    },
+    secrets: {
+      ...(config.secrets ?? {}),
+      localEncrypted: {
+        ...(config.secrets?.localEncrypted ?? {}),
+        keyFilePath: layout.secretsPath,
+      },
     },
   };
 }
@@ -203,7 +239,16 @@ export async function ensureSpsOwnerHostConfig({
   try {
     const raw = await fsApi.readFile(layout.configPath, "utf8");
     const config = parseExistingConfig(raw, layout.configPath);
-    return { config, layout, created: false };
+    if (config.server?.deploymentMode === "authenticated") {
+      return { config, layout, created: false };
+    }
+    // SPS Desktop no longer supports an anonymous local Core. Upgrade existing
+    // vaults in place while retaining their data, port, and storage layout.
+    const upgraded = configureSpsOwnerHostAuthenticatedLocal(config, { now });
+    const temporaryPath = `${layout.configPath}.${process.pid}.${Date.now()}.tmp`;
+    await fsApi.writeFile(temporaryPath, `${JSON.stringify(upgraded, null, 2)}\n`, "utf8");
+    await fsApi.rename(temporaryPath, layout.configPath);
+    return { config: upgraded, layout, created: false, upgraded: true };
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }

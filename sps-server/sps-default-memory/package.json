@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Bundled first-party memory provider for SPS Desktop Owner Host.",
-  "paperclipPlugin": {
+  "spsPlugin": {
     "manifest": "./dist/manifest.js"
   },
   "scripts": {

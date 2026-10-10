@@ -1,6 +1,6 @@
 export const SPS_SERVER_ACCESS_MODE = Object.freeze({
   UNCONFIGURED: "unconfigured",
-  LOCAL_TRUSTED: "local_trusted",
+  AUTHENTICATED_HOST: "authenticated_host",
   AUTHENTICATED_MEMBERSHIP: "authenticated_membership",
 });
 
@@ -12,10 +12,9 @@ export function resolveSpsServerAccess({ profile, teamAccess } = {}) {
 
   if (ownerHost && !teamProtected) {
     return {
-      mode: SPS_SERVER_ACCESS_MODE.LOCAL_TRUSTED,
+      mode: SPS_SERVER_ACCESS_MODE.AUTHENTICATED_HOST,
       dataOwner: "server",
       requiresMembership: false,
-      offlineCapable: true,
       serverRole: "host",
     };
   }
@@ -25,7 +24,6 @@ export function resolveSpsServerAccess({ profile, teamAccess } = {}) {
       mode: SPS_SERVER_ACCESS_MODE.AUTHENTICATED_MEMBERSHIP,
       dataOwner: "server",
       requiresMembership: true,
-      offlineCapable: false,
       serverRole: ownerHost ? "host" : "member",
     };
   }
@@ -34,7 +32,6 @@ export function resolveSpsServerAccess({ profile, teamAccess } = {}) {
     mode: SPS_SERVER_ACCESS_MODE.UNCONFIGURED,
     dataOwner: "server",
     requiresMembership: false,
-    offlineCapable: false,
     serverRole: "none",
   };
 }

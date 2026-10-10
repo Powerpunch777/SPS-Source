@@ -7,8 +7,13 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    uses: ./.github/workflows/sps-verify.yml
+    secrets: inherit
+
   package-pilot:
     name: Package unsigned Windows pilot installer
+    needs: verify
     runs-on: windows-latest
 
     steps:
@@ -24,7 +29,7 @@ jobs:
           cache-dependency-path: sps-server/desktop/package-lock.json
 
       - name: Install pinned pnpm for SPS Core
-        run: npm install --global pnpm@9.15.4
+        run: npm install --global pnpm@11.9.0
 
       - name: Install SPS Core dependencies
         working-directory: external/sps-core
@@ -41,6 +46,16 @@ jobs:
       - name: Install Desktop dependencies
         working-directory: sps-server/desktop
         run: npm ci
+
+      - name: Enforce SPS production dependency security policy
+        working-directory: sps-server/desktop
+        run: npm run audit:release
+
+      - name: Enforce SPS development dependency security policy
+        working-directory: sps-server/desktop
+        run: |
+          npm run audit:development
+          npm run docs:security:check
 
       - name: Verify Desktop tests
         working-directory: sps-server/desktop

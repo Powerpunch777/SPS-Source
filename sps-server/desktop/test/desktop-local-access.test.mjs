@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createSpsDesktopAccessToken,
+  isSpsDesktopTechnicalHostRequest,
   isSpsDesktopWorkspaceRequest,
   SPS_DESKTOP_ACCESS_TOKEN_ENV,
   spsDesktopAccessEnvironment,
@@ -20,4 +21,48 @@ test("injects the desktop token only into the active local Owner Host origin", (
   assert.equal(isSpsDesktopWorkspaceRequest({ ...input, url: "http://127.0.0.1:31310/SPS/projects" }), true);
   assert.equal(isSpsDesktopWorkspaceRequest({ ...input, url: "https://redongames.com" }), false);
   assert.equal(isSpsDesktopWorkspaceRequest({ ...input, url: "http://127.0.0.1:31311/SPS/projects" }), false);
+});
+
+test("limits the Host proof to Core technical-team routes on the active Owner Host", () => {
+  const input = { workspaceOrigin: "http://127.0.0.1:31310" };
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/sps-members",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/invites",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/sps-workspace-sources",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/workspace-shell",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/plugins/install",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/instance/settings",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/instance/database-backups",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/cli-auth/me",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/issues",
+  }), false);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "https://remote.tailnet.ts.net/api/companies/company-1/sps-members",
+  }), false);
 });

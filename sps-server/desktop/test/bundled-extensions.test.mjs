@@ -7,7 +7,7 @@ import {
   isSpsRoomWorkplaneBundled,
 } from "../src/bundled-extensions.mjs";
 
-test("starts Plugin Discovery but does not choose Memory or a Team Workplane by default", () => {
+test("starts Plugin Builder but does not choose Memory or a Team Workplane by default", () => {
   assert.equal(isSpsPluginDiscoveryEnabled({}), true);
   assert.equal(isSpsDefaultMemoryEnabled({}), false);
   assert.equal(isSpsRoomWorkplaneBundled({}), false);

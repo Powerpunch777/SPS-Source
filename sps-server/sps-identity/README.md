@@ -1,38 +1,174 @@
 # SPS Identity
 
-> 이 패키지는 외부 Host·원격 협업 모드에서 사용할 수 있는 identity runtime이다. 개인·소규모 팀 기본 제품 흐름의 역할·접근 정책은 Core가 아니라 활성화된 정책 플러그인이 정의한다.
+SPS Identity is the central account plane for SPS Desktop. It stores only
+identity, device, OAuth state, one-time code, and hashed refresh-token records.
+It is not a Workspace, Room, Task, agent, attachment, or execution server.
 
-This Cloudflare Worker is SPS's central identity plane. It deliberately stores
-only identity, device, OAuth state, one-time code, and refresh-token records.
-It is not a workspace, Room, Task, agent, attachment, or execution server.
-
-## Local checks
+## Local verification
 
 ```powershell
 Set-Location sps-server/sps-identity
-npm install
+npm ci
 npm test
 ```
 
-## Provisioning
+## Environments
 
-1. Create a Google OAuth **Web application** with this redirect URI:
-   `https://auth.redongames.com/v1/oauth/google/callback`.
-2. Run `npm run keygen` once on the deployment machine. It writes the RSA
-   private key and public JWK under the ignored `.secrets/` folder. Set the
-   public JWK as `SPS_IDENTITY_PUBLIC_JWK`, then put the private PEM in the
-   Worker secret named `SPS_IDENTITY_PRIVATE_KEY_PEM`.
-3. Run the deployment helper below. It creates the D1 database if needed,
-   applies the migration, stores the secrets, and attaches
-   `auth.redongames.com` during the Worker deploy.
+Production and staging are deliberately isolated:
 
-## Safe deployment helper
+| Environment | Worker | D1 | URL |
+| --- | --- | --- | --- |
+| Staging | `sps-identity-staging` | `sps-identity-staging` | `https://auth-staging.redongames.com` |
+| Production | `sps-identity` | `sps-identity` | `https://auth.redongames.com` |
 
-After Wrangler is authenticated, run
-`./scripts/publish-identity.ps1 -GoogleClientId <web-client-id>`. The script
-prompts for the Google web-client secret without writing it to a file, uploads
-the RSA key material from the ignored `.secrets/` folder, applies the D1
-migration, and deploys the Worker. Finish with `npm run verify:deployment`.
+Google OAuth needs a Web application redirect URI for each environment.
+Production uses `https://auth.redongames.com/v1/oauth/google/callback`; staging
+uses `https://auth-staging.redongames.com/v1/oauth/google/callback`.
 
-Never commit the Google secret, RSA private key, D1 database contents, or a
-Desktop refresh token.
+For a new environment, generate one key pair exactly once. Existing Production
+keys must be restored from backup, not regenerated during an ordinary release.
+The generator refuses to overwrite either file. The ignored files live under
+`.secrets/staging/` and `.secrets/production/`; never reuse the staging key in
+Production:
+
+```powershell
+$env:SPS_IDENTITY_ENVIRONMENT = "staging"; npm run keygen
+$env:SPS_IDENTITY_ENVIRONMENT = "production"; npm run keygen
+```
+
+## Replay-key initialization and rotation
+
+Normal deployment never generates or uploads an AES-GCM replay key. Initialize
+each environment once with an explicit command:
+
+```powershell
+./scripts/initialize-replay-key.ps1 -Environment Staging -GenerateNewKey
+./scripts/initialize-replay-key.ps1 -Environment Production -GenerateNewKey
+```
+
+The initializer refuses to overwrite a remote key with the same version. To
+rotate, increase `SPS_IDENTITY_REPLAY_KEY_VERSION`, initialize that new version,
+deploy, wait longer than the 60-second replay TTL, and only then remove the old
+secret. Ciphertexts include their key version during the overlap. The
+initializer combines an exclusive local file lock with a unique D1
+initialization record, so a second computer cannot initialize the same version.
+If upload fails after that record is created, recovery is intentionally manual:
+inspect both Cloudflare Secrets and D1 before removing the incomplete record.
+
+## Staged deployment
+
+Deploy staging first with `-RolloutPhase Bridge`. This creates an immutable
+Cloudflare version with a unique Wrangler tag, routes 100% traffic to that
+version, records the Cloudflare deployment ID separately from the SPS release
+ID, and writes evidence. Only after that bridge is the active rollback floor
+may `-RolloutPhase Final` be used. Final verification rolls back only to the
+declared bridge version if its verification fails; it never falls back to the
+legacy Worker.
+
+```powershell
+./scripts/publish-identity.ps1 `
+  -Environment Staging `
+  -GoogleClientId <staging-web-client-id>
+```
+
+The command applies migrations to the staging D1, uploads a strict immutable
+Worker version, verifies health/JWKS/source revision, and exercises the
+direct-D1 token protocol plus OAuth endpoint configuration. It writes token-free
+evidence containing the exact D1 identity, deployment/version IDs, replay-key
+version, rollout phase, and Source revision. The staging hostname must resolve
+before this command can run.
+
+The 302 check is named `oauthConfigurationSmoke`; it is not full OAuth. A
+human completes a real Google sign-in separately. Set the exact values printed
+by the staging deployment, then run `npm run smoke:oauth`; the command opens the
+browser, exchanges and revokes the resulting session, and writes token-free,
+hashed-subject evidence. After the resulting refresh session is revoked, the
+staging Worker issues an RSA-signed receipt bound to its Source revision,
+Cloudflare version metadata, newest deployment ID, SPS release ID, account
+hash, and a fresh smoke nonce. Validation re-fetches staging health, the active
+Cloudflare deployment list, and JWKS; boolean-only JSON cannot pass. Production
+Bridge and Final deployment both require this full OAuth evidence in addition
+to the direct-D1 protocol evidence.
+
+Production requires recent evidence from the exact Source revision. First
+deploy the compatibility Bridge and keep its three IDs. Then deploy Final while
+declaring that exact Bridge as the only supported rollback target:
+
+```powershell
+./scripts/publish-identity.ps1 `
+  -Environment Production `
+  -GoogleClientId <production-web-client-id> `
+  -StagingEvidencePath <staging-evidence.json> `
+  -FullOAuthEvidencePath <staging-full-oauth-evidence.json> `
+  -StagingDeploymentId <staging-worker-deployment-id> `
+  -StagingVersionId <staging-worker-version-id> `
+  -StagingReleaseId <staging-sps-release-id> `
+  -RolloutPhase Bridge `
+  -ConfirmProduction
+
+./scripts/publish-identity.ps1 `
+  -Environment Production `
+  -GoogleClientId <production-web-client-id> `
+  -StagingEvidencePath <staging-evidence.json> `
+  -FullOAuthEvidencePath <staging-full-oauth-evidence.json> `
+  -StagingDeploymentId <staging-worker-deployment-id> `
+  -StagingVersionId <staging-worker-version-id> `
+  -StagingReleaseId <staging-sps-release-id> `
+  -RolloutPhase Final `
+  -BridgeVersionId <production-bridge-version-id> `
+  -BridgeCloudflareDeploymentId <production-bridge-deployment-id> `
+  -BridgeReleaseId <production-bridge-release-id> `
+  -ConfirmProduction
+```
+
+Normal deployment uploads the Google and RSA signing secrets additively but
+omits the versioned replay secret. Cloudflare therefore preserves the replay
+key initialized by `initialize-replay-key.ps1`; changing it requires a new
+version name and the explicit rotation procedure above.
+
+Migration `0003` keeps the old plaintext replay table for Worker rollback and
+adds the encrypted v2 table. Migration `0004` assigns a unique safe family root
+to every active legacy refresh token, so users are not logged out during the
+rollout. As a second safety net, an unbackfilled active token receives a family
+root during its first atomic rotation. An already-consumed token whose lineage
+cannot be reconstructed is rejected without deleting its row.
+Migration `0005` additively carries an optional OAuth evidence nonce and
+deployment binding through the Google callback into the one-time authorization
+code. Previous Workers ignore those nullable columns, preserving Bridge
+rollback compatibility.
+Migration `0006` additively stores the signed OAuth-evidence revoke receipt and
+its hashed idempotency key. Receipt persistence and refresh-family deletion
+happen in one D1 batch, so a caller can recover the exact receipt after a lost
+response without allowing the revoked token to mint another descendant.
+
+Finalization reads the legacy replay table and refuses to run until its real
+maximum expiry has elapsed. It does not accept a manual "TTL elapsed" checkbox:
+
+```powershell
+./scripts/finalize-identity-v2.ps1 `
+  -StagingEvidencePath <staging-evidence.json> `
+  -ProductionDeploymentId <production-worker-deployment-id> `
+  -ProductionVersionId <production-worker-version-id> `
+  -ProductionReleaseId <production-sps-release-id>
+```
+
+Finalization removes only consumed legacy token rows and drained plaintext
+replay rows. Active migrated sessions remain valid. A supported rollback may
+target only the recorded Bridge Worker; selecting the pre-Bridge Worker in the
+Cloudflare dashboard would disable refresh-token family protection.
+
+After finalization, combine the Production Final rollout, staging protocol
+smoke, and staging full-OAuth evidence with `npm run attest:release -- <four
+paths>`. The Stable publish workflow remotely rechecks both Workers, exact
+Cloudflare version traffic, and the finalized Production D1 before publishing.
+Both Workers must expose Cloudflare's `CF_VERSION_METADATA` binding, the Final
+version must receive exactly 100% of traffic, and Production/Staging JWKS must
+contain different RSA signing keys.
+
+Desktop retries a lost or truncated response once with the same high-entropy
+idempotency key. Identity returns structured refresh error codes so revoked,
+reused, expired, and legacy sessions are cleared immediately without parsing
+human-readable messages.
+
+Never commit Google secrets, RSA private keys, replay keys, D1 contents,
+staging evidence, or Desktop refresh tokens.

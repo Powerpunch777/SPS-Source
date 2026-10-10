@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -8,7 +8,14 @@ const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "ut
 const version = String(packageJson.version || "").trim();
 if (!version) throw new Error("Room Chat plugin package.json must declare a version.");
 
-const outputDirectory = resolve(root, "dist", `ui-v${version}`);
+const distDirectory = resolve(root, "dist");
+const outputDirectoryName = `ui-v${version}`;
+const outputDirectory = resolve(distDirectory, outputDirectoryName);
+await mkdir(distDirectory, { recursive: true });
+for (const entry of await readdir(distDirectory, { withFileTypes: true })) {
+  if (!entry.name.startsWith("ui-v") || entry.name === outputDirectoryName) continue;
+  await rm(resolve(distDirectory, entry.name), { recursive: true, force: true });
+}
 await mkdir(outputDirectory, { recursive: true });
 await build({
   entryPoints: [resolve(root, "src", "ui", "RoomWorkplane.jsx")],

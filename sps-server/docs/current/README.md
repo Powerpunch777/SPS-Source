@@ -1,22 +1,58 @@
 # SPS Current Product Documents
 
-Current compatibility contract: [PLUGIN-COMPATIBILITY-AND-UPDATES.md](PLUGIN-COMPATIBILITY-AND-UPDATES.md).
+## Start here
 
-이 폴더만 SPS의 현재 제품 결정을 설명한다. 루트의 과거 구현 로그, Paperclip 호환 기록,
-특정 게임 프로젝트 기록은 제품 계약이 아니다.
-
-| 문서 | 내용 |
+| Need | Document |
 | --- | --- |
-| [PRODUCT-MODEL-ko.md](PRODUCT-MODEL-ko.md) | 제품 범위, 첫 Company, Core/Plugin 경계, 협업 확장 모델 |
-| [PLUGIN-DEVELOPER-PLATFORM-ko.md](PLUGIN-DEVELOPER-PLATFORM-ko.md) | 플러그인 제작자가 Core에서 받는 SDK와 개발 도구 |
-| [PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md](PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md) | 위험도 기반 업데이트, 데이터 마이그레이션, SDK 표준화 구현 계획 |
-| [ROADMAP.md](ROADMAP.md) | 제품 기반을 완성하기 위한 단계별 구현 계획·수용 기준·릴리스 게이트 |
-| [RELEASE-BASELINE-ko.md](RELEASE-BASELINE-ko.md) | 현재 Desktop/Core/Profile 지원 조합과 배포·롤백 상태 |
+| Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
+| Exact Desktop, Core, SDK, and bundled-extension candidate | [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md) |
+| Production dependency audit gate and expiring exceptions | [DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md) |
+| Workspace Shell Provider, generic Dashboard, and generic Inbox contract | [WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md](WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md) |
+| Install SPS Desktop, sign in, create or join a Host, and choose a workflow | [GETTING-STARTED-ko.md](GETTING-STARTED-ko.md) |
+| Stable releases, installation-test previews, automatic updates, and uninstall behavior | [RELEASE-AND-PREVIEW-POLICY-ko.md](RELEASE-AND-PREVIEW-POLICY-ko.md) |
+| Export scope, retained data, recovery limits, and Host transfer preparation | [DATA-AND-RECOVERY-ko.md](DATA-AND-RECOVERY-ko.md) |
+| A concise product introduction for demos and feedback meetings | [MEETING-BRIEF-ko.md](MEETING-BRIEF-ko.md) |
 
-## 문서 원칙
+## Maintainers and plugin authors
 
-- 제품 규칙을 바꾸면 이 폴더의 관련 문서를 같은 변경에서 갱신한다.
-- 구현되기 전의 내용은 `목표` 또는 `계획`이라고 명시한다.
-- 플러그인 소스 안의 `README`와 템플릿은 해당 플러그인의 개발 문서다. 제품 전체의 기본 동작으로 해석하지 않는다.
-- 과거 설계와 실험 기록은 Git 이력에서 확인한다. 현재 제품 문서에 과거 계약을 중복 보존하지 않는다.
-- 외부 관찰과 준비도 평가는 `../reviews`에 분리한다. 평가는 제품 계약을 바꾸지 않는다.
+- [PLUGIN-COMPATIBILITY-AND-UPDATES.md](PLUGIN-COMPATIBILITY-AND-UPDATES.md):
+  Desktop, Plugin API, and Extension Profile compatibility rules.
+- [CORE-PLUGIN-RUNTIME-CONTRACT.md](CORE-PLUGIN-RUNTIME-CONTRACT.md):
+  workflow-neutral Core primitives.
+- [WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md](WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md):
+  shared Core work surfaces and plugin contribution boundaries.
+- [PLUGIN-DEVELOPER-PLATFORM-ko.md](PLUGIN-DEVELOPER-PLATFORM-ko.md):
+  authoring-platform design. The public hands-on toolkit lives in
+  [`sps-plugin-sdk`](https://github.com/Powerpunch777/sps-plugin-sdk).
+- [PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md](PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md):
+  staged Core completion plan for the public Runtime SDK, Developer Mode,
+  Preview, Diagnostics, Core Marketplace Assistant, Plugin Builder, and
+  reference-plugin E2E.
+- [WORKSPACE-PLUGIN-ACTIVATION.md](WORKSPACE-PLUGIN-ACTIVATION.md):
+  Host installation versus Workspace activation.
+- [AGENT-RUNTIME-PACKS.md](AGENT-RUNTIME-PACKS.md): optional runtime-pack
+  delivery and verification.
+- [PAPERCLIP-COMPATIBILITY-MIGRATION.md](PAPERCLIP-COMPATIBILITY-MIGRATION.md):
+  quarantine and phased removal of internal compatibility names without
+  breaking existing Vaults or plugins.
+
+## Engineering evidence
+
+`CORE-COMPLETION-AUDIT.md`, `CORE-DESKTOP-E2E-AUDIT.md`, the baseline plan,
+the UI refresh plan, and the acceptance runbook are historical engineering
+evidence or test procedures. They are not the current candidate or product
+contract. When one conflicts with the current architecture,
+`PRODUCT-ARCHITECTURE-ko.md`, `CURRENT-CANDIDATE.md`, and
+`release/support-matrix.json` take precedence.
+
+## Documentation policy
+
+- Update related documents in the same change when a product rule changes.
+- Mark unfinished work as `planned` or `not implemented`.
+- `release/support-matrix.json` is the machine-readable source of truth for
+  the current development candidate. `CURRENT-CANDIDATE.md` is generated from
+  it and is checked by automated tests.
+- A README inside a plugin directory documents that plugin only; it does not
+  define an SPS-wide default workflow.
+- Use Git history or `docs/reviews` for historical evidence rather than
+  duplicating old contracts in current product documents.

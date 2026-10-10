@@ -1,189 +1,98 @@
-# SPS Plugin Platform Implementation Plan
+# SPS 플러그인 플랫폼 구현 계획
 
-Last updated: 2026-07-29
+최종 갱신: 2026-08-02
+기준 후보: historical snapshot SPS Desktop `0.4.104` (see `CURRENT-CANDIDATE.md` for the current candidate)
+상태: 1~8단계의 계약·패키징·자동 검증과 두 컴퓨터 물리 E2E 기준 통과. 공개 릴리스 게이트는 별도.
 
-## Purpose
+## 목표
 
-SPS Core must let a plugin author build a custom work environment without
-forcing a specific organization chart, task model, memory strategy, or
-development discipline. Core provides stable primitives and safety boundaries;
-plugins define the work model.
+SPS Core는 게임, 앱, 웹, 플러그인 개발처럼 서로 다른 작업 방식을 강제하지
+않는다. Core는 Desktop, Host/Member/Node, Runtime, Workspace Source, plugin
+lifecycle, 보안과 실행 기록을 제공하고, Room·Task·역할·메모리·승인·보고는
+플러그인이 정의한다.
 
-This plan turns the existing plugin runtime into a documented and testable
-platform. It does not add Room, Task, Lead, Worker, approval, or memory
-semantics to Core.
+Marketplace Assistant는 접근 가능한 AI adapter로 검색·비교·추천·제작 brief를
+돕는다. 설치나 lifecycle 변경은 수행하지 않는다. Plugin Builder는 외부 plugin
+프로젝트를 build·validate·test·preview·pack하고, 실제 설치는 Host가 설정 화면에서
+수동으로 한다.
 
-## Product Decisions
+## 1~8단계와 현재 상태
 
-- A Company can activate a different set of installed plugins from every other
-  Company.
-- Plugin installation, activation, update, disable, removal, and rollback are
-  explicit Host actions. An AI recommendation never performs a lifecycle
-  action by itself.
-- Core owns the technical safety boundary. A plugin owns the meaning of roles,
-  approvals, and workflow rules.
-- Host Owner is the only Core-level server owner. Plugin-defined access-control
-  plugins may define Viewer, Operator, Admin, or any other work role.
-- Windows Desktop is the first supported product surface. Host and Member use
-  one installer; the chosen connection flow determines the runtime role.
+### 1단계: 공개 Runtime SDK와 계약
 
-## Risk-Based Change Policy
+Profile 2.0, scoped primitive, typed tool, UI bridge, worker context, lifecycle,
+Source/Runtime/Run/Artifact 계약을 고정한다.
 
-Not every plugin update requires an interruption. SPS applies safeguards only
-when an action is difficult to reverse or can affect data, security, cost, or
-external systems.
+상태: 완료. SDK `146/146`, Profile 2.0 및 1.0 호환 검증 통과.
 
-| Change class | Examples | Required behavior |
-| --- | --- | --- |
-| Low risk | UI copy, styling, worker bug fix, new read-only view | Update can proceed normally. |
-| Review required | New plugin capability, new persistent-data migration, new secret binding, new external connector | Stop activation, show a review summary, and require an explicit Host approval. |
-| Strong confirmation | Data removal, export outside SPS, mass execution, paid external API action, plugin hard removal | Require an explicit confirmation, audit record, and the applicable backup or recovery reference. |
+### 2단계: Workspace Shell·Dashboard·Inbox 기반
 
-SPS does not permit destructive SQL plugin migrations in the first platform
-release. New database migrations may create, alter, insert, or backfill only
-inside the plugin namespace. Existing migration checksums can never change.
+Core shell과 범용 contribution 계약을 제공하되 Paperclip의 Room/Task 의미를
+Core에 다시 넣지 않는다. plugin이 필요하면 widget, inbox item, navigation을
+기여한다.
 
-## Current Platform Baseline
+상태: packaged Workspace와 baseline navigation 검증 통과. 업무 의미를 가진 화면은
+플러그인 범위로 남긴다.
 
-The current Core already has the following primitives:
+### 3단계: Developer Mode·Local Registry
 
-- signed package staging, package inspection, install, update, rollback, and
-  Company-scoped activation;
-- Plugin API, Extension Profile, and Desktop version compatibility checks;
-- manifest declarations, worker lifecycle, UI slots, typed Agent tools,
-  events, durable jobs, streams, and plugin logs;
-- scoped state, entities, artifacts, database namespaces, restricted SQL
-  migrations, and configuration records;
-- Agent, backend, node, local CLI, connector, and MCP integration paths;
-- encrypted Host-owned backup facilities and Desktop update/rollback support.
+외부 plugin 프로젝트의 build·validate·test·pack, source/output hash, stage,
+Preview와 Last Known Good를 제공한다.
 
-The gap is not raw capability. The missing work is to make the contracts
-predictable for third-party authors, make high-risk changes reviewable, and
-prove the whole path with repeatable tests.
+상태: packaged plugin Preview와 package 검증 통과.
 
-## Target Platform Contracts
+### 4단계: 격리 Plugin Preview
 
-### 1. Extension Profile
+production DB, secret, Source path와 분리된 Preview Host/Workspace에서 결과를
+확인하고 종료 시 임시 리소스를 정리한다.
 
-Extension Profile v1.1 will publish the stable manifest, capability, data
-scope, lifecycle, compatibility, and deprecation rules. It will describe the
-public SPS contract only; legacy Paperclip bridge fields remain compatibility
-details and are not recommended for new plugins.
+상태: packaged Plugin Preview 및 cleanup 통과.
 
-### 2. Plugin Data and Migrations
+### 5단계: Diagnostics·Test Kit
 
-Every plugin gets isolated state and, when declared, an isolated database
-namespace. The platform will add a read-only migration plan that reports:
+manifest, capability, worker/run/job/connector 상태와 fixture를 안전한 진단
+계약으로 제공한다.
 
-- pending migration file names and checksums;
-- whether the plugin already has persisted data;
-- the allowed SQL operation categories;
-- the old and new plugin versions; and
-- whether explicit Host approval and a fresh backup are required.
+상태: SDK와 Desktop 회귀에 포함되어 통과.
 
-A first installation may apply its initial namespace migration automatically:
-there is no prior plugin data to alter. An upgrade with pending migrations must
-remain `upgrade_pending` until the Host approves the reviewed plan. Approval
-must be bound to the exact target version and migration checksums so that it
-cannot be reused for another package.
+### 6단계: Workspace Job·Plugin Dependency
 
-For Registry-delivered updates, Core also pins the exact staged artifact ID,
-capability delta, and migration-plan hash in a `review_pending` record. The
-Host approval action must name that record. A newer Registry stage cannot
-silently replace the candidate currently being reviewed.
+grant, Node/Runtime 선택, 중복 실행 방지, 취소·retry·blocked·재시작 복구를
+Core가 기록하고 dependency 상태를 검증한다.
 
-### 3. Runs, Jobs, and External Tools
+상태: packaged Host plugin lifecycle 검증 통과.
 
-Core will standardize one execution record for Agent, CLI, local AI, API, and
-MCP calls: request, node, tool, progress, artifacts, cost metadata, outcome,
-cancellation, and retry history. Workflow plugins may group these records into
-their own Task or Room models, but Core will not assign workflow meaning.
+### 7단계: Marketplace Assistant·Plugin Builder
 
-### 4. Secrets and Connectors
+Core Marketplace는 검증된 catalog를 키워드·카테고리·호환성·검증 상태로 검색한다.
+Assistant는 자연어 검색과 추천을 호출하되 plugin 상태를 변경하지 않는다. Builder는
+제작과 Preview까지만 담당한다.
 
-Plugins declare required connections. Core resolves encrypted secret references
-and returns a scoped connection handle, never a reusable raw secret. Connector
-health, expiry, user consent, and audit records are common platform behavior.
+상태: 검색/추천, Builder, package 및 Host 수동 lifecycle 경계 검증 통과.
 
-### 5. UI and Developer Experience
+### 8단계: Reference Plugin과 실제 두 컴퓨터 E2E
 
-The SDK will provide SPS UI primitives for tabs, side panels, settings forms,
-empty/loading/error states, run status, and destructive-action confirmation.
-The Test Kit will provide mock Company, Agent, Node, filesystem, event, and
-lifecycle environments. The CLI will validate a package before it can be
-staged or published.
+Host Source를 Host가 선택하고, 승인된 laptop Node가 grant를 통해 CLI를 실행하며,
+Host가 route를 철회하면 재실행이 거부되는지 확인한다. 양쪽 재시작 뒤에도 상태를
+복구해야 한다.
 
-## Delivery Sequence
+상태: 완료. run `e0286388-cf8d-4acb-9890-40d8fce1edab`에서 laptop Agy CLI가 Host Source를 `Z:\\`로 사용하고 `SPS_WORKSPACE_PATH=Z:\\`를 통해 Host 파일 marker를 쓰고 읽었다. Source 회수 후 run `e5bec7a5-9324-4479-aea2-834d4dca5730`는 활성 transport route 없음으로 거부되었고 원본 해시는 유지되었다. 양쪽 재시작 후 Node·버전·플러그인·회수 상태가 복구되었다.
 
-### Phase A: Safe Update Foundation
+## 현재 증거
 
-1. Add a read-only pending-migration inspection API to Core.
-2. Classify upgrade risk from new capabilities, pending migrations, secrets,
-   and connector changes.
-3. Keep an upgraded plugin in `upgrade_pending` when review is required.
-4. Require a checksum-bound data-migration approval before activating a
-   reviewed update.
-5. Require Desktop to create and record a fresh Host backup before granting
-   data-migration approval.
-6. Add audit events and rollback guidance for every decision.
+- Historical snapshot (`0.4.104`): Desktop 테스트 `261/261` 통과, exit 0
+- desktop-node 테스트 `39/39` 통과
+- 공개 Plugin SDK 테스트 `146/146` 통과
+- Historical snapshot (`0.4.104`): 패키징 완료 및 Host/main, Member/laptop 설치 완료
+- Installer SHA256 `B58E7EAE15884D4E9B052ED3A15A9B43B340CB83DCAE1EE0D1A71261C974C2C1`, size `255265752`
+- 양쪽 app.asar SHA256 `2ECC983D650BBBB51798762A1A4AAFB6B8096AE5073C251CD33FB7C66E34EFEC`
+- packaged bootstrap, Workspace, Plugin Preview, Host plugin lifecycle 통과
+- 물리 Host Source → laptop Agy CLI 편집, revoke denial, restart recovery 통과
 
-Acceptance: a plugin with a new migration cannot start until the Host has
-reviewed the exact migration plan and a backup reference. A UI-only update
-continues without this interruption.
+## 완료 판정
 
-### Phase B: Stable Authoring Contract
-
-1. Publish Extension Profile v1.1 and SDK types.
-2. Freeze capability names, data scopes, lifecycle states, and compatibility
-   behavior.
-3. Add deprecation and Core/Desktop upgrade policy.
-4. Add a public conformance suite and one reference plugin.
-
-Acceptance: an external author can run `init`, `validate`, `test`, `pack`,
-and local publish with no SPS source checkout.
-
-### Phase C: Execution, Secrets, and Observability
-
-1. Complete the neutral Run contract across Agent, CLI, API, and MCP calls.
-2. Finish scoped connector and Vault-handle lifecycle support.
-3. Add a common diagnostics surface for plugin health, jobs, runs, logs,
-   compatibility, and pending reviews.
-
-Acceptance: a plugin can explain why a run, connector, job, or activation is
-blocked without exposing secrets or relying on product-specific UI.
-
-### Phase D: UI Kit and Official Examples
-
-1. Release reusable SPS UI primitives.
-2. Build the Plugin Discovery & Builder reference plugin on the public SDK.
-3. Build an Access Control reference plugin and a minimal Team Workplane
-   reference plugin.
-4. Provide Game, Web, App, and Plugin-development starter packs as optional
-   plugins or templates, never Core defaults.
-
-Acceptance: an author can copy an example, change its workflow model, and
-ship a package without modifying SPS Core.
-
-### Phase E: Product-Level Verification
-
-1. Run Core, SDK, Desktop, and packaged Owner Host tests.
-2. Test a real Host and Member Desktop pair: sign-in, invite, approval, node
-   registration, project-source mapping, Agent execution, revocation, and
-   restart recovery.
-3. Test plugin install, Company activation, safe update, rejected review,
-   approved migration, rollback, and backup restoration in the Desktop UI.
-4. Publish a support matrix, migration guide, and release checklist.
-
-## Explicit Non-Goals for This Plan
-
-- A public paid marketplace, payment, refunds, ratings, and community
-  publishing are not first-release features.
-- Core does not choose which Agent, plugin, or workflow a user should use.
-- Core does not silently install, activate, update, or remove a plugin.
-- Core does not make plugin roles or work approvals universal product rules.
-
-## Implementation Order Now
-
-Work starts with Phase A. The first code change is migration-plan inspection
-and upgrade gating. It is the narrowest change that protects persistent plugin
-data while preserving normal low-risk updates.
+자동 테스트와 패키징뿐 아니라 8단계의 실제 Source 실행·철회·재시작 결과도
+관찰 기록되었다. 따라서 1~8단계의 제품 구현은 완료로 표시한다. 남은 항목은
+베타 사용성 점검과 공개 릴리스 서명·배포 게이트이며, 세부 절차는
+[`CORE-DESKTOP-E2E-AUDIT.md`](CORE-DESKTOP-E2E-AUDIT.md)와
+[`BETA-ACCEPTANCE-RUNBOOK-ko.md`](BETA-ACCEPTANCE-RUNBOOK-ko.md)에 따른다.

@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildSpsIdentityAuthorizationUrl,
+  createSpsIdentityIdempotencyKey,
   createSpsIdentityPkce,
+  DEFAULT_SPS_DESKTOP_SIGN_IN_TIMEOUT_MS,
+  isExpiredSpsDesktopRefreshToken,
   isSpsIdentityUrl,
+  refreshSpsDesktopIdentity,
   startSpsDesktopIdentitySignIn,
 } from "../src/sps-identity-account.mjs";
+
+test("keeps the human Desktop sign-in callback alive for fifteen minutes", () => {
+  assert.equal(DEFAULT_SPS_DESKTOP_SIGN_IN_TIMEOUT_MS, 15 * 60 * 1000);
+});
 
 test("builds a central SPS Identity authorization request with Desktop PKCE", () => {
   const pkce = createSpsIdentityPkce((size) => Buffer.alloc(size, 4));
@@ -22,10 +30,44 @@ test("builds a central SPS Identity authorization request with Desktop PKCE", ()
   assert.equal(url.searchParams.get("device_id"), "desktop-device-1234");
 });
 
+test("creates a high-entropy SPS Identity idempotency key", () => {
+  assert.equal(createSpsIdentityIdempotencyKey((size) => Buffer.alloc(size, 9)).length, 43);
+});
+
 test("permits HTTPS identity services and loopback-only HTTP for development", () => {
   assert.equal(isSpsIdentityUrl("https://auth.redongames.com"), true);
   assert.equal(isSpsIdentityUrl("http://127.0.0.1:8787"), true);
   assert.equal(isSpsIdentityUrl("http://example.com"), false);
+});
+
+test("recognizes an expired SPS Desktop refresh token without treating unrelated failures as sign-out", () => {
+  assert.equal(isExpiredSpsDesktopRefreshToken(new Error("SPS sign-in could not finish: SPS refresh token is invalid or expired.")), true);
+  for (const code of [
+    "refresh_token_invalid",
+    "refresh_token_expired",
+    "refresh_token_reused",
+    "legacy_refresh_token",
+  ]) {
+    const failure = new Error("Localized or revised Identity message");
+    failure.code = code;
+    assert.equal(isExpiredSpsDesktopRefreshToken(failure), true);
+  }
+  assert.equal(isExpiredSpsDesktopRefreshToken(new Error("SPS Identity is temporarily unavailable.")), false);
+});
+
+test("preserves the structured Identity error code on refresh failure", async () => {
+  await assert.rejects(
+    refreshSpsDesktopIdentity({
+      identityUrl: "https://auth.redongames.com",
+      refreshToken: "refresh-token",
+      deviceId: "desktop-device-1234",
+      fetchImpl: async () => new Response(JSON.stringify({
+        error: "SPS refresh token reuse was detected. Sign in again.",
+        error_code: "refresh_token_reused",
+      }), { status: 401 }),
+    }),
+    (failure) => failure?.code === "refresh_token_reused" && isExpiredSpsDesktopRefreshToken(failure),
+  );
 });
 
 test("exchanges a one-time SPS code with its PKCE verifier", async () => {
@@ -55,4 +97,72 @@ test("exchanges a one-time SPS code with its PKCE verifier", async () => {
   assert.equal(requestBody.code, "sps-code");
   assert.equal(requestBody.device_id, "desktop-device-1234");
   assert.match(requestBody.code_verifier, /^[A-Za-z0-9_-]+$/);
+  assert.match(requestBody.idempotency_key, /^[A-Za-z0-9_-]{43}$/);
+});
+
+test("bounds a stalled SPS Identity refresh request", async () => {
+  await assert.rejects(
+    refreshSpsDesktopIdentity({
+      identityUrl: "https://auth.redongames.com",
+      refreshToken: "refresh-token",
+      deviceId: "desktop-device-1234",
+      timeoutMs: 1,
+      fetchImpl: async (_url, options) => {
+        assert.ok(options.signal instanceof AbortSignal);
+        throw new DOMException("timed out", "TimeoutError");
+      },
+    }),
+    /SPS Identity request timed out/,
+  );
+});
+
+test("retries a lost refresh response once with the same idempotency key", async () => {
+  const requests = [];
+  const account = await refreshSpsDesktopIdentity({
+    identityUrl: "https://auth.redongames.com",
+    refreshToken: "refresh-token",
+    deviceId: "desktop-device-1234",
+    randomBytes: (size) => Buffer.alloc(size, 5),
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      if (requests.length === 1) throw new TypeError("response lost");
+      return new Response(JSON.stringify({
+        access_token: "next-access-token",
+        refresh_token: "next-refresh-token",
+        expires_in: 900,
+        account: { subject: "sps-user", email: "person@example.com", name: "SPS Person" },
+      }), { status: 200 });
+    },
+  });
+  assert.equal(account.refreshToken, "next-refresh-token");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].idempotency_key, requests[1].idempotency_key);
+});
+
+test("retries a truncated refresh response once with the same idempotency key", async () => {
+  const requests = [];
+  const account = await refreshSpsDesktopIdentity({
+    identityUrl: "https://auth.redongames.com",
+    refreshToken: "refresh-token",
+    deviceId: "desktop-device-1234",
+    randomBytes: (size) => Buffer.alloc(size, 6),
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      if (requests.length === 1) {
+        return new Response('{"access_token":"rotated-but-truncated"', {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        access_token: "next-access-token",
+        refresh_token: "next-refresh-token",
+        expires_in: 900,
+        account: { subject: "sps-user", email: "person@example.com", name: "SPS Person" },
+      }), { status: 200 });
+    },
+  });
+  assert.equal(account.refreshToken, "next-refresh-token");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].idempotency_key, requests[1].idempotency_key);
 });

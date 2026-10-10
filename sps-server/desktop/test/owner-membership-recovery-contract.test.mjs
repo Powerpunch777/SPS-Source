@@ -16,6 +16,7 @@ test("repairs a stale private-team Owner membership through a narrow local proof
   assert.match(main, /headers\[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER\] = ownerHostDesktopAccessToken/);
   assert.match(main, /async function listCurrentOwnerIdentityCompanies\(\)/);
   assert.match(main, /async function ensurePrivateTeamOwnerMembership\(\)/);
+  assert.match(main, /await reconcileSpsTailscaleServe\(\{[\s\S]*?hostname: state\.teamAccess\.hostname/);
   assert.match(main, /humanRole: "owner"/);
   assert.match(main, /SPS Desktop Owner membership recovery\./);
   assert.match(main, /await acceptSpsIdentityInvite\(state\.teamAccess\.url, recoveryInvitation\.token\)/);

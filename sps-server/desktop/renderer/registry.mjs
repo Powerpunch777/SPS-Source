@@ -2,6 +2,12 @@ const $ = (selector) => document.querySelector(selector);
 
 let sources = [];
 let selectedSourceId = null;
+let developerProjects = [];
+let selectedDeveloperFolder = null;
+let previewDiagnostics = [];
+let previewDiagnosticsWarning = null;
+let previewState = { active: false };
+const developerInspections = new Map();
 const requestedSourceId = new URLSearchParams(window.location.search).get("source");
 
 function setNotice(message = "", error = false) {
@@ -26,6 +32,104 @@ function sourceTrustLabel(source) {
 
 function releaseLabel(release) {
   return release.catalog?.displayName || release.pluginId;
+}
+
+function shortHash(value) {
+  return typeof value === "string" ? `${value.slice(0, 10)}...` : "Not available";
+}
+
+function developerGateMarkup(candidate) {
+  if (!candidate) return '<span class="developer-status idle">Not checked</span>';
+  return ["build", "validate", "test"].map((command) => {
+    const gate = candidate.gates?.[command];
+    const label = command[0].toUpperCase() + command.slice(1);
+    return `<span class="developer-status ${gate?.success ? "passed" : "failed"}">${escapeHtml(label)} ${gate?.success ? "passed" : "failed"}</span>`;
+  }).join("");
+}
+
+function developerConformanceMarkup(candidate) {
+  const report = candidate?.conformance;
+  if (!report) return "Not available";
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  const passed = checks.filter((check) => check.status === "passed").length;
+  return `<span class="developer-status ${report.status === "passed" ? "passed" : "failed"}">${escapeHtml(report.status)}</span> ${passed}/${checks.length} checks`;
+}
+
+function renderDeveloperProjects() {
+  const list = $("#developer-project-list");
+  if (developerProjects.length === 0) {
+    list.innerHTML = '<p class="empty-state">No external plugin projects are connected.</p>';
+    return;
+  }
+  list.innerHTML = developerProjects.map((project) => {
+    const inspection = developerInspections.get(project.id);
+    const changed = inspection?.changedSinceCandidate;
+    const lastKnownGood = project.lastKnownGood;
+    return `
+      <article class="developer-card">
+        <div class="developer-card-heading">
+          <div>
+            <span class="release-badge development">Development</span>
+            <h2>${escapeHtml(project.displayName)}</h2>
+            <p>${escapeHtml(project.sourceLabel)}</p>
+          </div>
+          <button class="remove-developer-project" type="button" data-project-id="${escapeHtml(project.id)}" title="Disconnect project">Disconnect</button>
+        </div>
+        <div class="developer-gates">${developerGateMarkup(project.candidate)}</div>
+        <dl class="developer-metadata">
+          <div><dt>Source</dt><dd><code>${escapeHtml(shortHash(inspection?.current?.sourceFingerprint ?? project.candidate?.sourceFingerprint))}</code>${changed === true ? '<span class="changed">Changed</span>' : changed === false ? '<span class="clean">Current</span>' : ""}</dd></div>
+          <div><dt>Output</dt><dd><code>${escapeHtml(shortHash(inspection?.current?.outputFingerprint ?? project.candidate?.outputFingerprint))}</code></dd></div>
+          <div><dt>Conformance</dt><dd>${developerConformanceMarkup(project.candidate)}</dd></div>
+          <div><dt>Last known good</dt><dd>${lastKnownGood ? `<code>${escapeHtml(lastKnownGood.deployment.pluginId)} v${escapeHtml(lastKnownGood.deployment.version)}</code>` : "None"}</dd></div>
+        </dl>
+        <div class="developer-actions">
+          <button class="secondary inspect-developer-project" type="button" data-project-id="${escapeHtml(project.id)}">Check changes</button>
+          <button class="secondary run-developer-gates" type="button" data-project-id="${escapeHtml(project.id)}">Build &amp; test</button>
+          <button class="primary apply-developer-candidate" type="button" data-project-id="${escapeHtml(project.id)}" ${project.candidate?.promotable && changed !== true ? "" : "disabled"}>Open isolated preview</button>
+          ${lastKnownGood ? `<button class="secondary rollback-developer-project" type="button" data-project-id="${escapeHtml(project.id)}">Open last good preview</button>` : ""}
+          ${lastKnownGood ? `<button class="secondary reload-developer-ui" type="button" data-project-id="${escapeHtml(project.id)}">Reload UI</button>` : ""}
+          ${lastKnownGood ? `<button class="secondary restart-developer-worker" type="button" data-project-id="${escapeHtml(project.id)}">Restart worker</button>` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderPreviewDiagnostics() {
+  const list = $("#preview-diagnostics-list");
+  if (previewDiagnosticsWarning) {
+    list.innerHTML = `<div class="error-state"><strong>Preview diagnostics unavailable.</strong><p>${escapeHtml(previewDiagnosticsWarning)}</p></div>`;
+    return;
+  }
+  if (previewDiagnostics.length === 0) {
+    list.innerHTML = '<p class="empty-state">No Development diagnostics have been recorded.</p>';
+    return;
+  }
+  list.innerHTML = previewDiagnostics.map((event) => `
+    <article class="preview-diagnostic ${escapeHtml(event.level)}">
+      <span class="preview-diagnostic-level">${escapeHtml(event.level)}</span>
+      <code>${escapeHtml(event.origin)} / ${escapeHtml(event.category)} / ${escapeHtml(event.code)}</code>
+      <p>${escapeHtml(event.message)}</p>
+      <time datetime="${escapeHtml(event.occurredAt)}">${escapeHtml(new Date(event.occurredAt).toLocaleTimeString())}</time>
+    </article>
+  `).join("");
+}
+
+function renderPreviewEnvironment() {
+  const fixture = previewState.fixture;
+  const active = previewState.active === true && fixture;
+  $("#preview-environment-status").textContent = active
+    ? `${previewState.buildId} is isolated from the production Workspace.`
+    : "Open an isolated Preview to test plugin UI states.";
+  $("#preview-role").value = fixture?.role ?? "host";
+  $("#preview-viewport").value = fixture?.viewport ?? "desktop";
+  $("#preview-ui-state").value = fixture?.uiState ?? "live";
+  $("#preview-node").checked = fixture?.fixtures?.node?.enabled ?? true;
+  $("#preview-runtime").checked = fixture?.fixtures?.runtime?.enabled ?? true;
+  $("#preview-source").checked = fixture?.fixtures?.source?.enabled ?? true;
+  for (const control of document.querySelectorAll("#preview-environment-form select, #preview-environment-form input, #apply-preview-environment")) {
+    control.disabled = !active;
+  }
 }
 
 function renderSources() {
@@ -57,7 +161,10 @@ function renderReleases(report) {
     list.innerHTML = '<p class="empty-state">This Registry has no verified releases.</p>';
     return;
   }
-  list.innerHTML = report.releases.map((release) => {
+  const orderedReleases = [...report.releases].sort((left, right) =>
+    String(right.version).localeCompare(String(left.version), undefined, { numeric: true, sensitivity: "base" }),
+  );
+  list.innerHTML = orderedReleases.map((release) => {
     const documentation = release.catalog?.documentationUrl
       ? `<a class="documentation-link" href="${escapeHtml(release.catalog.documentationUrl)}" target="_blank" rel="noreferrer">Open documentation</a>`
       : "";
@@ -132,6 +239,31 @@ async function loadSources() {
   renderSources();
 }
 
+async function loadDeveloperProjects() {
+  developerProjects = await window.spsRegistry.listDeveloperProjects();
+  for (const projectId of [...developerInspections.keys()]) {
+    if (!developerProjects.some((project) => project.id === projectId)) developerInspections.delete(projectId);
+  }
+  renderDeveloperProjects();
+}
+
+async function loadPreviewDiagnostics() {
+  const result = await window.spsRegistry.listPreviewDiagnostics({
+    limit: 80,
+    origin: $("#preview-diagnostics-origin").value || undefined,
+    category: $("#preview-diagnostics-category").value || undefined,
+    level: $("#preview-diagnostics-level").value || undefined,
+  });
+  previewDiagnostics = Array.isArray(result?.events) ? result.events : [];
+  previewDiagnosticsWarning = result?.warning ?? null;
+  renderPreviewDiagnostics();
+}
+
+async function loadPreviewState() {
+  previewState = await window.spsRegistry.getPreviewState();
+  renderPreviewEnvironment();
+}
+
 async function inspectSelectedSource() {
   if (!selectedSourceId) return;
   $("#release-list").innerHTML = '<p class="empty-state">Verifying Registry index and release signatures...</p>';
@@ -144,6 +276,83 @@ async function inspectSelectedSource() {
 
 $("#refresh-sources").addEventListener("click", () => loadSources().catch((error) => setNotice(error.message, true)));
 $("#refresh-stages").addEventListener("click", () => loadStages());
+$("#refresh-developer-projects").addEventListener("click", () => loadDeveloperProjects().catch((error) => setNotice(error.message, true)));
+$("#refresh-preview-diagnostics").addEventListener("click", () => loadPreviewDiagnostics().catch((error) => setNotice(error.message, true)));
+for (const control of document.querySelectorAll("#preview-diagnostics-origin, #preview-diagnostics-category, #preview-diagnostics-level")) {
+  control.addEventListener("change", () => loadPreviewDiagnostics().catch((error) => setNotice(error.message, true)));
+}
+$("#refresh-preview-environment").addEventListener("click", () => loadPreviewState().catch((error) => setNotice(error.message, true)));
+$("#preview-environment-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!previewState.active || !previewState.fixture) return;
+  const currentFixtures = previewState.fixture.fixtures;
+  const toggle = (name, enabled) => ({
+    enabled,
+    ...(currentFixtures?.[name]?.payload ? { payload: currentFixtures[name].payload } : {}),
+  });
+  try {
+    previewState = await window.spsRegistry.updatePreviewEnvironment({
+      projectId: previewState.projectId,
+      fixture: {
+        role: $("#preview-role").value,
+        viewport: $("#preview-viewport").value,
+        uiState: $("#preview-ui-state").value,
+        fixtures: {
+          node: toggle("node", $("#preview-node").checked),
+          runtime: toggle("runtime", $("#preview-runtime").checked),
+          source: toggle("source", $("#preview-source").checked),
+        },
+      },
+    });
+    renderPreviewEnvironment();
+    await loadPreviewDiagnostics();
+    setNotice("Preview environment saved. The isolated Preview reloaded with the new fixture.");
+  } catch (error) {
+    setNotice(error instanceof Error ? error.message : String(error), true);
+  }
+});
+$("#clear-preview-diagnostics").addEventListener("click", async () => {
+  if (!window.confirm("Clear all saved plugin Preview diagnostics?")) return;
+  try {
+    await window.spsRegistry.clearPreviewDiagnostics();
+    await loadPreviewDiagnostics();
+    setNotice("Plugin Preview diagnostics cleared.");
+  } catch (error) {
+    setNotice(error instanceof Error ? error.message : String(error), true);
+  }
+});
+$("#choose-developer-folder").addEventListener("click", async () => {
+  try {
+    const selected = await window.spsRegistry.chooseDeveloperProjectFolder();
+    if (!selected) return;
+    selectedDeveloperFolder = selected;
+    $("#developer-source-path").value = selected.sourceLabel;
+    if (!$("#developer-display-name").value) $("#developer-display-name").value = selected.sourceLabel;
+  } catch (error) {
+    setNotice(error instanceof Error ? error.message : String(error), true);
+  }
+});
+$("#developer-project-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!selectedDeveloperFolder) {
+    setNotice("Choose an external plugin project folder first.", true);
+    return;
+  }
+  try {
+    await window.spsRegistry.connectDeveloperProject({
+      sourcePath: selectedDeveloperFolder.sourcePath,
+      sourceLabel: selectedDeveloperFolder.sourceLabel,
+      displayName: $("#developer-display-name").value.trim() || selectedDeveloperFolder.sourceLabel,
+    });
+    selectedDeveloperFolder = null;
+    form.reset();
+    await loadDeveloperProjects();
+    setNotice("Development project connected. SPS has not built or executed it.");
+  } catch (error) {
+    setNotice(error instanceof Error ? error.message : String(error), true);
+  }
+});
 $("#choose-local-folder").addEventListener("click", async () => {
   try {
     const selected = await window.spsRegistry.chooseLocalSource();
@@ -245,7 +454,86 @@ $("#stage-list").addEventListener("click", async (event) => {
   }
 });
 
-await Promise.all([loadSources(), loadStages()]);
+$("#developer-project-list").addEventListener("click", async (event) => {
+  const projectId = event.target.closest("[data-project-id]")?.dataset.projectId;
+  if (!projectId) return;
+  const button = event.target.closest("button");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    if (button.classList.contains("inspect-developer-project")) {
+      const inspection = await window.spsRegistry.inspectDeveloperProject({ projectId });
+      developerInspections.set(projectId, inspection);
+      const index = developerProjects.findIndex((project) => project.id === projectId);
+      if (index !== -1) developerProjects[index] = inspection.project;
+      renderDeveloperProjects();
+      setNotice(inspection.changedSinceCandidate ? "This project changed after its last gate run." : "Source and output still match the verified candidate.");
+      return;
+    }
+    if (button.classList.contains("run-developer-gates")) {
+      const gateResult = await window.spsRegistry.runDeveloperGates({ projectId });
+      const index = developerProjects.findIndex((project) => project.id === projectId);
+      if (index !== -1) developerProjects[index] = gateResult.project;
+      developerInspections.delete(projectId);
+      renderDeveloperProjects();
+      const failed = gateResult.reports.filter((report) => !report.success);
+      setNotice(failed.length === 0
+        ? "Build, validation, and lifecycle tests passed for one stable source tuple."
+        : `${failed.map((report) => report.command).join(", ")} did not pass. The active plugin was not changed.`,
+      failed.length > 0);
+      return;
+    }
+    if (button.classList.contains("apply-developer-candidate")) {
+      if (!window.confirm("Open this exact verified build in an isolated Preview? Production Workspace data and plugins will not be changed.")) return;
+      const applied = await window.spsRegistry.applyDeveloperCandidate({ projectId });
+      const index = developerProjects.findIndex((project) => project.id === projectId);
+      if (index !== -1) developerProjects[index] = applied.project;
+      developerInspections.delete(projectId);
+      await loadStages();
+      renderDeveloperProjects();
+      await loadPreviewState();
+      await loadPreviewDiagnostics();
+      setNotice(`${applied.plugin.pluginKey} v${applied.plugin.version} is running in an isolated Preview and is now the last known good development build.`);
+      return;
+    }
+    if (button.classList.contains("rollback-developer-project")) {
+      if (!window.confirm("Open the last known good build in its isolated Preview?")) return;
+      const restored = await window.spsRegistry.rollbackDeveloperProject({ projectId });
+      const index = developerProjects.findIndex((project) => project.id === projectId);
+      if (index !== -1) developerProjects[index] = restored.project;
+      developerInspections.delete(projectId);
+      renderDeveloperProjects();
+      await loadPreviewState();
+      await loadPreviewDiagnostics();
+      setNotice(`${restored.plugin.pluginKey} v${restored.plugin.version} opened in its isolated Preview.`);
+      return;
+    }
+    if (button.classList.contains("reload-developer-ui")) {
+      await window.spsRegistry.reloadDeveloperUi({ projectId });
+      setNotice("The SPS Workspace UI reloaded without restarting the plugin worker.");
+      return;
+    }
+    if (button.classList.contains("restart-developer-worker")) {
+      await window.spsRegistry.restartDeveloperWorker({ projectId });
+      await loadPreviewDiagnostics();
+      setNotice("The plugin worker restarted without replacing its verified UI build.");
+      return;
+    }
+    if (button.classList.contains("remove-developer-project")) {
+      if (!window.confirm("Disconnect this development project? SPS will not delete or modify its external source folder.")) return;
+      await window.spsRegistry.removeDeveloperProject({ projectId });
+      developerInspections.delete(projectId);
+      await loadDeveloperProjects();
+      setNotice("Development project disconnected. Its external files were not changed.");
+    }
+  } catch (error) {
+    setNotice(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+});
+
+await Promise.all([loadDeveloperProjects(), loadPreviewState(), loadPreviewDiagnostics(), loadSources(), loadStages()]);
 if (requestedSourceId && sources.some((source) => source.id === requestedSourceId)) {
   selectedSourceId = requestedSourceId;
   renderSources();
