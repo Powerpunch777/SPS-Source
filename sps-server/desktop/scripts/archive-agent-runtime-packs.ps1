@@ -11,6 +11,17 @@ function Assert-SafeSegment([string]$Value, [string]$Label) {
   }
 }
 
+function Get-ArchiveSha256([string]$ArchivePath) {
+  $stream = [System.IO.File]::OpenRead($ArchivePath)
+  $hasher = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $hasher.Dispose()
+    $stream.Dispose()
+  }
+}
+
 if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
   throw "Agent Runtime pack source directory was not found: $SourceRoot"
 }
@@ -49,7 +60,7 @@ Get-ChildItem -LiteralPath $SourceRoot -Directory | ForEach-Object {
       commands = @($manifest.commands.psobject.Properties.Name | Sort-Object)
       archive = $archiveName
       sizeBytes = (Get-Item -LiteralPath $archivePath).Length
-      sha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+      sha256 = Get-ArchiveSha256 $archivePath
     }
   }
 }

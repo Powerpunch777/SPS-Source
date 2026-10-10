@@ -7,7 +7,7 @@ The current candidate is `0.4.136` and remains `development-candidate`. It is no
 ## Candidate tuple
 
 - Desktop: `0.4.136`
-- Core: `ebccb44046dfa8ad09ebee163882a85295a2289e`
+- Core: `3f8a010fc7cc0af75d210ffdb5ec859aaf061574`
 - Plugin SDK: `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`)
 - Platform: Windows 10/11 x64
 - Remote transport: Tailscale `1.52.0` or later
@@ -56,13 +56,19 @@ claims about future registry advisories.
 
 ## Local validation
 
-- Desktop: 367/367 tests; Desktop Node: 39/39 tests.
+- Desktop: 368/368 tests; Desktop Node: 39/39 tests.
 - Core transport/catalog/auth configuration: 41/41; asset upload: 8/8.
 - MCP server source tests: 22/22; MCP connector: 8/8.
-- Core shard/workflow contracts: 7/7; all-workspace typecheck/build passed.
+- Core shard/workflow contracts: 8/8; portable asset copier: 2/2;
+  all-workspace typecheck/build passed on the patched dependency graph.
 - UI entry budget and compatibility namespace checks passed.
 - The asset fixture now loads its route graph in bounded setup before request
   assertions, avoiding cold-import timeouts and work leaking into the next test.
+- Windows temporary-path assertions compare canonical real paths, including
+  runner 8.3 aliases. Runtime pack ZIP hashes use a disposed .NET SHA-256 stream
+  and are checked against the exact archive bytes in a Windows subprocess test.
+- Core PR CI validates the committed lockfile instead of prohibiting changes,
+  regenerating an unreviewed graph, or replacing it with a CI artifact.
 - Initial retries and generated-dist MCP test discovery were not counted as
   successful source validation; only the corrected explicit commands above count.
 
@@ -96,7 +102,7 @@ The following are explicit release blockers, not completed code-test claims:
 - The exact candidate HEAD has not completed all nine Linux Core regression
   shards. Targeted Windows/Core checks and typecheck/build results do not
   substitute for the full Linux shard evidence.
-- Core `ebccb44046dfa8ad09ebee163882a85295a2289e` is still on Draft PR #26
+- Core `3f8a010fc7cc0af75d210ffdb5ec859aaf061574` is still on Draft PR #26
   and is not reachable from the Core `main` branch.
 
 Until these conditions have fresh evidence for the same candidate tuple,

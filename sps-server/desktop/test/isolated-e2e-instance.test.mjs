@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -38,7 +39,10 @@ test("fails closed when E2E isolation is enabled without a dedicated directory",
 test("accepts a real E2E directory below the operating-system temp folder", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "sps-e2e-user-data-test-"));
   try {
-    assert.equal(resolveSpsE2eUserDataDirectory({ enabled: true, configured: directory }), directory);
+    assert.equal(
+      resolveSpsE2eUserDataDirectory({ enabled: true, configured: directory }),
+      realpathSync.native(directory),
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
