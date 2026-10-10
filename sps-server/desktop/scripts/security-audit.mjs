@@ -100,6 +100,7 @@ export function findingsFromPnpmAudit(report, source = "core") {
 }
 
 const allowedSeverities = new Set(["critical", "high", "moderate", "low", "info"]);
+const allowedAuditScopes = new Set(["production", "full"]);
 
 function policyIdentity(entry) {
   return `${entry.source}\u0000${entry.advisoryId}\u0000${entry.module}`;
@@ -143,6 +144,13 @@ function validatePolicyEntries(entries, label, allowedSeveritySet) {
   for (const [index, entry] of entries.entries()) {
     const entryLabel = `${label}[${index}]`;
     if (!isRecord(entry)) throw new Error(`${entryLabel} must be an object.`);
+    if (entry.auditScopes !== undefined && (
+      !Array.isArray(entry.auditScopes) || entry.auditScopes.length === 0
+      || entry.auditScopes.some((scope) => !allowedAuditScopes.has(scope))
+      || new Set(entry.auditScopes).size !== entry.auditScopes.length
+    )) {
+      throw new Error(`${entryLabel}.auditScopes must contain unique production or full scopes.`);
+    }
     for (const field of ["source", "advisoryId", "module", "severity", "reason"]) {
       requireNonEmptyString(entry[field], field, entryLabel);
     }
@@ -166,7 +174,7 @@ function validatePolicyEntries(entries, label, allowedSeveritySet) {
   return identities;
 }
 
-function validatePolicy(policy) {
+export function validateSecurityAuditPolicy(policy) {
   if (!isRecord(policy) || policy.schemaVersion !== 2) {
     throw new Error("Security audit policy schemaVersion must be 2.");
   }
@@ -204,15 +212,19 @@ function expiryRejection(entry, now, label) {
   return null;
 }
 
-export function evaluateSecurityAudit({ findings, policy, now = new Date() }) {
-  validatePolicy(policy);
+export function evaluateSecurityAudit({ findings, policy, now = new Date(), auditScope = "production" }) {
+  validateSecurityAuditPolicy(policy);
+  if (!allowedAuditScopes.has(auditScope)) throw new Error("Unknown security audit scope.");
+  const applies = (entry) => entry.auditScopes === undefined || entry.auditScopes.includes(auditScope);
+  const exceptions = policy.exceptions.filter(applies);
+  const reviews = policy.reviews.filter(applies);
   const blockedSeverities = new Set(policy.blockSeverities);
   const blocked = findings.filter((finding) => blockedSeverities.has(finding.severity));
   const approved = [];
   const rejected = [];
 
   for (const finding of blocked) {
-    const exception = matchingPolicyEntry(policy.exceptions, finding);
+    const exception = matchingPolicyEntry(exceptions, finding);
     if (!exception) {
       rejected.push({ finding, reason: "no approved exception" });
       continue;
@@ -230,7 +242,7 @@ export function evaluateSecurityAudit({ findings, policy, now = new Date() }) {
   const reviewed = [];
   const reviewRejected = [];
   for (const finding of reviewRequired) {
-    const review = matchingPolicyEntry(policy.reviews, finding);
+    const review = matchingPolicyEntry(reviews, finding);
     if (!review) {
       reviewRejected.push({ finding, reason: "no current path review" });
       continue;
@@ -244,29 +256,54 @@ export function evaluateSecurityAudit({ findings, policy, now = new Date() }) {
   }
 
   const activeKeys = new Set(blocked.map((finding) => `${finding.source}:${finding.advisoryId}:${finding.module}`));
-  const staleExceptions = policy.exceptions.filter((exception) => (
+  const staleExceptions = exceptions.filter((exception) => (
     !activeKeys.has(`${exception.source}:${exception.advisoryId}:${exception.module}`)
   ));
   const activeReviewKeys = new Set(reviewRequired.map((finding) => `${finding.source}:${finding.advisoryId}:${finding.module}`));
-  const staleReviews = policy.reviews.filter((review) => (
+  const staleReviews = reviews.filter((review) => (
     !activeReviewKeys.has(`${review.source}:${review.advisoryId}:${review.module}`)
   ));
   return { blocked, approved, rejected, reviewRequired, reviewed, reviewRejected, staleExceptions, staleReviews };
 }
 
-export async function runSpsSecurityAudit({ now = new Date() } = {}) {
+export function securityAuditRejections(result) {
+  return [
+    ...result.rejected,
+    ...result.reviewRejected,
+    ...result.staleExceptions.map((finding) => ({
+      finding,
+      reason: "stale exception no longer matches an active advisory",
+    })),
+    ...result.staleReviews.map((finding) => ({
+      finding,
+      reason: "stale review no longer matches an active advisory",
+    })),
+  ];
+}
+
+export async function runSpsSecurityAudit({ now = new Date(), includeDevelopment = false } = {}) {
   const policy = JSON.parse(await readFile(policyPath, "utf8"));
+  const npmArgs = includeDevelopment
+    ? ["audit", "--json"]
+    : ["audit", "--omit=dev", "--json"];
+  const pnpmArgs = includeDevelopment
+    ? ["audit", "--json"]
+    : ["audit", "--prod", "--json"];
   const [desktopReport, coreReport] = await Promise.all([
-    runAudit("npm", ["audit", "--omit=dev", "--json"], desktopRoot),
-    runAudit("pnpm", ["audit", "--prod", "--json"], coreRoot),
+    runAudit("npm", npmArgs, desktopRoot),
+    runAudit("pnpm", pnpmArgs, coreRoot),
   ]);
   const findings = [
     ...findingsFromNpmAudit(desktopReport),
     ...findingsFromPnpmAudit(coreReport),
   ];
-  const result = evaluateSecurityAudit({ findings, policy, now });
+  const result = evaluateSecurityAudit({ findings, policy, now, auditScope: includeDevelopment ? "full" : "production" });
 
-  process.stdout.write(`SPS dependency audit: ${findings.length} advisories, ${result.blocked.length} critical/high.\n`);
+  const auditScope = includeDevelopment ? "full graph (production, development/build, shipped Electron)" : "production";
+  process.stdout.write(`SPS ${auditScope} dependency audit: ${findings.length} advisories, ${result.blocked.length} critical/high.\n`);
+  for (const finding of findings.filter((item) => !policy.blockSeverities.includes(item.severity) && !policy.reviewSeverities.includes(item.severity))) {
+    process.stdout.write(`REPORTED ${finding.severity} ${finding.source}:${finding.module} ${finding.advisoryId}: ${finding.title}.\n`);
+  }
   for (const { finding, exception } of result.approved) {
     process.stdout.write(`EXCEPTED ${finding.severity} ${finding.source}:${finding.module} ${finding.advisoryId} until ${exception.expiresOn}.\n`);
   }
@@ -279,7 +316,7 @@ export async function runSpsSecurityAudit({ now = new Date() } = {}) {
   for (const review of result.staleReviews) {
     process.stdout.write(`STALE REVIEW ${review.source}:${review.module} ${review.advisoryId}.\n`);
   }
-  const rejected = [...result.rejected, ...result.reviewRejected];
+  const rejected = securityAuditRejections(result);
   if (rejected.length > 0) {
     const details = rejected.map(({ finding, reason }) => (
       `${finding.severity} ${finding.source}:${finding.module} ${finding.advisoryId}: ${finding.title} (${reason})`
@@ -290,5 +327,5 @@ export async function runSpsSecurityAudit({ now = new Date() } = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await runSpsSecurityAudit();
+  await runSpsSecurityAudit({ includeDevelopment: process.argv.includes("--include-development") });
 }

@@ -76,6 +76,8 @@ jobs:
         working-directory: sps-server/desktop
         run: |
           npm run audit:release
+          npm run audit:development
+          npm run docs:security:check
           npm test -- --test-concurrency=1
 
       - name: Build and sign the immutable candidate

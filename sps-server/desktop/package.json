@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.135",
+  "version": "0.4.136",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
@@ -11,7 +11,10 @@
     "sync:desktop-node": "node scripts/sync-local-desktop-node.mjs",
     "docs:candidate": "node scripts/current-candidate-doc.mjs",
     "docs:candidate:check": "node scripts/current-candidate-doc.mjs --check",
+    "docs:security": "node scripts/dependency-security-doc.mjs",
+    "docs:security:check": "node scripts/dependency-security-doc.mjs --check",
     "audit:release": "node scripts/security-audit.mjs",
+    "audit:development": "node scripts/security-audit.mjs --include-development",
     "prestart": "npm run sync:desktop-node",
     "start": "electron .",
     "pretest": "npm run sync:desktop-node",
@@ -47,11 +50,12 @@
     "tar": "7.5.22"
   },
   "devDependencies": {
-    "electron": "^43.1.1",
+    "js-yaml": "4.3.2",
+    "electron": "^43.7.7",
     "electron-builder": "^26.15.3"
   },
   "overrides": {
-    "js-yaml": "4.3.1"
+    "js-yaml": "4.3.2"
   },
   "build": {
     "appId": "ai.sps.desktop",

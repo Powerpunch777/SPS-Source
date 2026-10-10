@@ -5,6 +5,7 @@ import {
   findingsFromNpmAudit,
   findingsFromPnpmAudit,
   runAudit,
+  securityAuditRejections,
 } from "../scripts/security-audit.mjs";
 
 const basePolicy = {
@@ -61,6 +62,18 @@ test("rejects a new critical or high advisory and reports stale exceptions", () 
   });
   assert.equal(result.rejected.length, 1);
   assert.equal(result.staleExceptions.length, 1);
+  const rejected = securityAuditRejections(result);
+  assert.equal(rejected.length, 3);
+  assert.match(rejected[1].reason, /stale exception/);
+  assert.match(rejected[2].reason, /stale review/);
+});
+
+test("fails the gate when obsolete exceptions or reviews remain in policy", () => {
+  const result = evaluateSecurityAudit({ findings: [], policy: basePolicy });
+  const rejected = securityAuditRejections(result);
+  assert.equal(rejected.length, 2);
+  assert.match(rejected[0].reason, /stale exception/);
+  assert.match(rejected[1].reason, /stale review/);
 });
 
 test("requires an exact, current review for moderate advisories", () => {
@@ -119,6 +132,24 @@ test("rejects a review that is not active yet", () => {
     now: new Date("2026-08-03T00:00:00Z"),
   });
   assert.match(result.reviewRejected[0].reason, /not active/);
+});
+
+test("full-only reviews never authorize production findings and remain expiry-bound", () => {
+  const finding = { source: "core", advisoryId: "456", module: "http-server", severity: "moderate", title: "path issue" };
+  const policy = { ...structuredClone(basePolicy), exceptions: [] };
+  policy.reviews[0].auditScopes = ["full"];
+  const now = new Date("2026-08-03T00:00:00Z");
+  const evaluate = (findings, auditScope, date = now) => evaluateSecurityAudit({ findings, policy, now: date, auditScope });
+  assert.equal(securityAuditRejections(evaluate([], "production")).length, 0);
+  assert.match(evaluate([finding], "production").reviewRejected[0].reason, /no current path review/);
+  assert.equal(securityAuditRejections(evaluate([finding], "full")).length, 0);
+  assert.equal(evaluate([], "full").staleReviews.length, 1);
+  assert.match(evaluate([finding], "full", new Date("2026-10-01")).reviewRejected[0].reason, /expired/);
+  assert.throws(() => evaluate([], "unknown"), /Unknown security audit scope/);
+  for (const auditScopes of [[], ["full", "full"], ["unknown"], "full"]) {
+    policy.reviews[0].auditScopes = auditScopes;
+    assert.throws(() => evaluate([], "full"), /auditScopes/);
+  }
 });
 
 test("rejects a nonzero audit command even when it writes valid-looking JSON", async () => {

@@ -37,6 +37,12 @@ jobs:
         working-directory: ${{ github.workspace }}/sps-server/desktop
         run: npm run audit:release
 
+      - name: Enforce SPS development dependency security policy
+        working-directory: ${{ github.workspace }}/sps-server/desktop
+        run: |
+          npm run audit:development
+          npm run docs:security:check
+
       - name: Typecheck SPS Core server
         run: pnpm --filter @paperclipai/server run typecheck
 

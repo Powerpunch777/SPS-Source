@@ -51,6 +51,12 @@ jobs:
         working-directory: sps-server/desktop
         run: npm run audit:release
 
+      - name: Enforce SPS development dependency security policy
+        working-directory: sps-server/desktop
+        run: |
+          npm run audit:development
+          npm run docs:security:check
+
       - name: Verify Desktop tests
         working-directory: sps-server/desktop
         run: npm test -- --test-concurrency=1
