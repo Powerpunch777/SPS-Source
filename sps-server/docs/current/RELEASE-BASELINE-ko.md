@@ -7,7 +7,7 @@ The current candidate is `0.4.136` and remains `development-candidate`. It is no
 ## Candidate tuple
 
 - Desktop: `0.4.136`
-- Core: `3f8a010fc7cc0af75d210ffdb5ec859aaf061574`
+- Core: `fdb8812e4317ca31b70cac5e8c74b17f14a925cf`
 - Plugin SDK: `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`)
 - Platform: Windows 10/11 x64
 - Remote transport: Tailscale `1.52.0` or later
@@ -69,6 +69,8 @@ claims about future registry advisories.
   and are checked against the exact archive bytes in a Windows subprocess test.
 - Core PR CI validates the committed lockfile instead of prohibiting changes,
   regenerating an unreviewed graph, or replacing it with a CI artifact.
+- Release package/bootstrap contracts pass 22/22. The unpublished MCP connector
+  remains buildable and usable locally but is not enrolled for automatic npm publication.
 - Initial retries and generated-dist MCP test discovery were not counted as
   successful source validation; only the corrected explicit commands above count.
 
@@ -102,7 +104,7 @@ The following are explicit release blockers, not completed code-test claims:
 - The exact candidate HEAD has not completed all nine Linux Core regression
   shards. Targeted Windows/Core checks and typecheck/build results do not
   substitute for the full Linux shard evidence.
-- Core `3f8a010fc7cc0af75d210ffdb5ec859aaf061574` is still on Draft PR #26
+- Core `fdb8812e4317ca31b70cac5e8c74b17f14a925cf` is still on Draft PR #26
   and is not reachable from the Core `main` branch.
 
 Until these conditions have fresh evidence for the same candidate tuple,
