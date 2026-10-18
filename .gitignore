@@ -23,6 +23,7 @@ sps-server/desktop/dist-google-login/
 sps-server/desktop/dist-*/
 sps-server/desktop/.owner-host-runtime*/
 sps-server/desktop/.npm-cache/
+sps-server/desktop/.dev-profile/
 sps-server/desktop/.agent-runtime-packs/
 sps-server/desktop/.remote-member-*
 sps-server/desktop/.tmp-*

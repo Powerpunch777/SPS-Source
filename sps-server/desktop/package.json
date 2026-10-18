@@ -17,6 +17,7 @@
     "audit:development": "node scripts/security-audit.mjs --include-development",
     "prestart": "npm run sync:desktop-node",
     "start": "electron .",
+    "dev": "node scripts/dev-desktop.mjs",
     "pretest": "npm run sync:desktop-node",
     "test": "node --test test/*.test.mjs",
     "test:e2e:bootstrap": "npm run sync:desktop-node && node scripts/smoke-isolated-desktop-ui.mjs",

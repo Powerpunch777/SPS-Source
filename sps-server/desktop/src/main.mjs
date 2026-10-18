@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveSpsE2eUserDataDirectory } from "./e2e-user-data.mjs";
+import { resolveDesktopDevelopment, watchDevelopmentSurfaces } from "./development-mode.mjs";
 import {
   cancelSpsNodeCommands,
   createNodeIdentity,
@@ -202,6 +203,21 @@ import {
 import { synchronizeSpsTeamWorkplaneConfig } from "./bundled-workplane-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const developmentMode = resolveDesktopDevelopment({
+  packaged: app.isPackaged,
+  enabled: process.env.SPS_DESKTOP_DEV === "1",
+  desktopRoot: path.resolve(__dirname, ".."),
+  e2e: process.env.SPS_DESKTOP_E2E === "1",
+});
+if (developmentMode) {
+  app.setPath("userData", developmentMode.profile);
+  app.on("browser-window-created", (_event, window) => {
+    window.on("page-title-updated", (event, title) => {
+      event.preventDefault();
+      window.setTitle(`[DEV] ${title}`);
+    });
+  });
+}
 
 function configureIsolatedE2eUserData() {
   const target = resolveSpsE2eUserDataDirectory();
@@ -1455,10 +1471,9 @@ async function ensureOwnerHostManager() {
           PAPERCLIP_STORAGE_LOCAL_DIR: ownerHost.layout.storageDir,
           PAPERCLIP_SECRETS_MASTER_KEY_FILE: ownerHost.layout.secretsPath,
           PAPERCLIP_PROJECTS_ROOT: ownerHost.layout.projectsDir,
-          // The Core CLI enables Vite middleware when it sees a source-tree
-          // entrypoint. Desktop must always render the bundled static UI so
-          // opening SPS never depends on a separate development web server.
-          PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
+          // Installed Desktop stays static; the isolated source-development
+          // profile opts into Core's in-process Vite middleware and HMR.
+          PAPERCLIP_UI_DEV_MIDDLEWARE: developmentMode?.uiMiddleware ?? "false",
           // Core keeps host-version policy product-neutral. Desktop supplies
           // its own release version so plugin minimumHostVersion guards are
           // evaluated against the app that owns this Owner Host.
@@ -4869,8 +4884,16 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
     registerIpc();
     configureWorkspaceRequestAuth();
     createApplicationMenu();
-    app.setAsDefaultProtocolClient("sps");
+    if (!developmentMode) app.setAsDefaultProtocolClient("sps");
     await createWindow({ show: !startedHidden });
+    if (developmentMode) {
+      const stopWatching = watchDevelopmentSurfaces({
+        desktopRoot: path.resolve(__dirname, ".."),
+        windows: () => BrowserWindow.getAllWindows().filter(window =>
+          window.webContents.getURL().startsWith("file:") || window === workspaceWindow),
+      });
+      app.once("will-quit", stopWatching);
+    }
     createTray();
     // Read Windows startup registration once after the first window is ready.
     // It must not run on the frequent status IPC path.
