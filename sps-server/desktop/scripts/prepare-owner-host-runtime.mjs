@@ -316,6 +316,7 @@ async function buildOwnerHostCoreArtifacts() {
   const dbTsconfig = path.join(coreRoot, "packages", "db", "tsconfig.json");
   const dbPackageRoot = path.join(coreRoot, "packages", "db");
   const sharedTsconfig = path.join(coreRoot, "packages", "shared", "tsconfig.json");
+  const catalogPackageRoot = path.join(coreRoot, "packages", "skills-catalog");
   const adapterUtilsTsconfig = path.join(coreRoot, "packages", "adapter-utils", "tsconfig.json");
   const marketplaceMcpTsconfig = path.join(coreRoot, "packages", "mcp-server", "tsconfig.json");
   const codexAdapterTsconfig = path.join(coreRoot, "packages", "adapters", "codex-local", "tsconfig.json");
@@ -348,6 +349,13 @@ async function buildOwnerHostCoreArtifacts() {
     { shell: pnpm.shell, environment: pnpm.environment },
   );
   await run(process.execPath, [tscCli, "-p", sharedTsconfig], coreRoot);
+  await run(
+    pnpm.command,
+    [...pnpm.prefixArgs, "--dir", catalogPackageRoot, "run", "build"],
+    coreRoot,
+    { shell: pnpm.shell, environment: pnpm.environment },
+  );
+  await requireFile(path.join(catalogPackageRoot, "dist", "src", "canonical-bytes.js"), "SPS Skills Catalog canonical-byte runtime is missing after build.");
   await run(process.execPath, [tscCli, "-p", adapterUtilsTsconfig], coreRoot);
   await run(process.execPath, [tscCli, "-p", marketplaceMcpTsconfig], coreRoot);
   await run(process.execPath, [tscCli, "-p", codexAdapterTsconfig], coreRoot);

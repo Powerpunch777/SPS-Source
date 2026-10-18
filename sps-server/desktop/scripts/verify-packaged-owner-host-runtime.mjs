@@ -26,6 +26,7 @@ const requiredFiles = [
   "sps-plugin-discovery/dist/manifest.js",
   "sps-room-chat/dist/manifest.js",
   "node_modules/@paperclipai/server/package.json",
+  "node_modules/@paperclipai/skills-catalog/dist/src/canonical-bytes.js",
   "node_modules/@sps/mcp-server/package.json",
   "node_modules/@sps/mcp-server/dist/marketplace-assistant-stdio.js",
   "node_modules/acpx/node_modules/@agentclientprotocol/sdk/package.json",
