@@ -134,6 +134,25 @@ from Core Marketplace search. The bundled plugin is enabled for a new Workspace
 as the initial discovery/authoring tool; it does not become a general workflow
 or a hidden Core rule.
 
+### Builder Agent Structure
+
+Design decision (2026-10-18; implementation pending): each Builder Workspace
+uses exactly one Lead and zero or more optional Workers. The user registers or
+selects the Lead before starting AI authoring and may add Workers as needed.
+The Lead can complete work alone when no Workers are configured.
+
+The Lead is the user's conversation partner, divides and delegates work when
+useful, reviews Worker results, and reports the integrated outcome. Workers
+perform bounded assignments and return results to the Lead. The Lead decides
+how to divide work; Core does not prescribe a task decomposition or profession.
+
+These roles and delegation rules belong to Plugin Builder. Core supplies the
+existing Agent/runtime execution, scoped resources, run records, and generic
+plugin services. Other workflow plugins may choose a different Agent structure.
+Adding a Builder Worker does not itself create a new CLI account or grant access
+to an unapproved runtime or Source. The current ledger/tools and detached Preview
+do not yet constitute this Lead/Worker authoring interface.
+
 The user works in the existing SPS window:
 
 - They describe the desired workflow to an Assistant.

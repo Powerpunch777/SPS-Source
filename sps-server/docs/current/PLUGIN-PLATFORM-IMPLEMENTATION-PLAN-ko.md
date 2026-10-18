@@ -80,6 +80,17 @@ Host가 route를 철회하면 재실행이 거부되는지 확인한다. 양쪽 
 
 ## 현재 증거
 
+### 후속 Builder 작업 구조 결정 (2026-10-18)
+
+- Builder Workspace의 AI 구성은 Lead 정확히 1명과 선택적인 Worker 0명 이상이다.
+- 사용자는 제작 시작 전에 Lead를 등록하거나 선택하고 필요할 때 Worker를 추가한다.
+- Lead는 사용자 대화, 작업 분배, Worker 결과 검토와 통합 보고를 담당한다.
+- Worker 없이 Lead만으로 제작을 진행할 수 있다. 작업 분할 방식은 Lead가 판단한다.
+- 역할과 위임 규칙은 Builder 플러그인의 책임이다. Core는 공통 실행 기반을 제공한다.
+- 구현 예정: Lead 선택 및 대화 화면, Worker 추가·관리, 위임 실행·결과 반환,
+  기존 제작 기록·검증·Preview 연결. 아래 historical 검증은 이 후속 흐름의
+  구현 완료를 의미하지 않는다.
+
 - Historical snapshot (`0.4.104`): Desktop 테스트 `261/261` 통과, exit 0
 - desktop-node 테스트 `39/39` 통과
 - 공개 Plugin SDK 테스트 `146/146` 통과
