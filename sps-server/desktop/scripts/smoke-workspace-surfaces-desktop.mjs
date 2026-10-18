@@ -481,6 +481,11 @@ try {
     (page) => page.route.includes("/builder") && page.body.includes("Plugin Builder") && page.body.includes("Authoring projects"),
     "the Plugin Builder project surface",
   );
+  if (screenshotPath && sourceElectron) {
+    const builderFont = await workspaceCdp.evaluate(`getComputedStyle(document.querySelector('.sps-builder')).fontFamily`);
+    assert.match(builderFont, /Pretendard/);
+    await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "plugin-builder.png"));
+  }
 
   await api(workspaceCdp, `/api/plugins/${teamWorkplane.id}/companies/${company.id}/activation`, {
     method: "PUT",
@@ -530,6 +535,44 @@ try {
   );
   const teamDashboard = await api(workspaceCdp, `/api/companies/${company.id}/workspace-dashboard`);
   assert.ok(teamDashboard.widgets?.some((widget) => widget.pluginId === teamWorkplane.id), "Team Workplane Dashboard widget was not registered.");
+
+  if (screenshotPath && sourceElectron) {
+    const project = await api(workspaceCdp, `/api/companies/${company.id}/projects`, {
+      method: "POST", body: { name: "UI inspection project", status: "in_progress" },
+    });
+    await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/agent-rooms?project=${project.id}`)})`);
+    await waitForPage(workspaceCdp, page => page.body.includes("UI inspection project") && page.body.includes("Rooms"), "internal project workplane");
+    await click(workspaceCdp, ".rw-project-card", "Open the test Agent Room");
+    await waitForPage(workspaceCdp, page => /room=/.test(page.route) && /보내기|Send|메시지/.test(page.body), "internal Agent Room composer");
+    for (const [width, height] of [[1024, 720], [1440, 900]]) {
+      await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+      await workspaceCdp.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`, true);
+      const room = await workspaceCdp.evaluate(`(() => {
+        const shell = document.querySelector('.rw-shell');
+        return { font: getComputedStyle(shell).fontFamily,
+          overflow: document.documentElement.scrollWidth > innerWidth,
+          composer: Boolean(shell.querySelector('.rw-composer')),
+          composerBottom: shell.querySelector('.rw-composer')?.getBoundingClientRect().bottom,
+          viewportHeight: innerHeight };
+      })()`);
+      assert.match(room.font, /Pretendard/);
+      assert.equal(room.overflow, false);
+      assert.equal(room.composer, true);
+      assert.ok(room.composerBottom <= room.viewportHeight, "Room composer extends below the viewport");
+      await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), `agent-room-${width}x${height}.png`));
+    }
+    await click(workspaceCdp, ".rw-context-trigger", "Open Room context panel");
+    const contextLayout = await workspaceCdp.evaluate(`(() => {
+      const main = document.querySelector('.rw-main').getBoundingClientRect();
+      const composer = document.querySelector('.rw-composer-surface').getBoundingClientRect();
+      const headerActions = document.querySelector('.rw-header-actions').getBoundingClientRect();
+      return { mainRight: main.right, composerRight: composer.right, actionsRight: headerActions.right };
+    })()`);
+    assert.ok(contextLayout.composerRight <= contextLayout.mainRight, "Open context panel clips the Room composer");
+    assert.ok(contextLayout.actionsRight <= contextLayout.mainRight, "Open context panel clips the Room header actions");
+    await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "agent-room-context.png"));
+    await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+  }
 
   await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/company/settings/instance/plugins`)})`);
   await waitForPage(

@@ -2,31 +2,33 @@
 import { usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
 import { jsx, jsxs } from "react/jsx-runtime";
 var styles = `
-  .sps-builder { max-width: 1100px; margin: 0 auto; color: var(--foreground, #172033); font: 14px/1.5 system-ui, sans-serif; }
+  .sps-builder { max-width: 1100px; margin: 0 auto; color: var(--foreground, #24272b); font: 14px/1.6 var(--font-sans, "Pretendard Variable", system-ui, sans-serif); letter-spacing: 0; }
   .sps-builder-header { padding: 8px 0 18px; }
   .sps-builder-header h1 { margin: 0; font-size: 22px; }
   .sps-builder-header p { max-width: 760px; margin: 8px 0 0; color: var(--muted-foreground, #667085); }
-  .sps-builder-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 14px; align-items: start; }
-  .sps-builder-card { border: 1px solid var(--border, #d8dee9); border-radius: 10px; background: var(--background, #fff); overflow: hidden; }
+  .sps-builder-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+  .sps-builder-card { min-width: 0; border: 1px solid var(--border, #e2e2e2); border-radius: 8px; background: var(--background, #fff); overflow: hidden; }
   .sps-builder-card-head { padding: 14px 16px; border-bottom: 1px solid var(--border, #e3e8f0); }
   .sps-builder-card-head strong { display: block; font-size: 14px; }
   .sps-builder-card-head span { display: block; margin-top: 3px; color: var(--muted-foreground, #667085); font-size: 12px; }
+  summary.sps-builder-card-head { cursor: pointer; color: var(--muted-foreground, #626b75); }
+  summary.sps-builder-card-head strong { display: inline; margin-left: 6px; font-weight: 500; }
   .sps-builder-empty { padding: 22px 16px; color: var(--muted-foreground, #667085); }
   .sps-builder-session { padding: 13px 16px; border-bottom: 1px solid var(--border, #e3e8f0); }
   .sps-builder-session:last-child { border-bottom: 0; }
   .sps-builder-session-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
   .sps-builder-session-head strong { overflow-wrap: anywhere; }
-  .sps-builder-status { flex: none; border-radius: 999px; background: #edf3fb; color: #1f5eb8; padding: 2px 7px; font-size: 11px; font-weight: 700; }
+  .sps-builder-status { flex: none; border-radius: 6px; background: var(--muted, #f4f4f4); color: var(--foreground, #24272b); padding: 2px 7px; font-size: 12px; font-weight: 500; }
   .sps-builder-session p { margin: 5px 0 0; color: var(--muted-foreground, #667085); font-size: 12px; overflow-wrap: anywhere; }
   .sps-builder-event { margin-top: 10px; padding-left: 10px; border-left: 2px solid #d9e3f1; }
   .sps-builder-event strong { display: block; font-size: 12px; text-transform: capitalize; }
   .sps-builder-event span { display: block; color: var(--muted-foreground, #667085); font-size: 11px; overflow-wrap: anywhere; }
   .sps-builder-contract { display: grid; gap: 10px; padding: 16px; }
   .sps-builder-step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 9px; align-items: start; }
-  .sps-builder-step-number { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #edf3fb; color: #1f5eb8; font-weight: 700; font-size: 12px; }
+  .sps-builder-step-number { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: var(--muted, #f4f4f4); color: var(--foreground, #24272b); font-weight: 600; font-size: 12px; }
   .sps-builder-step strong { display: block; }
   .sps-builder-step span { display: block; margin-top: 2px; color: var(--muted-foreground, #667085); font-size: 12px; }
-  .sps-builder-note { margin: 0 16px 16px; padding: 10px 11px; border-radius: 8px; background: #f6f8fb; color: var(--muted-foreground, #667085); font-size: 12px; }
+  .sps-builder-note { margin: 0 16px 16px; padding: 10px 11px; border-radius: 6px; background: var(--muted, #f4f4f4); color: var(--muted-foreground, #626b75); font-size: 12px; }
   @media (max-width: 820px) { .sps-builder-grid { grid-template-columns: 1fr; } }
 `;
 function eventLabel(event) {
@@ -70,11 +72,8 @@ function PluginBuilderPage({ context }) {
           ] }, event.id))
         ] }, session.id))
       ] }),
-      /* @__PURE__ */ jsxs("aside", { className: "sps-builder-card", children: [
-        /* @__PURE__ */ jsxs("div", { className: "sps-builder-card-head", children: [
-          /* @__PURE__ */ jsx("strong", { children: "Builder contract" }),
-          /* @__PURE__ */ jsx("span", { children: "AI may choose how to work. This bundle exposes no plugin lifecycle authority." })
-        ] }),
+      /* @__PURE__ */ jsxs("details", { className: "sps-builder-card", children: [
+        /* @__PURE__ */ jsx("summary", { className: "sps-builder-card-head", children: /* @__PURE__ */ jsx("strong", { children: "Builder contract" }) }),
         /* @__PURE__ */ jsx("div", { className: "sps-builder-contract", children: ["Create an external project", "Record authoring steps and evidence", "Inspect build, validation, and tests", "Open isolated Preview", "Create a package candidate"].map((label, index) => /* @__PURE__ */ jsxs("div", { className: "sps-builder-step", children: [
           /* @__PURE__ */ jsx("span", { className: "sps-builder-step-number", children: index + 1 }),
           /* @__PURE__ */ jsxs("div", { children: [

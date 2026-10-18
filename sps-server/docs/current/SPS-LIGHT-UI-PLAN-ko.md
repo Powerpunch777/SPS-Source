@@ -102,6 +102,27 @@ Lead 1명과 선택 Worker 구성은 Builder 플러그인 설계를 따른다.
 - 개발 증거는 desktop/dist/ui-light-onboarding/ 및 ui-light-onboarding-*.log에
   보관한다. 실제 Google OAuth 및 설치본 배포 검증과는 구분한다.
 
+### 3차 내부 화면 (2026-10-18)
+
+- Team Workplane Room, Plugin Builder, 선택형 Memory UI에도 공통 Pretendard와
+  중립 표면 색상을 적용했다. 각 화면은 여전히 해당 플러그인이 소유한다.
+- Room의 목록, 대화 본문, 입력 영역과 상세 패널을 정리하고 키보드 포커스 표시를
+  추가했다. 실제 1024x720 캡처에서 발견한 입력 영역 하단 잘림을 수정했다.
+- Builder의 제작 기록을 주 영역으로 두고 긴 계약 안내는 기본 접힌 상세 영역으로
+  옮겼다. Lead/Worker 대화 기능을 새로 구현한 것은 아니다.
+- Desktop Plugin Sources & Review와 Official Extensions 창의 CSS도 같은 글꼴,
+  밝은 중립 색상 및 포커스 기준으로 맞췄다. 이 중 Registry는 실제 창에서 확인했다.
+- Desktop 자동 테스트 369개, Builder 검사 9개 및 Room/Memory 전체 check가
+  통과했다. Room은 최종 레이아웃 수정 후 전체 check와 UI 빌드를 다시 수행했다.
+- 격리된 소스 Electron Workspace E2E에서 Builder, Room 1024x720/1440x900 및
+  열린 상세 패널을 캡처했다. 글꼴, 가로 넘침 및 입력 영역의 화면 내 위치를 검사했다.
+- 개발 캡처와 로그는 desktop/dist/ui-internal/ 및 ui-internal-*.log에 보관한다.
+  Registry 캡처는 통과한 Preview E2E로 생성했다. 외부 SDK 플러그인 연결, 격리된
+  Preview의 역할/뷰포트/오류 상태 전환, 패키징과 Preview 크래시 격리도 통과했다.
+  실제 AI 호출이나 사용자의 Workspace에서
+  플러그인을 설치하는 테스트가 아니며, 선택형 Memory 화면은 빌드/계약 검사 범위다.
+- 새 설치본 생성이나 설치된 앱 교체는 하지 않았다. 기존 설치본의 증거와 분리한다.
+
 ### 전체 개선 완료 기준
 
 - 실제 앱 캡처에서 기존/변경 화면을 비교할 수 있다.

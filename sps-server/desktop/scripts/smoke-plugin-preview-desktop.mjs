@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { access, mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import os from "node:os";
@@ -341,6 +341,17 @@ try {
     "Plugin Registry",
   ));
   await waitPage(registry, (page) => page.text.includes("Local Development Registry"), "Developer Registry UI");
+  const screenshotDirectory = process.env.SPS_DESKTOP_E2E_SCREENSHOT_DIR?.trim();
+  if (screenshotDirectory) {
+    await mkdir(screenshotDirectory, { recursive: true });
+    const font = await registry.evaluate(`(async () => {
+      await document.fonts.ready;
+      return [...document.fonts].some(font => font.family === 'Pretendard Variable' && font.status === 'loaded');
+    })()`, true);
+    assert.equal(font, true, "Registry did not load bundled typography");
+    const screenshot = await registry.command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+    await writeFile(path.join(screenshotDirectory, "plugin-registry.png"), Buffer.from(screenshot.data, "base64"));
+  }
 
   step("creating and connecting external SDK plugin");
   await makePlugin(pluginDirectory);

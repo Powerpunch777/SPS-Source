@@ -173,7 +173,9 @@ const renderSection = (title, items, typeLabel) => {
 const SHARED_STYLES = `
   :host {
     display: block;
-    font-family: system-ui, -apple-system, sans-serif;
+    font-family: var(--font-sans, "Pretendard Variable", system-ui, sans-serif);
+    line-height: 1.6;
+    letter-spacing: 0;
     color: rgba(255, 255, 255, 0.9);
     max-width: 960px;
     margin: 0 auto;
@@ -428,19 +430,20 @@ const SHARED_STYLES = `
   }
 
   /* The local SPS instance uses a light canvas by default. */
-  :host { color: #172033; }
-  .header { border-bottom-color: #e2e8f0; }
-  .header-title, .section-title { color: #172033; }
-  .header-subtitle, .loading-text, .card-date { color: #64748b; }
-  .empty-container, .empty-section-banner, .card { border-color: #dbe3ec; background-color: #ffffff; }
-  .empty-title { color: #172033; }
-  .empty-desc, .empty-section-banner { color: #64748b; }
-  .counter-badge { background-color: #eef2f7; color: #475569; }
-  .card:hover { border-color: #cbd5e1; background-color: #f8fafc; }
-  .scope-tag { color: #6d28d9; }
-  .type-tag { color: #64748b; }
-  .memory-text { color: #1f2937; }
-  .provenance-section { border-top-color: #e2e8f0; color: #64748b; }
+  :host { color: var(--foreground, #24272b); }
+  button, input, select, textarea { font: inherit; }
+  button:focus-visible { outline: 2px solid var(--ring, #777); outline-offset: 3px; }
+  .header { border-bottom-color: var(--border, #e2e2e2); }
+  .header-title, .section-title { color: var(--foreground, #24272b); }
+  .header-subtitle, .loading-text, .card-date { color: var(--muted-foreground, #626b75); }
+  .empty-container, .empty-section-banner, .card { border-color: var(--border, #e2e2e2); background-color: var(--background, #fff); border-radius: 8px; }
+  .empty-title { color: var(--foreground, #24272b); }
+  .empty-desc, .empty-section-banner { color: var(--muted-foreground, #626b75); }
+  .counter-badge { background-color: var(--muted, #f4f4f4); color: var(--muted-foreground, #626b75); }
+  .card:hover { border-color: var(--border, #ddd); background-color: var(--muted, #f7f7f7); }
+  .scope-tag, .type-tag { color: var(--muted-foreground, #626b75); }
+  .memory-text { color: var(--foreground, #24272b); }
+  .provenance-section { border-top-color: var(--border, #e2e2e2); color: var(--muted-foreground, #626b75); }
   .provenance-label { color: #94a3b8; }
   .provenance-value { color: #475569; }
   .provenance-code { color: #4338ca; background-color: #eef2ff; }
