@@ -4,6 +4,7 @@
 
 | Need | Document |
 | --- | --- |
+| Light UI direction, typography, shared surfaces, and Builder layout | [SPS-LIGHT-UI-PLAN-ko.md](SPS-LIGHT-UI-PLAN-ko.md) |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
 | Exact Desktop, Core, SDK, and bundled-extension candidate | [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md) |
 | Production dependency audit gate and expiring exceptions | [DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md) |
