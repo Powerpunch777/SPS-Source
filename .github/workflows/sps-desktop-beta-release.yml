@@ -29,6 +29,8 @@ jobs:
           cache-dependency-path: |
             sps-server/desktop/package-lock.json
             external/sps-plugin-sdk/package-lock.json
+            sps-server/sps-plugin-discovery/package-lock.json
+            sps-server/sps-room-chat/package-lock.json
 
       - name: Install pinned pnpm for SPS Core
         run: npm install --global pnpm@11.9.0
@@ -68,6 +70,14 @@ jobs:
       - name: Run Desktop tests
         working-directory: sps-server/desktop
         run: npm test -- --test-concurrency=1
+
+      - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm ci
+
+      - name: Install SPS Room Chat dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-room-chat
+        run: npm ci
 
       - name: Build unsigned candidate without publishing
         working-directory: sps-server/desktop

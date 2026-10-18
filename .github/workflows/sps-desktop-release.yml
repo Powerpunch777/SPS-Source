@@ -36,7 +36,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: sps-server/desktop/package-lock.json
+          cache-dependency-path: |
+            sps-server/desktop/package-lock.json
+            sps-server/sps-plugin-discovery/package-lock.json
+            sps-server/sps-room-chat/package-lock.json
 
       - name: Verify tag ancestry and signing credentials
         shell: pwsh
@@ -79,6 +82,14 @@ jobs:
           npm run audit:development
           npm run docs:security:check
           npm test -- --test-concurrency=1
+
+      - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm ci
+
+      - name: Install SPS Room Chat dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-room-chat
+        run: npm ci
 
       - name: Build and sign the immutable candidate
         working-directory: sps-server/desktop

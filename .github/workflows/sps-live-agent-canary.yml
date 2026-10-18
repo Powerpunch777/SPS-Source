@@ -22,7 +22,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: sps-server/desktop/package-lock.json
+          cache-dependency-path: |
+            sps-server/desktop/package-lock.json
+            sps-server/sps-plugin-discovery/package-lock.json
+            sps-server/sps-room-chat/package-lock.json
 
       - name: Install pinned pnpm
         run: npm install --global pnpm@11.9.0
@@ -35,6 +38,14 @@ jobs:
           pnpm --filter "@paperclipai/adapter-*" run build
           pnpm --filter @paperclipai/hermes-paperclip-adapter run build
           pnpm --filter paperclipai run build
+
+      - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm ci
+
+      - name: Install SPS Room Chat dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-room-chat
+        run: npm ci
 
       - name: Install and package SPS Desktop
         working-directory: sps-server/desktop
