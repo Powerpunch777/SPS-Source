@@ -7,7 +7,7 @@ The current candidate is `0.4.136` and remains `development-candidate`. It is no
 ## Candidate tuple
 
 - Desktop: `0.4.136`
-- Core: `313dadae90222e28127df6d0992faaeae2e8341a`
+- Core: `0565a4e295d1d9c97ee63c3c323c4da4d62a1bc8`
 - Plugin SDK: `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`)
 - Platform: Windows 10/11 x64
 - Remote transport: Tailscale `1.52.0` or later
@@ -87,6 +87,13 @@ were not installed. Core's Node 24 job also exposed the corrected npm/pnpm test
 runner bug. These earlier results do not imply exact-current-HEAD success or
 physical two-device verification. Follow the final PR evidence for fresh runs.
 
+Core run `39095628464` passed all nine shards and browser E2E at `313dadae9`.
+The subsequent Source run exposed a clipboard-test scheduling race, now fixed
+with React `act`, and Windows short-path handling in Room Changes/attachments.
+Git supplies the workspace prefix; attachment writes use the validated canonical
+directory. Regression tests cover path aliases without weakening link rejection.
+These changes require fresh final-tuple CI and package evidence.
+
 The transport statement above is intentionally precise: a direct `.ts.net`
 `Host` header on a loopback connection is not Serve provenance. Only the
 structured Serve identity and connection context can authorize tokenless
@@ -112,7 +119,7 @@ The following are explicit release blockers, not completed code-test claims:
 - The exact candidate HEAD has not completed all nine Linux Core regression
   shards. Targeted Windows/Core checks and typecheck/build results do not
   substitute for the full Linux shard evidence.
-- Core `313dadae90222e28127df6d0992faaeae2e8341a` is still on Draft PR #26
+- Core `0565a4e295d1d9c97ee63c3c323c4da4d62a1bc8` is still on Draft PR #26
   and is not reachable from the Core `main` branch.
 
 Until these conditions have fresh evidence for the same candidate tuple,

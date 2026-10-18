@@ -13671,7 +13671,7 @@ async function stageRoomAttachments(apiUrl, roomIssueId, attachments, workingDir
     if (requestBytes + declaredBytes > maxRequestBytes) throw new Error("The attached files exceed the Room request byte limit.");
     const directory = path3.join(roomDirectory, safeAttachmentPathSegment(attachmentId));
     const { realRoot, realDirectory } = ensureDirectoryTreeWithoutLinks(workspaceRoot, directory);
-    const localPath = path3.join(directory, safeAttachmentFilename(roomAttachmentName(attachment)));
+    const localPath = path3.join(realDirectory, safeAttachmentFilename(roomAttachmentName(attachment)));
     if (!pathIsContained(realDirectory, path3.resolve(localPath))) throw new Error("The Room attachment filename escaped its staging directory.");
     rejectLinkOrNonFile(localPath, "The staged Room attachment");
     const partialPath = `${localPath}.${randomUUID2()}.partial`;

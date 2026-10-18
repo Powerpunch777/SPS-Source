@@ -108,11 +108,26 @@ const staged = await stageRoomAttachments("http://127.0.0.1:3100", "room-attachm
 const expectedRoot = path.join(workspace, ".sps", "room-attachments");
 assert.equal(roomAttachmentWorkspaceRoot(workspace), expectedRoot);
 assert.equal(staged.length, 2);
-assert.ok(staged.every((attachment) => !path.relative(workspace, attachment.localPath).startsWith("..")));
+assert.ok(staged.every((attachment) => !path.relative(fs.realpathSync.native(workspace), attachment.localPath).startsWith("..")));
 assert.equal(fs.readFileSync(staged[0].localPath, "utf8"), "design brief");
 const gitExclude = workspaceGitExcludePath(workspace);
 assert.ok(gitExclude);
 assert.match(fs.readFileSync(gitExclude, "utf8"), /^\.sps\/room-attachments\/$/m);
+const aliasParent = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-alias-"));
+try {
+  fs.mkdirSync(path.join(workspace, "nested"));
+  const alias = path.join(aliasParent, "workspace");
+  fs.symlinkSync(workspace, alias, process.platform === "win32" ? "junction" : "dir");
+  const aliased = await stageRoomAttachments("http://127.0.0.1:3100", "room-alias", attachments, path.join(alias, "nested"));
+  assert.equal(aliased.length, 2);
+  for (const attachment of aliased) {
+    assert.equal(attachment.localPath, fs.realpathSync.native(attachment.localPath));
+    assert.ok(!path.relative(fs.realpathSync.native(path.join(workspace, "nested")), attachment.localPath).startsWith(".."));
+  }
+  assert.equal(fs.readFileSync(aliased[0].localPath, "utf8"), "design brief");
+} finally {
+  fs.rmSync(aliasParent, { recursive: true, force: true });
+}
 fs.rmSync(workspace, { recursive: true, force: true });
 
 const externalGitMetadata = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-external-git-"));
