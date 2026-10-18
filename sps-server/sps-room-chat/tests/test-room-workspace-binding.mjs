@@ -141,6 +141,20 @@ try {
   const changes = workspaceGitChanges({ id: "nested-workspace", name: "Nested workspace", cwd: nestedWorkspace, metadata: { kind: "implementation" } });
   assert.equal(changes.available, true);
   assert.deepEqual(changes.files.map((file) => file.path), ["inside-workspace.txt"]);
+  // CI's short TEMP alias and user-created junctions must not widen Changes.
+  const aliasRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sps-workspace-alias-"));
+  try {
+    const alias = path.join(aliasRoot, "workspace");
+    fs.symlinkSync(nestedWorkspace, alias, process.platform === "win32" ? "junction" : "dir");
+    for (const relativePaths of ["true", "false"]) {
+      execFileSync("git", ["config", "status.relativePaths", relativePaths], { cwd: nestedWorkspaceRepo });
+      const aliasedChanges = workspaceGitChanges({ id: "aliased-workspace", cwd: alias });
+      assert.equal(aliasedChanges.available, true);
+      assert.deepEqual(aliasedChanges.files.map((file) => file.path), ["inside-workspace.txt"]);
+    }
+  } finally {
+    fs.rmSync(aliasRoot, { recursive: true, force: true });
+  }
 } finally {
   fs.rmSync(nestedWorkspaceRepo, { recursive: true, force: true });
 }

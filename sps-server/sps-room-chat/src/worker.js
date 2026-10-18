@@ -2808,19 +2808,20 @@ function workspaceGitChanges(workspace) {
     return { id: workspace?.id ?? null, name, kind, available: false, files: [] };
   }
   try {
-    const repositoryRoot = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+    const workspaceRelativeRoot = execFileSync("git", ["-C", cwd, "rev-parse", "--show-prefix"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 5_000,
       windowsHide: true
-    }).trim();
-    const workspaceRelativeRoot = path.relative(repositoryRoot, cwd).replace(/\\/g, "/").replace(/^\.\/$/, "");
+    }).replace(/\r?\n$/, "");
     // A Project Workspace can intentionally live inside a larger repository.
     // Git reports paths from the repository root, so scope them back to the
-    // selected Workspace before returning them to the Room UI.
-    const workspacePrefix = workspaceRelativeRoot && !workspaceRelativeRoot.startsWith("../") && workspaceRelativeRoot !== ".."
-      ? workspaceRelativeRoot.replace(/\/+$/, "")
-      : "";
+    // selected Workspace before returning them to the Room UI. Ask Git for the
+    // prefix so Windows short paths and junctions cannot widen the scope.
+    const workspacePrefix = workspaceRelativeRoot.replace(/\/+$/, "");
+    if (path.posix.isAbsolute(workspacePrefix) || workspacePrefix.split("/").includes("..")) {
+      return { id: workspace?.id ?? null, name, kind, available: false, files: [] };
+    }
     const output = execFileSync("git", ["-c", "core.quotepath=false", "-C", cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],

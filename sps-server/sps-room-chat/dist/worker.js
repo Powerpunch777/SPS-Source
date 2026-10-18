@@ -16942,14 +16942,16 @@ function workspaceGitChanges(workspace) {
     return { id: workspace?.id ?? null, name, kind, available: false, files: [] };
   }
   try {
-    const repositoryRoot = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+    const workspaceRelativeRoot = execFileSync("git", ["-C", cwd, "rev-parse", "--show-prefix"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 5e3,
       windowsHide: true
-    }).trim();
-    const workspaceRelativeRoot = path4.relative(repositoryRoot, cwd).replace(/\\/g, "/").replace(/^\.\/$/, "");
-    const workspacePrefix = workspaceRelativeRoot && !workspaceRelativeRoot.startsWith("../") && workspaceRelativeRoot !== ".." ? workspaceRelativeRoot.replace(/\/+$/, "") : "";
+    }).replace(/\r?\n$/, "");
+    const workspacePrefix = workspaceRelativeRoot.replace(/\/+$/, "");
+    if (path4.posix.isAbsolute(workspacePrefix) || workspacePrefix.split("/").includes("..")) {
+      return { id: workspace?.id ?? null, name, kind, available: false, files: [] };
+    }
     const output = execFileSync("git", ["-c", "core.quotepath=false", "-C", cwd, "status", "--porcelain=v1", "-z", "--untracked-files=all"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
