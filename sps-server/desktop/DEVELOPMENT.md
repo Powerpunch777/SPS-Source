@@ -8,7 +8,10 @@ npm run dev
 
 This launches the source Electron app, not the installed release. Its window
 title starts with `[DEV]`. The persistent `.dev-profile/` directory holds its
-own login, settings, and Host data and is ignored by Git. Sign in and create a
+own login and settings and is ignored by Git. Development Host data is stored
+separately under the OS app-data directory's `SPS-Development/<workspace-id>/`
+folder, avoiding a Unicode source-checkout path in PostgreSQL native arguments.
+Sign in and create a
 test Host on the first launch. Do not select real project folders for UI tests.
 The installed app and its data are not copied into this profile.
 

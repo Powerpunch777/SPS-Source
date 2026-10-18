@@ -339,8 +339,17 @@ $("#open-workspace-retry").addEventListener("click", () => run(async () => {
 }));
 
 $("#create-owner-server").addEventListener("click", () => run(async () => {
-  setNotice("이 컴퓨터에 SPS Server와 Owner Vault를 준비하고 있습니다. 첫 실행은 몇 분 걸릴 수 있습니다.");
-  await window.spsDesktop.createOwnerServer();
+  const button = $("#create-owner-server");
+  if (button.disabled) return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    setNotice("이 컴퓨터에 SPS Server와 Owner Vault를 준비하고 있습니다. 첫 실행은 몇 분 걸릴 수 있습니다.");
+    await window.spsDesktop.createOwnerServer();
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
 }));
 
 $("#restore-owner-server").addEventListener("click", () => run(async () => {

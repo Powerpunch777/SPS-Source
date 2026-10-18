@@ -14,7 +14,7 @@ test("Owner Host creation succeeds only after activation is ready", async () => 
   );
   assert.match(
     renderer,
-    /\$\("#create-owner-server"\)\.addEventListener\("click", \(\) => run\(async \(\) => \{\s*setNotice\([\s\S]*?await window\.spsDesktop\.createOwnerServer\(\);\s*\}\)\);/,
+    /\$\("#create-owner-server"\)\.addEventListener\("click", \(\) => run\(async \(\) => \{[\s\S]*?button\.disabled = true;[\s\S]*?await window\.spsDesktop\.createOwnerServer\(\);\s*\} finally \{\s*button\.disabled = false;/,
   );
   assert.doesNotMatch(
     renderer,

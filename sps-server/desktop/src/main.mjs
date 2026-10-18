@@ -207,6 +207,7 @@ const developmentMode = resolveDesktopDevelopment({
   packaged: app.isPackaged,
   enabled: process.env.SPS_DESKTOP_DEV === "1",
   desktopRoot: path.resolve(__dirname, ".."),
+  vaultBase: app.getPath("appData"),
   e2e: process.env.SPS_DESKTOP_E2E === "1",
 });
 if (developmentMode) {
@@ -230,6 +231,7 @@ function configureIsolatedE2eUserData() {
 configureIsolatedE2eUserData();
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
 let mainWindow = null;
+let ownerCreationInProgress = false;
 let workspaceWindow = null;
 let registryWindow = null;
 let pluginPreviewWindow = null;
@@ -1244,7 +1246,7 @@ async function showHostProjectSourceManager(projectId) {
 }
 
 function ownerVaultRoot() {
-  return path.join(app.getPath("userData"), "owner-vault");
+  return developmentMode?.vaultRoot ?? path.join(app.getPath("userData"), "owner-vault");
 }
 
 async function materializeCurrentSpsOwnerHostRuntime() {
@@ -4520,9 +4522,15 @@ function registerIpc() {
     if (state.profile && !isOwnerHostProfile()) {
       throw new Error("This computer is already joined to another SPS Server. Disconnect it before creating a new local Server.");
     }
-    await startOwnerHost({ activate: true });
-    await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
-    return publicStatus();
+    if (ownerCreationInProgress) throw new Error("SPS Server creation is already in progress.");
+    ownerCreationInProgress = true;
+    try {
+      await startOwnerHost({ activate: true });
+      await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+      return publicStatus();
+    } finally {
+      ownerCreationInProgress = false;
+    }
   });
   ipcMain.handle("desktop:restore-owner-server", async () => await restoreOwnerServerFromTransfer());
   ipcMain.handle("desktop:join-server", async (_event, input) => {
