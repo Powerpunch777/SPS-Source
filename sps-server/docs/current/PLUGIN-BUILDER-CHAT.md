@@ -30,7 +30,15 @@ support-matrix.json; they are not part of the published v0.11.0 tag.
 - Desktop source Workspace E2E passed, including panel bounds at 1024x720 and
   1440x900 and responsive Workspace checks through 1440x900.
 - Development app: actual Codex Lead answered the initial connection check and
-  recalled its previous response on the next turn. No file edits were requested.
+  recalled its previous response on the next turn. After the final backend
+  restart it restored the transcript and recalled that answer again. No file
+  edits were requested. The right-hand panel was also inspected in the app.
+- Final source E2E rerun passed with screenshots and responsive assertions.
+  One preceding run without screenshot capture failed while establishing the
+  fresh Host Identity session (`desktop_access_required`); no authenticated
+  Workspace window opened. Retrying passed with the live development Host still
+  running. Its cause is not established, so startup reliability is not certified
+  by this passing retry and remains a separate regression investigation.
 
 These are source-development results, not signed-package or two-device evidence.
 
