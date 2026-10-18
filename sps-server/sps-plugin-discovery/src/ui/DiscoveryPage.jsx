@@ -1,93 +1,98 @@
-import { usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
-
-const styles = `
-  .sps-builder { max-width: 1100px; margin: 0 auto; color: var(--foreground, #24272b); font: 14px/1.6 var(--font-sans, "Pretendard Variable", system-ui, sans-serif); letter-spacing: 0; }
-  .sps-builder-header { padding: 8px 0 18px; }
-  .sps-builder-header h1 { margin: 0; font-size: 22px; }
-  .sps-builder-header p { max-width: 760px; margin: 8px 0 0; color: var(--muted-foreground, #667085); }
-  .sps-builder-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
-  .sps-builder-card { min-width: 0; border: 1px solid var(--border, #e2e2e2); border-radius: 8px; background: var(--background, #fff); overflow: hidden; }
-  .sps-builder-card-head { padding: 14px 16px; border-bottom: 1px solid var(--border, #e3e8f0); }
-  .sps-builder-card-head strong { display: block; font-size: 14px; }
-  .sps-builder-card-head span { display: block; margin-top: 3px; color: var(--muted-foreground, #667085); font-size: 12px; }
-  summary.sps-builder-card-head { cursor: pointer; color: var(--muted-foreground, #626b75); }
-  summary.sps-builder-card-head strong { display: inline; margin-left: 6px; font-weight: 500; }
-  .sps-builder-empty { padding: 22px 16px; color: var(--muted-foreground, #667085); }
-  .sps-builder-session { padding: 13px 16px; border-bottom: 1px solid var(--border, #e3e8f0); }
-  .sps-builder-session:last-child { border-bottom: 0; }
-  .sps-builder-session-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-  .sps-builder-session-head strong { overflow-wrap: anywhere; }
-  .sps-builder-status { flex: none; border-radius: 6px; background: var(--muted, #f4f4f4); color: var(--foreground, #24272b); padding: 2px 7px; font-size: 12px; font-weight: 500; }
-  .sps-builder-session p { margin: 5px 0 0; color: var(--muted-foreground, #667085); font-size: 12px; overflow-wrap: anywhere; }
-  .sps-builder-event { margin-top: 10px; padding-left: 10px; border-left: 2px solid #d9e3f1; }
-  .sps-builder-event strong { display: block; font-size: 12px; text-transform: capitalize; }
-  .sps-builder-event span { display: block; color: var(--muted-foreground, #667085); font-size: 11px; overflow-wrap: anywhere; }
-  .sps-builder-contract { display: grid; gap: 10px; padding: 16px; }
-  .sps-builder-step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 9px; align-items: start; }
-  .sps-builder-step-number { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: var(--muted, #f4f4f4); color: var(--foreground, #24272b); font-weight: 600; font-size: 12px; }
-  .sps-builder-step strong { display: block; }
-  .sps-builder-step span { display: block; margin-top: 2px; color: var(--muted-foreground, #667085); font-size: 12px; }
-  .sps-builder-note { margin: 0 16px 16px; padding: 10px 11px; border-radius: 6px; background: var(--muted, #f4f4f4); color: var(--muted-foreground, #626b75); font-size: 12px; }
-  @media (max-width: 820px) { .sps-builder-grid { grid-template-columns: 1fr; } }
-`;
-
-function eventLabel(event) {
-  return `${event?.type ?? "event"} - ${event?.status ?? "unknown"}`;
-}
+import { useEffect, useRef, useState } from "react";
+import { useHostNavigation, usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
+import { builderStyles } from "./builder-styles.js";
 
 export function PluginBuilderPage({ context }) {
-  const { data, loading, error } = usePluginData("plugin-builder-workspace", { companyId: context.companyId });
-  const sessions = Array.isArray(data?.authoringSessions) ? [...data.authoringSessions].reverse() : [];
-
-  return (
-    <div className="sps-builder">
-      <style>{styles}</style>
-      <header className="sps-builder-header">
-        <h1>Plugin Builder</h1>
-        <p>Create an external SPS plugin project, record the work performed by an approved Agent, inspect build evidence, preview it in isolation, and produce a package candidate.</p>
-      </header>
-      <div className="sps-builder-grid">
-        <main className="sps-builder-card">
-          <div className="sps-builder-card-head">
-            <strong>Authoring projects</strong>
-            <span>Projects are kept outside SPS. This page shows only the append-only authoring evidence stored for this Workspace.</span>
-          </div>
-          {loading ? <div className="sps-builder-empty">Loading authoring projects...</div> : null}
-          {error ? <div className="sps-builder-empty">Could not load authoring projects: {error.message}</div> : null}
-          {!loading && !error && sessions.length === 0 ? <div className="sps-builder-empty">No plugin project has been started in this Workspace.</div> : null}
-          {sessions.map((session) => (
-            <section className="sps-builder-session" key={session.id}>
-              <div className="sps-builder-session-head">
-                <strong>{session.displayName}</strong>
-                <span className="sps-builder-status">{session.status}</span>
-              </div>
-              <p>{session.pluginId}</p>
-              {session.goal ? <p>{session.goal}</p> : null}
-              {session.events.slice(-8).map((event) => (
-                <div className="sps-builder-event" key={event.id}>
-                  <strong>{eventLabel(event)}</strong>
-                  <span>{event.summary}</span>
-                  {event.evidence?.length ? <span>{event.evidence.length} evidence item(s)</span> : null}
-                </div>
-              ))}
-            </section>
-          ))}
-        </main>
-        <details className="sps-builder-card">
-          <summary className="sps-builder-card-head">
-            <strong>Builder contract</strong>
-          </summary>
-          <div className="sps-builder-contract">
-            {["Create an external project", "Record authoring steps and evidence", "Inspect build, validation, and tests", "Open isolated Preview", "Create a package candidate"].map((label, index) => (
-              <div className="sps-builder-step" key={label}>
-                <span className="sps-builder-step-number">{index + 1}</span>
-                <div><strong>{label}</strong><span>Recorded per Workspace in the append-only ledger.</span></div>
-              </div>
-            ))}
-          </div>
-          <p className="sps-builder-note">Installation, activation, update, disable, rollback, and removal remain Host lifecycle operations in Settings. Builder never invokes them.</p>
-        </details>
-      </div>
-    </div>
-  );
+  const { data, loading, error, refresh } = usePluginData("plugin-builder-workspace", { companyId: context.companyId });
+  const create = usePluginAction("builder-create"), send = usePluginAction("builder-send"), saveTeam = usePluginAction("builder-team");
+  const navigation = useHostNavigation();
+  const [selectedId, setSelectedId] = useState(null), [leadId, setLeadId] = useState("");
+  const [workers, setWorkers] = useState([]), [draft, setDraft] = useState(""), [files, setFiles] = useState([]);
+  const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [panel, setPanel] = useState(false), [panelWidth, setPanelWidth] = useState(300);
+  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null);
+  const agents = data?.agents ?? [], conversations = data?.conversations ?? [];
+  const conversation = conversations.find(item => item.id === selectedId);
+  const selectedLeadId = conversation?.leadId || leadId || agents[0]?.id || "";
+  const selectedWorkers = conversation?.workerIds ?? workers, lead = agents.find(agent => agent.id === selectedLeadId);
+  const messages = conversation?.messages ?? [], running = messages.some(message => message.status === "running");
+  const sessions = data?.authoringSessions ?? [];
+  useEffect(() => { const timer = setInterval(refresh, running ? 1500 : 10000); return () => clearInterval(timer); }, [refresh, running]);
+  useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }); }, [selectedId, messages.length, messages.at(-1)?.status]);
+  useEffect(() => () => resizeCleanup.current?.(), []);
+  function fresh() { setSelectedId(null); setDraft(""); setFiles([]); setNotice(""); }
+  async function submit(event) {
+    event.preventDefault();
+    if (busy || running || !selectedLeadId || (!draft.trim() && !files.length)) return;
+    setBusy(true); setNotice("");
+    try {
+      const current = conversation ?? await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
+      setSelectedId(current.id);
+      await send({ conversationId: current.id, message: draft, attachments: files });
+      setDraft(""); setFiles([]); refresh();
+    } catch (failure) { setNotice(failure.message || "메시지를 보내지 못했습니다."); refresh(); }
+    finally { setBusy(false); }
+  }
+  async function changeWorkers(workerId, checked) {
+    const next = checked ? [...selectedWorkers, workerId] : selectedWorkers.filter(id => id !== workerId);
+    if (!conversation) { setWorkers(next); return; }
+    setBusy(true); setNotice("");
+    try { await saveTeam({ conversationId: conversation.id, leadId: selectedLeadId, workerIds: next }); refresh(); }
+    catch (failure) { setNotice(failure.message); } finally { setBusy(false); }
+  }
+  async function attach(event) {
+    const chosen = [...event.target.files]; event.target.value = "";
+    try {
+      if (files.length + chosen.length > 4) throw new Error("텍스트 파일은 최대 4개까지 첨부할 수 있습니다.");
+      const next = await Promise.all(chosen.map(async file => {
+        if (file.size > 65536) throw new Error("파일 하나당 최대 64 KiB입니다.");
+        const content = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+        if (content.includes("\0")) throw new Error("UTF-8 텍스트 파일만 첨부할 수 있습니다.");
+        return { name: file.name, content };
+      })); setFiles([...files, ...next]); setNotice("");
+    } catch (failure) { setNotice(failure.message); }
+  }
+  function resize(event) {
+    const start = event.clientX, width = panelWidth; resizeCleanup.current?.();
+    const move = next => setPanelWidth(Math.max(260, Math.min(440, width + start - next.clientX)));
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); resizeCleanup.current = null; };
+    resizeCleanup.current = stop; window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
+  }
+  return <div className={`sps-builder ${panel ? "with-panel" : ""}`} style={{ "--builder-panel": `${panelWidth}px` }}>
+    <style>{builderStyles}</style>
+    <aside className="bc-rail" aria-label="Builder conversations">
+      <div className="bc-rail-header"><strong>Plugin Builder</strong><button className="bc-icon" title="새 대화" aria-label="새 대화" onClick={fresh}>+</button></div>
+      <div className="bc-list">{[...conversations].reverse().map(item => <button key={item.id} className={`bc-chat-link ${selectedId === item.id ? "active" : ""}`} onClick={() => { setSelectedId(item.id); setDraft(""); setFiles([]); setNotice(""); }}><span>{item.title}</span><small>{agents.find(agent => agent.id === item.leadId)?.name || "Lead"}</small></button>)}
+        {!loading && !conversations.length ? <p className="bc-muted">아직 대화가 없습니다.</p> : null}</div>
+    </aside>
+    <main className="bc-main">
+      <header className="bc-header"><span className="bc-header-title">{conversation?.title || "새 대화"}</span><button className="bc-icon" title="새 대화" aria-label="새 대화 시작" onClick={fresh}>+</button><button className="bc-button" aria-expanded={panel} onClick={() => setPanel(!panel)}>작업 패널</button></header>
+      <section className="bc-transcript" aria-label="Lead conversation" aria-live="polite">
+        {loading && !data ? <p className="bc-muted">대화를 불러오는 중...</p> : null}
+        {error ? <p className="bc-error" role="alert">{error.message} <button className="bc-button" onClick={refresh}>다시 시도</button></p> : null}
+        {!loading && !error && !messages.length ? <div className="bc-empty"><h2>무엇을 만들까요?</h2><p>Lead와 플러그인 제작을 시작하세요.</p></div> : null}
+        {messages.map(message => <article className={`bc-message ${message.role}`} key={message.id}>
+          <div className="bc-message-head"><span>{message.role === "user" ? "나" : lead?.name || "Lead"}</span>{message.status ? <span className="bc-status">{{ running:"작업 중", failed:"실패", interrupted:"중단됨", completed:"완료" }[message.status]}</span> : null}</div>
+          <div className={`bc-message-body ${message.status === "failed" ? "bc-error" : ""}`}>{message.content || (message.status === "running" ? "답변을 준비하고 있습니다…" : "")}</div>
+          {message.attachments?.map((file,index) => <details key={index}><summary>{file.name}</summary><pre>{file.content}</pre></details>)}
+          {message.steps?.length ? <details><summary>실행 기록 {message.steps.length}</summary><pre>{message.steps.map(step => step.text).join("\n")}</pre></details> : null}
+        </article>)}<div ref={end} />
+      </section>
+      <form className="bc-composer" onSubmit={submit}><div className="bc-compose-box">
+        {files.length ? <div className="bc-file-chips">{files.map((file,index) => <span className="bc-file-chip" key={index}>{file.name}<button type="button" title="첨부 제거" aria-label={`${file.name} 첨부 제거`} onClick={() => setFiles(files.filter((_,i) => i!==index))}>x</button></span>)}</div> : null}
+        <textarea aria-label="Lead에게 메시지" placeholder={lead ? `${lead.name}에게 메시지` : "먼저 Assistant를 등록하세요"} value={draft} maxLength={20000} disabled={busy || running || !lead} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if(event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
+        <div className="bc-compose-tools"><button type="button" className="bc-icon" title="UTF-8 텍스트 파일 첨부" aria-label="텍스트 파일 첨부" disabled={busy || running} onClick={() => fileInput.current.click()}>+</button><input className="bc-hidden" ref={fileInput} type="file" multiple accept=".txt,.md,.json,.js,.ts,.jsx,.tsx,.css,.html,.yaml,.yml,.csv" onChange={attach} />
+          <select aria-label="Lead 선택" value={selectedLeadId} disabled={busy || running || Boolean(conversation)} onChange={event => { setLeadId(event.target.value); setWorkers(workers.filter(id => id!==event.target.value)); }}>{!agents.length ? <option value="">Lead 없음</option> : null}{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
+          <span className="bc-model" title="선택한 Agent의 모델·추론 설정을 사용합니다">{lead?.model || lead?.adapterType || ""}{lead?.effort ? ` · ${lead.effort}` : ""}</span><span className="bc-spacer" /><button className="bc-button primary" disabled={busy || running || !lead || (!draft.trim() && !files.length)}>{busy ? "전송 중…" : running ? "응답 중…" : "보내기"}</button>
+        </div></div>{notice ? <p className="bc-notice bc-error" role="alert">{notice}</p> : null}{!lead && !loading ? <p className="bc-notice bc-muted">이 Workspace에 실행 가능한 Assistant가 없습니다.</p> : null}
+      </form>
+    </main>
+    {panel ? <aside className="bc-panel" aria-label="Builder 작업 패널"><div className="bc-resizer" role="separator" tabIndex={0} aria-label="작업 패널 너비" aria-orientation="vertical" aria-valuemin={260} aria-valuemax={440} aria-valuenow={panelWidth} onPointerDown={resize} onKeyDown={event => { if(["ArrowLeft","ArrowRight"].includes(event.key)) { event.preventDefault(); setPanelWidth(width => Math.max(260,Math.min(440,width+(event.key==="ArrowLeft"?20:-20)))); } }} />
+      <div className="bc-panel-head"><strong>작업</strong><button className="bc-icon" aria-label="작업 패널 닫기" title="작업 패널 닫기" onClick={() => setPanel(false)}>x</button></div><h3>Lead</h3><div className="bc-person"><span className="bc-person-name">{lead?.name || "선택 필요"}</span><small>{running ? "작업 중" : "대기"}</small></div><h3>Workers</h3>
+      {agents.filter(agent => agent.id!==selectedLeadId).map(agent => <div className="bc-person" key={agent.id}><label><input type="checkbox" disabled={busy || running} checked={selectedWorkers.includes(agent.id)} onChange={event => changeWorkers(agent.id,event.target.checked)} /><span className="bc-person-name">{agent.name}</span></label></div>)}{agents.length<2 ? <p>추가 Assistant를 등록하면 Worker로 선택할 수 있습니다.</p> : null}
+      {conversation?.reports?.length ? <><h3>Worker 보고</h3>{conversation.reports.map(report => <details className="bc-evidence-item" key={report.id}><summary>{agents.find(agent => agent.id===report.workerId)?.name || "Worker"} · {report.status}</summary><p>{report.objective}</p><p>{report.content || "실행 중"}</p></details>)}</> : null}
+      <h3>Preview</h3><button className="bc-button" onClick={() => navigation.navigate("/company/settings/instance/plugins")}>플러그인 검토 열기</button>
+      <details className="bc-evidence"><summary>제작 기록 · Authoring projects ({sessions.length})</summary>{!sessions.length ? <p>No plugin project has been started in this Workspace.</p> : null}{[...sessions].reverse().map(session => <div className="bc-evidence-item" key={session.id}><strong>{session.displayName}</strong><span className="bc-status">{session.status}</span>{session.events.slice(-8).map(event => <p key={event.id}>{event.summary}{event.evidence?.length ? ` · 증거 ${event.evidence.length}` : ""}</p>)}</div>)}</details>
+      <details className="bc-evidence"><summary>Builder contract</summary><p>제작 기록과 검증 결과는 Workspace에 저장합니다. Preview는 별도 격리 창에서 확인하며, 설치·활성화는 설정에서 관리합니다.</p></details>
+    </aside> : null}
+  </div>;
 }

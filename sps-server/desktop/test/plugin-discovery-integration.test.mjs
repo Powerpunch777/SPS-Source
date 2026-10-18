@@ -21,6 +21,10 @@ test("Plugin Builder is a neutral, lifecycle-free SPS tool provider", () => {
     "plugin.state.read",
     "plugin.state.write",
     "ui.page.register",
+    "agents.read",
+    "agent.sessions.create",
+    "agent.sessions.list",
+    "agent.sessions.send",
   ]);
   assert.equal(manifest.displayName, "Plugin Builder");
   assert.equal(manifest.ui?.slots?.find((slot) => slot.type === "page")?.routePath, "builder");
@@ -33,6 +37,8 @@ test("Plugin Builder is a neutral, lifecycle-free SPS tool provider", () => {
     "inspect-sps-plugin-build",
     "open-sps-plugin-preview",
     "create-sps-plugin-package",
+    "builder-delegate-worker",
+    "builder-worker-result",
   ]);
   assert.equal(manifest.capabilities.some((capability) => capability.startsWith("plugin.lifecycle.")), false);
   assert.equal(manifest.tools.some((tool) => /install|enable|activate|update|disable|remove|lifecycle/i.test(tool.name)), false);

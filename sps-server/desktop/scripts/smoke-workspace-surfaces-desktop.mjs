@@ -478,13 +478,30 @@ try {
   await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/builder`)})`);
   await waitForPage(
     workspaceCdp,
-    (page) => page.route.includes("/builder") && page.body.includes("Plugin Builder") && page.body.includes("Authoring projects"),
+    (page) => page.route.includes("/builder") && page.body.includes("Plugin Builder") && page.body.includes("무엇을 만들까요?"),
     "the Plugin Builder project surface",
   );
   if (screenshotPath && sourceElectron) {
     const builderFont = await workspaceCdp.evaluate(`getComputedStyle(document.querySelector('.sps-builder')).fontFamily`);
     assert.match(builderFont, /Pretendard/);
     await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "plugin-builder.png"));
+    await click(workspaceCdp, ".bc-header .bc-button", "Open Builder work panel");
+    for (const [width, height] of [[1024, 720], [1440, 900]]) {
+      await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+      await workspaceCdp.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`, true);
+      const builderLayout = await workspaceCdp.evaluate(`(() => {
+        const box = document.querySelector('.bc-compose-box').getBoundingClientRect();
+        return { bottom: box.bottom, height: innerHeight, overflow: document.documentElement.scrollWidth > innerWidth,
+          panel: Boolean(document.querySelector('.bc-panel')), separator: Boolean(document.querySelector('.bc-resizer[role="separator"]')) };
+      })()`);
+      assert.equal(builderLayout.overflow, false);
+      assert.ok(builderLayout.bottom <= builderLayout.height);
+      assert.equal(builderLayout.panel, true);
+      assert.equal(builderLayout.separator, true);
+      await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), `plugin-builder-panel-${width}x${height}.png`));
+    }
+    await click(workspaceCdp, ".bc-panel-head button", "Close Builder work panel");
+    await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
   }
 
   await api(workspaceCdp, `/api/plugins/${teamWorkplane.id}/companies/${company.id}/activation`, {

@@ -22,6 +22,8 @@ assert.deepEqual(manifest.tools.map((tool) => tool.name), [
   "inspect-sps-plugin-build",
   "open-sps-plugin-preview",
   "create-sps-plugin-package",
+  "builder-delegate-worker",
+  "builder-worker-result",
 ]);
 assert.match(manifest.tools.find((tool) => tool.name === "create-sps-plugin-project")?.description ?? "", /does not install or activate/i);
 assert.match(manifest.tools.find((tool) => tool.name === "open-sps-plugin-preview")?.description ?? "", /does not affect the production Workspace/i);

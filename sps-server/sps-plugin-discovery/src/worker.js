@@ -1,9 +1,16 @@
 import { defineSpsPlatformContract } from "@sonparkserver/plugin-sdk/platform";
 import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";
+import { createBuilderChat } from "./builder-chat.js";
 import manifest from "./manifest.js";
 import { createDiscoveryAuthoringService } from "./authoring.js";
 
 const authoringServices = new WeakMap();
+const chatServices = new WeakMap();
+function chatFor(platform) {
+  let chat = chatServices.get(platform.state);
+  if (!chat) { chat = createBuilderChat(platform); chatServices.set(platform.state, chat); }
+  return chat;
+}
 
 function authoringFor(platform) {
   let authoring = authoringServices.get(platform);
@@ -48,7 +55,7 @@ function tool(name, handler) {
 }
 
 const platform = defineSpsPlatformContract({
-  capabilities: ["agent.tools.register", "plugin.state.read", "plugin.state.write"],
+  capabilities: ["agent.tools.register", "plugin.state.read", "plugin.state.write", "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send"],
   tools: [
     tool("create-sps-plugin-project", async (authoring, params, runContext) => {
       const session = await authoring.createProject(params, runContext);
@@ -85,19 +92,26 @@ const platform = defineSpsPlatformContract({
         data: { authoringSessionId: session.id, pluginId: session.pluginId, status: session.status, event: session.events.at(-1) },
       };
     }),
+    ...[["builder-delegate-worker", "delegate"], ["builder-worker-result", "report"]].map(([name, method]) => ({
+      name, declaration: declarations.get(name),
+      handler: async (params, runContext, platform) => {
+        const data = await chatFor(platform)[method](runContext.companyId, params, runContext);
+        return { content: JSON.stringify(data), data };
+      },
+    })),
   ],
   data: [{
     key: "plugin-builder-workspace",
-    handler: (params, invocationPlatform) => workspaceView(authoringFor(invocationPlatform), params),
+    handler: async (params, invocationPlatform) => ({ ...await workspaceView(authoringFor(invocationPlatform), params), ...await chatFor(invocationPlatform).view(params.companyId) }),
   }],
+  actions: [["builder-create", "create"], ["builder-team", "team"], ["builder-send", "send"]].map(([key, method]) => ({
+    key, handler: async (params, platform) => {
+      if (platform.actor.type !== "user" || params.companyId && params.companyId !== platform.companyId) throw new Error("An authenticated Workspace user is required.");
+      return chatFor(platform)[method](platform.companyId, params);
+    },
+  })),
 });
 
-const plugin = defineSpsPlugin({
-  platform,
-  health() {
-    return { status: "ok", message: "SPS Plugin Builder is ready for external project authoring." };
-  },
-});
-
+const plugin = defineSpsPlugin({ platform, health() { return { status: "ok", message: "Plugin Builder chat is ready." }; } });
 export default plugin;
 runSpsWorker(plugin);

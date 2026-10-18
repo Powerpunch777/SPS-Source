@@ -87,9 +87,13 @@ Host가 route를 철회하면 재실행이 거부되는지 확인한다. 양쪽 
 - Lead는 사용자 대화, 작업 분배, Worker 결과 검토와 통합 보고를 담당한다.
 - Worker 없이 Lead만으로 제작을 진행할 수 있다. 작업 분할 방식은 Lead가 판단한다.
 - 역할과 위임 규칙은 Builder 플러그인의 책임이다. Core는 공통 실행 기반을 제공한다.
-- 구현 예정: Lead 선택 및 대화 화면, Worker 추가·관리, 위임 실행·결과 반환,
-  기존 제작 기록·검증·Preview 연결. 아래 historical 검증은 이 후속 흐름의
-  구현 완료를 의미하지 않는다.
+- 개발 소스 반영: Lead 선택, 대화 목록·저장·실행 기록, 텍스트 첨부,
+  Worker 선택 및 Lead 전용 위임·결과 조회 도구, 기존 제작 기록 패널.
+- 실제 Codex Lead의 첫 응답과 연속 응답을 개발 앱에서 확인했다.
+- Worker 실계정 위임 E2E, 실행 중지, 대화에서 별도 Preview로 직접 연결은
+  미완료다. 모델·추론은 선택한 Agent 설정을 사용한다.
+- 세부 계약과 검증 범위: [Builder Chat](PLUGIN-BUILDER-CHAT.md).
+  아래 historical 검증은 이 후속 흐름의 구현 완료를 의미하지 않는다.
 
 - Historical snapshot (`0.4.104`): Desktop 테스트 `261/261` 통과, exit 0
 - desktop-node 테스트 `39/39` 통과

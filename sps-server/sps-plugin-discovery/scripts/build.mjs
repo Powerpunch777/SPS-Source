@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readFile, rm } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rename } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -16,10 +16,8 @@ try {
   throw new Error("The public SPS Plugin SDK is unavailable. Check out external/sps-plugin-sdk before packaging Plugin Builder.");
 }
 
-await rm(resolve(root, "dist"), { recursive: true, force: true });
 await mkdir(resolve(root, "dist"), { recursive: true });
 await Promise.all([
-  cp(resolve(root, "src", "manifest.js"), resolve(root, "dist", "manifest.js")),
   cp(resolve(root, "src", "authoring.js"), resolve(root, "dist", "authoring.js")),
 ]);
 
@@ -28,7 +26,7 @@ await Promise.all([
 // node_modules layout that happens to exist on a developer machine.
 await build({
   entryPoints: [resolve(root, "src", "worker.js")],
-  outfile: resolve(root, "dist", "worker.js"),
+  outfile: resolve(root, "dist", "worker.next.js"),
   bundle: true,
   format: "esm",
   platform: "node",
@@ -39,6 +37,9 @@ await build({
   },
   logLevel: "warning",
 });
+await rename(resolve(root, "dist", "worker.next.js"), resolve(root, "dist", "worker.js"));
+await cp(resolve(root, "src", "manifest.js"), resolve(root, "dist", "manifest.next.js"));
+await rename(resolve(root, "dist", "manifest.next.js"), resolve(root, "dist", "manifest.js"));
 
 const outputDirectory = resolve(root, "dist", `ui-v${version}`);
 await mkdir(outputDirectory, { recursive: true });

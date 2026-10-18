@@ -28,7 +28,7 @@ test("ships a packaged Desktop Workspace Surfaces E2E harness", async () => {
     "workspace-inbox",
     "Neutral Workspace",
     "Plugin Builder",
-    "Authoring projects",
+    "무엇을 만들까요?",
     "Team Workplane",
     "taskkill",
     "removeTemporaryDirectory",

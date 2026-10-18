@@ -105,6 +105,10 @@ export default {
     "plugin.state.read",
     "plugin.state.write",
     "ui.page.register",
+    "agents.read",
+    "agent.sessions.create",
+    "agent.sessions.list",
+    "agent.sessions.send",
   ],
   companyActivation: { defaultEnabled: true },
   agentPlatform: {
@@ -135,5 +139,15 @@ export default {
     inspectBuildTool,
     openPreviewTool,
     packageTool,
+    {
+      name: "builder-delegate-worker", displayName: "Delegate Builder Worker",
+      description: "The conversation Lead assigns a specific objective to one selected Worker. Returns a report ID; use builder-worker-result to read its status and output. Other Agents cannot delegate.",
+      parametersSchema: { type: "object", properties: { conversationId: { type: "string" }, workerId: { type: "string" }, objective: { type: "string" } }, required: ["conversationId", "workerId", "objective"] },
+    },
+    {
+      name: "builder-worker-result", displayName: "Read Builder Worker Result",
+      description: "The conversation Lead reads the status and output of its own Worker assignment.",
+      parametersSchema: { type: "object", properties: { conversationId: { type: "string" }, reportId: { type: "string" } }, required: ["conversationId", "reportId"] },
+    },
   ],
 };

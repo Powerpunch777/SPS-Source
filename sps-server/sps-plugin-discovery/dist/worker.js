@@ -6,7 +6,11 @@ var SPS_PLATFORM_CAPABILITIES = Object.freeze([
   "events.emit",
   "jobs.schedule",
   "plugin.state.read",
-  "plugin.state.write"
+  "plugin.state.write",
+  "agents.read",
+  "agent.sessions.create",
+  "agent.sessions.list",
+  "agent.sessions.send"
 ]);
 var CAPABILITY_SET = new Set(SPS_PLATFORM_CAPABILITIES);
 function isPlainObject(value) {
@@ -147,7 +151,11 @@ function defineSpsPlatformContract(contract = {}) {
     data: defineUnique(value.data, (entry) => {
       const provider = assertRecord(entry, "data provider registration");
       return defineDataProvider(provider.key, provider.handler);
-    }, (provider) => provider.key, "data providers")
+    }, (provider) => provider.key, "data providers"),
+    actions: defineUnique(value.actions, (entry) => {
+      const action = assertRecord(entry, "action registration");
+      return defineDataProvider(action.key, action.handler);
+    }, (action) => action.key, "actions")
   });
 }
 
@@ -186,7 +194,7 @@ var PRIMITIVE_SET = new Set(SPS_CORE_PRIMITIVES);
 // ../../external/sps-plugin-sdk/worker/index.mjs
 var RUNTIME_OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 var LIFECYCLE_METHODS = /* @__PURE__ */ new Set(["initialize", "health", "shutdown"]);
-var PLATFORM_METHODS = /* @__PURE__ */ new Set(["executeTool", "onEvent", "runJob", "getData"]);
+var PLATFORM_METHODS = /* @__PURE__ */ new Set(["executeTool", "onEvent", "runJob", "getData", "performAction"]);
 var PLATFORM_HOST_OPERATIONS = /* @__PURE__ */ new Set([
   "state.get",
   "state.set",
@@ -195,7 +203,11 @@ var PLATFORM_HOST_OPERATIONS = /* @__PURE__ */ new Set([
   "events.subscribe",
   "inbox.publish",
   "inbox.update",
-  "inbox.withdraw"
+  "inbox.withdraw",
+  "agents.list",
+  "agents.sessions.create",
+  "agents.sessions.list",
+  "agents.sessions.sendMessage"
 ]);
 var JSON_RPC_VERSION = "2.0";
 var SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -265,6 +277,7 @@ function runSpsWorker(plugin2, options = {}) {
   let closed = false;
   let lifecycleState = "new";
   const pending = /* @__PURE__ */ new Map();
+  const sessionCallbacks = /* @__PURE__ */ new Map();
   const invocationStorage = new AsyncLocalStorage();
   const controller = new AbortController();
   let resolveClosed;
@@ -283,6 +296,7 @@ function runSpsWorker(plugin2, options = {}) {
     controller.abort(reason);
     for (const { reject } of pending.values()) reject(reason);
     pending.clear();
+    sessionCallbacks.clear();
     reader.close();
     input.pause?.();
     resolveClosed();
@@ -295,14 +309,14 @@ function runSpsWorker(plugin2, options = {}) {
       return Promise.reject(new TypeError("SPS Worker request input must be JSON-serializable."));
     }
     if (closed) return Promise.reject(new Error("SPS Worker transport is closed."));
-    const id = `sps-${nextRequestId++}`;
+    const id2 = `sps-${nextRequestId++}`;
     return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
+      pending.set(id2, { resolve, reject });
       try {
         const invocation = invocationStorage.getStore();
-        write({ jsonrpc: JSON_RPC_VERSION, id, method: operation, params: inputValue, ...invocation ? { paperclipInvocationId: invocation.id } : {} });
+        write({ jsonrpc: JSON_RPC_VERSION, id: id2, method: operation, params: inputValue, ...invocation ? { paperclipInvocationId: invocation.id } : {} });
       } catch (cause) {
-        pending.delete(id);
+        pending.delete(id2);
         reject(toError(cause));
       }
     });
@@ -315,7 +329,35 @@ function runSpsWorker(plugin2, options = {}) {
       return callHost(operation, inputValue);
     }
   });
+  function agentRequest(capability, operation, params) {
+    if (!definition.handlers.platform?.capabilities.includes(capability)) {
+      return Promise.reject(new Error(`Undeclared SPS Platform capability: ${capability}.`));
+    }
+    return callHost(operation, params);
+  }
   const platform2 = Object.freeze({
+    agents: Object.freeze({
+      list(input2) {
+        return agentRequest("agents.read", "agents.list", input2);
+      },
+      sessions: Object.freeze({
+        create(agentId, companyId, options2 = {}) {
+          return agentRequest("agent.sessions.create", "agents.sessions.create", { ...options2, agentId, companyId });
+        },
+        list(agentId, companyId) {
+          return agentRequest("agent.sessions.list", "agents.sessions.list", { agentId, companyId });
+        },
+        async sendMessage(sessionId, companyId, options2) {
+          if (options2.onEvent) sessionCallbacks.set(sessionId, options2.onEvent);
+          try {
+            return await agentRequest("agent.sessions.send", "agents.sessions.sendMessage", { sessionId, companyId, prompt: options2.prompt, ...options2.reason ? { reason: options2.reason } : {} });
+          } catch (error2) {
+            sessionCallbacks.delete(sessionId);
+            throw error2;
+          }
+        }
+      })
+    }),
     events: Object.freeze({
       emit(name, companyId, payload) {
         if (typeof name !== "string" || name.length === 0 || typeof companyId !== "string" || companyId.length === 0 || !isJsonValue2(payload)) {
@@ -351,9 +393,9 @@ function runSpsWorker(plugin2, options = {}) {
     return target;
   }
   function validateInboxActionId(value) {
-    const id = inboxString(value, "SPS Inbox action id", 100);
-    if (!SURFACE_ID_RE.test(id)) throw new TypeError("SPS Inbox action ids must use lowercase letters, numbers, dots, underscores, or hyphens.");
-    return id;
+    const id2 = inboxString(value, "SPS Inbox action id", 100);
+    if (!SURFACE_ID_RE.test(id2)) throw new TypeError("SPS Inbox action ids must use lowercase letters, numbers, dots, underscores, or hyphens.");
+    return id2;
   }
   function validateInboxItem(input2) {
     if (!isRecord(input2) || typeof input2.companyId !== "string" || input2.companyId.trim().length === 0 || input2.targetUserId !== void 0 && input2.targetUserId !== null && (typeof input2.targetUserId !== "string" || input2.targetUserId.trim().length === 0) || input2.severity !== void 0 && !["info", "success", "warning", "error"].includes(input2.severity) || input2.actionIds !== void 0 && !Array.isArray(input2.actionIds) || input2.opaqueReference !== void 0 && (!isRecord(input2.opaqueReference) || !isJsonValue2(input2.opaqueReference))) {
@@ -415,13 +457,19 @@ function runSpsWorker(plugin2, options = {}) {
     }
     return { scopeKind: key.scopeKind, ...key.scopeId === void 0 ? {} : { scopeId: key.scopeId }, ...key.namespace === void 0 ? {} : { namespace: key.namespace }, stateKey: key.stateKey };
   }
-  function sendResponse(id, result) {
-    write({ jsonrpc: JSON_RPC_VERSION, id, result: result === void 0 ? null : result });
+  function sendResponse(id2, result) {
+    write({ jsonrpc: JSON_RPC_VERSION, id: id2, result: result === void 0 ? null : result });
   }
-  function sendError(id, value) {
-    write({ jsonrpc: JSON_RPC_VERSION, id: id ?? null, error: value });
+  function sendError(id2, value) {
+    write({ jsonrpc: JSON_RPC_VERSION, id: id2 ?? null, error: value });
   }
   async function dispatchPlatformMethod(method, params) {
+    if (method === "performAction") {
+      if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue2(params.params ?? {}) || !isRecord(params.actorContext) || typeof params.actorContext.companyId !== "string" || !["user", "agent", "system"].includes(params.actorContext.type) || params.companyId !== void 0 && params.actorContext.companyId !== params.companyId) throw new TypeError("Invalid authenticated performAction context.");
+      const registration2 = definition.handlers.platform?.actions?.find((action) => action.key === params.key);
+      if (!registration2) throw Object.assign(new Error(`Unknown SPS Platform action: ${params.key}.`), { code: -32601 });
+      return registration2.handler(params.params ?? {}, { ...platform2, companyId: params.actorContext.companyId, actor: Object.freeze({ ...params.actorContext }) });
+    }
     if (method === "getData") {
       if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue2(params.params ?? {}) || params.companyId !== void 0 && typeof params.companyId !== "string" || params.renderEnvironment !== void 0 && !isJsonValue2(params.renderEnvironment)) {
         throw new TypeError("Invalid getData params.");
@@ -453,14 +501,14 @@ function runSpsWorker(plugin2, options = {}) {
     return registration.handler(params.job, platform2);
   }
   async function handleHostRequest(message) {
-    const { id, method } = message;
+    const { id: id2, method } = message;
     if (!LIFECYCLE_METHODS.has(method) && !PLATFORM_METHODS.has(method)) {
-      sendError(id, error(-32601, `Unsupported SPS Worker method: ${String(method)}.`));
+      sendError(id2, error(-32601, `Unsupported SPS Worker method: ${String(method)}.`));
       return;
     }
     if (method === "initialize") {
       if (lifecycleState !== "new") {
-        sendError(id, error(-32001, "SPS Worker has already been initialized."));
+        sendError(id2, error(-32001, "SPS Worker has already been initialized."));
         return;
       }
       lifecycleState = "initializing";
@@ -474,51 +522,64 @@ function runSpsWorker(plugin2, options = {}) {
         if (definition.handlers.platform) {
           supportedMethods.push("executeTool", "onEvent", "runJob");
           if (definition.handlers.platform.data.length > 0) supportedMethods.push("getData");
+          if (definition.handlers.platform.actions?.length > 0) supportedMethods.push("performAction");
         }
-        sendResponse(id, { ok: true, supportedMethods });
+        sendResponse(id2, { ok: true, supportedMethods });
       } catch (cause) {
         lifecycleState = "new";
         const value = toError(cause, "SPS Worker initialize failed.");
-        sendError(id, error(-32e3, value.message, value.data));
+        sendError(id2, error(-32e3, value.message, value.data));
       }
       return;
     }
     if (PLATFORM_METHODS.has(method)) {
       if (lifecycleState !== "ready") {
-        sendError(id, error(-32002, "SPS Worker is not initialized."));
+        sendError(id2, error(-32002, "SPS Worker is not initialized."));
         return;
       }
       const params = message.params;
       try {
         const result = await dispatchPlatformMethod(method, params);
-        sendResponse(id, result);
+        sendResponse(id2, result);
       } catch (cause) {
         const value = toError(cause, `SPS Worker ${method} failed.`);
-        sendError(id, error(value.code === -32601 ? -32601 : -32602, value.message, value.data));
+        sendError(id2, error(value.code === -32601 ? -32601 : -32602, value.message, value.data));
       }
       return;
     }
     if (method === "health" && lifecycleState !== "ready") {
-      sendError(id, error(-32002, "SPS Worker is not initialized."));
+      sendError(id2, error(-32002, "SPS Worker is not initialized."));
       return;
     }
     if (method === "health" && typeof definition.handlers.health !== "function") {
-      sendError(id, error(-32601, "SPS Worker does not implement health."));
+      sendError(id2, error(-32601, "SPS Worker does not implement health."));
       return;
     }
     if (method === "shutdown") lifecycleState = "shutting_down";
     const handler = definition.handlers[method];
     try {
       const result = handler ? await handler({ params: message.params, spsTransport, platform: platform2, inbox, signal: controller.signal }) : null;
-      sendResponse(id, result);
+      sendResponse(id2, result);
       if (method === "shutdown") close(new Error("SPS Host requested shutdown."));
     } catch (cause) {
       const value = toError(cause, `SPS Worker ${method} failed.`);
-      sendError(id, error(-32e3, value.message, value.data));
+      sendError(id2, error(-32e3, value.message, value.data));
       if (method === "shutdown") close(value);
     }
   }
   async function handleHostNotification(message) {
+    if (message.method === "agents.sessions.event") {
+      const event = message.params;
+      if (lifecycleState !== "ready" || !isRecord(event) || typeof event.sessionId !== "string" || !isJsonValue2(event)) return;
+      const callback = sessionCallbacks.get(event.sessionId);
+      if (["done", "error"].includes(event.eventType)) sessionCallbacks.delete(event.sessionId);
+      try {
+        await callback?.(event);
+      } catch (cause) {
+        logger(`SPS session callback failed: ${toError(cause).message}`);
+      }
+      return;
+    }
     if (message.method !== "onEvent") {
       logger(`SPS Worker ignored unsupported Host notification: ${String(message.method)}.`);
       return;
@@ -586,6 +647,260 @@ function runSpsWorker(plugin2, options = {}) {
       close(toError(reason, "SPS Worker shutdown requested."));
     }
   });
+}
+
+// src/builder-chat.js
+import { randomUUID } from "node:crypto";
+var namespace = "builder-chat";
+var stateKey = (companyId) => ({ scopeKind: "company", scopeId: companyId, namespace, stateKey: "conversations" });
+var id = () => randomUUID();
+var text = (value, limit) => typeof value === "string" ? value.trim().slice(0, limit) : "";
+var unavailable = /* @__PURE__ */ new Set(["terminated", "paused", "pending_approval"]);
+function createBuilderChat({ state, agents, logger = console }) {
+  const queues = /* @__PURE__ */ new Map();
+  const active = /* @__PURE__ */ new Map();
+  const reconciled = /* @__PURE__ */ new Set();
+  async function load(companyId) {
+    if (!companyId || typeof companyId !== "string") throw new Error("Workspace is required.");
+    const value = await state.get(stateKey(companyId));
+    return Array.isArray(value) ? value : [];
+  }
+  function mutate(companyId, fn) {
+    const operation = (queues.get(companyId) ?? Promise.resolve()).catch(() => {
+    }).then(async () => {
+      const conversations = await load(companyId);
+      const result = await fn(conversations);
+      await state.set(stateKey(companyId), conversations);
+      return result;
+    });
+    queues.set(companyId, operation);
+    return operation.finally(() => {
+      if (queues.get(companyId) === operation) queues.delete(companyId);
+    });
+  }
+  function find(conversations, conversationId) {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (!conversation) throw new Error("Conversation not found in this Workspace.");
+    return conversation;
+  }
+  async function available(companyId) {
+    return (await agents.list({ companyId, limit: 200 })).filter((agent) => !unavailable.has(agent.status));
+  }
+  async function validateTeam(companyId, leadId, workerIds) {
+    const allowed = new Set((await available(companyId)).map((agent) => agent.id));
+    if (!allowed.has(leadId)) throw new Error("Select an available Lead in this Workspace.");
+    if (!Array.isArray(workerIds) || workerIds.length > 12 || new Set(workerIds).size !== workerIds.length || workerIds.some((workerId) => workerId === leadId || !allowed.has(workerId))) {
+      throw new Error("Workers must be distinct available Agents, excluding the Lead.");
+    }
+  }
+  async function view(companyId) {
+    if (!reconciled.has(companyId)) {
+      await reconcile(companyId);
+      reconciled.add(companyId);
+    }
+    const [conversations, roster] = await Promise.all([load(companyId), available(companyId)]);
+    return {
+      conversations,
+      agents: roster.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        status: agent.status,
+        adapterType: agent.adapterType,
+        model: text(agent.adapterConfig?.model, 120),
+        effort: text(agent.adapterConfig?.reasoningEffort, 40)
+      }))
+    };
+  }
+  async function create(companyId, input) {
+    await validateTeam(companyId, input.leadId, input.workerIds ?? []);
+    return mutate(companyId, (conversations) => {
+      if (conversations.length >= 100) throw new Error("This Workspace has reached the 100 conversation limit.");
+      const conversation = {
+        id: id(),
+        title: "New conversation",
+        leadId: input.leadId,
+        workerIds: input.workerIds ?? [],
+        sessionId: null,
+        messages: [],
+        reports: [],
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      conversations.push(conversation);
+      return conversation;
+    });
+  }
+  async function team(companyId, input) {
+    await validateTeam(companyId, input.leadId, input.workerIds ?? []);
+    return mutate(companyId, (conversations) => {
+      const conversation = find(conversations, input.conversationId);
+      if (active.has(conversation.id)) throw new Error("Wait for the current reply before changing the team.");
+      if (conversation.messages.length && conversation.leadId !== input.leadId) {
+        throw new Error("Start a new conversation to change its Lead.");
+      }
+      conversation.leadId = input.leadId;
+      conversation.workerIds = input.workerIds ?? [];
+      return conversation;
+    });
+  }
+  function attachments(value) {
+    if (value === void 0) return [];
+    if (!Array.isArray(value) || value.length > 4) throw new Error("Attach up to four text files.");
+    return value.map((file) => {
+      if (typeof file?.content !== "string" || Buffer.byteLength(file.content, "utf8") > 65536) {
+        throw new Error("Each text attachment must be at most 64 KiB.");
+      }
+      const name = text(file.name, 120);
+      if (!name || /[\\/\x00-\x1f]/.test(name)) throw new Error("Attachment name must not contain a path.");
+      return { name, content: file.content };
+    });
+  }
+  async function send(companyId, input) {
+    const content = text(input.message, 2e4);
+    const files = attachments(input.attachments);
+    if (!content && !files.length) throw new Error("Write a message or attach a text file.");
+    const conversation = find(await load(companyId), input.conversationId);
+    await validateTeam(companyId, conversation.leadId, conversation.workerIds);
+    if (active.has(conversation.id)) throw new Error("The Lead is already replying.");
+    active.set(conversation.id, true);
+    let assistantId;
+    try {
+      await mutate(companyId, (conversations) => {
+        const current = find(conversations, conversation.id);
+        if (current.messages.length >= 400) throw new Error("Start a new conversation; this one has reached its message limit.");
+        if (current.messages.some((message) => message.status === "running")) {
+          throw new Error("The previous run was interrupted. Refresh its state before retrying.");
+        }
+        current.title = current.messages.length ? current.title : (content || files[0].name).slice(0, 60);
+        current.messages.push({ id: id(), role: "user", content, attachments: files, at: (/* @__PURE__ */ new Date()).toISOString() });
+        assistantId = id();
+        current.messages.push({ id: assistantId, role: "assistant", content: "", status: "running", steps: [], at: (/* @__PURE__ */ new Date()).toISOString() });
+        current.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+      });
+      let sessionId = conversation.sessionId;
+      if (sessionId && !(await agents.sessions.list(conversation.leadId, companyId)).some((session) => session.sessionId === sessionId)) sessionId = null;
+      if (!sessionId) {
+        const session = await agents.sessions.create(conversation.leadId, companyId, { taskKey: `plugin:sps.plugin-discovery:session:builder:${conversation.id}`, reason: "Plugin Builder conversation" });
+        sessionId = session.sessionId;
+        await mutate(companyId, (conversations) => {
+          find(conversations, conversation.id).sessionId = sessionId;
+        });
+      }
+      const prompt = [
+        `Plugin Builder conversation ID: ${conversation.id}. You are its Lead.`,
+        `Selected Worker Agent IDs: ${conversation.workerIds.join(", ") || "none"}.`,
+        content,
+        ...files.map((file) => `Attached text file: ${file.name}
+${file.content}`)
+      ].join("\n\n");
+      const result = await agents.sessions.sendMessage(sessionId, companyId, {
+        prompt,
+        reason: "Plugin Builder user message",
+        onEvent(event) {
+          void recordEvent(companyId, conversation.id, assistantId, event).catch((error2) => logger.error?.(error2.message));
+        }
+      });
+      await mutate(companyId, (conversations) => {
+        const message = find(conversations, conversation.id).messages.find((item) => item.id === assistantId);
+        message.runId = result.runId;
+      });
+      return { conversationId: conversation.id, runId: result.runId };
+    } catch (error2) {
+      active.delete(conversation.id);
+      if (assistantId) await mutate(companyId, (conversations) => {
+        const message = find(conversations, conversation.id).messages.find((item) => item.id === assistantId);
+        message.status = "failed";
+        message.content = error2.message;
+      });
+      throw error2;
+    }
+  }
+  async function recordEvent(companyId, conversationId, messageId, event) {
+    await mutate(companyId, (conversations) => {
+      const conversation = find(conversations, conversationId);
+      const message = conversation.messages.find((item) => item.id === messageId);
+      if (!message || message.status !== "running") return;
+      const terminal = event.eventType === "done" || event.eventType === "error";
+      if (terminal) {
+        const result = event.payload?.resultJson;
+        const output = typeof result === "string" ? result : result?.summary || result?.message || result?.output;
+        message.content = text(output, 1e5) || text(event.payload?.error, 4e3) || (event.eventType === "error" ? text(event.message, 4e3) : "The run finished without a text response.");
+        message.status = event.eventType === "error" ? "failed" : "completed";
+        active.delete(conversationId);
+      } else if (event.message) {
+        message.steps.push({ type: event.eventType, text: text(event.message, 2e3) });
+        message.steps = message.steps.slice(-80);
+      }
+      conversation.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    });
+  }
+  async function reconcile(companyId) {
+    await mutate(companyId, (conversations) => {
+      for (const conversation of conversations) for (const message of conversation.messages) {
+        if (message.status === "running" && !active.has(conversation.id)) {
+          message.status = "interrupted";
+          message.content = "Builder restarted while this run was in progress. Its result must be checked before sending again.";
+        }
+      }
+      for (const conversation of conversations) for (const report2 of conversation.reports ?? []) {
+        if (report2.status === "running" && !active.has(report2.id)) {
+          report2.status = "interrupted";
+          report2.content = "Builder restarted before the Worker report arrived.";
+        }
+      }
+    });
+  }
+  async function delegate(companyId, input, runContext) {
+    const conversation = find(await load(companyId), input.conversationId);
+    if (runContext.agentId !== conversation.leadId || !conversation.workerIds.includes(input.workerId)) {
+      throw new Error("Only this conversation's Lead can delegate to its selected Workers.");
+    }
+    await validateTeam(companyId, conversation.leadId, conversation.workerIds);
+    const objective = text(input.objective, 2e4);
+    if (!objective) throw new Error("Worker objective is required.");
+    const report2 = { id: id(), workerId: input.workerId, objective, status: "running", content: "", at: (/* @__PURE__ */ new Date()).toISOString() };
+    await mutate(companyId, (conversations) => {
+      const current = find(conversations, conversation.id);
+      if (current.reports.some((item) => item.workerId === input.workerId && item.status === "running")) throw new Error("This Worker already has a running assignment.");
+      if (current.reports.length >= 100) throw new Error("Worker assignment limit reached.");
+      current.reports.push(report2);
+    });
+    active.set(report2.id, true);
+    try {
+      const session = await agents.sessions.create(input.workerId, companyId, { taskKey: `plugin:sps.plugin-discovery:session:worker:${report2.id}`, reason: "Builder Lead delegation" });
+      await agents.sessions.sendMessage(session.sessionId, companyId, {
+        prompt: objective,
+        reason: "Builder Worker assignment",
+        onEvent(event) {
+          if (!["done", "error"].includes(event.eventType)) return;
+          void mutate(companyId, (conversations) => {
+            const target = find(conversations, conversation.id).reports.find((item) => item.id === report2.id);
+            const result = event.payload?.resultJson;
+            target.status = event.eventType === "done" ? "completed" : "failed";
+            target.content = text(typeof result === "string" ? result : result?.summary || result?.output || event.payload?.error || event.message, 1e5);
+            active.delete(report2.id);
+          }).catch((error2) => logger.error?.(error2.message));
+        }
+      });
+    } catch (error2) {
+      active.delete(report2.id);
+      await mutate(companyId, (conversations) => {
+        const target = find(conversations, conversation.id).reports.find((item) => item.id === report2.id);
+        target.status = "failed";
+        target.content = error2.message;
+      });
+      throw error2;
+    }
+    return { reportId: report2.id, status: "running" };
+  }
+  async function report(companyId, input, runContext) {
+    const conversation = find(await load(companyId), input.conversationId);
+    if (runContext.agentId !== conversation.leadId) throw new Error("Only this conversation's Lead can read Worker reports.");
+    const result = conversation.reports.find((item) => item.id === input.reportId);
+    if (!result) throw new Error("Worker report was not found in this conversation.");
+    return result;
+  }
+  return { view, create, team, send, reconcile, recordEvent, delegate, report };
 }
 
 // src/manifest.js
@@ -689,7 +1004,11 @@ var manifest_default = {
     "agent.tools.register",
     "plugin.state.read",
     "plugin.state.write",
-    "ui.page.register"
+    "ui.page.register",
+    "agents.read",
+    "agent.sessions.create",
+    "agent.sessions.list",
+    "agent.sessions.send"
   ],
   companyActivation: { defaultEnabled: true },
   agentPlatform: {
@@ -719,12 +1038,24 @@ var manifest_default = {
     runAuthoringStepTool,
     inspectBuildTool,
     openPreviewTool,
-    packageTool
+    packageTool,
+    {
+      name: "builder-delegate-worker",
+      displayName: "Delegate Builder Worker",
+      description: "The conversation Lead assigns a specific objective to one selected Worker. Returns a report ID; use builder-worker-result to read its status and output. Other Agents cannot delegate.",
+      parametersSchema: { type: "object", properties: { conversationId: { type: "string" }, workerId: { type: "string" }, objective: { type: "string" } }, required: ["conversationId", "workerId", "objective"] }
+    },
+    {
+      name: "builder-worker-result",
+      displayName: "Read Builder Worker Result",
+      description: "The conversation Lead reads the status and output of its own Worker assignment.",
+      parametersSchema: { type: "object", properties: { conversationId: { type: "string" }, reportId: { type: "string" } }, required: ["conversationId", "reportId"] }
+    }
   ]
 };
 
 // src/authoring.js
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 var STATE_NAMESPACE = "discovery";
 var AUTHORING_STATE_KEY = "authoring-sessions";
 var MAX_SESSIONS = 24;
@@ -736,7 +1067,7 @@ var DIGEST_PATTERN = /^[a-f0-9]{64}$/i;
 var EVENT_TYPES = /* @__PURE__ */ new Set(["project", "authoring", "build", "preview", "package"]);
 var EVENT_STATUSES = /* @__PURE__ */ new Set(["requested", "running", "passed", "failed", "blocked", "ready"]);
 var EVIDENCE_KINDS = /* @__PURE__ */ new Set(["workspace_file", "run", "test", "diagnostic", "artifact", "preview", "package"]);
-function stateKey(companyId) {
+function stateKey2(companyId) {
   return { scopeKind: "company", scopeId: companyId, namespace: STATE_NAMESPACE, stateKey: AUTHORING_STATE_KEY };
 }
 function asRecord(value) {
@@ -774,15 +1105,15 @@ function normalizeEvidence(value) {
 }
 function normalizeEvent(value) {
   const record = asRecord(value);
-  const id = asString(record.id);
-  if (!EVIDENCE_ID_PATTERN.test(id)) throw new Error("Authoring evidence id is invalid.");
+  const id2 = asString(record.id);
+  if (!EVIDENCE_ID_PATTERN.test(id2)) throw new Error("Authoring evidence id is invalid.");
   const type = asString(record.type);
   const status = asString(record.status);
   if (!EVENT_TYPES.has(type) || !EVENT_STATUSES.has(status)) throw new Error("Authoring event type or status is invalid.");
   const at = asString(record.at);
   if (!Number.isFinite(Date.parse(at))) throw new Error("Authoring event timestamp is invalid.");
   return {
-    id,
+    id: id2,
     type,
     status,
     summary: bounded(record.summary, 2e3),
@@ -793,8 +1124,8 @@ function normalizeEvent(value) {
 }
 function normalizeSession(value) {
   const record = asRecord(value);
-  const id = asString(record.id);
-  if (!ID_PATTERN.test(id)) throw new Error("Authoring session id is invalid.");
+  const id2 = asString(record.id);
+  if (!ID_PATTERN.test(id2)) throw new Error("Authoring session id is invalid.");
   const pluginId = asString(record.pluginId);
   if (!PLUGIN_ID_PATTERN.test(pluginId)) throw new Error("Plugin id is invalid.");
   const createdAt = asString(record.createdAt);
@@ -803,7 +1134,7 @@ function normalizeSession(value) {
     throw new Error("Authoring session timestamp is invalid.");
   }
   return {
-    id,
+    id: id2,
     pluginId,
     ...asString(record.projectRef) ? { projectRef: safeRelativeReference(record.projectRef) } : {},
     displayName: bounded(record.displayName, 120, pluginId),
@@ -834,7 +1165,7 @@ function eventFromInput(type, input, runId, now) {
   const status = asString(input.status, type === "project" || type === "preview" ? "requested" : "running");
   if (!EVENT_STATUSES.has(status)) throw new Error("Authoring event status is invalid.");
   return normalizeEvent({
-    id: `spsae_${randomUUID().replaceAll("-", "")}`,
+    id: `spsae_${randomUUID2().replaceAll("-", "")}`,
     type,
     status,
     summary: bounded(input.summary ?? input.objective, 2e3, `${type} ${status}`),
@@ -855,11 +1186,11 @@ function createDiscoveryAuthoringService(ctx, { now = () => (/* @__PURE__ */ new
     });
   }
   async function load(companyId) {
-    return normalizeSessions(await ctx.state.get(stateKey(companyId)));
+    return normalizeSessions(await ctx.state.get(stateKey2(companyId)));
   }
   async function save(companyId, sessions) {
     const normalized = normalizeSessions(sessions);
-    await ctx.state.set(stateKey(companyId), normalized);
+    await ctx.state.set(stateKey2(companyId), normalized);
     return normalized;
   }
   async function append(companyId, sessionId, event, validate = null) {
@@ -888,7 +1219,7 @@ function createDiscoveryAuthoringService(ctx, { now = () => (/* @__PURE__ */ new
     const projectRef = asString(request.projectRef) ? safeRelativeReference(request.projectRef) : "";
     const timestamp = now();
     const session = normalizeSession({
-      id: `spsas_${randomUUID().replaceAll("-", "")}`,
+      id: `spsas_${randomUUID2().replaceAll("-", "")}`,
       pluginId,
       ...projectRef ? { projectRef } : {},
       displayName,
@@ -962,6 +1293,15 @@ var discoveryAuthoringState = Object.freeze({
 
 // src/worker.js
 var authoringServices = /* @__PURE__ */ new WeakMap();
+var chatServices = /* @__PURE__ */ new WeakMap();
+function chatFor(platform2) {
+  let chat = chatServices.get(platform2.state);
+  if (!chat) {
+    chat = createBuilderChat(platform2);
+    chatServices.set(platform2.state, chat);
+  }
+  return chat;
+}
 function authoringFor(platform2) {
   let authoring = authoringServices.get(platform2);
   if (!authoring) {
@@ -1001,7 +1341,7 @@ function tool(name, handler) {
   };
 }
 var platform = defineSpsPlatformContract({
-  capabilities: ["agent.tools.register", "plugin.state.read", "plugin.state.write"],
+  capabilities: ["agent.tools.register", "plugin.state.read", "plugin.state.write", "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send"],
   tools: [
     tool("create-sps-plugin-project", async (authoring, params, runContext) => {
       const session = await authoring.createProject(params, runContext);
@@ -1037,19 +1377,31 @@ var platform = defineSpsPlatformContract({
         content: `Recorded the SPS package candidate for ${session.pluginId}. Host lifecycle state was not changed.`,
         data: { authoringSessionId: session.id, pluginId: session.pluginId, status: session.status, event: session.events.at(-1) }
       };
-    })
+    }),
+    ...[["builder-delegate-worker", "delegate"], ["builder-worker-result", "report"]].map(([name, method]) => ({
+      name,
+      declaration: declarations.get(name),
+      handler: async (params, runContext, platform2) => {
+        const data = await chatFor(platform2)[method](runContext.companyId, params, runContext);
+        return { content: JSON.stringify(data), data };
+      }
+    }))
   ],
   data: [{
     key: "plugin-builder-workspace",
-    handler: (params, invocationPlatform) => workspaceView(authoringFor(invocationPlatform), params)
-  }]
+    handler: async (params, invocationPlatform) => ({ ...await workspaceView(authoringFor(invocationPlatform), params), ...await chatFor(invocationPlatform).view(params.companyId) })
+  }],
+  actions: [["builder-create", "create"], ["builder-team", "team"], ["builder-send", "send"]].map(([key, method]) => ({
+    key,
+    handler: async (params, platform2) => {
+      if (platform2.actor.type !== "user" || params.companyId && params.companyId !== platform2.companyId) throw new Error("An authenticated Workspace user is required.");
+      return chatFor(platform2)[method](platform2.companyId, params);
+    }
+  }))
 });
-var plugin = defineSpsPlugin({
-  platform,
-  health() {
-    return { status: "ok", message: "SPS Plugin Builder is ready for external project authoring." };
-  }
-});
+var plugin = defineSpsPlugin({ platform, health() {
+  return { status: "ok", message: "Plugin Builder chat is ready." };
+} });
 var worker_default = plugin;
 runSpsWorker(plugin);
 export {
