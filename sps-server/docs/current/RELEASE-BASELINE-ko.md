@@ -19,6 +19,9 @@ shared frame and plugin settings). Source Electron visual checks passed at three
 viewport sizes; see `SPS-LIGHT-UI-PLAN-ko.md`. The prior installer and its four
 packaged E2Es predate this UI commit and do not validate these new bytes. A new
 installer has not been produced for the UI pass.
+The Desktop source also applies the same font and light styling to sign-in,
+Host creation/participation and setup forms. These source-level UI changes
+require a fresh package before any installed-app or release claim.
 
 ## Identity rollout state
 

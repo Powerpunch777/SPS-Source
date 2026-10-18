@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -105,6 +105,28 @@ async function inspectRenderer(target) {
       expression: "document.body.innerText",
       returnByValue: true,
     });
+    const screenshotDirectory = process.env.SPS_DESKTOP_E2E_SCREENSHOT_DIR?.trim();
+    if (screenshotDirectory) {
+      await mkdir(screenshotDirectory, { recursive: true });
+      for (const [width, height] of [[1024, 720], [1280, 800], [620, 760]]) {
+        await call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        const check = await call("Runtime.evaluate", {
+          expression: `(async () => {
+            await document.fonts.ready;
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            return { loaded: [...document.fonts].some(font => font.family === 'Pretendard Variable' && font.status === 'loaded'),
+              overflow: document.documentElement.scrollWidth > innerWidth,
+              hiddenScreensVisible: [...document.querySelectorAll('section[hidden]')].some(section => getComputedStyle(section).display !== 'none') };
+          })()`, awaitPromise: true, returnByValue: true,
+        });
+        assert.equal(check.exceptionDetails, undefined, "Login inspection failed in renderer");
+        assert.equal(check.result?.value?.loaded, true, "Bundled login font did not load");
+        assert.equal(check.result?.value?.overflow, false, "Login screen overflows horizontally");
+        assert.equal(check.result?.value?.hiddenScreensVisible, false, "Hidden onboarding screen became visible");
+        const screenshot = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+        await writeFile(path.join(screenshotDirectory, `sign-in-${width}x${height}.png`), Buffer.from(screenshot.data, "base64"));
+      }
+    }
     return evaluated?.result?.value ?? "";
   } finally {
     socket.close();

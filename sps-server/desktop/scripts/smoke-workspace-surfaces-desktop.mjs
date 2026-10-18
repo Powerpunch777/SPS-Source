@@ -385,6 +385,26 @@ try {
   await click(setupCdp, "#start-sps-account", "SPS sign-in");
   await waitForPage(setupCdp, () => issued.length > 0, "the mock Identity authorization callback", 30_000);
   await waitForPage(setupCdp, (page) => page.body.includes("Create") || page.body.includes("Server"), "the post-sign-in Host choice", 45_000);
+  if (screenshotPath && sourceElectron) {
+    const directory = path.dirname(screenshotPath);
+    for (const [width, height] of [[1024, 720], [620, 760]]) {
+      await setupCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+      await setupCdp.evaluate(`document.fonts.ready`, true);
+      await captureScreenshot(setupCdp, path.join(directory, `server-choice-${width}x${height}.png`));
+      await click(setupCdp, "#show-join-server", "Show invitation input");
+      const form = await setupCdp.evaluate(`(() => {
+        const input = document.querySelector('#invite-code');
+        return { visible: !document.querySelector('#join-server-form').hidden,
+          focused: document.activeElement === input, overflow: document.documentElement.scrollWidth > innerWidth };
+      })()`);
+      assert.equal(form.visible, true);
+      assert.equal(form.focused, true);
+      assert.equal(form.overflow, false);
+      await captureScreenshot(setupCdp, path.join(directory, `server-join-${width}x${height}.png`));
+      await click(setupCdp, "#show-join-server", "Hide invitation input");
+    }
+    await setupCdp.command("Emulation.clearDeviceMetricsOverride");
+  }
   await click(setupCdp, "#create-owner-server", "Create SPS Server");
 
   const workspaceTarget = await waitForTarget(
