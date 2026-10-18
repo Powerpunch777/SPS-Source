@@ -7,18 +7,24 @@ The current candidate is `0.4.136` and remains `development-candidate`. It is no
 ## Candidate tuple
 
 - Desktop: `0.4.136`
-- Core: `0565a4e295d1d9c97ee63c3c323c4da4d62a1bc8`
+- Core: `a88513b9afd6d56b9bb7362aaaebe6d9da9cb085`
 - Plugin SDK: `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`)
 - Platform: Windows 10/11 x64
 - Remote transport: Tailscale `1.52.0` or later
 - Identity protocol: v2 compatibility bridge
 - Rollback floor: `bridge-v2`
 
+The current Core includes the first light UI pass (bundled Korean/Latin font,
+shared frame and plugin settings). Source Electron visual checks passed at three
+viewport sizes; see `SPS-LIGHT-UI-PLAN-ko.md`. The prior installer and its four
+packaged E2Es predate this UI commit and do not validate these new bytes. A new
+installer has not been produced for the UI pass.
+
 ## Identity rollout state
 
 The external deployment state below is the last recorded state from August 2026,
-not a new October rollout verification. This candidate changes dependencies and
-verification tooling only. No Identity deployment, migration, Stable publication,
+not a new October rollout verification. This candidate changes dependencies,
+verification tooling and UI. No Identity deployment, migration, Stable publication,
 or signing operation was performed for this update. Treat each external condition
 as unverified until fresh candidate-bound evidence is collected.
 
@@ -119,7 +125,7 @@ The following are explicit release blockers, not completed code-test claims:
 - The exact candidate HEAD has not completed all nine Linux Core regression
   shards. Targeted Windows/Core checks and typecheck/build results do not
   substitute for the full Linux shard evidence.
-- Core `0565a4e295d1d9c97ee63c3c323c4da4d62a1bc8` is still on Draft PR #26
+- Core `a88513b9afd6d56b9bb7362aaaebe6d9da9cb085` is still on Draft PR #26
   and is not reachable from the Core `main` branch.
 
 Until these conditions have fresh evidence for the same candidate tuple,

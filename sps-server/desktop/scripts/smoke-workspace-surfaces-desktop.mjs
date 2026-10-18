@@ -15,6 +15,9 @@ const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopVersion = JSON.parse(await readFile(path.join(scriptDirectory, "..", "package.json"), "utf8")).version;
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
+const sourceElectron = process.env.SPS_DESKTOP_E2E_SOURCE === "1"
+  ? path.join(scriptDirectory, "..", "node_modules", "electron", "dist", "electron.exe")
+  : null;
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const keepE2eData = process.env.SPS_DESKTOP_E2E_KEEP_DATA === "1";
 const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
@@ -22,10 +25,10 @@ const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
 if (process.platform !== "win32") {
   throw new Error("Workspace Surfaces Desktop E2E currently targets the Windows release.");
 }
-if (!packagedBinary) {
+if (!packagedBinary && !sourceElectron) {
   throw new Error("Set SPS_DESKTOP_E2E_BINARY to a packaged SPS Desktop.exe.");
 }
-await access(packagedBinary);
+await access(packagedBinary || sourceElectron);
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -347,12 +350,14 @@ let appOutput = "";
 
 try {
   const { origin: identityUrl, issued } = await mockIdentity.start();
-  child = spawn(packagedBinary, [
+  const binary = packagedBinary || sourceElectron;
+  child = spawn(binary, [
     `--user-data-dir=${userDataDirectory}`,
     `--remote-debugging-port=${debugPort}`,
     "--remote-allow-origins=*",
+    ...(packagedBinary ? [] : ["."]),
   ], {
-    cwd: path.dirname(packagedBinary),
+    cwd: packagedBinary ? path.dirname(binary) : path.resolve(scriptDirectory, ".."),
     env: {
       ...process.env,
       SPS_IDENTITY_URL: identityUrl,
@@ -391,6 +396,7 @@ try {
   );
   workspaceCdp = await openCdp(workspaceTarget);
   await waitForPage(workspaceCdp, (page) => page.body.includes("Workspace") || page.body.includes("Dashboard"), "the Workspace Core UI", 90_000);
+  await workspaceCdp.evaluate(`localStorage.setItem("sps.theme", "light")`);
 
   const companies = await api(workspaceCdp, "/api/companies");
   const company = Array.isArray(companies) ? companies[0] : null;
@@ -424,12 +430,12 @@ try {
   // A fresh SPS Host intentionally starts with Plugin Builder only. Install the
   // packaged reference Workplane through the real Host API so this flow also
   // verifies optional local-package installation without changing that default.
-  const packagedTeamWorkplanePath = path.join(
+  const packagedTeamWorkplanePath = packagedBinary ? path.join(
     userDataDirectory,
     "owner-host-runtime",
     desktopVersion,
     "sps-room-chat",
-  );
+  ) : path.resolve(scriptDirectory, "..", "..", "sps-room-chat");
   await api(workspaceCdp, "/api/plugins/install", {
     method: "POST",
     body: {
@@ -508,12 +514,40 @@ try {
   await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/company/settings/instance/plugins`)})`);
   await waitForPage(
     workspaceCdp,
-    (page) => page.body.includes("Core Platform") && page.body.includes("Installed plugins remain plugin-owned surfaces"),
+    (page) => page.body.includes("Plugins") && page.body.includes("Plugin lifecycle and installation"),
     "the Core Plugins management surface",
   );
   if (screenshotPath) {
+    const font = await workspaceCdp.evaluate(`(async () => {
+      await document.fonts.ready;
+      return { family: getComputedStyle(document.body).fontFamily,
+        loaded: [...document.fonts].some(font => font.family === 'Pretendard Variable' && font.status === 'loaded') };
+    })()`, true);
+    if (sourceElectron) assert.ok(font.loaded, `Bundled UI font was not loaded: ${JSON.stringify(font)}`);
     await captureScreenshot(workspaceCdp, screenshotPath);
     console.log(`Saved SPS Workspace screenshot: ${screenshotPath}`);
+    if (sourceElectron) {
+      for (const [width, height] of [[1024, 720], [1280, 800], [1440, 900]]) {
+        await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await workspaceCdp.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`, true);
+        const layout = await workspaceCdp.evaluate(`(() => {
+          const main = document.getElementById('main-content');
+          return { viewport: innerWidth, documentWidth: document.documentElement.scrollWidth,
+            contentWidth: main.clientWidth, contentScrollWidth: main.scrollWidth,
+            clippedActions: [...main.querySelectorAll('button')].filter(button => {
+              const box = button.getBoundingClientRect();
+              return box.width > 0 && (box.left < 0 || box.right > innerWidth);
+            }).map(button => button.getAttribute('aria-label') || button.textContent) };
+        })()`);
+        assert.ok(layout.documentWidth <= layout.viewport && layout.contentScrollWidth <= layout.contentWidth + 1,
+          `Horizontal overflow at ${width}x${height}: ${JSON.stringify(layout)}`);
+        assert.deepEqual(layout.clippedActions, [], `Clipped actions at ${width}x${height}`);
+        const responsivePath = path.join(path.dirname(screenshotPath), `${path.parse(screenshotPath).name}-${width}x${height}.png`);
+        await captureScreenshot(workspaceCdp, responsivePath);
+        console.log(`Verified responsive Workspace: ${width}x${height}`);
+      }
+      await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+    }
   }
 
   await navigateByDomLink(workspaceCdp, "/inbox", "Inbox navigation");
@@ -532,7 +566,7 @@ try {
   );
   assert.match(fallback.body, /selected shell/i, `Neutral fallback did not explain the disabled Shell: ${fallback.body}`);
 
-  console.log("Packaged SPS Desktop Workspace Surfaces E2E passed.");
+  console.log(`SPS Desktop Workspace Surfaces E2E passed (${packagedBinary ? "packaged" : "source"}).`);
 } catch (error) {
   const diagnostics = [];
   for (const [label, cdp] of [["setup", setupCdp], ["workspace", workspaceCdp]]) {
