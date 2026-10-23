@@ -209,11 +209,15 @@ test("uses a distinct validated instance identity for an isolated preview runtim
   const development = await resolveSpsOwnerHostRuntime({
     coreRoots: ["C:/core"],
     instanceId: "preview.project_01",
+    configPath: "C:/SPS Vault/config.json",
+    environment: { PAPERCLIP_CONFIG: "C:/wrong/config.json", PAPERCLIP_INSTANCE_ID: "wrong" },
     fsApi,
   });
 
   assert.equal(packaged.environment.PAPERCLIP_INSTANCE_ID, "preview.project_01");
-  assert.deepEqual(development.args.slice(-2), ["--instance", "preview.project_01"]);
+  assert.deepEqual(development.args.slice(-4), ["--instance", "preview.project_01", "--config", "C:/SPS Vault/config.json"]);
+  assert.equal(development.environment.PAPERCLIP_CONFIG, "C:/SPS Vault/config.json");
+  assert.equal(development.environment.PAPERCLIP_INSTANCE_ID, "preview.project_01");
 });
 
 test("rejects unsafe Owner Host instance identities", async () => {

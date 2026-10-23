@@ -41,3 +41,14 @@ publish or expose the Vite development runtime through Tailscale Serve.
 Development bundles are generated in the existing plugin `dist` directories;
 review generated diffs before committing. Release packaging and final packaged
 E2E remain separate requirements. A source window is not release evidence.
+
+## Runtime Config Identity
+
+Development Core receives its selected config path and instance ID in the child
+environment before CLI imports execute, as well as in CLI arguments. Do not
+depend solely on late CLI option processing: startup modules can otherwise load
+a different local config. On 2026-10-23 the app expected port 31312 while Core
+listened on 31310, producing `desktop:open-workspace: fetch failed`. Pinning the
+startup environment restored port 31312 and automatic Workspace opening with
+the existing profile. Owner runtime tests and all 373 Desktop tests passed.
+This is source-development verification, not a new installer release.

@@ -317,7 +317,11 @@ export async function resolveSpsOwnerHostRuntime({
         ...(configPath ? ["--config", configPath] : []),
       ],
       cwd: coreRoot,
-      environment: { ...environment },
+      environment: {
+        ...environment,
+        ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
+        PAPERCLIP_INSTANCE_ID: resolvedInstanceId,
+      },
       kind: "development-core",
     };
   }
