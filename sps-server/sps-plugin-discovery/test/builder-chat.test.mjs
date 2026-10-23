@@ -3,15 +3,18 @@ import test from "node:test";
 import { createBuilderChat } from "../src/builder-chat.js";
 
 function harness() {
-  const values = new Map(), callbacks = new Map(), sends = [];
+  const values = new Map(), callbacks = new Map(), sends = [], cancellations = [];
+  let runState = { runId:"run-1", status:"running", cancellationRequested:true, termination:"pending", error:null, errorCode:null };
   const roster = [{ id:"lead", name:"Lead", status:"idle", adapterType:"codex_local", adapterConfig:{ model:"test-model", apiKey:"secret" } }, { id:"worker", name:"Worker", status:"idle" }, { id:"paused", status:"paused" }];
   const state = { async get(key) { return structuredClone(values.get(key.scopeId) ?? null); }, async set(key,value) { values.set(key.scopeId,structuredClone(value)); } };
   const agents = { async list() { return roster; }, sessions:{
     async list(agentId,companyId) { return [{sessionId:`${companyId}:${agentId}`}]; },
     async create(agentId,companyId) { return { sessionId:`${companyId}:${agentId}` }; },
     async sendMessage(sessionId,companyId,input) { sends.push(input.prompt); callbacks.set(sessionId,input.onEvent); return { runId:"run-1" }; },
+    async cancel(sessionId,companyId,runId) { cancellations.push({sessionId,companyId,runId}); return runState; },
+    async getRun() { return runState; },
   } };
-  return { service:createBuilderChat({state,agents}), callbacks, sends };
+  return { service:createBuilderChat({state,agents}), callbacks, sends, cancellations, setRunState(value) { runState={...runState,...value}; } };
 }
 test("Builder keeps conversations Workspace-scoped and hides Agent secrets", async () => {
   const {service}=harness();
@@ -55,4 +58,36 @@ test("Worker restart marks an in-flight transcript interrupted without rerunning
   const state={async get(){return structuredClone(saved);},async set(_key,value){saved.splice(0,saved.length,...value);}};
   const restarted=createBuilderChat({state,agents:{async list(){return [];}}});
   await restarted.reconcile("a");assert.equal(saved[0].messages[1].status,"interrupted");
+});
+
+test("Lead stop is exact-run scoped, stays pending until termination and does not stop Workers", async()=>{
+  const {service,cancellations,setRunState}=harness();
+  const chat=await service.create("a",{leadId:"lead",workerIds:["worker"]});
+  await service.send("a",{conversationId:chat.id,message:"hello"});
+  const message=(await service.view("a")).conversations[0].messages[1];
+  const input={conversationId:chat.id,messageId:message.id,runId:message.runId};
+  await assert.rejects(()=>service.stop("b",input),/not found/);
+  await assert.rejects(()=>service.stop("a",{...input,runId:"other"}),/exact Lead run/);
+  assert.equal(cancellations.length,0);
+  await service.stop("a",input);
+  assert.deepEqual(cancellations,[{sessionId:"a:lead",companyId:"a",runId:"run-1"}]);
+  assert.equal((await service.view("a")).conversations[0].messages[1].status,"cancelling");
+  await assert.rejects(()=>service.send("a",{conversationId:chat.id,message:"next"}),/already replying/);
+  await service.recordEvent("a",chat.id,message.id,{eventType:"error",payload:{status:"cancelled"}});
+  await service.recordEvent("a",chat.id,message.id,{eventType:"error",payload:{status:"failed"}});
+  assert.equal((await service.view("a")).conversations[0].messages[1].status,"cancelling");
+  setRunState({status:"cancelled",termination:"confirmed"});
+  assert.equal((await service.view("a")).conversations[0].messages[1].status,"cancelled");
+  await service.stop("a",input); assert.equal(cancellations.length,1);
+  await service.recordEvent("a",chat.id,message.id,{eventType:"done",payload:{resultJson:{summary:"late"}}});
+  assert.equal((await service.view("a")).conversations[0].messages[1].status,"cancelled");
+});
+
+test("a completed response wins a late stop without becoming cancelled", async()=>{
+  const {service,setRunState}=harness();const chat=await service.create("a",{leadId:"lead"});
+  await service.send("a",{conversationId:chat.id,message:"hello"});
+  const message=(await service.view("a")).conversations[0].messages[1];
+  setRunState({status:"succeeded",cancellationRequested:false,termination:"not_applicable"});
+  await service.stop("a",{conversationId:chat.id,messageId:message.id,runId:message.runId});
+  assert.equal((await service.view("a")).conversations[0].messages[1].status,"completed");
 });

@@ -5,6 +5,7 @@ const stateKey = companyId => ({ scopeKind: "company", scopeId: companyId, names
 const id = () => randomUUID();
 const text = (value, limit) => typeof value === "string" ? value.trim().slice(0, limit) : "";
 const unavailable = new Set(["terminated", "paused", "pending_approval"]);
+const inFlight = status => status === "running" || status === "cancelling";
 
 export function createBuilderChat({ state, agents, logger = console }) {
   const queues = new Map();
@@ -43,6 +44,7 @@ export function createBuilderChat({ state, agents, logger = console }) {
   }
   async function view(companyId) {
     if (!reconciled.has(companyId)) { await reconcile(companyId); reconciled.add(companyId); }
+    await refreshCancellations(companyId);
     const [conversations, roster] = await Promise.all([load(companyId), available(companyId)]);
     return {
       conversations,
@@ -101,7 +103,7 @@ export function createBuilderChat({ state, agents, logger = console }) {
       await mutate(companyId, conversations => {
         const current = find(conversations, conversation.id);
         if (current.messages.length >= 400) throw new Error("Start a new conversation; this one has reached its message limit.");
-        if (current.messages.some(message => message.status === "running")) {
+        if (current.messages.some(message => inFlight(message.status))) {
           throw new Error("The previous run was interrupted. Refresh its state before retrying.");
         }
         current.title = current.messages.length ? current.title : (content || files[0].name).slice(0, 60);
@@ -123,6 +125,9 @@ export function createBuilderChat({ state, agents, logger = console }) {
         content,
         ...files.map(file => `Attached text file: ${file.name}\n${file.content}`),
       ].join("\n\n");
+      await mutate(companyId, conversations => {
+        find(conversations, conversation.id).messages.find(item => item.id === assistantId).sessionId = sessionId;
+      });
       const result = await agents.sessions.sendMessage(sessionId, companyId, {
         prompt, reason: "Plugin Builder user message",
         onEvent(event) { void recordEvent(companyId, conversation.id, assistantId, event).catch(error => logger.error?.(error.message)); },
@@ -145,9 +150,13 @@ export function createBuilderChat({ state, agents, logger = console }) {
     await mutate(companyId, conversations => {
       const conversation = find(conversations, conversationId);
       const message = conversation.messages.find(item => item.id === messageId);
-      if (!message || message.status !== "running") return;
+      if (!message || !inFlight(message.status)) return;
       const terminal = event.eventType === "done" || event.eventType === "error";
       if (terminal) {
+        if (message.status === "cancelling" || event.payload?.status === "cancelled") {
+          message.status = "cancelling";
+          return;
+        }
         const result = event.payload?.resultJson;
         const output = typeof result === "string" ? result : result?.summary || result?.message || result?.output;
         message.content = text(output, 100_000) || text(event.payload?.error, 4_000) || (event.eventType === "error" ? text(event.message, 4_000) : "The run finished without a text response.");
@@ -160,11 +169,53 @@ export function createBuilderChat({ state, agents, logger = console }) {
       conversation.updatedAt = new Date().toISOString();
     });
   }
+  async function applyRunState(companyId, conversationId, messageId, run) {
+    return mutate(companyId, conversations => {
+      const message = find(conversations, conversationId).messages.find(item => item.id === messageId);
+      if (!message || !inFlight(message.status) || message.runId !== run.runId) return;
+      if (run.cancellationRequested && run.termination !== "confirmed") {
+        message.status = "cancelling";
+      } else if (run.cancellationRequested && run.termination === "confirmed") {
+        message.status = "cancelled";
+        active.delete(conversationId);
+      } else if (["succeeded", "failed", "interrupted", "cancelled", "timed_out"].includes(run.status)) {
+        message.status = run.status === "succeeded" ? "completed" : run.status === "cancelled" ? "interrupted" : "failed";
+        if (!message.content) message.content = text(run.error, 4_000);
+        active.delete(conversationId);
+      } else if (message.status === "cancelling") {
+        message.status = "running";
+      }
+    });
+  }
+  async function refreshCancellations(companyId) {
+    for (const conversation of await load(companyId)) for (const message of conversation.messages) {
+      if (message.status !== "cancelling" || !message.sessionId || !message.runId) continue;
+      const run = await agents.sessions.getRun(message.sessionId, companyId, message.runId);
+      await applyRunState(companyId, conversation.id, message.id, run);
+    }
+  }
+  async function stop(companyId, input) {
+    const conversation = find(await load(companyId), input.conversationId);
+    const message = conversation.messages.find(item => item.id === input.messageId);
+    if (!message || message.role !== "assistant" || message.runId !== input.runId || !message.runId || !message.sessionId) {
+      throw new Error("Select the exact Lead run to stop.");
+    }
+    if (!inFlight(message.status)) return { runId: message.runId, status: message.status };
+    await mutate(companyId, conversations => {
+      const current = find(conversations, conversation.id).messages.find(item => item.id === message.id);
+      if (inFlight(current.status)) current.status = "cancelling";
+    });
+    const run = await agents.sessions.cancel(message.sessionId, companyId, message.runId);
+    await applyRunState(companyId, conversation.id, message.id, run);
+    return run;
+  }
   async function reconcile(companyId) {
     // Worker restarts lose callbacks, not transcripts. Never silently rerun a turn.
     await mutate(companyId, conversations => {
       for (const conversation of conversations) for (const message of conversation.messages) {
-        if (message.status === "running" && !active.has(conversation.id)) {
+        if (message.status === "cancelling" && message.sessionId && message.runId) {
+          active.set(conversation.id, true);
+        } else if (message.status === "running" && !active.has(conversation.id)) {
           message.status = "interrupted";
           message.content = "Builder restarted while this run was in progress. Its result must be checked before sending again.";
         }
@@ -219,5 +270,5 @@ export function createBuilderChat({ state, agents, logger = console }) {
     if (!result) throw new Error("Worker report was not found in this conversation.");
     return result;
   }
-  return { view, create, team, send, reconcile, recordEvent, delegate, report };
+  return { view, create, team, send, stop, reconcile, recordEvent, delegate, report };
 }

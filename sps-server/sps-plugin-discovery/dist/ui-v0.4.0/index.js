@@ -22,6 +22,7 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 function PluginBuilderPage({ context }) {
   const { data, loading, error, refresh } = usePluginData("plugin-builder-workspace", { companyId: context.companyId });
   const create = usePluginAction("builder-create"), send = usePluginAction("builder-send"), saveTeam = usePluginAction("builder-team");
+  const stop = usePluginAction("builder-stop");
   const navigation = useHostNavigation();
   const [selectedId, setSelectedId] = useState(null), [leadId, setLeadId] = useState("");
   const [workers, setWorkers] = useState([]), [draft, setDraft] = useState(""), [files, setFiles] = useState([]);
@@ -31,7 +32,8 @@ function PluginBuilderPage({ context }) {
   const conversation = conversations.find((item) => item.id === selectedId);
   const selectedLeadId = conversation?.leadId || leadId || agents[0]?.id || "";
   const selectedWorkers = conversation?.workerIds ?? workers, lead = agents.find((agent) => agent.id === selectedLeadId);
-  const messages = conversation?.messages ?? [], running = messages.some((message) => message.status === "running");
+  const messages = conversation?.messages ?? [], activeMessage = messages.find((message) => ["running", "cancelling"].includes(message.status));
+  const running = Boolean(activeMessage), cancelling = activeMessage?.status === "cancelling";
   const sessions = data?.authoringSessions ?? [];
   useEffect(() => {
     const timer = setInterval(refresh, running ? 1500 : 1e4);
@@ -83,6 +85,19 @@ function PluginBuilderPage({ context }) {
       setBusy(false);
     }
   }
+  async function stopReply() {
+    if (busy || !activeMessage?.runId) return;
+    setBusy(true);
+    setNotice("");
+    try {
+      await stop({ conversationId: conversation.id, messageId: activeMessage.id, runId: activeMessage.runId });
+    } catch (failure) {
+      setNotice(failure.message || "\uC911\uC9C0 \uC0C1\uD0DC\uB97C \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  }
   async function attach(event) {
     const chosen = [...event.target.files];
     event.target.value = "";
@@ -104,14 +119,14 @@ function PluginBuilderPage({ context }) {
     const start = event.clientX, width = panelWidth;
     resizeCleanup.current?.();
     const move = (next) => setPanelWidth(Math.max(260, Math.min(440, width + start - next.clientX)));
-    const stop = () => {
+    const stop2 = () => {
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointerup", stop2);
       resizeCleanup.current = null;
     };
-    resizeCleanup.current = stop;
+    resizeCleanup.current = stop2;
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointerup", stop2);
   }
   return /* @__PURE__ */ jsxs("div", { className: `sps-builder ${panel ? "with-panel" : ""}`, style: { "--builder-panel": `${panelWidth}px` }, children: [
     /* @__PURE__ */ jsx("style", { children: builderStyles }),
@@ -153,7 +168,7 @@ function PluginBuilderPage({ context }) {
         messages.map((message) => /* @__PURE__ */ jsxs("article", { className: `bc-message ${message.role}`, children: [
           /* @__PURE__ */ jsxs("div", { className: "bc-message-head", children: [
             /* @__PURE__ */ jsx("span", { children: message.role === "user" ? "\uB098" : lead?.name || "Lead" }),
-            message.status ? /* @__PURE__ */ jsx("span", { className: "bc-status", children: { running: "\uC791\uC5C5 \uC911", failed: "\uC2E4\uD328", interrupted: "\uC911\uB2E8\uB428", completed: "\uC644\uB8CC" }[message.status] }) : null
+            message.status ? /* @__PURE__ */ jsx("span", { className: "bc-status", children: { running: "\uC791\uC5C5 \uC911", cancelling: "\uC911\uC9C0 \uD655\uC778 \uC911", cancelled: "\uC911\uC9C0 \uC644\uB8CC", failed: "\uC2E4\uD328", interrupted: "\uC911\uB2E8\uB428", completed: "\uC644\uB8CC" }[message.status] }) : null
           ] }),
           /* @__PURE__ */ jsx("div", { className: `bc-message-body ${message.status === "failed" ? "bc-error" : ""}`, children: message.content || (message.status === "running" ? "\uB2F5\uBCC0\uC744 \uC900\uBE44\uD558\uACE0 \uC788\uC2B5\uB2C8\uB2E4\u2026" : "") }),
           message.attachments?.map((file, index) => /* @__PURE__ */ jsxs("details", { children: [
@@ -197,7 +212,7 @@ function PluginBuilderPage({ context }) {
               lead?.effort ? ` \xB7 ${lead.effort}` : ""
             ] }),
             /* @__PURE__ */ jsx("span", { className: "bc-spacer" }),
-            /* @__PURE__ */ jsx("button", { className: "bc-button primary", disabled: busy || running || !lead || !draft.trim() && !files.length, children: busy ? "\uC804\uC1A1 \uC911\u2026" : running ? "\uC751\uB2F5 \uC911\u2026" : "\uBCF4\uB0B4\uAE30" })
+            running ? /* @__PURE__ */ jsx("button", { type: "button", className: "bc-button", title: "\uD604\uC7AC Lead \uC751\uB2F5\uB9CC \uC911\uC9C0", onClick: stopReply, disabled: busy || !activeMessage.runId, children: busy ? "\uC911\uC9C0 \uC694\uCCAD \uC911\u2026" : cancelling ? "\uC911\uC9C0 \uC7AC\uC2DC\uB3C4" : "\uC751\uB2F5 \uC911\uC9C0" }) : /* @__PURE__ */ jsx("button", { className: "bc-button primary", disabled: busy || !lead || !draft.trim() && !files.length, children: busy ? "\uC804\uC1A1 \uC911\u2026" : "\uBCF4\uB0B4\uAE30" })
           ] })
         ] }),
         notice ? /* @__PURE__ */ jsx("p", { className: "bc-notice bc-error", role: "alert", children: notice }) : null,

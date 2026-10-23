@@ -423,9 +423,8 @@ try {
   assert.ok(company?.id && company?.issuePrefix, `The isolated Host did not create a Workspace: ${JSON.stringify(companies)}`);
   const companyPrefix = company.issuePrefix;
 
-  // A new Core Workspace deliberately redirects an empty company to the
-  // Assistant setup surface. This isolated, non-running fixture keeps the
-  // test focused on the neutral Dashboard contract rather than onboarding.
+  // This fixture uses only an isolated, no-provider process. It neither uses
+  // the developer's AI credentials nor changes their Workspace data.
   const assistants = await api(workspaceCdp, `/api/companies/${company.id}/agents`);
   if (!Array.isArray(assistants) || assistants.length === 0) {
     await api(workspaceCdp, `/api/companies/${company.id}/agents`, {
@@ -434,7 +433,7 @@ try {
         name: "Workspace Surfaces E2E Assistant",
         role: "engineer",
         adapterType: "process",
-        adapterConfig: {},
+        adapterConfig: sourceElectron ? { command: process.execPath, args: ["-e", "console.log('Builder cancellation fixture ready'); setInterval(() => {}, 1000)"], timeoutSec: 90, graceSec: 1 } : {},
       },
     });
   }
@@ -502,6 +501,37 @@ try {
     }
     await click(workspaceCdp, ".bc-panel-head button", "Close Builder work panel");
     await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+  }
+
+  if (sourceElectron) {
+    await workspaceCdp.evaluate(`document.querySelector('.bc-composer textarea').focus()`);
+    await workspaceCdp.command("Input.insertText", { text: "Test the exact-run cancellation control." });
+    await click(workspaceCdp, ".bc-composer button.primary", "Send Builder fixture turn");
+    let runningRun = null;
+    const runDeadline = Date.now() + 45_000;
+    while (Date.now() < runDeadline) {
+      const state = await api(workspaceCdp, `/api/plugins/${builder.id}/bridge/data`, {
+        method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+      });
+      const message = state?.data?.conversations?.[0]?.messages?.find(item => item.role === "assistant");
+      if (message?.runId) {
+        const observed = await api(workspaceCdp, `/api/heartbeat-runs/${message.runId}`);
+        if (observed.processPid && observed.status === "running") { runningRun = observed; break; }
+        assert.ok(!["failed", "cancelled", "succeeded"].includes(observed.status), `Builder fixture ended before stop: ${JSON.stringify(observed)}`);
+      }
+      await delay(250);
+    }
+    assert.ok(runningRun?.processPid, "Builder did not start the isolated process fixture.");
+    await click(workspaceCdp, '.bc-composer button[title="현재 Lead 응답만 중지"]', "Stop the exact Builder Lead run");
+    await waitForPage(workspaceCdp, page => page.body.includes("중지 완료"), "confirmed Builder process termination", 30_000);
+    const stopped = await api(workspaceCdp, `/api/heartbeat-runs/${runningRun.id}`);
+    assert.equal(stopped.status, "cancelled");
+    assert.equal(stopped.contextSnapshot?.spsSessionCancellationTermination, "confirmed");
+    let alive = true;
+    try { process.kill(runningRun.processPid, 0); } catch (error) { if (error.code === "ESRCH") alive = false; else throw error; }
+    assert.equal(alive, false, "Builder showed stopped before its process exited.");
+    if (screenshotPath) await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "plugin-builder-stopped.png"));
+    console.log("Builder stop E2E: exact Lead run cancelled, process exit verified, no provider used.");
   }
 
   await api(workspaceCdp, `/api/plugins/${teamWorkplane.id}/companies/${company.id}/activation`, {

@@ -25,6 +25,8 @@ test("Plugin Builder is a neutral, lifecycle-free SPS tool provider", () => {
     "agent.sessions.create",
     "agent.sessions.list",
     "agent.sessions.send",
+    "agent.sessions.read",
+    "agent.sessions.cancel",
   ]);
   assert.equal(manifest.displayName, "Plugin Builder");
   assert.equal(manifest.ui?.slots?.find((slot) => slot.type === "page")?.routePath, "builder");

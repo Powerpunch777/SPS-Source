@@ -938,6 +938,24 @@ test("claims Node commands through a signed Board-authenticated request", async 
   assert.equal(body.privateKeyPem, undefined);
 });
 
+test("does not spawn a command when its initial signed lease is denied", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sps-denied-lease-"));
+  const marker = path.join(directory, "must-not-exist.txt");
+  let completion;
+  try {
+    await assert.rejects(() => executeSpsNodeCommand({
+      command: { id: "denied-lease", command: "agy", runtimeKind: "agy_cli", args: [], env: {}, lastEventSeq: 0 },
+      hubUrl: "https://sps.example.test", nodeId: "node-1", identity: createNodeIdentity(), accessToken: "test-token",
+      profile: { defaultWorkspacePath: directory, projectWorkspaces: {} },
+      resolveInvocation: async () => ({ executable: process.execPath, args: ["-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started')`] }),
+      checkCommandLease: async () => ({ active: false, error: "Cancelled before start" }),
+      completeCommand: async input => { completion = input.completion; },
+    }), /Cancelled before start/);
+    assert.equal(completion.status, "failed");
+    await assert.rejects(() => fs.access(marker), { code: "ENOENT" });
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
 test("acknowledges a cancelled plugin lease only after its Windows process tree exits", { skip: process.platform !== "win32", timeout: 25_000 }, async () => {
   let cancel = false;
   let pids = [];

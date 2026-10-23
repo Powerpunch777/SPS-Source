@@ -10,7 +10,9 @@ var SPS_PLATFORM_CAPABILITIES = Object.freeze([
   "agents.read",
   "agent.sessions.create",
   "agent.sessions.list",
-  "agent.sessions.send"
+  "agent.sessions.send",
+  "agent.sessions.read",
+  "agent.sessions.cancel"
 ]);
 var CAPABILITY_SET = new Set(SPS_PLATFORM_CAPABILITIES);
 function isPlainObject(value) {
@@ -170,6 +172,7 @@ var SPS_CORE_PRIMITIVES = Object.freeze([
   "runtimes.list",
   "runtimes.dispatch",
   "runs.observe",
+  "runs.cancel",
   "artifacts.write",
   "secrets.use"
 ]);
@@ -184,7 +187,9 @@ var SPS_RUNTIME_OPERATIONS = Object.freeze([
   "sps.executionGrants.revoke",
   "sps.runs.dispatch",
   "sps.runs.get",
+  "sps.runs.list",
   "sps.runs.listEvents",
+  "sps.runs.cancel",
   "sps.artifacts.publish",
   "sps.artifacts.list"
 ]);
@@ -195,6 +200,14 @@ var PRIMITIVE_SET = new Set(SPS_CORE_PRIMITIVES);
 var RUNTIME_OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 var LIFECYCLE_METHODS = /* @__PURE__ */ new Set(["initialize", "health", "shutdown"]);
 var PLATFORM_METHODS = /* @__PURE__ */ new Set(["executeTool", "onEvent", "runJob", "getData", "performAction"]);
+var PLATFORM_AGENT_OPERATIONS = Object.freeze({
+  "agents.list": "agents.read",
+  "agents.sessions.create": "agent.sessions.create",
+  "agents.sessions.list": "agent.sessions.list",
+  "agents.sessions.sendMessage": "agent.sessions.send",
+  "agents.sessions.getRun": "agent.sessions.read",
+  "agents.sessions.cancel": "agent.sessions.cancel"
+});
 var PLATFORM_HOST_OPERATIONS = /* @__PURE__ */ new Set([
   "state.get",
   "state.set",
@@ -204,10 +217,7 @@ var PLATFORM_HOST_OPERATIONS = /* @__PURE__ */ new Set([
   "inbox.publish",
   "inbox.update",
   "inbox.withdraw",
-  "agents.list",
-  "agents.sessions.create",
-  "agents.sessions.list",
-  "agents.sessions.sendMessage"
+  ...Object.keys(PLATFORM_AGENT_OPERATIONS)
 ]);
 var JSON_RPC_VERSION = "2.0";
 var SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -279,6 +289,7 @@ function runSpsWorker(plugin2, options = {}) {
   const pending = /* @__PURE__ */ new Map();
   const sessionCallbacks = /* @__PURE__ */ new Map();
   const invocationStorage = new AsyncLocalStorage();
+  const agentTenantStorage = new AsyncLocalStorage();
   const controller = new AbortController();
   let resolveClosed;
   const closedPromise = new Promise((resolve) => {
@@ -329,32 +340,53 @@ function runSpsWorker(plugin2, options = {}) {
       return callHost(operation, inputValue);
     }
   });
-  function agentRequest(capability, operation, params) {
+  function agentRequest(operation, params, requireTenant = false) {
+    const capability = Object.hasOwn(PLATFORM_AGENT_OPERATIONS, operation) ? PLATFORM_AGENT_OPERATIONS[operation] : void 0;
+    if (!capability) {
+      return Promise.reject(new TypeError(`Unsupported SPS Agent operation: ${String(operation)}.`));
+    }
     if (!definition.handlers.platform?.capabilities.includes(capability)) {
       return Promise.reject(new Error(`Undeclared SPS Platform capability: ${capability}.`));
     }
+    if (requireTenant) {
+      const tenant = agentTenantStorage.getStore();
+      const companyId = typeof tenant?.companyId === "string" ? tenant.companyId : tenant?.invocationCompanyId;
+      if (typeof companyId !== "string" || companyId.length === 0 || params.companyId !== companyId || typeof tenant?.companyId === "string" && typeof tenant?.invocationCompanyId === "string" && tenant.companyId !== tenant.invocationCompanyId) {
+        return Promise.reject(new Error("SPS Agent access must match the authenticated invocation company."));
+      }
+    }
     return callHost(operation, params);
+  }
+  function withAgentTenant(companyId, handler) {
+    const invocationCompanyId = invocationStorage.getStore()?.scope?.companyId;
+    return agentTenantStorage.run({ companyId, invocationCompanyId }, handler);
   }
   const platform2 = Object.freeze({
     agents: Object.freeze({
       list(input2) {
-        return agentRequest("agents.read", "agents.list", input2);
+        return agentRequest("agents.list", input2);
       },
       sessions: Object.freeze({
         create(agentId, companyId, options2 = {}) {
-          return agentRequest("agent.sessions.create", "agents.sessions.create", { ...options2, agentId, companyId });
+          return agentRequest("agents.sessions.create", { ...options2, agentId, companyId });
         },
         list(agentId, companyId) {
-          return agentRequest("agent.sessions.list", "agents.sessions.list", { agentId, companyId });
+          return agentRequest("agents.sessions.list", { agentId, companyId });
         },
         async sendMessage(sessionId, companyId, options2) {
           if (options2.onEvent) sessionCallbacks.set(sessionId, options2.onEvent);
           try {
-            return await agentRequest("agent.sessions.send", "agents.sessions.sendMessage", { sessionId, companyId, prompt: options2.prompt, ...options2.reason ? { reason: options2.reason } : {} });
+            return await agentRequest("agents.sessions.sendMessage", { sessionId, companyId, prompt: options2.prompt, ...options2.reason ? { reason: options2.reason } : {} });
           } catch (error2) {
             sessionCallbacks.delete(sessionId);
             throw error2;
           }
+        },
+        getRun(sessionId, companyId, runId) {
+          return agentRequest("agents.sessions.getRun", { sessionId, companyId, runId }, true);
+        },
+        cancel(sessionId, companyId, runId) {
+          return agentRequest("agents.sessions.cancel", { sessionId, companyId, runId }, true);
         }
       })
     }),
@@ -468,7 +500,7 @@ function runSpsWorker(plugin2, options = {}) {
       if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue2(params.params ?? {}) || !isRecord(params.actorContext) || typeof params.actorContext.companyId !== "string" || !["user", "agent", "system"].includes(params.actorContext.type) || params.companyId !== void 0 && params.actorContext.companyId !== params.companyId) throw new TypeError("Invalid authenticated performAction context.");
       const registration2 = definition.handlers.platform?.actions?.find((action) => action.key === params.key);
       if (!registration2) throw Object.assign(new Error(`Unknown SPS Platform action: ${params.key}.`), { code: -32601 });
-      return registration2.handler(params.params ?? {}, { ...platform2, companyId: params.actorContext.companyId, actor: Object.freeze({ ...params.actorContext }) });
+      return withAgentTenant(params.actorContext.companyId, () => registration2.handler(params.params ?? {}, { ...platform2, companyId: params.actorContext.companyId, actor: Object.freeze({ ...params.actorContext }) }));
     }
     if (method === "getData") {
       if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue2(params.params ?? {}) || params.companyId !== void 0 && typeof params.companyId !== "string" || params.renderEnvironment !== void 0 && !isJsonValue2(params.renderEnvironment)) {
@@ -476,29 +508,31 @@ function runSpsWorker(plugin2, options = {}) {
       }
       const registration2 = definition.handlers.platform?.data.find((provider) => provider.key === params.key);
       if (!registration2) throw Object.assign(new Error(`Unknown SPS Platform data provider: ${params.key}`), { code: -32601 });
-      return registration2.handler({
+      return withAgentTenant(params.companyId, () => registration2.handler({
         ...params.params ?? {},
         ...params.companyId === void 0 ? {} : { companyId: params.companyId },
         ...params.renderEnvironment === void 0 ? {} : { renderEnvironment: params.renderEnvironment }
-      }, platform2);
+      }, platform2));
     }
     if (method === "executeTool") {
       if (!isRecord(params) || typeof params.toolName !== "string" || !isJsonValue2(params.parameters) || !isJsonValue2(params.runContext)) throw new TypeError("Invalid executeTool params.");
       const registration2 = definition.handlers.platform?.tools.find((tool2) => tool2.name === params.toolName);
       if (!registration2) throw Object.assign(new Error(`Unknown SPS Platform tool: ${params.toolName}.`), { code: -32601 });
-      return registration2.handler(params.parameters, params.runContext, platform2);
+      return withAgentTenant(params.runContext.companyId, () => registration2.handler(params.parameters, params.runContext, platform2));
     }
     if (method === "onEvent") {
       if (!isRecord(params) || !isRecord(params.event) || typeof params.event.eventType !== "string" || !isJsonValue2(params.event)) throw new TypeError("Invalid onEvent params.");
       const registrations = definition.handlers.platform?.events.filter((event) => event.name === params.event.eventType) ?? [];
       if (registrations.length === 0) throw Object.assign(new Error(`Unknown SPS Platform event: ${params.event.eventType}.`), { code: -32601 });
-      for (const registration2 of registrations) await registration2.handler(params.event, platform2);
+      for (const registration2 of registrations) {
+        await withAgentTenant(params.event.companyId, () => registration2.handler(params.event, platform2));
+      }
       return null;
     }
     if (!isRecord(params) || !isRecord(params.job) || typeof params.job.jobKey !== "string" || !isJsonValue2(params.job)) throw new TypeError("Invalid runJob params.");
     const registration = definition.handlers.platform?.jobs.find((job) => job.jobKey === params.job.jobKey);
     if (!registration) throw Object.assign(new Error(`Unknown SPS Platform job: ${params.job.jobKey}.`), { code: -32601 });
-    return registration.handler(params.job, platform2);
+    return withAgentTenant(params.job.companyId, () => registration.handler(params.job, platform2));
   }
   async function handleHostRequest(message) {
     const { id: id2, method } = message;
@@ -656,6 +690,7 @@ var stateKey = (companyId) => ({ scopeKind: "company", scopeId: companyId, names
 var id = () => randomUUID();
 var text = (value, limit) => typeof value === "string" ? value.trim().slice(0, limit) : "";
 var unavailable = /* @__PURE__ */ new Set(["terminated", "paused", "pending_approval"]);
+var inFlight = (status) => status === "running" || status === "cancelling";
 function createBuilderChat({ state, agents, logger = console }) {
   const queues = /* @__PURE__ */ new Map();
   const active = /* @__PURE__ */ new Map();
@@ -698,6 +733,7 @@ function createBuilderChat({ state, agents, logger = console }) {
       await reconcile(companyId);
       reconciled.add(companyId);
     }
+    await refreshCancellations(companyId);
     const [conversations, roster] = await Promise.all([load(companyId), available(companyId)]);
     return {
       conversations,
@@ -768,7 +804,7 @@ function createBuilderChat({ state, agents, logger = console }) {
       await mutate(companyId, (conversations) => {
         const current = find(conversations, conversation.id);
         if (current.messages.length >= 400) throw new Error("Start a new conversation; this one has reached its message limit.");
-        if (current.messages.some((message) => message.status === "running")) {
+        if (current.messages.some((message) => inFlight(message.status))) {
           throw new Error("The previous run was interrupted. Refresh its state before retrying.");
         }
         current.title = current.messages.length ? current.title : (content || files[0].name).slice(0, 60);
@@ -793,6 +829,9 @@ function createBuilderChat({ state, agents, logger = console }) {
         ...files.map((file) => `Attached text file: ${file.name}
 ${file.content}`)
       ].join("\n\n");
+      await mutate(companyId, (conversations) => {
+        find(conversations, conversation.id).messages.find((item) => item.id === assistantId).sessionId = sessionId;
+      });
       const result = await agents.sessions.sendMessage(sessionId, companyId, {
         prompt,
         reason: "Plugin Builder user message",
@@ -819,9 +858,13 @@ ${file.content}`)
     await mutate(companyId, (conversations) => {
       const conversation = find(conversations, conversationId);
       const message = conversation.messages.find((item) => item.id === messageId);
-      if (!message || message.status !== "running") return;
+      if (!message || !inFlight(message.status)) return;
       const terminal = event.eventType === "done" || event.eventType === "error";
       if (terminal) {
+        if (message.status === "cancelling" || event.payload?.status === "cancelled") {
+          message.status = "cancelling";
+          return;
+        }
         const result = event.payload?.resultJson;
         const output = typeof result === "string" ? result : result?.summary || result?.message || result?.output;
         message.content = text(output, 1e5) || text(event.payload?.error, 4e3) || (event.eventType === "error" ? text(event.message, 4e3) : "The run finished without a text response.");
@@ -834,10 +877,52 @@ ${file.content}`)
       conversation.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     });
   }
+  async function applyRunState(companyId, conversationId, messageId, run) {
+    return mutate(companyId, (conversations) => {
+      const message = find(conversations, conversationId).messages.find((item) => item.id === messageId);
+      if (!message || !inFlight(message.status) || message.runId !== run.runId) return;
+      if (run.cancellationRequested && run.termination !== "confirmed") {
+        message.status = "cancelling";
+      } else if (run.cancellationRequested && run.termination === "confirmed") {
+        message.status = "cancelled";
+        active.delete(conversationId);
+      } else if (["succeeded", "failed", "interrupted", "cancelled", "timed_out"].includes(run.status)) {
+        message.status = run.status === "succeeded" ? "completed" : run.status === "cancelled" ? "interrupted" : "failed";
+        if (!message.content) message.content = text(run.error, 4e3);
+        active.delete(conversationId);
+      } else if (message.status === "cancelling") {
+        message.status = "running";
+      }
+    });
+  }
+  async function refreshCancellations(companyId) {
+    for (const conversation of await load(companyId)) for (const message of conversation.messages) {
+      if (message.status !== "cancelling" || !message.sessionId || !message.runId) continue;
+      const run = await agents.sessions.getRun(message.sessionId, companyId, message.runId);
+      await applyRunState(companyId, conversation.id, message.id, run);
+    }
+  }
+  async function stop(companyId, input) {
+    const conversation = find(await load(companyId), input.conversationId);
+    const message = conversation.messages.find((item) => item.id === input.messageId);
+    if (!message || message.role !== "assistant" || message.runId !== input.runId || !message.runId || !message.sessionId) {
+      throw new Error("Select the exact Lead run to stop.");
+    }
+    if (!inFlight(message.status)) return { runId: message.runId, status: message.status };
+    await mutate(companyId, (conversations) => {
+      const current = find(conversations, conversation.id).messages.find((item) => item.id === message.id);
+      if (inFlight(current.status)) current.status = "cancelling";
+    });
+    const run = await agents.sessions.cancel(message.sessionId, companyId, message.runId);
+    await applyRunState(companyId, conversation.id, message.id, run);
+    return run;
+  }
   async function reconcile(companyId) {
     await mutate(companyId, (conversations) => {
       for (const conversation of conversations) for (const message of conversation.messages) {
-        if (message.status === "running" && !active.has(conversation.id)) {
+        if (message.status === "cancelling" && message.sessionId && message.runId) {
+          active.set(conversation.id, true);
+        } else if (message.status === "running" && !active.has(conversation.id)) {
           message.status = "interrupted";
           message.content = "Builder restarted while this run was in progress. Its result must be checked before sending again.";
         }
@@ -900,7 +985,7 @@ ${file.content}`)
     if (!result) throw new Error("Worker report was not found in this conversation.");
     return result;
   }
-  return { view, create, team, send, reconcile, recordEvent, delegate, report };
+  return { view, create, team, send, stop, reconcile, recordEvent, delegate, report };
 }
 
 // src/manifest.js
@@ -1008,7 +1093,9 @@ var manifest_default = {
     "agents.read",
     "agent.sessions.create",
     "agent.sessions.list",
-    "agent.sessions.send"
+    "agent.sessions.send",
+    "agent.sessions.read",
+    "agent.sessions.cancel"
   ],
   companyActivation: { defaultEnabled: true },
   agentPlatform: {
@@ -1341,7 +1428,7 @@ function tool(name, handler) {
   };
 }
 var platform = defineSpsPlatformContract({
-  capabilities: ["agent.tools.register", "plugin.state.read", "plugin.state.write", "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send"],
+  capabilities: ["agent.tools.register", "plugin.state.read", "plugin.state.write", "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send", "agent.sessions.read", "agent.sessions.cancel"],
   tools: [
     tool("create-sps-plugin-project", async (authoring, params, runContext) => {
       const session = await authoring.createProject(params, runContext);
@@ -1391,7 +1478,7 @@ var platform = defineSpsPlatformContract({
     key: "plugin-builder-workspace",
     handler: async (params, invocationPlatform) => ({ ...await workspaceView(authoringFor(invocationPlatform), params), ...await chatFor(invocationPlatform).view(params.companyId) })
   }],
-  actions: [["builder-create", "create"], ["builder-team", "team"], ["builder-send", "send"]].map(([key, method]) => ({
+  actions: [["builder-create", "create"], ["builder-team", "team"], ["builder-send", "send"], ["builder-stop", "stop"]].map(([key, method]) => ({
     key,
     handler: async (params, platform2) => {
       if (platform2.actor.type !== "user" || params.companyId && params.companyId !== platform2.companyId) throw new Error("An authenticated Workspace user is required.");

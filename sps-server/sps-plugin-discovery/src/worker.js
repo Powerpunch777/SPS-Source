@@ -55,7 +55,7 @@ function tool(name, handler) {
 }
 
 const platform = defineSpsPlatformContract({
-  capabilities: ["agent.tools.register", "plugin.state.read", "plugin.state.write", "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send"],
+  capabilities: ["agent.tools.register", "plugin.state.read", "plugin.state.write", "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send", "agent.sessions.read", "agent.sessions.cancel"],
   tools: [
     tool("create-sps-plugin-project", async (authoring, params, runContext) => {
       const session = await authoring.createProject(params, runContext);
@@ -104,7 +104,7 @@ const platform = defineSpsPlatformContract({
     key: "plugin-builder-workspace",
     handler: async (params, invocationPlatform) => ({ ...await workspaceView(authoringFor(invocationPlatform), params), ...await chatFor(invocationPlatform).view(params.companyId) }),
   }],
-  actions: [["builder-create", "create"], ["builder-team", "team"], ["builder-send", "send"]].map(([key, method]) => ({
+  actions: [["builder-create", "create"], ["builder-team", "team"], ["builder-send", "send"], ["builder-stop", "stop"]].map(([key, method]) => ({
     key, handler: async (params, platform) => {
       if (platform.actor.type !== "user" || params.companyId && params.companyId !== platform.companyId) throw new Error("An authenticated Workspace user is required.");
       return chatFor(platform)[method](platform.companyId, params);

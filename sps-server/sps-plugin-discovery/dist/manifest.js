@@ -109,6 +109,8 @@ export default {
     "agent.sessions.create",
     "agent.sessions.list",
     "agent.sessions.send",
+    "agent.sessions.read",
+    "agent.sessions.cancel",
   ],
   companyActivation: { defaultEnabled: true },
   agentPlatform: {
