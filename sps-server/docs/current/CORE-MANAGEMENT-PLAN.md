@@ -121,20 +121,19 @@ manifest set 205 passed, one platform-inapplicable skip (206 total); public SDK
 155/155; Builder check 16/16; recursive Core typecheck, full build and compatibility
 boundary passed. The real adapter-completion test preserves a per-run usage
 snapshot, including absent cached tokens and explicit cost scope, without changing
-the legacy ledger. Source Electron Workspace E2E UI assertions passed again with actual Builder
+the legacy ledger. Source Electron Workspace E2E passed again with actual Builder
 Send/Stop, process exit, runtime snapshot and 1024/1280/1440 layout checks. These
 tests use mock Identity and a no-provider process, not paid AI or user Workspace
-data. Its final PowerShell orphan-cleanup command subsequently stopped responding
-on this PC; the process did not exit normally, so this is not a fully completed
-E2E run. An independent PowerShell Get-Date probe also stalled. The full Desktop
-suite likewise stalled at its Windows archive/PowerShell test; do not carry forward
-the previous full-suite result as proof of this tuple. A subsequent bounded run
-with `--test-skip-pattern=Windows.runtime.pack.archive` completed with 373 passed
-as reported by Node 26 (its empty skipped file is counted as a passing file wrapper;
-the archive test body was not executed). This is not full-suite certification.
-An initial bounded run failed only because the new matrix preceded the committed
-gitlinks; after committing the exact gitlinks it passed. Core/SDK checks completed
-using cmd.exe. The generated Builder Worker was rebuilt against the new pinned SDK.
+data. Final PowerShell orphan cleanup temporarily stalled, as did an independent
+Get-Date probe. Cleanup eventually completed and the E2E command exited 0. The
+first full Desktop run failed at the archive PowerShell timeout and the not-yet-
+committed gitlink baseline. A bounded run excluding that archive body passed, but
+was not treated as full-suite evidence. After Windows commands recovered and
+gitlinks were committed, the archive test passed independently and `npm test`
+completed normally: 373/373, no exclusions. Final log: stage-3-desktop-full-verified.log.
+Core/SDK checks also completed via cmd.exe. The generated Builder Worker was
+rebuilt against the new pinned SDK. These are local checks, not Linux/full Core or
+physical two-PC release evidence.
 
 An intermediate aggregate run loaded the old observation module before a duration
 test edit and failed one assertion (204 passed/one failed/one skipped). After edits
