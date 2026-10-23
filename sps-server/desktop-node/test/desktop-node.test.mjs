@@ -938,6 +938,41 @@ test("claims Node commands through a signed Board-authenticated request", async 
   assert.equal(body.privateKeyPem, undefined);
 });
 
+test("acknowledges a cancelled plugin lease only after its Windows process tree exits", { skip: process.platform !== "win32", timeout: 25_000 }, async () => {
+  let cancel = false;
+  let pids = [];
+  let completed = false;
+  const isAlive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  try {
+    const result = await executeSpsNodeCommand({
+      command: { id: "cancel-process-tree", pluginKey: "sps.cancel-test", subjectKey: "execution:one", command: "agy", runtimeKind: "agy_cli", args: [], env: {}, stdin: null, lastEventSeq: 0, timeoutMs: 15_000 },
+      hubUrl: "https://sps.example.test", nodeId: "node-1", identity: createNodeIdentity(), accessToken: "test-token",
+      profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
+      resolveInvocation: async () => ({ executable: process.execPath, args: ["-e",
+        "const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});console.log(JSON.stringify([process.pid,child.pid]));setInterval(()=>{},1000);" ] }),
+      appendCommandEvent: async input => {
+        if (input.stream === "stdout") { pids = JSON.parse(input.body.trim()); cancel = true; }
+      },
+      checkCommandLease: async () => cancel ? { active: false, status: "cancelling", error: "Cancellation requested by test." } : { active: true, status: "running" },
+      completeCommand: async input => {
+        expectStopped();
+        assert.equal(input.completion.status, "failed");
+        assert.match(input.completion.error, /Cancellation requested/);
+        completed = true;
+      },
+    });
+    function expectStopped() {
+      assert.equal(pids.length, 2);
+      for (const pid of pids) assert.equal(isAlive(pid), false, `Owned process ${pid} is still running`);
+    }
+    assert.equal(completed, true);
+    assert.equal(result.timedOut, false);
+    expectStopped();
+  } finally {
+    for (const pid of pids) { if (isAlive(pid)) { try { process.kill(pid, "SIGKILL"); } catch {} } }
+  }
+});
+
 test("uses a separate signed queue for workflow-neutral plugin runs", async () => {
   const identity = createNodeIdentity();
   const requests = [];
