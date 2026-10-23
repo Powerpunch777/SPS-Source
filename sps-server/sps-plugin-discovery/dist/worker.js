@@ -171,6 +171,7 @@ var SPS_CORE_PRIMITIVES = Object.freeze([
   "workspace.sources.route",
   "runtimes.list",
   "runtimes.dispatch",
+  "executions.observe",
   "runs.observe",
   "runs.cancel",
   "artifacts.write",
@@ -180,6 +181,8 @@ var CORE_PRIMITIVE_SET = new Set(SPS_CORE_PRIMITIVES);
 
 // ../../external/sps-plugin-sdk/runtime/index.mjs
 var SPS_RUNTIME_OPERATIONS = Object.freeze([
+  "sps.executions.list",
+  "sps.executions.get",
   "sps.workspaceSources.list",
   "sps.runtimes.list",
   "sps.executionGrants.list",
@@ -219,6 +222,7 @@ var PLATFORM_HOST_OPERATIONS = /* @__PURE__ */ new Set([
   "inbox.withdraw",
   ...Object.keys(PLATFORM_AGENT_OPERATIONS)
 ]);
+var EXECUTION_READ_OPERATIONS = /* @__PURE__ */ new Set(["sps.executions.list", "sps.executions.get"]);
 var JSON_RPC_VERSION = "2.0";
 var SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 function isRecord(value) {
@@ -336,6 +340,13 @@ function runSpsWorker(plugin2, options = {}) {
     request(operation, inputValue) {
       if (!RUNTIME_OPERATION_SET.has(operation)) {
         return Promise.reject(new TypeError(`Unsupported SPS Runtime operation: ${String(operation)}.`));
+      }
+      if (EXECUTION_READ_OPERATIONS.has(operation)) {
+        const requestedCompanyId = isRecord(inputValue) ? inputValue.companyId : void 0;
+        const invocationCompanyId = invocationStorage.getStore()?.scope?.companyId;
+        if (typeof requestedCompanyId !== "string" || requestedCompanyId.length === 0 || typeof invocationCompanyId !== "string" || invocationCompanyId.length === 0 || requestedCompanyId !== invocationCompanyId) {
+          return Promise.reject(new Error("SPS execution access must match the authenticated invocation company."));
+        }
       }
       return callHost(operation, inputValue);
     }

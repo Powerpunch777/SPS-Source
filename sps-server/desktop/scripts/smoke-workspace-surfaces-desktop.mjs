@@ -522,6 +522,7 @@ try {
       await delay(250);
     }
     assert.ok(runningRun?.processPid, "Builder did not start the isolated process fixture.");
+    assert.equal(runningRun.contextSnapshot?.spsExecutionRuntime?.adapterType, "process", "Execution runtime must be snapshotted before the process starts.");
     await click(workspaceCdp, '.bc-composer button[title="현재 Lead 응답만 중지"]', "Stop the exact Builder Lead run");
     await waitForPage(workspaceCdp, page => page.body.includes("중지 완료"), "confirmed Builder process termination", 30_000);
     const stopped = await api(workspaceCdp, `/api/heartbeat-runs/${runningRun.id}`);

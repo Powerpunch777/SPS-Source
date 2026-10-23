@@ -1,7 +1,8 @@
 # Core Management Incremental Plan
 
-Status: stage 1 and the Agent-session cancellation slice of stage 2 implemented
-in source, 2026-10-23. No new installer or Stable claim.
+Status: stage 1, Agent-session cancellation and cross-lane history slices of stage 2,
+and the usage-provenance foundation of stage 3 implemented in source, 2026-10-23.
+No new installer or Stable claim.
 
 Core owns technical execution state, usage evidence, limits, artifacts, audit and
 recovery. Plugins own assignments, roles, approvals and business evaluation.
@@ -14,11 +15,13 @@ do not replace either engine or import the upstream workflow model.
    cancellation request versus Node completion, race and late-output tests.
    This stage does not add Agent-session cancellation or Builder UI controls.
 2. Partly implemented: exact Agent-session run reads/cancel bridge and Builder
-   Lead stop. Remaining: complete cross-lane read model, technical failure/retry
-   classifications and parent/child execution ownership. No automatic retry of
-   unknown external effects.
-3. Planned: usage provenance (reported/estimated/unavailable), billing basis and
-   currency, Plugin attribution and idempotent usage receipts. Unknown is not zero.
+   Lead stop, safe cross-lane technical read model and conservative failure
+   classification. Remaining: parent/child execution ownership and complete
+   result/usage recovery. No automatic retry of unknown external effects.
+3. Partly implemented: usage provenance (reported/estimated/unavailable), billing
+   basis/currency and Plugin attribution in the common read model. Remaining:
+   idempotent usage receipts, aggregate queries and neutral Node usage ingestion.
+   Unknown is not zero.
 4. Planned: shared admission limits and budget reservations/settlement, then
    read-only Dashboard/Diagnostics/Inbox integration and optional result evidence.
 
@@ -79,6 +82,62 @@ and rerun. This does not erase the historical intermittent Identity startup issu
 Luna 6 xhigh implemented and tested the public SDK and reviewed cancellation races;
 the parent implemented Core, Node, Builder, and integration verification. No full
 Linux Core regression, packaged installer or two-PC certification is claimed.
+
+## Cross-Lane Observation and Usage Foundation
+
+- Add read-only `sps.executions.list/get` with separate `sps.executions.read`
+  capability and `executions.observe` primitive. Existing `sps.runs.read` remains
+  Node-only. Both lanes are scoped to the calling Plugin and Workspace.
+- Chronological pagination uses `(createdAt, runId, lane)` descending, truncating
+  PostgreSQL microseconds to the public millisecond precision for filtering and
+  ordering. Query at most limit+1 rows per lane; return at most 100 rows. This is
+  live history, not a frozen invoice or accounting snapshot.
+- Agent-session history uses the durable Core-written Plugin/session snapshot;
+  it does not require a current session row. Historical runtime is captured at
+  execution, never inferred from a subsequently edited Agent configuration.
+- Return technical phase, cancellation/termination, elapsed time and coarse
+  failure category. Unknown errors do not leak raw messages. All retries require
+  Plugin review; no automatic retry authorization or reassignment is introduced.
+- Persist versioned usage evidence beside existing usageJson, without changing
+  the legacy ledger. Explicit per-run adapter token values are reported; computed
+  session deltas are estimated. Invalid/missing values and unmarked legacy records
+  are unavailable, not zero. An explicit valid zero remains zero.
+- Cost requires explicit adapter `costUsdBasis: per_run`, independent from token
+  usageBasis. Unknown/cumulative scope is unavailable; do not claim the cumulative
+  total as this run's cost. Existing adapters require a separately verified scope
+  declaration before this common DTO can show their cost. Their ledger is unchanged.
+  Cost means adapter-reported USD, not a provider invoice. Subscription reference
+  cost is distinguished from incremental metered/overage charge. Absent subscription
+  cost is not presented as free. Neutral Node usage/model remain unavailable until
+  an explicit provider report contract exists; do not parse command arguments.
+- No prompts, arguments, environment, stdin, output, local paths or raw error text
+  are included. Existing detailed APIs and Artifact storage are not replaced.
+- No DB schema migration or user-data rewrite is needed. The SDK additions remain
+  unreleased and require pinned source plus a compatible Host. Published v0.11.0
+  does not contain these methods. Read-only UI aggregation is a subsequent slice.
+
+Verification (2026-10-23): Core scoped DB/observation/session/recovery/SDK bridge/
+manifest set 205 passed, one platform-inapplicable skip (206 total); public SDK
+155/155; Builder check 16/16; recursive Core typecheck, full build and compatibility
+boundary passed. The real adapter-completion test preserves a per-run usage
+snapshot, including absent cached tokens and explicit cost scope, without changing
+the legacy ledger. Source Electron Workspace E2E UI assertions passed again with actual Builder
+Send/Stop, process exit, runtime snapshot and 1024/1280/1440 layout checks. These
+tests use mock Identity and a no-provider process, not paid AI or user Workspace
+data. Its final PowerShell orphan-cleanup command subsequently stopped responding
+on this PC; the process did not exit normally, so this is not a fully completed
+E2E run. An independent PowerShell Get-Date probe also stalled. The full Desktop
+suite likewise stalled at its Windows archive/PowerShell test; do not carry forward
+the previous 373/373 result as proof of this tuple. Core/SDK checks completed using
+cmd.exe. The generated Builder Worker was rebuilt against the new pinned SDK.
+
+An intermediate aggregate run loaded the old observation module before a duration
+test edit and failed one assertion (204 passed/one failed/one skipped). After edits
+stopped, the complete same eight-file set passed 205/one skipped. Do not use the
+earlier failed log as current evidence. Luna 6 xhigh implemented SDK/bridge work
+and reviewed the read model; the parent fixed cost-scope uncertainty and secret-
+shaped runtime labels. Cost scope remains opt-in for existing adapters. No full
+Core regression, packaged installer, signed release or two-PC evidence is claimed.
 
 ## Verification and Safety
 
