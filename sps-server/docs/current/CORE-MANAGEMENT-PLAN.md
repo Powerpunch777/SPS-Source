@@ -128,8 +128,13 @@ data. Its final PowerShell orphan-cleanup command subsequently stopped respondin
 on this PC; the process did not exit normally, so this is not a fully completed
 E2E run. An independent PowerShell Get-Date probe also stalled. The full Desktop
 suite likewise stalled at its Windows archive/PowerShell test; do not carry forward
-the previous 373/373 result as proof of this tuple. Core/SDK checks completed using
-cmd.exe. The generated Builder Worker was rebuilt against the new pinned SDK.
+the previous full-suite result as proof of this tuple. A subsequent bounded run
+with `--test-skip-pattern=Windows.runtime.pack.archive` completed with 373 passed
+as reported by Node 26 (its empty skipped file is counted as a passing file wrapper;
+the archive test body was not executed). This is not full-suite certification.
+An initial bounded run failed only because the new matrix preceded the committed
+gitlinks; after committing the exact gitlinks it passed. Core/SDK checks completed
+using cmd.exe. The generated Builder Worker was rebuilt against the new pinned SDK.
 
 An intermediate aggregate run loaded the old observation module before a duration
 test edit and failed one assertion (204 passed/one failed/one skipped). After edits
