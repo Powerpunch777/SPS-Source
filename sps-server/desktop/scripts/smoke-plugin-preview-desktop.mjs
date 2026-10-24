@@ -12,9 +12,11 @@ import { fileURLToPath } from "node:url";
 import { inspectPluginArchive } from "@sonparkserver/plugin-sdk/registry/archive-inspector-v1.mjs";
 import { calculateStaticCapabilitiesDigest } from "@sonparkserver/plugin-sdk/registry/static-package-manifest-v1.mjs";
 import { resolveDeveloperPackageArtifact } from "../src/developer-package-artifact.mjs";
+import { redactPluginPreviewDiagnosticMessage } from "../src/plugin-preview-diagnostics.mjs";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { buildLiveBuilderPrompt, collectAuthoringSnapshot, verifyLiveBuilderChanges } from "./live-builder-authoring.mjs";
 import { buildLiveBuilderTeamPrompt, buildLiveBuilderRepairPrompt, verifyLiveBuilderTeamReport } from "./live-builder-team-authoring.mjs";
+import { captureLiveBuilderFailureArtifact } from "./live-builder-failure-artifact.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -170,16 +172,31 @@ async function cdpFor(target) {
     socket.addEventListener("message", listener); socket.send(JSON.stringify({ id: requestId, method, params }));
   });
   let expectedConfirmation = null;
+  const rendererErrors = [];
   socket.addEventListener("message", event => {
     const message = JSON.parse(event.data);
+    if (rendererErrors.length < 12) {
+      const errorArguments = message.method === "Runtime.consoleAPICalled" && message.params.type === "error"
+        ? message.params.args : message.method === "Runtime.exceptionThrown"
+          ? [message.params.exceptionDetails?.exception] : [];
+      if (errorArguments?.length) {
+        const text = errorArguments.slice(0, 4).map(arg => {
+          const properties = arg?.preview?.properties?.slice(0, 6).map(item => `${item.name}: ${item.value ?? item.type}`).join("; ");
+          return [arg?.value, arg?.description, properties].filter(item => typeof item === "string").join(" ");
+        }).join(" ").slice(0, 8000);
+        try { rendererErrors.push(redactPluginPreviewDiagnosticMessage(text)); } catch {}
+      }
+    }
     if (message.method !== "Page.javascriptDialogOpening") return;
     const accepted = message.params.type === "confirm" && message.params.message === expectedConfirmation;
     expectedConfirmation = null;
     void command("Page.handleJavaScriptDialog", { accept: accepted }).catch(() => {});
   });
   await command("Page.enable");
+  await command("Runtime.enable");
   return {
     command,
+    rendererErrors() { return [...rendererErrors]; },
     expectConfirmation(message) { expectedConfirmation = message; },
     async evaluate(expression, awaitPromise = false, timeoutMs = 20_000) { const result = await command("Runtime.evaluate", { expression, awaitPromise, returnByValue: true }, timeoutMs); if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || "Page evaluation failed."); return result.result?.value; },
     close: async () => {
@@ -1017,7 +1034,18 @@ try {
   const previewCompanies = await workspaceApi(preview, "/api/companies");
   assert.ok(previewCompanies[0]?.issuePrefix, "Preview did not create its isolated Workspace");
   await preview.evaluate(`location.assign(${JSON.stringify(`/${previewCompanies[0].issuePrefix}/builder-fixture`)})`);
-  await waitPage(preview, page => page.text.includes("Builder Preview Fixture") && page.text.includes("Count: 0"), "actual generated plugin UI");
+  try {
+    await waitPage(preview, page => {
+      if (page.text.includes("Builder Preview Fixture: failed to render")) {
+        return true;
+      }
+      return page.text.includes("Builder Preview Fixture") && page.text.includes("Count: 0");
+    }, "actual generated plugin UI");
+    const renderFailed = await preview.evaluate("document.body?.innerText.includes('Builder Preview Fixture: failed to render') === true");
+    assert.equal(renderFailed, false, `Generated plugin render failed: ${JSON.stringify(preview.rendererErrors())}`);
+  } catch (error) {
+    throw new Error(`${errorText(error)} Renderer diagnostics: ${JSON.stringify(preview.rendererErrors())}`);
+  }
   await preview.evaluate(`document.querySelector('#builder-fixture-count').click()`);
   await waitPage(preview, page => page.text.includes("Count: 1"), "generated plugin UI interaction");
   if (screenshotDirectory) {
@@ -1182,6 +1210,18 @@ try {
   console.log(`SPS Plugin Preview Desktop E2E passed (${packagedBinary ? "packaged" : "source"}${liveAuthoring ? ", live CLI authoring" : ""}).`);
 } catch (error) {
   const notes = [];
+  if (liveAuthoring) {
+    try {
+      const retained = await captureLiveBuilderFailureArtifact({ fixtureRoot: pluginDirectory, desktopRoot });
+      await writeFile(path.join(retained.artifactPath, "renderer-errors.json"), `${JSON.stringify({
+        evidenceKind: "development-failure", success: false,
+        errors: preview?.rendererErrors() ?? [],
+      }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+      notes.push(`Private failed-fixture capture: ${path.basename(retained.artifactPath)} (not verified).`);
+    } catch {
+      notes.push("Private failed-fixture capture unavailable; original failure preserved.");
+    }
+  }
   const safeFeedbackFailure = error?.safeBuilderFeedbackSnapshot === true;
   if (!safeFeedbackFailure) {
     for (const [name, cdp] of [["setup", setup], ["workspace", workspace], ["registry", registry], ["preview", preview]]) {
@@ -1190,7 +1230,7 @@ try {
     }
   }
   acceptanceFailure = new Error(safeFeedbackFailure
-    ? errorText(error)
+    ? `${errorText(error)}\n${notes.join("\n")}`
     : `${errorText(error)}\n${notes.join("\n")}\n${output.trim()}`);
   throw acceptanceFailure;
 } finally {

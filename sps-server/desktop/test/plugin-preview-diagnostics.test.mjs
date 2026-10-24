@@ -9,12 +9,23 @@ import {
   listPluginPreviewDiagnostics,
   MAX_PLUGIN_PREVIEW_DIAGNOSTICS,
   pluginPreviewDiagnosticsLayout,
+  redactPluginPreviewDiagnosticMessage,
 } from "../src/plugin-preview-diagnostics.mjs";
 
 const PROJECT_A = "dev-123e4567-e89b-12d3-a456-426614174000";
 const PROJECT_B = "dev-123e4567-e89b-12d3-a456-426614174001";
 const BUILD_A = "build-123e4567-e89b-12d3-a456-426614174000";
 const BUILD_B = "build-123e4567-e89b-12d3-a456-426614174001";
+
+test("keeps actionable render errors while removing local paths and credentials", () => {
+  const message = redactPluginPreviewDiagnosticMessage(
+    "ReferenceError: React is not defined\n at C:\\Users\\fixture\\dist\\ui\\index.js:4:2 Bearer fixtureSecret123456",
+  );
+  assert.ok(message.startsWith("ReferenceError: React is not defined"));
+  assert.ok(message.includes("[local-path]"));
+  assert.ok(!message.includes("fixtureSecret"));
+  assert.ok(!message.includes("C:\\Users"));
+});
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "sps-preview-diagnostics-"));

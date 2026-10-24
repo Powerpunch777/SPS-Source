@@ -48,7 +48,7 @@ function assertCode(value) {
   return code;
 }
 
-function redactDiagnosticMessage(value) {
+export function redactPluginPreviewDiagnosticMessage(value) {
   const message = assertString(value, "Preview diagnostic message", { min: 1, max: 8_192 })
     .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/postgres(?:ql)?:\/\/[^\s'"`<>]+/gi, "postgres://[redacted]")
@@ -80,7 +80,7 @@ function normalizeEvent(value) {
     phase: value.phase,
     level: value.level,
     code: assertCode(value.code),
-    message: redactDiagnosticMessage(value.message),
+    message: redactPluginPreviewDiagnosticMessage(value.message),
     timestamp: assertTimestamp(value.timestamp),
   };
 }
