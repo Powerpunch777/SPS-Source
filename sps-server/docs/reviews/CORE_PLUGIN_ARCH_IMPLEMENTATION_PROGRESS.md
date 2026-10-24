@@ -162,10 +162,10 @@ BOOLEAN 반환은 1-byte로 marshal하며 OS의 Developer Mode/권한을 변경�
   이 기록으로 완료 처리하지 않는다. 보안 감사의 과거 성공도 현재 결과로 인용하지 않는다.
 
 후속 검증: Desktop 전체 511/511, Core focused 7파일 106/106, server typecheck와
-compatibility boundary 통과. Electron Core Settings의 최종 7종과 정상 bootstrap은
-최종 커밋 고정 후 재실행한다.
-canary 테스트 4/4, 정상/timeout/reparse 실행과 정리도 통과했다. 최종 커밋의 tuple을
-고정한 뒤 전체 Desktop 검사를 다시 실행한다. 전체 Core build/typecheck는 위 첫 묶음
+compatibility boundary 통과. 구현 커밋 `0c9b54b6ad46e26ac971be83cb936010abaecb5f`
+고정 후 Desktop 전체와 Electron Core Settings 최종 7종, 정상 bootstrap을 재실행해
+모두 통과했다. 이후 변경은 검증 기록과 기존 legacy-positive 시험의 strict 옵션뿐이다.
+canary 테스트 4/4, 정상/timeout/reparse 실행과 정리도 통과했다. 전체 Core build/typecheck는 위 첫 묶음
 이력이고 이번 Core 변경은 테스트뿐이다. 전역 UI token gate의 기존 실패, 전체 Core/
 Linux CI, Zod/의존성 보류, 서명/운영 Identity/두 PC 게이트는 그대로 남는다.
 

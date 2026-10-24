@@ -145,7 +145,7 @@ test("marks only an authenticated legacy Owner Vault for one-time SPS Identity a
       companies: [{ id: "company-1", name: "Existing Studio" }],
     }), "utf8");
 
-    const state = await loadState(root);
+    const state = await loadState(root, { strictVersion: true });
     assert.equal(state.legacyOwnerHostAdoptionPending, true);
     assert.equal(hasPendingLegacyDesktopOwnerAdoption(state), true);
     assert.equal(hasPendingLegacyDesktopOwnerAdoption(JSON.parse(JSON.stringify(state))), false);
