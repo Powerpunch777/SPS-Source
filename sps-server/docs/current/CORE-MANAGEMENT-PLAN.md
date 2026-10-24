@@ -285,6 +285,13 @@ patches and independently reran the full 103-test set. Private ignored records:
 `usage-receipt-unit.log`, `usage-receipt-db.log`, `usage-receipt-e2e.log`. No full
 Linux Core regression, new installer or Stable/two-device claim is included.
 
+Desktop full `npm test` also passed 374/374 without exclusions after the Core
+gitlink and support matrix were committed. The existing persistent DEV app was
+normally exited and restarted, preserving its login and Workspace. New backend
+code is active without rebuilding an installer. `usage-receipt-desktop.log`
+records the local Desktop run. The previous global UI token-gate debt remains;
+this backend-only slice does not claim it resolved.
+
 ## Verification and Safety
 
 Core DB-backed tests: tenant/plugin isolation, capability rejection, queued and
