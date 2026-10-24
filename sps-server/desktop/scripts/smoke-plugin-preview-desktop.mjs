@@ -200,6 +200,130 @@ async function waitPage(cdp, predicate, label, timeout = 60_000) {
   throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(page)}`);
 }
 
+async function liveTeamPreviewFeedbackSnapshot(cdp, scope, projectId, conversationTitle) {
+  const expression = `(async () => {
+    const scope = ${JSON.stringify(scope)};
+    let direct = null;
+    let directError = false;
+    try {
+      const bridge = window.spsDesktopWorkspace;
+      if (typeof bridge?.getDeveloperProjectContext !== "function") directError = true;
+      else direct = await bridge.getDeveloperProjectContext(scope);
+    } catch { directError = true; }
+    const projectContext = document.querySelector(".bc-project-context");
+    const validation = projectContext?.querySelector(".bc-validation-feedback");
+    const validationText = validation?.querySelector("p")?.textContent || "";
+    const uiValidationState = validationText.includes("Preview · 실패") ? "preview-failed"
+      : validationText.includes("Preview · 통과") ? "preview-passed"
+        : validationText.includes("Preview · 진행 중") ? "preview-running"
+          : validationText.includes("검증 피드백 형식을 확인할 수 없습니다") ? "invalid-feedback"
+            : "other-or-absent";
+    const activeConversation = document.querySelector("#builder-conversations .bc-chat-link.active");
+    const headerTitle = document.querySelector(".bc-header-title")?.textContent?.trim() || "";
+    const activeTitle = activeConversation?.querySelector("span")?.textContent?.trim() || "";
+    const refreshButton = projectContext?.querySelector(".bc-project-refresh");
+    const addButton = projectContext?.querySelector(".bc-validation-add");
+    const feedback = direct?.validationFeedback;
+    const runStatusText = [...document.querySelectorAll(".bc-transcript .bc-message-head .bc-status")]
+      .at(-1)?.textContent?.trim() || "";
+    const runStatus = ({
+      "작업 중": "running", "실행 상태 확인 중": "recovering", "중지 확인 중": "cancelling",
+      "완료": "completed", "실패": "failed", "중단됨": "interrupted", "중지 완료": "cancelled",
+    })[runStatusText] || (runStatusText ? "other" : "none");
+    const diagnosticCodes = value => Array.isArray(value)
+      ? value.map(item => item?.code).filter(code => typeof code === "string" && /^[A-Z][A-Z0-9_.-]{0,119}$/.test(code)).slice(0, 6)
+      : [];
+    const uiCodes = [...(validation?.querySelectorAll("details strong") || [])]
+      .map(item => item.textContent?.trim())
+      .filter(code => typeof code === "string" && /^[A-Z][A-Z0-9_.-]{0,119}$/.test(code)).slice(0, 6);
+    const textarea = document.querySelector(".bc-composer textarea");
+    return {
+      scope: { companyId: scope.companyId, contextId: scope.contextId, expectedProjectId: ${JSON.stringify(projectId)} },
+      direct: {
+        error: directError,
+        available: direct?.available === true,
+        projectId: direct?.project?.id ?? null,
+        feedbackPresent: Boolean(feedback),
+        kind: feedback?.kind ?? null,
+        status: feedback?.status ?? null,
+        diagnosticCodes: diagnosticCodes(feedback?.diagnostics),
+      },
+      selection: {
+        activeConversationCount: document.querySelectorAll("#builder-conversations .bc-chat-link.active").length,
+        activeTitleMatchesExpected: activeTitle === ${JSON.stringify(conversationTitle)},
+        headerMatchesExpected: headerTitle === ${JSON.stringify(conversationTitle)},
+      },
+      ui: {
+        refreshButton: refreshButton ? { exists: true, disabled: refreshButton.disabled } : { exists: false },
+        addButton: addButton ? { exists: true, disabled: addButton.disabled } : { exists: false },
+        validationState: uiValidationState,
+        diagnosticCodes: uiCodes,
+        runStatus,
+        projectErrorVisible: Boolean(projectContext?.querySelector('[role="alert"]')),
+        validationNoticeVisible: Boolean(validation?.querySelector('[role="status"]')),
+        alertCount: projectContext?.querySelectorAll('[role="alert"]').length || 0,
+        draftChars: textarea?.value?.length ?? null,
+        draftHasPreviewFailure: textarea?.value?.includes("PREVIEW_CANDIDATE_FAILED") ?? false,
+        attachmentCount: document.querySelectorAll(".bc-file-chip").length,
+      },
+    };
+  })()`;
+  return await cdp.evaluate(expression, true, 10_000);
+}
+
+function liveTeamPreviewFeedbackError(phase, snapshot) {
+  const error = new Error(
+    `Live-team Preview feedback ${phase}; bounded Builder state: ${JSON.stringify(snapshot).slice(0, 3000)}`,
+  );
+  error.safeBuilderFeedbackSnapshot = true;
+  return error;
+}
+
+async function waitForLiveTeamPreviewFeedback(cdp, { scope, projectId, conversationTitle }, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
+  let lastSnapshot = null;
+  let phase = "waiting-for-direct-preview-failure";
+  let refreshClicked = false;
+  while (Date.now() < deadline) {
+    try {
+      lastSnapshot = await liveTeamPreviewFeedbackSnapshot(cdp, scope, projectId, conversationTitle);
+    } catch (error) {
+      lastSnapshot = { captureFailed: true, errorName: error?.name || "Error" };
+    }
+    const direct = lastSnapshot?.direct;
+    const expectedFailure = direct?.available === true
+      && direct.projectId === projectId
+      && direct.kind === "preview"
+      && direct.status === "failed"
+      && direct.diagnosticCodes?.includes("PREVIEW_CANDIDATE_FAILED");
+    if (!expectedFailure) {
+      phase = "waiting-for-direct-preview-failure";
+    } else if (!lastSnapshot.selection?.activeTitleMatchesExpected || !lastSnapshot.selection?.headerMatchesExpected) {
+      phase = "waiting-for-expected-conversation-selection";
+    } else if (!refreshClicked) {
+      phase = "waiting-for-enabled-project-refresh";
+      if (lastSnapshot.ui?.refreshButton?.exists && !lastSnapshot.ui.refreshButton.disabled) {
+        const clicked = await cdp.evaluate(`(() => {
+          const button = document.querySelector(".bc-project-context .bc-project-refresh");
+          if (!button || button.disabled) return false;
+          button.click();
+          return true;
+        })()`);
+        refreshClicked = clicked === true;
+      }
+    } else if (lastSnapshot.ui?.validationState === "preview-failed"
+      && lastSnapshot.ui?.addButton?.exists && !lastSnapshot.ui.addButton.disabled) {
+      return lastSnapshot;
+    } else {
+      phase = lastSnapshot.ui?.validationState !== "preview-failed"
+        ? "waiting-for-scoped-preview-failure-render"
+        : "waiting-for-enabled-feedback-button";
+    }
+    await delay(300);
+  }
+  throw liveTeamPreviewFeedbackError(`timed out ${phase}`, lastSnapshot);
+}
+
 async function registryCall(cdp, expression, timeoutMs = 20_000) { return await cdp.evaluate(`(async () => await (${expression}))()`, true, timeoutMs); }
 async function workspaceApi(cdp, pathName, options = {}) {
   const result = await cdp.evaluate(`(async () => {
@@ -743,16 +867,71 @@ try {
     const badGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
     assert.deepEqual(badGates.reports.map(report => report.success), [true, true, true]);
     await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000), /Invalid plugin manifest/);
-    await workspace.evaluate("document.querySelector('.bc-project-refresh').click()");
-    await waitPage(workspace, page => page.text.includes("Preview · 실패"), "live-team failed Preview feedback");
-    await workspace.evaluate("document.querySelector('.bc-validation-add').click()");
-    const feedback = await workspace.evaluate("document.querySelector('.bc-composer textarea').value");
-    assert.ok(feedback.includes("PREVIEW_CANDIDATE_FAILED"));
-    const beforeRepair = await collectAuthoringSnapshot(pluginDirectory);
+    const feedbackWorkspace = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
+      method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+    });
+    const feedbackConversation = feedbackWorkspace.data.conversations.find(item => item.id === developerContext.context.contextId);
+    assert.ok(feedbackConversation, "Selected Builder conversation disappeared before Preview feedback.");
+    let liveFeedbackState;
+    try {
+      liveFeedbackState = await waitForLiveTeamPreviewFeedback(workspace, {
+        scope: developerContext.context,
+        projectId: connected.id,
+        conversationTitle: feedbackConversation.title,
+      });
+    } catch (error) {
+      if (error?.safeBuilderFeedbackSnapshot) throw error;
+      const snapshot = await liveTeamPreviewFeedbackSnapshot(
+        workspace, developerContext.context, connected.id, feedbackConversation.title,
+      ).catch(diagnosticError => ({ captureFailed: true, errorName: diagnosticError?.name || "Error" }));
+      throw liveTeamPreviewFeedbackError("state capture failed", snapshot);
+    }
+    assert.equal(liveFeedbackState.direct.projectId, connected.id);
+    assert.equal(liveFeedbackState.direct.kind, "preview");
+    assert.equal(liveFeedbackState.direct.status, "failed");
+    assert.ok(liveFeedbackState.direct.diagnosticCodes.includes("PREVIEW_CANDIDATE_FAILED"));
+    assert.equal(liveFeedbackState.selection.activeTitleMatchesExpected, true);
+    assert.equal(liveFeedbackState.selection.headerMatchesExpected, true);
+    assert.equal(liveFeedbackState.ui.validationState, "preview-failed");
+    assert.equal(liveFeedbackState.ui.addButton.disabled, false);
+    const originalDraftBeforeFeedback = await workspace.evaluate("document.querySelector('.bc-composer textarea').value");
+    const attachmentsBeforeFeedback = await workspace.evaluate("document.querySelectorAll('.bc-file-chip').length");
     const beforeRepairChat = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
       method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
     });
-    const messageCount = beforeRepairChat.data.conversations.find(item => item.id === conversation.id).messages.length;
+    const messageCount = beforeRepairChat.data.conversations.find(item => item.id === conversation.id)?.messages.length;
+    assert.equal(typeof messageCount, "number", "Selected Builder conversation disappeared before feedback was added.");
+    const feedbackClick = await workspace.evaluate(`(() => {
+      const button = document.querySelector('.bc-project-context .bc-validation-add');
+      if (!button || button.disabled) return false;
+      button.click();
+      return true;
+    })()`);
+    if (feedbackClick !== true) {
+      const snapshot = await liveTeamPreviewFeedbackSnapshot(
+        workspace, developerContext.context, connected.id, feedbackConversation.title,
+      ).catch(diagnosticError => ({ captureFailed: true, errorName: diagnosticError?.name || "Error" }));
+      throw liveTeamPreviewFeedbackError("enabled feedback action changed before click", snapshot);
+    }
+    const feedbackDeadline = Date.now() + 10_000;
+    let feedback = "";
+    while (Date.now() < feedbackDeadline) {
+      feedback = await workspace.evaluate("document.querySelector('.bc-composer textarea')?.value || ''");
+      if (feedback.includes("PREVIEW_CANDIDATE_FAILED")) break;
+      await delay(100);
+    }
+    assert.ok(feedback.includes("PREVIEW_CANDIDATE_FAILED"));
+    assert.equal(feedback.startsWith(originalDraftBeforeFeedback), true, "Adding feedback must preserve the existing draft.");
+    assert.equal(feedback.includes(pluginDirectory), false, "Validation feedback must not expose the source path.");
+    assert.equal(await workspace.evaluate("document.querySelectorAll('.bc-file-chip').length"), attachmentsBeforeFeedback);
+    const afterFeedbackChat = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
+      method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+    });
+    assert.equal(afterFeedbackChat.data.conversations.find(item => item.id === conversation.id)?.messages.length, messageCount,
+      "Adding validation feedback must not send an AI message.");
+    assert.equal(await workspace.evaluate("document.querySelector('.bc-validation-add')?.disabled"), true,
+      "The same failed validation attempt must not be added twice.");
+    const beforeRepair = await collectAuthoringSnapshot(pluginDirectory);
     const repairPrompt = buildLiveBuilderRepairPrompt({ workerId: liveWorker.id, feedback });
     await workspace.evaluate(`(() => { const textarea = document.querySelector('.bc-composer textarea');
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, ${JSON.stringify(repairPrompt)});
@@ -918,7 +1097,14 @@ try {
   assert.equal(disconnected.project, null);
   assert.equal(disconnected.missingProject, true);
   await workspace.evaluate("document.querySelector('.bc-project-refresh').click()");
-  await waitPage(workspace, page => page.text.includes("연결했던 프로젝트가 목록에서 제거되었습니다"), "dangling link in Builder");
+  const danglingDeadline = Date.now() + 30_000;
+  let danglingVisible = false;
+  while (Date.now() < danglingDeadline) {
+    danglingVisible = await workspace.evaluate("document.querySelector('.bc-project-context')?.textContent.includes('연결했던 프로젝트가 목록에서 제거되었습니다') === true");
+    if (danglingVisible) break;
+    await delay(250);
+  }
+  assert.equal(danglingVisible, true, "Dangling project link was not shown in the Builder work panel.");
   await access(path.join(pluginDirectory, "package.json"));
   await registryCall(registry, `window.spsRegistry.clearDeveloperContext(${JSON.stringify({ contextToken: developerContext.contextToken })})`);
   assert.equal((await workspace.evaluate(getContextExpression, true)).missingProject, false);
@@ -988,11 +1174,16 @@ try {
   console.log(`SPS Plugin Preview Desktop E2E passed (${packagedBinary ? "packaged" : "source"}${liveAuthoring ? ", live CLI authoring" : ""}).`);
 } catch (error) {
   const notes = [];
-  for (const [name, cdp] of [["setup", setup], ["workspace", workspace], ["registry", registry], ["preview", preview]]) {
-    if (!cdp) continue;
-    try { notes.push(`${name}: ${JSON.stringify(await cdp.evaluate("({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 2000) || '' })"))}`); } catch (diagnosticError) { notes.push(`${name}: ${errorText(diagnosticError)}`); }
+  const safeFeedbackFailure = error?.safeBuilderFeedbackSnapshot === true;
+  if (!safeFeedbackFailure) {
+    for (const [name, cdp] of [["setup", setup], ["workspace", workspace], ["registry", registry], ["preview", preview]]) {
+      if (!cdp) continue;
+      try { notes.push(`${name}: ${JSON.stringify(await cdp.evaluate("({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 2000) || '' })"))}`); } catch (diagnosticError) { notes.push(`${name}: ${errorText(diagnosticError)}`); }
+    }
   }
-  acceptanceFailure = new Error(`${errorText(error)}\n${notes.join("\n")}\n${output.trim()}`);
+  acceptanceFailure = new Error(safeFeedbackFailure
+    ? errorText(error)
+    : `${errorText(error)}\n${notes.join("\n")}\n${output.trim()}`);
   throw acceptanceFailure;
 } finally {
   step("cleaning isolated E2E processes and data");
