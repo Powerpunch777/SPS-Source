@@ -199,6 +199,28 @@ Source Electron Workspace Surfaces harness에 Agent/활성 Plugin 0개, 독립 �
 연속 실행 결과는 아래 후속 검증에 기록한다. 실제 사용자 Host/계정과 분리된 임시
 userData/가짜 Identity/프로세스 fixture만 사용한다.
 
+구현 Source `aef40e7ba57d1ac731972b4b0d650c156c78924b`, Core
+`df26bea0148e163cd05efaa62aba6a2959d89870`, SDK 기존 `cfa64ec4...`에서 Desktop
+전체 512/512를 통과했다. 첫 테스트 중간의 staged/gitlink 불일치 및 harness 정적
+검사 실패는 pin/본문을 같은 Source 커밋에 반영한 뒤 전체 재실행으로 해소했다.
+후속 보안/의존성 조치를 면제하거나 최신 감사 통과로 바꾼 것은 아니다.
+
+수정 후 Workspace Surfaces source Electron 전체가 한 번의 연속 실행에서 통과하고
+정리까지 완료됐다. Agent/활성 Plugin 0개, Agent 자동 생성/Agent·Dashboard fetch
+없음, 공통 chrome 없음, 실제 플러그인 관리 왕복, 620/1000px fit를 확인했다.
+기존 Dashboard/Agent 등록 Cancel, 선택된 Team Shell 기본 경로, 비활성 Shell의
+독립 빈 화면 복귀도 유지했다. Builder의 가짜 process 실행/실제 종료 확인, 대화별
+미전송 text/attachment 보존, 안전한 usage/history 상세 및 lane 변경, 내부 Room과
+Plugin Settings 반응형 검증도 같은 실행에서 통과했다. 원본 스크린샷은 ignored
+개발 산출물에만 보관하고 620px 빈 화면을 직접 검토했다. 실제 Google/유료 AI 호출,
+패키지 설치본, 원격 Member/물리 두 PC 및 Stable 검증은 아니다.
+
+재현: `sps-server/desktop`에서 `SPS_DESKTOP_E2E_SOURCE=1` 및 임시 개발 screenshot
+출력 경로를 설정하고 `npm run test:e2e:workspace-surfaces` 실행. 해당 실행 중에는
+같은 Core UI output을 덮어쓰는 build를 동시에 수행하지 않는다. 되돌리기는 이
+entry/router commit을 revert하는 범위이며, 새 DB migration이나 사용자 저장값
+변환은 없다. 이번 Source 후속 커밋은 이 검증 기록만 추가한다.
+
 ## 다음 게이트
 
 독립 복구 경로의 장애 조합 검증을 보강하고 OS/renderer 실행 계약을 구체화한다.
