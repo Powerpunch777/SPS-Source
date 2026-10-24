@@ -1,124 +1,132 @@
 # Workflow Plugin과 Extension Plugin 전환 계획
 
-상태: 전환 결정 및 1단계 독립 Appearance UI 제거 완료
-최종 갱신: 2026-08-01
+상태: 2026-10-25 목표 문서 정렬; 목표 구현은 대부분 미완료
+최종 갱신: 2026-10-25
 
 ## 목적
 
-SPS 플러그인을 두 종류로 분류하고, Workspace별 작업 방식을 선택할 수 있는
-기준을 정한다.
+Workspace에서 기본 진입 Shell을 선택하는 방법과 다른 플러그인의 UI 자유를
+정의한다. 이 문서의 목표는 현재 구현 상태와 구분한다. 자세한 근거와 순서는
+[현행 감사](../reviews/CORE_PLUGIN_ARCH_GAP_AUDIT.md)와
+[이전 계획](../reviews/CORE_PLUGIN_ARCH_MIGRATION_PLAN.md)을 따른다.
 
-- **Workflow Plugin**: Workspace의 주요 작업 흐름과 화면 구성을 제공한다.
-- **Extension Plugin**: 메모리, MCP, GitHub, 이미지 도구처럼 기존 작업 흐름에
-  기능을 추가한다.
+- **Primary**: 기본 진입 Shell로 선택된 플러그인. Workspace마다 선택은 0개
+  또는 최대 1개다.
+- **Extension**: Primary로 선택되지 않은 활성 플러그인. UI 없는 도구부터
+  전체 작업 UI, 전용 창, 전체 화면 UI까지 자체 UI를 자유롭게 제공할 수 있다.
 
-장기적으로 각 Workspace는 `Primary Workflow` 하나를 사용하고, 여러 Extension을
-동시에 활성화할 수 있다. 이번 구현 범위는 이 장기 구조의 전체 구현이 아니라,
-독립적인 `Workspace Appearance` UI를 제거하는 것이다.
+Primary와 Extension은 권한 등급이 아니다. 분류는 일반 SDK 접근이나 UI 제공
+능력을 제한하지 않으며, 실제 capability와 Workspace 경계가 권한을 결정한다.
+Primary 0개, Agent 0개, Extension 0개인 Workspace도 유효하다. 공통 Core Shell,
+Dashboard, Inbox 사용을 강제하지 않는다.
 
 ## 확정 구조
 
 ```text
 Workspace
-├─ Primary Workflow Plugin (장기 목표: 최대 1개)
-└─ Extension Plugins (장기 목표: 여러 개)
+├─ Primary (선택 사항: 0 또는 1)
+└─ Extensions (선택 사항: 0개 이상, UI 선택 사항)
 ```
 
-### Workflow Plugin
+### Primary
 
-Workflow Plugin은 다음을 제안할 수 있다.
+Primary로 선택된 플러그인은 기본 진입 Shell과 탐색을 제공할 수 있다.
 
-- 기본 진입 화면
-- 작업 화면과 탐색 그룹
-- Dashboard 기본 배치
-- 해당 업무에 필요한 프로젝트, 작업, 보고 화면
+Primary 선택은 화면의 기본값만 정한다. Core 관리 권한이나 다른 플러그인의
+데이터·권한 소유권을 주지 않는다. 기본 선택이 없으면 Plugin UI를 열지 않는
+경로를 포함해 Host가 정하는 유효한 시작 동작을 제공한다.
 
-Workflow Plugin은 Core 설정, 복구 경로, 다른 플러그인의 데이터와 권한을
-소유하지 않는다.
+### Extension
 
-### Extension Plugin
+Extension은 업무 기능을 추가하거나 자체 UI를 제공한다. UI를 반드시 공통 Shell에
+끼워 넣거나 기존 업무 흐름의 보조 기능으로 한정하지 않는다.
 
-Extension Plugin은 현재 Workspace의 작업 흐름에 기능을 추가한다.
-
-- 메모리 Provider
-- MCP 및 외부 도구 연결
+- 메모리 Provider, MCP 및 외부 도구
 - GitHub, 빌드, QA, 이미지·음성 도구
-- Dashboard 위젯과 Inbox 보고
+- 전체 업무 UI, 전용 창, 전체 화면 UI 또는 헤드리스 실행
+- Dashboard/Inbox 기여 (해당 호환 표면을 사용하는 경우)
 
-Extension은 여러 개를 동시에 활성화할 수 있으며, 자체적으로 Workspace의
-전체 탐색 구조를 대체하지 않는다.
+여러 Extension을 함께 활성화할 수 있다. Extension이라는 분류만으로 자체
+탐색 구조나 화면을 대체할 수 없다고 제한하지 않는다.
 
 ## 화면 정책
 
 `Workspace Appearance`라는 독립 화면은 제거한다. Appearance를 별도로 열고
 Shell을 다시 고르는 이중 절차를 만들지 않는다.
 
-장기 구현에서는 `Settings > Plugins`에서 다음을 관리한다.
+Core의 Plugin 관리 화면 또는 동등한 관리 경로에서 다음을 관리한다. 이는
+Plugin이 사용할 Workspace UI를 강제한다는 뜻이 아니다.
 
-- Workflow Plugin 목록
-- 현재 Workspace의 Primary Workflow 선택
-- Extension Plugin별 활성화 상태
+- 현재 Workspace의 Primary 선택 (없음 또는 하나)
+- Plugin별 Workspace 활성화 상태
 - 플러그인의 설치·호환성·오류 상태
 
-Primary Workflow 선택은 해당 Workspace에만 적용되어야 한다. Extension 활성화도
-Workspace별로 독립 저장되어야 한다.
+Primary 선택, Extension 활성화와 실행/데이터 정책은 Workspace별로 분리한다.
 
 ## Core에 남기는 계약
 
-이번 UI 제거는 Core의 Workspace Shell 계약을 삭제하는 작업이 아니다. 다음은
-계속 유지한다.
+기존 API와 저장 데이터는 호환성을 위해 유지한다. 이것은 공통 UI를 필수로
+유지한다는 뜻이 아니다.
 
 - `ui.workspaceShell.provide` capability와 manifest 계약
 - Workspace별 Shell 상태 저장 API
-- Neutral Core Shell fallback
-- 고정 복구 경로와 Safe mode
+- 기존 Shell 선택 API와 Neutral fallback adapter
+- 기존 Safe mode 및 Shell 실패 처리 계약
 - Shell 로드 실패, 비활성화, 제거, 호환성 오류 처리
 - Dashboard와 Inbox의 Core 계약
 
-현재 단계에서는 위 계약을 사용하는 기존 코드와 저장 데이터를 변경하지 않는다.
-독립 Appearance 화면만 제거하거나 더 이상 진입할 수 없게 정리한다.
+Native 관리/복구 경로를 Plugin 코드와 Plugin UI 밖에서 독립적으로 사용할 수
+있도록 구현하고 실패 시나리오로 검증하는 것이 기존 공통 Shell UI를 제거하기
+위한 선행 조건이다. 그 전까지 Shell API와 데이터는 additive 호환으로 보존한다.
 
 ## 단계별 계획
 
 | 단계 | 범위 | 상태 |
 | --- | --- | --- |
-| 0 | Workflow/Extension 분류와 독립 Appearance UI 제거 범위 문서화 | 완료 |
-| 1 | 독립 `Workspace Appearance` 메뉴·페이지·진입점 제거. 기존 URL은 Plugins로 이동하며 Shell 계약, API, 저장 데이터, fallback 유지 | 완료 |
-| 2 | Plugins 화면에서 Workflow와 Extension을 구분해 표시 | 미구현 |
-| 3 | Workspace별 Primary Workflow 선택 및 저장 | 미구현 |
-| 4 | Extension 다중 활성화와 Workspace별 상태 검증 | 미구현 |
-| 5 | 기존 Appearance 데이터의 Primary Workflow 마이그레이션과 fallback 검증 | 미구현 |
-| 6 | 기존 Plugin Preview·Review를 새 분류와 연결하고 Desktop E2E 및 업그레이드 회귀 검증 | 미구현 |
+| A | 이 Source 문서와 수용 기준 정렬 | 목표/현행 구분 반영 |
+| B | Plugin UI와 독립된 Native 복구 경로 | v1 소스/Electron smoke 구현; 전체 장애 조합은 미검증 |
+| C | UI/Worker/Vault/파일 경계 보안 PoC | 가짜 파일 AppContainer canary만 통과; 제품 통합/전체 표는 미검증 |
+| D | Primary/Agent/Extension 0개 Workspace 정상화, 공통 UI 선택화 | D1: 0 Agent 자동 redirect 제거; 공통 Shell과 기본 활성화 정책 유지 |
+| E | 0/1 Primary 선택, 다중 Extension, 공개 계약과 호환성 | 일부 기존 primitive; 목표 계약은 미구현 |
+| F 이후 | 실행 격리·제어, 데이터 경계, Preview/다중 창 등 | 마이그레이션 계획 참조 |
+
+2026-08-01 문서의 0/1단계 완료 표기는 독립 Appearance UI 제거라는 당시의 좁은
+범위에 한정된 이력이다. 이를 새 목표의 분류, Native 복구, 공통 UI 선택화가
+구현되었다는 근거로 해석하지 않는다.
+
+후속 검증 범위는 [구현 진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)을
+따른다. 이전 감사의 미구현 표와 최신 부분 구현을 혼합해 완료로 판단하지 않는다.
 
 ## 전환 규칙
 
-1. 이번 단계에서는 `Workspace Appearance` 화면만 대상으로 삼는다.
-2. Core의 Shell capability와 저장 계약을 제거하지 않는다.
-3. 기존 Shell 선택 데이터는 삭제하지 않는다.
-4. Primary Workflow 선택 화면이 구현되기 전까지 기존 저장값은 읽을 수 있어야
-   하며, 필요하면 Neutral Core Shell로 안전하게 fallback한다.
-5. Workflow와 Extension의 분류 또는 자동 활성화는 이번 단계에서 구현하지 않는다.
-6. 플러그인 설치·검토·Marketplace 동작은 이번 단계의 범위가 아니다.
+1. Primary 선택은 선택 사항이며 Workspace별 0개 또는 최대 1개다.
+2. Extension은 여러 개 활성화할 수 있고, UI/창/탐색 제공으로 제한하지 않는다.
+3. Plugin UI 제공 여부와 Primary/Extension 명칭은 권한을 부여하거나 빼앗지 않는다.
+4. Native Core 관리와 복구는 Plugin UI 및 Plugin 코드 로딩에 의존하지 않는다.
+5. 기존 Shell/Dashboard/Inbox API와 저장 데이터는 호환 경로로 보존하며 강제
+   마이그레이션하거나 즉시 삭제하지 않는다.
+6. 패키지는 Host에 설치하고, 활성화·설정·데이터·실행 정책은 Workspace별로
+   적용한다. 기존 Workspace Job 기능과 완성된 실행 제어/격리는 구분한다.
+7. 새 기본값이나 마이그레이션은 기존 Extension을 묵시적으로 비활성화하지 않는다.
 
 ## 완료 기준
 
-이번 단계의 완료 기준은 다음으로 한정한다.
+문서 목표의 수용 기준은 다음과 같다. 아래는 구현 완료 보고가 아니다.
 
-- 독립 `Workspace Appearance` UI에 접근할 수 없다.
-- Workspace Shell 계약, API, 저장 데이터, Neutral fallback이 유지된다.
-- 기존 Workspace가 손상되거나 플러그인 활성화 상태가 바뀌지 않는다.
-- Plugins, Safe mode, Diagnostics, Update, Export/Import 같은 복구 경로가
-  계속 접근 가능하다.
-- 후속 Primary Workflow 선택과 Workflow/Extension 분류가 구현되지 않았음을
-  문서와 UI에서 혼동하지 않는다.
+- Primary/Agent/Extension이 모두 0인 Workspace를 정상 생성·사용할 수 있다.
+- 공통 Workspace Shell/Dashboard/Inbox가 없어도 제품 사용이 가능하다.
+- Native 복구는 Plugin UI/코드 실패 및 Workspace 창 부재에도 접근 가능하다.
+- Primary는 0개 또는 최대 1개이고, Extension의 UI 제공은 제한되지 않는다.
+- 기존 Shell/API/data를 읽고 유지하는 호환성과 신규 계약이 함께 검증된다.
+- Workspace-scoped Jobs를 Host 전역이라고 기술하지 않으며, Job scope만으로
+  완성된 pause/stop/실제 종료/replay 방지를 주장하지 않는다.
 
 ## 범위 밖
 
-다음은 후속 단계에서 별도로 설계·구현한다.
+다음은 별도 PR/게이트에서 구현·검증한다.
 
-- Plugins 화면의 Workflow/Extension 분류 UI
-- Workspace별 Primary Workflow 선택
-- Extension 다중 활성화 UX
-- Appearance 데이터 마이그레이션
-- 새 Workflow/Extension 분류와 기존 Plugin Builder Preview·Review의 연계
-- Marketplace 검색, 추천, 공유
+- Native 독립 복구와 보안 PoC
+- 빈 Workspace 및 선택형 Core/Plugin UI
+- Primary/Extension manifest/API의 additive 전환과 데이터 호환
+- Workspace 실행 정책, 실제 종료 증거, private data lifecycle
+- 다중 창, 공개 Preview, Builder 연계, 배포 검증

@@ -349,6 +349,11 @@ jobs:
         working-directory: sps-server/desktop
         run: npm run test:e2e:bootstrap
 
+      - name: Run independent Native Core Settings source E2E
+        timeout-minutes: 5
+        working-directory: sps-server/desktop
+        run: npm run test:e2e:core-settings
+
       - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
         working-directory: sps-server/sps-plugin-discovery
         run: npm ci

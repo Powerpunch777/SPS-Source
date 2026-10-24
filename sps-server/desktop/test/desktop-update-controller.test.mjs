@@ -43,10 +43,17 @@ test("disables updates before the app is packaged", async () => {
 test("owns update status and preserves safe install shutdown order", async () => {
   const autoUpdater = updater();
   const events = [];
+  let promptResponse = 1;
+  let promptOptions = null;
   let mainWindow = { isDestroyed: () => false };
   const controller = createSpsDesktopUpdateController({
     app: app(),
-    dialog: { showMessageBox: async () => ({ response: 1 }) },
+    dialog: {
+      showMessageBox: async (_window, options) => {
+        promptOptions = options;
+        return { response: promptResponse };
+      },
+    },
     getMainWindow: () => mainWindow,
     stopDesktopRuntimeGracefully: async () => { events.push("stop-runtime"); },
     setQuitting: () => { events.push("set-quitting"); },
@@ -60,7 +67,14 @@ test("owns update status and preserves safe install shutdown order", async () =>
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(controller.getStatus().state, "ready");
-  await controller.installDownloaded();
+  assert.equal(autoUpdater.autoInstallOnAppQuit, false);
+  assert.equal(autoUpdater.quitAndInstallCalls, 0);
+  assert.deepEqual(events, []);
+  assert.deepEqual(promptOptions.buttons, ["Restart and install", "Later"]);
+  assert.match(promptOptions.detail, /remain downloaded until you choose Restart and install/);
+
+  promptResponse = 0;
+  await controller.prompt(controller.getStatus(), { force: true });
   assert.deepEqual(events, ["set-quitting", "stop-runtime", "set-shutdown-complete"]);
   assert.equal(autoUpdater.quitAndInstallCalls, 1);
 

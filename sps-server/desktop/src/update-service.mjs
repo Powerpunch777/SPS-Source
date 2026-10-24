@@ -3,7 +3,7 @@ export const SPS_DESKTOP_UPDATE_POLICY = Object.freeze({
   channel: "latest",
   trust: "official-release",
   automaticDownload: true,
-  automaticInstall: true,
+  automaticInstall: false,
   mandatory: false,
 });
 
@@ -147,12 +147,12 @@ export function createSpsUpdateService({
         });
         return;
       }
-      updater.autoInstallOnAppQuit = policy.automaticInstall;
+      updater.autoInstallOnAppQuit = false;
       publish({
         state: "ready",
         availableVersion: downloadedVersion,
         percent: 100,
-        message: "The SPS Desktop update is ready and will install automatically when the app closes.",
+        message: "The SPS Desktop update is ready to install when you choose to restart.",
       });
     });
     updater.on("error", () => publish({

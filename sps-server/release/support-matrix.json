@@ -5,7 +5,7 @@
     "desktopVersion": "0.4.137",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
-      "revision": "0574df95db75bff132ef2b7f9704f7bbd73608c6"
+      "revision": "e9833566b7533d08f9863414a40d274cdafb579c"
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",

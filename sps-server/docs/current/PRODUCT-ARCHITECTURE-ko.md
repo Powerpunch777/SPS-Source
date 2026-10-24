@@ -1,6 +1,6 @@
 # SPS Product Architecture
 
-Last updated: 2026-08-05
+Last updated: 2026-10-25
 
 ## Purpose
 
@@ -18,6 +18,36 @@ The initial remote transport contract requires Tailscale `1.52.0` or later.
 SPS checks the installed version before creating or repairing a Serve route.
 Tagged devices do not receive Tailscale user identity headers, so they are not
 supported as human Member clients in this first release.
+
+## Target Architecture (2026-10-25)
+
+This is the authoritative product direction, not a statement that the current
+checkout implements it. The current-state gaps and migration sequence are
+tracked in the [Core/Plugin gap audit](../reviews/CORE_PLUGIN_ARCH_GAP_AUDIT.md)
+and [migration plan](../reviews/CORE_PLUGIN_ARCH_MIGRATION_PLAN.md).
+The [implementation progress](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)
+separately records Native recovery v1, the zero-Agent redirect removal, manual
+update application, and the narrowly scoped Windows canary. None completes the
+entire target or changes the installed application by itself.
+
+- A valid Workspace may have zero Primary plugins, zero Agents, and zero
+  Extensions. None is a prerequisite for creating or using a Workspace.
+- `Primary` is an optional designation for the default entry Shell, with at
+  most one selected per Workspace. It is not a privilege tier. Extensions may
+  independently provide full UI, dedicated windows, full-screen views,
+  headless behavior, and the ordinary SDK capabilities they declare.
+- Core does not require a common Workspace Shell, Dashboard, or Inbox UI.
+  Existing Shell, Dashboard, and Inbox APIs and stored data remain available
+  for compatibility and optional use; this direction does not authorize their
+  deletion or forced migration.
+- Core management and recovery must be reachable through Native system UI
+  outside Plugin UI and without loading Plugin code. This independent path is
+  a prerequisite to removing any existing common Core UI; it is not yet a
+  claim of implementation.
+- Package installation remains Host-scoped; activation, settings, data, and
+  execution policy are Workspace-scoped. Workspace-scoped Job code already
+  exists, but it does not by itself provide complete Workspace process
+  isolation, stop semantics, or execution control.
 
 ### Local and Tailscale trust boundary
 
@@ -52,11 +82,14 @@ isolation.
   connector primitives.
 - Plugin package inspection, compatibility checks, staging, lifecycle,
   Workspace-scoped activation, update, rollback, and isolated plugin data.
-- Generic plugin surfaces: navigation contribution, settings contribution,
-  tools, jobs, and future detached Preview windows.
-- Generic Workspace Shell, Dashboard, and Inbox surfaces. Core owns their
-  technical lifecycle and safety; plugins own workflow widgets, reports,
-  actions, roles, and approval meaning.
+- Generic plugin capabilities: optional UI contributions, settings, tools,
+  jobs, and future detached Preview windows. UI is not required for an Extension.
+- Existing Workspace Shell, Dashboard, and Inbox contracts and data for
+  compatibility and optional use. They are not mandatory product surfaces;
+  when used, Core owns their technical contracts and plugins own workflow
+  meaning.
+- Native Core management and recovery, independent of Plugin UI, once the
+  recovery prerequisite has been implemented and verified.
 - Marketplace search, plugin details, and the Marketplace Assistant surface.
   Core dispatches Assistant turns through a user-authorized AI adapter and
   exposes only read-only catalog tools.
@@ -76,12 +109,13 @@ This boundary lets one company use a game-production Workplane while another
 company uses an app-development or OpenHands-like workflow without changing
 SPS Core.
 
-The detailed Shell, Dashboard, and Inbox boundary is defined in
+The retained compatibility contracts for Shell, Dashboard, and Inbox are
+described in
 [WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md](WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md).
-One Workspace may select one active Shell Provider, while multiple enabled
-plugins may contribute widgets and Inbox items. Plugin management, recovery,
-updates, diagnostics, and data transfer remain reachable through Core and
-cannot be disabled by a Shell Provider.
+The target permits no Primary or one Primary per Workspace and multiple
+Extensions; it does not require the retained surfaces or restrict Extension
+UI. Native recovery independent of Plugin UI is a prerequisite, not a current
+implementation claim.
 
 ## Navigation Rule
 
@@ -130,9 +164,11 @@ plugin.
 
 Plugin Builder is a bundled product plugin, not a Core workflow rule. It is the
 first reference implementation of the authoring platform and remains separate
-from Core Marketplace search. The bundled plugin is enabled for a new Workspace
-as the initial discovery/authoring tool; it does not become a general workflow
-or a hidden Core rule.
+from Core Marketplace search. The current candidate enables the bundled plugin
+for a new Workspace as an initial discovery/authoring tool. Under the
+2026-10-25 target it is optional: that candidate default does not make an
+Extension, Agent, or Primary mandatory, and existing activation state remains
+subject to compatibility rules.
 
 ### Builder Agent Structure
 
@@ -296,12 +332,20 @@ preservation path.
 
 ## Implementation Status and Order
 
+The 2026-10-25 target above is not implemented as a whole. Current Core has
+reusable legacy Shell selection/activation primitives and Workspace-scoped
+Jobs, but that is not equivalent to the optional Primary/Extension model,
+independent Native recovery, or full Workspace execution isolation. The gap
+audit is authoritative for exact current evidence. Historical, dated tests
+below prove only the candidate and scope stated at their date; they do not
+prove conformance to this target.
+
 Implemented foundation:
 
 - Windows Desktop Host, Owner Vault, technical Host/Member/Node path,
   Workspace Sources, generic runtime execution, plugin package lifecycle,
   compatibility checks, local development Registry support, Official Registry
-  contract, Workspace Shell, Dashboard, Inbox, isolated Plugin Preview,
+  contract, legacy Workspace Shell, Dashboard, Inbox, isolated Plugin Preview,
   Diagnostics, Test Kit, Default Memory provider, and automatic Desktop-update
   mechanism.
 

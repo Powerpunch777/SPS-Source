@@ -134,6 +134,7 @@ test("release verification runs every Windows Desktop E2E before publishing", as
   );
 
   assert.match(workflow, /npm run test:e2e:bootstrap/);
+  assert.match(workflow, /npm run test:e2e:core-settings/);
   assert.match(workflow, /npm run prepare:owner-host-runtime/);
   assert.match(workflow, /electron-builder --win dir --publish never/);
   assert.match(workflow, /SPS_DESKTOP_E2E_BINARY:/);

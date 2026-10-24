@@ -1,6 +1,7 @@
 # Core / Plugin 보안 실현 가능성 검토
 
-기준일: 2026-10-25 KST. 상태: Phase 0 감사 및 제안, 구현 승인 전.
+기준일: 2026-10-25 KST. 본문은 Phase 0 감사 기준이다. 이후 구현이 승인됐으며,
+제6절과 [진행 기록](CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)에 후속 실증을 구분한다.
 
 기준 Source `174e7508019a316fd3df0109608d3cff6f4a91ae`, Core
 `0574df95db75bff132ef2b7f9704f7bbd73608c6`, SDK
@@ -122,9 +123,11 @@ Core Vault와 사용자의 별도 CLI 로그인 홈도 구분한다. Vault를 �
 | A/B 격리 | 지정 시나리오에서 A 취소/프로세스 종료/reset이 B 실행/데이터를 바꾸지 않음; Host 재시작 후 stop/pause 유지 | 공유 Worker 모델로 합격 선언 금지. 공유 자원 고갈의 가용성 보장으로 확대 금지 |
 | CLI 호환 | 각 지원 Windows/CLI 버전에서 로그인 handle, 파일, 네트워크, 취소 동작을 실검증 | 특정 runtime/version 미지원으로 명시 |
 
-이번 감사에서는 이 Windows 보안 PoC를 실행하지 않았다. 테스트 통과 수치로
-미실행 PoC를 대체하지 않는다. Core 네트워크 allowlist나 CPU/RAM 자동 제한을
-새 정책으로 제안/활성화하지 않았다.
+Phase 0 감사에서는 이 Windows 보안 PoC를 실행하지 않았다. 이후 사용자 승인으로
+임시 AppContainer 프로필의 가짜 파일 canary 일부를 실행했다. 정확한 범위와
+미검증 항목은 [구현 진행 기록](CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)을
+따른다. 해당 좁은 실험을 위 표 전체의 합격이나 제품 sandbox 구현으로 확대하지
+않는다. Core 네트워크 allowlist나 CPU/RAM 자동 제한은 추가하지 않았다.
 
 별도 Node 프로토콜 검증에서는 타 Workspace 서명/만료 lease/회수 grant/위조 완료를
 거부하는지 확인한다. 정상 서명키를 탈취한 Node의 거짓 종료 보고까지 로컬 파일

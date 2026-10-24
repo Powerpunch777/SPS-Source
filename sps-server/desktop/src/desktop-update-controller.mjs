@@ -94,7 +94,7 @@ export function createSpsDesktopUpdateController({
       type: "info",
       title: "SPS Desktop update ready",
       message: `SPS Desktop ${version} has been downloaded.`,
-      detail: "It will install automatically the next time SPS Desktop closes. You can also restart now.",
+      detail: "The update will remain downloaded until you choose Restart and install.",
       buttons: ["Restart and install", "Later"],
       defaultId: 0,
       cancelId: 1,

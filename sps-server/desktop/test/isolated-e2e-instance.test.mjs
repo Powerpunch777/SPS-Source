@@ -20,6 +20,7 @@ test("isolates Electron E2E application data below the system temp directory", a
 
   for (const script of [
     "smoke-isolated-desktop-ui.mjs",
+    "smoke-core-settings-desktop.mjs",
     "smoke-workspace-surfaces-desktop.mjs",
     "smoke-plugin-preview-desktop.mjs",
     "smoke-host-plugin-lifecycle-desktop.mjs",

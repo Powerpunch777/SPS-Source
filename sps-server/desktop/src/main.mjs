@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
 import { randomBytes, randomUUID } from "node:crypto";
 import { spawn as spawnChildProcess } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
@@ -7,6 +7,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveSpsE2eUserDataDirectory } from "./e2e-user-data.mjs";
 import { resolveDesktopDevelopment, watchDevelopmentSurfaces } from "./development-mode.mjs";
+import { coreRecoveryEnvironment, loadCoreRecoverySettings, saveCoreRecoverySettings } from "./core-recovery-store.mjs";
+import { createCoreSettingsController } from "./core-settings-controller.mjs";
+import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
 import {
   cancelSpsNodeCommands,
   createNodeIdentity,
@@ -236,6 +239,7 @@ function configureIsolatedE2eUserData() {
 
 configureIsolatedE2eUserData();
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
+const opensCoreSettingsOnLaunch = process.argv.includes("--sps-core-settings");
 let mainWindow = null;
 let ownerCreationInProgress = false;
 let workspaceWindow = null;
@@ -246,6 +250,8 @@ let pluginPreviewRuntime = null;
 let pluginPreviewClosing = false;
 const activeDeveloperProjectOperations = new Set();
 let officialExtensionsWindow = null;
+let coreSettingsController = null;
+let ownerHostRecoveryPluginsDisabled = null;
 let state = emptyState();
 let pendingAuth = null;
 let desktopAccountController = null;
@@ -1381,7 +1387,8 @@ async function requireReadyOwnerHost() {
 async function ensureOwnerHostManager() {
   const vaultRoot = ownerVaultRoot();
   const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
-  const defaultMemoryEnabled = isSpsDefaultMemoryEnabled();
+  const recovery = await loadCoreRecoverySettings({ userDataPath: app.getPath("userData") });
+  const defaultMemoryEnabled = isSpsDefaultMemoryEnabled() && !recovery.pluginsDisabled;
   const pluginDiscoveryEnabled = isSpsPluginDiscoveryEnabled();
   const roomWorkplaneBundled = isSpsRoomWorkplaneBundled();
   const discoveryCatalog = pluginDiscoveryVaultLayout(vaultRoot);
@@ -1435,6 +1442,8 @@ async function ensureOwnerHostManager() {
   ownerHostManager = createSpsOwnerHostManager({
     url,
     resolveRuntime: async () => {
+      const recovery = await loadCoreRecoverySettings({ userDataPath: app.getPath("userData") });
+      ownerHostRecoveryPluginsDisabled = recovery.pluginsDisabled;
       const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
       const stableNodeCommand = app.isPackaged && materializedRuntime
         ? await materializeStableSpsOwnerHostNode({
@@ -1469,6 +1478,7 @@ async function ensureOwnerHostManager() {
         stableNodeCommand,
         configPath: ownerHost.layout.configPath,
         environment: {
+          ...coreRecoveryEnvironment(recovery),
           ...spsAgentRuntimePackEnvironment({
             root: ownerAgentRuntimePacksRoot(),
             nodeCommand: materializedRuntime
@@ -3816,6 +3826,59 @@ async function showWorkspace() {
   await openWorkspace();
 }
 
+function ensureCoreSettingsController() {
+  if (coreSettingsController) return coreSettingsController;
+  coreSettingsController = createCoreSettingsController({
+    BrowserWindow,
+    globalShortcut,
+    rendererFile: path.join(__dirname, "..", "renderer", "core-settings.html"),
+    preloadFile: path.join(__dirname, "core-settings-preload.cjs"),
+    getStatus: async () => {
+      const recovery = await loadCoreRecoverySettings({ userDataPath: app.getPath("userData") });
+      const host = ownerHostManager ? await ownerHostManager.inspect().catch(() => ownerHostStatus) : ownerHostStatus;
+      return {
+        appVersion: app.getVersion(),
+        canManageHost: isOwnerHostProfile() && currentAccountOwnsOwnerHost(),
+        host: { state: host.state, lastError: host.lastError ? redactLocalDiagnostic(host.lastError) : null },
+        recovery: { ...recovery, needsRestart: ownerHostRecoveryPluginsDisabled !== null && recovery.pluginsDisabled !== ownerHostRecoveryPluginsDisabled },
+      };
+    },
+    authorizeMutation: assertRegistryOwner,
+    setPluginsDisabled: disabled => saveCoreRecoverySettings({ userDataPath: app.getPath("userData"), disabled }),
+    confirmRestart: async parentWindow => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Restart the local SPS Host?",
+        message: "Restart the Host with the saved recovery settings?",
+        detail: "This stops the local Host and requests cancellation of its managed work across Workspaces. Saved plugin activation and data are kept. Remote process termination may remain pending until its Node responds.",
+        buttons: ["Cancel", "Restart Host"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
+    restartHost: async () => {
+      const current = await ownerHostManager?.inspect();
+      if (current?.state === "running-existing") throw new Error("SPS cannot restart a Host process it does not own.");
+      closeWorkspaceWindow();
+      await cancelSpsNodeCommands("The local Host was explicitly restarted from Core Settings.");
+      await defaultMemoryManager?.stop({ force: false });
+      await ownerHostManager?.stop({ force: false });
+      defaultMemoryManager = null;
+      ownerHostManager = null;
+      ownerHostRecoveryPluginsDisabled = null;
+      await startOwnerHost({ activate: false });
+      sendDesktopAccountStatus();
+    },
+    openWorkspace: showWorkspace,
+    checkUpdates: checkForDesktopBetaUpdate,
+    exportHost: exportOwnerVaultTransfer,
+    inspectTransfer: inspectOwnerVaultTransfer,
+  });
+  return coreSettingsController;
+}
+
+async function showCoreSettings() {
+  await ensureCoreSettingsController().show();
+}
+
 function canCreateMemberInvite() {
   return Boolean(
     currentDesktopAccount()
@@ -3942,6 +4005,7 @@ function createApplicationMenu() {
       submenu: [
         { label: accountLabel, enabled: false },
         { type: "separator" },
+        { label: "Core settings...", click: () => run(showCoreSettings) },
         { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => run(showWorkspace) },
         { label: "Connect this computer as an SPS Node...", visible: canRegisterCurrentDesktopNode(), click: () => run(registerCurrentDesktopNode) },
         { label: "Create teammate invitation...", visible: canCreateMemberInvite(), click: () => run(showMemberInvite) },
@@ -3977,6 +4041,7 @@ function createApplicationMenu() {
       ],
     },
   ]));
+  coreSettingsController?.hideMenuBar();
 }
 
 function refreshTrayMenu() {
@@ -3987,6 +4052,7 @@ function refreshTrayMenu() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: accountLabel, enabled: false },
     { type: "separator" },
+    { label: "Core settings...", click: () => { void showCoreSettings(); } },
     { label: "Open SPS Desktop", click: () => { void showMainWindow(); } },
     { label: "Open SPS workspace", enabled: Boolean(account && state.profile), click: () => { void showWorkspace(); } },
     { label: "Connect this computer as an SPS Node...", visible: canRegisterCurrentDesktopNode(), click: () => { void runNodeRegistrationFromTray(); } },
@@ -4475,6 +4541,7 @@ function sendJoinToRenderer(value) {
 }
 
 function registerIpc() {
+  ensureCoreSettingsController().registerIpc(ipcMain);
   ipcMain.on("desktop:plugin-preview-fixture", (event) => {
     const ownsPreview = Boolean(
       pluginPreviewWindow
@@ -5036,7 +5103,8 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
   app.on("second-instance", (_event, argv) => {
     const joinArg = findSpsJoinUriArg(argv);
     if (joinArg) sendJoinToRenderer(joinArg);
-    void showMainWindow();
+    if (argv.includes("--sps-core-settings")) void app.whenReady().then(showCoreSettings);
+    else void showMainWindow();
   });
   app.whenReady().then(async () => {
     state = await loadState(app.getPath("userData"));
@@ -5047,7 +5115,7 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
     configureWorkspaceRequestAuth();
     createApplicationMenu();
     if (!developmentMode) app.setAsDefaultProtocolClient("sps");
-    await createWindow({ show: !startedHidden });
+    await createWindow({ show: !startedHidden && !opensCoreSettingsOnLaunch });
     if (developmentMode) {
       const stopWatching = watchDevelopmentSurfaces({
         desktopRoot: path.resolve(__dirname, ".."),
@@ -5057,6 +5125,9 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
       app.once("will-quit", stopWatching);
     }
     createTray();
+    ensureCoreSettingsController().registerShortcut();
+    app.once("will-quit", () => coreSettingsController?.dispose());
+    if (opensCoreSettingsOnLaunch) await showCoreSettings();
     // Read Windows startup registration once after the first window is ready.
     // It must not run on the frequent status IPC path.
     setTimeout(refreshLaunchAtLoginStatus, 0);

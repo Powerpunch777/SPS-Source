@@ -30,7 +30,7 @@ test("disables updates for an unpackaged SPS Desktop development run", async () 
   assert.equal(updater.checkCalls, 0);
 });
 
-test("downloads an SPS Desktop update automatically and installs it when the app closes", async () => {
+test("downloads an SPS Desktop update automatically but installs only on explicit request", async () => {
   const updater = createUpdater();
   const service = createSpsUpdateService({
     app: { isPackaged: true, getVersion: () => "0.1.0" },
@@ -64,10 +64,10 @@ test("downloads an SPS Desktop update automatically and installs it when the app
   assert.equal(service.getStatus().percent, 54);
   updater.emit("update-downloaded", { version: "0.2.0" });
   assert.equal(service.getStatus().state, "ready");
-  assert.equal(service.getStatus().message, "The SPS Desktop update is ready and will install automatically when the app closes.");
-  assert.equal(updater.autoInstallOnAppQuit, true);
+  assert.equal(service.getStatus().message, "The SPS Desktop update is ready to install when you choose to restart.");
+  assert.equal(updater.autoInstallOnAppQuit, false);
 
-  // Restart is optional; an app quit also installs because autoInstallOnAppQuit is true.
+  // Quitting the app must not arm installation; installation remains an explicit action.
   await service.install();
   assert.equal(updater.installCalls, 1);
 });
@@ -100,6 +100,8 @@ test("uses the same stable update channel for every SPS Desktop role", () => {
     policy,
   });
 
+  assert.equal(policy.automaticDownload, true);
+  assert.equal(policy.automaticInstall, false);
   assert.equal(updater.channel, "latest");
   assert.equal(updater.allowPrerelease, false);
   assert.equal(service.getStatus().channel, "latest");
