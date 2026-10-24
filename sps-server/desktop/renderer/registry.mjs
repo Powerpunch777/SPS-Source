@@ -89,6 +89,7 @@ function renderDeveloperProjects() {
           ${lastKnownGood ? `<button class="secondary rollback-developer-project" type="button" data-project-id="${escapeHtml(project.id)}">Open last good preview</button>` : ""}
           ${lastKnownGood ? `<button class="secondary reload-developer-ui" type="button" data-project-id="${escapeHtml(project.id)}">Reload UI</button>` : ""}
           ${lastKnownGood ? `<button class="secondary restart-developer-worker" type="button" data-project-id="${escapeHtml(project.id)}">Restart worker</button>` : ""}
+          ${lastKnownGood ? `<button class="secondary reveal-developer-package" type="button" data-project-id="${escapeHtml(project.id)}">Show verified package</button>` : ""}
         </div>
       </article>
     `;
@@ -517,6 +518,11 @@ $("#developer-project-list").addEventListener("click", async (event) => {
       await window.spsRegistry.restartDeveloperWorker({ projectId });
       await loadPreviewDiagnostics();
       setNotice("The plugin worker restarted without replacing its verified UI build.");
+      return;
+    }
+    if (button.classList.contains("reveal-developer-package")) {
+      const artifact = await window.spsRegistry.revealDeveloperPackage({ projectId });
+      setNotice(`Opened the last Preview-verified package: ${artifact.fileName} (${artifact.sizeBytes.toLocaleString()} bytes). SHA-256: ${artifact.sha256}. New source edits are not included until verified in Preview.`);
       return;
     }
     if (button.classList.contains("remove-developer-project")) {

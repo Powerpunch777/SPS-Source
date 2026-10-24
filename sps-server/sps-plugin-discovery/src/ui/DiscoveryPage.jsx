@@ -15,7 +15,7 @@ export function PluginBuilderPage({ context }) {
   const conversation = conversations.find(item => item.id === selectedId);
   const selectedLeadId = conversation?.leadId || leadId || agents[0]?.id || "";
   const selectedWorkers = conversation?.workerIds ?? workers, lead = agents.find(agent => agent.id === selectedLeadId);
-  const messages = conversation?.messages ?? [], activeMessage = messages.find(message => ["running", "cancelling"].includes(message.status));
+  const messages = conversation?.messages ?? [], activeMessage = messages.find(message => ["running", "cancelling"].includes(message.status) || message.recoveryPending);
   const running = Boolean(activeMessage), cancelling = activeMessage?.status === "cancelling";
   const sessions = data?.authoringSessions ?? [];
   useEffect(() => { const timer = setInterval(refresh, running ? 1500 : 10000); return () => clearInterval(timer); }, [refresh, running]);
@@ -80,7 +80,7 @@ export function PluginBuilderPage({ context }) {
         {error ? <p className="bc-error" role="alert">{error.message} <button className="bc-button" onClick={refresh}>다시 시도</button></p> : null}
         {!loading && !error && !messages.length ? <div className="bc-empty"><h2>무엇을 만들까요?</h2><p>Lead와 플러그인 제작을 시작하세요.</p></div> : null}
         {messages.map(message => <article className={`bc-message ${message.role}`} key={message.id}>
-          <div className="bc-message-head"><span>{message.role === "user" ? "나" : lead?.name || "Lead"}</span>{message.status ? <span className="bc-status">{{ running:"작업 중", cancelling:"중지 확인 중", cancelled:"중지 완료", failed:"실패", interrupted:"중단됨", completed:"완료" }[message.status]}</span> : null}</div>
+          <div className="bc-message-head"><span>{message.role === "user" ? "나" : lead?.name || "Lead"}</span>{message.status ? <span className="bc-status">{message.recoveryPending ? "실행 상태 확인 중" : { running:"작업 중", cancelling:"중지 확인 중", cancelled:"중지 완료", failed:"실패", interrupted:"중단됨", completed:"완료" }[message.status]}</span> : null}</div>
           <div className={`bc-message-body ${message.status === "failed" ? "bc-error" : ""}`}>{message.content || (message.status === "running" ? "답변을 준비하고 있습니다…" : "")}</div>
           {message.attachments?.map((file,index) => <details key={index}><summary>{file.name}</summary><pre>{file.content}</pre></details>)}
           {message.steps?.length ? <details><summary>실행 기록 {message.steps.length}</summary><pre>{message.steps.map(step => step.text).join("\n")}</pre></details> : null}

@@ -21,6 +21,7 @@ const channels = [
   "desktop:developer-rollback-project",
   "desktop:developer-reload-ui",
   "desktop:developer-restart-worker",
+  "desktop:developer-reveal-package",
   "desktop:developer-list-preview-diagnostics",
   "desktop:developer-clear-preview-diagnostics",
   "desktop:developer-preview-state",
@@ -68,6 +69,7 @@ function makeHarness() {
     rollbackDesktopDeveloperProject: services.developer_rollback_project,
     reloadDesktopDeveloperUi: services.developer_reload_ui,
     restartDesktopDeveloperWorker: services.developer_restart_worker,
+    revealDesktopDeveloperPackage: services.developer_reveal_package,
     listDesktopPluginPreviewDiagnostics: services.developer_list_preview_diagnostics,
     clearDesktopPluginPreviewDiagnostics: services.developer_clear_preview_diagnostics,
     publicDesktopPluginPreviewState: services.public_desktop_preview_state,
@@ -97,6 +99,7 @@ test("forwards registry and developer arguments without changing their shape", a
     ["desktop:developer-rollback-project", { projectId: "project-5" }],
     ["desktop:developer-reload-ui", { projectId: "project-6" }],
     ["desktop:developer-restart-worker", { projectId: "project-7" }],
+    ["desktop:developer-reveal-package", { projectId: "project-package", archivePath: "ignored" }],
     ["desktop:developer-list-preview-diagnostics", { limit: 3 }],
     ["desktop:developer-update-preview-environment", { projectId: "project-8" }],
     ["desktop:developer-remove-project", { projectId: "project-9" }],
@@ -106,7 +109,8 @@ test("forwards registry and developer arguments without changing their shape", a
     await harness.handlers.get(channel)(harness.event, input);
   }
   assert.equal(harness.registryAssertions, channels.length);
-  assert.equal(harness.ownerAssertions, 1);
+  assert.equal(harness.ownerAssertions, 2);
+  assert.deepEqual(harness.calls.find((call) => call.key === "developer_reveal_package").args, ["project-package"]);
   assert.deepEqual(harness.calls.find((call) => call.key === "registry_add_source").args, [inputs.get("desktop:registry-add-source")]);
   assert.deepEqual(harness.calls.find((call) => call.key === "registry_remove_source").args, ["source-2"]);
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_inspect_project").args, ["project-2"]);
@@ -147,4 +151,19 @@ test("enforces the registry window guard before forwarding", async () => {
   });
   await assert.rejects(() => handlers.get("desktop:registry-list-sources")({}), (actual) => actual === error);
   assert.deepEqual(calls, []);
+});
+
+test("rejects package reveal from other windows and without Host authority", async () => {
+  for (const rejectedGuard of ["window", "owner"]) {
+    const handlers = new Map();
+    let revealed = false;
+    registerDesktopRegistryIpc({
+      ipcMain: { handle(channel, handler) { handlers.set(channel, handler); } },
+      assertRegistryWindowEvent: () => { if (rejectedGuard === "window") throw new Error("Wrong window"); },
+      assertRegistryOwner: () => { if (rejectedGuard === "owner") throw new Error("Host required"); },
+      revealDesktopDeveloperPackage: async () => { revealed = true; },
+    });
+    await assert.rejects(handlers.get("desktop:developer-reveal-package")({}, { projectId: "project-1" }));
+    assert.equal(revealed, false);
+  }
 });

@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("spsRegistry", {
   rollbackDeveloperProject: (input) => ipcRenderer.invoke("desktop:developer-rollback-project", input),
   reloadDeveloperUi: (input) => ipcRenderer.invoke("desktop:developer-reload-ui", input),
   restartDeveloperWorker: (input) => ipcRenderer.invoke("desktop:developer-restart-worker", input),
+  revealDeveloperPackage: (input) => ipcRenderer.invoke("desktop:developer-reveal-package", input),
   getPreviewState: () => ipcRenderer.invoke("desktop:developer-preview-state"),
   updatePreviewEnvironment: (input) => ipcRenderer.invoke("desktop:developer-update-preview-environment", input),
   listPreviewDiagnostics: (input) => ipcRenderer.invoke("desktop:developer-list-preview-diagnostics", input),

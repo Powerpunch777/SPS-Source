@@ -166,6 +166,7 @@ import {
   listDeveloperDiagnostics,
 } from "./developer-diagnostics.mjs";
 import { registerDesktopRegistryIpc } from "./desktop-registry-controller.mjs";
+import { resolveDeveloperPackageArtifact } from "./developer-package-artifact.mjs";
 import { assessSpsPluginCompatibility } from "./plugin-compatibility.mjs";
 import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
@@ -2651,6 +2652,18 @@ async function applyDesktopDeveloperCandidate(projectId) {
   });
 }
 
+async function revealDesktopDeveloperPackage(projectId) {
+  assertRegistryOwner();
+  return await withDeveloperProjectOperation(projectId, async () => {
+    const project = await developerProjectRecord(projectId);
+    if (!project.lastKnownGood) throw new Error("Open a verified build in Preview before locating its package.");
+    const artifact = await resolveDeveloperPackageArtifact({ vaultRoot: ownerVaultRoot(), build: project.lastKnownGood });
+    shell.showItemInFolder(artifact.archivePath);
+    const { archivePath, ...metadata } = artifact;
+    return { revealed: true, ...metadata };
+  });
+}
+
 async function rollbackDesktopDeveloperProject(projectId) {
   assertRegistryOwner();
   return await withDeveloperProjectOperation(projectId, async () => {
@@ -4506,6 +4519,7 @@ function registerIpc() {
     rollbackDesktopDeveloperProject,
     reloadDesktopDeveloperUi,
     restartDesktopDeveloperWorker,
+    revealDesktopDeveloperPackage,
     listDesktopPluginPreviewDiagnostics,
     clearDesktopPluginPreviewDiagnostics,
     publicDesktopPluginPreviewState,

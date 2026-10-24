@@ -32,7 +32,7 @@ function PluginBuilderPage({ context }) {
   const conversation = conversations.find((item) => item.id === selectedId);
   const selectedLeadId = conversation?.leadId || leadId || agents[0]?.id || "";
   const selectedWorkers = conversation?.workerIds ?? workers, lead = agents.find((agent) => agent.id === selectedLeadId);
-  const messages = conversation?.messages ?? [], activeMessage = messages.find((message) => ["running", "cancelling"].includes(message.status));
+  const messages = conversation?.messages ?? [], activeMessage = messages.find((message) => ["running", "cancelling"].includes(message.status) || message.recoveryPending);
   const running = Boolean(activeMessage), cancelling = activeMessage?.status === "cancelling";
   const sessions = data?.authoringSessions ?? [];
   useEffect(() => {
@@ -168,7 +168,7 @@ function PluginBuilderPage({ context }) {
         messages.map((message) => /* @__PURE__ */ jsxs("article", { className: `bc-message ${message.role}`, children: [
           /* @__PURE__ */ jsxs("div", { className: "bc-message-head", children: [
             /* @__PURE__ */ jsx("span", { children: message.role === "user" ? "\uB098" : lead?.name || "Lead" }),
-            message.status ? /* @__PURE__ */ jsx("span", { className: "bc-status", children: { running: "\uC791\uC5C5 \uC911", cancelling: "\uC911\uC9C0 \uD655\uC778 \uC911", cancelled: "\uC911\uC9C0 \uC644\uB8CC", failed: "\uC2E4\uD328", interrupted: "\uC911\uB2E8\uB428", completed: "\uC644\uB8CC" }[message.status] }) : null
+            message.status ? /* @__PURE__ */ jsx("span", { className: "bc-status", children: message.recoveryPending ? "\uC2E4\uD589 \uC0C1\uD0DC \uD655\uC778 \uC911" : { running: "\uC791\uC5C5 \uC911", cancelling: "\uC911\uC9C0 \uD655\uC778 \uC911", cancelled: "\uC911\uC9C0 \uC644\uB8CC", failed: "\uC2E4\uD328", interrupted: "\uC911\uB2E8\uB428", completed: "\uC644\uB8CC" }[message.status] }) : null
           ] }),
           /* @__PURE__ */ jsx("div", { className: `bc-message-body ${message.status === "failed" ? "bc-error" : ""}`, children: message.content || (message.status === "running" ? "\uB2F5\uBCC0\uC744 \uC900\uBE44\uD558\uACE0 \uC788\uC2B5\uB2C8\uB2E4\u2026" : "") }),
           message.attachments?.map((file, index) => /* @__PURE__ */ jsxs("details", { children: [

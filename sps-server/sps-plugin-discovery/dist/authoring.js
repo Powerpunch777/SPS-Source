@@ -240,9 +240,19 @@ export function createDiscoveryAuthoringService(ctx, { now = () => new Date().to
       summary: packageVersion ? `${summary} Version: ${packageVersion}.` : summary,
       evidence: [...(Array.isArray(request.evidence) ? request.evidence : []), { kind: "package", ref: packageRef, label: "SPS plugin package" }],
     }, runContext.runId, now), (session) => {
-      const build = [...session.events].reverse().find((event) => event.type === "build");
-      if (!build || build.status !== "passed") {
-        throw new Error("A passed latest build inspection is required before creating a package candidate.");
+      let latestBuildIndex = -1;
+      for (let index = session.events.length - 1; index >= 0; index -= 1) {
+        if (session.events[index].type === "build") {
+          latestBuildIndex = index;
+          break;
+        }
+      }
+      const latestBuild = latestBuildIndex >= 0 ? session.events[latestBuildIndex] : null;
+      if (!latestBuild || latestBuild.status !== "passed") {
+        throw new Error("A passed latest build inspection is required; rerun build inspection before creating a package candidate.");
+      }
+      if (session.events.slice(latestBuildIndex + 1).some((event) => event.type === "authoring")) {
+        throw new Error("A new authoring step was recorded after the latest passed build inspection; rerun build inspection before creating a package candidate.");
       }
     });
   }

@@ -136,10 +136,10 @@ or a hidden Core rule.
 
 ### Builder Agent Structure
 
-Design decision (2026-10-18; implementation pending): each Builder Workspace
-uses exactly one Lead and zero or more optional Workers. The user registers or
-selects the Lead before starting AI authoring and may add Workers as needed.
-The Lead can complete work alone when no Workers are configured.
+Implemented in source (2026-10-24): each Builder conversation uses one selected
+Lead and zero or more optional Workers (currently bounded to 12). The user
+selects the Lead before sending; the Lead can work alone when no Workers are
+configured.
 
 The Lead is the user's conversation partner, divides and delegates work when
 useful, reviews Worker results, and reports the integrated outcome. Workers
@@ -149,15 +149,21 @@ how to divide work; Core does not prescribe a task decomposition or profession.
 These roles and delegation rules belong to Plugin Builder. Core supplies the
 existing Agent/runtime execution, scoped resources, run records, and generic
 plugin services. Other workflow plugins may choose a different Agent structure.
-Adding a Builder Worker does not itself create a new CLI account or grant access
-to an unapproved runtime or Source. The current ledger/tools and detached Preview
-do not yet constitute this Lead/Worker authoring interface.
+The Lead can delegate only to selected Workers and read their reports; stop
+targets the selected Lead run, not its Workers. Adding a Worker does not create a
+CLI account or grant access to an unapproved runtime or Source. Workspace-scoped
+conversations, transcripts, attachments, event steps and reports are implemented.
+After restart, interrupted turns are not automatically repeated; cancellation
+and recovery remain bounded by the existing session/run contract.
 
 The user works in the existing SPS window:
 
-- They describe the desired workflow to an Assistant.
-- The Assistant creates and changes a separate plugin project folder or Git
-  repository; plugin source is never inserted into the SPS application files.
+- They describe the desired workflow to an Assistant. File work is performed
+  through the Agent's separately approved workspace tools; this flow has not
+  been verified with a paid provider.
+- Plugin source stays in a separate external project folder or Git repository,
+  never in SPS application files. The Builder conversation is not yet bound to
+  a Desktop Developer Mode project; the author connects that project manually.
 - The existing SPS screen remains the place for conversation, change review,
   file inspection, run status, and test results.
 
@@ -172,12 +178,28 @@ The result is shown in a separate **Plugin Preview** window:
 
 Core provides the generic detached-window and isolated-execution capability.
 Plugin Builder chooses to use it; another authoring plugin may use the same
-capability differently. The current Builder foundation records append-only
-authoring evidence, inspects build/test evidence, opens an isolated Preview,
-and creates a candidate `.spsplugin` package for a Local Development Registry.
-It cannot install, enable, update, disable, or remove a plugin. Public upload,
-publisher review, signing into the Official Registry, and community discovery
-remain future productization work rather than completed Builder features.
+capability differently. The source implementation records append-only authoring
+evidence, while Desktop Developer Mode independently runs build, validation and
+test gates against a stable source/output fingerprint, packages the candidate,
+and opens it in an isolated Preview. The Preview can be archived as a local
+development build; this does not change production Workspace plugin state.
+Builder authoring tools do not invoke production install or lifecycle actions.
+That is the tool boundary, not a policy that rejects an explicit Host decision:
+Host installation, activation, update, disable and removal through Settings >
+Plugins remain unchanged. The read-only **Show verified package** action reveals
+the last Preview-verified archive after checking its persisted identity, safe
+Vault path and SHA-256; it does not install the package. Public upload, publisher review,
+Official Registry signing and community discovery are not implemented.
+
+The current source E2E harness checks registration of seven Builder tools and
+executes the five authoring-ledger tools. It exercises SDK scaffolding, manual
+Desktop project connection, mandatory Developer Mode gates, a generated page
+with an interactive counter in isolated Preview, and verified archive reveal.
+It uses mock Identity and a no-provider execution; it does not establish
+paid-provider file execution or public publishing. Separate unit regressions
+cover Lead/Worker delegation, stale builds, restart overlap, callback races and
+unconfirmed cancellation. Exact verification results are recorded in the
+[delivery plan](PLUGIN-BUILDER-DELIVERY-PLAN.md).
 
 ## Personal Plugin Path
 
@@ -286,11 +308,14 @@ Still required before the first complete product release:
 1. Run the Marketplace search/detail/Assistant acceptance flow against the
    exact release tuple and publish its evidence. The feature implementation is
    already present; this item is candidate verification and release gating.
-2. Run the complete Plugin Builder authoring -> build evidence -> isolated
-   Preview -> package -> explicit Host Local Registry review flow against the
-   exact release tuple. The authoring foundation is present; public submission,
-   publisher review, Official Registry signing, and community marketplace
-   lifecycle are intentionally outside Phase 1.
+2. Run the current Plugin Builder conversation -> external SDK project -> manual
+   Desktop connection -> build/validate/test -> isolated Preview -> package and
+   explicit Host review flow against the exact release tuple. The source
+   foundation exists; parent verification of the current Host handoff and
+   restart/ledger cases is pending. Paid-provider authoring, automatic
+   conversation-to-Desktop project binding, public submission, publisher
+   review, Official Registry signing and community marketplace lifecycle remain
+   outside the verified scope.
 3. Complete a physical fresh-machine Host restore acceptance test with a real
    transfer bundle and publish the evidence.
 4. Complete direct, two-computer Host/Member acceptance tests and publish a

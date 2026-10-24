@@ -26,6 +26,7 @@ export function registerDesktopRegistryIpc({
   rollbackDesktopDeveloperProject,
   reloadDesktopDeveloperUi,
   restartDesktopDeveloperWorker,
+  revealDesktopDeveloperPackage,
   listDesktopPluginPreviewDiagnostics,
   clearDesktopPluginPreviewDiagnostics,
   publicDesktopPluginPreviewState,
@@ -102,6 +103,11 @@ export function registerDesktopRegistryIpc({
   ipcMain.handle("desktop:developer-restart-worker", async (event, input) => {
     assertRegistryEvent(event);
     return await restartDesktopDeveloperWorker(input?.projectId);
+  });
+  ipcMain.handle("desktop:developer-reveal-package", async (event, input) => {
+    assertRegistryEvent(event);
+    assertRegistryOwner();
+    return await revealDesktopDeveloperPackage(input?.projectId);
   });
   ipcMain.handle("desktop:developer-list-preview-diagnostics", async (event, input) => {
     assertRegistryEvent(event);

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
-import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { access, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import os from "node:os";
@@ -10,6 +10,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { inspectPluginArchive } from "@sonparkserver/plugin-sdk/registry/archive-inspector-v1.mjs";
+import { calculateStaticCapabilitiesDigest } from "@sonparkserver/plugin-sdk/registry/static-package-manifest-v1.mjs";
+import { resolveDeveloperPackageArtifact } from "../src/developer-package-artifact.mjs";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -239,6 +241,33 @@ async function makePlugin(directory) {
   const sdkLink = path.join(directory, "node_modules", "@sonparkserver", "plugin-sdk");
   await mkdir(path.dirname(sdkLink), { recursive: true });
   await symlink(sdkRoot, sdkLink, "junction");
+  const manifestPath = path.join(directory, "dist", "manifest.js");
+  const capabilities = ["plugin.state.read", "ui.page.register"];
+  const runtimeManifest = (await readFile(manifestPath, "utf8"))
+    .replace('capabilities: ["plugin.state.read"]', `capabilities: ${JSON.stringify(capabilities)}`)
+    .replace('entrypoints: { worker: "./dist/worker.js" }', 'entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui" }')
+    .replace('  sps:', '  ui: { slots: [{ type: "page", id: "builder-fixture", routePath: "builder-fixture", displayName: "Builder Fixture", exportName: "BuilderFixture" }] },\n  sps:');
+  await writeFile(manifestPath, runtimeManifest);
+  const staticPath = path.join(directory, "sps-plugin.json");
+  const staticManifest = JSON.parse(await readFile(staticPath, "utf8"));
+  staticManifest.capabilities = capabilities;
+  staticManifest.permissionsDigest = calculateStaticCapabilitiesDigest(capabilities);
+  staticManifest.runtime.manifestSha256 = createHash("sha256").update(runtimeManifest).digest("hex");
+  await writeFile(staticPath, `${JSON.stringify(staticManifest, null, 2)}\n`);
+  const packagePath = path.join(directory, "package.json");
+  const packageManifest = JSON.parse(await readFile(packagePath, "utf8"));
+  packageManifest.files.push("dist/ui");
+  await writeFile(packagePath, `${JSON.stringify(packageManifest, null, 2)}\n`);
+  await mkdir(path.join(directory, "dist", "ui"));
+  await writeFile(path.join(directory, "dist", "ui", "index.js"), [
+    'import { createElement, useState } from "react";',
+    'export function BuilderFixture() {',
+    '  const [count, setCount] = useState(0);',
+    '  return createElement("main", {style:{padding:24}},',
+    '    createElement("h1", null, "Builder Preview Fixture"),',
+    '    createElement("button", {id:"builder-fixture-count", onClick:()=>setCount(value=>value+1)}, `Count: ${count}`));',
+    '}',
+  ].join("\n"));
 }
 
 const identity = mockIdentity();
@@ -300,13 +329,15 @@ try {
   let builderTools = [];
   while (Date.now() < toolDeadline) {
     builderTools = await workspaceApi(workspace, "/api/plugins/tools?pluginId=sps.plugin-discovery");
-    if (Array.isArray(builderTools) && builderTools.length === 5) break;
+    if (Array.isArray(builderTools) && builderTools.length === 7) break;
     await delay(250);
   }
   const builderPluginState = await workspaceApi(workspace, "/api/plugins");
   assert.deepEqual(
     builderTools.map((tool) => tool.name).sort(),
     [
+      "sps.plugin-discovery:builder-delegate-worker",
+      "sps.plugin-discovery:builder-worker-result",
       "sps.plugin-discovery:create-sps-plugin-package",
       "sps.plugin-discovery:create-sps-plugin-project",
       "sps.plugin-discovery:inspect-sps-plugin-build",
@@ -328,9 +359,13 @@ try {
   await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/builder`)})`);
   await waitPage(
     workspace,
-    (page) => page.url.includes("/builder") && page.text.includes("Plugin Builder") && page.text.includes("SPS Preview Desktop E2E"),
+    (page) => page.url.includes("/builder") && page.text.includes("Plugin Builder"),
     "Plugin Builder authoring surface",
   );
+  await workspace.evaluate(`document.querySelector('.bc-header .bc-button').click()`);
+  await waitPage(workspace, page => page.text.includes("Authoring projects"), "Builder authoring panel");
+  await workspace.evaluate(`document.querySelector('.bc-evidence').open = true`);
+  await waitPage(workspace, page => page.text.includes("SPS Preview Desktop E2E"), "Builder authoring project evidence");
   step("opening Developer Registry from Workspace");
   const opened = await workspace.evaluate("window.spsDesktopWorkspace?.openPluginRegistries ? window.spsDesktopWorkspace.openPluginRegistries() : Promise.reject(new Error('Workspace Registry bridge unavailable'))", true);
   assert.equal(opened?.opened, true, "Workspace did not open the real Registry window.");
@@ -401,6 +436,23 @@ try {
   assert.equal(initialFixture?.viewport, "desktop");
   assert.equal(initialFixture?.uiState, "live");
   assert.ok(await workspace.evaluate("Boolean(document.body?.isConnected)"), "Main Workspace did not coexist with Preview.");
+  const previewCompanies = await workspaceApi(preview, "/api/companies");
+  assert.ok(previewCompanies[0]?.issuePrefix, "Preview did not create its isolated Workspace");
+  await preview.evaluate(`location.assign(${JSON.stringify(`/${previewCompanies[0].issuePrefix}/builder-fixture`)})`);
+  await waitPage(preview, page => page.text.includes("Builder Preview Fixture") && page.text.includes("Count: 0"), "actual generated plugin UI");
+  await preview.evaluate(`document.querySelector('#builder-fixture-count').click()`);
+  await waitPage(preview, page => page.text.includes("Count: 1"), "generated plugin UI interaction");
+  if (screenshotDirectory) {
+    const screenshot = await preview.command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+    await writeFile(path.join(screenshotDirectory, "generated-plugin-preview.png"), Buffer.from(screenshot.data, "base64"));
+  }
+  const artifact = await resolveDeveloperPackageArtifact({ vaultRoot: path.join(userData, "owner-vault"), build: applied.lastKnownGood });
+  assert.equal(artifact.sha256, applied.lastKnownGood.deployment.artifactSha256);
+  assert.equal((await inspectPluginArchive(artifact.archivePath)).valid, true);
+  await registry.evaluate(`document.querySelector('#refresh-developer-projects').click()`);
+  await waitPage(registry, page => page.text.includes("Show verified package"), "verified package access button");
+  await registry.evaluate(`document.querySelector('.reveal-developer-package').click()`);
+  await waitPage(registry, page => page.text.includes("Opened the last Preview-verified package") && page.text.includes(artifact.sha256), "verified package reveal handoff");
 
   step("switching fixture to Member, mobile, and error state");
   const state = await registryCall(registry, "window.spsRegistry.getPreviewState()");

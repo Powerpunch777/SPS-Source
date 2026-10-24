@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createDiscoveryAuthoringService, discoveryAuthoringState } from "../dist/authoring.js";
 
-function harness() {
+function harness({ now } = {}) {
   const values = new Map();
   const key = (input) => `${input.scopeKind}:${input.scopeId}:${input.namespace}:${input.stateKey}`;
   const ctx = {
@@ -13,7 +13,7 @@ function harness() {
   };
   let index = 0;
   const service = createDiscoveryAuthoringService(ctx, {
-    now: () => new Date(Date.UTC(2026, 6, 31, 12, 0, 0, index++)).toISOString(),
+    now: now ?? (() => new Date(Date.UTC(2026, 6, 31, 12, 0, 0, index++)).toISOString()),
   });
   return { service, values };
 }
@@ -155,6 +155,71 @@ test("rejects package creation when the latest build inspection failed", async (
     evidence: [],
   }, run), /passed latest build inspection is required/);
   assert.equal((await service.load("workspace-a"))[0].events.at(-1).status, "failed");
+});
+
+test("requires a build inspection after authoring even when event timestamps match", async () => {
+  const { service } = harness({ now: () => "2026-07-31T12:00:00.000Z" });
+  const run = { companyId: "workspace-a", runId: "run-a" };
+  const created = await service.createProject({ goal: "Build a current package.", pluginId: "local.fresh-build" }, run);
+  await service.inspectBuild({
+    authoringSessionId: created.id,
+    status: "passed",
+    summary: "Initial build passed.",
+    evidence: [{ kind: "test", ref: "initial-build" }],
+  }, run);
+  await service.runStep({
+    authoringSessionId: created.id,
+    objective: "Change the plugin after the build.",
+    status: "passed",
+    evidence: [{ kind: "workspace_file", ref: "src/worker.js" }],
+  }, run);
+
+  await assert.rejects(() => service.createPackage({
+    authoringSessionId: created.id,
+    packageRef: "artifacts/fresh-build.spsplugin",
+    evidence: [],
+  }, run), /new authoring step.*rerun build inspection/i);
+  assert.equal((await service.load("workspace-a"))[0].events.length, 3);
+
+  await service.inspectBuild({
+    authoringSessionId: created.id,
+    status: "passed",
+    summary: "Build passed after the latest authoring step.",
+    evidence: [{ kind: "test", ref: "fresh-build" }],
+  }, run);
+  const preview = await service.requestPreview({ authoringSessionId: created.id }, run);
+  assert.equal(preview.events.at(-1).type, "preview");
+  assert.equal(preview.events.at(-1).status, "requested");
+
+  const packaged = await service.createPackage({
+    authoringSessionId: created.id,
+    packageRef: "artifacts/fresh-build.spsplugin",
+    evidence: [],
+  }, run);
+  assert.equal(packaged.events.at(-1).type, "package");
+  assert.equal(packaged.status, "packaged");
+  assert.ok(packaged.events.every((event) => event.at === "2026-07-31T12:00:00.000Z"));
+});
+
+test("authoring in another project does not invalidate a passed build", async () => {
+  const { service } = harness();
+  const run = { companyId: "workspace-a", runId: "run-a" };
+  const builtProject = await service.createProject({ goal: "Build the first plugin.", pluginId: "local.first-plugin" }, run);
+  await service.inspectBuild({ authoringSessionId: builtProject.id, status: "passed" }, run);
+
+  const otherProject = await service.createProject({ goal: "Build a second plugin.", pluginId: "local.second-plugin" }, run);
+  await service.runStep({
+    authoringSessionId: otherProject.id,
+    objective: "Continue work on the second plugin.",
+    status: "running",
+  }, run);
+
+  const packaged = await service.createPackage({
+    authoringSessionId: builtProject.id,
+    packageRef: "artifacts/first-plugin.spsplugin",
+    evidence: [],
+  }, run);
+  assert.equal(packaged.status, "packaged");
 });
 
 test("never drops old events when the append-only ledger reaches its limit", async () => {
