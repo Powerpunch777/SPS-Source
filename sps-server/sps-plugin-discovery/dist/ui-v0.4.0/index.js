@@ -285,7 +285,7 @@ function PluginBuilderPage({ context }) {
     projectRefresh.current = loadProjectContext;
     void loadProjectContext();
     const refreshOnFocus = () => {
-      if (!validationBusyRef.current) void loadProjectContext();
+      if (!validationBusyRef.current && !agentFolderCheckBusyRef.current) void loadProjectContext();
     };
     window.addEventListener("focus", refreshOnFocus);
     return () => {

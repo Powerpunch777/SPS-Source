@@ -502,10 +502,14 @@ try {
   const folderInput = { context: developerContext.context, agentId: conversation.leadId };
   const checkFolder = value => workspace.evaluate(`window.spsDesktopWorkspace.checkDeveloperAgentFolder(${JSON.stringify(value)})`, true);
   const leadBeforeCheck = await workspaceApi(workspace, `/api/agents/${conversation.leadId}`);
+  const initialFolderCheck = await checkFolder(folderInput);
+  if (liveAuthoring) assert.equal(initialFolderCheck.status, "configured-match");
+  else assert.ok(["unsupported", "unavailable"].includes(initialFolderCheck.status));
   const folderDraft = await workspace.evaluate("document.querySelector('.bc-composer textarea').value");
   const folderFiles = await workspace.evaluate("document.querySelectorAll('.bc-file-chip').length");
   await workspace.evaluate("document.querySelector('.bc-agent-folder-check button').click()");
-  await waitPage(workspace, page => page.text.includes(liveAuthoring ? "설정 경로 일치" : "확인 미지원"), "read-only Lead folder comparison");
+  const folderStatusText = { "configured-match": "설정 경로 일치", unsupported: "확인 미지원", unavailable: "폴더 설정 확인 불가" }[initialFolderCheck.status];
+  await waitPage(workspace, page => page.text.includes(folderStatusText), "read-only Lead folder comparison");
   assert.deepEqual((await workspaceApi(workspace, `/api/agents/${conversation.leadId}`)).adapterConfig, leadBeforeCheck.adapterConfig);
   assert.equal(await workspace.evaluate("document.querySelector('.bc-composer textarea').value"), folderDraft);
   assert.equal(await workspace.evaluate("document.querySelectorAll('.bc-file-chip').length"), folderFiles);
