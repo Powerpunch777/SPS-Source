@@ -267,8 +267,46 @@ transport, source-static selection and integration. No new installer was built.
 - This reuses existing read models and adds no schema, SDK method, ledger, or
   business policy. No new page/sidebar, polling, retry action, cancellation
   mutation, or cascade policy is introduced.
-- Verification is pending the parent; no check counts or results are claimed
-  for this slice.
+- Core route/observation/summary checks: 98/98; actual DB Node/history routes:
+  27/27; UI/API/Plugin Settings: 25/25. Recursive typecheck and full build pass,
+  as do compatibility and UI entry-budget gates. An initial recursive typecheck
+  found a test-only optional-chain/bitwise expression; the corrected full rerun
+  passed. Full Desktop suite after the committed pin: 375/375.
+- Global UI token checks still report the existing 124 findings (79 color,
+  43 arbitrary values, 2 font-size). No new execution-history files are listed;
+  the global gate is not claimed clean.
+- Initial source Electron E2E exited 0 including cleanup, covering the stopped
+  Builder run's Host history/detail, lane isolation and refresh, plus existing
+  usage/process/responsive checks. A later rerun with an added detail-layout
+  assertion failed earlier at CDP Runtime.evaluate timeout in the Builder
+  surface. The subsequent exact-source rerun exited 0 including cleanup, with
+  the additional 1024px detail-layout assertion and screenshot. Final log:
+  `execution-history-e2e-verified.log`; do not treat the failed attempt as passing.
+- Persistent DEV was normally restarted with login/data preserved. Parent
+  navigated Settings > Plugins > Plugin Builder > Status and opened an existing
+  run's details; estimated tokens and unavailable cost rendered without a new
+  provider call or user-data reset. One native input geometry failure was
+  recovered by reselecting/activating the current window.
+- Private local evidence: `execution-history-{unit,db,ui-final,typecheck-final,build,desktop,e2e,e2e-final}.log`
+  under `desktop/dist`. These are development records, not release attestations.
+  No fresh security audit, full Linux Core regression, installer, SDK release,
+  remote Node/provider or physical two-PC certification is claimed.
+
+Integrated tuple: Core `98ce2de643a51271323d2d0b26321ec4de7cf16f`, Source
+implementation `85872685f23dfd7105b7b96e61e98dc5b7f2c4f1` (verification-only
+documentation follows), SDK unchanged at
+`abfbd3692a59c126ae74f487e01d415eed38665e`. Reproduce the Core set with
+`pnpm exec vitest run server/src/__tests__/sps-executions-routes.test.ts server/src/__tests__/sps-execution-observation.test.ts server/src/__tests__/sps-execution-summary.test.ts`;
+DB routes use `pnpm exec vitest run server/src/__tests__/sps-nodes-routes.test.ts`.
+UI set uses `pnpm exec vitest run ui/src/components/SpsPluginExecutions.test.tsx ui/src/components/SpsPluginUsage.test.tsx ui/src/api/sps-executions.test.ts ui/src/pages/PluginSettings.test.tsx`.
+Desktop uses `npm test`; source Electron smoke uses the existing
+`SPS_DESKTOP_E2E_SOURCE=1`/`SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS=120000`
+environment and `node scripts/smoke-workspace-surfaces-desktop.mjs`.
+Luna 6 xhigh implemented bounded UI/API/tests/docs and reviewed new scope/proof
+paths without actionable findings. Parent implemented Core/DB/Desktop integration,
+removed DTO duplication, fixed empty-page navigation/tiny-cost/runtime labels and
+the test typing issue, and performed final local verification. Luna quota was
+retried; Fast remains user-configured. Stable prerequisites are unchanged.
 
 ## Adapter Usage Receipt Slice (2026-10-24)
 
