@@ -167,6 +167,46 @@ Implemented in source; this increment's final test evidence is recorded below.
   installation remain separate Host actions. Member/browser surfaces cannot
   use this local Host bridge.
 
+Validation for this increment: Builder check 31/31 and Desktop 411/411 passed.
+A separate Luna review found no actionable scope/path authority bypass; its
+dangling-link display finding was fixed. A source Preview pass covered basic
+linking before the final draft-preservation and dangling-UI assertions were
+added. The exact implementation commit is
+`e3d9b7ef1120147df8f60fcaa9d554ccf4682a7d`; final E2E evidence follows below.
+
+- Final source Preview E2E at `e3d9b7ef`: exit 0 including cleanup. Fresh
+  conversation creation sent no message and retained its unsent draft and text
+  attachment. Host selected the reference in the real review UI. Another
+  conversation/Workspace had no link, extra input fields and old window tokens
+  were rejected, explicit unlink/relink persisted, and Builder displayed the
+  selected project without its path. Mandatory gates, interactive generated
+  Preview, verified archive reveal, lifecycle isolation and crash diagnostics
+  passed. Disconnecting the project produced the distinct dangling-link UI;
+  unlink cleared only that reference and the external package file still existed.
+- Final source Workspace E2E at the same commit: exit 0 including cleanup.
+  Exact Lead Send/Stop and process exit, usage/history and responsive layouts
+  remained working. No paid provider or physical remote Member was exercised.
+- Parent visually inspected the final linked-project screenshot and opened
+  the existing DEV conversation's panel and correctly scoped review window.
+  The no-provider fixture intentionally reports an Agent execution error; this
+  is not evidence of successful AI authoring. No paid-provider request or user
+  folder connection was made during the native DEV check.
+- Logs: `desktop/dist/builder-context-{plugin-final,desktop-final,workspace}.log`,
+  `builder-context-preview.log` (earlier passing basic flow),
+  `builder-context-preview-final.log` (parallel port collision/CDP timeout),
+  and `builder-context-preview-verified.log` (sequential pass). Screenshots are
+  in `builder-context-observation/`. These ignored private records are not
+  release attestations. Core/SDK remain unchanged and clean; no new installer,
+  whole-Core/Linux test result or dependency audit is claimed.
+
+The parallel final Preview/Workspace E2E attempt exposed the existing port-probe
+race: both can select the same free PostgreSQL port before either binds it.
+The Workspace suite passed, while Preview PostgreSQL startup failed. These
+suites must be run sequentially for this candidate. Free-port probing is not a
+cross-process startup lease; this residual concurrency limitation is not fixed
+or hidden by the project-reference increment. Future startup resilience work
+should handle a lost port reservation without touching existing Vaults.
+
 Next, validate real-provider authoring on an explicitly approved Source through
 the same Desktop gates. Do not treat this navigation link as runtime working
 directory configuration, and do not install a plugin implicitly when chosen or
