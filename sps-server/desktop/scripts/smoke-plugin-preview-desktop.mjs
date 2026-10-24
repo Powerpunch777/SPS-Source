@@ -1111,6 +1111,14 @@ try {
   step("verified redacted diagnostics and live production Workspace");
   if (liveTeam) {
     step("Host explicitly stages and confirms installation of the exact Preview-verified archive");
+    // Project-scoped review intentionally hides installation controls. Reopen
+    // the normal Host registry instead of invoking its hidden form.
+    const hostRegistry = await workspace.evaluate("window.spsDesktopWorkspace.openPluginRegistries()", true);
+    assert.equal(hostRegistry?.opened, true);
+    await waitPage(registry, page => page.text.includes("Trusted sources"), "normal Host Registry view");
+    assert.equal(await registryCall(registry, "window.spsRegistry.getDeveloperContext()"), null);
+    await registry.evaluate("(() => { const details = document.querySelector('#source-form').closest('details'); if (!details.open) details.querySelector('summary').click(); })()");
+    assert.equal(await registry.evaluate("document.querySelector('#source-form').getClientRects().length > 0"), true);
     const localRegistry = path.join(temporaryRoot, "manual-registry");
     const keys = path.join(temporaryRoot, "registry-keys");
     await mkdir(path.join(localRegistry, "artifacts"), { recursive: true });

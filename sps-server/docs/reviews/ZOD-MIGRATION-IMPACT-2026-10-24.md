@@ -14,6 +14,23 @@ This document is not a security exception or release acceptance.
   (`core:zod`, advisory `1243066`) and two Low. No waiver was added.
 - Private audit output: `desktop/dist/builder-security-hold-audit.log`.
 
+A separate fresh `npm run audit:development` also exited 1. That broader policy
+explicitly includes development/build dependencies and the shipped Electron
+runtime: 15 advisories, six Critical/High. It must not be described as a
+production-library-only count or ignored because Electron is a devDependency.
+
+| Scope | Blocking Critical/High advisory IDs | Current interpretation |
+| --- | --- | --- |
+| Desktop shipped Electron | `1243070` | Electron runtime security update requires follow-up before installer replacement. |
+| Desktop dependency graph, undici | `1243113`, `1243114` | Build/tool graph; inspect the precise execution path and supported upstream patches. |
+| Core development graph, Storybook | `1242753`, `1242874` | Development server risks, not proof the packaged SPS Host exposes Storybook. |
+| Core production, Zod | `1243066` | Also blocks the production gate described above. |
+
+Five unreviewed Moderate findings and a stale `sprintf-js` review also block the
+broader policy. Private output:
+`desktop/dist/builder-security-hold-development-audit.log`. These additional
+findings are recorded, not patched or waived by this impact-only follow-up.
+
 The [reviewed advisory](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)
 lists versions below `4.6.6` as affected and `4.6.6` as patched. The issue concerns
 memory exhaustion while accumulating collection-validation errors. It does not
