@@ -237,6 +237,54 @@ These are private development records, not published release attestations. Luna 
 xhigh implemented UI/client/tests; parent reviewed and implemented Core, Desktop
 transport, source-static selection and integration. No new installer was built.
 
+## Adapter Usage Receipt Slice (2026-10-24)
+
+- Reuse `heartbeatRuns.usageJson`; no new billing ledger, DB migration or public
+  SDK method. Plugin Agent completions with usage retain a bounded v1 receipt
+  bound to Workspace/run/Agent/Plugin/session identity. The accepted terminal
+  transition and receipt share one running-only conditional write.
+- Read the bound receipt in history and summaries. Invalid digest, scope or
+  unknown fields makes usage unavailable without falling back to mutable sibling
+  evidence. Older rows without receipts keep their previous versioned-evidence
+  behavior; no backfill or reinterpretation of unmarked legacy costs.
+- SHA-256 detects inconsistency; it is not a provider signature, invoice or
+  defense against a DB administrator replacing both the report and digest.
+  Unknown provider data, late cancelled completions and neutral Node usage are
+  not reconciled by this slice. Business success/reassignment stays Plugin-owned.
+- Optional adapter `usageReportedFields` separates actual Codex/Claude token
+  values from legacy parser defaults. Missing/invalid fields stay null, actual
+  zero remains zero, malformed supplied masks fail closed. No new provider scope
+  assumption or inherited accounting/delta behavior is introduced.
+- Luna 6 xhigh produced the initial receipt and parser changes but hit the usage
+  limit before completion. The parent retained/reviewed those changes, fixed
+  scope type narrowing and invalid model-entry completeness, and added DB
+  completion, late-write, scoped history and summary coverage. Luna was retried
+  on the user's instruction; its review is not claimed complete unless returned.
+- Remaining: provider receipt correction/reconciliation, neutral Node usage
+  ingestion, admission/reservation/budget enforcement and broader common views.
+  None is implied by an adapter-completion receipt.
+
+Final checks: seven-file usage/parser/execute set 103/103; actual DB execution
+history and heartbeat recovery 113 passed, one platform-inapplicable skip.
+Recursive Core typecheck, full build, compatibility boundary and UI entry budget
+passed. Source Electron Workspace E2E completed with exit 0: real Builder
+Send/Stop, exact process exit, safe run summary, unknown usage, time windows and
+refresh, plus 1024/1280/1440 layouts. Mock Identity/no-provider execution was used;
+no live Agent was invoked or user Workspace reset.
+
+An additional inherited CLI-execute set failed 34 POSIX extensionless-script
+fixtures on Windows (15 passed); it is not reported as a passing adapter suite.
+The new mocked execution transport tests passed cross-platform. An initial DB
+test incorrectly awaited Agent idle after an artificial external terminal write;
+the corrected test awaits the rejected late finalization itself, then verifies
+the retained receipt and zero appended cost rows. The complete DB rerun passed.
+
+Both Luna retries completed: bounded receipt/context/observation review found no
+actionable issue, and execute transport tests passed 8/8. Parent reviewed the
+patches and independently reran the full 103-test set. Private ignored records:
+`usage-receipt-unit.log`, `usage-receipt-db.log`, `usage-receipt-e2e.log`. No full
+Linux Core regression, new installer or Stable/two-device claim is included.
+
 ## Verification and Safety
 
 Core DB-backed tests: tenant/plugin isolation, capability rejection, queued and
