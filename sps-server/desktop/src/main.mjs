@@ -3773,6 +3773,7 @@ function configureWorkspaceRequestAuth() {
     if (isOwnerHostProfile() && isSpsDesktopTechnicalHostRequest({
       url: details.url,
       workspaceOrigin,
+      method: details.method,
     })) {
       requestHeaders[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER] = ownerHostDesktopAccessToken;
     }

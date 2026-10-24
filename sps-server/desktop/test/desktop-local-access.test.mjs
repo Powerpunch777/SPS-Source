@@ -66,3 +66,20 @@ test("limits the Host proof to Core technical-team routes on the active Owner Ho
     url: "https://remote.tailnet.ts.net/api/companies/company-1/sps-members",
   }), false);
 });
+
+test("grants execution-summary Host proof only to the exact GET endpoint on the active Host", () => {
+  const workspaceOrigin = "http://127.0.0.1:31310";
+  const endpoint = "/api/companies/11111111-1111-4111-8111-111111111111/sps-executions/summary";
+  const check = (url, method) => isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url, method });
+  assert.equal(check(`${workspaceOrigin}${endpoint}?pluginId=fixture`, "GET"), true);
+  for (const method of [undefined, "POST", "PUT", "DELETE", "PATCH"]) {
+    assert.equal(check(`${workspaceOrigin}${endpoint}`, method), false);
+  }
+  for (const url of [
+    `https://remote.tailnet.ts.net${endpoint}`,
+    `http://127.0.0.1:31311${endpoint}`,
+    `${workspaceOrigin}${endpoint}/other`,
+    `${workspaceOrigin}${endpoint}-other`,
+    `${workspaceOrigin}/api/companies/not-uuid/sps-executions/summary`,
+  ]) assert.equal(check(url, "GET"), false);
+});

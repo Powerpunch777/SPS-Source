@@ -1,7 +1,7 @@
 # Core Management Incremental Plan
 
 Status: stage 1, Agent-session cancellation and cross-lane history slices of stage 2,
-and the usage-provenance foundation of stage 3 implemented in source, 2026-10-23.
+and usage provenance/summary of stage 3 implemented in source, 2026-10-24.
 No new installer or Stable claim.
 
 Core owns technical execution state, usage evidence, limits, artifacts, audit and
@@ -23,8 +23,9 @@ do not replace either engine or import the upstream workflow model.
    immutable/idempotent provider usage receipts and neutral Node usage ingestion.
    Own-plugin aggregate queries are now implemented as a read-only projection.
    Unknown is not zero.
-4. Planned: shared admission limits and budget reservations/settlement, then
-   read-only Dashboard/Diagnostics/Inbox integration and optional result evidence.
+4. Partly implemented: existing Plugin Status diagnostics consumes the read-only usage
+   projection. Shared admission limits and budget reservations/settlement,
+   broader Dashboard/Inbox integration and optional result evidence remain planned.
 
 ## Stage 1 Contract
 
@@ -183,6 +184,40 @@ exit 0 after real Send/Stop, process-exit/runtime assertions and responsive
 existing login and conversations. No usage-summary UI was added. Future required
 client methods must be applied together with protocol, implementation and mocks
 before treating a stopped DEV checkout as runnable.
+
+## Host Usage UI Slice (2026-10-24)
+
+- Reuse Plugin Settings > Status, without adding a page, sidebar entry, workflow
+  role, or another ledger. Periods are 24 hours, 7 days and 30 days. Refresh is
+  explicit; no usage polling or automatic retries are added.
+- The human Host API requires both local Host authority and Workspace access.
+  Resolve the Plugin key from its registry ID, not a caller-selected key. Reads
+  work for retained disabled Plugin history. Invalid/ambiguous queries return
+  400; missing scopes return 404; over 10,000 matches return actionable 422.
+  Agent/Member callers do not gain an alternate capability bypass.
+- Desktop supplies its second Host proof only for the exact summary GET route
+  on the active local Host origin. The first live-app attempt exposed the missing
+  allowlist entry; it was fixed without weakening Core authorization.
+- Show reported and estimated values/coverage separately, unavailable counts,
+  technical phase totals and recorded duration. Never combine API incremental
+  cost with subscription reference or present unknown usage as zero/free.
+  Tiny positive costs remain distinguishable from a real zero.
+- Scope and window are part of the query key. Workspace/Plugin changes remount
+  the panel, and aborted/failed requests do not show prior-scope totals. Loading,
+  no-execution, forbidden, oversized and generic error states are covered.
+- Source static startup previously preferred a stale `server/ui-dist` packaging
+  copy. Source workspaces now require the current `ui/dist`; a missing source
+  build does not silently certify old UI. Standalone packages still use their
+  bundled `ui-dist`. Earlier source E2E runs alone are not proof of the latest UI.
+- Initial E2E attempts failed to activate Radix Status with synthetic click.
+  The harness now uses keyboard activation and awaits the ready summary control.
+  A rerun against the current source UI passed real scoped run lookup, unknown
+  usage, period changes, refresh, process cancellation and responsive checks.
+  Mock Identity and a no-provider process preserve live accounts and user data.
+- No DB migration, paid AI invocation, new installer, full Linux Core regression
+  or two-device release evidence is included. Provider receipts/reconciliation,
+  neutral Node usage ingestion, admission/budget enforcement and broader common
+  management views remain follow-ups.
 
 ## Verification and Safety
 

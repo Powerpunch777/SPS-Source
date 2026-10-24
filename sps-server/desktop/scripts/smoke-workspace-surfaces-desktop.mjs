@@ -275,7 +275,9 @@ async function openCdp(target) {
 }
 
 async function describePage(cdp) {
-  return await cdp.evaluate(`({ title: document.title, route: location.href, body: document.body?.innerText?.slice(0, 4000) || "" })`);
+  return await cdp.evaluate(`({ title: document.title, route: location.href, body: document.body?.innerText?.slice(0, 4000) || "",
+    usageReady: Boolean(document.querySelector('[data-testid="sps-plugin-usage"] table')) && document.querySelector('[aria-label="Refresh execution usage"]')?.disabled === false,
+    usagePeriod: document.querySelector('#sps-usage-period')?.value })`);
 }
 
 async function click(cdp, selector, label) {
@@ -533,6 +535,58 @@ try {
     assert.equal(alive, false, "Builder showed stopped before its process exited.");
     if (screenshotPath) await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "plugin-builder-stopped.png"));
     console.log("Builder stop E2E: exact Lead run cancelled, process exit verified, no provider used.");
+
+    // Read the same real Core run through Host diagnostics, without seeding a
+    // second usage ledger or contacting a paid provider.
+    await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/company/settings/instance/plugins/${builder.id}`)})`);
+    await waitForPage(workspaceCdp, page => page.body.includes("Configuration") && page.body.includes("Status"), "Plugin settings");
+    const statusSelector = '[role="tab"][id$="-trigger-status"]';
+    // Radix Tabs activates on pointer-down or keyboard, not a synthetic click.
+    await workspaceCdp.evaluate(`document.querySelector(${JSON.stringify(statusSelector)}).focus()`);
+    await workspaceCdp.command("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await workspaceCdp.command("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await waitForPage(workspaceCdp, page => page.usageReady, "real execution usage summary");
+    const summaryBounds = await workspaceCdp.evaluate(`(() => {
+      const panel = document.querySelector('[data-testid="sps-plugin-usage"]');
+      return { times: [...panel.querySelectorAll('time')].map(time => time.dateTime), text: panel.textContent };
+    })()`);
+    const usageParams = new URLSearchParams({ pluginId: builder.id, from: summaryBounds.times[0], to: summaryBounds.times[1] });
+    const usage = await api(workspaceCdp, `/api/companies/${company.id}/sps-executions/summary?${usageParams}`);
+    assert.ok(usage.executionCount >= 1, "Real Builder run is absent from Host usage");
+    assert.ok(usage.terminalCount >= 1);
+    assert.equal(usage.tokens.inputTokens.reported, null, "No-provider fixture must not fabricate usage");
+    assert.ok(usage.tokens.inputTokens.unavailableExecutions >= 1);
+    assert.equal(usage.costs.incrementalApi.reported, null);
+    for (const [value, milliseconds] of [["7d", 7 * 86400000], ["30d", 30 * 86400000], ["24h", 86400000]]) {
+      await workspaceCdp.evaluate(`(() => {
+        const select = document.querySelector('#sps-usage-period');
+        select.value = ${JSON.stringify(value)};
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+      await waitForPage(workspaceCdp, page => page.usageReady && page.usagePeriod === value, `usage period ${value}`);
+      const range = await workspaceCdp.evaluate(`[...document.querySelector('[data-testid="sps-plugin-usage"]').querySelectorAll('time')].map(time => time.dateTime)`);
+      assert.equal(Date.parse(range[1]) - Date.parse(range[0]), milliseconds);
+    }
+    await click(workspaceCdp, '[aria-label="Refresh execution usage"]', "Refresh usage");
+    await waitForPage(workspaceCdp, page => page.usageReady, "refreshed usage");
+    if (screenshotPath) {
+      for (const [width, height] of [[1024, 720], [1440, 900]]) {
+        await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await workspaceCdp.evaluate(`document.querySelector('[data-testid="sps-plugin-usage"]').scrollIntoView({ block: 'start' })`);
+        const layout = await workspaceCdp.evaluate(`(() => {
+          const panel = document.querySelector('[data-testid="sps-plugin-usage"]').getBoundingClientRect();
+          const refresh = document.querySelector('[aria-label="Refresh execution usage"]').getBoundingClientRect();
+          return { documentWidth: document.documentElement.scrollWidth, viewport: innerWidth,
+            panelLeft: panel.left, panelRight: panel.right, refreshRight: refresh.right,
+            tablesFit: [...document.querySelectorAll('[data-testid="sps-plugin-usage"] table')].every(table => table.scrollWidth <= table.parentElement.clientWidth + 1) };
+        })()`);
+        assert.ok(layout.documentWidth <= layout.viewport && layout.panelLeft >= 0 && layout.panelRight <= layout.viewport && layout.refreshRight <= layout.viewport && layout.tablesFit,
+          `Usage layout clipped at ${width}: ${JSON.stringify(layout)}`);
+        await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), `plugin-usage-${width}x${height}.png`));
+      }
+      await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+    }
+    console.log("Usage UI E2E: real scoped run, unknown usage, 24h/7d/30d selection and refresh verified.");
   }
 
   await api(workspaceCdp, `/api/plugins/${teamWorkplane.id}/companies/${company.id}/activation`, {

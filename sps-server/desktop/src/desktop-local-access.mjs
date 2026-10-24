@@ -31,10 +31,13 @@ export function isSpsDesktopWorkspaceRequest({ url, workspaceOrigin }) {
  * Only the local Host Workspace can carry the second proof for Core's
  * technical controls. Workflow policy stays plugin-owned.
  */
-export function isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin }) {
+export function isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin, method }) {
   if (!isSpsDesktopWorkspaceRequest({ url, workspaceOrigin })) return false;
   try {
     const pathname = new URL(url).pathname;
+    if (method === "GET" && /^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/sps-executions\/summary$/i.test(pathname)) {
+      return true;
+    }
     return [
       /^\/api\/companies$/,
       /^\/api\/companies\/[^/]+$/,
