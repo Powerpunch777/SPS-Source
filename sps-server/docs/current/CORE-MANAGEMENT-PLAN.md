@@ -378,6 +378,16 @@ Private ignored evidence: `node-usage-{unit,db,node-tests,typecheck,build,e2e}.l
 and `node-usage-migration-generation.log`. No full Linux Core regression, fresh
 dependency audit, signed installer, release or physical two-PC claim is made.
 
+Final Desktop suite passed 374/374 after the Core pin was committed and local
+Desktop Node was synchronized. The final source Electron rerun also passed
+(exit 0 after cleanup), recorded in `node-usage-e2e-final.log`. The persistent
+DEV Host was normally restarted; its log confirms exactly migration
+`0162_sps_node_usage.sql` applied, and the existing logged-in Workspace reopened.
+No account reset or historical usage backfill occurred. One transient native
+input geometry error was recovered by selecting the current window again.
+`node-usage-desktop.log` records the full Desktop suite. Previous global UI token
+gate debt is unchanged, not claimed resolved.
+
 ## Verification and Safety
 
 Core DB-backed tests: tenant/plugin isolation, capability rejection, queued and
