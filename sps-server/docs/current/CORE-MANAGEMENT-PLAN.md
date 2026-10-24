@@ -219,6 +219,24 @@ before treating a stopped DEV checkout as runnable.
   neutral Node usage ingestion, admission/budget enforcement and broader common
   management views remain follow-ups.
 
+Final Host usage UI checks: focused Core/UI tests 71/71; actual DB Node/execution
+suite 25/25; Desktop full `npm test` 374/374 without exclusions. Recursive Core
+typecheck/full build, final UI typecheck/build, compatibility boundary and UI
+entry bundle gate passed. The global token gate failed at 124 pre-existing
+findings (79 color, 43 arbitrary-value, 2 font-size); no new usage files appeared
+in its findings. That global gate is not claimed clean.
+
+Final compact source Electron E2E exited 0. It checks the real Builder run's safe
+summary, unknown tokens/cost, all three time windows, refresh and non-overflowing
+usage tables at 1024/1440; the existing Workspace checks include 1280. Screenshots
+were visually inspected. The persistent DEV app also loaded existing recorded
+usage through its normal Host window. Local ignored logs: usage-ui-final-tests.log,
+usage-ui-db.log, usage-ui-final-typecheck.log, usage-ui-final-core-build.log,
+usage-ui-desktop-tests.log, usage-ui-e2e-compact.log and usage-ui-observation/*.png.
+These are private development records, not published release attestations. Luna 6
+xhigh implemented UI/client/tests; parent reviewed and implemented Core, Desktop
+transport, source-static selection and integration. No new installer was built.
+
 ## Verification and Safety
 
 Core DB-backed tests: tenant/plugin isolation, capability rejection, queued and
