@@ -20,7 +20,8 @@ do not replace either engine or import the upstream workflow model.
    result/usage recovery. No automatic retry of unknown external effects.
 3. Partly implemented: usage provenance (reported/estimated/unavailable), billing
    basis/currency and Plugin attribution in the common read model. Remaining:
-   idempotent usage receipts, aggregate queries and neutral Node usage ingestion.
+   immutable/idempotent provider usage receipts and neutral Node usage ingestion.
+   Own-plugin aggregate queries are now implemented as a read-only projection.
    Unknown is not zero.
 4. Planned: shared admission limits and budget reservations/settlement, then
    read-only Dashboard/Diagnostics/Inbox integration and optional result evidence.
@@ -142,6 +143,38 @@ earlier failed log as current evidence. Luna 6 xhigh implemented SDK/bridge work
 and reviewed the read model; the parent fixed cost-scope uncertainty and secret-
 shaped runtime labels. Cost scope remains opt-in for existing adapters. No full
 Core regression, packaged installer, signed release or two-PC evidence is claimed.
+
+## Usage Summary Slice (2026-10-24)
+
+- Complete `sps.executions.summarize` / `executions.summarize` with the existing
+  `sps.executions.read` capability. No new write authority or business policy.
+- Accept canonical UTC millisecond `from/to` in a positive range of at most 31
+  days. Use execution creation time `[from, to)`, with optional lane or Agent
+  filter; neutral Node executions cannot be filtered by an invented Agent ID.
+- Read both lanes in one read-only repeatable-read transaction. Query bounded
+  rows and reject over 10,000 matching executions instead of partial totals.
+- Deduplicate lane/run identities in the projection. Repeated summary reads do
+  not insert usage/cost events. This reuses the existing per-run snapshot and
+  guarded terminal write; it does not add a second ledger or claim that provider
+  receipt ingestion/correction/reconciliation is complete.
+- Separate reported/estimated subtotals and unavailable counts. Empty or unknown
+  metrics stay null, explicit zero stays zero, and overflow becomes unknown.
+  API, subscription-reference and other USD costs remain separate. These numeric
+  adapter-report sums are not provider invoices or settlement amounts.
+- No schema migration or historical backfill. UI usage surfaces and budget /
+  admission enforcement remain follow-ups; this slice is API/SDK only.
+- An interrupted earlier edit left the new required client method without mock
+  and Worker implementations, preventing the DEV Owner Host SDK build. Restored
+  protocol, capability map, Host service, Worker client/finite RPC and test mock
+  together. SDK/server typechecks pass and the actual DEV app was restarted into
+  the existing Workspace without resetting login or data.
+- Focused Core nine-file set: 215 passed, one platform-inapplicable skip (216
+  total). DB limit/boundary additions also passed independently (25 scenarios),
+  including an actual 10,001-row refusal. Core recursive typecheck/full build and
+  compatibility boundary passed. Public SDK verified separately. No full Core
+  Linux regression, signed installer or physical two-PC evidence is claimed.
+- Luna 6 xhigh implemented the public SDK and performed a bounded read-model
+  review; parent completed Core plumbing, DB behavior, tests and app recovery.
 
 ## Verification and Safety
 
