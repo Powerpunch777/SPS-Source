@@ -371,7 +371,10 @@ try {
           command: liveCodexCommand,
           engine: "cli", cwd: pluginDirectory, model: "gpt-6-luna", reasoningEffort: "xhigh", fastMode: true,
           dangerouslyBypassApprovalsAndSandbox: false,
-          extraArgs: ["--sandbox", "workspace-write", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "-c", 'windows.sandbox="mxc"', "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=false"],
+          extraArgs: ["--sandbox", "workspace-write", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "-c", 'windows.sandbox="mxc"', "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=false",
+            // Explicit authorization for this isolated fixture's own-plugin RPC.
+            // Production Agent policies and all Core tool grants stay unchanged.
+            ...(liveTeam ? ["-c", 'mcp_servers.sps-plugin-session.tools.execute_plugin_tool.approval_mode="approve"'] : [])],
           timeoutSec: liveTeam ? 480 : 300, graceSec: 5,
         },
       },
