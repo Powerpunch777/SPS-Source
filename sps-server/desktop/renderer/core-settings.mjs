@@ -36,7 +36,8 @@ function syncControls() {
   const busy = statusLoading || pending.size > 0;
   for (const button of actionButtons) {
     const ownerAction = ["restart-host", "export-host"].includes(button.dataset.action);
-    button.disabled = busy || !currentStatus || (ownerAction && currentStatus.canManageHost === false);
+    button.disabled = busy || !currentStatus || (ownerAction && currentStatus.canManageHost === false)
+      || (button.dataset.action === "open-workspace" && currentStatus.desktopStateAvailable === false);
   }
   pluginToggle.disabled = busy || currentStatus?.canManageHost === false || typeof currentStatus?.recovery?.pluginsDisabled !== "boolean";
   retryButton.disabled = busy;
@@ -45,13 +46,14 @@ function syncControls() {
 function renderStatus(status) {
   currentStatus = status;
   const { host, recovery } = status;
-  byId("host-state").textContent = safeText(host.state);
+  byId("host-state").textContent = host.startupDeferred ? "Startup deferred (recovery)" : safeText(host.state);
+  byId("desktop-state-error").hidden = status.desktopStateAvailable !== false;
   byId("app-version").textContent = safeText(status.appVersion);
 
   const shortcut = status.shortcut;
   if (isRecord(shortcut) && typeof shortcut.registered === "boolean") {
     byId("shortcut-state").textContent = shortcut.registered
-      ? `Registered${typeof shortcut.accelerator === "string" && shortcut.accelerator.trim() ? ` · ${safeText(shortcut.accelerator)}` : ""}`
+      ? `Registered${typeof shortcut.accelerator === "string" && shortcut.accelerator.trim() ? ` · ${safeText(shortcut.accelerator).replace("CommandOrControl", "Ctrl")}` : ""}`
       : "Not registered";
   } else {
     byId("shortcut-state").textContent = "Unavailable";
@@ -64,7 +66,7 @@ function renderStatus(status) {
     : "Unavailable";
 
   const storageError = hasReportedError(recovery.storageError);
-  byId("storage-state").textContent = storageError ? "Error reported" : "No error reported";
+  byId("storage-state").textContent = storageError || status.desktopStateAvailable === false ? "Error reported" : "No error reported";
   byId("host-error").hidden = !hasReportedError(host.lastError);
   byId("storage-error").hidden = !storageError;
   byId("status-details").hidden = false;

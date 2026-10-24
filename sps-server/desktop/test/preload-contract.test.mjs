@@ -113,7 +113,7 @@ test("lets a signed-in Node owner map local task folders before opening Workspac
     readFile(new URL("../renderer/renderer.mjs", import.meta.url), "utf8"),
   ]);
 
-  assert.match(main, /let setupMode = false;/);
+  assert.match(main, /let setupMode = opensCoreSettingsOnLaunch;/);
   assert.match(main, /ipcMain\.handle\("desktop:save-default-workspace"/);
   assert.match(main, /ipcMain\.handle\("desktop:manage-host-project-source"/);
   assert.match(main, /ownerHostApi\(`\/companies\/\$\{encodeURIComponent\(companyId\)\}\/projects`\)/);

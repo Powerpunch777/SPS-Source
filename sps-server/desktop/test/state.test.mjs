@@ -3,7 +3,93 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { emptyState, loadState, saveState } from "../src/state.mjs";
+import { consumeLegacyDesktopConnectionMigration, emptyState, hasPendingLegacyDesktopOwnerAdoption, loadState, saveState } from "../src/state.mjs";
+
+test("strict startup rejects parseable damage to ownership and account routing", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-"));
+  const file = path.join(root, "sps-desktop-state.json");
+  const profile = { hubUrl: "http://127.0.0.1:31310", connectionKind: "owner-host" };
+  try {
+    for (const patch of [
+      { ownerHostOwnerSubject: 42 }, { accountConnections: [] },
+      { accountConnections: { member: null } },
+      { ownerHostOwnerSubject: "owner", accountConnections: { member: profile } },
+      { ownerHostOwnerSubject: null, profile },
+      { legacyOwnerHostAdoptionPending: "true" },
+      { encryptedDesktopAccount: [] }, { encryptedBoardApiToken: {} },
+      { encryptedTeamCredentials: [] }, { encryptedHostProjectShareSecrets: {} },
+      { identity: [] }, { identity: { encryptedPrivateKey: 42 } },
+      { identity: { encryptedTransportPrivateKey: {} } },
+      { legacyOwnerHostAdoptionPending: true, encryptedBoardApiToken: "fake-old-proof", companies: [{}] },
+    ]) {
+      const raw = JSON.stringify({ ...emptyState(), ...patch });
+      await fs.writeFile(file, raw);
+      await assert.rejects(loadState(root, { strictVersion: true }));
+      assert.equal(await fs.readFile(file, "utf8"), raw);
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("only genuine legacy loads receive a nonpersisted, one-use connection migration", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-"));
+  const file = path.join(root, "sps-desktop-state.json");
+  try {
+    await fs.writeFile(file, JSON.stringify({ version: 4, profile: { hubUrl: "https://host.example.test" } }));
+    const legacy = await loadState(root, { strictVersion: true });
+    assert.equal(consumeLegacyDesktopConnectionMigration({ ...legacy }), false);
+    assert.equal(consumeLegacyDesktopConnectionMigration(legacy), true);
+    assert.equal(consumeLegacyDesktopConnectionMigration(legacy), false);
+    await saveState(root, legacy);
+    assert.equal(consumeLegacyDesktopConnectionMigration(await loadState(root, { strictVersion: true })), false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("strict startup retains established current Owner and Member routing", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-"));
+  const owner = { hubUrl: "http://127.0.0.1:31310", connectionKind: "owner-host", authMode: "sps-identity" };
+  const member = { hubUrl: "https://host.example.test", connectionKind: "remote", authMode: "sps-identity" };
+  try {
+    for (const profile of [owner, member]) {
+      const saved = { ...emptyState(), ownerHostOwnerSubject: "owner", profile,
+        accountConnections: { owner, member } };
+      await saveState(root, saved);
+      const loaded = await loadState(root, { strictVersion: true });
+      assert.equal(loaded.ownerHostOwnerSubject, "owner");
+      assert.deepEqual(loaded.profile, profile);
+      assert.equal(loaded.accountConnections.owner.connectionKind, "owner-host");
+      assert.equal(loaded.accountConnections.member.connectionKind, "remote");
+      assert.equal(consumeLegacyDesktopConnectionMigration(loaded), false);
+    }
+    await saveState(root, { ...emptyState(), profile: member, accountConnections: { member } });
+    const memberOnly = await loadState(root, { strictVersion: true });
+    assert.equal(memberOnly.ownerHostOwnerSubject, null);
+    assert.equal(memberOnly.accountConnections.member.connectionKind, "remote");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("strict startup rejects unsupported or corrupt state without rewriting existing bytes", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-"));
+  const file = path.join(root, "sps-desktop-state.json");
+  try {
+    for (const raw of ['{"version":999,"profile":{"future":"keep"}}', "not-json"]) {
+      await fs.writeFile(file, raw);
+      await assert.rejects(loadState(root, { strictVersion: true }));
+      assert.equal(await fs.readFile(file, "utf8"), raw);
+    }
+    await fs.rm(file);
+    assert.deepEqual(await loadState(root, { strictVersion: true }), emptyState());
+    await fs.writeFile(file, JSON.stringify({ version: 1, nodeId: "retained-node" }));
+    assert.equal((await loadState(root, { strictVersion: true })).nodeId, "retained-node");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 test("adds private team access fields without discarding a v1 Desktop profile", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-"));
@@ -61,6 +147,11 @@ test("marks only an authenticated legacy Owner Vault for one-time SPS Identity a
 
     const state = await loadState(root);
     assert.equal(state.legacyOwnerHostAdoptionPending, true);
+    assert.equal(hasPendingLegacyDesktopOwnerAdoption(state), true);
+    assert.equal(hasPendingLegacyDesktopOwnerAdoption(JSON.parse(JSON.stringify(state))), false);
+    state.ownerHostOwnerSubject = "established-owner";
+    assert.equal(hasPendingLegacyDesktopOwnerAdoption(state), false);
+    state.ownerHostOwnerSubject = null;
     assert.equal(state.ownerHostOwnerSubject, null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });

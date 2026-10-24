@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Threading;
 
 internal static class AppContainerCanary
 {
@@ -46,6 +47,8 @@ internal static class AppContainerCanary
     [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateSymbolicLinkW")]
+    [return: MarshalAs(UnmanagedType.U1)] private static extern bool CreateSymbolicLink(string link, string target, uint flags);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(IntPtr process, uint rights, out IntPtr token);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool GetTokenInformation(IntPtr token, int kind, IntPtr value, int size, out int returned);
 
@@ -151,10 +154,85 @@ internal static class AppContainerCanary
         return succeeded;
     }
 
+    private static void RunTimeoutFixture(string id)
+    {
+        string name = "SPS.Isolation.PoC." + id;
+        string tempRoot = Path.GetFullPath(Path.GetTempPath());
+        string root = Path.Combine(tempRoot, "sps-appcontainer-poc-" + id);
+        CheckAncestors(root);
+        Directory.CreateDirectory(root);
+        string allowed = Path.Combine(root, "allowed"), vault = Path.Combine(root, "vault-canary");
+        Directory.CreateDirectory(allowed); Directory.CreateDirectory(vault);
+        File.WriteAllText(Path.Combine(allowed, "read.txt"), "SPS-PUBLIC-CANARY");
+        File.WriteAllText(Path.Combine(vault, "fake-secret.txt"), "SPS-FAKE-SECRET-" + id);
+        IntPtr sid = IntPtr.Zero;
+        int result = CreateAppContainerProfile(name, "SPS isolated canary test", "Temporary development canary only", IntPtr.Zero, 0, out sid);
+        try
+        {
+            if (result != 0) Marshal.ThrowExceptionForHR(result);
+        }
+        finally
+        {
+            if (sid != IntPtr.Zero) FreeSid(sid);
+        }
+        Console.WriteLine("{\"timeoutFixtureReady\":true}");
+        Console.Out.Flush();
+        Thread.Sleep(Timeout.Infinite);
+    }
+
+    private static int RunReparseFixture(string id)
+    {
+        string tempRoot = Path.GetFullPath(Path.GetTempPath());
+        string root = Path.Combine(tempRoot, "sps-appcontainer-poc-" + id);
+        string tree = Path.Combine(root, "tree"), target = Path.Combine(root, "fake-target");
+        string link = Path.Combine(tree, "fake-directory-link");
+        bool supported = false, rejected = false, linked = false, cleanup = false;
+        int errorCode = 0;
+        try
+        {
+            CheckAncestors(root);
+            Directory.CreateDirectory(tree);
+            Directory.CreateDirectory(target);
+            File.WriteAllText(Path.Combine(target, "fake.txt"), "SPS-REPARSE-CANARY");
+            if (!CreateSymbolicLink(link, target, 3))
+            {
+                errorCode = Marshal.GetLastWin32Error();
+                if (errorCode != 1 && errorCode != 50 && errorCode != 87 && errorCode != 1314) throw new Win32Exception(errorCode);
+                errorCode = 0;
+            }
+            else
+            {
+                supported = true;
+                linked = true;
+                try { CheckTree(tree); }
+                catch (InvalidOperationException error)
+                {
+                    if (error.Message != "Reparse point in test tree.") throw;
+                    rejected = true;
+                }
+            }
+        }
+        catch (Win32Exception error) { errorCode = error.NativeErrorCode; }
+        catch { errorCode = -1; }
+        finally
+        {
+            if (linked)
+            {
+                try { Directory.Delete(link, false); }
+                catch { errorCode = -1; }
+            }
+            cleanup = Cleanup(id, false);
+        }
+        bool passed = errorCode == 0 && cleanup && (!supported || rejected);
+        Console.WriteLine("{\"schemaVersion\":1,\"scope\":\"development-canary-only\",\"productIsolationImplemented\":false,\"reparseFixtureSupported\":" + Bool(supported)
+            + ",\"reparseRejected\":" + Bool(rejected) + ",\"cleanupSucceeded\":" + Bool(cleanup) + ",\"errorCode\":" + errorCode + ",\"passed\":" + Bool(passed) + "}");
+        return passed ? 0 : 2;
+    }
+
     public static int Main(string[] args)
     {
         Guid guid;
-        if (args.Length != 2 || (args[0] != "--run" && args[0] != "--cleanup") || !Guid.TryParseExact(args[1], "N", out guid)) return 2;
+        if (args.Length != 2 || (args[0] != "--run" && args[0] != "--cleanup" && args[0] != "--timeout-fixture" && args[0] != "--reparse-fixture") || !Guid.TryParseExact(args[1], "N", out guid)) return 2;
         string id = guid.ToString("N");
         if (args[0] == "--cleanup")
         {
@@ -162,6 +240,12 @@ internal static class AppContainerCanary
             Console.WriteLine("{\"cleanupSucceeded\":" + Bool(succeeded) + "}");
             return succeeded ? 0 : 2;
         }
+        if (args[0] == "--timeout-fixture")
+        {
+            RunTimeoutFixture(id);
+            return 0;
+        }
+        if (args[0] == "--reparse-fixture") return RunReparseFixture(id);
         string name = "SPS.Isolation.PoC." + id;
         string tempRoot = Path.GetFullPath(Path.GetTempPath());
         string root = Path.Combine(tempRoot, "sps-appcontainer-poc-" + id);

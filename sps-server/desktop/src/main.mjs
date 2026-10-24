@@ -54,7 +54,7 @@ import {
   shouldRefreshJoinedDesktopNode,
 } from "./node-activation.mjs";
 import { isSpsTechnicalMemberAccessRemoved } from "./member-access.mjs";
-import { emptyState, loadState, saveState } from "./state.mjs";
+import { consumeLegacyDesktopConnectionMigration, emptyState, hasPendingLegacyDesktopOwnerAdoption, loadState, saveState } from "./state.mjs";
 import {
   getSpsAccountConnection,
   normalizeSpsAccountConnection,
@@ -253,6 +253,8 @@ let officialExtensionsWindow = null;
 let coreSettingsController = null;
 let ownerHostRecoveryPluginsDisabled = null;
 let state = emptyState();
+let desktopStateUnavailable = false;
+let backgroundStartupDeferred = opensCoreSettingsOnLaunch;
 let pendingAuth = null;
 let desktopAccountController = null;
 let heartbeatTimer = null;
@@ -262,7 +264,7 @@ let pendingJoin = null;
 let pendingJoinError = null;
 let rendererReadyForJoinLinks = false;
 let workspaceOrigin = null;
-let setupMode = false;
+let setupMode = opensCoreSettingsOnLaunch;
 let nodeRuntimeStatus = emptyNodeRuntimeStatus();
 let tray = null;
 let isQuitting = false;
@@ -373,8 +375,19 @@ function decrypt(value) {
 }
 
 async function persistState({ rememberActiveConnection = true } = {}) {
+  if (desktopStateUnavailable) throw new Error("SPS Desktop connection settings are unavailable. Existing settings were not replaced.");
+  // Keep the original legacy file until adoption succeeds. New credentials are
+  // only in memory if migration fails, so restart can retry the genuine source.
+  if (hasPendingLegacyDesktopOwnerAdoption(state)) return;
   if (rememberActiveConnection) rememberCurrentAccountConnection();
   await saveState(app.getPath("userData"), state);
+}
+
+function enterDesktopStateRecovery() {
+  desktopStateUnavailable = true;
+  backgroundStartupDeferred = true;
+  setupMode = true;
+  state = emptyState();
 }
 
 function currentIdentity() {
@@ -518,7 +531,7 @@ function profilesMatch(left, right) {
 }
 
 // v1-v4 had one machine-wide `profile`. On first v5 launch, claim that
-  // legacy record for the already signed-in SPS account only. Later account
+// legacy record for the already signed-in SPS account only. Later account
 // switches never inherit another account's routing or local-workspace record.
 function restoreCurrentAccountConnection() {
   const account = currentDesktopAccount();
@@ -526,11 +539,9 @@ function restoreCurrentAccountConnection() {
     suspendExpiredAccountConnection();
     return false;
   }
-  if (Object.keys(state.accountConnections).length === 0 && state.profile) {
+  if (consumeLegacyDesktopConnectionMigration(state) && Object.keys(state.accountConnections).length === 0 && state.profile
+    && (!isOwnerHostProfile(state.profile) || state.ownerHostOwnerSubject === account.subject)) {
     state.accountConnections = setSpsAccountConnection(state.accountConnections, account.subject, state.profile);
-    if (isOwnerHostProfile(state.profile) && !state.ownerHostOwnerSubject) {
-      state.ownerHostOwnerSubject = account.subject;
-    }
   }
   let savedProfile = getSpsAccountConnection(state.accountConnections, account.subject);
   if (
@@ -584,7 +595,7 @@ function recordDesktopJoinAttempt(status, error = null) {
 }
 
 async function adoptLegacyOwnerHostIfNeeded() {
-  if (!state.legacyOwnerHostAdoptionPending || state.ownerHostOwnerSubject || !currentDesktopAccount()) {
+  if (!hasPendingLegacyDesktopOwnerAdoption(state) || !currentDesktopAccount()) {
     return false;
   }
   await startOwnerHost({ activate: true });
@@ -605,6 +616,7 @@ function openSpsExternalUrl(value) {
 }
 
 async function startDesktopAccountSignIn() {
+  if (desktopStateUnavailable) throw new Error("Repair SPS Desktop connection settings before signing in.");
   return desktopAccountController.signIn();
 }
 
@@ -1385,6 +1397,7 @@ async function requireReadyOwnerHost() {
 }
 
 async function ensureOwnerHostManager() {
+  if (desktopStateUnavailable) throw new Error("Repair SPS Desktop connection settings before starting the Host.");
   const vaultRoot = ownerVaultRoot();
   const ownerHost = await ensureSpsOwnerHostConfig({ vaultRoot });
   const recovery = await loadCoreRecoverySettings({ userDataPath: app.getPath("userData") });
@@ -1591,6 +1604,7 @@ async function activateOwnerHostProfile() {
 
 async function startOwnerHost({ activate = false } = {}) {
   const ownerHost = await ensureOwnerHostManager();
+  backgroundStartupDeferred = false;
   ownerHostStatus = {
     state: "starting",
     url: ownerHost.url,
@@ -3816,6 +3830,7 @@ async function maybeOpenWorkspaceForCurrentAccount() {
 }
 
 async function showMainWindow() {
+  if (desktopStateUnavailable) return showCoreSettings();
   if (!mainWindow || mainWindow.isDestroyed()) await createWindow();
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
@@ -3838,8 +3853,9 @@ function ensureCoreSettingsController() {
       const host = ownerHostManager ? await ownerHostManager.inspect().catch(() => ownerHostStatus) : ownerHostStatus;
       return {
         appVersion: app.getVersion(),
-        canManageHost: isOwnerHostProfile() && currentAccountOwnsOwnerHost(),
-        host: { state: host.state, lastError: host.lastError ? redactLocalDiagnostic(host.lastError) : null },
+        canManageHost: !desktopStateUnavailable && isOwnerHostProfile() && currentAccountOwnsOwnerHost(),
+        desktopStateAvailable: !desktopStateUnavailable,
+        host: { state: host.state, startupDeferred: backgroundStartupDeferred, lastError: host.lastError ? redactLocalDiagnostic(host.lastError) : null },
         recovery: { ...recovery, needsRestart: ownerHostRecoveryPluginsDisabled !== null && recovery.pluginsDisabled !== ownerHostRecoveryPluginsDisabled },
       };
     },
@@ -3864,15 +3880,33 @@ function ensureCoreSettingsController() {
       defaultMemoryManager = null;
       ownerHostManager = null;
       ownerHostRecoveryPluginsDisabled = null;
-      await startOwnerHost({ activate: false });
-      sendDesktopAccountStatus();
+      await startHostFromCoreSettings();
     },
-    openWorkspace: showWorkspace,
+    openWorkspace: async () => {
+      if (isOwnerHostProfile() && !ownerHostIsReady()) {
+        assertRegistryOwner();
+        await startHostFromCoreSettings();
+      }
+      await showWorkspace();
+      backgroundStartupDeferred = false;
+      scheduleHeartbeat();
+    },
     checkUpdates: checkForDesktopBetaUpdate,
     exportHost: exportOwnerVaultTransfer,
     inspectTransfer: inspectOwnerVaultTransfer,
   });
   return coreSettingsController;
+}
+
+async function startHostFromCoreSettings() {
+  try {
+    await startOwnerHost({ activate: false });
+  } catch (error) {
+    ownerHostStatus = { ...ownerHostStatus, state: "stopped", lastError: error instanceof Error ? error.message : "SPS Host could not start." };
+    throw error;
+  } finally {
+    sendDesktopAccountStatus();
+  }
 }
 
 async function showCoreSettings() {
@@ -4205,7 +4239,7 @@ function initializeDesktopAccountController() {
     encrypt,
     decrypt,
     persistState,
-    loadPersistedState: () => loadState(app.getPath("userData")),
+    loadPersistedState: () => loadState(app.getPath("userData"), { strictVersion: true }),
     withRefreshLock: withSpsDesktopRefreshLock,
     refreshIdentity: refreshSpsDesktopIdentity,
     isExpiredRefreshToken: isExpiredSpsDesktopRefreshToken,
@@ -4246,6 +4280,7 @@ function initializeDesktopAccountController() {
 }
 
 async function connectNode() {
+  if (desktopStateUnavailable) throw new Error("Repair SPS Desktop connection settings before connecting this Node.");
   if (isOwnerHostProfile()) {
     throw new Error("Owner Host mode is ready for local work. Enable remote Node grants after authenticated network setup is configured.");
   }
@@ -4388,6 +4423,7 @@ async function sendNodeHeartbeat() {
 }
 
 function scheduleHeartbeat({ immediate = true } = {}) {
+  if (desktopStateUnavailable) return;
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(() => { void sendNodeHeartbeat(); }, 60_000);
   if (immediate) void sendNodeHeartbeat();
@@ -5107,15 +5143,25 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
     else void showMainWindow();
   });
   app.whenReady().then(async () => {
-    state = await loadState(app.getPath("userData"));
+    try {
+      state = await loadState(app.getPath("userData"), { strictVersion: true });
+    } catch {
+      enterDesktopStateRecovery();
+    }
     initializeDesktopAccountController();
     restoreCurrentAccountConnection();
-    await persistState();
+    if (!desktopStateUnavailable) {
+      try { await persistState(); }
+      catch {
+        enterDesktopStateRecovery();
+        initializeDesktopAccountController();
+      }
+    }
     registerIpc();
     configureWorkspaceRequestAuth();
     createApplicationMenu();
     if (!developmentMode) app.setAsDefaultProtocolClient("sps");
-    await createWindow({ show: !startedHidden && !opensCoreSettingsOnLaunch });
+    await createWindow({ show: !startedHidden && !backgroundStartupDeferred });
     if (developmentMode) {
       const stopWatching = watchDevelopmentSurfaces({
         desktopRoot: path.resolve(__dirname, ".."),
@@ -5127,25 +5173,24 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
     createTray();
     ensureCoreSettingsController().registerShortcut();
     app.once("will-quit", () => coreSettingsController?.dispose());
-    if (opensCoreSettingsOnLaunch) await showCoreSettings();
+    if (backgroundStartupDeferred) await showCoreSettings();
     // Read Windows startup registration once after the first window is ready.
     // It must not run on the frequent status IPC path.
     setTimeout(refreshLaunchAtLoginStatus, 0);
-    void bootstrapOwnerHost().finally(() => {
-      // A returning Member already has a signed-in account and an accepted
-      // team connection. Reopen its Workspace on launch so the Node refreshes
-      // its heartbeat and any newly introduced local identity material (such
-      // as the project-source transport key) without a second user click.
-      // Owner Host startup keeps its existing, separately guarded path.
-      if (isOwnerHostProfile()) return;
-      void maybeOpenWorkspaceForCurrentAccount().catch((error) => {
-        desktopAccountController.setError(error);
-        sendDesktopAccountStatus();
+    if (!backgroundStartupDeferred) {
+      void bootstrapOwnerHost().finally(() => {
+        // Normal launch reconnects a returning Member; recovery-only launch
+        // never starts the Host or Node from saved connection metadata.
+        if (isOwnerHostProfile()) return;
+        void maybeOpenWorkspaceForCurrentAccount().catch((error) => {
+          desktopAccountController.setError(error);
+          sendDesktopAccountStatus();
+        });
       });
-    });
+      scheduleHeartbeat();
+    }
     const initialJoinArg = findSpsJoinUriArg(process.argv);
     if (initialJoinArg) sendJoinToRenderer(initialJoinArg);
-    scheduleHeartbeat();
     await initializeUpdates();
   });
 }
