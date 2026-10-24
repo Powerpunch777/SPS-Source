@@ -3,6 +3,8 @@ const $ = (selector) => document.querySelector(selector);
 let sources = [];
 let selectedSourceId = null;
 let developerProjects = [];
+let developerContext = null;
+let developerContextError = null;
 let selectedDeveloperFolder = null;
 let previewDiagnostics = [];
 let previewDiagnosticsWarning = null;
@@ -66,7 +68,7 @@ function renderDeveloperProjects() {
     const changed = inspection?.changedSinceCandidate;
     const lastKnownGood = project.lastKnownGood;
     return `
-      <article class="developer-card">
+      <article class="developer-card" data-project-id="${escapeHtml(project.id)}">
         <div class="developer-card-heading">
           <div>
             <span class="release-badge development">Development</span>
@@ -83,6 +85,7 @@ function renderDeveloperProjects() {
           <div><dt>Last known good</dt><dd>${lastKnownGood ? `<code>${escapeHtml(lastKnownGood.deployment.pluginId)} v${escapeHtml(lastKnownGood.deployment.version)}</code>` : "None"}</dd></div>
         </dl>
         <div class="developer-actions">
+          ${developerContext ? `<button class="secondary link-developer-context" type="button" data-project-id="${escapeHtml(project.id)}" ${developerContext.project?.id === project.id ? "disabled" : ""}>${developerContext.project?.id === project.id ? "Linked to this context" : "Link to this context"}</button>` : ""}
           <button class="secondary inspect-developer-project" type="button" data-project-id="${escapeHtml(project.id)}">Check changes</button>
           <button class="secondary run-developer-gates" type="button" data-project-id="${escapeHtml(project.id)}">Build &amp; test</button>
           <button class="primary apply-developer-candidate" type="button" data-project-id="${escapeHtml(project.id)}" ${project.candidate?.promotable && changed !== true ? "" : "disabled"}>Open isolated preview</button>
@@ -94,6 +97,31 @@ function renderDeveloperProjects() {
       </article>
     `;
   }).join("");
+}
+
+function renderDeveloperContext() {
+  const visible = Boolean(developerContext || developerContextError);
+  $("#developer-context").hidden = !visible;
+  document.body.classList.toggle("developer-context-mode", visible);
+  $("#developer-context-title").textContent = developerContextError
+    ? "Project context unavailable" : developerContext
+      ? `${developerContext.workspaceName} / ${developerContext.pluginName} / ${developerContext.context.contextId.slice(0, 8)}` : "";
+  $("#developer-context-project").textContent = developerContextError || (developerContext?.project
+    ? `Linked: ${developerContext.project.displayName}`
+    : developerContext?.missingProject ? "The linked project was disconnected. Choose another project or unlink this reference."
+      : "No project linked.");
+  $("#clear-developer-context").hidden = !developerContext || (!developerContext.project && !developerContext.missingProject);
+}
+
+async function loadDeveloperContext() {
+  try {
+    developerContext = await window.spsRegistry.getDeveloperContext();
+    developerContextError = null;
+  } catch {
+    developerContext = null;
+    developerContextError = "Refresh this window before linking a project.";
+  }
+  renderDeveloperContext();
 }
 
 function renderPreviewDiagnostics() {
@@ -242,6 +270,7 @@ async function loadSources() {
 
 async function loadDeveloperProjects() {
   developerProjects = await window.spsRegistry.listDeveloperProjects();
+  await loadDeveloperContext();
   for (const projectId of [...developerInspections.keys()]) {
     if (!developerProjects.some((project) => project.id === projectId)) developerInspections.delete(projectId);
   }
@@ -278,6 +307,16 @@ async function inspectSelectedSource() {
 $("#refresh-sources").addEventListener("click", () => loadSources().catch((error) => setNotice(error.message, true)));
 $("#refresh-stages").addEventListener("click", () => loadStages());
 $("#refresh-developer-projects").addEventListener("click", () => loadDeveloperProjects().catch((error) => setNotice(error.message, true)));
+$("#clear-developer-context").addEventListener("click", async (event) => {
+  if (!developerContext) return;
+  event.currentTarget.disabled = true;
+  try {
+    developerContext = await window.spsRegistry.clearDeveloperContext({ contextToken: developerContext.contextToken });
+    renderDeveloperContext(); renderDeveloperProjects();
+    setNotice("Project reference unlinked. External files and Source permissions were not changed.");
+  } catch (error) { setNotice(error.message, true); }
+  finally { $("#clear-developer-context").disabled = false; }
+});
 $("#refresh-preview-diagnostics").addEventListener("click", () => loadPreviewDiagnostics().catch((error) => setNotice(error.message, true)));
 for (const control of document.querySelectorAll("#preview-diagnostics-origin, #preview-diagnostics-category, #preview-diagnostics-level")) {
   control.addEventListener("change", () => loadPreviewDiagnostics().catch((error) => setNotice(error.message, true)));
@@ -462,6 +501,13 @@ $("#developer-project-list").addEventListener("click", async (event) => {
   if (!button) return;
   button.disabled = true;
   try {
+    if (button.classList.contains("link-developer-context")) {
+      if (!developerContext) throw new Error("Open this project from a Workspace context first.");
+      developerContext = await window.spsRegistry.linkDeveloperContext({ projectId, contextToken: developerContext.contextToken });
+      renderDeveloperContext(); renderDeveloperProjects();
+      setNotice("Project reference linked. Build, Preview and Source permissions remain separate actions.");
+      return;
+    }
     if (button.classList.contains("inspect-developer-project")) {
       const inspection = await window.spsRegistry.inspectDeveloperProject({ projectId });
       developerInspections.set(projectId, inspection);

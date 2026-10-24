@@ -17,6 +17,12 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /sourceElectron/);
   assert.match(harness, /mockIdentity/);
   assert.match(harness, /openPluginRegistries/);
+  assert.match(harness, /getDeveloperProjectContext/);
+  assert.match(harness, /openDeveloperProjectContext/);
+  assert.match(harness, /link-developer-context/);
+  assert.match(harness, /oldContextToken/);
+  assert.match(harness, /Unsent plugin draft/);
+  assert.match(harness, /disconnected.missingProject, true/);
   assert.match(harness, /sps\.plugin-discovery:create-sps-plugin-project/);
   assert.match(harness, /run-sps-authoring-step/);
   assert.match(harness, /inspect-sps-plugin-build/);

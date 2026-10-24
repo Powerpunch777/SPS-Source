@@ -1,6 +1,6 @@
 // src/ui/DiscoveryPage.jsx
-import { useEffect, useRef, useState } from "react";
-import { useHostNavigation, usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
 
 // src/ui/builder-styles.js
 var builderStyles = `
@@ -12,29 +12,86 @@ var builderStyles = `
 .bc-transcript{overflow:auto;min-height:0;padding:24px clamp(16px,3vw,40px);overscroll-behavior:contain}.bc-empty{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;gap:8px}.bc-empty h2{font-size:22px;font-weight:600;margin:0}.bc-empty p{color:var(--muted-foreground,#68717b);margin:0;max-width:380px}.bc-message{max-width:800px;margin:0 auto 26px;overflow-wrap:anywhere}.bc-message.user{width:fit-content;max-width:85%;margin-right:0;margin-left:auto;background:var(--muted,#f5f5f5);border-radius:8px;padding:11px 15px}.bc-message-head{font-size:12px;color:var(--muted-foreground,#68717b);margin-bottom:6px;display:flex;gap:10px;align-items:center}.bc-message-body{white-space:pre-wrap;font-size:15px;line-height:1.7}.bc-message details{margin-top:8px;font-size:12px;color:var(--muted-foreground,#68717b)}.bc-message pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:12px/1.5 ui-monospace,monospace}.bc-error{color:#a61b1b;font-size:12px;overflow-wrap:anywhere}.bc-muted{color:var(--muted-foreground,#68717b);font-size:12px}.bc-status{border-radius:5px;background:var(--muted,#f4f4f4);padding:2px 6px;font-size:11px}
 .bc-composer{padding:12px clamp(16px,3vw,40px) 18px}.bc-compose-box{max-width:840px;margin:0 auto;border:1px solid var(--border,#ddd);border-radius:8px;padding:10px 12px;box-shadow:0 1px 3px #00000008}.bc-compose-box:focus-within{border-color:var(--ring,#888)}.bc-compose-box textarea{display:block;resize:none;width:100%;min-height:70px;max-height:180px;border:0;outline:0;background:transparent;padding:4px}.bc-compose-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}.bc-compose-tools select{min-width:0;max-width:200px;border:0;background:transparent;font-size:12px;padding:4px}.bc-spacer{flex:1}.bc-model{font-size:11px;color:var(--muted-foreground,#68717b)}.bc-file-chips{display:flex;gap:6px;flex-wrap:wrap}.bc-file-chip{display:flex;align-items:center;gap:5px;font-size:12px;padding:2px 6px;border:1px solid var(--border,#ddd);border-radius:5px}.bc-file-chip button{border:0;background:transparent}.bc-hidden{display:none}.bc-notice{max-width:840px;margin:6px auto;font-size:12px}
 .bc-panel{position:relative;min-width:0;min-height:0;overflow:auto;border-left:1px solid var(--border,#ddd);background:var(--background,#fff);padding:14px}.bc-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.bc-panel h3{margin:18px 0 8px;font-size:12px;font-weight:600}.bc-panel p{font-size:12px;color:var(--muted-foreground,#68717b)}.bc-person{display:flex;gap:8px;align-items:center;padding:8px 0;min-width:0}.bc-person label{display:flex;gap:8px;align-items:center;width:100%;min-width:0}.bc-person-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bc-person small{margin-left:auto;color:var(--muted-foreground,#68717b);font-size:11px}.bc-resizer{position:absolute;top:0;bottom:0;left:0;width:6px;cursor:col-resize;touch-action:none}.bc-evidence{border-top:1px solid var(--border,#ddd);padding-top:12px;margin-top:18px}.bc-evidence summary{cursor:pointer;font-size:12px}.bc-evidence-item{padding:8px 0;border-bottom:1px solid var(--border,#eee);font-size:12px}.bc-evidence-item strong{display:block}.bc-evidence-item p{margin:4px 0;overflow-wrap:anywhere}
+.bc-project-context{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.bc-project-context h3,.bc-project-context p,.bc-project-name{flex-basis:100%;margin-bottom:0;overflow-wrap:anywhere}.bc-project-name{display:grid;gap:3px;min-width:0;font-size:12px}.bc-project-name small{color:var(--muted-foreground,#68717b)}.bc-project-context>small{display:block;flex-basis:100%;color:var(--muted-foreground,#68717b);font-size:11px;overflow-wrap:anywhere}
 @media(max-width:1100px){.sps-builder.with-panel{grid-template-columns:var(--builder-rail) minmax(0,1fr)}.bc-panel{position:absolute;inset:0 0 0 auto;z-index:4;width:min(var(--builder-panel),80%);box-shadow:-8px 0 24px #0000000d}}
 @media(max-width:850px){.sps-builder{--builder-rail:150px}.bc-model{display:none}}
 @media(max-width:600px){.sps-builder{--builder-rail:0px}.bc-rail{display:none}.bc-composer{padding:10px}.bc-transcript{padding:16px}.bc-header{padding:8px 10px}}
 `;
 
+// src/ui/developer-project-context.js
+var DEVELOPER_PROJECT_PLUGIN_ID = "sps.plugin-discovery";
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function safeLabel(value) {
+  if (typeof value !== "string") return null;
+  const label = value.trim();
+  if (!label || label.length > 120 || /[\\/:\u0000-\u001f\u007f]/.test(label)) return null;
+  return label;
+}
+function buildDeveloperProjectContextInput(scope) {
+  if (!record(scope) || typeof scope.companyId !== "string" || !UUID.test(scope.companyId) || typeof scope.contextId !== "string" || !UUID.test(scope.contextId)) return null;
+  return {
+    companyId: scope.companyId,
+    pluginId: DEVELOPER_PROJECT_PLUGIN_ID,
+    contextId: scope.contextId
+  };
+}
+function getDeveloperProjectBridge(host) {
+  if (!record(host) || typeof host.getDeveloperProjectContext !== "function" || typeof host.openDeveloperProjectContext !== "function") return null;
+  return Object.freeze({
+    get(scope) {
+      const input = buildDeveloperProjectContextInput(scope);
+      if (!input) throw new TypeError("A valid Workspace and conversation are required.");
+      return host.getDeveloperProjectContext(input);
+    },
+    open(scope) {
+      const input = buildDeveloperProjectContextInput(scope);
+      if (!input) throw new TypeError("A valid Workspace and conversation are required.");
+      return host.openDeveloperProjectContext(input);
+    }
+  });
+}
+function normalizeDeveloperProjectContextResponse(value) {
+  if (!record(value) || value.available !== true || typeof value.missingProject !== "boolean") return null;
+  if (value.project === null) {
+    return { project: null, missingProject: value.missingProject };
+  }
+  if (!record(value.project) || value.missingProject || typeof value.project.id !== "string" || !value.project.id || typeof value.project.verified !== "boolean") return null;
+  const displayName = safeLabel(value.project.displayName);
+  const sourceLabel = safeLabel(value.project.sourceLabel);
+  if (!displayName || !sourceLabel) return null;
+  return {
+    project: { displayName, sourceLabel, verified: value.project.verified },
+    missingProject: false
+  };
+}
+
 // src/ui/DiscoveryPage.jsx
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
+function desktopProjectBridge() {
+  if (typeof window === "undefined") return null;
+  return getDeveloperProjectBridge(window.spsDesktopWorkspace);
+}
 function PluginBuilderPage({ context }) {
   const { data, loading, error, refresh } = usePluginData("plugin-builder-workspace", { companyId: context.companyId });
   const create = usePluginAction("builder-create"), send = usePluginAction("builder-send"), saveTeam = usePluginAction("builder-team");
   const stop = usePluginAction("builder-stop");
-  const navigation = useHostNavigation();
   const [selectedId, setSelectedId] = useState(null), [leadId, setLeadId] = useState("");
   const [workers, setWorkers] = useState([]), [draft, setDraft] = useState(""), [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [panel, setPanel] = useState(false), [panelWidth, setPanelWidth] = useState(300);
-  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null);
+  const [projectState, setProjectState] = useState(null), [projectBusy, setProjectBusy] = useState(false);
+  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null), projectRequest = useRef(0), projectRefresh = useRef(null), createdConversation = useRef(null), projectActionGeneration = useRef(0), projectActionCompany = useRef(context.companyId);
   const agents = data?.agents ?? [], conversations = data?.conversations ?? [];
   const conversation = conversations.find((item) => item.id === selectedId);
+  const projectConversation = conversation ?? (createdConversation.current?.id === selectedId ? createdConversation.current : null);
   const selectedLeadId = conversation?.leadId || leadId || agents[0]?.id || "";
   const selectedWorkers = conversation?.workerIds ?? workers, lead = agents.find((agent) => agent.id === selectedLeadId);
   const messages = conversation?.messages ?? [], activeMessage = messages.find((message) => ["running", "cancelling"].includes(message.status) || message.recoveryPending);
   const running = Boolean(activeMessage), cancelling = activeMessage?.status === "cancelling";
   const sessions = data?.authoringSessions ?? [];
+  const projectContextId = projectConversation?.id ?? null;
+  const projectScopeKey = JSON.stringify([context.companyId, projectContextId]);
+  const visibleProjectState = panel && projectState?.scopeKey === projectScopeKey ? projectState : null;
   useEffect(() => {
     const timer = setInterval(refresh, running ? 1500 : 1e4);
     return () => clearInterval(timer);
@@ -43,7 +100,74 @@ function PluginBuilderPage({ context }) {
     end.current?.scrollIntoView({ block: "nearest" });
   }, [selectedId, messages.length, messages.at(-1)?.status]);
   useEffect(() => () => resizeCleanup.current?.(), []);
+  useEffect(() => () => {
+    projectActionGeneration.current++;
+  }, []);
+  useLayoutEffect(() => {
+    if (projectActionCompany.current === context.companyId) return;
+    projectActionCompany.current = context.companyId;
+    projectActionGeneration.current++;
+    createdConversation.current = null;
+    setSelectedId(null);
+  }, [context.companyId]);
+  useEffect(() => {
+    let stale = false;
+    projectRefresh.current = null;
+    if (!panel) return () => {
+      stale = true;
+      projectRequest.current++;
+    };
+    const scopeKey = JSON.stringify([context.companyId, projectConversation?.id ?? null]);
+    const bridge = desktopProjectBridge();
+    if (!bridge) {
+      setProjectState({ scopeKey, kind: "host-only" });
+      return () => {
+        stale = true;
+        projectRequest.current++;
+      };
+    }
+    if (!projectConversation?.id) {
+      setProjectState({ scopeKey, kind: "no-conversation" });
+      return () => {
+        stale = true;
+        projectRequest.current++;
+      };
+    }
+    const scope = { companyId: context.companyId, contextId: projectConversation.id };
+    if (!buildDeveloperProjectContextInput(scope)) {
+      setProjectState({ scopeKey, kind: "error" });
+      return () => {
+        stale = true;
+        projectRequest.current++;
+      };
+    }
+    const loadProjectContext = async () => {
+      const requestId = ++projectRequest.current;
+      setProjectState({ scopeKey, kind: "loading" });
+      try {
+        const response = normalizeDeveloperProjectContextResponse(await bridge.get(scope));
+        if (!response) throw new Error("Invalid project context response.");
+        if (!stale && requestId === projectRequest.current) setProjectState({ scopeKey, kind: "ready", value: response });
+      } catch {
+        if (!stale && requestId === projectRequest.current) setProjectState({ scopeKey, kind: "error" });
+      }
+    };
+    projectRefresh.current = loadProjectContext;
+    void loadProjectContext();
+    const refreshOnFocus = () => {
+      void loadProjectContext();
+    };
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      stale = true;
+      projectRequest.current++;
+      if (projectRefresh.current === loadProjectContext) projectRefresh.current = null;
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [panel, context.companyId, projectConversation?.id]);
   function fresh() {
+    projectActionGeneration.current++;
+    createdConversation.current = null;
     setSelectedId(null);
     setDraft("");
     setFiles([]);
@@ -55,7 +179,7 @@ function PluginBuilderPage({ context }) {
     setBusy(true);
     setNotice("");
     try {
-      const current = conversation ?? await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
+      const current = projectConversation ?? await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
       setSelectedId(current.id);
       await send({ conversationId: current.id, message: draft, attachments: files });
       setDraft("");
@@ -98,6 +222,46 @@ function PluginBuilderPage({ context }) {
       refresh();
     }
   }
+  async function openProjectContext() {
+    if (busy || projectBusy) return;
+    const bridge = desktopProjectBridge();
+    if (!bridge) {
+      setProjectState({ scopeKey: projectScopeKey, kind: "host-only" });
+      return;
+    }
+    if (!selectedLeadId || !lead) {
+      setProjectState({ scopeKey: projectScopeKey, kind: "error" });
+      return;
+    }
+    const actionGeneration = ++projectActionGeneration.current;
+    const actionCompanyId = context.companyId;
+    const actionIsCurrent = () => projectActionGeneration.current === actionGeneration && projectActionCompany.current === actionCompanyId;
+    setBusy(true);
+    setProjectBusy(true);
+    let targetConversation = projectConversation;
+    try {
+      if (!targetConversation) {
+        targetConversation = await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
+        if (!actionIsCurrent()) return;
+        createdConversation.current = targetConversation;
+        setSelectedId(targetConversation.id);
+        await refresh();
+        if (!actionIsCurrent()) return;
+      }
+      const scope = { companyId: context.companyId, contextId: targetConversation.id };
+      if (!buildDeveloperProjectContextInput(scope)) throw new Error("Invalid project scope.");
+      if (!actionIsCurrent()) return;
+      const result = await bridge.open(scope);
+      if (result?.opened !== true) throw new Error("Host did not open the Developer Registry.");
+    } catch {
+      if (!actionIsCurrent()) return;
+      const contextId = targetConversation?.id ?? projectContextId;
+      setProjectState({ scopeKey: JSON.stringify([context.companyId, contextId]), kind: "error" });
+    } finally {
+      setBusy(false);
+      setProjectBusy(false);
+    }
+  }
   async function attach(event) {
     const chosen = [...event.target.files];
     event.target.value = "";
@@ -137,6 +301,8 @@ function PluginBuilderPage({ context }) {
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "bc-list", children: [
         [...conversations].reverse().map((item) => /* @__PURE__ */ jsxs("button", { className: `bc-chat-link ${selectedId === item.id ? "active" : ""}`, onClick: () => {
+          projectActionGeneration.current++;
+          createdConversation.current = null;
           setSelectedId(item.id);
           setDraft("");
           setFiles([]);
@@ -253,8 +419,34 @@ function PluginBuilderPage({ context }) {
           /* @__PURE__ */ jsx("p", { children: report.content || "\uC2E4\uD589 \uC911" })
         ] }, report.id))
       ] }) : null,
-      /* @__PURE__ */ jsx("h3", { children: "Preview" }),
-      /* @__PURE__ */ jsx("button", { className: "bc-button", onClick: () => navigation.navigate("/company/settings/instance/plugins"), children: "\uD50C\uB7EC\uADF8\uC778 \uAC80\uD1A0 \uC5F4\uAE30" }),
+      /* @__PURE__ */ jsxs("section", { className: "bc-project-context", "aria-label": "\uC81C\uC791 \uD504\uB85C\uC81D\uD2B8", children: [
+        /* @__PURE__ */ jsx("h3", { children: "\uC81C\uC791 \uD504\uB85C\uC81D\uD2B8" }),
+        visibleProjectState?.kind === "host-only" ? /* @__PURE__ */ jsx("p", { children: "\uD504\uB85C\uC81D\uD2B8 \uC5F0\uACB0\uC740 Host \uC571\uC5D0\uC11C\uB9CC \uC0AC\uC6A9\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." }) : null,
+        visibleProjectState?.kind === "loading" ? /* @__PURE__ */ jsx("p", { children: "\uC774 \uB300\uD654\uC758 \uD504\uB85C\uC81D\uD2B8 \uC815\uBCF4\uB97C \uBD88\uB7EC\uC624\uB294 \uC911..." }) : null,
+        visibleProjectState?.kind === "error" ? /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsx("p", { className: "bc-error", role: "alert", children: "\uC774 \uB300\uD654\uC758 \uD504\uB85C\uC81D\uD2B8 \uC815\uBCF4\uB97C \uBD88\uB7EC\uC624\uAC70\uB098 \uC5F4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694." }),
+          projectContextId ? /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-refresh", disabled: busy, onClick: () => projectRefresh.current?.(), children: "\uC0C8\uB85C\uACE0\uCE68" }) : /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-open", disabled: busy || !lead, onClick: openProjectContext, children: "\uD504\uB85C\uC81D\uD2B8 \uC5F0\uACB0" })
+        ] }) : null,
+        visibleProjectState?.kind === "no-conversation" ? /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsx("p", { children: "\uB300\uD654\uB97C \uB9CC\uB4E0 \uB4A4 \uC774 \uB300\uD654\uC5D0 \uC81C\uC791 \uD504\uB85C\uC81D\uD2B8\uB97C \uC5F0\uACB0\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." }),
+          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-open", disabled: busy || !lead, onClick: openProjectContext, children: projectBusy ? "\uC5EC\uB294 \uC911\u2026" : "\uD504\uB85C\uC81D\uD2B8 \uC5F0\uACB0" })
+        ] }) : null,
+        visibleProjectState?.kind === "ready" && !visibleProjectState.value.project ? /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsx("p", { children: visibleProjectState.value.missingProject ? "\uC5F0\uACB0\uD588\uB358 \uD504\uB85C\uC81D\uD2B8\uAC00 \uBAA9\uB85D\uC5D0\uC11C \uC81C\uAC70\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC5F0\uACB0\uD558\uAC70\uB098 \uAC80\uD1A0 \uCC3D\uC5D0\uC11C \uC5F0\uACB0\uC744 \uD574\uC81C\uD558\uC138\uC694." : "\uC774 \uB300\uD654\uC5D0\uB294 \uC5F0\uACB0\uB41C \uC81C\uC791 \uD504\uB85C\uC81D\uD2B8\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." }),
+          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-open", disabled: busy || !lead, onClick: openProjectContext, children: projectBusy ? "\uC5EC\uB294 \uC911\u2026" : "\uD504\uB85C\uC81D\uD2B8 \uC5F0\uACB0" }),
+          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-refresh", disabled: busy, onClick: () => projectRefresh.current?.(), children: "\uC0C8\uB85C\uACE0\uCE68" })
+        ] }) : null,
+        visibleProjectState?.kind === "ready" && visibleProjectState.value.project ? /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsxs("div", { className: "bc-project-name", children: [
+            /* @__PURE__ */ jsx("strong", { children: visibleProjectState.value.project.displayName }),
+            /* @__PURE__ */ jsx("small", { children: visibleProjectState.value.project.sourceLabel })
+          ] }),
+          /* @__PURE__ */ jsx("p", { title: "\uD604\uC7AC \uC18C\uC2A4\uAC00 \uAC80\uC99D\uB418\uC5C8\uC74C\uC744 \uC758\uBBF8\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", children: visibleProjectState.value.project.verified ? "\uB9C8\uC9C0\uB9C9 Preview \uAC80\uC99D\uBCF8 \uC788\uC74C" : "\uB9C8\uC9C0\uB9C9 Preview \uAC80\uC99D\uBCF8 \uC5C6\uC74C" }),
+          /* @__PURE__ */ jsx("small", { title: "Developer Registry \uC5F0\uACB0\uB9CC \uC218\uD589\uD558\uBA70 Source \uB610\uB294 CLI \uAD8C\uD55C\uC740 \uBD80\uC5EC\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", children: "Registry \uC5F0\uACB0\uC740 Source/CLI \uAD8C\uD55C\uC744 \uBD80\uC5EC\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." }),
+          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-open", disabled: busy, onClick: openProjectContext, children: projectBusy ? "\uC5EC\uB294 \uC911\u2026" : "\uAC80\uC99D\xB7Preview \uC5F4\uAE30" }),
+          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-refresh", disabled: busy, onClick: () => projectRefresh.current?.(), children: "\uC0C8\uB85C\uACE0\uCE68" })
+        ] }) : null
+      ] }),
       /* @__PURE__ */ jsxs("details", { className: "bc-evidence", children: [
         /* @__PURE__ */ jsxs("summary", { children: [
           "\uC81C\uC791 \uAE30\uB85D \xB7 Authoring projects (",

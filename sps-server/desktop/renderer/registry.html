@@ -22,6 +22,10 @@
           </div>
           <button id="refresh-developer-projects" class="icon-button" type="button" title="Refresh developer projects">Refresh</button>
         </div>
+        <div id="developer-context" class="developer-context" hidden aria-label="Developer project context">
+          <div><strong id="developer-context-title"></strong><p id="developer-context-project"></p></div>
+          <button id="clear-developer-context" class="secondary" type="button" hidden>Unlink project</button>
+        </div>
         <form id="developer-project-form" class="developer-project-form">
           <label>Plugin project<input id="developer-source-path" readonly placeholder="Choose an external plugin project folder" /></label>
           <label>Display name<input id="developer-display-name" maxlength="120" placeholder="My SPS Plugin" /></label>

@@ -167,6 +167,8 @@ import {
 } from "./developer-diagnostics.mjs";
 import { registerDesktopRegistryIpc } from "./desktop-registry-controller.mjs";
 import { resolveDeveloperPackageArtifact } from "./developer-package-artifact.mjs";
+import { normalizeDeveloperContext, getDeveloperContextLink, setDeveloperContextLink, clearDeveloperContextLink } from "./developer-context-store.mjs";
+import { registerDesktopDeveloperContextIpc } from "./desktop-developer-context-controller.mjs";
 import { assessSpsPluginCompatibility } from "./plugin-compatibility.mjs";
 import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
@@ -235,6 +237,7 @@ let mainWindow = null;
 let ownerCreationInProgress = false;
 let workspaceWindow = null;
 let registryWindow = null;
+let registryDeveloperContext = null;
 let pluginPreviewWindow = null;
 let pluginPreviewRuntime = null;
 let pluginPreviewClosing = false;
@@ -2019,6 +2022,81 @@ async function developerProjectRecord(projectId) {
   return project;
 }
 
+async function resolveDesktopDeveloperContext(input) {
+  assertRegistryOwner();
+  const context = normalizeDeveloperContext(input);
+  const company = await ownerHostApi(`/companies/${encodeURIComponent(context.companyId)}`, { ownerBootstrap: true });
+  if (company?.id !== context.companyId) throw new Error("Developer context Workspace was not found.");
+  const plugins = await ownerHostApi("/plugins", { ownerBootstrap: true });
+  const plugin = plugins.find(entry => entry.pluginKey === context.pluginId);
+  if (!plugin) throw new Error("Developer context plugin was not found on this Host.");
+  return { context, workspaceName: company.name, pluginName: plugin.manifestJson?.displayName || context.pluginId };
+}
+
+async function getDesktopDeveloperContext(input) {
+  const resolved = await resolveDesktopDeveloperContext(input);
+  const binding = await getDeveloperContextLink({ vaultRoot: ownerVaultRoot(), context: resolved.context });
+  const projects = binding ? (await loadDeveloperProjects({ vaultRoot: ownerVaultRoot() })).projects : [];
+  const project = projects.find(entry => entry.id === binding?.projectId);
+  assertRegistryOwner();
+  return {
+    available: true,
+    ...resolved,
+    project: project ? {
+      id: project.id, displayName: project.displayName,
+      sourceLabel: publicDeveloperProject(project).sourceLabel,
+      verified: Boolean(project.lastKnownGood),
+    } : null,
+    missingProject: Boolean(binding && !project),
+  };
+}
+
+async function openDesktopDeveloperContext(input) {
+  const resolved = await resolveDesktopDeveloperContext(input);
+  await showRegistryWindow({ developerContext: resolved.context });
+  return { opened: true };
+}
+
+async function getRegistryDeveloperContext() {
+  assertRegistryOwner();
+  const selection = registryDeveloperContext;
+  if (!selection) return null;
+  const result = await getDesktopDeveloperContext(selection.context);
+  if (registryDeveloperContext !== selection) throw new Error("Developer context changed. Refresh this window.");
+  return { ...result, contextToken: selection.token };
+}
+
+function selectedRegistryDeveloperContext(token) {
+  const selection = registryDeveloperContext;
+  if (!selection || typeof token !== "string" || token !== selection.token) {
+    throw new Error("Developer context changed. Refresh this window before linking a project.");
+  }
+  return selection;
+}
+
+async function linkRegistryDeveloperContext(input) {
+  assertRegistryOwner();
+  const selection = selectedRegistryDeveloperContext(input?.contextToken);
+  await resolveDesktopDeveloperContext(selection.context);
+  const project = await developerProjectRecord(input?.projectId);
+  selectedRegistryDeveloperContext(input.contextToken);
+  assertRegistryOwner();
+  await setDeveloperContextLink({ vaultRoot: ownerVaultRoot(), context: selection.context, projectId: project.id });
+  selectedRegistryDeveloperContext(input.contextToken);
+  return await getRegistryDeveloperContext();
+}
+
+async function clearRegistryDeveloperContext(input) {
+  assertRegistryOwner();
+  const selection = selectedRegistryDeveloperContext(input?.contextToken);
+  await resolveDesktopDeveloperContext(selection.context);
+  selectedRegistryDeveloperContext(input.contextToken);
+  assertRegistryOwner();
+  await clearDeveloperContextLink({ vaultRoot: ownerVaultRoot(), context: selection.context });
+  selectedRegistryDeveloperContext(input.contextToken);
+  return await getRegistryDeveloperContext();
+}
+
 async function withDeveloperProjectOperation(projectId, operation) {
   if (activeDeveloperProjectOperations.has(projectId)) {
     throw new Error("This developer project already has an operation in progress.");
@@ -3535,12 +3613,11 @@ function configureWorkspaceNavigation(window, hubOrigin) {
   });
 }
 
-async function showRegistryWindow({ sourceId = null } = {}) {
+async function showRegistryWindow({ sourceId = null, developerContext = null } = {}) {
   assertRegistryOwner();
+  registryDeveloperContext = developerContext ? { context: normalizeDeveloperContext(developerContext), token: randomUUID() } : null;
   if (registryWindow && !registryWindow.isDestroyed()) {
-    if (sourceId) {
-      await registryWindow.loadFile(path.join(__dirname, "..", "renderer", "registry.html"), { query: { source: sourceId } });
-    }
+    await registryWindow.loadFile(path.join(__dirname, "..", "renderer", "registry.html"), { query: sourceId ? { source: sourceId } : {} });
     registryWindow.show();
     registryWindow.focus();
     return;
@@ -3567,7 +3644,7 @@ async function showRegistryWindow({ sourceId = null } = {}) {
   });
   window.once("ready-to-show", () => window.show());
   window.on("closed", () => {
-    if (registryWindow === window) registryWindow = null;
+    if (registryWindow === window) { registryWindow = null; registryDeveloperContext = null; }
   });
   await window.loadFile(
     path.join(__dirname, "..", "renderer", "registry.html"),
@@ -4483,6 +4560,11 @@ function registerIpc() {
     // still opens the source manager without preselecting a Registry.
     await showRegistryWindow({ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE.id });
     return { opened: true };
+  });
+  registerDesktopDeveloperContextIpc({
+    ipcMain, assertLocalOwnerWorkspace, assertRegistryWindowEvent, assertRegistryOwner,
+    getDesktopDeveloperContext, openDesktopDeveloperContext, getRegistryDeveloperContext,
+    linkRegistryDeveloperContext, clearRegistryDeveloperContext,
   });
   ipcMain.handle("desktop:official-extensions-load-catalog", async (event) => {
     if (!officialExtensionsWindow || officialExtensionsWindow.isDestroyed() || event.sender.id !== officialExtensionsWindow.webContents.id) {

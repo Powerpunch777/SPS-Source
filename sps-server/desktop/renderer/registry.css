@@ -88,6 +88,13 @@ button { cursor: pointer; }
   .catalog-panel, .review-panel { padding: 18px; }
 }
 .developer-panel { max-height: 390px; overflow: auto; padding: 16px 22px 18px; border-bottom: 1px solid #e2e5e9; background: #f7f8f9; }
+.developer-context { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 0 14px; margin-bottom: 14px; border-bottom: 1px solid #e2e5e9; }
+.developer-context[hidden], #clear-developer-context[hidden] { display: none; }
+.developer-context > div { min-width: 0; }
+.developer-context strong, .developer-context p { overflow-wrap: anywhere; }
+.developer-context p { margin: 5px 0 0; color: #626b75; font-size: 12px; }
+.developer-context-mode .developer-panel { max-height: none; flex: 1; }
+.developer-context-mode .registry-grid, .developer-context-mode .review-panel { display: none; }
 .section-kicker { margin: 0 0 5px !important; color: #626b75 !important; font-size: 11px !important; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
 .developer-project-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(160px, 0.8fr) auto auto; align-items: end; gap: 9px; margin-bottom: 14px; }
 .developer-project-form label { display: grid; gap: 5px; color: #626b75; font-size: 12px; }

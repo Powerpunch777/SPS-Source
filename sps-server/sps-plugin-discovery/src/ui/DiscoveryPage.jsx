@@ -1,33 +1,98 @@
-import { useEffect, useRef, useState } from "react";
-import { useHostNavigation, usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
 import { builderStyles } from "./builder-styles.js";
+import {
+  buildDeveloperProjectContextInput,
+  getDeveloperProjectBridge,
+  normalizeDeveloperProjectContextResponse,
+} from "./developer-project-context.js";
+
+function desktopProjectBridge() {
+  if (typeof window === "undefined") return null;
+  return getDeveloperProjectBridge(window.spsDesktopWorkspace);
+}
 
 export function PluginBuilderPage({ context }) {
   const { data, loading, error, refresh } = usePluginData("plugin-builder-workspace", { companyId: context.companyId });
   const create = usePluginAction("builder-create"), send = usePluginAction("builder-send"), saveTeam = usePluginAction("builder-team");
   const stop = usePluginAction("builder-stop");
-  const navigation = useHostNavigation();
   const [selectedId, setSelectedId] = useState(null), [leadId, setLeadId] = useState("");
   const [workers, setWorkers] = useState([]), [draft, setDraft] = useState(""), [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [panel, setPanel] = useState(false), [panelWidth, setPanelWidth] = useState(300);
-  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null);
+  const [projectState, setProjectState] = useState(null), [projectBusy, setProjectBusy] = useState(false);
+  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null), projectRequest = useRef(0), projectRefresh = useRef(null), createdConversation = useRef(null), projectActionGeneration = useRef(0), projectActionCompany = useRef(context.companyId);
   const agents = data?.agents ?? [], conversations = data?.conversations ?? [];
   const conversation = conversations.find(item => item.id === selectedId);
+  const projectConversation = conversation ?? (createdConversation.current?.id === selectedId ? createdConversation.current : null);
   const selectedLeadId = conversation?.leadId || leadId || agents[0]?.id || "";
   const selectedWorkers = conversation?.workerIds ?? workers, lead = agents.find(agent => agent.id === selectedLeadId);
   const messages = conversation?.messages ?? [], activeMessage = messages.find(message => ["running", "cancelling"].includes(message.status) || message.recoveryPending);
   const running = Boolean(activeMessage), cancelling = activeMessage?.status === "cancelling";
   const sessions = data?.authoringSessions ?? [];
+  const projectContextId = projectConversation?.id ?? null;
+  const projectScopeKey = JSON.stringify([context.companyId, projectContextId]);
+  const visibleProjectState = panel && projectState?.scopeKey === projectScopeKey ? projectState : null;
   useEffect(() => { const timer = setInterval(refresh, running ? 1500 : 10000); return () => clearInterval(timer); }, [refresh, running]);
   useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }); }, [selectedId, messages.length, messages.at(-1)?.status]);
   useEffect(() => () => resizeCleanup.current?.(), []);
-  function fresh() { setSelectedId(null); setDraft(""); setFiles([]); setNotice(""); }
+  useEffect(() => () => { projectActionGeneration.current++; }, []);
+  useLayoutEffect(() => {
+    if (projectActionCompany.current === context.companyId) return;
+    projectActionCompany.current = context.companyId;
+    projectActionGeneration.current++;
+    createdConversation.current = null;
+    setSelectedId(null);
+  }, [context.companyId]);
+  useEffect(() => {
+    let stale = false;
+    projectRefresh.current = null;
+    if (!panel) return () => { stale = true; projectRequest.current++; };
+
+    const scopeKey = JSON.stringify([context.companyId, projectConversation?.id ?? null]);
+    const bridge = desktopProjectBridge();
+    if (!bridge) {
+      setProjectState({ scopeKey, kind: "host-only" });
+      return () => { stale = true; projectRequest.current++; };
+    }
+    if (!projectConversation?.id) {
+      setProjectState({ scopeKey, kind: "no-conversation" });
+      return () => { stale = true; projectRequest.current++; };
+    }
+
+    const scope = { companyId: context.companyId, contextId: projectConversation.id };
+    if (!buildDeveloperProjectContextInput(scope)) {
+      setProjectState({ scopeKey, kind: "error" });
+      return () => { stale = true; projectRequest.current++; };
+    }
+    const loadProjectContext = async () => {
+      const requestId = ++projectRequest.current;
+      setProjectState({ scopeKey, kind: "loading" });
+      try {
+        const response = normalizeDeveloperProjectContextResponse(await bridge.get(scope));
+        if (!response) throw new Error("Invalid project context response.");
+        if (!stale && requestId === projectRequest.current) setProjectState({ scopeKey, kind: "ready", value: response });
+      } catch {
+        if (!stale && requestId === projectRequest.current) setProjectState({ scopeKey, kind: "error" });
+      }
+    };
+    projectRefresh.current = loadProjectContext;
+    void loadProjectContext();
+    const refreshOnFocus = () => { void loadProjectContext(); };
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      stale = true;
+      projectRequest.current++;
+      if (projectRefresh.current === loadProjectContext) projectRefresh.current = null;
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [panel, context.companyId, projectConversation?.id]);
+  function fresh() { projectActionGeneration.current++; createdConversation.current = null; setSelectedId(null); setDraft(""); setFiles([]); setNotice(""); }
   async function submit(event) {
     event.preventDefault();
     if (busy || running || !selectedLeadId || (!draft.trim() && !files.length)) return;
     setBusy(true); setNotice("");
     try {
-      const current = conversation ?? await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
+      const current = projectConversation ?? await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
       setSelectedId(current.id);
       await send({ conversationId: current.id, message: draft, attachments: files });
       setDraft(""); setFiles([]); refresh();
@@ -47,6 +112,44 @@ export function PluginBuilderPage({ context }) {
     try { await stop({ conversationId: conversation.id, messageId: activeMessage.id, runId: activeMessage.runId }); }
     catch (failure) { setNotice(failure.message || "중지 상태를 확인하지 못했습니다."); }
     finally { setBusy(false); refresh(); }
+  }
+  async function openProjectContext() {
+    if (busy || projectBusy) return;
+    const bridge = desktopProjectBridge();
+    if (!bridge) {
+      setProjectState({ scopeKey: projectScopeKey, kind: "host-only" });
+      return;
+    }
+    if (!selectedLeadId || !lead) {
+      setProjectState({ scopeKey: projectScopeKey, kind: "error" });
+      return;
+    }
+    const actionGeneration = ++projectActionGeneration.current;
+    const actionCompanyId = context.companyId;
+    const actionIsCurrent = () => projectActionGeneration.current === actionGeneration
+      && projectActionCompany.current === actionCompanyId;
+    setBusy(true);
+    setProjectBusy(true);
+    let targetConversation = projectConversation;
+    try {
+      if (!targetConversation) {
+        targetConversation = await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
+        if (!actionIsCurrent()) return;
+        createdConversation.current = targetConversation;
+        setSelectedId(targetConversation.id);
+        await refresh();
+        if (!actionIsCurrent()) return;
+      }
+      const scope = { companyId: context.companyId, contextId: targetConversation.id };
+      if (!buildDeveloperProjectContextInput(scope)) throw new Error("Invalid project scope.");
+      if (!actionIsCurrent()) return;
+      const result = await bridge.open(scope);
+      if (result?.opened !== true) throw new Error("Host did not open the Developer Registry.");
+    } catch {
+      if (!actionIsCurrent()) return;
+      const contextId = targetConversation?.id ?? projectContextId;
+      setProjectState({ scopeKey: JSON.stringify([context.companyId, contextId]), kind: "error" });
+    } finally { setBusy(false); setProjectBusy(false); }
   }
   async function attach(event) {
     const chosen = [...event.target.files]; event.target.value = "";
@@ -70,7 +173,7 @@ export function PluginBuilderPage({ context }) {
     <style>{builderStyles}</style>
     <aside className="bc-rail" aria-label="Builder conversations">
       <div className="bc-rail-header"><strong>Plugin Builder</strong><button className="bc-icon" title="새 대화" aria-label="새 대화" onClick={fresh}>+</button></div>
-      <div className="bc-list">{[...conversations].reverse().map(item => <button key={item.id} className={`bc-chat-link ${selectedId === item.id ? "active" : ""}`} onClick={() => { setSelectedId(item.id); setDraft(""); setFiles([]); setNotice(""); }}><span>{item.title}</span><small>{agents.find(agent => agent.id === item.leadId)?.name || "Lead"}</small></button>)}
+      <div className="bc-list">{[...conversations].reverse().map(item => <button key={item.id} className={`bc-chat-link ${selectedId === item.id ? "active" : ""}`} onClick={() => { projectActionGeneration.current++; createdConversation.current = null; setSelectedId(item.id); setDraft(""); setFiles([]); setNotice(""); }}><span>{item.title}</span><small>{agents.find(agent => agent.id === item.leadId)?.name || "Lead"}</small></button>)}
         {!loading && !conversations.length ? <p className="bc-muted">아직 대화가 없습니다.</p> : null}</div>
     </aside>
     <main className="bc-main">
@@ -99,7 +202,20 @@ export function PluginBuilderPage({ context }) {
       <div className="bc-panel-head"><strong>작업</strong><button className="bc-icon" aria-label="작업 패널 닫기" title="작업 패널 닫기" onClick={() => setPanel(false)}>x</button></div><h3>Lead</h3><div className="bc-person"><span className="bc-person-name">{lead?.name || "선택 필요"}</span><small>{running ? "작업 중" : "대기"}</small></div><h3>Workers</h3>
       {agents.filter(agent => agent.id!==selectedLeadId).map(agent => <div className="bc-person" key={agent.id}><label><input type="checkbox" disabled={busy || running} checked={selectedWorkers.includes(agent.id)} onChange={event => changeWorkers(agent.id,event.target.checked)} /><span className="bc-person-name">{agent.name}</span></label></div>)}{agents.length<2 ? <p>추가 Assistant를 등록하면 Worker로 선택할 수 있습니다.</p> : null}
       {conversation?.reports?.length ? <><h3>Worker 보고</h3>{conversation.reports.map(report => <details className="bc-evidence-item" key={report.id}><summary>{agents.find(agent => agent.id===report.workerId)?.name || "Worker"} · {report.status}</summary><p>{report.objective}</p><p>{report.content || "실행 중"}</p></details>)}</> : null}
-      <h3>Preview</h3><button className="bc-button" onClick={() => navigation.navigate("/company/settings/instance/plugins")}>플러그인 검토 열기</button>
+      <section className="bc-project-context" aria-label="제작 프로젝트"><h3>제작 프로젝트</h3>
+        {visibleProjectState?.kind === "host-only" ? <p>프로젝트 연결은 Host 앱에서만 사용할 수 있습니다.</p> : null}
+        {visibleProjectState?.kind === "loading" ? <p>이 대화의 프로젝트 정보를 불러오는 중...</p> : null}
+        {visibleProjectState?.kind === "error" ? <><p className="bc-error" role="alert">이 대화의 프로젝트 정보를 불러오거나 열지 못했습니다. 다시 시도해 주세요.</p>{projectContextId ? <button className="bc-button bc-project-refresh" disabled={busy} onClick={() => projectRefresh.current?.()}>새로고침</button> : <button className="bc-button bc-project-open" disabled={busy || !lead} onClick={openProjectContext}>프로젝트 연결</button>}</> : null}
+        {visibleProjectState?.kind === "no-conversation" ? <><p>대화를 만든 뒤 이 대화에 제작 프로젝트를 연결할 수 있습니다.</p><button className="bc-button bc-project-open" disabled={busy || !lead} onClick={openProjectContext}>{projectBusy ? "여는 중…" : "프로젝트 연결"}</button></> : null}
+        {visibleProjectState?.kind === "ready" && !visibleProjectState.value.project ? <><p>{visibleProjectState.value.missingProject ? "연결했던 프로젝트가 목록에서 제거되었습니다. 다시 연결하거나 검토 창에서 연결을 해제하세요." : "이 대화에는 연결된 제작 프로젝트가 없습니다."}</p><button className="bc-button bc-project-open" disabled={busy || !lead} onClick={openProjectContext}>{projectBusy ? "여는 중…" : "프로젝트 연결"}</button><button className="bc-button bc-project-refresh" disabled={busy} onClick={() => projectRefresh.current?.()}>새로고침</button></> : null}
+        {visibleProjectState?.kind === "ready" && visibleProjectState.value.project ? <>
+          <div className="bc-project-name"><strong>{visibleProjectState.value.project.displayName}</strong><small>{visibleProjectState.value.project.sourceLabel}</small></div>
+          <p title="현재 소스가 검증되었음을 의미하지 않습니다.">{visibleProjectState.value.project.verified ? "마지막 Preview 검증본 있음" : "마지막 Preview 검증본 없음"}</p>
+          <small title="Developer Registry 연결만 수행하며 Source 또는 CLI 권한은 부여하지 않습니다.">Registry 연결은 Source/CLI 권한을 부여하지 않습니다.</small>
+          <button className="bc-button bc-project-open" disabled={busy} onClick={openProjectContext}>{projectBusy ? "여는 중…" : "검증·Preview 열기"}</button>
+          <button className="bc-button bc-project-refresh" disabled={busy} onClick={() => projectRefresh.current?.()}>새로고침</button>
+        </> : null}
+      </section>
       <details className="bc-evidence"><summary>제작 기록 · Authoring projects ({sessions.length})</summary>{!sessions.length ? <p>No plugin project has been started in this Workspace.</p> : null}{[...sessions].reverse().map(session => <div className="bc-evidence-item" key={session.id}><strong>{session.displayName}</strong><span className="bc-status">{session.status}</span>{session.events.slice(-8).map(event => <p key={event.id}>{event.summary}{event.evidence?.length ? ` · 증거 ${event.evidence.length}` : ""}</p>)}</div>)}</details>
       <details className="bc-evidence"><summary>Builder contract</summary><p>제작 기록과 검증 결과는 Workspace에 저장합니다. Preview는 별도 격리 창에서 확인하며, 설치·활성화는 설정에서 관리합니다.</p></details>
     </aside> : null}

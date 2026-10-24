@@ -136,20 +136,48 @@ From `sps-server/desktop`: `npm test`; for source Preview, set
 `SPS_DESKTOP_E2E_SOURCE=1` and run
 `node scripts/smoke-workspace-surfaces-desktop.mjs`.
 
-## Next Delivery Slice
+## Stage 4: Conversation-to-Project Handoff
 
-Make the existing manual external-project handoff understandable from a Builder
-conversation, without letting a Plugin choose arbitrary Host paths or mint
-verified build evidence. Then validate real-provider file authoring on an
-explicitly approved Source and connect that result through the same mandatory
-Desktop gates. Do not add installation as an implicit consequence of choosing
-or previewing a plugin.
+Implemented in source; this increment's final test evidence is recorded below.
+
+- Builder work panel provides **Project connection** and opens the existing Host
+  Developer Registry in a focused development view, not the install marketplace.
+  A new conversation can be created for this action without sending an AI
+  message; an unsent draft and text attachments are retained.
+- Host explicitly selects a connected project with **Link to this context**.
+  A reference is keyed by Workspace UUID, plugin ID and plugin-owned context
+  UUID. Builder uses its conversation UUID; Core has no conversation contract.
+- The Host-local bounded `developer-mode/context-links.json` stores IDs and
+  timestamps only. It has no prompts, paths, file snapshots, Source grants or
+  execution policy. Unknown schemas/fields and linked/nonregular paths fail
+  closed. Writes are serialized within the Desktop process and atomically
+  renamed; this is not a multi-process database or a hardware trust boundary.
+- Workspace bridge exposes get/open only, not mutation, filesystem access or
+  gate execution. Registry mutation requires the current Host, review window,
+  exact existing project and per-open context token. Opening another context
+  invalidates the prior window token. The context is navigation metadata, not
+  proof that the renderer is the claimed plugin or that a UUID is a real
+  conversation. Actual conversation existence belongs to Builder.
+- Project labels and last-known-good existence return to Builder without
+  absolute paths. The latter is not proof that current source edits are
+  verified. Focus or explicit refresh updates the selected conversation only.
+- Unlink removes only the reference. Disconnecting the external project makes
+  its reference unavailable until relink/unlink; it does not delete source files.
+  Folder connection, build/validate/test, Preview, package reveal and production
+  installation remain separate Host actions. Member/browser surfaces cannot
+  use this local Host bridge.
+
+Next, validate real-provider authoring on an explicitly approved Source through
+the same Desktop gates. Do not treat this navigation link as runtime working
+directory configuration, and do not install a plugin implicitly when chosen or
+previewed.
 
 ## Deferred and Unverified
 
 - Paid-provider end-to-end file creation and editing have not been verified.
-- There is no automatic binding from a Builder conversation to a Desktop
-  Developer Mode project; external projects are connected manually.
+- Conversation-to-project navigation references are Host-selected. Automatic
+  Source grants, Agent working-directory binding and real-provider authoring
+  are not implemented by this handoff.
 - An AI-callable authoring tool cannot substitute for Desktop's mandatory
   `build`/`validate`/`test` execution or mint verified gate evidence.
 - Public publishing, publisher review, Official Registry signing and community

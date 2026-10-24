@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
-import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -376,6 +376,33 @@ try {
     "Plugin Registry",
   ));
   await waitPage(registry, (page) => page.text.includes("Local Development Registry"), "Developer Registry UI");
+  assert.equal(await registryCall(registry, "window.spsRegistry.getDeveloperContext()"), null);
+  step("opening a project handoff from a new Builder conversation without sending an AI message");
+  await waitPage(workspace, page => page.text.includes("프로젝트 연결"), "Builder project context action");
+  await workspace.evaluate(`(() => {
+    const textarea = document.querySelector('.bc-composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, 'Unsent plugin draft');
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['Unsent attachment'], 'draft.txt', { type: 'text/plain' }));
+    const input = document.querySelector('.bc-composer input[type=file]');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await waitPage(workspace, page => page.text.includes("draft.txt"), "unsent attachment before project linking");
+  await workspace.evaluate("document.querySelector('.bc-project-open').click()");
+  await waitPage(registry, page => page.text.includes("No project linked."), "scoped Developer Registry context");
+  let developerContext = await registryCall(registry, "window.spsRegistry.getDeveloperContext()");
+  assert.equal(developerContext.context.companyId, company.id);
+  assert.equal(developerContext.context.pluginId, "sps.plugin-discovery");
+  const linkedConversation = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
+    method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+  });
+  const conversation = linkedConversation.data.conversations.find(item => item.id === developerContext.context.contextId);
+  assert.ok(conversation, "Project handoff did not create a real Builder conversation");
+  assert.deepEqual(conversation.messages, [], "Linking a project must not send an AI prompt");
+  assert.equal(await workspace.evaluate("document.querySelector('.bc-composer textarea').value"), "Unsent plugin draft");
+  assert.equal(await workspace.evaluate("document.querySelector('.bc-file-chip')?.textContent.includes('draft.txt')"), true);
   const screenshotDirectory = process.env.SPS_DESKTOP_E2E_SCREENSHOT_DIR?.trim();
   if (screenshotDirectory) {
     await mkdir(screenshotDirectory, { recursive: true });
@@ -401,6 +428,40 @@ try {
   });
   const connected = await registryCall(registry, `window.spsRegistry.connectDeveloperProject(${JSON.stringify({ sourcePath: pluginDirectory, sourceLabel: "external-plugin", displayName: "Preview Desktop E2E" })})`);
   assert.match(connected.id, /^dev-/);
+  await registry.evaluate("document.querySelector('#refresh-developer-projects').click()");
+  await waitPage(registry, page => page.text.includes("Link to this context"), "explicit project reference choice");
+  await registry.evaluate("document.querySelector('.link-developer-context').click()");
+  await waitPage(registry, page => page.text.includes("Linked: Preview Desktop E2E"), "saved project reference");
+  const getContextExpression = `window.spsDesktopWorkspace.getDeveloperProjectContext(${JSON.stringify(developerContext.context)})`;
+  let linkedContext = await workspace.evaluate(getContextExpression, true);
+  assert.equal(linkedContext.project.id, connected.id);
+  assert.equal(linkedContext.project.verified, false);
+  assert.equal(Object.hasOwn(linkedContext.project, "sourcePath"), false);
+  assert.equal(JSON.stringify(linkedContext).includes(pluginDirectory), false);
+  const otherContext = { ...developerContext.context, contextId: randomUUID() };
+  assert.equal((await workspace.evaluate(`window.spsDesktopWorkspace.getDeveloperProjectContext(${JSON.stringify(otherContext)})`, true)).project, null);
+  const otherCompany = await workspaceApi(workspace, "/api/companies", { method: "POST", body: { name: "Context isolation E2E" } });
+  assert.equal((await workspace.evaluate(`window.spsDesktopWorkspace.getDeveloperProjectContext(${JSON.stringify({ ...developerContext.context, companyId: otherCompany.id })})`, true)).project, null);
+  await assert.rejects(() => workspace.evaluate(`window.spsDesktopWorkspace.getDeveloperProjectContext(${JSON.stringify({ ...developerContext.context, sourcePath: pluginDirectory })})`, true));
+  await workspace.evaluate("document.querySelector('.bc-project-refresh').click()");
+  await waitPage(workspace, page => page.text.includes("Preview Desktop E2E"), "linked project in Builder");
+  if (screenshotDirectory) {
+    const screenshot = await workspace.command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+    await writeFile(path.join(screenshotDirectory, "builder-linked-project.png"), Buffer.from(screenshot.data, "base64"));
+  }
+  const oldContextToken = developerContext.contextToken;
+  await workspace.evaluate(`window.spsDesktopWorkspace.openDeveloperProjectContext(${JSON.stringify(developerContext.context)})`, true);
+  await waitPage(registry, page => page.text.includes("Linked: Preview Desktop E2E"), "reopened scoped review");
+  developerContext = await registryCall(registry, "window.spsRegistry.getDeveloperContext()");
+  assert.notEqual(developerContext.contextToken, oldContextToken);
+  await assert.rejects(() => registryCall(registry, `window.spsRegistry.clearDeveloperContext(${JSON.stringify({ contextToken: oldContextToken })})`));
+  await registry.evaluate("document.querySelector('#clear-developer-context').click()");
+  await waitPage(registry, page => page.text.includes("No project linked."), "explicit reference unlink");
+  assert.equal((await workspace.evaluate(getContextExpression, true)).project, null);
+  await access(path.join(pluginDirectory, "package.json"));
+  await registry.evaluate("document.querySelector('.link-developer-context').click()");
+  await waitPage(registry, page => page.text.includes("Linked: Preview Desktop E2E"), "explicit reference relink");
+  step("verified context isolation, stale-window denial, explicit unlink and unchanged source files");
   let gates;
   try {
     gates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
@@ -426,6 +487,8 @@ try {
   const applied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000);
   assert.equal(applied.isolated, true);
   assert.equal(applied.plugin?.status, "ready");
+  linkedContext = await workspace.evaluate(getContextExpression, true);
+  assert.equal(linkedContext.project.verified, true);
 
   step("verifying isolated Preview and production Workspace coexist");
   const mainTarget = await waitTarget(debugPort, child, (entry) => entry.id === workspaceTarget.id, "main Workspace still open");
@@ -512,6 +575,15 @@ try {
   const safeDiagnostics = JSON.stringify(diagnostics);
   assert.doesNotMatch(safeDiagnostics, new RegExp(pluginDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
   assert.doesNotMatch(safeDiagnostics, /access_token|refresh_token|authorization|password|secret/i);
+  await registryCall(registry, `window.spsRegistry.removeDeveloperProject(${JSON.stringify({ projectId: connected.id })})`);
+  const disconnected = await workspace.evaluate(getContextExpression, true);
+  assert.equal(disconnected.project, null);
+  assert.equal(disconnected.missingProject, true);
+  await workspace.evaluate("document.querySelector('.bc-project-refresh').click()");
+  await waitPage(workspace, page => page.text.includes("연결했던 프로젝트가 목록에서 제거되었습니다"), "dangling link in Builder");
+  await access(path.join(pluginDirectory, "package.json"));
+  await registryCall(registry, `window.spsRegistry.clearDeveloperContext(${JSON.stringify({ contextToken: developerContext.contextToken })})`);
+  assert.equal((await workspace.evaluate(getContextExpression, true)).missingProject, false);
   step("verified redacted diagnostics and live production Workspace");
   console.log(`SPS Plugin Preview Desktop E2E passed (${packagedBinary ? "packaged" : "source"}).`);
 } catch (error) {

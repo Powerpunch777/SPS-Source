@@ -183,7 +183,7 @@ test("keeps the Registry window on a narrow Owner-only preload bridge", async ()
     readFile(registryHtmlPath, "utf8"),
   ]);
 
-  assert.match(main, /async function showRegistryWindow\(\{ sourceId = null \} = \{\}\) \{[\s\S]*?assertRegistryOwner\(\);[\s\S]*?registry-preload\.cjs/);
+  assert.match(main, /async function showRegistryWindow\(\{ sourceId = null, developerContext = null \} = \{\}\) \{[\s\S]*?assertRegistryOwner\(\);[\s\S]*?registry-preload\.cjs/);
   assert.match(main, /registerDesktopRegistryIpc\(\{/);
   assert.match(registryController, /ipcMain\.handle\("desktop:registry-list-sources"/);
   assert.match(registryController, /ipcMain\.handle\("desktop:registry-stage-release"/);
@@ -363,4 +363,21 @@ test("shuts down the Owner Host gracefully before quitting Desktop", async () =>
   assert.match(main, /app\.on\("before-quit", \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?shutdownComplete = true;[\s\S]*?app\.quit\(\);/);
   assert.match(main, /desktopUpdateController\.stop\(\);/);
   assert.match(main, /createSpsDesktopUpdateController\(\{[\s\S]*?stopDesktopRuntimeGracefully,[\s\S]*?setQuitting:[\s\S]*?setShutdownComplete:/);
+});
+
+test("exposes developer context navigation only through the Host Workspace and review bridges", async () => {
+  const workspace = await readFile(workspacePreloadPath, "utf8");
+  const registry = await readFile(registryPreloadPath, "utf8");
+  const preview = await readFile(previewPreloadPath, "utf8");
+  const setup = await readFile(preloadPath, "utf8");
+  const main = await readFile(mainPath, "utf8");
+  assert.match(workspace, /getDeveloperProjectContext: \(input\) => ipcRenderer.invoke\("desktop:workspace-developer-context-get", input\)/);
+  assert.match(workspace, /openDeveloperProjectContext: \(input\) => ipcRenderer.invoke\("desktop:workspace-developer-context-open", input\)/);
+  assert.doesNotMatch(workspace, /desktop:developer-context-(link|clear)|desktop:developer-(run-gates|apply-candidate)/);
+  assert.match(registry, /desktop:developer-context-link/);
+  assert.match(registry, /desktop:developer-context-clear/);
+  assert.doesNotMatch(`${preview}\n${setup}`, /desktop:(workspace-developer-context|developer-context)/);
+  assert.match(main, /registerDesktopDeveloperContextIpc\(\{/);
+  assert.match(main, /registryDeveloperContext !== selection/);
+  assert.match(main, /token !== selection.token/);
 });

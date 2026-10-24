@@ -162,8 +162,10 @@ The user works in the existing SPS window:
   through the Agent's separately approved workspace tools; this flow has not
   been verified with a paid provider.
 - Plugin source stays in a separate external project folder or Git repository,
-  never in SPS application files. The Builder conversation is not yet bound to
-  a Desktop Developer Mode project; the author connects that project manually.
+  never in SPS application files. A Host can open Developer Mode from a Builder
+  conversation and explicitly link a previously connected external project.
+  This is a Host-local navigation reference, not Source access or CLI authority.
+  The Host still chooses the external folder and explicitly runs the gates.
 - The existing SPS screen remains the place for conversation, change review,
   file inspection, run status, and test results.
 
