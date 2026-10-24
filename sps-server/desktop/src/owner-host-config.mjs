@@ -34,19 +34,54 @@ function canListen(port) {
   });
 }
 
+async function findDynamicLoopbackPorts() {
+  const servers = [];
+  try {
+    const ports = [];
+    for (let index = 0; index < 2; index += 1) {
+      const server = net.createServer();
+      servers.push(server);
+      server.unref();
+      ports.push(await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
+          const address = server.address();
+          if (!address || typeof address === "string") reject(new Error("No local port was assigned."));
+          else resolve(address.port);
+        });
+      }));
+    }
+    return { serverPort: ports[0], databasePort: ports[1] };
+  } finally {
+    // Hold both probes until allocated so the OS cannot return the same port.
+    await Promise.all(servers.filter(server => server.listening).map(server => new Promise(resolve => server.close(resolve))));
+  }
+}
+
 export async function findSpsOwnerHostPorts({
   serverPort = SPS_OWNER_HOST_DEFAULT_PORT,
   databasePort = SPS_OWNER_HOST_DEFAULT_DATABASE_PORT,
   isAvailable = canListen,
   attempts = 100,
+  findDynamicPorts = findDynamicLoopbackPorts,
 } = {}) {
   for (let offset = 0; offset < attempts; offset += 1) {
     const candidateServerPort = serverPort + offset;
     const candidateDatabasePort = databasePort + offset;
     if (!isUsablePort(candidateServerPort) || !isUsablePort(candidateDatabasePort)) break;
-    if (await isAvailable(candidateServerPort) && await isAvailable(candidateDatabasePort)) {
+    if (candidateServerPort !== candidateDatabasePort && await isAvailable(candidateServerPort) && await isAvailable(candidateDatabasePort)) {
       return { serverPort: candidateServerPort, databasePort: candidateDatabasePort };
     }
+  }
+  try {
+    const fallback = await findDynamicPorts();
+    if (isUsablePort(fallback?.serverPort) && isUsablePort(fallback?.databasePort)
+      && fallback.serverPort !== fallback.databasePort
+      && await isAvailable(fallback.serverPort) && await isAvailable(fallback.databasePort)) {
+      return { serverPort: fallback.serverPort, databasePort: fallback.databasePort };
+    }
+  } catch (cause) {
+    throw new Error("SPS Desktop could not select local Owner Host ports. Try again after checking local networking.", { cause });
   }
   throw new Error("SPS Desktop could not reserve a local Owner Host port. Close the conflicting app and try again.");
 }
