@@ -448,10 +448,21 @@ try {
   await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/dashboard`)})`);
   const neutral = await waitForPage(
     workspaceCdp,
-    (page) => page.body.includes("Neutral Workspace") || page.body.includes("No Dashboard widgets yet"),
+    (page) => page.body.includes("Neutral Workspace") || page.body.includes("No plugin updates to show"),
     "the unselected Neutral Workspace Shell",
   );
   assert.ok(neutral.route.includes(`/${companyPrefix}/dashboard`), `Neutral Workspace route was unexpected: ${neutral.route}`);
+
+  if (sourceElectron) {
+    await click(workspaceCdp, 'a[href$="/company/settings/agents"]', "Open Agent management from Dashboard");
+    await waitForPage(workspaceCdp, page => page.route.endsWith("/company/settings/agents") && page.body.includes("Add Agent"), "Agent directory");
+    await click(workspaceCdp, 'a[href$="/assistants/new"]', "Add Agent from Settings");
+    await waitForPage(workspaceCdp, page => page.body.includes("Default working folder") && page.body.includes("Add Agent"), "Agent registration form");
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('[aria-label="Agent name"]').value`), "", "Registration must not reuse a misleading Assistant name");
+    await workspaceCdp.evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Cancel').click()`);
+    await waitForPage(workspaceCdp, page => page.route.endsWith("/company/settings/agents") && page.body.includes("Add Agent"), "Cancelled Agent registration returns to directory");
+    console.log("Agent management E2E: Dashboard link, Settings directory, empty registration, Cancel without saving.");
+  }
 
   // A fresh SPS Host intentionally starts with Plugin Builder only. Install the
   // packaged reference Workplane through the real Host API so this flow also
@@ -491,7 +502,7 @@ try {
     const builderFont = await workspaceCdp.evaluate(`getComputedStyle(document.querySelector('.sps-builder')).fontFamily`);
     assert.match(builderFont, /Pretendard/);
     await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "plugin-builder.png"));
-    await click(workspaceCdp, ".bc-header .bc-button", "Open Builder work panel");
+    await workspaceCdp.evaluate(`[...document.querySelectorAll('.bc-header .bc-button')].find(button => button.textContent === '작업 패널').click()`);
     for (const [width, height] of [[1024, 720], [1440, 900]]) {
       await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
       await workspaceCdp.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`, true);
@@ -540,6 +551,64 @@ try {
     assert.equal(alive, false, "Builder showed stopped before its process exited.");
     if (screenshotPath) await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "plugin-builder-stopped.png"));
     console.log("Builder stop E2E: exact Lead run cancelled, process exit verified, no provider used.");
+
+    const writeDraft = async text => {
+      await workspaceCdp.evaluate(`(() => {
+        const input = document.querySelector('.bc-composer textarea');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(text)});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+    };
+    await writeDraft("Unsent existing conversation draft");
+    await workspaceCdp.evaluate(`(() => {
+      const file = new File(['unsent attachment'], 'draft-notes.txt', {type:'text/plain'});
+      const originalRead = File.prototype.arrayBuffer;
+      File.prototype.arrayBuffer = function () {
+        File.prototype.arrayBuffer = originalRead;
+        return new Promise(resolve => { window.auditFinishAttachment = () => resolve(new TextEncoder().encode('unsent attachment').buffer); });
+      };
+      const files = new DataTransfer(); files.items.add(file);
+      const input = document.querySelector('.bc-composer input[type=file]'); input.files = files.files;
+      input.dispatchEvent(new Event('change', {bubbles:true}));
+    })()`);
+    assert.equal(await workspaceCdp.evaluate(`Boolean(window.auditFinishAttachment)`), true, "Deferred file-read fixture did not start");
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('.bc-composer button.primary').disabled`), true);
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('[aria-label="새 대화 시작"]').disabled`), true);
+    await workspaceCdp.evaluate(`[...document.querySelectorAll('.bc-header .bc-button')].find(button => button.textContent === '작업 패널').click()`);
+    await workspaceCdp.evaluate(`window.auditFinishAttachment(); delete window.auditFinishAttachment`);
+    await waitForPage(workspaceCdp, page => page.body.includes("draft-notes.txt"), "unsent attachment");
+    await workspaceCdp.evaluate(`(() => {
+      window.auditOriginalConfirm = window.confirm;
+      window.auditDiscardPrompts = 0;
+      window.confirm = () => { window.auditDiscardPrompts++; return false; };
+      [...document.querySelectorAll('.bc-panel button')].find(button => button.textContent === 'Agent 관리').click();
+    })()`);
+    assert.equal(await workspaceCdp.evaluate(`window.auditDiscardPrompts`), 1);
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('.bc-composer textarea').value`), "Unsent existing conversation draft");
+    await workspaceCdp.evaluate(`window.confirm = window.auditOriginalConfirm; delete window.auditOriginalConfirm; delete window.auditDiscardPrompts`);
+    await click(workspaceCdp, '[aria-label="새 대화 시작"]', "Switch to new conversation without discarding draft");
+    await writeDraft("Unsent new conversation draft");
+    await click(workspaceCdp, ".bc-chat-link", "Return to previous conversation");
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('.bc-composer textarea').value`), "Unsent existing conversation draft");
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('.bc-file-chip').textContent.includes('draft-notes.txt')`), true);
+    await click(workspaceCdp, '[aria-label="새 대화 시작"]', "Return to new conversation draft");
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('.bc-composer textarea').value`), "Unsent new conversation draft");
+    await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width: 540, height: 800, deviceScaleFactor: 1, mobile: false });
+    assert.equal(await workspaceCdp.evaluate(`getComputedStyle(document.querySelector('.bc-history-toggle')).display !== 'none'`), true);
+    await click(workspaceCdp, ".bc-history-toggle", "Open conversation history at narrow width");
+    assert.equal(await workspaceCdp.evaluate(`getComputedStyle(document.querySelector('.bc-rail')).display !== 'none'`), true);
+    const mobileBounds = await workspaceCdp.evaluate(`(() => {
+      const rail = document.querySelector('.bc-rail').getBoundingClientRect();
+      const main = document.querySelector('.bc-main').getBoundingClientRect();
+      return { railWidth: rail.width, mainWidth: main.width, overflow: document.documentElement.scrollWidth > innerWidth };
+    })()`);
+    assert.ok(mobileBounds.railWidth > 200 && mobileBounds.mainWidth > 200 && !mobileBounds.overflow, `Narrow-width history has no usable width: ${JSON.stringify(mobileBounds)}`);
+    if (screenshotPath) await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "plugin-builder-history-540x800.png"));
+    await click(workspaceCdp, ".bc-chat-link", "Choose conversation at narrow width");
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('.bc-composer textarea').value`), "Unsent existing conversation draft");
+    assert.equal(await workspaceCdp.evaluate(`document.querySelector('.bc-history-toggle').getAttribute('aria-expanded')`), "false");
+    await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+    console.log("Builder draft E2E: text and attachment preserved across conversations; narrow-width history remains reachable.");
 
     // Read the same real Core run through Host diagnostics, without seeding a
     // second usage ledger or contacting a paid provider.
@@ -781,7 +850,7 @@ try {
   await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/dashboard`)})`);
   const fallback = await waitForPage(
     workspaceCdp,
-    (page) => page.body.includes("Neutral Shell restored"),
+    (page) => page.body.includes("Default Workspace restored"),
     "the Neutral Shell fallback warning",
   );
   assert.match(fallback.body, /selected shell/i, `Neutral fallback did not explain the disabled Shell: ${fallback.body}`);

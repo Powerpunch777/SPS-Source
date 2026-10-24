@@ -353,7 +353,7 @@ try {
   const authoringAgents = [];
   for (const [name, cwd] of [["Folder Author A", pluginDirectory], ["Folder Author B", path.dirname(pluginDirectory)]]) {
     await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/assistants/new?adapterType=codex_local`)})`);
-    await waitPage(workspace, page => page.text.includes("Default working folder") && page.text.includes("Add Assistant"), "Core Assistant folder form");
+    await waitPage(workspace, page => page.text.includes("Default working folder") && page.text.includes("Add Agent"), "Core Agent folder form");
     await workspace.evaluate(`(() => {
       const set = (selector, value) => {
         const input = document.querySelector(selector);
@@ -361,10 +361,10 @@ try {
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
       };
-      set('[aria-label="Assistant name"]', ${JSON.stringify(name)});
+      set('[aria-label="Agent name"]', ${JSON.stringify(name)});
       set('[aria-label="Default working folder"]', ${JSON.stringify(cwd)});
     })()`);
-    await workspace.evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Add Assistant').click()");
+    await workspace.evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Add Agent').click()");
     await waitPage(workspace, page => page.url.includes("/dashboard") && page.text.includes(name), "registered Assistant roster");
     const registered = (await workspaceApi(workspace, `/api/companies/${company.id}/agents`)).find(item => item.name === name);
     assert.ok(registered?.id);
@@ -375,7 +375,7 @@ try {
   }
   assert.notEqual(authoringAgents[0].id, authoringAgents[1].id);
   assert.deepEqual((await workspaceApi(workspace, `/api/agents/${agent.id}`)).adapterConfig, originalAgentConfig);
-  assert.equal(await workspace.evaluate("[...document.querySelectorAll('a')].some(link => link.textContent.trim() === 'Add Assistant')"), true);
+  assert.equal(await workspace.evaluate("[...document.querySelectorAll('a')].some(link => link.textContent.trim() === 'Add Agent')"), true);
   step("Core registered separate per-Agent folders without changing the original Agent or running a CLI");
 
   const toolDeadline = Date.now() + 30_000;
@@ -415,7 +415,7 @@ try {
     (page) => page.url.includes("/builder") && page.text.includes("Plugin Builder"),
     "Plugin Builder authoring surface",
   );
-  await workspace.evaluate(`document.querySelector('.bc-header .bc-button').click()`);
+  await workspace.evaluate(`[...document.querySelectorAll('.bc-header .bc-button')].find(button => button.textContent === '작업 패널').click()`);
   await waitPage(workspace, page => page.text.includes("Authoring projects"), "Builder authoring panel");
   await workspace.evaluate(`document.querySelector('.bc-evidence').open = true`);
   await waitPage(workspace, page => page.text.includes("SPS Preview Desktop E2E"), "Builder authoring project evidence");

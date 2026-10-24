@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
+import { useHostNavigation, usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
 import { builderStyles } from "./builder-styles.js";
 import {
   buildDeveloperProjectContextInput,
@@ -8,6 +8,7 @@ import {
 } from "./developer-project-context.js";
 import { getDeveloperAgentFolderBridge, normalizeDeveloperAgentFolderCheckResponse } from "./developer-agent-folder.js";
 import { appendDeveloperValidationRepairRequest } from "./developer-validation-feedback.js";
+import { builderDraftKey, createBuilderDraftStore } from "./builder-drafts.js";
 
 function desktopProjectBridge() {
   if (typeof window === "undefined") return null;
@@ -20,11 +21,23 @@ function desktopAgentFolderBridge() {
 }
 
 export function PluginBuilderPage({ context }) {
+  return <WorkspacePluginBuilder key={context.companyId} context={context} />;
+}
+
+function WorkspacePluginBuilder({ context }) {
+  const navigation = useHostNavigation();
   const { data, loading, error, refresh } = usePluginData("plugin-builder-workspace", { companyId: context.companyId });
   const create = usePluginAction("builder-create"), send = usePluginAction("builder-send"), saveTeam = usePluginAction("builder-team");
   const stop = usePluginAction("builder-stop");
   const [selectedId, setSelectedId] = useState(null), [leadId, setLeadId] = useState("");
-  const [workers, setWorkers] = useState([]), [draft, setDraft] = useState(""), [files, setFiles] = useState([]);
+  const [workers, setWorkers] = useState([]), [drafts] = useState(createBuilderDraftStore), [, redrawDrafts] = useState(0);
+  const draftKey = builderDraftKey(context.companyId, selectedId);
+  const { draft, files } = drafts.read(draftKey);
+  function setDraft(value) { drafts.update(draftKey, { draft: value }); redrawDrafts(revision => revision + 1); }
+  function setFiles(value) { drafts.update(draftKey, { files: value }); redrawDrafts(revision => revision + 1); }
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const workspaceGeneration = useRef(0);
+  const [attachmentBusy, setAttachmentBusy] = useState(false), attachmentBusyRef = useRef(false);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [panel, setPanel] = useState(false), [panelWidth, setPanelWidth] = useState(300);
   const [projectState, setProjectState] = useState(null), [projectBusy, setProjectBusy] = useState(false), [validationBusy, setValidationBusy] = useState(false), [validationNotice, setValidationNotice] = useState("");
   const [agentFolderCheck, setAgentFolderCheck] = useState(null), [agentFolderCheckBusy, setAgentFolderCheckBusy] = useState(false);
@@ -55,8 +68,14 @@ export function PluginBuilderPage({ context }) {
   useLayoutEffect(() => {
     if (projectActionCompany.current === context.companyId) return;
     projectActionCompany.current = context.companyId;
+    workspaceGeneration.current++;
     projectActionGeneration.current++;
     createdConversation.current = null;
+    drafts.clear();
+    draftValue.current = "";
+    setNotice("");
+    setHistoryOpen(false);
+    setLeadId(""); setWorkers([]);
     setSelectedId(null);
   }, [context.companyId]);
   useEffect(() => {
@@ -103,17 +122,45 @@ export function PluginBuilderPage({ context }) {
       window.removeEventListener("focus", refreshOnFocus);
     };
   }, [panel, context.companyId, projectConversation?.id]);
-  function fresh() { projectActionGeneration.current++; createdConversation.current = null; setSelectedId(null); draftValue.current = ""; setDraft(""); setFiles([]); setNotice(""); setValidationNotice(""); }
+  function selectConversation(id) {
+    if (busy || attachmentBusyRef.current) return;
+    projectActionGeneration.current++;
+    createdConversation.current = null;
+    setSelectedId(id);
+    draftValue.current = drafts.read(builderDraftKey(context.companyId, id)).draft;
+    setNotice(""); setValidationNotice(""); setHistoryOpen(false);
+  }
+  function fresh() { selectConversation(null); }
+  function manageAgents() {
+    if (busy || attachmentBusyRef.current) return;
+    if (drafts.hasDrafts() && !window.confirm("Agent 설정으로 이동하면 보내지 않은 초안과 첨부가 사라집니다. 이동할까요?")) return;
+    navigation.navigate("/company/settings/agents");
+  }
   async function submit(event) {
     event.preventDefault();
-    if (busy || running || validationBusy || validationBusyRef.current || !selectedLeadId || (!draft.trim() && !files.length)) return;
+    if (busy || running || attachmentBusyRef.current || validationBusy || validationBusyRef.current || !selectedLeadId || (!draft.trim() && !files.length)) return;
     setBusy(true); setNotice("");
+    const companyId = context.companyId, generation = workspaceGeneration.current;
+    const sent = { draft, files };
+    let targetKey = draftKey;
+    const isCurrent = () => mounted.current && projectActionCompany.current === companyId
+      && workspaceGeneration.current === generation;
     try {
       const current = projectConversation ?? await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
+      if (!isCurrent()) return;
+      targetKey = builderDraftKey(companyId, current.id);
+      if (!projectConversation) {
+        drafts.move(draftKey, targetKey);
+        createdConversation.current = current;
+      }
       setSelectedId(current.id);
-      await send({ conversationId: current.id, message: draft, attachments: files });
-      draftValue.current = ""; setDraft(""); setFiles([]); refresh();
-    } catch (failure) { setNotice(failure.message || "메시지를 보내지 못했습니다."); refresh(); }
+      await send({ conversationId: current.id, message: sent.draft, attachments: sent.files });
+      if (!isCurrent()) return;
+      drafts.clearSent(targetKey, sent);
+      redrawDrafts(revision => revision + 1);
+      draftValue.current = drafts.read(targetKey).draft;
+      refresh();
+    } catch (failure) { if (isCurrent()) { setNotice(failure.message || "메시지를 보내지 못했습니다."); refresh(); } }
     finally { setBusy(false); }
   }
   async function changeWorkers(workerId, checked) {
@@ -132,7 +179,7 @@ export function PluginBuilderPage({ context }) {
     finally { setBusy(false); refresh(); }
   }
   async function openProjectContext() {
-    if (busy || projectBusy || validationBusy || agentFolderCheckBusy || agentFolderCheckBusyRef.current) return;
+    if (busy || attachmentBusyRef.current || projectBusy || validationBusy || agentFolderCheckBusy || agentFolderCheckBusyRef.current) return;
     const bridge = desktopProjectBridge();
     if (!bridge) {
       setProjectState({ scopeKey: projectScopeKey, kind: "host-only" });
@@ -154,6 +201,7 @@ export function PluginBuilderPage({ context }) {
         targetConversation = await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
         if (!actionIsCurrent()) return;
         createdConversation.current = targetConversation;
+        drafts.move(draftKey, builderDraftKey(actionCompanyId, targetConversation.id));
         setSelectedId(targetConversation.id);
         await refresh();
         if (!actionIsCurrent()) return;
@@ -274,6 +322,9 @@ export function PluginBuilderPage({ context }) {
   }
   async function attach(event) {
     const chosen = [...event.target.files]; event.target.value = "";
+    if (busy || running || attachmentBusyRef.current || !chosen.length) return;
+    const companyId = context.companyId, generation = workspaceGeneration.current;
+    attachmentBusyRef.current = true; setAttachmentBusy(true);
     try {
       if (files.length + chosen.length > 4) throw new Error("텍스트 파일은 최대 4개까지 첨부할 수 있습니다.");
       const next = await Promise.all(chosen.map(async file => {
@@ -281,8 +332,13 @@ export function PluginBuilderPage({ context }) {
         const content = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
         if (content.includes("\0")) throw new Error("UTF-8 텍스트 파일만 첨부할 수 있습니다.");
         return { name: file.name, content };
-      })); setFiles([...files, ...next]); setNotice("");
-    } catch (failure) { setNotice(failure.message); }
+      }));
+      if (!mounted.current || projectActionCompany.current !== companyId || workspaceGeneration.current !== generation) return;
+      const currentFiles = drafts.read(draftKey).files;
+      if (currentFiles.length + next.length > 4) throw new Error("텍스트 파일은 최대 4개까지 첨부할 수 있습니다.");
+      setFiles([...currentFiles, ...next]); setNotice("");
+    } catch (failure) { if (mounted.current && projectActionCompany.current === companyId && workspaceGeneration.current === generation) setNotice(failure.message); }
+    finally { attachmentBusyRef.current = false; if (mounted.current) setAttachmentBusy(false); }
   }
   function resize(event) {
     const start = event.clientX, width = panelWidth; resizeCleanup.current?.();
@@ -290,15 +346,15 @@ export function PluginBuilderPage({ context }) {
     const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); resizeCleanup.current = null; };
     resizeCleanup.current = stop; window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
   }
-  return <div className={`sps-builder ${panel ? "with-panel" : ""}`} style={{ "--builder-panel": `${panelWidth}px` }}>
+  return <div className={`sps-builder ${panel ? "with-panel" : ""} ${historyOpen ? "with-history" : ""}`} style={{ "--builder-panel": `${panelWidth}px` }}>
     <style>{builderStyles}</style>
-    <aside className="bc-rail" aria-label="Builder conversations">
-      <div className="bc-rail-header"><strong>Plugin Builder</strong><button className="bc-icon" title="새 대화" aria-label="새 대화" onClick={fresh}>+</button></div>
-      <div className="bc-list">{[...conversations].reverse().map(item => <button key={item.id} className={`bc-chat-link ${selectedId === item.id ? "active" : ""}`} onClick={() => { projectActionGeneration.current++; createdConversation.current = null; setSelectedId(item.id); draftValue.current = ""; setDraft(""); setFiles([]); setNotice(""); setValidationNotice(""); }}><span>{item.title}</span><small>{agents.find(agent => agent.id === item.leadId)?.name || "Lead"}</small></button>)}
+    <aside id="builder-conversations" className="bc-rail" aria-label="Builder conversations">
+      <div className="bc-rail-header"><strong>Plugin Builder</strong><button className="bc-icon" title="새 대화" aria-label="새 대화" disabled={busy || attachmentBusy} onClick={fresh}>+</button></div>
+      <div className="bc-list">{[...conversations].reverse().map(item => <button key={item.id} disabled={busy || attachmentBusy} className={`bc-chat-link ${selectedId === item.id ? "active" : ""}`} onClick={() => selectConversation(item.id)}><span>{item.title}</span><small>{agents.find(agent => agent.id === item.leadId)?.name || "Lead"}{drafts.read(builderDraftKey(context.companyId, item.id)).draft || drafts.read(builderDraftKey(context.companyId, item.id)).files.length ? " · 초안" : ""}</small></button>)}
         {!loading && !conversations.length ? <p className="bc-muted">아직 대화가 없습니다.</p> : null}</div>
     </aside>
     <main className="bc-main">
-      <header className="bc-header"><span className="bc-header-title">{conversation?.title || "새 대화"}</span><button className="bc-icon" title="새 대화" aria-label="새 대화 시작" onClick={fresh}>+</button><button className="bc-button" aria-expanded={panel} onClick={() => { projectActionGeneration.current++; setPanel(!panel); }}>작업 패널</button></header>
+      <header className="bc-header"><button className="bc-button bc-history-toggle" aria-controls="builder-conversations" aria-expanded={historyOpen} onClick={() => { setHistoryOpen(!historyOpen); setPanel(false); }}>대화 목록</button><span className="bc-header-title">{conversation?.title || "새 대화"}</span><button className="bc-icon" title="새 대화" aria-label="새 대화 시작" disabled={busy || attachmentBusy} onClick={fresh}>+</button><button className="bc-button" aria-expanded={panel} onClick={() => { projectActionGeneration.current++; setHistoryOpen(false); setPanel(!panel); }}>작업 패널</button></header>
       <section className="bc-transcript" aria-label="Lead conversation" aria-live="polite">
         {loading && !data ? <p className="bc-muted">대화를 불러오는 중...</p> : null}
         {error ? <p className="bc-error" role="alert">{error.message} <button className="bc-button" onClick={refresh}>다시 시도</button></p> : null}
@@ -311,17 +367,18 @@ export function PluginBuilderPage({ context }) {
         </article>)}<div ref={end} />
       </section>
       <form className="bc-composer" onSubmit={submit}><div className="bc-compose-box">
-        {files.length ? <div className="bc-file-chips">{files.map((file,index) => <span className="bc-file-chip" key={index}>{file.name}<button type="button" title="첨부 제거" aria-label={`${file.name} 첨부 제거`} onClick={() => setFiles(files.filter((_,i) => i!==index))}>x</button></span>)}</div> : null}
-        <textarea aria-label="Lead에게 메시지" placeholder={lead ? `${lead.name}에게 메시지` : "먼저 Assistant를 등록하세요"} value={draft} maxLength={20000} disabled={busy || running || !lead} onChange={event => { draftValue.current = event.target.value; setDraft(event.target.value); }} onKeyDown={event => { if(event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
-        <div className="bc-compose-tools"><button type="button" className="bc-icon" title="UTF-8 텍스트 파일 첨부" aria-label="텍스트 파일 첨부" disabled={busy || running || validationBusy} onClick={() => fileInput.current.click()}>+</button><input className="bc-hidden" ref={fileInput} type="file" multiple accept=".txt,.md,.json,.js,.ts,.jsx,.tsx,.css,.html,.yaml,.yml,.csv" onChange={attach} />
+        {files.length ? <div className="bc-file-chips">{files.map((file,index) => <span className="bc-file-chip" key={index}>{file.name}<button type="button" title="첨부 제거" aria-label={`${file.name} 첨부 제거`} disabled={busy || running} onClick={() => setFiles(files.filter((_,i) => i!==index))}>x</button></span>)}</div> : null}
+        <textarea aria-label="Lead에게 메시지" placeholder={lead ? `${lead.name}에게 메시지` : "먼저 Agent를 등록하세요"} value={draft} maxLength={20000} disabled={busy || running || !lead} onChange={event => { draftValue.current = event.target.value; setDraft(event.target.value); }} onKeyDown={event => { if(event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
+        <div className="bc-compose-tools"><button type="button" className="bc-icon" title="UTF-8 텍스트 파일 첨부" aria-label="텍스트 파일 첨부" disabled={busy || running || validationBusy || attachmentBusy} onClick={() => fileInput.current.click()}>+</button><input className="bc-hidden" ref={fileInput} type="file" multiple accept=".txt,.md,.json,.js,.ts,.jsx,.tsx,.css,.html,.yaml,.yml,.csv" onChange={attach} />
           <select aria-label="Lead 선택" value={selectedLeadId} disabled={busy || running || validationBusy || agentFolderCheckBusy || Boolean(conversation)} onChange={event => { projectActionGeneration.current++; setLeadId(event.target.value); setWorkers(workers.filter(id => id!==event.target.value)); }}>{!agents.length ? <option value="">Lead 없음</option> : null}{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
-          <span className="bc-model" title="선택한 Agent의 모델·추론 설정을 사용합니다">{lead?.model || lead?.adapterType || ""}{lead?.effort ? ` · ${lead.effort}` : ""}</span><span className="bc-spacer" />{running ? <button type="button" className="bc-button" title="현재 Lead 응답만 중지" onClick={stopReply} disabled={busy || validationBusy || !activeMessage.runId}>{busy ? "중지 요청 중…" : cancelling ? "중지 재시도" : "응답 중지"}</button> : <button className="bc-button primary" disabled={busy || validationBusy || !lead || (!draft.trim() && !files.length)}>{busy ? "전송 중…" : "보내기"}</button>}
-        </div></div>{notice ? <p className="bc-notice bc-error" role="alert">{notice}</p> : null}{!lead && !loading ? <p className="bc-notice bc-muted">이 Workspace에 실행 가능한 Assistant가 없습니다.</p> : null}
+          <span className="bc-model" title="선택한 Agent의 모델·추론 설정을 사용합니다">{lead?.model || lead?.adapterType || ""}{lead?.effort ? ` · ${lead.effort}` : ""}</span><span className="bc-spacer" />{running ? <button type="button" className="bc-button" title="현재 Lead 응답만 중지" onClick={stopReply} disabled={busy || validationBusy || !activeMessage.runId}>{busy ? "중지 요청 중…" : cancelling ? "중지 재시도" : "응답 중지"}</button> : <button className="bc-button primary" disabled={busy || validationBusy || attachmentBusy || !lead || (!draft.trim() && !files.length)}>{attachmentBusy ? "첨부 읽는 중…" : busy ? "전송 중…" : "보내기"}</button>}
+        </div></div>{notice ? <p className="bc-notice bc-error" role="alert">{notice}</p> : null}{!lead && !loading ? <p className="bc-notice bc-muted">실행 가능한 Agent가 없습니다. <button type="button" className="bc-button" onClick={manageAgents}>Agent 관리</button></p> : null}
       </form>
     </main>
     {panel ? <aside className="bc-panel" aria-label="Builder 작업 패널"><div className="bc-resizer" role="separator" tabIndex={0} aria-label="작업 패널 너비" aria-orientation="vertical" aria-valuemin={260} aria-valuemax={440} aria-valuenow={panelWidth} onPointerDown={resize} onKeyDown={event => { if(["ArrowLeft","ArrowRight"].includes(event.key)) { event.preventDefault(); setPanelWidth(width => Math.max(260,Math.min(440,width+(event.key==="ArrowLeft"?20:-20)))); } }} />
       <div className="bc-panel-head"><strong>작업</strong><button className="bc-icon" aria-label="작업 패널 닫기" title="작업 패널 닫기" onClick={() => { projectActionGeneration.current++; setPanel(false); }}>x</button></div><h3>Lead</h3><div className="bc-person"><span className="bc-person-name">{lead?.name || "선택 필요"}</span><small>{running ? "작업 중" : "대기"}</small></div><h3>Workers</h3>
-      {agents.filter(agent => agent.id!==selectedLeadId).map(agent => <div className="bc-person" key={agent.id}><label><input type="checkbox" disabled={busy || running} checked={selectedWorkers.includes(agent.id)} onChange={event => changeWorkers(agent.id,event.target.checked)} /><span className="bc-person-name">{agent.name}</span></label></div>)}{agents.length<2 ? <p>추가 Assistant를 등록하면 Worker로 선택할 수 있습니다.</p> : null}
+      {agents.filter(agent => agent.id!==selectedLeadId).map(agent => <div className="bc-person" key={agent.id}><label><input type="checkbox" disabled={busy || running || validationBusy} checked={selectedWorkers.includes(agent.id)} onChange={event => changeWorkers(agent.id,event.target.checked)} /><span className="bc-person-name">{agent.name}</span></label></div>)}{agents.length<2 ? <p>추가 Agent를 등록하면 Worker로 선택할 수 있습니다.</p> : null}
+      <button type="button" className="bc-button" disabled={busy || attachmentBusy} onClick={manageAgents}>Agent 관리</button>
       {conversation?.reports?.length ? <><h3>Worker 보고</h3>{conversation.reports.map(report => <details className="bc-evidence-item" key={report.id}><summary>{agents.find(agent => agent.id===report.workerId)?.name || "Worker"} · {report.status}</summary><p>{report.objective}</p><p>{report.content || "실행 중"}</p></details>)}</> : null}
       <section className="bc-project-context" aria-label="제작 프로젝트"><h3>제작 프로젝트</h3>
         {visibleProjectState?.kind === "host-only" ? <p>프로젝트 연결은 Host 앱에서만 사용할 수 있습니다.</p> : null}

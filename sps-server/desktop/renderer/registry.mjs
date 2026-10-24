@@ -9,6 +9,11 @@ let selectedDeveloperFolder = null;
 let previewDiagnostics = [];
 let previewDiagnosticsWarning = null;
 let previewState = { active: false };
+let sourceInspectionRevision = 0;
+let sourceListRevision = 0;
+let currentSourceInspection = null;
+let requestedSourcePending = true;
+let registryStages = [];
 const developerInspections = new Map();
 const requestedSourceId = new URLSearchParams(window.location.search).get("source");
 
@@ -25,6 +30,18 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderLoadError(selector, message) {
+  $(selector).innerHTML = `<div class="error-state"><strong>${escapeHtml(message)}</strong><p>Use Refresh to retry.</p></div>`;
+}
+
+function resetCatalog() {
+  sourceInspectionRevision += 1;
+  currentSourceInspection = null;
+  $("#catalog-title").textContent = "Choose a source";
+  $("#catalog-status").textContent = "A source is verified before its releases can be staged.";
+  $("#release-list").innerHTML = '<p class="empty-state">Select a trusted source to browse its releases.</p>';
 }
 
 function sourceTrustLabel(source) {
@@ -102,7 +119,7 @@ function renderDeveloperProjects() {
 function renderDeveloperContext() {
   const visible = Boolean(developerContext || developerContextError);
   $("#developer-context").hidden = !visible;
-  document.body.classList.toggle("developer-context-mode", visible);
+  document.body.classList.toggle("developer-context-mode", Boolean(developerContext));
   $("#developer-context-title").textContent = developerContextError
     ? "Project context unavailable" : developerContext
       ? `${developerContext.workspaceName} / ${developerContext.pluginName} / ${developerContext.context.contextId.slice(0, 8)}` : "";
@@ -119,7 +136,7 @@ async function loadDeveloperContext() {
     developerContextError = null;
   } catch {
     developerContext = null;
-    developerContextError = "Refresh this window before linking a project.";
+    developerContextError = "Refresh developer projects before linking a project.";
   }
   renderDeveloperContext();
 }
@@ -218,13 +235,14 @@ function renderReleases(report) {
         <span class="release-links">${documentation}${publisherWebsite}</span>
       </div>
       <div class="release-meta"><span>${Math.ceil(release.artifact.sizeBytes / 1024)} KB</span><code>${escapeHtml(release.artifact.sha256.slice(0, 12))}...</code><span class="release-badge">${escapeHtml(report.source.kind === "official" ? "Official" : "Verified release")}</span></div>
-      <button class="primary stage-release" type="button" data-plugin-id="${escapeHtml(release.pluginId)}" data-version="${escapeHtml(release.version)}">Stage for review</button>
+      <button class="primary stage-release" type="button" data-source-id="${escapeHtml(report.source.id)}" data-inspection-revision="${currentSourceInspection.revision}" data-plugin-id="${escapeHtml(release.pluginId)}" data-version="${escapeHtml(release.version)}">Stage for review</button>
     </article>
   `;
   }).join("");
 }
 
 function renderStages(stages) {
+  registryStages = Array.isArray(stages) ? stages : [];
   const list = $("#stage-list");
   if (!Array.isArray(stages) || stages.length === 0) {
     list.innerHTML = '<p class="empty-state">No staged packages. Stage a verified release before any plugin code can run.</p>';
@@ -236,8 +254,9 @@ function renderStages(stages) {
     const capabilities = Array.isArray(stage.capabilities) && stage.capabilities.length > 0
       ? stage.capabilities.join(", ")
       : "No declared capabilities";
-    const status = stage.status === "registered" ? "registered" : "staged";
+    const status = ["staged", "registered", "review_pending"].includes(stage.status) ? stage.status : "unavailable";
     const action = status === "registered" ? "Apply this verified version" : "Enable reviewed version";
+    const pending = status === "review_pending";
     return `
       <article class="stage-card">
         <div>
@@ -246,67 +265,126 @@ function renderStages(stages) {
           <p>Capabilities: ${escapeHtml(capabilities)}</p>
           <code>${escapeHtml(String(stage.artifactSha256).slice(0, 12))}...</code>
         </div>
-        <span class="stage-status ${status}">${escapeHtml(status)}</span>
-        <button class="primary enable-stage" type="button" data-stage-id="${escapeHtml(stage.stageId)}">${action}</button>
+        <span class="stage-status ${status}">${pending ? "Awaiting Host review" : escapeHtml(status)}</span>
+        ${pending ? '<p>Open SPS Workspace > Settings > Plugins to approve or reject this update.</p>'
+          : status === "unavailable" ? '<p>Refresh the review queue before applying this package.</p>'
+            : `<button class="primary enable-stage" type="button" data-stage-id="${escapeHtml(stage.stageId)}">${action}</button>`}
       </article>
     `;
   }).join("");
 }
 
 async function loadStages() {
+  registryStages = [];
   $("#stage-list").innerHTML = '<p class="empty-state">Loading staged packages...</p>';
   try {
     renderStages(await window.spsRegistry.listStages());
-  } catch (error) {
-    $("#stage-list").innerHTML = `<div class="error-state"><strong>Could not load the review queue.</strong><pre>${escapeHtml(error instanceof Error ? error.message : String(error))}</pre></div>`;
+    return true;
+  } catch {
+    renderLoadError("#stage-list", "Could not load the review queue.");
+    return false;
   }
 }
 
 async function loadSources() {
-  sources = await window.spsRegistry.listSources();
-  if (selectedSourceId && !sources.some((source) => source.id === selectedSourceId)) selectedSourceId = null;
-  renderSources();
+  const revision = ++sourceListRevision;
+  resetCatalog();
+  $("#source-list").innerHTML = '<p class="empty-state">Loading Registry sources...</p>';
+  try {
+    const loaded = await window.spsRegistry.listSources();
+    if (revision !== sourceListRevision) return;
+    sources = loaded;
+    if (selectedSourceId && !sources.some((source) => source.id === selectedSourceId)) selectedSourceId = null;
+    if (requestedSourcePending) {
+      requestedSourcePending = false;
+      if (!selectedSourceId && sources.some((source) => source.id === requestedSourceId)) selectedSourceId = requestedSourceId;
+    }
+    renderSources();
+    if (selectedSourceId) await inspectSelectedSource();
+  } catch {
+    if (revision !== sourceListRevision) return;
+    sources = [];
+    selectedSourceId = null;
+    resetCatalog();
+    renderLoadError("#source-list", "Could not load Registry sources.");
+  }
 }
 
 async function loadDeveloperProjects() {
-  developerProjects = await window.spsRegistry.listDeveloperProjects();
-  await loadDeveloperContext();
-  for (const projectId of [...developerInspections.keys()]) {
-    if (!developerProjects.some((project) => project.id === projectId)) developerInspections.delete(projectId);
+  const contextRequest = loadDeveloperContext();
+  $("#developer-project-list").innerHTML = '<p class="empty-state">Loading connected developer projects...</p>';
+  try {
+    const [loaded] = await Promise.all([window.spsRegistry.listDeveloperProjects(), contextRequest]);
+    developerProjects = loaded;
+    for (const projectId of [...developerInspections.keys()]) {
+      if (!developerProjects.some((project) => project.id === projectId)) developerInspections.delete(projectId);
+    }
+    renderDeveloperProjects();
+  } catch {
+    renderLoadError("#developer-project-list", "Could not load developer projects.");
+  } finally {
+    await contextRequest;
   }
-  renderDeveloperProjects();
 }
 
 async function loadPreviewDiagnostics() {
-  const result = await window.spsRegistry.listPreviewDiagnostics({
-    limit: 80,
-    origin: $("#preview-diagnostics-origin").value || undefined,
-    category: $("#preview-diagnostics-category").value || undefined,
-    level: $("#preview-diagnostics-level").value || undefined,
-  });
-  previewDiagnostics = Array.isArray(result?.events) ? result.events : [];
-  previewDiagnosticsWarning = result?.warning ?? null;
-  renderPreviewDiagnostics();
-}
-
-async function loadPreviewState() {
-  previewState = await window.spsRegistry.getPreviewState();
-  renderPreviewEnvironment();
-}
-
-async function inspectSelectedSource() {
-  if (!selectedSourceId) return;
-  $("#release-list").innerHTML = '<p class="empty-state">Verifying Registry index and release signatures...</p>';
+  $("#preview-diagnostics-list").innerHTML = '<p class="empty-state">Loading development diagnostics...</p>';
   try {
-    renderReleases(await window.spsRegistry.inspectSource({ sourceId: selectedSourceId }));
-  } catch (error) {
-    $("#release-list").innerHTML = `<div class="error-state"><strong>Registry check failed.</strong><pre>${escapeHtml(error instanceof Error ? error.message : String(error))}</pre></div>`;
+    const result = await window.spsRegistry.listPreviewDiagnostics({
+      limit: 80,
+      origin: $("#preview-diagnostics-origin").value || undefined,
+      category: $("#preview-diagnostics-category").value || undefined,
+      level: $("#preview-diagnostics-level").value || undefined,
+    });
+    previewDiagnostics = Array.isArray(result?.events) ? result.events : [];
+    previewDiagnosticsWarning = result?.warning ?? null;
+    renderPreviewDiagnostics();
+  } catch {
+    previewDiagnostics = [];
+    previewDiagnosticsWarning = "Could not load development diagnostics. Use Refresh to retry.";
+    renderPreviewDiagnostics();
   }
 }
 
-$("#refresh-sources").addEventListener("click", () => loadSources().catch((error) => setNotice(error.message, true)));
+async function loadPreviewState() {
+  previewState = { active: false };
+  renderPreviewEnvironment();
+  $("#preview-environment-status").textContent = "Loading Preview environment...";
+  try {
+    previewState = await window.spsRegistry.getPreviewState();
+    renderPreviewEnvironment();
+  } catch {
+    $("#preview-environment-status").textContent = "Could not load the Preview environment. Use Refresh to retry.";
+  }
+}
+
+async function inspectSelectedSource() {
+  const sourceId = selectedSourceId;
+  const revision = ++sourceInspectionRevision;
+  currentSourceInspection = null;
+  if (!sourceId) return;
+  const isCurrent = () => revision === sourceInspectionRevision && sourceId === selectedSourceId
+    && sources.some((source) => source.id === sourceId);
+  $("#catalog-title").textContent = sources.find((source) => source.id === sourceId)?.displayName ?? "Registry source";
+  $("#catalog-status").textContent = "Verifying selected source...";
+  $("#release-list").innerHTML = '<p class="empty-state">Verifying Registry index and release signatures...</p>';
+  try {
+    const report = await window.spsRegistry.inspectSource({ sourceId });
+    if (!isCurrent()) return;
+    if (report.source?.id !== sourceId) throw new Error("Registry source mismatch.");
+    if (report.valid) currentSourceInspection = { sourceId, revision, releases: report.releases };
+    renderReleases(report);
+  } catch {
+    if (!isCurrent()) return;
+    currentSourceInspection = null;
+    $("#catalog-status").textContent = "Verification unavailable.";
+    renderLoadError("#release-list", "Could not verify this Registry. Refresh sources to retry.");
+  }
+}
+
+$("#refresh-sources").addEventListener("click", () => loadSources());
 $("#refresh-stages").addEventListener("click", () => loadStages());
-$("#refresh-developer-projects").addEventListener("click", () => loadDeveloperProjects().catch((error) => setNotice(error.message, true)));
+$("#refresh-developer-projects").addEventListener("click", () => loadDeveloperProjects());
 $("#clear-developer-context").addEventListener("click", async (event) => {
   if (!developerContext) return;
   event.currentTarget.disabled = true;
@@ -317,11 +395,11 @@ $("#clear-developer-context").addEventListener("click", async (event) => {
   } catch (error) { setNotice(error.message, true); }
   finally { $("#clear-developer-context").disabled = false; }
 });
-$("#refresh-preview-diagnostics").addEventListener("click", () => loadPreviewDiagnostics().catch((error) => setNotice(error.message, true)));
+$("#refresh-preview-diagnostics").addEventListener("click", () => loadPreviewDiagnostics());
 for (const control of document.querySelectorAll("#preview-diagnostics-origin, #preview-diagnostics-category, #preview-diagnostics-level")) {
-  control.addEventListener("change", () => loadPreviewDiagnostics().catch((error) => setNotice(error.message, true)));
+  control.addEventListener("change", () => loadPreviewDiagnostics());
 }
-$("#refresh-preview-environment").addEventListener("click", () => loadPreviewState().catch((error) => setNotice(error.message, true)));
+$("#refresh-preview-environment").addEventListener("click", () => loadPreviewState());
 $("#preview-environment-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!previewState.active || !previewState.fixture) return;
@@ -417,6 +495,7 @@ $("#source-form").addEventListener("submit", async (event) => {
       displayName: $("#source-name").value.trim(),
       localPath: $("#local-path").value,
     };
+    sourceListRevision += 1;
     sources = await window.spsRegistry.addSource(input);
     selectedSourceId = input.id;
     renderSources();
@@ -433,16 +512,19 @@ $("#source-list").addEventListener("click", async (event) => {
   const sourceId = event.target.closest("[data-source-id]")?.dataset.sourceId;
   try {
     if (removeId) {
-      sources = await window.spsRegistry.removeSource({ sourceId: removeId });
+      sourceListRevision += 1;
       if (selectedSourceId === removeId) {
         selectedSourceId = null;
-        $("#catalog-title").textContent = "Choose a source";
-        $("#catalog-status").textContent = "A source is verified before its releases can be staged.";
-        $("#release-list").innerHTML = '<p class="empty-state">Select a trusted source to browse its releases.</p>';
+        resetCatalog();
+      }
+      sources = await window.spsRegistry.removeSource({ sourceId: removeId });
+      if (selectedSourceId && !sources.some((source) => source.id === selectedSourceId)) {
+        selectedSourceId = null;
+        resetCatalog();
       }
       renderSources();
       setNotice("Registry source removed. Existing staged plugins were not changed.");
-    } else if (sourceId) {
+    } else if (sourceId && sources.some((source) => source.id === sourceId)) {
       selectedSourceId = sourceId;
       renderSources();
       await inspectSelectedSource();
@@ -454,19 +536,28 @@ $("#source-list").addEventListener("click", async (event) => {
 
 $("#release-list").addEventListener("click", async (event) => {
   const button = event.target.closest(".stage-release");
-  if (!button || !selectedSourceId) return;
+  if (!button || button.disabled) return;
+  const inspection = currentSourceInspection;
+  if (!inspection || inspection.sourceId !== selectedSourceId
+    || !sources.some((source) => source.id === inspection.sourceId)
+    || button.dataset.sourceId !== inspection.sourceId
+    || button.dataset.inspectionRevision !== String(inspection.revision)
+    || !inspection.releases.some((release) => release.pluginId === button.dataset.pluginId && release.version === button.dataset.version)) {
+    setNotice("This release view is no longer current. Select the source again before staging.", true);
+    return;
+  }
   try {
     button.disabled = true;
     button.textContent = "Staging...";
     const staged = await window.spsRegistry.stageRelease({
-      sourceId: selectedSourceId,
+      sourceId: inspection.sourceId,
       pluginId: button.dataset.pluginId,
       version: button.dataset.version,
     });
     await loadStages();
     setNotice(`${staged.stage.pluginId} v${staged.stage.version} is staged and disabled. Review it below before enabling.`);
-  } catch (error) {
-    setNotice(error instanceof Error ? error.message : String(error), true);
+  } catch {
+    setNotice("Could not stage this release. Refresh sources and try again.", true);
   } finally {
     button.disabled = false;
     button.textContent = "Stage for review";
@@ -475,22 +566,34 @@ $("#release-list").addEventListener("click", async (event) => {
 
 $("#stage-list").addEventListener("click", async (event) => {
   const button = event.target.closest(".enable-stage");
-  if (!button) return;
+  if (!button || button.disabled) return;
   const stageId = button.dataset.stageId;
-  if (!stageId) return;
+  const stage = registryStages.find((entry) => entry.stageId === stageId);
+  if (!stage || !["staged", "registered"].includes(stage.status)) return;
   const confirmed = window.confirm("Apply this exact reviewed plugin version? SPS will import its runtime only after this confirmation. It may install, update, or roll back the current plugin version.");
   if (!confirmed) return;
   try {
     button.disabled = true;
     button.textContent = "Applying...";
     const enabled = await window.spsRegistry.enableStage({ stageId });
+    const pending = enabled.stage?.status === "review_pending" || enabled.plugin?.status === "upgrade_pending";
+    const loaded = await loadStages();
+    if (pending) {
+      if (loaded) renderStages(registryStages.map((entry) => entry.stageId === stageId ? { ...entry, status: "review_pending" } : entry));
+      setNotice("This update is awaiting Host review. Open SPS Workspace > Settings > Plugins to approve or reject it.");
+    } else if (enabled.plugin?.status === "ready") {
+      setNotice(`${enabled.plugin.pluginKey ?? "Plugin"} v${enabled.plugin.version ?? ""} is ready.`);
+    } else {
+      setNotice("Package applied. Check its status in SPS Workspace > Settings > Plugins.");
+    }
+  } catch {
     await loadStages();
-    setNotice(`${enabled.plugin?.pluginKey ?? "Plugin"} v${enabled.plugin?.version ?? ""} is ready.`);
-  } catch (error) {
-    setNotice(error instanceof Error ? error.message : String(error), true);
+    setNotice("Could not apply this package. Check the review queue and try again.", true);
   } finally {
-    button.disabled = false;
-    button.textContent = "Apply this verified version";
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = stage.status === "registered" ? "Apply this verified version" : "Enable reviewed version";
+    }
   }
 });
 
@@ -585,9 +688,4 @@ $("#developer-project-list").addEventListener("click", async (event) => {
   }
 });
 
-await Promise.all([loadDeveloperProjects(), loadPreviewState(), loadPreviewDiagnostics(), loadSources(), loadStages()]);
-if (requestedSourceId && sources.some((source) => source.id === requestedSourceId)) {
-  selectedSourceId = requestedSourceId;
-  renderSources();
-  await inspectSelectedSource();
-}
+await Promise.allSettled([loadDeveloperProjects(), loadPreviewState(), loadPreviewDiagnostics(), loadSources(), loadStages()]);

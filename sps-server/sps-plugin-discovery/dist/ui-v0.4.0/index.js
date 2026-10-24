@@ -1,6 +1,6 @@
 // src/ui/DiscoveryPage.jsx
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
+import { useHostNavigation, usePluginAction, usePluginData } from "@sonparkserver/plugin-sdk/ui/bridge";
 
 // src/ui/builder-styles.js
 var builderStyles = `
@@ -13,9 +13,10 @@ var builderStyles = `
 .bc-composer{padding:12px clamp(16px,3vw,40px) 18px}.bc-compose-box{max-width:840px;margin:0 auto;border:1px solid var(--border,#ddd);border-radius:8px;padding:10px 12px;box-shadow:0 1px 3px #00000008}.bc-compose-box:focus-within{border-color:var(--ring,#888)}.bc-compose-box textarea{display:block;resize:none;width:100%;min-height:70px;max-height:180px;border:0;outline:0;background:transparent;padding:4px}.bc-compose-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}.bc-compose-tools select{min-width:0;max-width:200px;border:0;background:transparent;font-size:12px;padding:4px}.bc-spacer{flex:1}.bc-model{font-size:11px;color:var(--muted-foreground,#68717b)}.bc-file-chips{display:flex;gap:6px;flex-wrap:wrap}.bc-file-chip{display:flex;align-items:center;gap:5px;font-size:12px;padding:2px 6px;border:1px solid var(--border,#ddd);border-radius:5px}.bc-file-chip button{border:0;background:transparent}.bc-hidden{display:none}.bc-notice{max-width:840px;margin:6px auto;font-size:12px}
 .bc-panel{position:relative;min-width:0;min-height:0;overflow:auto;border-left:1px solid var(--border,#ddd);background:var(--background,#fff);padding:14px}.bc-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.bc-panel h3{margin:18px 0 8px;font-size:12px;font-weight:600}.bc-panel p{font-size:12px;color:var(--muted-foreground,#68717b)}.bc-person{display:flex;gap:8px;align-items:center;padding:8px 0;min-width:0}.bc-person label{display:flex;gap:8px;align-items:center;width:100%;min-width:0}.bc-person-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bc-person small{margin-left:auto;color:var(--muted-foreground,#68717b);font-size:11px}.bc-resizer{position:absolute;top:0;bottom:0;left:0;width:6px;cursor:col-resize;touch-action:none}.bc-evidence{border-top:1px solid var(--border,#ddd);padding-top:12px;margin-top:18px}.bc-evidence summary{cursor:pointer;font-size:12px}.bc-evidence-item{padding:8px 0;border-bottom:1px solid var(--border,#eee);font-size:12px}.bc-evidence-item strong{display:block}.bc-evidence-item p{margin:4px 0;overflow-wrap:anywhere}
 .bc-project-context{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.bc-project-context h3,.bc-project-context p,.bc-project-name{flex-basis:100%;margin-bottom:0;overflow-wrap:anywhere}.bc-project-name{display:grid;gap:3px;min-width:0;font-size:12px}.bc-project-name small{color:var(--muted-foreground,#68717b)}.bc-project-context>small{display:block;flex-basis:100%;color:var(--muted-foreground,#68717b);font-size:11px;overflow-wrap:anywhere}
+.bc-agent-folder-check,.bc-validation-feedback{display:grid;gap:8px;min-width:0;flex-basis:100%;border-top:1px solid var(--border,#ddd);padding-top:12px;margin-top:6px}.bc-agent-folder-check small{color:var(--muted-foreground,#68717b);font-size:11px;overflow-wrap:anywhere}.bc-history-toggle{display:none}
 @media(max-width:1100px){.sps-builder.with-panel{grid-template-columns:var(--builder-rail) minmax(0,1fr)}.bc-panel{position:absolute;inset:0 0 0 auto;z-index:4;width:min(var(--builder-panel),80%);box-shadow:-8px 0 24px #0000000d}}
 @media(max-width:850px){.sps-builder{--builder-rail:150px}.bc-model{display:none}}
-@media(max-width:600px){.sps-builder{--builder-rail:0px}.bc-rail{display:none}.bc-composer{padding:10px}.bc-transcript{padding:16px}.bc-header{padding:8px 10px}}
+@media(max-width:600px){.sps-builder{--builder-rail:0px}.bc-main{grid-column:1/-1}.bc-rail{display:none}.bc-history-toggle{display:block}.sps-builder.with-history{grid-template-rows:minmax(120px,.4fr) minmax(0,1fr)}.sps-builder.with-history .bc-rail{display:flex;grid-column:1/-1;grid-row:1;border-right:0;border-bottom:1px solid var(--border,#ddd)}.sps-builder.with-history .bc-main{grid-row:2}.bc-composer{padding:10px}.bc-transcript{padding:16px}.bc-header{padding:8px 10px}}
 `;
 
 // src/ui/developer-validation-feedback.js
@@ -179,6 +180,48 @@ function normalizeDeveloperAgentFolderCheckResponse(value, expected) {
   };
 }
 
+// src/ui/builder-drafts.js
+function builderDraftKey(companyId, conversationId) {
+  return JSON.stringify([companyId, conversationId ?? null]);
+}
+function createBuilderDraftStore() {
+  const entries = /* @__PURE__ */ new Map();
+  const empty = () => ({ draft: "", files: [] });
+  return {
+    read(key) {
+      return entries.get(key) ?? empty();
+    },
+    update(key, patch) {
+      const next = { ...entries.get(key) ?? empty(), ...patch };
+      if (!next.draft && !next.files.length) entries.delete(key);
+      else entries.set(key, next);
+      return next;
+    },
+    move(from, to) {
+      if (from === to) return;
+      const entry = entries.get(from);
+      if (entry) entries.set(to, entry);
+      entries.delete(from);
+    },
+    clearSent(key, sent) {
+      const entry = entries.get(key);
+      if (!entry) return;
+      const next = {
+        draft: entry.draft === sent.draft ? "" : entry.draft,
+        files: entry.files.filter((file) => !sent.files.includes(file))
+      };
+      if (!next.draft && !next.files.length) entries.delete(key);
+      else entries.set(key, next);
+    },
+    hasDrafts() {
+      return entries.size > 0;
+    },
+    clear() {
+      entries.clear();
+    }
+  };
+}
+
 // src/ui/DiscoveryPage.jsx
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 function desktopProjectBridge() {
@@ -190,11 +233,28 @@ function desktopAgentFolderBridge() {
   return getDeveloperAgentFolderBridge(window.spsDesktopWorkspace);
 }
 function PluginBuilderPage({ context }) {
+  return /* @__PURE__ */ jsx(WorkspacePluginBuilder, { context }, context.companyId);
+}
+function WorkspacePluginBuilder({ context }) {
+  const navigation = useHostNavigation();
   const { data, loading, error, refresh } = usePluginData("plugin-builder-workspace", { companyId: context.companyId });
   const create = usePluginAction("builder-create"), send = usePluginAction("builder-send"), saveTeam = usePluginAction("builder-team");
   const stop = usePluginAction("builder-stop");
   const [selectedId, setSelectedId] = useState(null), [leadId, setLeadId] = useState("");
-  const [workers, setWorkers] = useState([]), [draft, setDraft] = useState(""), [files, setFiles] = useState([]);
+  const [workers, setWorkers] = useState([]), [drafts] = useState(createBuilderDraftStore), [, redrawDrafts] = useState(0);
+  const draftKey = builderDraftKey(context.companyId, selectedId);
+  const { draft, files } = drafts.read(draftKey);
+  function setDraft(value) {
+    drafts.update(draftKey, { draft: value });
+    redrawDrafts((revision) => revision + 1);
+  }
+  function setFiles(value) {
+    drafts.update(draftKey, { files: value });
+    redrawDrafts((revision) => revision + 1);
+  }
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const workspaceGeneration = useRef(0);
+  const [attachmentBusy, setAttachmentBusy] = useState(false), attachmentBusyRef = useRef(false);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [panel, setPanel] = useState(false), [panelWidth, setPanelWidth] = useState(300);
   const [projectState, setProjectState] = useState(null), [projectBusy, setProjectBusy] = useState(false), [validationBusy, setValidationBusy] = useState(false), [validationNotice, setValidationNotice] = useState("");
   const [agentFolderCheck, setAgentFolderCheck] = useState(null), [agentFolderCheckBusy, setAgentFolderCheckBusy] = useState(false);
@@ -235,8 +295,15 @@ function PluginBuilderPage({ context }) {
   useLayoutEffect(() => {
     if (projectActionCompany.current === context.companyId) return;
     projectActionCompany.current = context.companyId;
+    workspaceGeneration.current++;
     projectActionGeneration.current++;
     createdConversation.current = null;
+    drafts.clear();
+    draftValue.current = "";
+    setNotice("");
+    setHistoryOpen(false);
+    setLeadId("");
+    setWorkers([]);
     setSelectedId(null);
   }, [context.companyId]);
   useEffect(() => {
@@ -295,32 +362,53 @@ function PluginBuilderPage({ context }) {
       window.removeEventListener("focus", refreshOnFocus);
     };
   }, [panel, context.companyId, projectConversation?.id]);
-  function fresh() {
+  function selectConversation(id) {
+    if (busy || attachmentBusyRef.current) return;
     projectActionGeneration.current++;
     createdConversation.current = null;
-    setSelectedId(null);
-    draftValue.current = "";
-    setDraft("");
-    setFiles([]);
+    setSelectedId(id);
+    draftValue.current = drafts.read(builderDraftKey(context.companyId, id)).draft;
     setNotice("");
     setValidationNotice("");
+    setHistoryOpen(false);
+  }
+  function fresh() {
+    selectConversation(null);
+  }
+  function manageAgents() {
+    if (busy || attachmentBusyRef.current) return;
+    if (drafts.hasDrafts() && !window.confirm("Agent \uC124\uC815\uC73C\uB85C \uC774\uB3D9\uD558\uBA74 \uBCF4\uB0B4\uC9C0 \uC54A\uC740 \uCD08\uC548\uACFC \uCCA8\uBD80\uAC00 \uC0AC\uB77C\uC9D1\uB2C8\uB2E4. \uC774\uB3D9\uD560\uAE4C\uC694?")) return;
+    navigation.navigate("/company/settings/agents");
   }
   async function submit(event) {
     event.preventDefault();
-    if (busy || running || validationBusy || validationBusyRef.current || !selectedLeadId || !draft.trim() && !files.length) return;
+    if (busy || running || attachmentBusyRef.current || validationBusy || validationBusyRef.current || !selectedLeadId || !draft.trim() && !files.length) return;
     setBusy(true);
     setNotice("");
+    const companyId = context.companyId, generation = workspaceGeneration.current;
+    const sent = { draft, files };
+    let targetKey = draftKey;
+    const isCurrent = () => mounted.current && projectActionCompany.current === companyId && workspaceGeneration.current === generation;
     try {
       const current = projectConversation ?? await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
+      if (!isCurrent()) return;
+      targetKey = builderDraftKey(companyId, current.id);
+      if (!projectConversation) {
+        drafts.move(draftKey, targetKey);
+        createdConversation.current = current;
+      }
       setSelectedId(current.id);
-      await send({ conversationId: current.id, message: draft, attachments: files });
-      draftValue.current = "";
-      setDraft("");
-      setFiles([]);
+      await send({ conversationId: current.id, message: sent.draft, attachments: sent.files });
+      if (!isCurrent()) return;
+      drafts.clearSent(targetKey, sent);
+      redrawDrafts((revision) => revision + 1);
+      draftValue.current = drafts.read(targetKey).draft;
       refresh();
     } catch (failure) {
-      setNotice(failure.message || "\uBA54\uC2DC\uC9C0\uB97C \uBCF4\uB0B4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
-      refresh();
+      if (isCurrent()) {
+        setNotice(failure.message || "\uBA54\uC2DC\uC9C0\uB97C \uBCF4\uB0B4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+        refresh();
+      }
     } finally {
       setBusy(false);
     }
@@ -357,7 +445,7 @@ function PluginBuilderPage({ context }) {
     }
   }
   async function openProjectContext() {
-    if (busy || projectBusy || validationBusy || agentFolderCheckBusy || agentFolderCheckBusyRef.current) return;
+    if (busy || attachmentBusyRef.current || projectBusy || validationBusy || agentFolderCheckBusy || agentFolderCheckBusyRef.current) return;
     const bridge = desktopProjectBridge();
     if (!bridge) {
       setProjectState({ scopeKey: projectScopeKey, kind: "host-only" });
@@ -378,6 +466,7 @@ function PluginBuilderPage({ context }) {
         targetConversation = await create({ leadId: selectedLeadId, workerIds: selectedWorkers });
         if (!actionIsCurrent()) return;
         createdConversation.current = targetConversation;
+        drafts.move(draftKey, builderDraftKey(actionCompanyId, targetConversation.id));
         setSelectedId(targetConversation.id);
         await refresh();
         if (!actionIsCurrent()) return;
@@ -491,6 +580,10 @@ function PluginBuilderPage({ context }) {
   async function attach(event) {
     const chosen = [...event.target.files];
     event.target.value = "";
+    if (busy || running || attachmentBusyRef.current || !chosen.length) return;
+    const companyId = context.companyId, generation = workspaceGeneration.current;
+    attachmentBusyRef.current = true;
+    setAttachmentBusy(true);
     try {
       if (files.length + chosen.length > 4) throw new Error("\uD14D\uC2A4\uD2B8 \uD30C\uC77C\uC740 \uCD5C\uB300 4\uAC1C\uAE4C\uC9C0 \uCCA8\uBD80\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.");
       const next = await Promise.all(chosen.map(async (file) => {
@@ -499,10 +592,16 @@ function PluginBuilderPage({ context }) {
         if (content.includes("\0")) throw new Error("UTF-8 \uD14D\uC2A4\uD2B8 \uD30C\uC77C\uB9CC \uCCA8\uBD80\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.");
         return { name: file.name, content };
       }));
-      setFiles([...files, ...next]);
+      if (!mounted.current || projectActionCompany.current !== companyId || workspaceGeneration.current !== generation) return;
+      const currentFiles = drafts.read(draftKey).files;
+      if (currentFiles.length + next.length > 4) throw new Error("\uD14D\uC2A4\uD2B8 \uD30C\uC77C\uC740 \uCD5C\uB300 4\uAC1C\uAE4C\uC9C0 \uCCA8\uBD80\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.");
+      setFiles([...currentFiles, ...next]);
       setNotice("");
     } catch (failure) {
-      setNotice(failure.message);
+      if (mounted.current && projectActionCompany.current === companyId && workspaceGeneration.current === generation) setNotice(failure.message);
+    } finally {
+      attachmentBusyRef.current = false;
+      if (mounted.current) setAttachmentBusy(false);
     }
   }
   function resize(event) {
@@ -518,36 +617,35 @@ function PluginBuilderPage({ context }) {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop2);
   }
-  return /* @__PURE__ */ jsxs("div", { className: `sps-builder ${panel ? "with-panel" : ""}`, style: { "--builder-panel": `${panelWidth}px` }, children: [
+  return /* @__PURE__ */ jsxs("div", { className: `sps-builder ${panel ? "with-panel" : ""} ${historyOpen ? "with-history" : ""}`, style: { "--builder-panel": `${panelWidth}px` }, children: [
     /* @__PURE__ */ jsx("style", { children: builderStyles }),
-    /* @__PURE__ */ jsxs("aside", { className: "bc-rail", "aria-label": "Builder conversations", children: [
+    /* @__PURE__ */ jsxs("aside", { id: "builder-conversations", className: "bc-rail", "aria-label": "Builder conversations", children: [
       /* @__PURE__ */ jsxs("div", { className: "bc-rail-header", children: [
         /* @__PURE__ */ jsx("strong", { children: "Plugin Builder" }),
-        /* @__PURE__ */ jsx("button", { className: "bc-icon", title: "\uC0C8 \uB300\uD654", "aria-label": "\uC0C8 \uB300\uD654", onClick: fresh, children: "+" })
+        /* @__PURE__ */ jsx("button", { className: "bc-icon", title: "\uC0C8 \uB300\uD654", "aria-label": "\uC0C8 \uB300\uD654", disabled: busy || attachmentBusy, onClick: fresh, children: "+" })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "bc-list", children: [
-        [...conversations].reverse().map((item) => /* @__PURE__ */ jsxs("button", { className: `bc-chat-link ${selectedId === item.id ? "active" : ""}`, onClick: () => {
-          projectActionGeneration.current++;
-          createdConversation.current = null;
-          setSelectedId(item.id);
-          draftValue.current = "";
-          setDraft("");
-          setFiles([]);
-          setNotice("");
-          setValidationNotice("");
-        }, children: [
+        [...conversations].reverse().map((item) => /* @__PURE__ */ jsxs("button", { disabled: busy || attachmentBusy, className: `bc-chat-link ${selectedId === item.id ? "active" : ""}`, onClick: () => selectConversation(item.id), children: [
           /* @__PURE__ */ jsx("span", { children: item.title }),
-          /* @__PURE__ */ jsx("small", { children: agents.find((agent) => agent.id === item.leadId)?.name || "Lead" })
+          /* @__PURE__ */ jsxs("small", { children: [
+            agents.find((agent) => agent.id === item.leadId)?.name || "Lead",
+            drafts.read(builderDraftKey(context.companyId, item.id)).draft || drafts.read(builderDraftKey(context.companyId, item.id)).files.length ? " \xB7 \uCD08\uC548" : ""
+          ] })
         ] }, item.id)),
         !loading && !conversations.length ? /* @__PURE__ */ jsx("p", { className: "bc-muted", children: "\uC544\uC9C1 \uB300\uD654\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." }) : null
       ] })
     ] }),
     /* @__PURE__ */ jsxs("main", { className: "bc-main", children: [
       /* @__PURE__ */ jsxs("header", { className: "bc-header", children: [
+        /* @__PURE__ */ jsx("button", { className: "bc-button bc-history-toggle", "aria-controls": "builder-conversations", "aria-expanded": historyOpen, onClick: () => {
+          setHistoryOpen(!historyOpen);
+          setPanel(false);
+        }, children: "\uB300\uD654 \uBAA9\uB85D" }),
         /* @__PURE__ */ jsx("span", { className: "bc-header-title", children: conversation?.title || "\uC0C8 \uB300\uD654" }),
-        /* @__PURE__ */ jsx("button", { className: "bc-icon", title: "\uC0C8 \uB300\uD654", "aria-label": "\uC0C8 \uB300\uD654 \uC2DC\uC791", onClick: fresh, children: "+" }),
+        /* @__PURE__ */ jsx("button", { className: "bc-icon", title: "\uC0C8 \uB300\uD654", "aria-label": "\uC0C8 \uB300\uD654 \uC2DC\uC791", disabled: busy || attachmentBusy, onClick: fresh, children: "+" }),
         /* @__PURE__ */ jsx("button", { className: "bc-button", "aria-expanded": panel, onClick: () => {
           projectActionGeneration.current++;
+          setHistoryOpen(false);
           setPanel(!panel);
         }, children: "\uC791\uC5C5 \uD328\uB110" })
       ] }),
@@ -586,9 +684,9 @@ function PluginBuilderPage({ context }) {
         /* @__PURE__ */ jsxs("div", { className: "bc-compose-box", children: [
           files.length ? /* @__PURE__ */ jsx("div", { className: "bc-file-chips", children: files.map((file, index) => /* @__PURE__ */ jsxs("span", { className: "bc-file-chip", children: [
             file.name,
-            /* @__PURE__ */ jsx("button", { type: "button", title: "\uCCA8\uBD80 \uC81C\uAC70", "aria-label": `${file.name} \uCCA8\uBD80 \uC81C\uAC70`, onClick: () => setFiles(files.filter((_, i) => i !== index)), children: "x" })
+            /* @__PURE__ */ jsx("button", { type: "button", title: "\uCCA8\uBD80 \uC81C\uAC70", "aria-label": `${file.name} \uCCA8\uBD80 \uC81C\uAC70`, disabled: busy || running, onClick: () => setFiles(files.filter((_, i) => i !== index)), children: "x" })
           ] }, index)) }) : null,
-          /* @__PURE__ */ jsx("textarea", { "aria-label": "Lead\uC5D0\uAC8C \uBA54\uC2DC\uC9C0", placeholder: lead ? `${lead.name}\uC5D0\uAC8C \uBA54\uC2DC\uC9C0` : "\uBA3C\uC800 Assistant\uB97C \uB4F1\uB85D\uD558\uC138\uC694", value: draft, maxLength: 2e4, disabled: busy || running || !lead, onChange: (event) => {
+          /* @__PURE__ */ jsx("textarea", { "aria-label": "Lead\uC5D0\uAC8C \uBA54\uC2DC\uC9C0", placeholder: lead ? `${lead.name}\uC5D0\uAC8C \uBA54\uC2DC\uC9C0` : "\uBA3C\uC800 Agent\uB97C \uB4F1\uB85D\uD558\uC138\uC694", value: draft, maxLength: 2e4, disabled: busy || running || !lead, onChange: (event) => {
             draftValue.current = event.target.value;
             setDraft(event.target.value);
           }, onKeyDown: (event) => {
@@ -598,7 +696,7 @@ function PluginBuilderPage({ context }) {
             }
           } }),
           /* @__PURE__ */ jsxs("div", { className: "bc-compose-tools", children: [
-            /* @__PURE__ */ jsx("button", { type: "button", className: "bc-icon", title: "UTF-8 \uD14D\uC2A4\uD2B8 \uD30C\uC77C \uCCA8\uBD80", "aria-label": "\uD14D\uC2A4\uD2B8 \uD30C\uC77C \uCCA8\uBD80", disabled: busy || running || validationBusy, onClick: () => fileInput.current.click(), children: "+" }),
+            /* @__PURE__ */ jsx("button", { type: "button", className: "bc-icon", title: "UTF-8 \uD14D\uC2A4\uD2B8 \uD30C\uC77C \uCCA8\uBD80", "aria-label": "\uD14D\uC2A4\uD2B8 \uD30C\uC77C \uCCA8\uBD80", disabled: busy || running || validationBusy || attachmentBusy, onClick: () => fileInput.current.click(), children: "+" }),
             /* @__PURE__ */ jsx("input", { className: "bc-hidden", ref: fileInput, type: "file", multiple: true, accept: ".txt,.md,.json,.js,.ts,.jsx,.tsx,.css,.html,.yaml,.yml,.csv", onChange: attach }),
             /* @__PURE__ */ jsxs("select", { "aria-label": "Lead \uC120\uD0DD", value: selectedLeadId, disabled: busy || running || validationBusy || agentFolderCheckBusy || Boolean(conversation), onChange: (event) => {
               projectActionGeneration.current++;
@@ -613,11 +711,14 @@ function PluginBuilderPage({ context }) {
               lead?.effort ? ` \xB7 ${lead.effort}` : ""
             ] }),
             /* @__PURE__ */ jsx("span", { className: "bc-spacer" }),
-            running ? /* @__PURE__ */ jsx("button", { type: "button", className: "bc-button", title: "\uD604\uC7AC Lead \uC751\uB2F5\uB9CC \uC911\uC9C0", onClick: stopReply, disabled: busy || validationBusy || !activeMessage.runId, children: busy ? "\uC911\uC9C0 \uC694\uCCAD \uC911\u2026" : cancelling ? "\uC911\uC9C0 \uC7AC\uC2DC\uB3C4" : "\uC751\uB2F5 \uC911\uC9C0" }) : /* @__PURE__ */ jsx("button", { className: "bc-button primary", disabled: busy || validationBusy || !lead || !draft.trim() && !files.length, children: busy ? "\uC804\uC1A1 \uC911\u2026" : "\uBCF4\uB0B4\uAE30" })
+            running ? /* @__PURE__ */ jsx("button", { type: "button", className: "bc-button", title: "\uD604\uC7AC Lead \uC751\uB2F5\uB9CC \uC911\uC9C0", onClick: stopReply, disabled: busy || validationBusy || !activeMessage.runId, children: busy ? "\uC911\uC9C0 \uC694\uCCAD \uC911\u2026" : cancelling ? "\uC911\uC9C0 \uC7AC\uC2DC\uB3C4" : "\uC751\uB2F5 \uC911\uC9C0" }) : /* @__PURE__ */ jsx("button", { className: "bc-button primary", disabled: busy || validationBusy || attachmentBusy || !lead || !draft.trim() && !files.length, children: attachmentBusy ? "\uCCA8\uBD80 \uC77D\uB294 \uC911\u2026" : busy ? "\uC804\uC1A1 \uC911\u2026" : "\uBCF4\uB0B4\uAE30" })
           ] })
         ] }),
         notice ? /* @__PURE__ */ jsx("p", { className: "bc-notice bc-error", role: "alert", children: notice }) : null,
-        !lead && !loading ? /* @__PURE__ */ jsx("p", { className: "bc-notice bc-muted", children: "\uC774 Workspace\uC5D0 \uC2E4\uD589 \uAC00\uB2A5\uD55C Assistant\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." }) : null
+        !lead && !loading ? /* @__PURE__ */ jsxs("p", { className: "bc-notice bc-muted", children: [
+          "\uC2E4\uD589 \uAC00\uB2A5\uD55C Agent\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. ",
+          /* @__PURE__ */ jsx("button", { type: "button", className: "bc-button", onClick: manageAgents, children: "Agent \uAD00\uB9AC" })
+        ] }) : null
       ] })
     ] }),
     panel ? /* @__PURE__ */ jsxs("aside", { className: "bc-panel", "aria-label": "Builder \uC791\uC5C5 \uD328\uB110", children: [
@@ -641,10 +742,11 @@ function PluginBuilderPage({ context }) {
       ] }),
       /* @__PURE__ */ jsx("h3", { children: "Workers" }),
       agents.filter((agent) => agent.id !== selectedLeadId).map((agent) => /* @__PURE__ */ jsx("div", { className: "bc-person", children: /* @__PURE__ */ jsxs("label", { children: [
-        /* @__PURE__ */ jsx("input", { type: "checkbox", disabled: busy || running, checked: selectedWorkers.includes(agent.id), onChange: (event) => changeWorkers(agent.id, event.target.checked) }),
+        /* @__PURE__ */ jsx("input", { type: "checkbox", disabled: busy || running || validationBusy, checked: selectedWorkers.includes(agent.id), onChange: (event) => changeWorkers(agent.id, event.target.checked) }),
         /* @__PURE__ */ jsx("span", { className: "bc-person-name", children: agent.name })
       ] }) }, agent.id)),
-      agents.length < 2 ? /* @__PURE__ */ jsx("p", { children: "\uCD94\uAC00 Assistant\uB97C \uB4F1\uB85D\uD558\uBA74 Worker\uB85C \uC120\uD0DD\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." }) : null,
+      agents.length < 2 ? /* @__PURE__ */ jsx("p", { children: "\uCD94\uAC00 Agent\uB97C \uB4F1\uB85D\uD558\uBA74 Worker\uB85C \uC120\uD0DD\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." }) : null,
+      /* @__PURE__ */ jsx("button", { type: "button", className: "bc-button", disabled: busy || attachmentBusy, onClick: manageAgents, children: "Agent \uAD00\uB9AC" }),
       conversation?.reports?.length ? /* @__PURE__ */ jsxs(Fragment, { children: [
         /* @__PURE__ */ jsx("h3", { children: "Worker \uBCF4\uACE0" }),
         conversation.reports.map((report) => /* @__PURE__ */ jsxs("details", { className: "bc-evidence-item", children: [

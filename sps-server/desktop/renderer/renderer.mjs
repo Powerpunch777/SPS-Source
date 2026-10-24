@@ -154,10 +154,20 @@ function renderWorkspace(status) {
   const complete = $("#complete-server-access");
   const check = $("#check-server-access");
   const openWorkspace = $("#open-workspace-retry");
+  const retryHost = $("#retry-owner-host");
+  const refreshServer = $("#refresh-server-status");
+  show(retryHost, false);
+  show(refreshServer, false);
   $("#workspace-eyebrow").textContent = local ? "THIS COMPUTER'S SPS SERVER" : "SPS SERVER";
   if (local && !ready) {
-    $("#workspace-title").textContent = "SPS Server를 시작하는 중";
-    $("#workspace-detail").textContent = status?.ownerHost?.lastError ?? "Owner Vault와 기본 서비스가 준비되면 Workspace를 자동으로 엽니다.";
+    const starting = status?.ownerHost?.state === "starting";
+    $("#workspace-title").textContent = starting ? "SPS Server를 시작하는 중" : "SPS Server가 중지되었습니다";
+    $("#workspace-detail").textContent = status?.ownerHost?.lastError
+      ?? (starting ? "서버가 준비되면 Workspace를 자동으로 엽니다."
+        : status?.teamAccess?.enabled ? "앱을 다시 실행한 뒤 상태를 확인하세요. 저장된 서버 데이터는 유지됩니다."
+          : "서버를 다시 시작할 수 있습니다. 저장된 서버 데이터는 유지됩니다.");
+    show(retryHost, !starting && !status?.teamAccess?.enabled);
+    show(refreshServer, true);
     show(openWorkspace, false);
     show(complete, false);
     show(check, false);
@@ -338,6 +348,19 @@ $("#open-workspace-retry").addEventListener("click", () => run(async () => {
   await window.spsDesktop.openWorkspace();
 }));
 
+$("#retry-owner-host").addEventListener("click", () => run(async () => {
+  const button = $("#retry-owner-host");
+  if (button.disabled) return;
+  button.disabled = true;
+  try { await window.spsDesktop.useOwnerHost(); }
+  finally { button.disabled = false; }
+}));
+
+$("#refresh-server-status").addEventListener("click", () => run(async () => {}));
+$("#workspace-switch-account").addEventListener("click", () => run(async () => {
+  await window.spsDesktop.signOutSpsAccount();
+}));
+
 $("#create-owner-server").addEventListener("click", () => run(async () => {
   const button = $("#create-owner-server");
   if (button.disabled) return;
@@ -346,6 +369,7 @@ $("#create-owner-server").addEventListener("click", () => run(async () => {
   try {
     setNotice("이 컴퓨터에 SPS Server와 Owner Vault를 준비하고 있습니다. 첫 실행은 몇 분 걸릴 수 있습니다.");
     await window.spsDesktop.createOwnerServer();
+    setNotice("SPS Server 준비가 완료되었습니다.");
   } finally {
     button.disabled = false;
     button.removeAttribute("aria-busy");
@@ -354,7 +378,8 @@ $("#create-owner-server").addEventListener("click", () => run(async () => {
 
 $("#restore-owner-server").addEventListener("click", () => run(async () => {
   setNotice("Transfer bundle을 검증하고 새 Owner Host에 복원합니다.");
-  await window.spsDesktop.restoreOwnerServer();
+  const restored = await window.spsDesktop.restoreOwnerServer();
+  setNotice(restored ? "서버 백업을 복원했습니다." : "복원을 취소했습니다. 서버 데이터는 변경하지 않았습니다.");
 }));
 
 $("#show-join-server").addEventListener("click", () => {
@@ -409,8 +434,8 @@ $("#project-folder-list").addEventListener("click", (event) => run(async () => {
     return;
   }
   if (button.dataset.action === "share") {
-    await window.spsDesktop.manageHostProjectSource({ projectId });
-    setNotice("Project source access updated for the selected SPS Member Node.");
+    const result = await window.spsDesktop.manageHostProjectSource({ projectId });
+    setNotice(result ? "Project source access updated for the selected SPS Member Node." : "Source access dialog cancelled. Access is unchanged.");
     return;
   }
   const workspacePath = await window.spsDesktop.chooseProjectWorkspace();
