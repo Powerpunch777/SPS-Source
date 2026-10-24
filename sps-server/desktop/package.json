@@ -1,7 +1,7 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.136",
+  "version": "0.4.137",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
@@ -24,6 +24,7 @@
     "test:e2e:workspace-surfaces": "npm run sync:desktop-node && node scripts/smoke-workspace-surfaces-desktop.mjs",
     "test:e2e:plugin-preview": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs",
     "test:e2e:plugin-preview:live": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs --live-authoring",
+    "test:e2e:plugin-preview:team": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs --live-team",
     "test:e2e:host-plugin-lifecycle": "npm run sync:desktop-node && node scripts/smoke-host-plugin-lifecycle-desktop.mjs",
     "test:e2e:host-plugin-lifecycle:live": "npm run sync:desktop-node && node scripts/smoke-host-plugin-lifecycle-desktop.mjs --live-agent",
     "release:init-device-key": "node scripts/initialize-physical-device-key.mjs",

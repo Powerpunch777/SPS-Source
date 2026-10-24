@@ -14,11 +14,13 @@ import { calculateStaticCapabilitiesDigest } from "@sonparkserver/plugin-sdk/reg
 import { resolveDeveloperPackageArtifact } from "../src/developer-package-artifact.mjs";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { buildLiveBuilderPrompt, collectAuthoringSnapshot, verifyLiveBuilderChanges } from "./live-builder-authoring.mjs";
+import { buildLiveBuilderTeamPrompt, buildLiveBuilderRepairPrompt, verifyLiveBuilderTeamReport } from "./live-builder-team-authoring.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
-const liveAuthoring = process.argv.includes("--live-authoring");
+const liveTeam = process.argv.includes("--live-team");
+const liveAuthoring = liveTeam || process.argv.includes("--live-authoring");
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const sdkRoot = path.join(desktopRoot, "node_modules", "@sonparkserver", "plugin-sdk");
@@ -155,8 +157,18 @@ async function cdpFor(target) {
     const listener = (event) => { const message = JSON.parse(event.data); if (message.id !== requestId) return; clearTimeout(timeout); socket.removeEventListener("message", listener); message.error ? reject(new Error(message.error.message)) : resolve(message.result); };
     socket.addEventListener("message", listener); socket.send(JSON.stringify({ id: requestId, method, params }));
   });
+  let expectedConfirmation = null;
+  socket.addEventListener("message", event => {
+    const message = JSON.parse(event.data);
+    if (message.method !== "Page.javascriptDialogOpening") return;
+    const accepted = message.params.type === "confirm" && message.params.message === expectedConfirmation;
+    expectedConfirmation = null;
+    void command("Page.handleJavaScriptDialog", { accept: accepted }).catch(() => {});
+  });
+  await command("Page.enable");
   return {
     command,
+    expectConfirmation(message) { expectedConfirmation = message; },
     async evaluate(expression, awaitPromise = false, timeoutMs = 20_000) { const result = await command("Runtime.evaluate", { expression, awaitPromise, returnByValue: true }, timeoutMs); if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || "Page evaluation failed."); return result.result?.value; },
     close: async () => {
       if (socket.readyState === WebSocket.CLOSED) return;
@@ -281,6 +293,8 @@ const pluginDirectory = path.join(temporaryRoot, "external-plugin");
 const packageArchivePath = path.join(temporaryRoot, "artifacts", "preview-desktop-e2e.spsplugin");
 let child; let setup; let workspace; let registry; let preview; let workspaceTarget; let output = "";
 let liveAgent = null;
+let liveWorker = null;
+const liveWorkerRunIds = [];
 let liveRunId = null;
 let authoredFiles = null;
 let liveArtifact = null;
@@ -331,10 +345,19 @@ try {
           engine: "cli", cwd: pluginDirectory, model: "gpt-6-luna", reasoningEffort: "xhigh", fastMode: true,
           dangerouslyBypassApprovalsAndSandbox: false,
           extraArgs: ["--sandbox", "workspace-write", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "-c", 'windows.sandbox="mxc"', "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=false"],
-          timeoutSec: 300, graceSec: 5,
+          timeoutSec: liveTeam ? 480 : 300, graceSec: 5,
         },
       },
     });
+    if (liveTeam) {
+      liveWorker = await workspaceApi(workspace, `/api/companies/${company.id}/agents`, {
+        method: "POST", body: {
+          name: "Builder Live Worker", role: "engineer", adapterType: "codex_local",
+          adapterConfig: { ...liveAgent.adapterConfig, timeoutSec: 300 },
+        },
+      });
+      assert.notEqual(liveWorker.id, liveAgent.id);
+    }
   }
   let projects = await workspaceApi(workspace, `/api/companies/${company.id}/projects`);
   if (!Array.isArray(projects) || projects.length === 0) {
@@ -427,6 +450,10 @@ try {
     })()`);
     assert.equal(await workspace.evaluate("document.querySelector('[aria-label=\"Lead 선택\"]').value"), liveAgent?.id ?? agent.id);
   }
+  if (liveTeam) {
+    await workspace.evaluate(`[...document.querySelectorAll('.bc-person label')].find(label => label.textContent.includes('Builder Live Worker')).querySelector('input').click()`);
+    assert.equal(await workspace.evaluate(`[...document.querySelectorAll('.bc-person label')].find(label => label.textContent.includes('Builder Live Worker')).querySelector('input').checked`), true);
+  }
   step("opening Developer Registry from Workspace");
   const opened = await workspace.evaluate("window.spsDesktopWorkspace?.openPluginRegistries ? window.spsDesktopWorkspace.openPluginRegistries() : Promise.reject(new Error('Workspace Registry bridge unavailable'))", true);
   assert.equal(opened?.opened, true, "Workspace did not open the real Registry window.");
@@ -461,6 +488,7 @@ try {
   });
   const conversation = linkedConversation.data.conversations.find(item => item.id === developerContext.context.contextId);
   assert.ok(conversation, "Project handoff did not create a real Builder conversation");
+  if (liveTeam) assert.deepEqual(conversation.workerIds, [liveWorker.id]);
   assert.deepEqual(conversation.messages, [], "Linking a project must not send an AI prompt");
   assert.equal(await workspace.evaluate("document.querySelector('.bc-composer textarea').value"), "Unsent plugin draft");
   assert.equal(await workspace.evaluate("document.querySelector('.bc-file-chip')?.textContent.includes('draft.txt')"), true);
@@ -623,20 +651,22 @@ try {
   if (liveAuthoring) {
     step("sending real Builder authoring request to the dedicated workspace-write CLI Agent");
     const beforeFiles = await collectAuthoringSnapshot(pluginDirectory);
-    const prompt = buildLiveBuilderPrompt();
+    const prompt = liveTeam ? buildLiveBuilderTeamPrompt({ workerId: liveWorker.id }) : buildLiveBuilderPrompt();
     await workspace.evaluate(`(() => {
       const textarea = document.querySelector('.bc-composer textarea');
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, ${JSON.stringify(prompt)});
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     })()`);
     await workspace.evaluate("document.querySelector('.bc-composer').requestSubmit()");
-    const end = Date.now() + 330_000;
+    const end = Date.now() + (liveTeam ? 510_000 : 330_000);
     let turn = null;
+    let currentChat = null;
     while (Date.now() < end) {
       const current = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
         method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
       });
       const chat = current.data.conversations.find(entry => entry.id === developerContext.context.contextId);
+      currentChat = chat;
       turn = chat?.messages.find(entry => entry.role === "assistant");
       if (turn?.runId) liveRunId = turn.runId;
       if (turn && !turn.recoveryPending && ["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) break;
@@ -647,6 +677,16 @@ try {
     assert.match(liveRunId ?? "", /^[a-f0-9-]{36}$/i, "Live Builder did not return a run ID.");
     const liveRun = await workspaceApi(workspace, `/api/heartbeat-runs/${encodeURIComponent(liveRunId)}`);
     assert.equal(liveRun.status, "succeeded");
+    if (liveTeam) {
+      const report = verifyLiveBuilderTeamReport(currentChat, { workerId: liveWorker.id, leadRunId: liveRunId });
+      liveWorkerRunIds.push(report.runId);
+      const workerRun = await workspaceApi(workspace, `/api/heartbeat-runs/${report.runId}`);
+      assert.equal(workerRun.agentId, liveWorker.id);
+      assert.equal(workerRun.status, "succeeded");
+      const audit = await workspaceApi(workspace, `/api/plugins/sps.plugin-discovery/companies/${company.id}/tool-audit?limit=100`);
+      assert.ok(audit.audit.some(item => item.runId === liveRunId && item.toolName.endsWith(':builder-delegate-worker') && item.status === 'succeeded'), "The real Lead never called the delegation tool.");
+      step("the real Lead delegated through its bound MCP tools and the distinct real Worker completed");
+    }
     const events = await workspaceApi(workspace, `/api/heartbeat-runs/${liveRunId}/events?limit=200`);
     const invocation = events.find(event => event.eventType === "adapter.invoke")?.payload;
     assert.equal(path.resolve(invocation?.cwd ?? ""), path.resolve(pluginDirectory), "CLI did not execute in the approved test project.");
@@ -663,6 +703,61 @@ try {
       throw new Error(`${errorText(error)} Changed paths: ${JSON.stringify(changed)}. CLI reply: ${turn.content?.slice(-4000) ?? ""}`);
     }
     step(`live CLI authored ${changedPaths.length} allowed files through the Builder conversation`);
+  }
+  if (liveTeam) {
+    step("injecting a runtime-only validation fault and explicitly requesting Worker repair through Builder");
+    const manifestPath = path.join(pluginDirectory, "dist", "manifest.js");
+    const staticPath = path.join(pluginDirectory, "sps-plugin.json");
+    const validManifest = await readFile(manifestPath, "utf8");
+    const invalidManifest = validManifest.replace(/primitives\s*:\s*\[\s*\]/, 'primitives: [{ name: "invalid.fixture" }]');
+    assert.notEqual(invalidManifest, validManifest, "The authored fixture must preserve the neutral empty primitives contract.");
+    const invalidStatic = JSON.parse(await readFile(staticPath, "utf8"));
+    invalidStatic.runtime.manifestSha256 = createHash("sha256").update(invalidManifest).digest("hex");
+    await writeFile(manifestPath, invalidManifest);
+    await writeFile(staticPath, `${JSON.stringify(invalidStatic, null, 2)}\n`);
+    const badGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+    assert.deepEqual(badGates.reports.map(report => report.success), [true, true, true]);
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000), /Invalid plugin manifest/);
+    await workspace.evaluate("document.querySelector('.bc-project-refresh').click()");
+    await waitPage(workspace, page => page.text.includes("Preview · 실패"), "live-team failed Preview feedback");
+    await workspace.evaluate("document.querySelector('.bc-validation-add').click()");
+    const feedback = await workspace.evaluate("document.querySelector('.bc-composer textarea').value");
+    assert.ok(feedback.includes("PREVIEW_CANDIDATE_FAILED"));
+    const beforeRepair = await collectAuthoringSnapshot(pluginDirectory);
+    const beforeRepairChat = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
+      method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+    });
+    const messageCount = beforeRepairChat.data.conversations.find(item => item.id === conversation.id).messages.length;
+    const repairPrompt = buildLiveBuilderRepairPrompt({ workerId: liveWorker.id, feedback });
+    await workspace.evaluate(`(() => { const textarea = document.querySelector('.bc-composer textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, ${JSON.stringify(repairPrompt)});
+      textarea.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await workspace.evaluate("document.querySelector('.bc-composer').requestSubmit()");
+    let repairChat = null;
+    let repairTurn = null;
+    const repairDeadline = Date.now() + 510_000;
+    while (Date.now() < repairDeadline) {
+      const current = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
+        method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+      });
+      repairChat = current.data.conversations.find(entry => entry.id === conversation.id);
+      repairTurn = repairChat?.messages.slice(messageCount).find(entry => entry.role === "assistant");
+      if (repairTurn && !repairTurn.recoveryPending && ["completed", "failed", "cancelled", "interrupted"].includes(repairTurn.status)) break;
+      await delay(1_000);
+    }
+    assert.equal(repairTurn?.status, "completed", `Real Worker repair failed: ${repairTurn?.content?.slice(0, 2000)}`);
+    const report = verifyLiveBuilderTeamReport(repairChat, { workerId: liveWorker.id, leadRunId: repairTurn.runId });
+    assert.ok(!liveWorkerRunIds.includes(report.runId), "Repair reused the original Worker run.");
+    liveWorkerRunIds.push(report.runId);
+    const workerRun = await workspaceApi(workspace, `/api/heartbeat-runs/${report.runId}`);
+    assert.equal(workerRun.agentId, liveWorker.id);
+    assert.equal(workerRun.status, "succeeded");
+    const afterRepair = await collectAuthoringSnapshot(pluginDirectory);
+    const changed = Object.keys(afterRepair).filter(key => beforeRepair[key] !== afterRepair[key]).sort();
+    assert.deepEqual(changed, ["dist/manifest.js", "sps-plugin.json"]);
+    assert.ok(Object.keys(beforeRepair).every(key => Object.hasOwn(afterRepair, key)), "Worker repair deleted a file.");
+    authoredFiles = afterRepair;
+    step("validation feedback was explicitly sent; a new real Worker run repaired only manifest and hash metadata");
   }
   await executeBuilderTool(workspace, runContext, "run-sps-authoring-step", {
     authoringSessionId,
@@ -801,6 +896,51 @@ try {
   await registryCall(registry, `window.spsRegistry.clearDeveloperContext(${JSON.stringify({ contextToken: developerContext.contextToken })})`);
   assert.equal((await workspace.evaluate(getContextExpression, true)).missingProject, false);
   step("verified redacted diagnostics and live production Workspace");
+  if (liveTeam) {
+    step("Host explicitly stages and confirms installation of the exact Preview-verified archive");
+    const localRegistry = path.join(temporaryRoot, "manual-registry");
+    const keys = path.join(temporaryRoot, "registry-keys");
+    await mkdir(path.join(localRegistry, "artifacts"), { recursive: true });
+    await mkdir(path.join(localRegistry, "releases"), { recursive: true });
+    await mkdir(keys, { recursive: true });
+    const command = async args => await execFileAsync(process.execPath, [sdkCliPath, ...args], { cwd: desktopRoot, windowsHide: true, timeout: 30_000 });
+    for (const name of ["publisher", "root"]) await command(["keygen", "--private", path.join(keys, `${name}.pem`), "--public", path.join(keys, `${name}.pub`)]);
+    const exactArchive = path.join(localRegistry, "artifacts", "fixture.spsplugin");
+    await copyFile(liveArtifact.archivePath, exactArchive);
+    assert.equal(createHash("sha256").update(await readFile(exactArchive)).digest("hex"), liveArtifact.sha256);
+    const releaseFile = path.join(localRegistry, "releases", "fixture.json");
+    await command(["release", exactArchive, "--artifact-url", "artifacts/fixture.spsplugin", "--publisher-id", "builder-e2e",
+      "--publisher-key-id", "ed25519:builder-e2e", "--private-key", path.join(keys, "publisher.pem"), "--out", releaseFile]);
+    await command(["registry-index", "--registry-id", "local.builder-team-e2e", "--display-name", "Builder Test Registry",
+      "--root-key-id", "ed25519:builder-root", "--root-private-key", path.join(keys, "root.pem"),
+      "--publisher-key", `ed25519:builder-e2e=${path.join(keys, "publisher.pub")}`,
+      "--release", `releases/fixture.json=${releaseFile}`, "--out", path.join(localRegistry, "registry.json")]);
+    await registry.evaluate(`(() => {
+      document.querySelector('#source-id').value = 'local.builder-team-e2e';
+      document.querySelector('#source-name').value = 'Builder Test Registry';
+      document.querySelector('#local-path').value = ${JSON.stringify(localRegistry)};
+      document.querySelector('#source-form').requestSubmit();
+    })()`);
+    await waitPage(registry, page => page.text.includes("Builder Test Registry") && page.text.includes("Stage for review"), "Host-trusted exact package release");
+    assert.deepEqual(lifecycleSnapshot(await workspaceApi(workspace, "/api/plugins")), productionBefore);
+    await registry.evaluate(`document.querySelector('.stage-release[data-plugin-id="local.preview-desktop-e2e"]').click()`);
+    await waitPage(registry, page => page.text.includes("Enable reviewed version"), "exact archive staged but not installed");
+    const stages = await registryCall(registry, "window.spsRegistry.listStages()");
+    const staged = stages.find(item => item.pluginId === "local.preview-desktop-e2e");
+    assert.equal(staged.artifactSha256, liveArtifact.sha256);
+    assert.equal(staged.status, "staged");
+    assert.deepEqual(lifecycleSnapshot(await workspaceApi(workspace, "/api/plugins")), productionBefore);
+    registry.expectConfirmation("Apply this exact reviewed plugin version? SPS will import its runtime only after this confirmation. It may install, update, or roll back the current plugin version.");
+    await registry.evaluate(`document.querySelector('.enable-stage[data-stage-id="${staged.stageId}"]').click()`);
+    await waitPage(registry, page => page.text.includes("local.preview-desktop-e2e v0.1.0 is ready."), "Host-confirmed installed plugin");
+    const installed = (await workspaceApi(workspace, "/api/plugins")).find(item => item.pluginKey === "local.preview-desktop-e2e");
+    assert.equal(installed?.status, "ready");
+    await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/builder-fixture`)})`);
+    await waitPage(workspace, page => page.text.includes("Builder Preview Fixture") && page.text.includes("Count: 0"), "installed real plugin page");
+    await workspace.evaluate("document.querySelector('#builder-fixture-count').click()");
+    await waitPage(workspace, page => page.text.includes("Count: 1"), "installed real plugin interaction");
+    step("the exact authored/repaired archive runs after explicit Host review; no AI installed it");
+  }
   if (liveAuthoring) {
     await mkdir(path.join(desktopRoot, "dist"), { recursive: true });
     const retained = await mkdtemp(path.join(desktopRoot, "dist", "builder-live-verified-"));
@@ -812,7 +952,8 @@ try {
       reasoningEffort: "xhigh", fastMode: true, sandbox: "workspace-write",
       actualRunSucceeded: true, fileHashes: authoredFiles,
       packageSha256: liveArtifact.sha256, previewCounter: "Count: 1",
-      installedInProduction: false,
+      installedInProduction: false, installedInIsolatedTestHost: liveTeam,
+      realWorkerRunCount: liveWorkerRunIds.length,
     }, null, 2)}\n`, { flag: "wx" });
     step(`retained verified development package in ${path.basename(retained)}`);
   }
