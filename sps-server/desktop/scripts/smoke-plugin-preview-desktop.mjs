@@ -231,6 +231,20 @@ async function executeBuilderTool(cdp, runContext, toolName, parameters) {
   });
 }
 
+async function assertLiveCliInvocation(cdp, runId, projectDirectory) {
+  const events = await workspaceApi(cdp, `/api/heartbeat-runs/${runId}/events?limit=200`);
+  const invocation = events.find(event => event.eventType === "adapter.invoke")?.payload;
+  assert.equal(path.resolve(invocation?.cwd ?? ""), path.resolve(projectDirectory));
+  const args = invocation.commandArgs;
+  assert.ok(args.includes("workspace-write"));
+  assert.ok(args.includes('windows.sandbox="mxc"'));
+  assert.ok(!args.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.ok(args.includes('service_tier="fast"'));
+  assert.equal(args[args.indexOf("--model") + 1], "gpt-6-luna");
+  assert.ok(args.includes('model_reasoning_effort="xhigh"'));
+  return invocation;
+}
+
 function lifecycleSnapshot(plugins) {
   return (Array.isArray(plugins) ? plugins : [])
     .map((plugin) => ({
@@ -690,25 +704,20 @@ try {
     assert.match(liveRunId ?? "", /^[a-f0-9-]{36}$/i, "Live Builder did not return a run ID.");
     const liveRun = await workspaceApi(workspace, `/api/heartbeat-runs/${encodeURIComponent(liveRunId)}`);
     assert.equal(liveRun.status, "succeeded");
+    const invocation = await assertLiveCliInvocation(workspace, liveRunId, pluginDirectory);
     if (liveTeam) {
+      assert.ok(currentChat?.reports?.some(report => report.workerId === liveWorker.id),
+        `The Lead did not delegate. Reply: ${turn.content?.slice(0, 4000)}. MCP arguments: ${JSON.stringify(invocation.commandArgs.filter(arg => arg.startsWith('mcp_servers.')))}`);
       const report = verifyLiveBuilderTeamReport(currentChat, { workerId: liveWorker.id, leadRunId: liveRunId });
       liveWorkerRunIds.push(report.runId);
       const workerRun = await workspaceApi(workspace, `/api/heartbeat-runs/${report.runId}`);
       assert.equal(workerRun.agentId, liveWorker.id);
       assert.equal(workerRun.status, "succeeded");
+      await assertLiveCliInvocation(workspace, report.runId, pluginDirectory);
       const audit = await workspaceApi(workspace, `/api/plugins/sps.plugin-discovery/companies/${company.id}/tool-audit?limit=100`);
       assert.ok(audit.audit.some(item => item.runId === liveRunId && item.toolName.endsWith(':builder-delegate-worker') && item.status === 'succeeded'), "The real Lead never called the delegation tool.");
       step("the real Lead delegated through its bound MCP tools and the distinct real Worker completed");
     }
-    const events = await workspaceApi(workspace, `/api/heartbeat-runs/${liveRunId}/events?limit=200`);
-    const invocation = events.find(event => event.eventType === "adapter.invoke")?.payload;
-    assert.equal(path.resolve(invocation?.cwd ?? ""), path.resolve(pluginDirectory), "CLI did not execute in the approved test project.");
-    assert.ok(invocation.commandArgs.includes("workspace-write"));
-    assert.ok(invocation.commandArgs.includes('windows.sandbox="mxc"'));
-    assert.ok(!invocation.commandArgs.includes("--dangerously-bypass-approvals-and-sandbox"));
-    assert.ok(invocation.commandArgs.includes('service_tier="fast"'));
-    assert.equal(invocation.commandArgs[invocation.commandArgs.indexOf("--model") + 1], "gpt-6-luna");
-    assert.ok(invocation.commandArgs.includes('model_reasoning_effort="xhigh"'));
     let changedPaths;
     try { changedPaths = verifyLiveBuilderChanges(beforeFiles, authoredFiles); }
     catch (error) {
@@ -765,6 +774,8 @@ try {
     const workerRun = await workspaceApi(workspace, `/api/heartbeat-runs/${report.runId}`);
     assert.equal(workerRun.agentId, liveWorker.id);
     assert.equal(workerRun.status, "succeeded");
+    await assertLiveCliInvocation(workspace, repairTurn.runId, pluginDirectory);
+    await assertLiveCliInvocation(workspace, report.runId, pluginDirectory);
     const afterRepair = await collectAuthoringSnapshot(pluginDirectory);
     const changed = Object.keys(afterRepair).filter(key => beforeRepair[key] !== afterRepair[key]).sort();
     assert.deepEqual(changed, ["dist/manifest.js", "sps-plugin.json"]);
