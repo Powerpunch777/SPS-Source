@@ -1,8 +1,10 @@
 # Core Management Incremental Plan
 
-Status: stage 1, Agent-session cancellation and cross-lane history slices of stage 2,
-and usage provenance/summary of stage 3 implemented in source, 2026-10-24.
-No new installer or Stable claim.
+Status: stage 1 and the Agent-session cancellation/cross-lane history slices of
+stage 2, plus stage 3 usage provenance, summaries, Host diagnostics, Agent
+receipts and Claude-only neutral Node ingestion, are implemented in source,
+2026-10-24. Node-ingestion checks below are interim; parent final verification
+is pending. No new installer or Stable claim.
 
 Core owns technical execution state, usage evidence, limits, artifacts, audit and
 recovery. Plugins own assignments, roles, approvals and business evaluation.
@@ -18,11 +20,12 @@ do not replace either engine or import the upstream workflow model.
    Lead stop, safe cross-lane technical read model and conservative failure
    classification. Remaining: parent/child execution ownership and complete
    result/usage recovery. No automatic retry of unknown external effects.
-3. Partly implemented: usage provenance (reported/estimated/unavailable), billing
-   basis/currency and Plugin attribution in the common read model. Remaining:
-   immutable/idempotent provider usage receipts and neutral Node usage ingestion.
-   Own-plugin aggregate queries are now implemented as a read-only projection.
-   Unknown is not zero.
+3. Implemented in source: usage provenance (reported/estimated/unavailable),
+   billing basis/currency and Plugin attribution in the common read model;
+   Agent-session receipts; read-only own-Plugin aggregates; and bounded neutral
+   Node Claude usage receipts. Remaining: provider-issued receipt verification,
+   correction/reconciliation and any non-Claude Node source under a separate
+   versioned contract. Unknown is not zero.
 4. Partly implemented: existing Plugin Status diagnostics consumes the read-only usage
    projection. Shared admission limits and budget reservations/settlement,
    broader Dashboard/Inbox integration and optional result evidence remain planned.
@@ -110,13 +113,17 @@ Linux Core regression, packaged installer or two-PC certification is claimed.
   declaration before this common DTO can show their cost. Their ledger is unchanged.
   Cost means adapter-reported USD, not a provider invoice. Subscription reference
   cost is distinguished from incremental metered/overage charge. Absent subscription
-  cost is not presented as free. Neutral Node usage/model remain unavailable until
-  an explicit provider report contract exists; do not parse command arguments.
+  cost is not presented as free. At this observation slice, neutral Node usage
+  was unavailable; the later ingestion slice below adds only Claude `modelUsage`
+  result evidence. Other runtimes and model identity remain unknown; do not infer
+  usage from command arguments or plaintext.
 - No prompts, arguments, environment, stdin, output, local paths or raw error text
   are included. Existing detailed APIs and Artifact storage are not replaced.
-- No DB schema migration or user-data rewrite is needed. The SDK additions remain
-  unreleased and require pinned source plus a compatible Host. Published v0.11.0
-  does not contain these methods. Read-only UI aggregation is a subsequent slice.
+- This observation API slice required no DB migration or user-data rewrite. The
+  separate Node-ingestion slice below adds nullable `usage_json` in migration 0162
+  without a backfill. SDK additions remain unreleased and require pinned source
+  plus a compatible Host. Published v0.11.0 does not contain these methods.
+  Read-only UI aggregation is a subsequent slice.
 
 Verification (2026-10-23): Core scoped DB/observation/session/recovery/SDK bridge/
 manifest set 205 passed, one platform-inapplicable skip (206 total); public SDK
@@ -162,8 +169,9 @@ Core regression, packaged installer, signed release or two-PC evidence is claime
   metrics stay null, explicit zero stays zero, and overflow becomes unknown.
   API, subscription-reference and other USD costs remain separate. These numeric
   adapter-report sums are not provider invoices or settlement amounts.
-- No schema migration or historical backfill. UI usage surfaces and budget /
-  admission enforcement remain follow-ups; this slice is API/SDK only.
+- The summary API itself adds no schema migration or historical backfill. The
+  separate Node-ingestion migration is documented below. UI usage surfaces and
+  budget/admission enforcement remain follow-ups; this slice is API/SDK only.
 - An interrupted earlier edit left the new required client method without mock
   and Worker implementations, preventing the DEV Owner Host SDK build. Restored
   protocol, capability map, Host service, Worker client/finite RPC and test mock
@@ -215,9 +223,11 @@ before treating a stopped DEV checkout as runnable.
   usage, period changes, refresh, process cancellation and responsive checks.
   Mock Identity and a no-provider process preserve live accounts and user data.
 - No DB migration, paid AI invocation, new installer, full Linux Core regression
-  or two-device release evidence is included. Provider receipts/reconciliation,
-  neutral Node usage ingestion, admission/budget enforcement and broader common
-  management views remain follow-ups.
+  or two-device release evidence is included in this UI slice. At that point,
+  neutral Node usage ingestion remained a follow-up; the separate Claude-only
+  ingestion slice below supersedes that item. Provider-issued receipt
+  correction/reconciliation, other-runtime Node usage, admission/budget
+  enforcement and broader common management views remain follow-ups.
 
 Final Host usage UI checks: focused Core/UI tests 71/71; actual DB Node/execution
 suite 25/25; Desktop full `npm test` 374/374 without exclusions. Recursive Core
@@ -249,8 +259,9 @@ transport, source-static selection and integration. No new installer was built.
   behavior; no backfill or reinterpretation of unmarked legacy costs.
 - SHA-256 detects inconsistency; it is not a provider signature, invoice or
   defense against a DB administrator replacing both the report and digest.
-  Unknown provider data, late cancelled completions and neutral Node usage are
-  not reconciled by this slice. Business success/reassignment stays Plugin-owned.
+  Unknown provider data and late cancelled completions are not reconciled by this
+  Agent-session receipt slice. Neutral Claude Node ingestion is a separate slice
+  below. Business success/reassignment stays Plugin-owned.
 - Optional adapter `usageReportedFields` separates actual Codex/Claude token
   values from legacy parser defaults. Missing/invalid fields stay null, actual
   zero remains zero, malformed supplied masks fail closed. No new provider scope
@@ -260,9 +271,9 @@ transport, source-static selection and integration. No new installer was built.
   scope type narrowing and invalid model-entry completeness, and added DB
   completion, late-write, scoped history and summary coverage. Luna was retried
   on the user's instruction; its review is not claimed complete unless returned.
-- Remaining: provider receipt correction/reconciliation, neutral Node usage
-  ingestion, admission/reservation/budget enforcement and broader common views.
-  None is implied by an adapter-completion receipt.
+- Remaining: provider-issued receipt verification/correction/reconciliation,
+  other-runtime Node ingestion, admission/reservation/budget enforcement and
+  broader common views. None is implied by an Agent adapter-completion receipt.
 
 Final checks: seven-file usage/parser/execute set 103/103; actual DB execution
 history and heartbeat recovery 113 passed, one platform-inapplicable skip.
@@ -291,6 +302,81 @@ normally exited and restarted, preserving its login and Workspace. New backend
 code is active without rebuilding an installer. `usage-receipt-desktop.log`
 records the local Desktop run. The previous global UI token-gate debt remains;
 this backend-only slice does not claim it resolved.
+
+## Neutral Plugin Node Claude Usage Ingestion Slice (2026-10-24)
+
+- The Desktop Node collector is enabled only for `claude_cli`. It recognizes
+  structured JSON Lines objects with `type: "result"` and a `modelUsage` object;
+  it does not infer usage from other CLI output, plaintext, command arguments,
+  or Claude's top-level `usage` field. Ordinary plaintext is ignored and does
+  not create or revise a report.
+- Bound each line to 64 KiB and `modelUsage` to 1..64 model entries. Extract
+  only `inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, and
+  `outputTokens`. For each aggregate independently, every model must provide a
+  nonnegative safe integer and the total must not overflow; otherwise that
+  aggregate is null. `inputTokens` includes cache-creation input, and
+  `cachedInputTokens` is cache-read input. Model identifiers are not retained.
+- The last recognized result replaces the prior report; it never accumulates.
+  Missing/invalid usage in a recognized result, malformed JSON-like or
+  truncated structured input, invalid UTF-8, and oversized lines clear stale
+  usage. A report is emitted only when at least one aggregate is known.
+- The strict optional completion `usageReport` is v1, source
+  `claude_model_usage_v1`, with three required nullable token fields and no
+  cost, model, billing, freeform, or Agent-attribution fields. Older Nodes omit
+  it; older Hosts strip it. No public SDK method changes.
+- Core accepts the report only from a signed Node completion for the matching
+  Claude run with current authority. Its internal receipt binds Workspace, run,
+  Node, runner, execution grant and Plugin. Receipt plus terminal result are
+  written through an active-state CAS: duplicates/late completions cannot
+  overwrite the accepted report. A cancellation that won first remains
+  cancelled but may retain usage from its completion acknowledgement;
+  revocation that already made the run terminal cannot append usage.
+- Scoped history, summary and Host UI verify this receipt; absent, invalid,
+  mismatched or altered receipts produce unknown usage, with no fallback to
+  unbound sibling fields. The digest is Node application-report integrity, not a
+  provider signature/invoice, TPM attestation, or protection from an admin
+  changing both payload and digest.
+- Add nullable `usage_json` with additive migration `0162_sps_node_usage` only;
+  existing rows stay null with no backfill. The generated snapshot reconciles
+  the earlier hand-authored SPS migration baseline; migration SQL only adds the
+  column. No second ledger, cost, model identity, billing, Agent attribution,
+  admission, reservation, budget enforcement, or automatic business decision
+  is added.
+- This is Claude-only. Codex and other runtimes remain unknown; any future
+  support needs an explicit versioned source contract, bounded parser, strict
+  schema, compatibility behavior and focused tests. It must not infer Codex
+  scope or silently expand this contract into budgets or admission policy.
+- Interim checks currently reported: Core DB 26/26, Core pure 31/31, and shared
+  278 passed. These are not final repository checks; parent final verification
+  is pending and will be appended separately. No full Core regression, build,
+  installer, or release claim is made by this interim note.
+
+Final local checks: Core usage/schema/receipt set 60/60; signed DB Node routes
+26/26; Desktop Node 55/55, including a real child process and lost completion
+response retry. Recursive Core typecheck/full build, compatibility boundary and
+UI entry budget passed. Re-running migration generation reports no schema drift.
+The first generated SQL reflected older hand-authored migrations missing from
+the snapshot; it was not applied. The final SQL contains only ADD COLUMN, and
+fresh isolated databases migrated and passed the signed-route tests.
+
+Source Electron Workspace E2E completed with exit 0 (Builder Send/Stop, process
+exit, unknown usage, period/refresh controls and 1024/1280/1440 layouts). This is
+a UI regression test, not a real Claude provider or two-device usage test. Node
+parser/child-process and signed Core ingestion are separately tested. No paid AI
+or existing Workspace mutation was used for fixtures.
+
+Parent audit also found that a lost completion response triggered a generic
+failed retry without usage. The runner now retries the same prepared completion
+payload with a fresh signed request, without rerunning the process. The bounded
+retry can still fail during prolonged outage; durable offline receipt recovery
+is not implemented. Luna 6 xhigh implemented collector/shared schemas/docs and
+the retry test; parent reviewed/integrated Core persistence and DB checks. Luna
+review found no actionable Core receipt/CAS issue. Quota interruptions were
+retried; the last runner verification returned 55 passing tests.
+
+Private ignored evidence: `node-usage-{unit,db,node-tests,typecheck,build,e2e}.log`
+and `node-usage-migration-generation.log`. No full Linux Core regression, fresh
+dependency audit, signed installer, release or physical two-PC claim is made.
 
 ## Verification and Safety
 

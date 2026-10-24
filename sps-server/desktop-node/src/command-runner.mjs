@@ -8,6 +8,7 @@ import {
   completeSpsNodeCommand,
 } from "./hub-client.mjs";
 import { openSpsWorkspaceSourceRoute } from "./host-project-share.mjs";
+import { createSpsNodeUsageCollector } from "./usage-collector.mjs";
 
 const OUTPUT_CHUNK_LIMIT = 48 * 1024;
 const COMMAND_LEASE_CHECK_INTERVAL_MS = 2_000;
@@ -430,6 +431,8 @@ export async function executeSpsNodeCommand({
 }) {
   assertSpsNodeCommandRuntime(command);
   const cancellationGeneration = commandCancellationGeneration;
+  const usageCollector = createSpsNodeUsageCollector(command.runtimeKind);
+  let usageReport = null;
   let sequence = Number(command.lastEventSeq ?? 0);
   let outputQueue = Promise.resolve();
   const enqueueOutput = (stream, raw) => {
@@ -461,6 +464,7 @@ export async function executeSpsNodeCommand({
   let leaseCancellationError = null;
   let lastLeaseConfirmedAt = Date.now();
   let hostProjectShareSession = null;
+  let normalCompletionPayload = null;
   const activeRun = { child: null, cancellationError: null };
   activeCommands.set(command.id, activeRun);
   try {
@@ -538,11 +542,15 @@ export async function executeSpsNodeCommand({
         activeRun.cancellationError = lastCommandCancellationReason;
         void terminateProcessTree(child).catch(() => child?.kill());
       }
-      child.stdout.on("data", (chunk) => enqueueOutput("stdout", chunk.toString("utf8")));
+      child.stdout.on("data", (chunk) => {
+        usageCollector.push(chunk);
+        enqueueOutput("stdout", chunk.toString("utf8"));
+      });
       child.stderr.on("data", (chunk) => enqueueOutput("stderr", chunk.toString("utf8")));
       child.once("error", (error) => settle(reject, error));
       child.once("close", (exitCode, signal) => {
         if (leaseTimer) clearInterval(leaseTimer);
+        usageReport = usageCollector.finish();
         settle(resolve, { exitCode, signal, timedOut });
       });
       const checkLease = async () => {
@@ -600,21 +608,24 @@ export async function executeSpsNodeCommand({
     await processTerminations.get(child);
     leaseCancellationError ??= activeRun.cancellationError;
     await outputQueue;
-    await completeCommand({
+    const completion = {
+      status: result.exitCode === 0 && !result.timedOut && !leaseCancellationError ? "succeeded" : "failed",
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      error: leaseCancellationError ?? (result.timedOut ? `Local command exceeded ${timeoutMs}ms.` : null),
+    };
+    if (typeof command.pluginKey === "string" && usageReport) completion.usageReport = usageReport;
+    normalCompletionPayload = {
       hubUrl,
       nodeId,
       identity,
       accessToken,
       sessionCookie,
       commandId: command.id,
-      completion: {
-        status: result.exitCode === 0 && !result.timedOut && !leaseCancellationError ? "succeeded" : "failed",
-        exitCode: result.exitCode,
-        signal: result.signal,
-        timedOut: result.timedOut,
-        error: leaseCancellationError ?? (result.timedOut ? `Local command exceeded ${timeoutMs}ms.` : null),
-      },
-    });
+      completion,
+    };
+    await completeCommand(normalCompletionPayload);
     return { ...result, workspace, elapsedMs: Date.now() - startedAt };
   } catch (error) {
     if (timeout) clearTimeout(timeout);
@@ -627,7 +638,7 @@ export async function executeSpsNodeCommand({
       else if (child.exitCode === null && child.signalCode === null) await terminateProcessTree(child);
     }
     await outputQueue.catch(() => undefined);
-    await completeCommand({
+    const fallbackCompletionPayload = normalCompletionPayload ?? {
       hubUrl,
       nodeId,
       identity,
@@ -641,7 +652,8 @@ export async function executeSpsNodeCommand({
         timedOut: false,
         error: error instanceof Error ? error.message.slice(0, 16_000) : "SPS Desktop command execution failed.",
       },
-    }).catch(() => undefined);
+    };
+    await completeCommand(fallbackCompletionPayload).catch(() => undefined);
     throw error;
   } finally {
     await hostProjectShareSession?.close().catch(() => undefined);
