@@ -94,6 +94,7 @@ export function buildLiveBuilderPrompt() {
     "Declare the UI entrypoint as entrypoints.ui: \"./dist/ui\" in dist/manifest.js. Register one page slot for routePath \"builder-fixture\" with exportName \"BuilderFixture\". Declare exactly the needed capabilities plugin.state.read and ui.page.register in the runtime and static manifests.",
     "",
     "Keep the package metadata valid: package.json files must include dist/ui; sps-plugin.json must have the matching capabilities, permissionsDigest computed with the installed SDK export calculateStaticCapabilitiesDigest from @sonparkserver/plugin-sdk/registry/static-package-manifest-v1.mjs, and runtime.manifestSha256 equal to SHA-256 of the exact dist/manifest.js bytes (use Node's built-in crypto). Preserve the starter's other required metadata.",
+    "This fixture needs no Core primitives. Preserve sps exactly as { contractVersion: \"2.0\", primitives: [] }; do not add object-valued or other primitive declarations. Static package validation does not replace the Core runtime schema check performed when Preview loads the plugin.",
     "",
     "Modify only these four existing/new project files: package.json, sps-plugin.json, dist/manifest.js, and dist/ui/index.js. Do not modify or create any other file, including worker files. Do not add dependencies or use the network; do not install, publish, change Source, access paths outside this project, or perform any production/Core operation.",
     "",

@@ -263,6 +263,19 @@ screenshots: `builder-live-observation/`; retained package:
 `builder-live-verified-xT93G9/`. Failed attempts remain recorded, not relabeled as
 passing. Final committed-source rerun evidence will be recorded separately.
 
+The first committed-source rerun at `bb1f4651` failed at Preview: the model
+changed `sps.primitives` to object declarations. The static `validate` command
+and Worker lifecycle test do not validate a dynamically imported runtime
+manifest against Core's complete schema; Preview correctly rejected it and no
+package was retained for that attempt. Do not describe those static checks as
+full runtime compatibility certification or weaken Preview to accept it.
+The fixture prompt now explicitly preserves its empty Core primitive declaration.
+A separate SDK profile-inspector bug that silently filtered non-string primitives
+was fixed at `cfa64ec4f589ea9765661834e1685ef1f2e14453`, with full SDK 157/157.
+This does not add runtime code execution to static inspection. Production
+authoring still needs an explicit user-visible failed-gate feedback/repair flow;
+the live harness is not evidence of autonomous multi-attempt repair.
+
 ## Deferred and Unverified
 
 - Source-bound production authoring and remote Member authoring remain unverified.

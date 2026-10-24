@@ -226,6 +226,8 @@ test("builder prompt specifies the fixture, package contract, and operational bo
     "plugin.state.read and ui.page.register",
     "calculateStaticCapabilitiesDigest",
     "runtime.manifestSha256",
+    'primitives: []',
+    "Static package validation does not replace the Core runtime schema check",
     "package.json",
     "sps-plugin.json",
     "dist/manifest.js",
