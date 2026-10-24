@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn as spawnChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 function asMessage(error) {
@@ -60,6 +61,14 @@ async function fileExists(entry, fsApi) {
   }
 }
 
+function resolveOwnerHostInstanceId(value) {
+  const instanceId = value ?? "sps-desktop-owner";
+  if (typeof instanceId !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(instanceId)) {
+    throw new Error("SPS Owner Host instanceId must be 1-64 ASCII letters, digits, dots, underscores, or hyphens.");
+  }
+  return instanceId;
+}
+
 async function removeDirectoryWithRetry(target, { fsApi, delay, attempts = 20 } = {}) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -111,6 +120,53 @@ async function findTsxLoader(coreRoot, fsApi) {
 
 export function spsOwnerHostBundledNodePath(runtimeRoot, platform = process.platform) {
   return path.join(runtimeRoot, "bin", platform === "win32" ? "node.exe" : "node");
+}
+
+async function fileSha256(filePath, fsApi) {
+  const contents = await fsApi.readFile(filePath);
+  return createHash("sha256").update(contents).digest("hex");
+}
+
+export async function materializeStableSpsOwnerHostNode({
+  runtimeRoot,
+  stableRoot,
+  platform = process.platform,
+  fsApi = fs,
+} = {}) {
+  if (!runtimeRoot || !stableRoot) return null;
+  const source = spsOwnerHostBundledNodePath(runtimeRoot, platform);
+  if (!(await fileExists(source, fsApi))) return null;
+
+  const executableName = platform === "win32" ? "node.exe" : "node";
+  const target = path.join(stableRoot, executableName);
+  const metadataPath = path.join(stableRoot, "node-source.json");
+  const sourceSha256 = await fileSha256(source, fsApi);
+  try {
+    const metadata = JSON.parse(await fsApi.readFile(metadataPath, "utf8"));
+    if (
+      metadata?.sha256 === sourceSha256
+      && await fileExists(target, fsApi)
+      && await fileSha256(target, fsApi) === sourceSha256
+    ) return target;
+  } catch {
+    // Missing or stale metadata is repaired from the verified packaged runtime.
+  }
+
+  await fsApi.mkdir(stableRoot, { recursive: true });
+  const temporaryTarget = path.join(stableRoot, `${executableName}.tmp-${process.pid}-${Date.now()}`);
+  const temporaryMetadata = `${metadataPath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fsApi.copyFile(source, temporaryTarget);
+    await fsApi.rm(target, { force: true });
+    await fsApi.rename(temporaryTarget, target);
+    await fsApi.writeFile(temporaryMetadata, `${JSON.stringify({ format: 1, sha256: sourceSha256 })}\n`, "utf8");
+    await fsApi.rm(metadataPath, { force: true });
+    await fsApi.rename(temporaryMetadata, metadataPath);
+    return target;
+  } finally {
+    await fsApi.rm(temporaryTarget, { force: true }).catch(() => undefined);
+    await fsApi.rm(temporaryMetadata, { force: true }).catch(() => undefined);
+  }
 }
 
 export async function materializeSpsOwnerHostRuntime({
@@ -211,10 +267,13 @@ export async function resolveSpsOwnerHostRuntime({
   coreRoots,
   nodeCommand = "node",
   packagedNodeCommand = process.execPath,
+  stableNodeCommand = null,
   configPath = null,
+  instanceId,
   environment = {},
   fsApi = fs,
 } = {}) {
+  const resolvedInstanceId = resolveOwnerHostInstanceId(instanceId);
   const packagedRoots = Array.isArray(packagedRuntimeRoots) ? packagedRuntimeRoots.filter(Boolean) : [];
   for (const runtimeRoot of packagedRoots) {
     const entry = path.join(runtimeRoot, "dist", "index.js");
@@ -222,8 +281,9 @@ export async function resolveSpsOwnerHostRuntime({
     if (!(await fileExists(entry, fsApi)) || !(await fileExists(bootstrap, fsApi))) continue;
     const bundledNodeCommand = spsOwnerHostBundledNodePath(runtimeRoot);
     const hasBundledNode = await fileExists(bundledNodeCommand, fsApi);
+    const hasStableNode = stableNodeCommand ? await fileExists(stableNodeCommand, fsApi) : false;
     return {
-      command: hasBundledNode ? bundledNodeCommand : packagedNodeCommand,
+      command: hasStableNode ? stableNodeCommand : hasBundledNode ? bundledNodeCommand : packagedNodeCommand,
       args: [
         "sps-owner-host-bootstrap.mjs",
       ],
@@ -231,9 +291,10 @@ export async function resolveSpsOwnerHostRuntime({
       environment: {
         // Older Desktop packages used Electron as Node. Keep that fallback so
         // an existing runtime can still be opened during an in-place update.
-        ...(hasBundledNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
+        ...(hasStableNode || hasBundledNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
         ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
         ...environment,
+        PAPERCLIP_INSTANCE_ID: resolvedInstanceId,
       },
       kind: "packaged-owner-runtime",
     };
@@ -252,11 +313,15 @@ export async function resolveSpsOwnerHostRuntime({
         "--import", pathToFileURL(tsx.loader).href,
         entry,
         "run",
-        "--instance", "sps-desktop-owner",
+        "--instance", resolvedInstanceId,
         ...(configPath ? ["--config", configPath] : []),
       ],
       cwd: coreRoot,
-      environment: { ...environment },
+      environment: {
+        ...environment,
+        ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
+        PAPERCLIP_INSTANCE_ID: resolvedInstanceId,
+      },
       kind: "development-core",
     };
   }
@@ -268,6 +333,7 @@ export function createSpsOwnerHostManager({
   resolveRuntime = async () => null,
   spawn = spawnChildProcess,
   fetchImpl = fetch,
+  baseEnvironment = process.env,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   // First launch has to initialize Embedded PostgreSQL and can take several
   // minutes while Windows inspects its native runtime files.
@@ -289,6 +355,7 @@ export function createSpsOwnerHostManager({
       lastError = null;
       return {
         state: ownedChild ? "running" : "running-existing",
+        owned: Boolean(ownedChild),
         url,
         health,
         startedAt,
@@ -296,9 +363,9 @@ export function createSpsOwnerHostManager({
       };
     }
     if (ownedChild && ownedChild.exitCode == null) {
-      return { state: "starting", url, health: null, startedAt, lastError };
+      return { state: "starting", owned: true, url, health: null, startedAt, lastError };
     }
-    return { state: "stopped", url, health: null, startedAt: null, lastError };
+    return { state: "stopped", owned: false, url, health: null, startedAt: null, lastError };
   }
 
   async function start() {
@@ -316,7 +383,7 @@ export function createSpsOwnerHostManager({
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
         env: {
-          ...process.env,
+          ...baseEnvironment,
           ...runtime.environment,
           PAPERCLIP_TELEMETRY_DISABLED: "1",
         },

@@ -4,8 +4,11 @@ import path from "node:path";
 import {
   appendSpsNodeCommandEvent,
   checkSpsNodeCommandLease,
+  claimSpsWorkspaceSourceRoute,
   completeSpsNodeCommand,
 } from "./hub-client.mjs";
+import { openSpsWorkspaceSourceRoute } from "./host-project-share.mjs";
+import { createSpsNodeUsageCollector } from "./usage-collector.mjs";
 
 const OUTPUT_CHUNK_LIMIT = 48 * 1024;
 const COMMAND_LEASE_CHECK_INTERVAL_MS = 2_000;
@@ -13,6 +16,8 @@ const COMMAND_LEASE_MAX_UNAVAILABLE_MS = 60_000;
 const WINDOWS_COMMAND_LOOKUP_TIMEOUT_MS = 8_000;
 const COMMAND_PREFLIGHT_TIMEOUT_MS = 30_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1_000;
+const MIN_PLUGIN_COMMAND_TIMEOUT_MS = 1_000;
+const MAX_PLUGIN_COMMAND_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const FORBIDDEN_ENV_KEYS = new Set([
   "ANTHROPIC_API_KEY",
   "CODEX_HOME",
@@ -87,6 +92,23 @@ export function buildSpsNodeRuntimeEnvironment(commandEnvironment, hostEnvironme
   };
 }
 
+export function spsMarketplaceMcpRuntimeEnvironment(runtime, environment = {}) {
+  const output = { ...environment };
+  if (!runtime) return output;
+  const nodeCommand = typeof runtime.nodeCommand === "string" ? runtime.nodeCommand.trim() : "";
+  const entryPath = typeof runtime.entryPath === "string" ? runtime.entryPath.trim() : "";
+  if (!path.isAbsolute(nodeCommand) || !path.isAbsolute(entryPath)) {
+    throw new Error("SPS Desktop Marketplace MCP runtime paths must be absolute local paths.");
+  }
+  const pathKey = Object.keys(output).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  output[pathKey] = [path.dirname(nodeCommand), output[pathKey]].filter(Boolean).join(path.delimiter);
+  // These values always come from the local Desktop installation. Hub input
+  // is filtered before this merge and therefore cannot replace either path.
+  output.SPS_MARKETPLACE_MCP_NODE = nodeCommand;
+  output.SPS_MARKETPLACE_MCP_ENTRY = entryPath;
+  return output;
+}
+
 async function listSignedInCodexProfiles(homeRoot) {
   const entries = await fs.readdir(homeRoot, { withFileTypes: true }).catch(() => []);
   const candidates = entries
@@ -149,24 +171,68 @@ export function assertSpsNodeCommandRuntime(command) {
   }
 }
 
-export async function resolveSpsNodeWorkspace(command, profile) {
+export function resolveSpsNodeCommandTimeoutMs(command) {
+  const timeoutMs = command?.timeoutMs;
+  if (typeof command?.pluginKey === "string") {
+    if (timeoutMs === undefined || timeoutMs === null) return DEFAULT_COMMAND_TIMEOUT_MS;
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new Error("SPS Desktop rejected invalid timeoutMs for a neutral plugin command; expected a positive safe integer.");
+    }
+    return Math.min(MAX_PLUGIN_COMMAND_TIMEOUT_MS, Math.max(MIN_PLUGIN_COMMAND_TIMEOUT_MS, timeoutMs));
+  }
+  return typeof timeoutMs === "number" && timeoutMs > 0
+    ? timeoutMs
+    : DEFAULT_COMMAND_TIMEOUT_MS;
+}
+
+export function isSpsHostSharedWorkspacePath(value, platform = process.platform) {
+  if (platform !== "win32" || typeof value !== "string") return false;
+  // Only a UNC share can represent a Host-owned workspace on a Member Node.
+  // Drive letters are local to the Member and must never be supplied by it.
+  return /^\\\\[^\\/:*?"<>|]+\\[^\\/:*?"<>|]+(?:\\|$)/.test(value.trim());
+}
+
+export async function resolveSpsNodeWorkspace(command, profile, options = {}) {
   const projectId = typeof command?.projectId === "string" && command.projectId.trim()
     ? command.projectId
     : null;
-  // A project-bound command must never fall back to this computer's default
-  // folder. Each project is explicitly mapped by the Node owner so a remote
-  // Agent cannot accidentally work in another repository.
-  const configured = projectId
-    ? profile.projectWorkspaces?.[projectId]
+  const workspaceSourceId = typeof command?.workspaceSourceId === "string" && command.workspaceSourceId.trim()
+    ? command.workspaceSourceId.trim()
+    : null;
+  const connectionKind = typeof profile?.connectionKind === "string" ? profile.connectionKind : "remote";
+  const hostIssuedCwd = typeof command?.cwdHint === "string" ? command.cwdHint.trim() : "";
+  const configuredSource = workspaceSourceId
+    ? (profile?.workspaceSources ?? []).find((source) => source?.id === workspaceSourceId) ?? null
+    : null;
+  // Project source folders are selected once by the Owner Host. A Member may
+  // run only in the Host-provided UNC share, never in an arbitrary mapping in
+  // its own Desktop state. The Owner Host retains its direct source mapping.
+  const configured = workspaceSourceId
+    ? connectionKind === "owner-host"
+      ? configuredSource?.sourcePath || hostIssuedCwd
+      : isSpsHostSharedWorkspacePath(hostIssuedCwd, options.platform)
+        ? hostIssuedCwd
+        : ""
+    : projectId
+    ? connectionKind === "owner-host"
+      ? profile.projectWorkspaces?.[projectId] || hostIssuedCwd
+      : isSpsHostSharedWorkspacePath(hostIssuedCwd, options.platform)
+        ? hostIssuedCwd
+        : ""
     : profile.defaultWorkspacePath;
-  if (projectId && (!configured || !configured.trim())) {
-    throw new Error(`No local workspace is configured for SPS project ${projectId}. Choose its folder in SPS Desktop before this Agent runs.`);
+  if ((projectId || workspaceSourceId) && (!configured || !configured.trim())) {
+    if (workspaceSourceId) {
+      throw new Error(`Workspace Source ${workspaceSourceId} is not available to this Member Node. The Host must configure an SPS shared source folder before this runtime runs.`);
+    }
+    throw new Error(`SPS project ${projectId} is not available to this Member Node. The Owner Host must configure an SPS shared project folder before this Agent runs.`);
   }
   if (!configured || !configured.trim()) {
     throw new Error("No local workspace is configured for this SPS project. Set a default workspace folder in SPS Desktop.");
   }
-  const workspace = path.resolve(configured.trim());
-  const info = await fs.stat(workspace).catch(() => null);
+  const resolvePath = options.resolvePath ?? path.resolve;
+  const stat = options.stat ?? fs.stat;
+  const workspace = resolvePath(configured.trim());
+  const info = await stat(workspace).catch(() => null);
   if (!info?.isDirectory()) throw new Error(`Configured workspace is not a directory: ${workspace}`);
   return workspace;
 }
@@ -300,17 +366,23 @@ export async function resolveSpsNodeInvocation(command, args, options = {}) {
   };
 }
 
-async function terminateProcessTree(child) {
+const processTerminations = new WeakMap();
+function processScopeAlive(child) {
+  if (!child?.pid) return false;
+  try { process.kill(process.platform === "win32" ? child.pid : -child.pid, 0); return true; }
+  catch (error) { return error.code !== "ESRCH"; }
+}
+async function terminateProcessTreeInternal(child) {
   if (!child?.pid) return;
   if (process.platform === "win32") {
-    await new Promise((resolve) => {
+    await new Promise((resolve, reject) => {
       const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
         windowsHide: true,
         stdio: "ignore",
       });
       const fallback = () => {
         if (child.exitCode == null) child.kill();
-        resolve();
+        reject(new Error("Windows process-tree termination has not been confirmed."));
       };
       killer.once("error", fallback);
       killer.once("close", (code) => {
@@ -323,7 +395,25 @@ async function terminateProcessTree(child) {
     });
     return;
   }
-  child.kill("SIGTERM");
+  try { process.kill(-child.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+  const deadline = Date.now() + 1500;
+  while (processScopeAlive(child) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30));
+  if (processScopeAlive(child)) {
+    try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+  }
+}
+function terminateProcessTree(child) {
+  if (!child?.pid) return Promise.resolve();
+  const pending = processTerminations.get(child);
+  if (pending) return pending;
+  const operation = terminateProcessTreeInternal(child).then(async () => {
+    const deadline = Date.now() + 2000;
+    while (processScopeAlive(child) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30));
+    if (processScopeAlive(child)) throw new Error("Local command termination has not been confirmed.");
+  });
+  processTerminations.set(child, operation);
+  void operation.catch(() => { if (processTerminations.get(child) === operation) processTerminations.delete(child); });
+  return operation;
 }
 
 export async function cancelSpsNodeCommands(reason = "SPS Desktop stopped this local command.") {
@@ -346,18 +436,33 @@ export async function executeSpsNodeCommand({
   sessionCookie,
   profile,
   resolveInvocation = resolveSpsNodeInvocation,
+  resolveWorkspace = resolveSpsNodeWorkspace,
+  openWorkspaceSourceRoute = openSpsWorkspaceSourceRoute,
+  claimWorkspaceSourceRoute = claimSpsWorkspaceSourceRoute,
   checkCommandLease = checkSpsNodeCommandLease,
+  appendCommandEvent = appendSpsNodeCommandEvent,
+  completeCommand = completeSpsNodeCommand,
   hostEnvironment = process.env,
+  marketplaceMcpRuntime = null,
 }) {
   assertSpsNodeCommandRuntime(command);
+  const timeoutMs = resolveSpsNodeCommandTimeoutMs(command);
+  if (typeof command.id !== "string" || command.id.trim().length === 0) {
+    throw new Error("SPS Desktop rejected a command without a nonempty command ID.");
+  }
+  if (activeCommands.has(command.id)) {
+    throw new Error("SPS Desktop rejected a duplicate active command ID.");
+  }
   const cancellationGeneration = commandCancellationGeneration;
+  const usageCollector = createSpsNodeUsageCollector(command.runtimeKind);
+  let usageReport = null;
   let sequence = Number(command.lastEventSeq ?? 0);
   let outputQueue = Promise.resolve();
   const enqueueOutput = (stream, raw) => {
     for (const body of outputChunks(raw)) {
       if (!body) continue;
       const eventSequence = ++sequence;
-      outputQueue = outputQueue.then(() => appendSpsNodeCommandEvent({
+      outputQueue = outputQueue.then(() => appendCommandEvent({
         hubUrl,
         nodeId,
         identity,
@@ -371,9 +476,6 @@ export async function executeSpsNodeCommand({
     }
   };
 
-  const timeoutMs = typeof command.timeoutMs === "number" && command.timeoutMs > 0
-    ? command.timeoutMs
-    : DEFAULT_COMMAND_TIMEOUT_MS;
   const startedAt = Date.now();
   let timeout = null;
   let child = null;
@@ -381,24 +483,60 @@ export async function executeSpsNodeCommand({
   let leaseCheckInFlight = false;
   let leaseCancellationError = null;
   let lastLeaseConfirmedAt = Date.now();
+  let hostProjectShareSession = null;
+  let normalCompletionPayload = null;
   const activeRun = { child: null, cancellationError: null };
   activeCommands.set(command.id, activeRun);
   try {
     const prepared = await withCommandPreflightTimeout(async () => {
       throwIfCommandCancelled(activeRun, cancellationGeneration);
-      const workspace = await resolveSpsNodeWorkspace(command, profile);
+      const ownerHasLocalSource = typeof command.workspaceSourceId === "string"
+        && command.workspaceSourceId.trim()
+        && profile?.connectionKind === "owner-host"
+        && Array.isArray(profile?.workspaceSources)
+        && profile.workspaceSources.some((source) => source?.id === command.workspaceSourceId && typeof source?.sourcePath === "string" && source.sourcePath.trim());
+      const workspaceAccess = typeof command.workspaceSourceId === "string" && command.workspaceSourceId.trim() && !ownerHasLocalSource
+        ? await claimWorkspaceSourceRoute({
+          hubUrl,
+          nodeId,
+          sourceId: command.workspaceSourceId,
+          identity,
+          accessToken,
+          sessionCookie,
+        })
+        : command.workspaceAccess ?? null;
+      hostProjectShareSession = await openWorkspaceSourceRoute(
+        workspaceAccess,
+        identity?.transportPrivateKeyPem ?? null,
+        { expectedSharePath: command.cwdHint ?? null },
+      );
+      const workspace = hostProjectShareSession?.workspacePath
+        ? path.resolve(hostProjectShareSession.workspacePath)
+        : await resolveWorkspace(command, profile);
+      const workspaceInfo = await fs.stat(workspace).catch(() => null);
+      if (!workspaceInfo?.isDirectory()) {
+        throw new Error(`Configured workspace is not a directory: ${workspace}`);
+      }
       throwIfCommandCancelled(activeRun, cancellationGeneration);
       // The Hub process may be bound to localhost on its own computer. A member
       // Node must use the Hub URL it connected to, never that host-local address.
       const environment = {
-        ...buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
+        ...spsMarketplaceMcpRuntimeEnvironment(
+          marketplaceMcpRuntime,
+          buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
+        ),
         PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
+        SPS_WORKSPACE_PATH: workspace,
       };
       if (command.runtimeKind === "codex_cli") {
         environment.CODEX_HOME = await resolveSpsNodeCodexHome(command, hostEnvironment);
         delete environment.PAPERCLIP_CODEX_ACCOUNT;
       }
       const invocation = await resolveInvocation(command.command, command.args);
+      throwIfCommandCancelled(activeRun, cancellationGeneration);
+      const lease = await checkCommandLease({ hubUrl, nodeId, identity, accessToken, sessionCookie, commandId: command.id });
+      if (!lease?.active) throw new Error(lease?.error || "SPS Hub cancelled this local command before start.");
+      lastLeaseConfirmedAt = Date.now();
       throwIfCommandCancelled(activeRun, cancellationGeneration);
       return { environment, invocation, workspace };
     });
@@ -415,6 +553,7 @@ export async function executeSpsNodeCommand({
         cwd: workspace,
         env: environment,
         shell: false,
+        detached: process.platform !== "win32",
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -423,17 +562,25 @@ export async function executeSpsNodeCommand({
         activeRun.cancellationError = lastCommandCancellationReason;
         void terminateProcessTree(child).catch(() => child?.kill());
       }
-      child.stdout.on("data", (chunk) => enqueueOutput("stdout", chunk.toString("utf8")));
+      child.stdout.on("data", (chunk) => {
+        usageCollector.push(chunk);
+        enqueueOutput("stdout", chunk.toString("utf8"));
+      });
       child.stderr.on("data", (chunk) => enqueueOutput("stderr", chunk.toString("utf8")));
       child.once("error", (error) => settle(reject, error));
       child.once("close", (exitCode, signal) => {
         if (leaseTimer) clearInterval(leaseTimer);
+        usageReport = usageCollector.finish();
         settle(resolve, { exitCode, signal, timedOut });
       });
       const checkLease = async () => {
-        if (leaseCheckInFlight || leaseCancellationError || activeRun.cancellationError) return;
+        if (leaseCheckInFlight) return;
         leaseCheckInFlight = true;
         try {
+          if (leaseCancellationError || activeRun.cancellationError) {
+            await terminateProcessTree(child);
+            return;
+          }
           const lease = await checkCommandLease({
             hubUrl,
             nodeId,
@@ -476,29 +623,42 @@ export async function executeSpsNodeCommand({
     });
     if (timeout) clearTimeout(timeout);
     if (leaseTimer) clearInterval(leaseTimer);
+    if (process.platform !== "win32" && processScopeAlive(child)) await terminateProcessTree(child);
+    if (leaseCancellationError || activeRun.cancellationError || result.timedOut) await terminateProcessTree(child);
+    await processTerminations.get(child);
     leaseCancellationError ??= activeRun.cancellationError;
     await outputQueue;
-    await completeSpsNodeCommand({
+    const completion = {
+      status: result.exitCode === 0 && !result.timedOut && !leaseCancellationError ? "succeeded" : "failed",
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      error: leaseCancellationError ?? (result.timedOut ? `Local command exceeded ${timeoutMs}ms.` : null),
+    };
+    if (typeof command.pluginKey === "string" && usageReport) completion.usageReport = usageReport;
+    normalCompletionPayload = {
       hubUrl,
       nodeId,
       identity,
       accessToken,
       sessionCookie,
       commandId: command.id,
-      completion: {
-        status: result.exitCode === 0 && !result.timedOut && !leaseCancellationError ? "succeeded" : "failed",
-        exitCode: result.exitCode,
-        signal: result.signal,
-        timedOut: result.timedOut,
-        error: leaseCancellationError ?? (result.timedOut ? `Local command exceeded ${timeoutMs}ms.` : null),
-      },
-    });
+      completion,
+    };
+    await completeCommand(normalCompletionPayload);
     return { ...result, workspace, elapsedMs: Date.now() - startedAt };
   } catch (error) {
     if (timeout) clearTimeout(timeout);
     if (leaseTimer) clearInterval(leaseTimer);
+    // A failed kill is not a completion acknowledgement. Keep Core pending
+    // rather than reporting that a still-live process has finished.
+    if (child?.pid) {
+      const termination = processTerminations.get(child);
+      if (termination) await termination;
+      else if (child.exitCode === null && child.signalCode === null) await terminateProcessTree(child);
+    }
     await outputQueue.catch(() => undefined);
-    await completeSpsNodeCommand({
+    const fallbackCompletionPayload = normalCompletionPayload ?? {
       hubUrl,
       nodeId,
       identity,
@@ -512,9 +672,11 @@ export async function executeSpsNodeCommand({
         timedOut: false,
         error: error instanceof Error ? error.message.slice(0, 16_000) : "SPS Desktop command execution failed.",
       },
-    }).catch(() => undefined);
+    };
+    await completeCommand(fallbackCompletionPayload).catch(() => undefined);
     throw error;
   } finally {
-    activeCommands.delete(command.id);
+    await hostProjectShareSession?.close().catch(() => undefined);
+    if (activeCommands.get(command.id) === activeRun) activeCommands.delete(command.id);
   }
 }

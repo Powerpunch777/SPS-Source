@@ -13,6 +13,7 @@ const ownerProfile = {
   displayName: "SPS Owner",
   defaultWorkspacePath: "C:\\Work",
   projectWorkspaces: { "project-1": "C:\\Work\\project-1" },
+  workspaceSources: [{ id: "source_001", name: "Client", sourcePath: "C:\\Work\\client" }],
 };
 
 test("keeps SPS connection metadata isolated by SPS account subject", () => {
@@ -45,6 +46,20 @@ test("does not persist tokens or unknown fields in an SPS account connection", (
     "displayName",
     "hubUrl",
     "projectWorkspaces",
+    "workspaceSources",
   ]);
   assert.equal(normalized.encryptedBoardApiToken, undefined);
+});
+
+test("keeps source folder mappings on the Owner Host and removes them from Member connections", () => {
+  const member = setSpsAccountConnection({}, "member-subject", {
+    ...ownerProfile,
+    connectionKind: "remote",
+    defaultWorkspacePath: "C:\\Member\\must-not-run-projects-here",
+    projectWorkspaces: { "project-1": "C:\\Member\\must-not-run-projects-here" },
+  });
+
+  assert.deepEqual(member["member-subject"].projectWorkspaces, {});
+  assert.deepEqual(member["member-subject"].workspaceSources, []);
+  assert.equal(member["member-subject"].defaultWorkspacePath, "");
 });

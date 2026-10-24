@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" />
+    <title>SPS Core Settings</title>
+    <link rel="stylesheet" href="./core-settings.css" />
+  </head>
+  <body>
+    <main class="settings-shell">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">LOCAL DESKTOP CONTROLS</p>
+          <h1>Core settings</h1>
+          <p class="intro">Host health, recovery options, and local maintenance.</p>
+        </div>
+      </header>
+
+      <p id="action-notice" class="notice" role="status" aria-live="polite"></p>
+
+      <section class="section" aria-labelledby="host-heading" aria-busy="true" id="status-region">
+        <div class="section-heading">
+          <div>
+            <h2 id="host-heading">Host status</h2>
+            <p id="status-message" class="muted" role="status" aria-live="polite">Loading local host status...</p>
+          </div>
+          <button id="retry-status" class="button secondary" type="button" hidden>Retry</button>
+        </div>
+
+        <dl id="status-details" class="status-grid" hidden>
+          <div class="status-item">
+            <dt>Host</dt>
+            <dd id="host-state">Unknown</dd>
+          </div>
+          <div class="status-item">
+            <dt>App version</dt>
+            <dd id="app-version">Unknown</dd>
+          </div>
+          <div class="status-item">
+            <dt>Settings shortcut</dt>
+            <dd id="shortcut-state">Unavailable</dd>
+          </div>
+          <div class="status-item">
+            <dt>Plugin startup</dt>
+            <dd id="plugin-state">Unknown</dd>
+          </div>
+          <div class="status-item">
+            <dt>Local storage</dt>
+            <dd id="storage-state">Unknown</dd>
+          </div>
+        </dl>
+
+        <div id="host-error" class="inline-warning" role="status" hidden>
+          The host reported an error. Diagnostic details are hidden to protect credentials.
+        </div>
+        <div id="storage-error" class="inline-warning" role="status" hidden>
+          Storage reported an error. Diagnostic details are hidden to protect credentials.
+        </div>
+        <div id="desktop-state-error" class="inline-warning" role="status" hidden>
+          Desktop connection settings are unavailable. Existing settings were left unchanged. Host and Node startup are blocked.
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="recovery-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="recovery-heading">Recovery</h2>
+            <p class="muted">Choose whether plugins start with the host.</p>
+          </div>
+        </div>
+        <label class="toggle-row" for="plugins-disabled">
+          <input id="plugins-disabled" data-action type="checkbox" disabled />
+          <span>
+            <strong>Disable plugin startup</strong>
+            <span class="help-text">This setting applies on the next startup. Saving it does not restart the host.</span>
+          </span>
+        </label>
+        <p class="caution">This recovery option does not claim to sandbox plugins or other host code.</p>
+      </section>
+
+      <section class="section" aria-labelledby="actions-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="actions-heading">Host actions</h2>
+            <p class="muted">Each action runs only when selected.</p>
+          </div>
+        </div>
+        <div class="action-list">
+          <div class="action-row">
+            <div>
+              <h3>Workspace</h3>
+              <p class="help-text">Open the local workspace.</p>
+            </div>
+            <button class="button secondary" data-action="open-workspace" type="button" disabled>Open workspace</button>
+          </div>
+          <div class="action-row">
+            <div>
+              <h3>Updates</h3>
+              <p class="help-text">Check for desktop updates.</p>
+            </div>
+            <button class="button secondary" data-action="check-updates" type="button" disabled>Check updates</button>
+          </div>
+          <div class="action-row">
+            <div>
+              <h3>Restart host</h3>
+              <p class="help-text">Restart is separate from recovery settings and requires this explicit action.</p>
+            </div>
+            <button class="button primary" data-action="restart-host" type="button" disabled>Restart host</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="transfer-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="transfer-heading">Export and transfer</h2>
+            <p class="muted">Use the desktop's local export and inspection flows.</p>
+          </div>
+        </div>
+        <div class="action-list">
+          <div class="action-row">
+            <div>
+              <h3>Export host</h3>
+              <p class="help-text">Start a host export.</p>
+            </div>
+            <button class="button secondary" data-action="export-host" type="button" disabled>Export host</button>
+          </div>
+          <div class="action-row">
+            <div>
+              <h3>Inspect transfer</h3>
+              <p class="help-text">Review a transfer artifact without starting a restore here.</p>
+            </div>
+            <button class="button secondary" data-action="inspect-transfer" type="button" disabled>Inspect transfer</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./core-settings.mjs"></script>
+  </body>
+</html>

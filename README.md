@@ -1,4 +1,8 @@
-# SPS
+# SPS Source
+
+This is the private product source repository for SPS. The public product
+overview, downloads, and feedback routes live at
+[Powerpunch777/SPS](https://github.com/Powerpunch777/SPS).
 
 SPS is a Desktop-first platform for building AI work environments from plugins.
 
@@ -19,11 +23,13 @@ The Catalog is not a separate application. It is the discovery area inside `Sett
 
 ```text
 external/sps-core/       Private SPS product Core (tracked from its stable main branch)
+external/sps-plugin-sdk/ Public plugin authoring SDK and CLI (pinned submodule)
 sps-server/              SPS Desktop, Host, Node, plugin runtime, and first-party extensions
-sps-plugin-sdk/          Public plugin authoring SDK and CLI
-sps-official-extensions/ Signed first-party extension distribution source
-redon-games-website/     Redon Games public website
 ```
+
+The signed Official Extensions registry and the Redon Games website are
+separate sibling repositories; they are not product-source directories in this
+private repository.
 
 ## Product Documents
 
@@ -32,7 +38,7 @@ Current product decisions live in [sps-server/docs/current](sps-server/docs/curr
 - [Product model](sps-server/docs/current/PRODUCT-MODEL-ko.md)
 - [Plugin developer platform](sps-server/docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)
 - [Roadmap](sps-server/docs/current/ROADMAP.md)
-- [Company plugin activation](sps-server/docs/current/COMPANY-PLUGIN-ACTIVATION.md)
+- [Workspace plugin activation](sps-server/docs/current/WORKSPACE-PLUGIN-ACTIVATION.md)
 - [Plugin compatibility and updates](sps-server/docs/current/PLUGIN-COMPATIBILITY-AND-UPDATES.md)
 
 ## Development
@@ -44,9 +50,19 @@ The product runtime lives in the private `SPS-Core` repository. The public
 not a product runtime, release channel, or support surface.
 
 ```powershell
-Set-Location .\sps-server\plugin-platform
+Set-Location .\external\sps-plugin-sdk
+npm test
+
+Set-Location ..\..\sps-server\desktop
 npm test
 
 Set-Location ..\sps-room-chat
 npm run check
+
+Set-Location ..\sps-identity
+npm test
 ```
+
+The retired internal `sps-server/plugin-platform` copy has been removed. Plugin
+authoring, conformance, packaging, Registry publishing, and templates all come
+from the pinned public SDK under `external/sps-plugin-sdk`.

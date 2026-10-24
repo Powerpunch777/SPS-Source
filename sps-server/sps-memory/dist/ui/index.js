@@ -1,8 +1,8 @@
-var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"):"",k=n=>{if(!n||n==="unknown")return"unknown";if(n.includes("T"))try{return new Date(n).toLocaleDateString()}catch{return n}return n},E=n=>{let e=n.status||"unknown",o=e==="approved"?"badge-ok":"badge-pending",r=n.date||n.createdAt||"unknown",i=k(r),a=n.text||n.content||"",c=[n.source?.kind&&`kind=${n.source.kind}`,n.source?.identifier&&`identifier=${n.source.identifier}`,n.source?.id&&`id=${n.source.id}`,n.source?.note].filter(Boolean).join("; "),s=n.provenance?.path||c,u=n.provenance?.lineStart?`:${n.provenance.lineStart}`:"";return`
+var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"):"",k=n=>{if(!n||n==="unknown")return"unknown";if(n.includes("T"))try{return new Date(n).toLocaleDateString()}catch{return n}return n},E=n=>{let e=n.status||"unknown",r=e==="approved"?"badge-ok":"badge-pending",o=n.date||n.createdAt||"unknown",i=k(o),a=n.text||n.content||"",d=[n.source?.kind&&`kind=${n.source.kind}`,n.source?.identifier&&`identifier=${n.source.identifier}`,n.source?.id&&`id=${n.source.id}`,n.source?.note].filter(Boolean).join("; "),s=n.provenance?.path||d,u=n.provenance?.lineStart?`:${n.provenance.lineStart}`:"";return`
     <div class="card">
       <div class="card-header">
         <div class="header-left">
-          <span class="badge ${o}">${e.toUpperCase()}</span>
+          <span class="badge ${r}">${e.toUpperCase()}</span>
           ${n.scope?`<span class="scope-tag">${l(n.scope)}</span>`:""}
           ${n.type?`<span class="type-tag">${l(n.type)}</span>`:""}
         </div>
@@ -28,7 +28,7 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
         </div>
       `:""}
     </div>
-  `},D=n=>{let e=n.status||"candidate",t=l(String(e).toUpperCase()),r=e==="approved"?"badge-ok":"badge-pending",i=n.createdAt||n.date||"unknown",a=k(i),c=n.content||n.text||"",s=[n.source?.kind&&`kind=${n.source.kind}`,n.source?.identifier&&`identifier=${n.source.identifier}`,n.source?.id&&`id=${n.source.id}`,n.source?.note].filter(Boolean).join("; "),u=n.provenance?.path||s,d=n.provenance?.lineStart?`:${n.provenance.lineStart}`:"",p="";if(n.idempotencyKey&&(p+=`
+  `},D=n=>{let e=n.status||"candidate",t=l(String(e).toUpperCase()),o=e==="approved"?"badge-ok":"badge-pending",i=n.createdAt||n.date||"unknown",a=k(i),d=n.content||n.text||"",s=[n.source?.kind&&`kind=${n.source.kind}`,n.source?.identifier&&`identifier=${n.source.identifier}`,n.source?.id&&`id=${n.source.id}`,n.source?.note].filter(Boolean).join("; "),u=n.provenance?.path||s,c=n.provenance?.lineStart?`:${n.provenance.lineStart}`:"",p="";if(n.idempotencyKey&&(p+=`
       <div class="provenance-row">
         <span class="provenance-label">Idempotency Key:</span>
         <span class="provenance-code">${l(n.idempotencyKey)}</span>
@@ -42,14 +42,14 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
     <div class="card">
       <div class="card-header">
         <div class="header-left">
-          <span class="badge ${r}">${t}</span>
+          <span class="badge ${o}">${t}</span>
           ${n.scope?`<span class="scope-tag">${l(n.scope)}</span>`:""}
           ${n.type?`<span class="type-tag">${l(n.type)}</span>`:""}
         </div>
         <span class="card-date">${l(a)}</span>
       </div>
 
-      <div class="memory-text">${l(c)}</div>
+      <div class="memory-text">${l(d)}</div>
 
       <div class="provenance-section">
         ${n.issueId?`
@@ -61,7 +61,7 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
         ${u?`
           <div class="provenance-row">
             <span class="provenance-label">Provenance:</span>
-            <span class="provenance-code">${l(u)}${l(d)}</span>
+            <span class="provenance-code">${l(u)}${l(c)}</span>
           </div>
         `:""}
         ${p}
@@ -84,13 +84,15 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
         <span class="counter-badge">${e.length}</span>
       </h3>
       <div class="cards-grid">
-        ${e.map(o=>E(o)).join("")}
+        ${e.map(r=>E(r)).join("")}
       </div>
     </div>
   `,y=`
   :host {
     display: block;
-    font-family: system-ui, -apple-system, sans-serif;
+    font-family: var(--font-sans, "Pretendard Variable", system-ui, sans-serif);
+    line-height: 1.6;
+    letter-spacing: 0;
     color: rgba(255, 255, 255, 0.9);
     max-width: 960px;
     margin: 0 auto;
@@ -345,23 +347,24 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
   }
 
   /* The local SPS instance uses a light canvas by default. */
-  :host { color: #172033; }
-  .header { border-bottom-color: #e2e8f0; }
-  .header-title, .section-title { color: #172033; }
-  .header-subtitle, .loading-text, .card-date { color: #64748b; }
-  .empty-container, .empty-section-banner, .card { border-color: #dbe3ec; background-color: #ffffff; }
-  .empty-title { color: #172033; }
-  .empty-desc, .empty-section-banner { color: #64748b; }
-  .counter-badge { background-color: #eef2f7; color: #475569; }
-  .card:hover { border-color: #cbd5e1; background-color: #f8fafc; }
-  .scope-tag { color: #6d28d9; }
-  .type-tag { color: #64748b; }
-  .memory-text { color: #1f2937; }
-  .provenance-section { border-top-color: #e2e8f0; color: #64748b; }
+  :host { color: var(--foreground, #24272b); }
+  button, input, select, textarea { font: inherit; }
+  button:focus-visible { outline: 2px solid var(--ring, #777); outline-offset: 3px; }
+  .header { border-bottom-color: var(--border, #e2e2e2); }
+  .header-title, .section-title { color: var(--foreground, #24272b); }
+  .header-subtitle, .loading-text, .card-date { color: var(--muted-foreground, #626b75); }
+  .empty-container, .empty-section-banner, .card { border-color: var(--border, #e2e2e2); background-color: var(--background, #fff); border-radius: 8px; }
+  .empty-title { color: var(--foreground, #24272b); }
+  .empty-desc, .empty-section-banner { color: var(--muted-foreground, #626b75); }
+  .counter-badge { background-color: var(--muted, #f4f4f4); color: var(--muted-foreground, #626b75); }
+  .card:hover { border-color: var(--border, #ddd); background-color: var(--muted, #f7f7f7); }
+  .scope-tag, .type-tag { color: var(--muted-foreground, #626b75); }
+  .memory-text { color: var(--foreground, #24272b); }
+  .provenance-section { border-top-color: var(--border, #e2e2e2); color: var(--muted-foreground, #626b75); }
   .provenance-label { color: #94a3b8; }
   .provenance-value { color: #475569; }
   .provenance-code { color: #4338ca; background-color: #eef2ff; }
-`,x=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._pluginSlot=null,this._pluginContext=null,this._mounted=!1,this._loading=!1,this._error=null,this._data=null,this._lastCacheKey=null}get pluginSlot(){return this._pluginSlot}set pluginSlot(e){this._pluginSlot=e,this._fetchData()}get pluginContext(){return this._pluginContext}set pluginContext(e){this._pluginContext=e,this._fetchData()}connectedCallback(){this._mounted=!0,this._fetchData()}disconnectedCallback(){this._mounted=!1}async _fetchData(){if(!this._mounted)return;let e=this._pluginContext,t=this._pluginSlot;if(!e)return;let o=e.companyId,r=e.entityId,i=e.projectId;if(!o||!r)return;let a=`${o}:${i}:${r}`;if(!(this._lastCacheKey===a&&(this._loading||this._data||this._error))){this._lastCacheKey=a,this._loading=!0,this._error=null,this._data=null,this._render();try{let s=`/api/plugins/${t?.pluginId||"local.memory-sidecar"}/data/memory-view`,u=await fetch(s,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:o,params:{companyId:o,projectId:i||null,issueId:r}})});if(!u.ok){let p=`HTTP ${u.status}`;try{let h=await u.json();p=h.message||h.error||p}catch{}throw new Error(p)}let d=await u.json();this._data=d.data||{},this._loading=!1,this._render()}catch(c){this._error=c,this._loading=!1,this._render()}}}_render(){let e=this.shadowRoot;if(!e)return;let t="";if(this._loading)t=`
+`,x=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._pluginSlot=null,this._pluginContext=null,this._mounted=!1,this._loading=!1,this._error=null,this._data=null,this._lastCacheKey=null}get pluginSlot(){return this._pluginSlot}set pluginSlot(e){this._pluginSlot=e,this._fetchData()}get pluginContext(){return this._pluginContext}set pluginContext(e){this._pluginContext=e,this._fetchData()}connectedCallback(){this._mounted=!0,this._fetchData()}disconnectedCallback(){this._mounted=!1}async _fetchData(){if(!this._mounted)return;let e=this._pluginContext,t=this._pluginSlot;if(!e)return;let r=e.companyId,o=e.entityId,i=e.projectId;if(!r||!o)return;let a=`${r}:${i}:${o}`;if(!(this._lastCacheKey===a&&(this._loading||this._data||this._error))){this._lastCacheKey=a,this._loading=!0,this._error=null,this._data=null,this._render();try{let s=`/api/plugins/${t?.pluginId||"local.memory-sidecar"}/data/memory-view`,u=await fetch(s,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:r,params:{companyId:r,projectId:i||null,issueId:o}})});if(!u.ok){let p=`HTTP ${u.status}`;try{let h=await u.json();p=h.message||h.error||p}catch{}throw new Error(p)}let c=await u.json();this._data=c.data||{},this._loading=!1,this._render()}catch(d){this._error=d,this._loading=!1,this._render()}}}_render(){let e=this.shadowRoot;if(!e)return;let t="";if(this._loading)t=`
         <div class="loading-container">
           <div class="spinner"></div>
           <span class="loading-text">Recalling task room memory...</span>
@@ -371,7 +374,7 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
           <h4 class="error-title">Failed to load memory data</h4>
           <p class="error-body">${l(this._error.message||String(this._error))}</p>
         </div>
-      `;else if(this._data){let o=this._data.companyMemories||[],r=this._data.projectMemories||[],i=this._data.candidates||[],a=!!this._data.hasAssignee,c=this._data.agentMemories||[];o.length===0&&r.length===0&&i.length===0&&(!a||c.length===0)?t=`
+      `;else if(this._data){let r=this._data.companyMemories||[],o=this._data.projectMemories||[],i=this._data.candidates||[],a=!!this._data.hasAssignee,d=this._data.agentMemories||[];r.length===0&&o.length===0&&i.length===0&&(!a||d.length===0)?t=`
           <div class="empty-container">
             <span class="empty-title">No Memory Found</span>
             <span class="empty-desc">
@@ -380,9 +383,9 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
           </div>
         `:t=`
           ${f("Memory Candidates",i,"Candidate")}
-          ${a?f("Assigned Agent Memory",c,"Agent"):""}
-          ${f("Project Memory",r,"Project")}
-          ${f("Company Memory",o,"Company")}
+          ${a?f("Assigned Agent Memory",d,"Agent"):""}
+          ${f("Project Memory",o,"Project")}
+          ${f("Company Memory",r,"Company")}
         `}else t=`
         <div class="loading-container">
           <span class="loading-text">Initializing context...</span>
@@ -398,7 +401,7 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
       <div class="content-body">
         ${t}
       </div>
-    `}};customElements.get("paperclip-memory-tab")||customElements.define("paperclip-memory-tab",x);var L="paperclip-memory-tab",_=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._pluginSlot=null,this._pluginContext=null,this._mounted=!1,this._loading=!1,this._error=null,this._data=null,this._lastCacheKey=null}get pluginSlot(){return this._pluginSlot}set pluginSlot(e){this._pluginSlot=e,this._fetchData()}get pluginContext(){return this._pluginContext}set pluginContext(e){this._pluginContext=e,this._fetchData()}connectedCallback(){this._mounted=!0,this._fetchData()}disconnectedCallback(){this._mounted=!1}async _fetchData(){if(!this._mounted)return;let e=this._pluginContext,t=this._pluginSlot;if(!e)return;let o=e.companyId,r=e.projectId||e.entityId;if(!o||!r){this._error=new Error("companyId and projectId are required for project-memory-view data"),this._loading=!1,this._render();return}let i=`${o}:${r}`;if(!(this._lastCacheKey===i&&(this._loading||this._data||this._error))){this._lastCacheKey=i,this._loading=!0,this._error=null,this._data=null,this._render();try{let c=`/api/plugins/${t?.pluginId||"local.memory-sidecar"}/data/project-memory-view`,s=await fetch(c,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:o,params:{companyId:o,projectId:r}})});if(!s.ok){let d=`HTTP ${s.status}`;try{let p=await s.json();d=p.message||p.error||d}catch{}throw new Error(d)}let u=await s.json();this._data=u.data||{},this._loading=!1,this._render()}catch(a){this._error=a,this._loading=!1,this._render()}}}_render(){let e=this.shadowRoot;if(!e)return;let t="";if(this._loading)t=`
+    `}};customElements.get("paperclip-memory-tab")||customElements.define("paperclip-memory-tab",x);var L="paperclip-memory-tab",_=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._pluginSlot=null,this._pluginContext=null,this._mounted=!1,this._loading=!1,this._error=null,this._data=null,this._lastCacheKey=null}get pluginSlot(){return this._pluginSlot}set pluginSlot(e){this._pluginSlot=e,this._fetchData()}get pluginContext(){return this._pluginContext}set pluginContext(e){this._pluginContext=e,this._fetchData()}connectedCallback(){this._mounted=!0,this._fetchData()}disconnectedCallback(){this._mounted=!1}async _fetchData(){if(!this._mounted)return;let e=this._pluginContext,t=this._pluginSlot;if(!e)return;let r=e.companyId,o=e.projectId||e.entityId;if(!r||!o){this._error=new Error("companyId and projectId are required for project-memory-view data"),this._loading=!1,this._render();return}let i=`${r}:${o}`;if(!(this._lastCacheKey===i&&(this._loading||this._data||this._error))){this._lastCacheKey=i,this._loading=!0,this._error=null,this._data=null,this._render();try{let d=`/api/plugins/${t?.pluginId||"local.memory-sidecar"}/data/project-memory-view`,s=await fetch(d,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:r,params:{companyId:r,projectId:o}})});if(!s.ok){let c=`HTTP ${s.status}`;try{let p=await s.json();c=p.message||p.error||c}catch{}throw new Error(c)}let u=await s.json();this._data=u.data||{},this._loading=!1,this._render()}catch(a){this._error=a,this._loading=!1,this._render()}}}_render(){let e=this.shadowRoot;if(!e)return;let t="";if(this._loading)t=`
         <div class="loading-container">
           <div class="spinner"></div>
           <span class="loading-text">Recalling project memory...</span>
@@ -408,7 +411,7 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
           <h4 class="error-title">Failed to load memory data</h4>
           <p class="error-body">${l(this._error.message||String(this._error))}</p>
         </div>
-      `;else if(this._data){let o=this._data.companyMemories||[],r=this._data.projectMemories||[],i=this._data.candidates||[];o.length===0&&r.length===0&&i.length===0?t=`
+      `;else if(this._data){let r=this._data.companyMemories||[],o=this._data.projectMemories||[],i=this._data.candidates||[];r.length===0&&o.length===0&&i.length===0?t=`
           <div class="empty-container">
             <span class="empty-title">No Memory Found</span>
             <span class="empty-desc">
@@ -417,8 +420,8 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
           </div>
         `:t=`
           ${f("Memory Candidates",i,"Candidate")}
-          ${f("Project Memory",r,"Project")}
-          ${f("Company Memory",o,"Company")}
+          ${f("Project Memory",o,"Project")}
+          ${f("Company Memory",r,"Company")}
         `}else t=`
         <div class="loading-container">
           <span class="loading-text">Initializing context...</span>
@@ -434,7 +437,7 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
       <div class="content-body">
         ${t}
       </div>
-    `}};customElements.get("paperclip-project-memory-tab")||customElements.define("paperclip-project-memory-tab",_);var M="paperclip-project-memory-tab",w=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._pluginSlot=null,this._pluginContext=null,this._mounted=!1,this._loading=!1,this._error=null,this._data=null,this._lastCacheKey=null}get pluginSlot(){return this._pluginSlot}set pluginSlot(e){this._pluginSlot=e,this._fetchData()}get pluginContext(){return this._pluginContext}set pluginContext(e){this._pluginContext=e,this._fetchData()}connectedCallback(){this._mounted=!0,this._fetchData()}disconnectedCallback(){this._mounted=!1}async _fetchData(){if(!this._mounted)return;let e=this._pluginContext,t=this._pluginSlot;if(!e)return;let o=e.companyId,r=e.projectId||e.entityId;if(!o||!r){this._error=new Error("companyId and projectId are required for project-memory-candidates-view data"),this._loading=!1,this._render();return}let i=`${o}:${r}`;if(!(this._lastCacheKey===i&&(this._loading||this._data||this._error))){this._lastCacheKey=i,this._loading=!0,this._error=null,this._data=null,this._render();try{let c=`/api/plugins/${t?.pluginId||"local.memory-sidecar"}/data/project-memory-candidates-view`,s=await fetch(c,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:o,params:{companyId:o,projectId:r}})});if(!s.ok){let d=`HTTP ${s.status}`;try{let p=await s.json();d=p.message||p.error||d}catch{}throw new Error(d)}let u=await s.json();this._data=u.data||{},this._loading=!1,this._render()}catch(a){this._error=a,this._loading=!1,this._render()}}}_render(){let e=this.shadowRoot;if(!e)return;let t="";if(this._loading)t=`
+    `}};customElements.get("paperclip-project-memory-tab")||customElements.define("paperclip-project-memory-tab",_);var M="paperclip-project-memory-tab",w=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._pluginSlot=null,this._pluginContext=null,this._mounted=!1,this._loading=!1,this._error=null,this._data=null,this._lastCacheKey=null}get pluginSlot(){return this._pluginSlot}set pluginSlot(e){this._pluginSlot=e,this._fetchData()}get pluginContext(){return this._pluginContext}set pluginContext(e){this._pluginContext=e,this._fetchData()}connectedCallback(){this._mounted=!0,this._fetchData()}disconnectedCallback(){this._mounted=!1}async _fetchData(){if(!this._mounted)return;let e=this._pluginContext,t=this._pluginSlot;if(!e)return;let r=e.companyId,o=e.projectId||e.entityId;if(!r||!o){this._error=new Error("companyId and projectId are required for project-memory-candidates-view data"),this._loading=!1,this._render();return}let i=`${r}:${o}`;if(!(this._lastCacheKey===i&&(this._loading||this._data||this._error))){this._lastCacheKey=i,this._loading=!0,this._error=null,this._data=null,this._render();try{let d=`/api/plugins/${t?.pluginId||"local.memory-sidecar"}/data/project-memory-candidates-view`,s=await fetch(d,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:r,params:{companyId:r,projectId:o}})});if(!s.ok){let c=`HTTP ${s.status}`;try{let p=await s.json();c=p.message||p.error||c}catch{}throw new Error(c)}let u=await s.json();this._data=u.data||{},this._loading=!1,this._render()}catch(a){this._error=a,this._loading=!1,this._render()}}}_render(){let e=this.shadowRoot;if(!e)return;let t="";if(this._loading)t=`
         <div class="loading-container">
           <div class="spinner"></div>
           <span class="loading-text">Loading memory candidates...</span>
@@ -444,7 +447,7 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
           <h4 class="error-title">Failed to load memory candidates</h4>
           <p class="error-body">${l(this._error.message||String(this._error))}</p>
         </div>
-      `;else if(this._data){let o=this._data.candidates||[];o.length===0?t=`
+      `;else if(this._data){let r=this._data.candidates||[];r.length===0?t=`
           <div class="empty-container">
             <span class="empty-title">No Proposed Candidates</span>
             <span class="empty-desc">
@@ -455,10 +458,10 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
           <div class="section-container">
             <h3 class="section-title">
               <span>Memory Candidates Queue</span>
-              <span class="counter-badge">${o.length}</span>
+              <span class="counter-badge">${r.length}</span>
             </h3>
             <div class="cards-grid">
-              ${o.map(r=>D(r)).join("")}
+              ${r.map(o=>D(o)).join("")}
             </div>
           </div>
         `}else t=`
@@ -476,41 +479,41 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
       <div class="content-body">
         ${t}
       </div>
-    `}};customElements.get("paperclip-project-memory-candidates-tab")||customElements.define("paperclip-project-memory-candidates-tab",w);var z="paperclip-project-memory-candidates-tab",$=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._pluginSlot=null,this._pluginContext=null,this._mounted=!1,this._submitting=!1,this._previewData=null,this._error=null,this._launching=!1,this._launchResult=null,this._launchError=null,this._currentDraft=null,this._agentRooms=[],this._agentRoomsLoading=!1,this._agentRoomsKey=null}get pluginSlot(){return this._pluginSlot}set pluginSlot(e){this._pluginSlot=e}get pluginContext(){return this._pluginContext}set pluginContext(e){this._pluginContext=e,this._render(),this._loadAgentRooms()}connectedCallback(){this._mounted=!0,this._render(),this._loadAgentRooms()}disconnectedCallback(){this._mounted=!1}async _loadAgentRooms(){let e=this._pluginContext,t=e?.projectId||e?.entityId,o=e?.companyId,r=this._pluginSlot?.pluginId||"local.memory-sidecar";if(!o||!t||this._agentRoomsLoading)return;let i=`${o}:${t}:${r}`;if(this._agentRoomsKey!==i){this._agentRoomsLoading=!0;try{let a=await fetch(`/api/plugins/${r}/data/direct-task-agent-rooms`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:o,params:{companyId:o,projectId:t}})});if(!a.ok)throw new Error("Unable to load Agent Rooms.");let c=await a.json();this._agentRooms=Array.isArray(c?.data?.agentRooms)?c.data.agentRooms:[],this._agentRoomsKey=i}catch{this._agentRooms=[],this._agentRoomsKey=i}finally{this._agentRoomsLoading=!1,this._updateAgentRoomOptions()}}}_updateAgentRoomOptions(){let e=this.shadowRoot,t=e?.getElementById("role-select"),o=e?.getElementById("agent-room-select");if(!t||!o)return;let r=o.value,i=t.value,a=this._agentRooms.filter(s=>s.role===i),c=this._agentRoomsLoading?"Loading Agent Rooms...":i?"Select an Agent Room...":"Select a worker role first...";o.innerHTML=`<option value="" disabled selected>${l(c)}</option>${a.map(s=>`<option value="${l(s.id)}">${l(s.identifier)} - ${l(s.title)}</option>`).join("")}`,a.some(s=>s.id===r)&&(o.value=r),o.disabled=this._agentRoomsLoading||!i||a.length===0}_setupFormListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("preview-form");t&&t.addEventListener("submit",async o=>{if(o.preventDefault(),this._submitting)return;let r=e.getElementById("role-select"),i=e.getElementById("agent-room-select"),a=e.getElementById("title-input"),c=e.getElementById("description-input"),s=r.value,u=i.value,d=a.value.trim(),p=c.value.trim();e.getElementById("error-role").textContent="",e.getElementById("error-agent-room").textContent="",e.getElementById("error-title").textContent="",e.getElementById("error-description").textContent="";let h=!0;if(s?s!=="unreal-code"&&s!=="unreal-qa"&&(e.getElementById("error-role").textContent="Invalid role selected.",h=!1):(e.getElementById("error-role").textContent="Role selection is required.",h=!1),u||(e.getElementById("error-agent-room").textContent="Agent Room selection is required.",h=!1),d?d.length>200&&(e.getElementById("error-title").textContent=`Title must be 200 characters or less (current: ${d.length}).`,h=!1):(e.getElementById("error-title").textContent="Title is required.",h=!1),p?p.length>4e3&&(e.getElementById("error-description").textContent=`Description must be 4,000 characters or less (current: ${p.length}).`,h=!1):(e.getElementById("error-description").textContent="Description is required.",h=!1),!!h){this._submitting=!0,this._error=null,this._previewData=null,this._updateButtonState();try{let m=this._pluginContext,C=this._pluginSlot;if(!m)throw new Error("Plugin context not initialized");let I=m.companyId,S=m.projectId||m.entityId,R=`/api/plugins/${C?.pluginId||"local.memory-sidecar"}/data/direct-task-preview`,b=await fetch(R,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:I,params:{companyId:I,projectId:S,role:s,parentId:u,title:d,description:p}})});if(!b.ok){let g=`HTTP ${b.status}`;try{let v=await b.json();g=v.message||v.error||g}catch{}throw new Error(g)}let j=await b.json();if(this._previewData=j.data||{},this._previewData.valid)this._currentDraft={role:s,parentId:u,title:d,description:p,idempotencyKey:"idem-"+Math.random().toString(36).substring(2,15)+Math.random().toString(36).substring(2,15)},this._launchResult=null,this._launchError=null;else{this._currentDraft=null;let g=this._previewData.errors;g&&(g.role&&(e.getElementById("error-role").textContent=g.role),g.title&&(e.getElementById("error-title").textContent=g.title),g.description&&(e.getElementById("error-description").textContent=g.description))}}catch(m){this._error=m}finally{this._submitting=!1,this._updateButtonState(),this._renderPreviewResult()}}})}_setupFormChangeListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("role-select"),o=e.getElementById("agent-room-select"),r=e.getElementById("title-input"),i=e.getElementById("description-input"),a=()=>{this._currentDraft&&(t.value!==this._currentDraft.role||o.value!==this._currentDraft.parentId||r.value.trim()!==this._currentDraft.title||i.value.trim()!==this._currentDraft.description)&&(this._previewData=null,this._currentDraft=null,this._launchResult=null,this._launchError=null,this._renderPreviewResult())};t&&t.addEventListener("change",()=>{this._updateAgentRoomOptions(),a()}),o&&o.addEventListener("change",a),r&&r.addEventListener("input",a),i&&i.addEventListener("input",a)}_updateButtonState(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("preview-btn"),o=e.querySelector(".btn-text"),r=e.querySelector(".btn-spinner");t&&o&&r&&(this._submitting?(t.disabled=!0,o.textContent="Validating...",r.style.display="inline-block"):(t.disabled=!1,o.textContent="Preview Request",r.style.display="none"))}_renderLaunchContent(){if(this._launchResult&&this._launchResult.ok){let i=this._pluginContext?.companyPrefix,a=this._launchResult.identifier,c="";if(i&&typeof i=="string"&&/^[A-Za-z0-9_-]{1,80}$/.test(i)&&a&&typeof a=="string"&&/^[A-Za-z0-9_-]{1,120}$/.test(a)){let s=`/${encodeURIComponent(i)}/issues/${encodeURIComponent(a)}`;c=`<a href="${l(s)}" class="task-link" style="color: #4f46e5; text-decoration: underline; font-weight: 600;">Open SPS Task Room</a>`}return`
+    `}};customElements.get("paperclip-project-memory-candidates-tab")||customElements.define("paperclip-project-memory-candidates-tab",w);var P="paperclip-project-memory-candidates-tab",$=class extends HTMLElement{constructor(){super(),this.attachShadow({mode:"open"}),this._pluginSlot=null,this._pluginContext=null,this._mounted=!1,this._submitting=!1,this._previewData=null,this._error=null,this._launching=!1,this._launchResult=null,this._launchError=null,this._currentDraft=null,this._agentRooms=[],this._agentRoomsLoading=!1,this._agentRoomsKey=null}get pluginSlot(){return this._pluginSlot}set pluginSlot(e){this._pluginSlot=e}get pluginContext(){return this._pluginContext}set pluginContext(e){this._pluginContext=e,this._render(),this._loadAgentRooms()}connectedCallback(){this._mounted=!0,this._render(),this._loadAgentRooms()}disconnectedCallback(){this._mounted=!1}async _loadAgentRooms(){let e=this._pluginContext,t=e?.projectId||e?.entityId,r=e?.companyId,o=this._pluginSlot?.pluginId||"local.memory-sidecar";if(!r||!t||this._agentRoomsLoading)return;let i=`${r}:${t}:${o}`;if(this._agentRoomsKey!==i){this._agentRoomsLoading=!0;try{let a=await fetch(`/api/plugins/${o}/data/direct-task-agent-rooms`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:r,params:{companyId:r,projectId:t}})});if(!a.ok)throw new Error("Unable to load Agent Rooms.");let d=await a.json();this._agentRooms=Array.isArray(d?.data?.agentRooms)?d.data.agentRooms:[],this._agentRoomsKey=i}catch{this._agentRooms=[],this._agentRoomsKey=i}finally{this._agentRoomsLoading=!1,this._updateAgentRoomOptions()}}}_updateAgentRoomOptions(){let e=this.shadowRoot,t=e?.getElementById("role-select"),r=e?.getElementById("agent-room-select");if(!t||!r)return;let o=r.value,i=t.value,a=this._agentRooms.filter(s=>s.role===i),d=this._agentRoomsLoading?"Loading Agent Rooms...":i?"Select an Agent Room...":"Select a worker role first...";r.innerHTML=`<option value="" disabled selected>${l(d)}</option>${a.map(s=>`<option value="${l(s.id)}">${l(s.identifier)} - ${l(s.title)}</option>`).join("")}`,a.some(s=>s.id===o)&&(r.value=o),r.disabled=this._agentRoomsLoading||!i||a.length===0}_setupFormListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("preview-form");t&&t.addEventListener("submit",async r=>{if(r.preventDefault(),this._submitting)return;let o=e.getElementById("role-select"),i=e.getElementById("agent-room-select"),a=e.getElementById("title-input"),d=e.getElementById("description-input"),s=o.value,u=i.value,c=a.value.trim(),p=d.value.trim();e.getElementById("error-role").textContent="",e.getElementById("error-agent-room").textContent="",e.getElementById("error-title").textContent="",e.getElementById("error-description").textContent="";let h=!0;if(s?s!=="unreal-code"&&s!=="unreal-qa"&&(e.getElementById("error-role").textContent="Invalid role selected.",h=!1):(e.getElementById("error-role").textContent="Role selection is required.",h=!1),u||(e.getElementById("error-agent-room").textContent="Agent Room selection is required.",h=!1),c?c.length>200&&(e.getElementById("error-title").textContent=`Title must be 200 characters or less (current: ${c.length}).`,h=!1):(e.getElementById("error-title").textContent="Title is required.",h=!1),p?p.length>4e3&&(e.getElementById("error-description").textContent=`Description must be 4,000 characters or less (current: ${p.length}).`,h=!1):(e.getElementById("error-description").textContent="Description is required.",h=!1),!!h){this._submitting=!0,this._error=null,this._previewData=null,this._updateButtonState();try{let m=this._pluginContext,C=this._pluginSlot;if(!m)throw new Error("Plugin context not initialized");let I=m.companyId,S=m.projectId||m.entityId,R=`/api/plugins/${C?.pluginId||"local.memory-sidecar"}/data/direct-task-preview`,v=await fetch(R,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:I,params:{companyId:I,projectId:S,role:s,parentId:u,title:c,description:p}})});if(!v.ok){let g=`HTTP ${v.status}`;try{let b=await v.json();g=b.message||b.error||g}catch{}throw new Error(g)}let j=await v.json();if(this._previewData=j.data||{},this._previewData.valid)this._currentDraft={role:s,parentId:u,title:c,description:p,idempotencyKey:"idem-"+Math.random().toString(36).substring(2,15)+Math.random().toString(36).substring(2,15)},this._launchResult=null,this._launchError=null;else{this._currentDraft=null;let g=this._previewData.errors;g&&(g.role&&(e.getElementById("error-role").textContent=g.role),g.title&&(e.getElementById("error-title").textContent=g.title),g.description&&(e.getElementById("error-description").textContent=g.description))}}catch(m){this._error=m}finally{this._submitting=!1,this._updateButtonState(),this._renderPreviewResult()}}})}_setupFormChangeListeners(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("role-select"),r=e.getElementById("agent-room-select"),o=e.getElementById("title-input"),i=e.getElementById("description-input"),a=()=>{this._currentDraft&&(t.value!==this._currentDraft.role||r.value!==this._currentDraft.parentId||o.value.trim()!==this._currentDraft.title||i.value.trim()!==this._currentDraft.description)&&(this._previewData=null,this._currentDraft=null,this._launchResult=null,this._launchError=null,this._renderPreviewResult())};t&&t.addEventListener("change",()=>{this._updateAgentRoomOptions(),a()}),r&&r.addEventListener("change",a),o&&o.addEventListener("input",a),i&&i.addEventListener("input",a)}_updateButtonState(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("preview-btn"),r=e.querySelector(".btn-text"),o=e.querySelector(".btn-spinner");t&&r&&o&&(this._submitting?(t.disabled=!0,r.textContent="Validating...",o.style.display="inline-block"):(t.disabled=!1,r.textContent="Preview Request",o.style.display="none"))}_renderLaunchContent(){if(this._launchResult&&this._launchResult.ok){let i=this._pluginContext?.companyPrefix,a=this._launchResult.identifier,d="";if(i&&typeof i=="string"&&/^[A-Za-z0-9_-]{1,80}$/.test(i)&&a&&typeof a=="string"&&/^[A-Za-z0-9_-]{1,120}$/.test(a)){let s=`/${encodeURIComponent(i)}/issues/${encodeURIComponent(a)}`;d=`<a href="${l(s)}" class="task-link" style="color: #4f46e5; text-decoration: underline; font-weight: 600;">Open SPS Task Room</a>`}return`
         <div class="launch-success" style="color: #15803d; font-size: 13px;">
           <p style="margin: 0 0 8px 0; font-weight: 600;">\u2713 Task Room Launched Successfully!</p>
           <p style="margin: 0 0 8px 0;">Issue Identifier: <strong style="font-weight: 700;">${l(a)}</strong></p>
-          ${c}
+          ${d}
         </div>
       `}let e="";this._launchError&&(e=`
         <div class="launch-error" style="color: #b91c1c; font-size: 13px; margin-bottom: 12px; background: #fee2e2; padding: 8px 12px; border-radius: 6px; border: 1px solid #fca5a5; width: 100%; box-sizing: border-box;">
           <strong>Error launching task room:</strong> ${l(this._launchError.message||String(this._launchError))}
         </div>
-      `);let t=this._launching?"disabled":"",o=this._launching?"Launching Task Room...":"Launch Task Room",r=this._launching?"inline-block":"none";return`
+      `);let t=this._launching?"disabled":"",r=this._launching?"Launching Task Room...":"Launch Task Room",o=this._launching?"inline-block":"none";return`
       ${e}
       <button type="button" id="launch-btn" class="preview-btn" style="background-color: #059669;" ${t}>
-        <span class="launch-btn-text">${l(o)}</span>
-        <span class="btn-spinner launch-spinner" style="display: ${r};"></span>
+        <span class="launch-btn-text">${l(r)}</span>
+        <span class="btn-spinner launch-spinner" style="display: ${o};"></span>
       </button>
-    `}async _handleLaunch(){if(this._currentDraft){this._launching=!0,this._launchError=null,this._launchResult=null,this._renderPreviewResult();try{let e=this._pluginContext,t=this._pluginSlot;if(!e)throw new Error("Plugin context not initialized");let o=e.companyId,r=e.projectId||e.entityId,a=`/api/plugins/${t?.pluginId||"local.memory-sidecar"}/actions/direct-task-submit`,c=await fetch(a,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:o,params:{projectId:r,role:this._currentDraft.role,parentId:this._currentDraft.parentId,title:this._currentDraft.title,description:this._currentDraft.description,idempotencyKey:this._currentDraft.idempotencyKey}})});if(!c.ok){let d=`HTTP ${c.status}`;try{let p=await c.json();d=p.message||p.error||d}catch{}throw new Error(d)}let s=await c.json(),u=[s,s?.result,s?.data,s?.data?.result,s?.result?.data].find(d=>d&&typeof d=="object"&&typeof d.ok=="boolean")||s;if(u&&u.ok)this._launchResult=u;else throw new Error(u?.message||u?.code||"Failed to launch task room.")}catch(e){this._launchError=e}finally{this._launching=!1,this._renderPreviewResult()}}}_renderPreviewResult(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("preview-result");if(t)if(this._error)t.className="preview-result invalid",t.style.display="flex",t.innerHTML=`
+    `}async _handleLaunch(){if(this._currentDraft){this._launching=!0,this._launchError=null,this._launchResult=null,this._renderPreviewResult();try{let e=this._pluginContext,t=this._pluginSlot;if(!e)throw new Error("Plugin context not initialized");let r=e.companyId,o=e.projectId||e.entityId,a=`/api/plugins/${t?.pluginId||"local.memory-sidecar"}/actions/direct-task-submit`,d=await fetch(a,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({companyId:r,params:{projectId:o,role:this._currentDraft.role,parentId:this._currentDraft.parentId,title:this._currentDraft.title,description:this._currentDraft.description,idempotencyKey:this._currentDraft.idempotencyKey}})});if(!d.ok){let c=`HTTP ${d.status}`;try{let p=await d.json();c=p.message||p.error||c}catch{}throw new Error(c)}let s=await d.json(),u=[s,s?.result,s?.data,s?.data?.result,s?.result?.data].find(c=>c&&typeof c=="object"&&typeof c.ok=="boolean")||s;if(u&&u.ok)this._launchResult=u;else throw new Error(u?.message||u?.code||"Failed to launch task room.")}catch(e){this._launchError=e}finally{this._launching=!1,this._renderPreviewResult()}}}_renderPreviewResult(){let e=this.shadowRoot;if(!e)return;let t=e.getElementById("preview-result");if(t)if(this._error)t.className="preview-result invalid",t.style.display="flex",t.innerHTML=`
         <h4 class="result-title invalid">Validation Error</h4>
         <p class="result-value">${l(this._error.message||String(this._error))}</p>
-      `;else if(this._previewData){let o=this._previewData;if(o.valid){t.className="preview-result valid",t.style.display="flex",t.innerHTML=`
+      `;else if(this._previewData){let r=this._previewData;if(r.valid){t.className="preview-result valid",t.style.display="flex",t.innerHTML=`
           <h4 class="result-title valid">\u2713 Request Valid</h4>
           <div class="result-grid">
             <div class="result-label">Worker Role:</div>
-            <div class="result-value result-value-highlight">${l(o.roleLabel)}</div>
+            <div class="result-value result-value-highlight">${l(r.roleLabel)}</div>
 
             <div class="result-label">Safety Boundary:</div>
-            <div class="result-value result-boundary">${l(o.roleBoundary)}</div>
+            <div class="result-value result-boundary">${l(r.roleBoundary)}</div>
 
             <div class="result-label">SPS Outcome:</div>
-            <div class="result-value">${l(o.spsStatement)}</div>
+            <div class="result-value">${l(r.spsStatement)}</div>
           </div>
           <div class="launch-section" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #bbf7d0; display: flex; flex-direction: column; gap: 12px; width: 100%; box-sizing: border-box;">
             ${this._renderLaunchContent()}
           </div>
-        `;let r=e.getElementById("launch-btn");r&&r.addEventListener("click",async()=>{this._launching||await this._handleLaunch()})}else t.className="preview-result invalid",t.style.display="flex",t.innerHTML=`
+        `;let o=e.getElementById("launch-btn");o&&o.addEventListener("click",async()=>{this._launching||await this._handleLaunch()})}else t.className="preview-result invalid",t.style.display="flex",t.innerHTML=`
           <h4 class="result-title invalid">\u2717 Validation Failed</h4>
           <p class="result-value">Please correct the highlighted errors in the form above and try again.</p>
         `}else t.style.display="none",t.innerHTML=""}_render(){let e=this.shadowRoot;if(!e)return;let t=this._pluginContext;if(!t){e.innerHTML=`
@@ -518,7 +521,7 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
         <div class="loading-container">
           <span class="loading-text">Initializing context...</span>
         </div>
-      `;return}let o=t.companyId,r=t.projectId||t.entityId;e.innerHTML=`
+      `;return}let r=t.companyId,o=t.projectId||t.entityId;e.innerHTML=`
       <style>
         ${y}
         
@@ -729,5 +732,5 @@ var l=n=>n?String(n).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&g
 
         <div id="preview-result" class="preview-result" style="display: none;"></div>
       </div>
-    `,this._setupFormListeners(),this._setupFormChangeListeners()}};customElements.get("paperclip-project-direct-task-preview-tab")||customElements.define("paperclip-project-direct-task-preview-tab",$);var P="paperclip-project-direct-task-preview-tab";export{L as MemoryTab,P as ProjectDirectTaskPreviewTab,z as ProjectMemoryCandidatesTab,M as ProjectMemoryTab};
+    `,this._setupFormListeners(),this._setupFormChangeListeners()}};customElements.get("paperclip-project-direct-task-preview-tab")||customElements.define("paperclip-project-direct-task-preview-tab",$);var z="paperclip-project-direct-task-preview-tab";export{L as MemoryTab,z as ProjectDirectTaskPreviewTab,P as ProjectMemoryCandidatesTab,M as ProjectMemoryTab};
 //# sourceMappingURL=index.js.map

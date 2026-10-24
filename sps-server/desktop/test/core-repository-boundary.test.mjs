@@ -38,6 +38,8 @@ test("keeps product source out of Core private implementation paths", async () =
   const unexpected = [];
   for (const relativePath of trackedProductFiles()) {
     const normalized = relativePath.replaceAll(path.sep, "/");
+    // Audit documents cite implementation paths; they are not runtime imports.
+    if (normalized.endsWith(".md")) continue;
     const content = await readFile(path.join(productDirectory, relativePath), "utf8");
     if (content.includes(`${corePrivatePackagePath}/`) && !allowedCorePackageReferences.has(normalized)) {
       unexpected.push(normalized);

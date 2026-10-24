@@ -14,6 +14,13 @@ assert.equal(manifest.default.agentPlatform?.profileKey, "sps-lead-worker");
 assert.equal(manifest.default.version, packageJson.version);
 assert.equal(manifest.default.entrypoints.ui, `./dist/ui-v${packageJson.version}`);
 assert.ok(fs.existsSync(path.join(root, manifest.default.entrypoints.ui, "index.js")));
+assert.deepEqual(
+  fs.readdirSync(path.join(root, "dist"), { withFileTypes: true })
+    .filter((entry) => entry.name.startsWith("ui-v"))
+    .map((entry) => entry.name)
+    .sort(),
+  [`ui-v${packageJson.version}`],
+);
 assert.ok(manifest.default.capabilities.includes("issue.documents.write"));
 assert.ok(manifest.default.capabilities.includes("issue.comments.create"));
 assert.ok(manifest.default.capabilities.includes("events.subscribe"));
@@ -21,6 +28,27 @@ assert.ok(manifest.default.capabilities.includes("companies.read"));
 assert.ok(manifest.default.capabilities.includes("project.workspaces.read"));
 assert.ok(manifest.default.capabilities.includes("ui.page.register"));
 assert.ok(manifest.default.capabilities.includes("ui.sidebar.register"));
+assert.ok(manifest.default.capabilities.includes("ui.workspaceShell.provide"));
+assert.ok(manifest.default.capabilities.includes("ui.dashboard.contribute"));
+assert.ok(manifest.default.capabilities.includes("inbox.items.publish"));
+assert.ok(manifest.default.ui.dashboardWidgets?.some((widget) => (
+  widget.id === "team-workplane-status"
+  && widget.dataAction === "team-workplane-dashboard"
+  && widget.exportName === "TeamWorkplaneDashboardWidget"
+)));
+assert.deepEqual(manifest.default.ui.workspaceShell, {
+  id: "team-workplane",
+  displayName: "Team Workplane",
+  defaultRoute: "/agent-rooms",
+  navigation: [
+    { id: "team-rooms", displayName: "Team Rooms", target: "/agent-rooms", order: 10 },
+    { id: "project-tasks", displayName: "Tasks", target: "/tasks", order: 20 },
+  ],
+  dashboardPreset: [
+    { widgetId: "team-workplane-status", size: "medium", order: 10 },
+  ],
+  emptyWorkspaceAction: { displayName: "Open Team Rooms", target: "/agent-rooms" },
+});
 assert.ok(manifest.default.ui.slots.some((slot) => slot.id === "project-tasks" && slot.routePath === "tasks"));
 assert.ok(!manifest.default.ui.slots.some((slot) => slot.id === "project-tasks-sidebar"));
 assert.ok(manifest.default.ui.slots.some((slot) => (
@@ -84,6 +112,8 @@ assert.match(worker, /PROVISIONED_AGENT_ROOM_ORIGIN/);
 assert.match(worker, /loadAgentInstructions/);
 assert.match(worker, /handleProjectTasksView/);
 assert.match(worker, /project-tasks-view/);
+assert.match(worker, /handleTeamWorkplaneDashboard/);
+assert.match(worker, /publishTaskOwnerReportInbox/);
 assert.match(worker, /Update Room Workspace binding/);
 assert.match(worker, /ROOM_JOB_ENTITY_TYPE/);
 assert.match(worker, /reconcileInterruptedRoomJobs/);

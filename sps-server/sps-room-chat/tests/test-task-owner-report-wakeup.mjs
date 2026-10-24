@@ -134,6 +134,7 @@ const comments = new Map([
 ]);
 const entities = new Map();
 const issues = new Map([[ownerRoomId, ownerRoom], [taskId, task]]);
+const inboxItems = new Map();
 const originalFetch = globalThis.fetch;
 let ownerPrompt = "";
 const nativeSessions = [];
@@ -263,6 +264,14 @@ const ctx = {
     },
     list: async ({ scopeId } = {}) => [...entities.values()].filter((record) => !scopeId || record.scopeId === scopeId)
   },
+  inbox: {
+    publish: async (input) => {
+      const existing = inboxItems.get(input.externalId);
+      const item = { id: existing?.id ?? `inbox-${inboxItems.size + 1}`, ...input };
+      inboxItems.set(input.externalId, item);
+      return { id: item.id, externalId: item.externalId };
+    }
+  },
   streams: { open: () => {}, emit: () => {} },
   logger: { error: () => {}, warn: (...args) => testWarnings.push(args) }
 };
@@ -360,6 +369,11 @@ assert.equal(savedTaskState.review.status, "owner_review_requested");
 assert.equal(savedTaskState.review.workerReportCommentId, workerReport.id);
 assert.equal(savedTaskState.ownerNotification.status, "completed");
 assert.equal(savedTaskState.ownerNotification.reportCommentId, workerReport.id);
+assert.equal(inboxItems.size, 1);
+const initialInboxReport = inboxItems.get(`team-workplane:room-report:${taskId}:${workerReport.id}`);
+assert.equal(initialInboxReport.category, "workflow-report");
+assert.equal(initialInboxReport.severity, "info");
+assert.equal(initialInboxReport.navigationTarget, `/agent-rooms?project=${projectId}&room=${ownerRoomId}`);
 
 const mismatchedLaterBlocker = {
   id: "worker-report-later-mismatched-blocker",
@@ -928,6 +942,7 @@ assert.equal(savedManualTaskState.review.mode, "manual");
 assert.equal(savedManualTaskState.review.status, "owner_review_pending");
 assert.equal(savedManualTaskState.ownerNotification.status, "manual_pending");
 assert.ok(savedManualTaskState.ownerNotification.roomReportCommentId);
+assert.equal(inboxItems.get(`team-workplane:room-report:${manualTaskId}:worker-report-manual`).severity, "info");
 const manualDuplicate = await handleTaskStatusUpdated(ctx, {
   eventId: "event-manual-task-owner-review-duplicate",
   eventType: "issue.comment.created",

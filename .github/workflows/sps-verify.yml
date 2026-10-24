@@ -4,6 +4,7 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -27,13 +28,28 @@ jobs:
           package-manager-cache: false
 
       - name: Install pinned pnpm
-        run: npm install --global pnpm@9.15.4
+        run: npm install --global pnpm@11.9.0
 
       - name: Install Core dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Enforce SPS production dependency security policy
+        working-directory: ${{ github.workspace }}/sps-server/desktop
+        run: npm run audit:release
+
+      - name: Enforce SPS development dependency security policy
+        working-directory: ${{ github.workspace }}/sps-server/desktop
+        run: |
+          npm run audit:development
+          npm run docs:security:check
+
       - name: Typecheck SPS Core server
         run: pnpm --filter @paperclipai/server run typecheck
+
+      - name: Enforce SPS compatibility namespace
+        run: |
+          pnpm check:sps-compat-boundary
+          pnpm test:sps-compat-boundary
 
       - name: Test SPS-branded first-admin setup
         run: pnpm --filter @paperclipai/ui exec vitest run src/App.test.tsx
@@ -59,6 +75,125 @@ jobs:
       - name: Build the SPS browser UI
         run: pnpm --filter @paperclipai/ui run build
 
+      - name: Enforce SPS browser entry bundle budget
+        run: |
+          pnpm check:sps-ui-bundle
+          pnpm test:sps-ui-bundle
+
+  core-full-regression:
+    name: SPS Core Linux tests (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: general
+            group: general-server
+            shard_index: 0
+            shard_count: 3
+            label: server 1/3
+          - mode: general
+            group: general-server
+            shard_index: 1
+            shard_count: 3
+            label: server 2/3
+          - mode: general
+            group: general-server
+            shard_index: 2
+            shard_count: 3
+            label: server 3/3
+          - mode: general
+            group: general-workspaces-a
+            label: workspaces A
+          - mode: general
+            group: general-workspaces-b
+            label: workspaces B
+          - mode: serialized
+            shard_index: 0
+            shard_count: 4
+            label: serialized 1/4
+          - mode: serialized
+            shard_index: 1
+            shard_count: 4
+            label: serialized 2/4
+          - mode: serialized
+            shard_index: 2
+            shard_count: 4
+            label: serialized 3/4
+          - mode: serialized
+            shard_index: 3
+            shard_count: 4
+            label: serialized 4/4
+    defaults:
+      run:
+        working-directory: external/sps-core
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@11.9.0
+
+      - name: Install Core dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run bounded Core test shard
+        shell: bash
+        run: |
+          if [ "${{ matrix.mode }}" = "serialized" ]; then
+            pnpm test:run:serialized -- \
+              --shard-index "${{ matrix.shard_index }}" \
+              --shard-count "${{ matrix.shard_count }}"
+          elif [ "${{ matrix.group }}" = "general-server" ]; then
+            pnpm test:run:general -- \
+              --group "${{ matrix.group }}" \
+              --shard-index "${{ matrix.shard_index }}" \
+              --shard-count "${{ matrix.shard_count }}"
+          else
+            pnpm test:run:general -- --group "${{ matrix.group }}"
+          fi
+
+  core-full-build:
+    name: SPS Core full Linux typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: external/sps-core
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@11.9.0
+
+      - name: Install Core dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck every Core workspace
+        run: pnpm typecheck
+
+      - name: Build every Core workspace
+        run: pnpm build
+
+      - name: Require clean Linux catalog build
+        run: git diff --exit-code -- packages/skills-catalog/generated/catalog.json packages/teams-catalog/generated/catalog.json
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest
@@ -75,7 +210,7 @@ jobs:
           cache-dependency-path: sps-server/sps-room-chat/package-lock.json
 
       - name: Install pinned pnpm for the SPS plugin SDK
-        run: npm install --global pnpm@9.15.4
+        run: npm install --global pnpm@11.9.0
 
       - name: Build SPS plugin SDK for the Room workplane
         working-directory: external/sps-core
@@ -90,6 +225,60 @@ jobs:
       - name: Verify SPS Room durable workplane
         working-directory: sps-server/sps-room-chat
         run: npm run check
+
+  bundled-plugins:
+    name: SPS bundled plugins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sps-server/sps-plugin-discovery/package-lock.json
+
+      - name: Verify SPS Default Memory
+        working-directory: sps-server/sps-default-memory
+        run: npm run check
+
+      - name: Install SPS Plugin Discovery dependencies
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm ci
+
+      - name: Rebuild and verify SPS Plugin Discovery
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm run check
+
+  identity:
+    name: SPS Identity contracts (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24, 26]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: sps-server/sps-identity/package-lock.json
+
+      - name: Install SPS Identity dependencies
+        working-directory: sps-server/sps-identity
+        run: npm ci
+
+      - name: Verify sign-in, token rotation, revocation, and concurrency
+        working-directory: sps-server/sps-identity
+        run: npm test
 
   plugin-kit:
     name: SPS Plugin Kit and Registry
@@ -130,6 +319,23 @@ jobs:
           cache-dependency-path: |
             sps-server/desktop/package-lock.json
             external/sps-plugin-sdk/package-lock.json
+            sps-server/sps-plugin-discovery/package-lock.json
+            sps-server/sps-room-chat/package-lock.json
+
+      - name: Install pinned pnpm for SPS Core runtime packaging
+        run: npm install --global pnpm@11.9.0
+
+      - name: Install SPS Core dependencies for Desktop runtime packaging
+        working-directory: external/sps-core
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SPS Core package prerequisites for Desktop E2E
+        working-directory: external/sps-core
+        run: |
+          pnpm --filter @paperclipai/plugin-sdk run build
+          pnpm --filter "@paperclipai/adapter-*" run build
+          pnpm --filter @paperclipai/hermes-paperclip-adapter run build
+          pnpm --filter paperclipai run build
 
       - name: Install SPS Desktop dependencies
         working-directory: sps-server/desktop
@@ -138,6 +344,66 @@ jobs:
       - name: Test SPS Desktop invite and update flow
         working-directory: sps-server/desktop
         run: npm test
+
+      - name: Run isolated Desktop bootstrap E2E
+        working-directory: sps-server/desktop
+        run: npm run test:e2e:bootstrap
+
+      - name: Run independent Native Core Settings source E2E
+        timeout-minutes: 5
+        working-directory: sps-server/desktop
+        run: npm run test:e2e:core-settings
+
+      - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm ci
+
+      - name: Install SPS Room Chat dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-room-chat
+        run: npm ci
+
+      - name: Prepare Owner Host runtime for Desktop E2E
+        working-directory: sps-server/desktop
+        run: npm run prepare:owner-host-runtime
+
+      - name: Require clean Windows catalog build
+        run: git -C external/sps-core diff --exit-code -- packages/skills-catalog/generated/catalog.json packages/teams-catalog/generated/catalog.json
+
+      - name: Build unpacked Windows Desktop for E2E
+        working-directory: sps-server/desktop
+        run: npx electron-builder --win dir --publish never
+
+      - name: Add E2E update provider configuration
+        working-directory: sps-server/desktop
+        shell: pwsh
+        run: |
+          @"
+          owner: Powerpunch777
+          repo: SPS-Desktop-Releases
+          provider: github
+          releaseType: release
+          channel: latest
+          updaterCacheDirName: '@spsdesktop-updater'
+          "@ | Set-Content -LiteralPath 'dist/win-unpacked/resources/app-update.yml' -Encoding utf8NoBOM
+
+      - name: Run packaged Desktop workspace surfaces E2E
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: npm run test:e2e:workspace-surfaces
+
+      - name: Run packaged Desktop plugin preview E2E
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+        run: npm run test:e2e:plugin-preview
+
+      - name: Run packaged Desktop Host plugin lifecycle E2E
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+        run: npm run test:e2e:host-plugin-lifecycle
 
       - name: Test SPS node signing, command lease, and capability flow
         working-directory: sps-server/desktop-node

@@ -1,0 +1,71 @@
+name: SPS Live Agent Canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-codex-host-lifecycle:
+    name: Live Codex ACP Host lifecycle (non-blocking)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            sps-server/desktop/package-lock.json
+            sps-server/sps-plugin-discovery/package-lock.json
+            sps-server/sps-room-chat/package-lock.json
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@11.9.0
+
+      - name: Install and build SPS Core runtime prerequisites
+        working-directory: external/sps-core
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @paperclipai/plugin-sdk run build
+          pnpm --filter "@paperclipai/adapter-*" run build
+          pnpm --filter @paperclipai/hermes-paperclip-adapter run build
+          pnpm --filter paperclipai run build
+
+      - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm ci
+
+      - name: Install SPS Room Chat dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-room-chat
+        run: npm ci
+
+      - name: Install and package SPS Desktop
+        working-directory: sps-server/desktop
+        run: |
+          npm ci
+          npm run prepare:owner-host-runtime
+          npx electron-builder --win dir --publish never
+
+      - name: Run the credential-dependent Codex ACP canary
+        working-directory: sps-server/desktop
+        env:
+          OPENAI_API_KEY: ${{ secrets.SPS_LIVE_CODEX_OPENAI_API_KEY }}
+          SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+          SPS_DESKTOP_E2E_DIAGNOSTICS_PATH: ${{ runner.temp }}\sps-live-agent-canary.txt
+        run: npm run test:e2e:host-plugin-lifecycle:live
+
+      - name: Upload canary diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sps-live-agent-canary-${{ github.run_id }}
+          path: ${{ runner.temp }}\sps-live-agent-canary.txt
+          if-no-files-found: warn

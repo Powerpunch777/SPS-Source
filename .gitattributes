@@ -1,0 +1,8 @@
+# Generated plugin JavaScript is hashed byte-for-byte during packaging.
+# Keep it stable across Windows and CI checkouts.
+sps-server/sps-default-memory/dist/**/*.js text eol=lf
+sps-server/sps-default-memory/src/**/*.js text eol=lf
+sps-server/sps-plugin-discovery/dist/**/*.js text eol=lf
+sps-server/sps-plugin-discovery/src/**/*.js text eol=lf
+sps-server/sps-room-chat/dist/**/*.js text eol=lf
+sps-server/sps-room-chat/src/**/*.js text eol=lf

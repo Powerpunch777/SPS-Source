@@ -34,19 +34,54 @@ function canListen(port) {
   });
 }
 
+async function findDynamicLoopbackPorts() {
+  const servers = [];
+  try {
+    const ports = [];
+    for (let index = 0; index < 2; index += 1) {
+      const server = net.createServer();
+      servers.push(server);
+      server.unref();
+      ports.push(await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
+          const address = server.address();
+          if (!address || typeof address === "string") reject(new Error("No local port was assigned."));
+          else resolve(address.port);
+        });
+      }));
+    }
+    return { serverPort: ports[0], databasePort: ports[1] };
+  } finally {
+    // Hold both probes until allocated so the OS cannot return the same port.
+    await Promise.all(servers.filter(server => server.listening).map(server => new Promise(resolve => server.close(resolve))));
+  }
+}
+
 export async function findSpsOwnerHostPorts({
   serverPort = SPS_OWNER_HOST_DEFAULT_PORT,
   databasePort = SPS_OWNER_HOST_DEFAULT_DATABASE_PORT,
   isAvailable = canListen,
   attempts = 100,
+  findDynamicPorts = findDynamicLoopbackPorts,
 } = {}) {
   for (let offset = 0; offset < attempts; offset += 1) {
     const candidateServerPort = serverPort + offset;
     const candidateDatabasePort = databasePort + offset;
     if (!isUsablePort(candidateServerPort) || !isUsablePort(candidateDatabasePort)) break;
-    if (await isAvailable(candidateServerPort) && await isAvailable(candidateDatabasePort)) {
+    if (candidateServerPort !== candidateDatabasePort && await isAvailable(candidateServerPort) && await isAvailable(candidateDatabasePort)) {
       return { serverPort: candidateServerPort, databasePort: candidateDatabasePort };
     }
+  }
+  try {
+    const fallback = await findDynamicPorts();
+    if (isUsablePort(fallback?.serverPort) && isUsablePort(fallback?.databasePort)
+      && fallback.serverPort !== fallback.databasePort
+      && await isAvailable(fallback.serverPort) && await isAvailable(fallback.databasePort)) {
+      return { serverPort: fallback.serverPort, databasePort: fallback.databasePort };
+    }
+  } catch (cause) {
+    throw new Error("SPS Desktop could not select local Owner Host ports. Try again after checking local networking.", { cause });
   }
   throw new Error("SPS Desktop could not reserve a local Owner Host port. Close the conflicting app and try again.");
 }
@@ -90,7 +125,7 @@ export function createSpsOwnerHostConfig({ vaultRoot, serverPort, databasePort, 
     },
     logging: { mode: "file", logDir: layout.logDir },
     server: {
-      deploymentMode: "local_trusted",
+      deploymentMode: "authenticated",
       exposure: "private",
       bind: "loopback",
       host: "127.0.0.1",
@@ -150,7 +185,7 @@ export function configureSpsOwnerHostPrivateTeamAccess(config, { hostname, now =
   };
 }
 
-export function configureSpsOwnerHostLocalOnly(config, { now = new Date() } = {}) {
+export function configureSpsOwnerHostAuthenticatedLocal(config, { now = new Date() } = {}) {
   const server = config?.server;
   if (!server?.port) throw new Error("SPS Owner Host config has no server port.");
   return {
@@ -158,7 +193,7 @@ export function configureSpsOwnerHostLocalOnly(config, { now = new Date() } = {}
     $meta: nextConfigMetadata(config, now),
     server: {
       ...server,
-      deploymentMode: "local_trusted",
+      deploymentMode: "authenticated",
       exposure: "private",
       bind: "loopback",
       host: "127.0.0.1",
@@ -170,6 +205,42 @@ export function configureSpsOwnerHostLocalOnly(config, { now = new Date() } = {}
       baseUrlMode: "auto",
       publicBaseUrl: undefined,
       disableSignUp: false,
+    },
+  };
+}
+
+export function rebaseSpsOwnerHostConfigPaths(config, { vaultRoot, now = new Date() } = {}) {
+  if (!config || typeof config !== "object") throw new Error("SPS Owner Host config is required.");
+  if (!vaultRoot) throw new Error("SPS Owner Host vault root is required.");
+  const layout = ownerHostVaultLayout(vaultRoot);
+  return {
+    ...config,
+    $meta: nextConfigMetadata(config, now),
+    database: {
+      ...(config.database ?? {}),
+      embeddedPostgresDataDir: layout.databaseDir,
+      backup: {
+        ...(config.database?.backup ?? {}),
+        dir: layout.backupDir,
+      },
+    },
+    logging: {
+      ...(config.logging ?? {}),
+      logDir: layout.logDir,
+    },
+    storage: {
+      ...(config.storage ?? {}),
+      localDisk: {
+        ...(config.storage?.localDisk ?? {}),
+        baseDir: layout.storageDir,
+      },
+    },
+    secrets: {
+      ...(config.secrets ?? {}),
+      localEncrypted: {
+        ...(config.secrets?.localEncrypted ?? {}),
+        keyFilePath: layout.secretsPath,
+      },
     },
   };
 }
@@ -203,7 +274,16 @@ export async function ensureSpsOwnerHostConfig({
   try {
     const raw = await fsApi.readFile(layout.configPath, "utf8");
     const config = parseExistingConfig(raw, layout.configPath);
-    return { config, layout, created: false };
+    if (config.server?.deploymentMode === "authenticated") {
+      return { config, layout, created: false };
+    }
+    // SPS Desktop no longer supports an anonymous local Core. Upgrade existing
+    // vaults in place while retaining their data, port, and storage layout.
+    const upgraded = configureSpsOwnerHostAuthenticatedLocal(config, { now });
+    const temporaryPath = `${layout.configPath}.${process.pid}.${Date.now()}.tmp`;
+    await fsApi.writeFile(temporaryPath, `${JSON.stringify(upgraded, null, 2)}\n`, "utf8");
+    await fsApi.rename(temporaryPath, layout.configPath);
+    return { config: upgraded, layout, created: false, upgraded: true };
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }

@@ -49,7 +49,8 @@ export function satisfiesSpsVersion(versionText, rangeText) {
 export function assessSpsPluginCompatibility(releaseCompatibility, {
   desktopVersion,
   pluginApi = 1,
-  extensionProfile = "1.0",
+  extensionProfile,
+  extensionProfiles,
 } = {}) {
   if (!releaseCompatibility || typeof releaseCompatibility !== "object" || Array.isArray(releaseCompatibility)) {
     return { compatible: false, reason: "The signed release has no SPS compatibility declaration." };
@@ -58,9 +59,18 @@ export function assessSpsPluginCompatibility(releaseCompatibility, {
     return { compatible: false, reason: `This SPS Desktop supports Plugin API ${pluginApi}, but the release requires Plugin API ${String(releaseCompatibility.pluginApi)}.` };
   }
   const requiredProfile = PROFILE_VERSION.exec(releaseCompatibility.extensionProfile ?? "");
-  const currentProfile = PROFILE_VERSION.exec(extensionProfile);
-  if (!requiredProfile || !currentProfile || requiredProfile[1] !== currentProfile[1]) {
-    return { compatible: false, reason: `This SPS Desktop supports Extension Profile ${extensionProfile}, but the release requires ${String(releaseCompatibility.extensionProfile)}.` };
+  const supportedProfiles = Array.isArray(extensionProfiles)
+    ? extensionProfiles
+    : extensionProfile
+      ? [extensionProfile]
+      : ["1.0", "2.0"];
+  const supportedMajors = supportedProfiles
+    .map((profile) => PROFILE_VERSION.exec(profile))
+    .filter(Boolean)
+    .map((profile) => profile[1]);
+  if (!requiredProfile || !supportedMajors.includes(requiredProfile[1])) {
+    const supportedLabel = supportedProfiles.length > 0 ? supportedProfiles.join(", ") : "none";
+    return { compatible: false, reason: `This SPS Desktop supports Extension Profiles ${supportedLabel}, but the release requires ${String(releaseCompatibility.extensionProfile)}.` };
   }
   const spsRangeResult = satisfiesSpsVersion(desktopVersion, releaseCompatibility.sps);
   if (spsRangeResult === null) {

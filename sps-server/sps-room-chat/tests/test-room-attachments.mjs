@@ -7,6 +7,7 @@ process.env.PAPERCLIP_ROOM_CHAT_TEST = "1";
 const {
   attachmentIdsParam,
   cleanupRoomAttachmentCache,
+  excludeWorkspaceRoomAttachments,
   isCodexImageAttachment,
   mergeRoomAttachments,
   resolveRoomAttachments,
@@ -38,14 +39,14 @@ globalThis.fetch = async (url) => {
         id: "image-attachment",
         originalFilename: "mockup.png",
         contentType: "image/png",
-        byteSize: 42,
+        byteSize: Buffer.byteLength("image bytes"),
         contentPath: "/api/attachments/image-attachment/content"
       },
       {
         id: "brief-attachment",
         originalFilename: "brief.md",
         contentType: "text/markdown",
-        byteSize: 84,
+        byteSize: Buffer.byteLength("design brief"),
         contentPath: "/api/attachments/brief-attachment/content"
       }
     ]), { status: 200 });
@@ -55,6 +56,15 @@ globalThis.fetch = async (url) => {
   }
   if (/\/api\/attachments\/image-attachment\/content$/.test(href)) {
     return new Response("image bytes", { status: 200 });
+  }
+  if (/\/api\/attachments\/size-mismatch\/content$/.test(href)) {
+    return new Response("tiny", { status: 200 });
+  }
+  if (/\/api\/attachments\/oversized-content\/content$/.test(href)) {
+    return new Response("123456789", { status: 200 });
+  }
+  if (/\/api\/attachments\/dot-filename\/content$/.test(href)) {
+    return new Response("safe", { status: 200 });
   }
   assert.fail(`Unexpected attachment request: ${href}`);
 };
@@ -85,18 +95,130 @@ assert.match(imagePreviewTurn, /SYSTEM-PROVIDED ROOM RESPONSE CONTRACT/);
 assert.match(imagePreviewTurn, /final response must embed at least one relevant image/);
 assert.match(imagePreviewTurn, /!\[description\]\(<C:\/absolute\/path\/to\/image\.png>\)/);
 assert.match(imagePreviewTurn, /Do not merely say that an image is shown/);
+const emptyWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-empty-attachments-"));
+assert.deepEqual(
+  await stageRoomAttachments("http://127.0.0.1:3100", "room-empty", [], emptyWorkspace),
+  []
+);
+assert.equal(fs.existsSync(path.join(emptyWorkspace, ".sps")), false);
+fs.rmSync(emptyWorkspace, { recursive: true, force: true });
 const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-room-workspace-"));
 fs.mkdirSync(path.join(workspace, ".git", "info"), { recursive: true });
 const staged = await stageRoomAttachments("http://127.0.0.1:3100", "room-attachment", attachments, workspace);
 const expectedRoot = path.join(workspace, ".sps", "room-attachments");
 assert.equal(roomAttachmentWorkspaceRoot(workspace), expectedRoot);
 assert.equal(staged.length, 2);
-assert.ok(staged.every((attachment) => !path.relative(workspace, attachment.localPath).startsWith("..")));
+assert.ok(staged.every((attachment) => !path.relative(fs.realpathSync.native(workspace), attachment.localPath).startsWith("..")));
 assert.equal(fs.readFileSync(staged[0].localPath, "utf8"), "design brief");
 const gitExclude = workspaceGitExcludePath(workspace);
 assert.ok(gitExclude);
 assert.match(fs.readFileSync(gitExclude, "utf8"), /^\.sps\/room-attachments\/$/m);
+const aliasParent = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-alias-"));
+try {
+  fs.mkdirSync(path.join(workspace, "nested"));
+  const alias = path.join(aliasParent, "workspace");
+  fs.symlinkSync(workspace, alias, process.platform === "win32" ? "junction" : "dir");
+  const aliased = await stageRoomAttachments("http://127.0.0.1:3100", "room-alias", attachments, path.join(alias, "nested"));
+  assert.equal(aliased.length, 2);
+  for (const attachment of aliased) {
+    assert.equal(attachment.localPath, fs.realpathSync.native(attachment.localPath));
+    assert.ok(!path.relative(fs.realpathSync.native(path.join(workspace, "nested")), attachment.localPath).startsWith(".."));
+  }
+  assert.equal(fs.readFileSync(aliased[0].localPath, "utf8"), "design brief");
+} finally {
+  fs.rmSync(aliasParent, { recursive: true, force: true });
+}
 fs.rmSync(workspace, { recursive: true, force: true });
+
+const externalGitMetadata = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-external-git-"));
+const gitFileWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-git-file-"));
+fs.writeFileSync(path.join(gitFileWorkspace, ".git"), `gitdir: ${externalGitMetadata}\n`, "utf8");
+assert.equal(workspaceGitExcludePath(gitFileWorkspace), null);
+const gitFileFallback = excludeWorkspaceRoomAttachments(gitFileWorkspace);
+assert.equal(gitFileFallback, path.join(gitFileWorkspace, ".sps", "room-attachments", ".gitignore"));
+assert.equal(fs.readFileSync(gitFileFallback, "utf8"), "*\n!.gitignore\n");
+assert.equal(fs.existsSync(path.join(externalGitMetadata, "info", "exclude")), false);
+fs.rmSync(gitFileWorkspace, { recursive: true, force: true });
+
+const linkedGitWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-linked-git-"));
+fs.symlinkSync(externalGitMetadata, path.join(linkedGitWorkspace, ".git"), process.platform === "win32" ? "junction" : "dir");
+assert.equal(workspaceGitExcludePath(linkedGitWorkspace), null);
+const linkedGitFallback = excludeWorkspaceRoomAttachments(linkedGitWorkspace);
+assert.equal(linkedGitFallback, path.join(linkedGitWorkspace, ".sps", "room-attachments", ".gitignore"));
+assert.equal(fs.readFileSync(linkedGitFallback, "utf8"), "*\n!.gitignore\n");
+assert.equal(fs.existsSync(path.join(externalGitMetadata, "info", "exclude")), false);
+fs.rmSync(linkedGitWorkspace, { recursive: true, force: true });
+
+const linkedInfoWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-linked-info-"));
+fs.mkdirSync(path.join(linkedInfoWorkspace, ".git"), { recursive: true });
+fs.symlinkSync(externalGitMetadata, path.join(linkedInfoWorkspace, ".git", "info"), process.platform === "win32" ? "junction" : "dir");
+assert.equal(workspaceGitExcludePath(linkedInfoWorkspace), null);
+const linkedInfoFallback = excludeWorkspaceRoomAttachments(linkedInfoWorkspace);
+assert.equal(linkedInfoFallback, path.join(linkedInfoWorkspace, ".sps", "room-attachments", ".gitignore"));
+assert.equal(fs.readFileSync(linkedInfoFallback, "utf8"), "*\n!.gitignore\n");
+assert.equal(fs.existsSync(path.join(externalGitMetadata, "exclude")), false);
+fs.rmSync(linkedInfoWorkspace, { recursive: true, force: true });
+fs.rmSync(externalGitMetadata, { recursive: true, force: true });
+
+const hostileWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-hostile-"));
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", ".", [attachments[0]], hostileWorkspace),
+  /Room id must contain only/
+);
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{ ...attachments[0], id: ".." }], hostileWorkspace),
+  /Attachment id must contain only/
+);
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{
+    ...attachments[0],
+    id: "external-content",
+    contentPath: "https://example.invalid/api/attachments/external-content/content"
+  }], hostileWorkspace),
+  /must stay on the local SPS attachment API/
+);
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{
+    ...attachments[0],
+    id: "size-mismatch",
+    byteSize: 99,
+    contentPath: "/api/attachments/size-mismatch/content"
+  }], hostileWorkspace),
+  /size did not match SPS metadata/
+);
+const dotFilename = await stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{
+  ...attachments[0],
+  id: "dot-filename",
+  originalFilename: "..",
+  byteSize: Buffer.byteLength("safe"),
+  contentPath: "/api/attachments/dot-filename/content"
+}], hostileWorkspace);
+assert.equal(path.basename(dotFilename[0].localPath), "attachment");
+
+const previousFileLimit = process.env.SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES;
+process.env.SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES = "8";
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [{
+    ...attachments[0],
+    id: "oversized-content",
+    byteSize: 0,
+    contentPath: "/api/attachments/oversized-content/content"
+  }], hostileWorkspace),
+  /exceeds the 8 byte file limit/
+);
+if (previousFileLimit === undefined) delete process.env.SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES;
+else process.env.SPS_ROOM_ATTACHMENT_MAX_FILE_BYTES = previousFileLimit;
+fs.rmSync(hostileWorkspace, { recursive: true, force: true });
+
+const linkedWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-link-"));
+const linkTarget = fs.mkdtempSync(path.join(os.tmpdir(), "sps-room-attachment-outside-"));
+fs.symlinkSync(linkTarget, path.join(linkedWorkspace, ".sps"), process.platform === "win32" ? "junction" : "dir");
+await assert.rejects(
+  stageRoomAttachments("http://127.0.0.1:3100", "safe-room", [attachments[0]], linkedWorkspace),
+  /cannot use a symlink or junction/
+);
+fs.rmSync(linkedWorkspace, { recursive: true, force: true });
+fs.rmSync(linkTarget, { recursive: true, force: true });
 
 const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-room-cache-"));
 const staleDirectory = path.join(cacheRoot, "room", "stale");

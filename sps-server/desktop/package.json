@@ -1,28 +1,66 @@
 {
   "name": "@sps/desktop",
   "private": true,
-  "version": "0.4.80",
+  "version": "0.4.137",
   "description": "SPS Desktop Owner Host and Member Node collaboration app",
   "author": "SonParkServer",
   "main": "src/main.mjs",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/ensure-electron-runtime.mjs",
+    "sync:desktop-node": "node scripts/sync-local-desktop-node.mjs",
+    "docs:candidate": "node scripts/current-candidate-doc.mjs",
+    "docs:candidate:check": "node scripts/current-candidate-doc.mjs --check",
+    "docs:security": "node scripts/dependency-security-doc.mjs",
+    "docs:security:check": "node scripts/dependency-security-doc.mjs --check",
+    "audit:release": "node scripts/security-audit.mjs",
+    "audit:development": "node scripts/security-audit.mjs --include-development",
+    "prestart": "npm run sync:desktop-node",
     "start": "electron .",
+    "dev": "node scripts/dev-desktop.mjs",
+    "pretest": "npm run sync:desktop-node",
     "test": "node --test test/*.test.mjs",
-    "prepare:owner-host-runtime": "node scripts/prepare-owner-host-runtime.mjs",
+    "test:e2e:bootstrap": "npm run sync:desktop-node && node scripts/smoke-isolated-desktop-ui.mjs",
+    "test:e2e:core-settings": "npm run sync:desktop-node && node scripts/smoke-core-settings-desktop.mjs && node scripts/smoke-core-settings-desktop.mjs --corrupt-recovery && node scripts/smoke-core-settings-desktop.mjs --corrupt-desktop-state && node scripts/smoke-core-settings-desktop.mjs --unwritable-desktop-state && node scripts/smoke-core-settings-desktop.mjs --malformed-routing-state && node scripts/smoke-core-settings-desktop.mjs --unverified-legacy-adoption && node scripts/smoke-core-settings-desktop.mjs --deferred-owner",
+    "test:security:appcontainer-canary": "node scripts/security-poc/run-appcontainer-canary.mjs",
+    "test:e2e:workspace-surfaces": "npm run sync:desktop-node && node scripts/smoke-workspace-surfaces-desktop.mjs",
+    "test:e2e:plugin-preview": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs",
+    "test:e2e:plugin-preview:live": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs --live-authoring",
+    "test:e2e:plugin-preview:team": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs --live-team",
+    "test:e2e:host-plugin-lifecycle": "npm run sync:desktop-node && node scripts/smoke-host-plugin-lifecycle-desktop.mjs",
+    "test:e2e:host-plugin-lifecycle:live": "npm run sync:desktop-node && node scripts/smoke-host-plugin-lifecycle-desktop.mjs --live-agent",
+    "release:init-device-key": "node scripts/initialize-physical-device-key.mjs",
+    "release:sign-device-evidence": "node scripts/sign-physical-release-evidence.mjs",
+    "release:observe-serve": "node scripts/tailscale-serve-observation-server.mjs",
+    "release:create-serve-evidence": "node scripts/create-tailscale-serve-evidence.mjs",
+    "release:verify-serve-evidence": "node scripts/verify-tailscale-serve-evidence.mjs",
+    "release:clean-evidence": "node scripts/clean-release-evidence.mjs",
+    "release:verify-evidence-privacy": "node scripts/verify-release-evidence-privacy.mjs",
+    "prepare:owner-host-runtime": "npm run sync:desktop-node && node scripts/prepare-owner-host-runtime.mjs",
     "smoke:owner-host-runtime": "node scripts/smoke-packaged-owner-host-runtime.mjs",
-    "package:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis && node scripts/create-release-manifest.mjs",
-    "release:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish never && node scripts/create-release-manifest.mjs",
-    "package:candidate:win": "npm run prepare:owner-host-runtime && electron-builder --win nsis --publish never && node scripts/create-release-manifest.mjs"
+    "smoke:marketplace-mcp-runtime": "node scripts/smoke-packaged-marketplace-mcp-runtime.mjs",
+    "smoke:packaged-marketplace-mcp-runtime": "node scripts/smoke-packaged-marketplace-mcp-runtime.mjs --packaged",
+    "smoke:plugin-preview-runtime": "node scripts/smoke-plugin-preview-runtime.mjs",
+    "stage:agent-runtime-packs": "node scripts/stage-agent-runtime-packs.mjs",
+    "archive:agent-runtime-packs": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/archive-agent-runtime-packs.ps1",
+    "verify:packaged-owner-host-runtime": "node scripts/verify-packaged-owner-host-runtime.mjs",
+    "package:win": "npm run release:clean-evidence && npm run release:verify-evidence-privacy && npm run prepare:owner-host-runtime && electron-builder --win nsis && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && npm run smoke:packaged-marketplace-mcp-runtime && node scripts/create-release-manifest.mjs && npm run release:verify-evidence-privacy",
+    "release:win": "npm run release:clean-evidence && npm run release:verify-evidence-privacy && npm run prepare:owner-host-runtime && electron-builder --win nsis --config.forceCodeSigning=true --publish never && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && npm run smoke:packaged-marketplace-mcp-runtime && node scripts/create-release-manifest.mjs && npm run release:verify-evidence-privacy",
+    "package:candidate:win": "npm run release:clean-evidence && npm run release:verify-evidence-privacy && npm run prepare:owner-host-runtime && electron-builder --win nsis --publish never && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && npm run smoke:packaged-marketplace-mcp-runtime && node scripts/create-release-manifest.mjs && npm run release:verify-evidence-privacy"
   },
   "dependencies": {
-    "@sps/desktop-node": "file:../desktop-node",
     "@sonparkserver/plugin-sdk": "file:../../external/sps-plugin-sdk",
-    "electron-updater": "6.8.9"
+    "@sps/desktop-node": "file:../desktop-node",
+    "electron-updater": "6.8.9",
+    "tar": "7.5.22"
   },
   "devDependencies": {
-    "electron": "^43.1.1",
+    "js-yaml": "4.3.2",
+    "electron": "^43.7.7",
     "electron-builder": "^26.15.3"
+  },
+  "overrides": {
+    "js-yaml": "4.3.2"
   },
   "build": {
     "appId": "ai.sps.desktop",
@@ -37,19 +75,8 @@
     ],
     "extraResources": [
       {
-        "from": ".owner-host-runtime",
-        "to": "sps-owner-host-runtime",
-        "filter": [
-          "**/*",
-          "!node_modules/**"
-        ]
-      },
-      {
-        "from": ".owner-host-runtime/node_modules",
-        "to": "sps-owner-host-runtime/node_modules",
-        "filter": [
-          "**/*"
-        ]
+        "from": ".owner-host-runtime-package",
+        "to": "sps-owner-host-runtime-package"
       }
     ],
     "icon": "assets/sps-logo.png",
@@ -69,7 +96,9 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "useZip": false,
+      "differentialPackage": false
     }
   }
 }
