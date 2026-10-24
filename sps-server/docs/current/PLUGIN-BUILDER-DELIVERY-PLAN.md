@@ -479,6 +479,23 @@ rejected the unstaged updated Core pin; staged and committed checks passed.
 The final passing log above supersedes them. Documentation commits do not change
 the tested implementation tuple.
 
+## Stage 8: Real Lead-to-Worker Verification and Security Hold
+
+On 2026-10-24, the isolated source fixture exercised real local Lead tool
+delegation and distinct Worker runs for authoring and manifest/hash repair.
+Desktop `480/480` and Builder `45/45` passed, but the final Electron suite did
+not: one earlier attempt passed interactive Preview then failed the test's
+hidden Registry-view handoff; the final attempt instead encountered generated
+UI rendering failure before the corrected manual-install handoff. These are
+partial observations, not complete Builder or installed-app acceptance.
+
+The exact tuple, commands, failed attempts and next diagnostic-capture work are
+recorded in [the team verification review](../reviews/BUILDER-TEAM-VERIFICATION-2026-10-24.md).
+The user explicitly deferred Zod migration and installed-app replacement pending
+[the compatibility impact assessment](../reviews/ZOD-MIGRATION-IMPACT-2026-10-24.md).
+Fresh production and full-graph security gates both fail; no waiver was added.
+No new installer or public Stable release was created.
+
 ## Deferred and Unverified
 
 - Source-bound production authoring and remote Member authoring remain unverified.
