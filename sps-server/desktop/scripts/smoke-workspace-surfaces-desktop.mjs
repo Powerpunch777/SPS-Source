@@ -42,6 +42,36 @@ function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+const d2RequestMonitorStartExpression = String.raw`(() => {
+  const originalFetch = window.fetch;
+  window.__spsD2OriginalFetch = originalFetch;
+  window.__spsD2Requests = [];
+  window.fetch = function(input, init) {
+    const requestUrl = input instanceof Request
+      ? input.url
+      : input instanceof URL
+        ? input.href
+        : String(input);
+    window.__spsD2Requests.push(requestUrl);
+    return originalFetch.call(window, input, init);
+  };
+})()`;
+
+const d2RequestMonitorStopExpression = String.raw`(() => {
+  const requests = window.__spsD2Requests || [];
+  if (window.__spsD2OriginalFetch) window.fetch = window.__spsD2OriginalFetch;
+  delete window.__spsD2OriginalFetch;
+  delete window.__spsD2Requests;
+  return requests;
+})()`;
+
+function legacyWorkspaceDataRequests(requestUrls) {
+  return requestUrls.filter((requestUrl) => {
+    const pathname = new URL(requestUrl, "http://127.0.0.1").pathname;
+    return pathname.endsWith("/agents") || pathname.endsWith("/workspace-dashboard");
+  });
+}
+
 async function findAvailablePort() {
   return await new Promise((resolve, reject) => {
     const server = createNetServer();
@@ -276,6 +306,8 @@ async function openCdp(target) {
 
 async function describePage(cdp) {
   return await cdp.evaluate(`({ title: document.title, route: location.href, body: document.body?.innerText?.slice(0, 4000) || "",
+    workspaceEntry: document.querySelector('[data-sps-workspace-entry]')?.getAttribute('data-sps-workspace-entry') || null,
+    legacyLayout: Boolean(document.querySelector('#main-content') && document.querySelector('aside') && document.querySelector('nav[aria-label="breadcrumb"]')),
     usageReady: Boolean(document.querySelector('[data-testid="sps-plugin-usage"] table')) && document.querySelector('[aria-label="Refresh execution usage"]')?.disabled === false,
     usagePeriod: document.querySelector('#sps-usage-period')?.value,
     historyText: document.querySelector('[data-testid="sps-plugin-executions"]')?.innerText?.slice(0, 4000) || "",
@@ -422,13 +454,109 @@ try {
     hostReadyTimeoutMs,
   );
   workspaceCdp = await openCdp(workspaceTarget);
-  await waitForPage(workspaceCdp, (page) => page.body.includes("Workspace") || page.body.includes("Dashboard"), "the Workspace Core UI", 90_000);
+  await waitForPage(workspaceCdp, (page) => page.workspaceEntry === "empty" || page.body.includes("Workspace") || page.body.includes("Dashboard"), "the Workspace Core UI", 90_000);
   await workspaceCdp.evaluate(`localStorage.setItem("sps.theme", "light")`);
 
   const companies = await api(workspaceCdp, "/api/companies");
   const company = Array.isArray(companies) ? companies[0] : null;
   assert.ok(company?.id && company?.issuePrefix, `The isolated Host did not create a Workspace: ${JSON.stringify(companies)}`);
   const companyPrefix = company.issuePrefix;
+
+  if (sourceElectron) {
+    const clearedShell = await api(workspaceCdp, `/api/companies/${company.id}/workspace-shell`, {
+      method: "PUT",
+      body: { pluginId: null },
+    });
+    assert.equal(clearedShell.mode, "neutral");
+    assert.equal(clearedShell.providerPluginId, null);
+    const entryPlugins = await api(workspaceCdp, `/api/plugins/companies/${company.id}`);
+    for (const plugin of entryPlugins?.plugins ?? []) {
+      if (plugin.activation?.enabled !== true) continue;
+      await api(workspaceCdp, `/api/plugins/${plugin.id}/companies/${company.id}/activation`, {
+        method: "PUT",
+        body: { enabled: false },
+      });
+    }
+    const inactiveEntryPlugins = await api(workspaceCdp, `/api/plugins/companies/${company.id}`);
+    assert.deepEqual(
+      (inactiveEntryPlugins?.plugins ?? []).filter((plugin) => plugin.activation?.enabled === true).map((plugin) => plugin.id),
+      [],
+      "The neutral entry fixture must have no active default plugins.",
+    );
+    const agentsBeforeEntry = await api(workspaceCdp, `/api/companies/${company.id}/agents`);
+    assert.ok(Array.isArray(agentsBeforeEntry), `Agent state was not an array: ${JSON.stringify(agentsBeforeEntry)}`);
+    assert.equal(agentsBeforeEntry.length, 0, "The empty Workspace entry must start without Agents.");
+
+    await workspaceCdp.evaluate(d2RequestMonitorStartExpression);
+    const rootPath = `/${companyPrefix}`;
+    await workspaceCdp.evaluate(`(() => {
+      history.pushState({}, "", ${JSON.stringify(rootPath)});
+      dispatchEvent(new PopStateEvent("popstate"));
+    })()`);
+    const emptyEntry = await waitForPage(
+      workspaceCdp,
+      (page) => page.workspaceEntry === "empty",
+      "the independent empty Workspace entry",
+    );
+    const emptyEntryRequests = await workspaceCdp.evaluate(d2RequestMonitorStopExpression);
+    assert.equal(new URL(emptyEntry.route).pathname.replace(/\/$/, ""), rootPath.replace(/\/$/, ""), `Empty entry redirected away from the Workspace root: ${emptyEntry.route}`);
+    const emptyEntryDom = await workspaceCdp.evaluate(`(() => ({
+      marker: document.querySelector('[data-sps-workspace-entry]')?.getAttribute('data-sps-workspace-entry') || null,
+      emptyMessage: document.body.innerText.includes('No default plugin selected.'),
+      manageHref: [...document.querySelectorAll('a')].find(link => link.textContent.trim() === 'Manage plugins')?.getAttribute('href') || null,
+      legacyChrome: Boolean(document.querySelector('#main-content, aside, nav[aria-label="breadcrumb"]')),
+      legacyLinks: [...document.querySelectorAll('a[href$="/dashboard"], a[href$="/inbox"], a[href$="/company/settings/agents"], a[href$="/assistants/new"]')].map(link => link.getAttribute('href')),
+      legacyCopy: /Agent|Dashboard/.test(document.body.innerText),
+    }))()`);
+    assert.equal(emptyEntryDom.marker, "empty");
+    assert.equal(emptyEntryDom.emptyMessage, true, "The neutral root did not render its empty-state message.");
+    const expectedManagerPath = `${rootPath}/company/settings/instance/plugins`;
+    assert.ok(emptyEntryDom.manageHref, `Manage plugins link was missing: ${JSON.stringify(emptyEntryDom)}`);
+    assert.equal(new URL(emptyEntryDom.manageHref, emptyEntry.route).pathname, expectedManagerPath, `Manage plugins link target was unexpected: ${JSON.stringify(emptyEntryDom)}`);
+    assert.equal(emptyEntryDom.legacyChrome, false, `The empty entry rendered legacy navigation or breadcrumbs: ${JSON.stringify(emptyEntryDom)}`);
+    assert.deepEqual(emptyEntryDom.legacyLinks, [], `The empty entry rendered legacy workspace navigation: ${JSON.stringify(emptyEntryDom.legacyLinks)}`);
+    assert.equal(emptyEntryDom.legacyCopy, false, "The empty entry rendered legacy Agent or Dashboard content.");
+    const legacyRequests = legacyWorkspaceDataRequests(emptyEntryRequests);
+    assert.deepEqual(legacyRequests, [], `The empty entry fetched legacy Agent or Dashboard data: ${JSON.stringify(legacyRequests)}`);
+
+    for (const [width, height] of [[620, 760], [1000, 760]]) {
+      await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+      await workspaceCdp.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`, true);
+      const layout = await workspaceCdp.evaluate(`(() => ({ viewport: innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        entryWidth: document.querySelector('[data-sps-workspace-entry]')?.getBoundingClientRect().width || 0 }))()`);
+      assert.ok(layout.documentWidth <= layout.viewport, `Empty Workspace entry overflows at ${width}x${height}: ${JSON.stringify(layout)}`);
+      assert.ok(layout.entryWidth > 0 && layout.entryWidth <= layout.viewport, `Empty Workspace entry does not fit at ${width}x${height}: ${JSON.stringify(layout)}`);
+      if (screenshotPath) {
+        await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), `neutral-entry-${width}x${height}.png`));
+      }
+    }
+    await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+
+    await click(workspaceCdp, 'a[href$="/company/settings/instance/plugins"]', "Open Manage plugins from the empty Workspace entry");
+    const manager = await waitForPage(
+      workspaceCdp,
+      (page) => new URL(page.route).pathname.endsWith("/company/settings/instance/plugins")
+        && page.body.includes("Plugins")
+        && page.body.includes("Plugin lifecycle and installation")
+        && page.legacyLayout,
+      "the legacy Plugin Manager layout from the empty Workspace entry",
+    );
+    assert.equal(manager.legacyLayout, true, "Plugin management must retain the legacy Layout, sidebar, and breadcrumbs.");
+
+    await workspaceCdp.evaluate(d2RequestMonitorStartExpression);
+    await workspaceCdp.evaluate(`(() => {
+      history.pushState({}, "", ${JSON.stringify(rootPath)});
+      dispatchEvent(new PopStateEvent("popstate"));
+    })()`);
+    const returnedEntry = await waitForPage(workspaceCdp, (page) => page.workspaceEntry === "empty", "return to the empty Workspace entry");
+    const returnRequests = await workspaceCdp.evaluate(d2RequestMonitorStopExpression);
+    assert.deepEqual(legacyWorkspaceDataRequests(returnRequests), [], `Returning to the empty entry fetched legacy Agent or Dashboard data: ${JSON.stringify(returnRequests)}`);
+    assert.equal(new URL(returnedEntry.route).pathname.replace(/\/$/, ""), rootPath.replace(/\/$/, ""));
+    const agentsAfterEntry = await api(workspaceCdp, `/api/companies/${company.id}/agents`);
+    assert.equal(agentsAfterEntry.length, 0, "Opening and leaving the empty entry must not synthesize an Agent.");
+    console.log("D2 neutral entry E2E: zero Agents/default activations, independent root, legacy Plugin Manager link, and 620/1000px fit.");
+  }
 
   // This fixture uses only an isolated, no-provider process. It neither uses
   // the developer's AI credentials nor changes their Workspace data.
@@ -748,6 +876,18 @@ try {
     method: "PUT",
     body: { pluginId: teamWorkplane.id, shellId: teamProvider.shell.id },
   });
+  if (sourceElectron) {
+    const defaultRoute = teamProvider.shell.defaultRoute;
+    assert.ok(defaultRoute?.startsWith("/"), `Team Workplane Shell did not declare a company-relative defaultRoute: ${JSON.stringify(teamProvider.shell)}`);
+    const selectedRootPath = `/${companyPrefix}${defaultRoute}`;
+    await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}`)})`);
+    const selectedRoot = await waitForPage(
+      workspaceCdp,
+      (page) => new URL(page.route).pathname.replace(/\/$/, "").toLowerCase() === selectedRootPath.replace(/\/$/, "").toLowerCase(),
+      "the selected Team Workplane Shell default route from the Workspace root",
+    );
+    assert.equal(new URL(selectedRoot.route).pathname.replace(/\/$/, "").toLowerCase(), selectedRootPath.replace(/\/$/, "").toLowerCase());
+  }
   await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/dashboard`)})`);
   const teamWidgetPage = await waitForPage(
     workspaceCdp,
@@ -854,6 +994,25 @@ try {
     "the Neutral Shell fallback warning",
   );
   assert.match(fallback.body, /selected shell/i, `Neutral fallback did not explain the disabled Shell: ${fallback.body}`);
+  if (sourceElectron) {
+    await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}`)})`);
+    const unavailableEntry = await waitForPage(
+      workspaceCdp,
+      (page) => page.workspaceEntry === "empty",
+      "the generic empty entry after the selected Shell becomes unavailable",
+    );
+    const unavailableDom = await workspaceCdp.evaluate(`(() => ({
+      marker: document.querySelector('[data-sps-workspace-entry]')?.getAttribute('data-sps-workspace-entry') || null,
+      unavailableMessage: document.body.innerText.includes('The selected plugin is unavailable.'),
+      privateFallbackDetail: /Selected Shell plugin is not active/i.test(document.body.innerText),
+      legacyChrome: Boolean(document.querySelector('#main-content, aside, nav[aria-label="breadcrumb"]')),
+    }))()`);
+    assert.equal(new URL(unavailableEntry.route).pathname.replace(/\/$/, ""), `/${companyPrefix}`.replace(/\/$/, ""));
+    assert.equal(unavailableDom.marker, "empty");
+    assert.equal(unavailableDom.unavailableMessage, true, `Unavailable Shell did not use the generic empty state: ${JSON.stringify(unavailableDom)}`);
+    assert.equal(unavailableDom.privateFallbackDetail, false, "Unavailable Shell leaked internal fallback detail on the independent root.");
+    assert.equal(unavailableDom.legacyChrome, false, "Unavailable Shell root rendered legacy navigation or breadcrumbs.");
+  }
 
   console.log(`SPS Desktop Workspace Surfaces E2E passed (${packagedBinary ? "packaged" : "source"}).`);
 } catch (error) {
@@ -865,6 +1024,7 @@ try {
   if (appOutput.trim()) diagnostics.push(`app-output:\n${appOutput.trim()}`);
   throw new Error(`${errorText(error)}\n${diagnostics.join("\n")}`);
 } finally {
+  if (workspaceCdp) await workspaceCdp.evaluate(d2RequestMonitorStopExpression).catch(() => undefined);
   const quitCdp = workspaceCdp ?? setupCdp;
   if (quitCdp && child?.exitCode === null) {
     await quitCdp.command("Browser.close").catch(() => undefined);

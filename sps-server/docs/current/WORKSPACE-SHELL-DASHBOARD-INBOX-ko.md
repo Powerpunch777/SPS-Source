@@ -51,6 +51,17 @@ Dashboard 배치, Inbox 사용자 상태는 해당 호환 표면을 사용하는
 
 ### Neutral Core Shell
 
+현행 D2 소스 단계에서 SPS baseline의 Workspace 루트는 선택된 사용 가능한 Shell이
+없으면 별도의 빈 진입 화면을 표시한다. 공통 Sidebar/Breadcrumb, Dashboard/Inbox,
+Agent 목록을 그 진입 화면에 넣지 않으며 Agent/위젯/Plugin UI 모듈도 조회·로드하지
+않는다. 플러그인 관리 링크는 사용자가 명시적으로 여는 선택 경로다. 선택/Workspace
+조회 실패는 빈 성공으로 취급하지 않고 일반 오류와 수동 재시도로 구분한다.
+
+기존에 선택된 Shell의 기본 경로 및 기본 번들 정책은 유지한다. 해당 Plugin 페이지와
+명시적 `/dashboard`, `/inbox`, Agent/설정 deep link는 아직 기존 공통 Shell을
+사용한다. 전체 화면 Plugin 표현/Primary-Extension manifest 전환은 미구현이며,
+이번 단계가 모든 Plugin 페이지의 공통 메뉴를 제거한 것은 아니다.
+
 기존 호환 UI에서 선택하거나 fallback으로 사용할 수 있는 Core Shell이다. 제품 전체의
 필수 시작 화면은 아니다. 해당 Shell을 사용하는 경우 다음 상황에서 적합하다.
 

@@ -3,7 +3,7 @@
 기준일: 2026-10-25 KST. 사용자 승인 후 진행 중인 소스 변경이다.
 설치된 앱 교체, Stable 게시, 기존 사용자 데이터 이전을 뜻하지 않는다.
 Desktop 버전 표기는 미출시 `0.4.137` 소스 단계이며, Core pin은
-`3c51d04e9917111c55f9d0cedebf410faa373743`다. 이 변경으로 설치본/manifest를
+`df26bea0148e163cd05efaa62aba6a2959d89870`다. 이 변경으로 설치본/manifest를
 새로 만들지 않았으며 이전 패키지나 E2E를 이 새 Source의 증거로 재사용하지 않는다.
 
 ## 결정
@@ -21,7 +21,7 @@ Desktop 버전 표기는 미출시 `0.4.137` 소스 단계이며, Core pin은
 | A 문서 | 제품 목표/현행 구분, Core 계약, stale Host-only Job 설명 정리 | 후속 PR마다 SDK/API와 함께 갱신 |
 | B Native Recovery | 독립 설정창/시작 차단, 복구 전용 실행, 손상·미지원·저장 실패 시 상태 원문 보존과 쓰기 차단, 소유권 보정 금지 | 실제 DB 장애/Plugin hang 조합의 완전한 Host 통합 시험, 선택형 로컬 인증, 세부 진단 UI |
 | C OS 실증 | 가짜 파일/자식 명령 canary, timeout 후 cleanup, cleanup walker의 directory symlink 거부 | 실제 CLI, UNC/실행 중 reparse 탈출/다른 드라이브, broker/DB/IPC/메모리, A/B 중지·정책 전환 |
-| D1 빈 Workspace | Agent 0개/terminated-only의 자동 등록 redirect 제거 | 필수 공통 Shell 제거와 기본 Plugin 선택 정책은 아직 유지 |
+| D1/D2 빈 Workspace | Agent 0개 자동 등록 제거, Primary 미선택 루트를 독립 빈 진입 화면으로 분리 | 선택된 Plugin 페이지의 공통 chrome은 유지; 전체 화면 표현/Primary-Extension 계약과 기본 Plugin 선택 정책 변경은 미구현 |
 | K1 업데이트 | 자동 확인/다운로드 유지, Later/일반 종료로 설치하지 않음 | 실행 중 적용 조정/진단 동의/배포·복원 최종 통합 |
 | E/F/F-UI/G/H/I/J/L | 이번 단계에서 구현 완료로 표시하지 않음 | Primary/Extension 공개 계약, OS/renderer 보호, Workspace 실행·데이터 수명주기, 공개 Preview, 다중 창, 생태계 |
 
@@ -169,8 +169,39 @@ canary 테스트 4/4, 정상/timeout/reparse 실행과 정리도 통과했다. �
 이력이고 이번 Core 변경은 테스트뿐이다. 전역 UI token gate의 기존 실패, 전체 Core/
 Linux CI, Zod/의존성 보류, 서명/운영 Identity/두 PC 게이트는 그대로 남는다.
 
+## 후속 D2 / 독립 빈 진입 화면
+
+SPS basic + Core baseline이고 기존 Workplane 모드가 아닌 경우, Workspace 루트는
+선택한 Shell이 없으면 공통 `Layout`을 mount하지 않는다. Agent/위젯/Dashboard/
+Plugin UI 목록을 그 화면에서 조회하지 않고, Workspace 이름과 플러그인 관리의
+명시적 진입점만 표시한다. 선택된 사용 가능한 기존 Shell은 이전 기본 경로로
+이동하며 해당 Plugin 페이지의 chrome은 아직 유지한다. 새 Workspace의 번들
+활성화/기본 선택을 일괄 변경하거나 기존 데이터를 초기화하지 않는다.
+
+라우트 prefix로 Workspace를 먼저 결정하여 이전에 선택했던 다른 Workspace의
+Shell/설정 링크를 사용하지 않는다. 모르는 prefix는 다른 Workspace로 자동 귀속하지
+않고, 진행 중인 수동 Workspace 전환도 기존 선택 동기화 규칙으로 보존한다.
+조회 중/오류와 빈 성공을 구분한다. cached selection은 서버 재검증 전 Plugin UI로
+이동하지 않고, 오류는 민감 진단 원문 없이 수동 재시도를 제공한다. 저장된 root/
+unsafe 기본 경로는 기존 명시적 Dashboard로 복귀해 루프/Workspace 경로 이탈을
+막는다. `/dashboard`, `/inbox`, Agent 등록/상세, 설정 deep link/API는 남겨 둔다.
+
+Core 변경부 9파일 회귀 91/91, 전체 30개 package typecheck와 전체 build,
+compatibility boundary 및 UI entry bundle 검사 통과. entry JS 1,295,378 bytes로
+기존 1,500,000-byte budget 이하다. 전역 UI token gate는 기존 color 79/bracket
+36/font-size 1개로 여전히 실패하며 새 파일은 보고되지 않았다. 전체 Core 회귀,
+Linux, Storybook 시각 baseline, 설치본/물리 두 PC 증거는 이 검사로 주장하지 않는다.
+
+Source Electron Workspace Surfaces harness에 Agent/활성 Plugin 0개, 독립 루트,
+실제 Manage plugins 링크, 620/1000px 레이아웃, 기존 선택 Shell과 비활성 후 복귀
+검사를 추가했다. 첫 실행은 실제 빈 화면까지 도달했지만 harness의 cooked template
+정규식이 잘못되어 중단됐다. 그 실패는 성공 증거로 재사용하지 않으며 수정 후 전체
+연속 실행 결과는 아래 후속 검증에 기록한다. 실제 사용자 Host/계정과 분리된 임시
+userData/가짜 Identity/프로세스 fixture만 사용한다.
+
 ## 다음 게이트
 
 독립 복구 경로의 장애 조합 검증을 보강하고 OS/renderer 실행 계약을 구체화한다.
-그 전에는 기존 Core 관리 UI를 제거하거나 보호 모드를 사용할 수 있다고 노출하지 않는다.
+기존 Core 관리 UI와 직접 주소는 보존하며, 보호 모드를 사용할 수 있다고 노출하지 않는다.
+선택된 Plugin 화면의 전체 화면 표현과 Primary/Extension 공개 계약은 다음 별도 단계다.
 단계별 테스트/롤백 근거를 남기며 기존 데이터/API/deep link를 보존한다.
