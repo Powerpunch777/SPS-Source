@@ -16,6 +16,8 @@ const COMMAND_LEASE_MAX_UNAVAILABLE_MS = 60_000;
 const WINDOWS_COMMAND_LOOKUP_TIMEOUT_MS = 8_000;
 const COMMAND_PREFLIGHT_TIMEOUT_MS = 30_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1_000;
+const MIN_PLUGIN_COMMAND_TIMEOUT_MS = 1_000;
+const MAX_PLUGIN_COMMAND_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const FORBIDDEN_ENV_KEYS = new Set([
   "ANTHROPIC_API_KEY",
   "CODEX_HOME",
@@ -167,6 +169,20 @@ export function assertSpsNodeCommandRuntime(command) {
   if (normalized !== expected) {
     throw new Error(`SPS Desktop rejected ${rawCommand}; this Agent is approved only for ${expected}.`);
   }
+}
+
+export function resolveSpsNodeCommandTimeoutMs(command) {
+  const timeoutMs = command?.timeoutMs;
+  if (typeof command?.pluginKey === "string") {
+    if (timeoutMs === undefined || timeoutMs === null) return DEFAULT_COMMAND_TIMEOUT_MS;
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new Error("SPS Desktop rejected invalid timeoutMs for a neutral plugin command; expected a positive safe integer.");
+    }
+    return Math.min(MAX_PLUGIN_COMMAND_TIMEOUT_MS, Math.max(MIN_PLUGIN_COMMAND_TIMEOUT_MS, timeoutMs));
+  }
+  return typeof timeoutMs === "number" && timeoutMs > 0
+    ? timeoutMs
+    : DEFAULT_COMMAND_TIMEOUT_MS;
 }
 
 export function isSpsHostSharedWorkspacePath(value, platform = process.platform) {
@@ -430,6 +446,13 @@ export async function executeSpsNodeCommand({
   marketplaceMcpRuntime = null,
 }) {
   assertSpsNodeCommandRuntime(command);
+  const timeoutMs = resolveSpsNodeCommandTimeoutMs(command);
+  if (typeof command.id !== "string" || command.id.trim().length === 0) {
+    throw new Error("SPS Desktop rejected a command without a nonempty command ID.");
+  }
+  if (activeCommands.has(command.id)) {
+    throw new Error("SPS Desktop rejected a duplicate active command ID.");
+  }
   const cancellationGeneration = commandCancellationGeneration;
   const usageCollector = createSpsNodeUsageCollector(command.runtimeKind);
   let usageReport = null;
@@ -453,9 +476,6 @@ export async function executeSpsNodeCommand({
     }
   };
 
-  const timeoutMs = typeof command.timeoutMs === "number" && command.timeoutMs > 0
-    ? command.timeoutMs
-    : DEFAULT_COMMAND_TIMEOUT_MS;
   const startedAt = Date.now();
   let timeout = null;
   let child = null;
@@ -657,6 +677,6 @@ export async function executeSpsNodeCommand({
     throw error;
   } finally {
     await hostProjectShareSession?.close().catch(() => undefined);
-    activeCommands.delete(command.id);
+    if (activeCommands.get(command.id) === activeRun) activeCommands.delete(command.id);
   }
 }

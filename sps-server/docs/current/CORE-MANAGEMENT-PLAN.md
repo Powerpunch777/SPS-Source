@@ -3,8 +3,7 @@
 Status: stage 1 and the Agent-session cancellation/cross-lane history slices of
 stage 2, plus stage 3 usage provenance, summaries, Host diagnostics, Agent
 receipts and Claude-only neutral Node ingestion, are implemented in source,
-2026-10-24. Node-ingestion checks below are interim; parent final verification
-is pending. No new installer or Stable claim.
+2026-10-24. No new installer or Stable claim.
 
 Core owns technical execution state, usage evidence, limits, artifacts, audit and
 recovery. Plugins own assignments, roles, approvals and business evaluation.
@@ -346,10 +345,10 @@ this backend-only slice does not claim it resolved.
   support needs an explicit versioned source contract, bounded parser, strict
   schema, compatibility behavior and focused tests. It must not infer Codex
   scope or silently expand this contract into budgets or admission policy.
-- Interim checks currently reported: Core DB 26/26, Core pure 31/31, and shared
-  278 passed. These are not final repository checks; parent final verification
-  is pending and will be appended separately. No full Core regression, build,
-  installer, or release claim is made by this interim note.
+- Initial interim checks recorded at implementation time: Core DB 26/26, Core
+  pure 31/31, and shared 278 passed. These are intermediate results, not full
+  repository checks; final local checks for this ingestion slice are recorded
+  below. No full Core regression, installer, or release claim is made here.
 
 Final local checks: Core usage/schema/receipt set 60/60; signed DB Node routes
 26/26; Desktop Node 55/55, including a real child process and lost completion
@@ -387,6 +386,41 @@ No account reset or historical usage backfill occurred. One transient native
 input geometry error was recovered by selecting the current window again.
 `node-usage-desktop.log` records the full Desktop suite. Previous global UI token
 gate debt is unchanged, not claimed resolved.
+
+## Neutral Plugin Execution Timeout and Node Ownership Guards (2026-10-24)
+
+- Core `dispatchRun` accepts an omitted or null timeout as unset. A supplied
+  non-null value must be a positive safe integer; zero, negative, fractional,
+  non-finite, unsafe, and non-number values are rejected before a run is
+  inserted. Valid values clamp to 1 second through 4 hours.
+- The Local Node independently validates/clamps neutral Plugin command timeouts.
+  An omitted/null value uses the existing 30-minute Node default. Legacy command
+  timeout handling is unchanged; this validation does not widen to that lane.
+- Before claim, Core checks the persisted timeout on each queued neutral Plugin
+  run. Invalid persisted data marks the run failed and claim processing skips it
+  without dispatching a process.
+- Neutral Plugin claims are not silently requeued after 10 minutes. Silence is
+  not evidence that a process stopped, so an old claimed run stays `claimed`;
+  explicit cancellation stays `cancelling` until the signed Node acknowledges
+  completion. No automatic retry is made for uncertain process execution. The
+  legacy command lane's existing stale-claim handling is unchanged.
+- Local Node rejects an active duplicate command ID across all execution lanes
+  before replacing the tracked entry, spawning a process, or sending a synthetic
+  completion. Distinct IDs may execute concurrently. This is a per-ID ownership
+  guard, not a shared concurrency limit.
+- Existing Node lease, Workspace Source, and authorization checks remain in
+  force. This slice adds no DB migration, API or SDK method, arbitrary global
+  concurrency default, or Workspace usage-budget enforcement. Configurable
+  capacity limits and admission/reservation policy remain future contracts.
+- Core verification for this guard slice: focused four-file set 50/50 and
+  actual DB-backed signed Node tests 27/27; `pnpm -r typecheck`, full build,
+  compatibility boundary, and UI bundle checks passed. No full Linux Core
+  regression or new security audit is claimed.
+- Final Local Node suite: 60/60, including active-ID collision rejection,
+  cancellation of the original process, concurrent distinct IDs, and a real
+  timeout/PID check confirming the child is dead before completion is accepted.
+  `execution-guards-node-tests.log` records the parent rerun. Desktop and source
+  Electron E2E checks will be recorded separately after integration.
 
 ## Verification and Safety
 
