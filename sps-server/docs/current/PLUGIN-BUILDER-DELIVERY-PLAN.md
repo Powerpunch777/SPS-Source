@@ -276,6 +276,37 @@ This does not add runtime code execution to static inspection. Production
 authoring still needs an explicit user-visible failed-gate feedback/repair flow;
 the live harness is not evidence of autonomous multi-attempt repair.
 
+Final committed-source verification at
+`3da819254fbbb07c0059ec808e0ef94003127499`, Core
+`98ce2de643a51271323d2d0b26321ec4de7cf16f`, SDK
+`cfa64ec4f589ea9765661834e1685ef1f2e14453`: live source E2E exit 0 including
+cleanup; Desktop 422/422, SDK 157/157, Builder 31/31. Source was clean during
+the final run. The actual invocation also asserted requested Luna/xhigh/Fast,
+workspace-write/MXC and absence of unrestricted bypass. Mandatory Desktop gates,
+interactive counter, archive verification/reveal, production lifecycle isolation,
+fixture switching, Preview crash diagnostics and dangling references passed.
+
+- Private final log: `desktop/dist/builder-live-authoring-fixed.log`.
+- Final screenshots: `desktop/dist/builder-live-fixed-observation/`.
+- Retained archive: `desktop/dist/builder-live-verified-e0vFhi/builder-preview-fixture.spsplugin`.
+- Independently rechecked archive SHA-256:
+  `c959da9330ab7368ce235d190c3cbb9aac69de1fa52c53956ca1bb614615aaa0`.
+- Desktop/SDK logs: `builder-live-desktop-final-fixed.log` and
+  `builder-live-sdk-tests.log`. Initial pin-update test correctly blocked the
+  not-yet-staged SDK gitlink; the final committed tuple passed. The earlier
+  `builder-live-authoring-final.log` is a failed Preview attempt, not final success.
+
+Reproduce from Desktop in PowerShell, using a supported installed CLI and MXC:
+
+```powershell
+$env:SPS_DESKTOP_E2E_CODEX_COMMAND = (Get-Command codex.exe).Source
+$env:SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS = '120000'
+npm run test:e2e:plugin-preview:live
+```
+
+There is no new installer, production Agent configuration change, Core/DB/API
+change, SDK publication, fresh dependency audit or two-device/Stable claim.
+
 ## Deferred and Unverified
 
 - Source-bound production authoring and remote Member authoring remain unverified.
