@@ -42,6 +42,10 @@
 
 ## Engineering evidence
 
+- [2026-10-24 UI flow audit](../reviews/UI-FLOW-AUDIT-2026-10-24.md): current
+  navigation, cross-Workspace state, Builder drafts and Desktop recovery fixes;
+  includes tested versus unverified user flows and source-only limits.
+
 `CORE-COMPLETION-AUDIT.md`, `CORE-DESKTOP-E2E-AUDIT.md`, the baseline plan,
 the UI refresh plan, and the acceptance runbook are historical engineering
 evidence or test procedures. They are not the current candidate or product

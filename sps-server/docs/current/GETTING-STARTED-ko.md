@@ -1,6 +1,9 @@
 # SPS 시작하기
 
-최종 갱신: 2026-07-30
+최종 갱신: 2026-10-24 (현재 개발 소스의 UI 경로 기준)
+
+아래 Agent 관리와 Builder 화면 개선은 현재 개발 소스에 반영되어 있다. 이 문서
+갱신 자체가 새 설치 파일이나 Stable 릴리스 배포를 뜻하지는 않는다.
 
 ## 준비물
 
@@ -20,21 +23,32 @@
 3. 메인 컴퓨터라면 **Host 만들기**, 팀의 기존 환경에 들어간다면 **Host 참여하기**를
    선택한다.
 4. Workspace를 만들거나 초대받은 Workspace를 연다.
-5. 새 Workspace에서 사용할 Initial Assistant를 하나 등록한다.
+5. 새 Workspace에서 사용할 Agent를 하나 등록한다. 이후 추가·수정은
+   **Host settings > Agents**에서 한다.
 
 SPS Workspace는 빈 작업 공간으로 시작한다. 기본 Task 보드, Room, 조직도, Agent
 역할, 메모리 정책은 자동으로 생기지 않는다.
 
 ## 원하는 작업 방식 고르기
 
-1. Workspace의 Initial Assistant에게 게임 개발, 웹 개발, 앱 개발, 연구, 자동화 등
-   원하는 작업 방식을 설명한다.
-2. Assistant는 Catalog를 검색하거나 필요한 Plugin의 초안 작성을 도울 수 있다.
+1. **설정 > Plugins > Marketplace**에서 플러그인을 검색한다. Marketplace
+   Assistant는 허용된 Agent를 선택해 검색과 설명을 요청하는 별도 기능이다.
+2. 제작하려면 사이드바의 **Plugin Builder**에서 Lead로 사용할 Agent를 고르고
+   대화한다. 추가 Agent는 작업 패널에서 Worker로 선택한다.
 3. Host는 **설정 > 플러그인**에서 Plugin의 정보와 호환성을 확인한다.
 4. Host가 선택한 Workspace에만 Plugin을 활성화한다.
 
-대화나 추천은 설치 권한이 아니다. Plugin 상태 변경은 항상 Host의 명시적 동작으로
-끝난다.
+검색이나 선택만으로 설치되지 않는다. Plugin 상태 변경은 Host가 별도로 명시해
+진행한다. Core는 Agent의 Runtime과 기본 폴더를 관리하고, Lead/Worker 역할은
+Builder 플러그인이 관리한다.
+
+같은 CLI 로그인으로 여러 Agent를 만들 수 있으며 모델·기본 작업 폴더를 각각
+정할 수 있다. 계정 사용 한도는 공유된다. 기본 폴더 설정은 Source 접근 권한이나
+파일 시스템 샌드박스를 대신하지 않는다.
+
+Builder 안에서 대화를 바꾸면 전송 전 초안과 첨부가 유지된다. 페이지 종료나 다른
+화면으로 이동한 뒤까지 보존하는 저장 기능은 아니다. Agent 관리 버튼으로 나갈
+때는 초안이 있으면 먼저 폐기 여부를 확인한다.
 
 ## 팀 컴퓨터 연결
 
@@ -62,6 +76,7 @@ Host만 로컬 프로젝트 폴더를 Workspace Source로 지정한다. Source�
 
 - 로그인 문제: Google 계정, SPS Identity 연결, 시스템 시간, 네트워크를 확인한다.
 - Member 연결 문제: Tailscale이 `1.52.0` 이상인지, 연결 상태와 전체 SPS 초대 코드를 확인한다.
-- Agent가 보이지 않음: Node 등록·승인과 해당 Runtime의 로컬 로그인을 확인한다.
+- Agent가 보이지 않음: **Host settings > Agents**의 등록·상태와 해당 Runtime의
+  로그인을 확인한다. 원격 실행은 Node 등록·승인과 해당 사용자 접근 권한도 확인한다.
 - Plugin이 보이지 않음: Host가 설치했는지와 Workspace 활성화 상태를 확인한다.
 - 데이터 이전: [DATA-AND-RECOVERY-ko.md](DATA-AND-RECOVERY-ko.md)를 먼저 읽는다.
