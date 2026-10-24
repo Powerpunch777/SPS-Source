@@ -25,9 +25,10 @@ do not replace either engine or import the upstream workflow model.
    Node Claude usage receipts. Remaining: provider-issued receipt verification,
    correction/reconciliation and any non-Claude Node source under a separate
    versioned contract. Unknown is not zero.
-4. Partly implemented: existing Plugin Status diagnostics consumes the read-only usage
-   projection. Shared admission limits and budget reservations/settlement,
-   broader Dashboard/Inbox integration and optional result evidence remain planned.
+4. Partly implemented: existing Plugin Settings > Status shows read-only usage
+   and paged execution history. Shared admission limits and budget
+   reservations/settlement, broader Dashboard/Inbox integration and optional
+   result evidence remain planned.
 
 ## Stage 1 Contract
 
@@ -245,6 +246,29 @@ usage-ui-desktop-tests.log, usage-ui-e2e-compact.log and usage-ui-observation/*.
 These are private development records, not published release attestations. Luna 6
 xhigh implemented UI/client/tests; parent reviewed and implemented Core, Desktop
 transport, source-static selection and integration. No new installer was built.
+
+## Host Execution History Read Slice (2026-10-24)
+
+- Plugin Settings > Status places execution history below usage. It uses the
+  existing safe history service and DTO, shows latest pages, and supports
+  explicit manual refresh, lane filtering, and scoped detail.
+- `GET /api/companies/:companyId/sps-executions?pluginId=<registry UUID>` lists
+  history with `limit` defaulting to 20 and bounded to 1..100, optional `lane`
+  (`node` or `agent_session`), and the complete optional cursor tuple
+  `beforeCreatedAt` (UTC milliseconds), `beforeRunId` (UUID), and `beforeLane`
+  (`node` or `agent_session`). Results are newest-first.
+- `GET /api/companies/:companyId/sps-executions/:lane/:runId?pluginId=<registry UUID>`
+  returns one execution detail under that same scope. Core derives the exact
+  Plugin identity from the registry UUID; both local Host proof and Workspace
+  access are required. Retained history remains available for disabled Plugins.
+- The UI excludes raw prompts, arguments, environment, logs, raw errors, local
+  paths, and arbitrary subject labels. Technical success is not business
+  acceptance; unknown usage is not zero.
+- This reuses existing read models and adds no schema, SDK method, ledger, or
+  business policy. No new page/sidebar, polling, retry action, cancellation
+  mutation, or cascade policy is introduced.
+- Verification is pending the parent; no check counts or results are claimed
+  for this slice.
 
 ## Adapter Usage Receipt Slice (2026-10-24)
 

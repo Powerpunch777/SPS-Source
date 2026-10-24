@@ -277,7 +277,12 @@ async function openCdp(target) {
 async function describePage(cdp) {
   return await cdp.evaluate(`({ title: document.title, route: location.href, body: document.body?.innerText?.slice(0, 4000) || "",
     usageReady: Boolean(document.querySelector('[data-testid="sps-plugin-usage"] table')) && document.querySelector('[aria-label="Refresh execution usage"]')?.disabled === false,
-    usagePeriod: document.querySelector('#sps-usage-period')?.value })`);
+    usagePeriod: document.querySelector('#sps-usage-period')?.value,
+    historyText: document.querySelector('[data-testid="sps-plugin-executions"]')?.innerText?.slice(0, 4000) || "",
+    historyReady: document.querySelector('[aria-label="Refresh execution history"]')?.disabled === false,
+    historyLane: document.querySelector('[aria-label="Execution lane"]')?.value,
+    historyRunIds: [...document.querySelectorAll('[data-testid="sps-plugin-executions"] button[aria-label^="View execution "]')].map(button => button.getAttribute('aria-label').slice(15)),
+    historyDetail: document.querySelector('[data-testid="sps-execution-detail"]')?.innerText?.slice(0, 4000) || "" })`);
 }
 
 async function click(cdp, selector, label) {
@@ -587,6 +592,56 @@ try {
       await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
     }
     console.log("Usage UI E2E: real scoped run, unknown usage, 24h/7d/30d selection and refresh verified.");
+    const historyEndpoint = `/api/companies/${company.id}/sps-executions`;
+    const history = await api(workspaceCdp, `${historyEndpoint}?${new URLSearchParams({ pluginId: builder.id, limit: "20" })}`);
+    assert.ok(history.items.some(item => item.runId === runningRun.id && item.lane === "agent_session"), "Stopped Builder run is absent from Host history");
+    await waitForPage(workspaceCdp, page => page.historyReady && page.historyRunIds.includes(runningRun.id), "Host execution history");
+    await workspaceCdp.evaluate(`document.querySelector('[data-testid="sps-plugin-executions"]').scrollIntoView({ block: 'start' })`);
+    await click(workspaceCdp, `[aria-label="View execution ${runningRun.id}"]`, "Open the stopped Builder execution");
+    await waitForPage(workspaceCdp, page => page.historyDetail.includes(runningRun.id) && /cancelled/i.test(page.historyDetail), "scoped execution detail");
+    const detail = await api(workspaceCdp, `${historyEndpoint}/agent_session/${runningRun.id}?${new URLSearchParams({ pluginId: builder.id })}`);
+    assert.equal(detail.termination, "confirmed");
+    assert.equal(detail.usage.inputTokens.value, null);
+    if (screenshotPath) {
+      await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width: 1024, height: 720, deviceScaleFactor: 1, mobile: false });
+      await workspaceCdp.evaluate(`document.querySelector('[data-testid="sps-execution-detail"]').scrollIntoView({ block: 'start' })`);
+      assert.equal(await workspaceCdp.evaluate(`(() => {
+        const panel = document.querySelector('[data-testid="sps-execution-detail"]');
+        return document.documentElement.scrollWidth <= innerWidth && panel.scrollWidth <= panel.clientWidth + 1;
+      })()`), true, "Execution detail overflowed at minimum desktop width");
+      await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), "plugin-execution-detail-1024x720.png"));
+      await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+    }
+    const setLane = async lane => {
+      await workspaceCdp.evaluate(`(() => {
+        const select = document.querySelector('[aria-label="Execution lane"]');
+        select.value = ${JSON.stringify(lane)};
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+    };
+    await setLane("node");
+    await waitForPage(workspaceCdp, page => page.historyReady && page.historyLane === "node" && page.historyText.includes("No executions"), "empty Node history");
+    assert.equal(await workspaceCdp.evaluate(`Boolean(document.querySelector('[data-testid="sps-execution-detail"]'))`), false, "Lane change retained stale detail");
+    await setLane("agent_session");
+    await waitForPage(workspaceCdp, page => page.historyReady && page.historyLane === "agent_session" && page.historyRunIds.includes(runningRun.id), "Agent-session history");
+    await click(workspaceCdp, '[aria-label="Refresh execution history"]', "Refresh execution history");
+    await waitForPage(workspaceCdp, page => page.historyReady && page.historyRunIds.includes(runningRun.id), "refreshed execution history");
+    if (screenshotPath) {
+      for (const [width, height] of [[1024, 720], [1440, 900]]) {
+        await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await workspaceCdp.evaluate(`document.querySelector('[data-testid="sps-plugin-executions"]').scrollIntoView({ block: 'start' })`);
+        const fits = await workspaceCdp.evaluate(`(() => {
+          const panel = document.querySelector('[data-testid="sps-plugin-executions"]');
+          const bounds = panel.getBoundingClientRect();
+          return document.documentElement.scrollWidth <= innerWidth && bounds.left >= 0 && bounds.right <= innerWidth
+            && [...panel.querySelectorAll('table')].every(table => table.scrollWidth <= table.parentElement.clientWidth + 1);
+        })()`);
+        assert.equal(fits, true, `Execution history clipped at ${width}`);
+        await captureScreenshot(workspaceCdp, path.join(path.dirname(screenshotPath), `plugin-executions-${width}x${height}.png`));
+      }
+      await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+    }
+    console.log("History UI E2E: exact stopped run, safe detail, lane isolation and refresh verified.");
   }
 
   await api(workspaceCdp, `/api/plugins/${teamWorkplane.id}/companies/${company.id}/activation`, {

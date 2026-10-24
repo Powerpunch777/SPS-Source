@@ -83,3 +83,20 @@ test("grants execution-summary Host proof only to the exact GET endpoint on the 
     `${workspaceOrigin}/api/companies/not-uuid/sps-executions/summary`,
   ]) assert.equal(check(url, "GET"), false);
 });
+
+test("grants read-only execution history proof only to exact local Host routes", () => {
+  const workspaceOrigin = "http://127.0.0.1:31310";
+  const root = "/api/companies/11111111-1111-4111-8111-111111111111/sps-executions";
+  const id = "22222222-2222-4222-8222-222222222222";
+  const check = (url, method = "GET") => isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url, method });
+  for (const suffix of ["", `/node/${id}`, `/agent_session/${id}`]) {
+    const url = `${workspaceOrigin}${root}${suffix}?pluginId=fixture`;
+    assert.equal(check(url), true);
+    for (const method of ["POST", "PUT", "DELETE", "PATCH", undefined]) assert.equal(check(url, method ?? ""), false);
+    assert.equal(check(`https://member.example.test${root}${suffix}`), false);
+    assert.equal(check(`http://127.0.0.1:31311${root}${suffix}`), false);
+  }
+  for (const suffix of ["/", "/unknown", `/other/${id}`, "/node/not-uuid", `/node/${id}/cancel`, `/node/${id}/events`]) {
+    assert.equal(check(`${workspaceOrigin}${root}${suffix}`), false);
+  }
+});

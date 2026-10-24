@@ -35,7 +35,7 @@ export function isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin, method 
   if (!isSpsDesktopWorkspaceRequest({ url, workspaceOrigin })) return false;
   try {
     const pathname = new URL(url).pathname;
-    if (method === "GET" && /^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/sps-executions\/summary$/i.test(pathname)) {
+    if (method === "GET" && /^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/sps-executions(?:\/summary|\/(?:node|agent_session)\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})?$/i.test(pathname)) {
       return true;
     }
     return [
