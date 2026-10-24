@@ -51,6 +51,8 @@ async function freePort() {
 }
 
 async function removeRetry(target) {
+  assert.equal(path.dirname(path.resolve(target)), path.resolve(os.tmpdir()), "Cleanup target must remain directly inside the test temp directory.");
+  assert.ok(path.basename(target).startsWith("sps-plugin-preview-desktop-e2e-"));
   let lastError;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try { await rm(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 150 }); return; } catch (error) { lastError = error; await delay(300); }
@@ -298,6 +300,7 @@ const liveWorkerRunIds = [];
 let liveRunId = null;
 let authoredFiles = null;
 let liveArtifact = null;
+let acceptanceFailure = null;
 
 try {
   if (liveAuthoring) await makePlugin(pluginDirectory, { withUi: false });
@@ -353,7 +356,7 @@ try {
       liveWorker = await workspaceApi(workspace, `/api/companies/${company.id}/agents`, {
         method: "POST", body: {
           name: "Builder Live Worker", role: "engineer", adapterType: "codex_local",
-          adapterConfig: { ...liveAgent.adapterConfig, timeoutSec: 300 },
+          adapterConfig: { ...liveAgent.adapterConfig, timeoutSec: 210 },
         },
       });
       assert.notEqual(liveWorker.id, liveAgent.id);
@@ -910,7 +913,7 @@ try {
     assert.equal(createHash("sha256").update(await readFile(exactArchive)).digest("hex"), liveArtifact.sha256);
     const releaseFile = path.join(localRegistry, "releases", "fixture.json");
     await command(["release", exactArchive, "--artifact-url", "artifacts/fixture.spsplugin", "--publisher-id", "builder-e2e",
-      "--publisher-key-id", "ed25519:builder-e2e", "--private-key", path.join(keys, "publisher.pem"), "--out", releaseFile]);
+      "--publisher-key-id", "ed25519:builder-e2e", "--private-key", path.join(keys, "publisher.pem"), "--visibility", "private", "--out", releaseFile]);
     await command(["registry-index", "--registry-id", "local.builder-team-e2e", "--display-name", "Builder Test Registry",
       "--root-key-id", "ed25519:builder-root", "--root-private-key", path.join(keys, "root.pem"),
       "--publisher-key", `ed25519:builder-e2e=${path.join(keys, "publisher.pub")}`,
@@ -964,7 +967,8 @@ try {
     if (!cdp) continue;
     try { notes.push(`${name}: ${JSON.stringify(await cdp.evaluate("({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 2000) || '' })"))}`); } catch (diagnosticError) { notes.push(`${name}: ${errorText(diagnosticError)}`); }
   }
-  throw new Error(`${errorText(error)}\n${notes.join("\n")}\n${output.trim()}`);
+  acceptanceFailure = new Error(`${errorText(error)}\n${notes.join("\n")}\n${output.trim()}`);
+  throw acceptanceFailure;
 } finally {
   step("cleaning isolated E2E processes and data");
   await cleanupTimeout(
@@ -980,8 +984,10 @@ try {
   step(postgresStopped ? "temporary PostgreSQL processes stopped" : "temporary PostgreSQL process cleanup could not be confirmed");
   await cleanupTimeout(identity.close(), "mock Identity server").catch((error) => console.warn(errorText(error)));
   step("mock Identity server closed");
-  await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
-    .catch((error) => console.warn(`Could not remove Preview Desktop E2E temp data: ${errorText(error)}`));
+  const dataRemoved = await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
+    .then(() => true)
+    .catch((error) => { console.warn(`Could not remove Preview Desktop E2E temp data: ${errorText(error)}`); return false; });
+  if (!postgresStopped || !dataRemoved) throw new Error("Preview E2E cleanup is incomplete; the test cannot be accepted.", { cause: acceptanceFailure });
   step("cleanup complete");
 }
 
