@@ -23,6 +23,7 @@
     "test:e2e:bootstrap": "npm run sync:desktop-node && node scripts/smoke-isolated-desktop-ui.mjs",
     "test:e2e:workspace-surfaces": "npm run sync:desktop-node && node scripts/smoke-workspace-surfaces-desktop.mjs",
     "test:e2e:plugin-preview": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs",
+    "test:e2e:plugin-preview:live": "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs --live-authoring",
     "test:e2e:host-plugin-lifecycle": "npm run sync:desktop-node && node scripts/smoke-host-plugin-lifecycle-desktop.mjs",
     "test:e2e:host-plugin-lifecycle:live": "npm run sync:desktop-node && node scripts/smoke-host-plugin-lifecycle-desktop.mjs --live-agent",
     "release:init-device-key": "node scripts/initialize-physical-device-key.mjs",

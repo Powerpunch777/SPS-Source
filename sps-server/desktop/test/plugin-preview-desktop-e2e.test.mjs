@@ -11,6 +11,14 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   const [harness, packageJson] = await Promise.all([readFile(harnessPath, "utf8"), readFile(packagePath, "utf8")]);
   const manifest = JSON.parse(packageJson);
   assert.equal(manifest.scripts["test:e2e:plugin-preview"], "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs");
+  assert.equal(manifest.scripts["test:e2e:plugin-preview:live"], "npm run sync:desktop-node && node scripts/smoke-plugin-preview-desktop.mjs --live-authoring");
+  assert.match(harness, /process\.argv\.includes\("--live-authoring"\)/);
+  assert.match(harness, /dangerouslyBypassApprovalsAndSandbox: false/);
+  assert.match(harness, /"--sandbox", "workspace-write"/);
+  assert.ok(harness.includes('windows.sandbox="mxc"'));
+  assert.match(harness, /verifyLiveBuilderChanges/);
+  assert.match(harness, /liveRun.status, "succeeded"/);
+  assert.match(harness, /installedInProduction: false/);
   assert.match(harness, /SPS_DESKTOP_E2E_BINARY/);
   assert.match(harness, /SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS/);
   assert.match(harness, /parseE2eHostReadyTimeout/);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import os from "node:os";
@@ -13,10 +13,12 @@ import { inspectPluginArchive } from "@sonparkserver/plugin-sdk/registry/archive
 import { calculateStaticCapabilitiesDigest } from "@sonparkserver/plugin-sdk/registry/static-package-manifest-v1.mjs";
 import { resolveDeveloperPackageArtifact } from "../src/developer-package-artifact.mjs";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
+import { buildLiveBuilderPrompt, collectAuthoringSnapshot, verifyLiveBuilderChanges } from "./live-builder-authoring.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
+const liveAuthoring = process.argv.includes("--live-authoring");
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const sdkRoot = path.join(desktopRoot, "node_modules", "@sonparkserver", "plugin-sdk");
@@ -228,7 +230,7 @@ async function waitFixture(cdp, expected, label, timeout = 30_000) {
   throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(value)}`);
 }
 
-async function makePlugin(directory) {
+async function makePlugin(directory, { withUi = true } = {}) {
   await execFileAsync(process.execPath, [
     sdkCliPath,
     "init",
@@ -241,6 +243,7 @@ async function makePlugin(directory) {
   const sdkLink = path.join(directory, "node_modules", "@sonparkserver", "plugin-sdk");
   await mkdir(path.dirname(sdkLink), { recursive: true });
   await symlink(sdkRoot, sdkLink, "junction");
+  if (!withUi) return;
   const manifestPath = path.join(directory, "dist", "manifest.js");
   const capabilities = ["plugin.state.read", "ui.page.register"];
   const runtimeManifest = (await readFile(manifestPath, "utf8"))
@@ -277,8 +280,13 @@ const userData = path.join(temporaryRoot, "user-data");
 const pluginDirectory = path.join(temporaryRoot, "external-plugin");
 const packageArchivePath = path.join(temporaryRoot, "artifacts", "preview-desktop-e2e.spsplugin");
 let child; let setup; let workspace; let registry; let preview; let workspaceTarget; let output = "";
+let liveAgent = null;
+let liveRunId = null;
+let authoredFiles = null;
+let liveArtifact = null;
 
 try {
+  if (liveAuthoring) await makePlugin(pluginDirectory, { withUi: false });
   step("starting mock SPS Identity");
   const identityState = await identity.start();
   const binary = packagedBinary || sourceElectron;
@@ -313,6 +321,21 @@ try {
     })];
   }
   const agent = agents[0];
+  if (liveAuthoring) {
+    liveAgent = await workspaceApi(workspace, `/api/companies/${company.id}/agents`, {
+      method: "POST",
+      body: {
+        name: "Builder Live Author", role: "engineer", adapterType: "codex_local",
+        adapterConfig: {
+          command: process.env.SPS_DESKTOP_E2E_CODEX_COMMAND?.trim() || "codex",
+          engine: "cli", cwd: pluginDirectory, model: "gpt-6-luna", reasoningEffort: "xhigh", fastMode: true,
+          dangerouslyBypassApprovalsAndSandbox: false,
+          extraArgs: ["--sandbox", "workspace-write", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "-c", 'windows.sandbox="mxc"', "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=false"],
+          timeoutSec: 300, graceSec: 5,
+        },
+      },
+    });
+  }
   let projects = await workspaceApi(workspace, `/api/companies/${company.id}/projects`);
   if (!Array.isArray(projects) || projects.length === 0) {
     projects = [await workspaceApi(workspace, `/api/companies/${company.id}/projects`, {
@@ -366,6 +389,14 @@ try {
   await waitPage(workspace, page => page.text.includes("Authoring projects"), "Builder authoring panel");
   await workspace.evaluate(`document.querySelector('.bc-evidence').open = true`);
   await waitPage(workspace, page => page.text.includes("SPS Preview Desktop E2E"), "Builder authoring project evidence");
+  if (liveAgent) {
+    await workspace.evaluate(`(() => {
+      const select = document.querySelector('[aria-label="Lead 선택"]');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(liveAgent.id)});
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    assert.equal(await workspace.evaluate("document.querySelector('[aria-label=\"Lead 선택\"]').value"), liveAgent.id);
+  }
   step("opening Developer Registry from Workspace");
   const opened = await workspace.evaluate("window.spsDesktopWorkspace?.openPluginRegistries ? window.spsDesktopWorkspace.openPluginRegistries() : Promise.reject(new Error('Workspace Registry bridge unavailable'))", true);
   assert.equal(opened?.opened, true, "Workspace did not open the real Registry window.");
@@ -416,16 +447,7 @@ try {
   }
 
   step("creating and connecting external SDK plugin");
-  await makePlugin(pluginDirectory);
-  await executeBuilderTool(workspace, runContext, "run-sps-authoring-step", {
-    authoringSessionId,
-    objective: "Create the public SDK project and connect it to Desktop Developer Mode.",
-    status: "passed",
-    evidence: [
-      { kind: "workspace_file", ref: "external-plugin/package.json", label: "Plugin package" },
-      { kind: "workspace_file", ref: "external-plugin/src/manifest.js", label: "Plugin manifest" },
-    ],
-  });
+  if (!liveAuthoring) await makePlugin(pluginDirectory);
   const connected = await registryCall(registry, `window.spsRegistry.connectDeveloperProject(${JSON.stringify({ sourcePath: pluginDirectory, sourceLabel: "external-plugin", displayName: "Preview Desktop E2E" })})`);
   assert.match(connected.id, /^dev-/);
   await registry.evaluate("document.querySelector('#refresh-developer-projects').click()");
@@ -462,6 +484,59 @@ try {
   await registry.evaluate("document.querySelector('.link-developer-context').click()");
   await waitPage(registry, page => page.text.includes("Linked: Preview Desktop E2E"), "explicit reference relink");
   step("verified context isolation, stale-window denial, explicit unlink and unchanged source files");
+  if (liveAuthoring) {
+    step("sending real Builder authoring request to the dedicated workspace-write CLI Agent");
+    const beforeFiles = await collectAuthoringSnapshot(pluginDirectory);
+    const prompt = buildLiveBuilderPrompt();
+    await workspace.evaluate(`(() => {
+      const textarea = document.querySelector('.bc-composer textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, ${JSON.stringify(prompt)});
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await workspace.evaluate("document.querySelector('.bc-composer').requestSubmit()");
+    const end = Date.now() + 330_000;
+    let turn = null;
+    while (Date.now() < end) {
+      const current = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
+        method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+      });
+      const chat = current.data.conversations.find(entry => entry.id === developerContext.context.contextId);
+      turn = chat?.messages.find(entry => entry.role === "assistant");
+      if (turn?.runId) liveRunId = turn.runId;
+      if (turn && !turn.recoveryPending && ["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) break;
+      await delay(1_000);
+    }
+    assert.equal(turn?.status, "completed", `Live Builder authoring did not complete: ${JSON.stringify({ status: turn?.status, recoveryPending: turn?.recoveryPending, message: turn?.content?.slice(0, 1000) })}`);
+    authoredFiles = await collectAuthoringSnapshot(pluginDirectory);
+    assert.match(liveRunId ?? "", /^[a-f0-9-]{36}$/i, "Live Builder did not return a run ID.");
+    const liveRun = await workspaceApi(workspace, `/api/heartbeat-runs/${encodeURIComponent(liveRunId)}`);
+    assert.equal(liveRun.status, "succeeded");
+    const events = await workspaceApi(workspace, `/api/heartbeat-runs/${liveRunId}/events?limit=200`);
+    const invocation = events.find(event => event.eventType === "adapter.invoke")?.payload;
+    assert.equal(path.resolve(invocation?.cwd ?? ""), path.resolve(pluginDirectory), "CLI did not execute in the approved test project.");
+    assert.ok(invocation.commandArgs.includes("workspace-write"));
+    assert.ok(invocation.commandArgs.includes('windows.sandbox="mxc"'));
+    assert.ok(!invocation.commandArgs.includes("--dangerously-bypass-approvals-and-sandbox"));
+    assert.ok(invocation.commandArgs.includes('service_tier="fast"'));
+    assert.equal(invocation.commandArgs[invocation.commandArgs.indexOf("--model") + 1], "gpt-6-luna");
+    assert.ok(invocation.commandArgs.includes('model_reasoning_effort="xhigh"'));
+    let changedPaths;
+    try { changedPaths = verifyLiveBuilderChanges(beforeFiles, authoredFiles); }
+    catch (error) {
+      const changed = Object.keys(authoredFiles).filter(key => beforeFiles[key] !== authoredFiles[key]);
+      throw new Error(`${errorText(error)} Changed paths: ${JSON.stringify(changed)}. CLI reply: ${turn.content?.slice(-4000) ?? ""}`);
+    }
+    step(`live CLI authored ${changedPaths.length} allowed files through the Builder conversation`);
+  }
+  await executeBuilderTool(workspace, runContext, "run-sps-authoring-step", {
+    authoringSessionId,
+    objective: liveAuthoring ? "Live CLI authored the external plugin through Builder." : "Create the public SDK project and connect it to Desktop Developer Mode.",
+    status: "passed",
+    evidence: [
+      { kind: "workspace_file", ref: "external-plugin/package.json", label: "Plugin package" },
+      { kind: "workspace_file", ref: "external-plugin/dist/manifest.js", label: "Plugin manifest" },
+    ],
+  });
   let gates;
   try {
     gates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
@@ -512,6 +587,7 @@ try {
   const artifact = await resolveDeveloperPackageArtifact({ vaultRoot: path.join(userData, "owner-vault"), build: applied.lastKnownGood });
   assert.equal(artifact.sha256, applied.lastKnownGood.deployment.artifactSha256);
   assert.equal((await inspectPluginArchive(artifact.archivePath)).valid, true);
+  if (liveAuthoring) liveArtifact = artifact;
   await registry.evaluate(`document.querySelector('#refresh-developer-projects').click()`);
   await waitPage(registry, page => page.text.includes("Show verified package"), "verified package access button");
   await registry.evaluate(`document.querySelector('.reveal-developer-package').click()`);
@@ -585,7 +661,22 @@ try {
   await registryCall(registry, `window.spsRegistry.clearDeveloperContext(${JSON.stringify({ contextToken: developerContext.contextToken })})`);
   assert.equal((await workspace.evaluate(getContextExpression, true)).missingProject, false);
   step("verified redacted diagnostics and live production Workspace");
-  console.log(`SPS Plugin Preview Desktop E2E passed (${packagedBinary ? "packaged" : "source"}).`);
+  if (liveAuthoring) {
+    await mkdir(path.join(desktopRoot, "dist"), { recursive: true });
+    const retained = await mkdtemp(path.join(desktopRoot, "dist", "builder-live-verified-"));
+    const retainedArchive = path.join(retained, "builder-preview-fixture.spsplugin");
+    await copyFile(liveArtifact.archivePath, retainedArchive);
+    assert.equal(createHash("sha256").update(await readFile(retainedArchive)).digest("hex"), liveArtifact.sha256);
+    await writeFile(path.join(retained, "result.json"), `${JSON.stringify({
+      schemaVersion: 1, evidenceKind: "development-smoke", model: "gpt-6-luna",
+      reasoningEffort: "xhigh", fastMode: true, sandbox: "workspace-write",
+      actualRunSucceeded: true, fileHashes: authoredFiles,
+      packageSha256: liveArtifact.sha256, previewCounter: "Count: 1",
+      installedInProduction: false,
+    }, null, 2)}\n`, { flag: "wx" });
+    step(`retained verified development package in ${path.basename(retained)}`);
+  }
+  console.log(`SPS Plugin Preview Desktop E2E passed (${packagedBinary ? "packaged" : "source"}${liveAuthoring ? ", live CLI authoring" : ""}).`);
 } catch (error) {
   const notes = [];
   for (const [name, cdp] of [["setup", setup], ["workspace", workspace], ["registry", registry], ["preview", preview]]) {

@@ -212,12 +212,64 @@ the same Desktop gates. Do not treat this navigation link as runtime working
 directory configuration, and do not install a plugin implicitly when chosen or
 previewed.
 
+## Stage 5: Opt-in Live CLI Authoring Harness
+
+`desktop` now provides `npm run test:e2e:plugin-preview:live`. The default
+Preview E2E remains deterministic and does not call an AI provider. Live mode
+uses the actual Builder composer and session bridge with a dedicated temporary
+Agent and public SDK starter. It does not modify an existing user's Agent,
+project, login, Workspace or production plugin installation.
+
+- Requested configuration: `gpt-6-luna`, `xhigh`, Fast, CLI engine, explicit
+  `workspace-write`, `approval_policy="never"`, no sandbox bypass, no command
+  network access, and native Windows MXC sandbox. MXC must be supported and
+  permitted; there is no unrestricted or weaker sandbox fallback. This test
+  configuration is not a new default for user Agents.
+- `SPS_DESKTOP_E2E_CODEX_COMMAND` can identify an already installed CLI binary.
+  The local npm CLI `0.144.1` rejected the requested model. The bundled CLI
+  `0.163.0-alpha.11.2` accepted it but, without a Windows sandbox implementation,
+  completed without creating the fixture and reported read-only execution.
+  Both attempts were failures, not successful authoring evidence. The managed
+  MXC compatibility probe subsequently returned `MXC_OK`. The full MXC live
+  harness then passed with exit 0 including process and temporary data cleanup.
+- The test checks the actual invocation working directory, sandbox arguments,
+  Fast argument, run success, and exactly four changed project files. Bounded
+  regular-file snapshots exclude root `.git` and `node_modules`, reject other
+  links, and cap file/directory count, depth and bytes. These hashes detect
+  changes after execution, not filesystem authorization or credential isolation.
+- Build, validation, tests, interactive Preview counter and archive verification
+  must still succeed. Only after the entire harness passes is the verified
+  development package copied to a new ignored `desktop/dist/builder-live-verified-*`
+  directory with a hash-only development summary. This is neither installation,
+  a published plugin nor signed Stable evidence. Temporary source/Vault data is
+  cleaned by the existing harness; the retained archive is not an editable source
+  project.
+- Run live and deterministic Desktop E2Es sequentially because the previously
+  documented cross-process startup port reservation limitation remains.
+
+Live testing does not implement automatic Agent cwd binding from conversation
+references, a new Source authorization contract, Worker delegation authoring,
+or Member computer execution. Those require their own explicit design and tests.
+
+Initial working-tree validation (2026-10-24): Desktop 422/422 and Builder 31/31;
+live source E2E completed with four allowed files authored by Luna, run/invocation
+cwd/sandbox/Fast checks, all Desktop gates, interactive Preview `Count: 0 -> 1`,
+verified package reveal, production lifecycle isolation, fixture switching,
+Preview-only crash diagnostics and dangling-link handling. Parent inspected the
+actual generated Preview screenshot. Identity was mocked; the CLI/model call was
+real and used the existing account. This is not a Google login, remote Member or
+Stable acceptance test. Logs: `desktop/dist/builder-live-authoring*.log`;
+screenshots: `builder-live-observation/`; retained package:
+`builder-live-verified-xT93G9/`. Failed attempts remain recorded, not relabeled as
+passing. Final committed-source rerun evidence will be recorded separately.
+
 ## Deferred and Unverified
 
-- Paid-provider end-to-end file creation and editing have not been verified.
+- Source-bound production authoring and remote Member authoring remain unverified.
 - Conversation-to-project navigation references are Host-selected. Automatic
-  Source grants, Agent working-directory binding and real-provider authoring
-  are not implemented by this handoff.
+  Source grants and Agent working-directory binding are not implemented by this
+  handoff. A dedicated local Agent's real authoring has now been verified, not
+  automatic authoring against an arbitrary connected Source.
 - An AI-callable authoring tool cannot substitute for Desktop's mandatory
   `build`/`validate`/`test` execution or mint verified gate evidence.
 - Public publishing, publisher review, Official Registry signing and community
