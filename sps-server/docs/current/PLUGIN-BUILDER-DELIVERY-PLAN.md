@@ -404,7 +404,7 @@ of silently changing an existing Lead. Agent registration/settings remain Core;
 Lead/Worker selection remains Plugin Builder. A shared login shares provider
 limits, not additional quota. This work does not copy credentials between Agents.
 
-Implementation in progress:
+Implemented in source development:
 
 - Reuse Core Assistant registration and configuration APIs. Workspace lists every
   nonterminated Assistant and always offers Add Assistant. The existing setup
@@ -423,6 +423,61 @@ Implementation in progress:
   Other adapters and remote execution are not certified by the comparison.
 - No automatic Agent creation/selection, message sending, cwd mutation, grants,
   installation, Core schema migration or SDK method is introduced.
+
+Final implementation tuple: Source
+`51bc7ab9a3f47e1a05d42e083d2ab54cfe0b78c4`, Core
+`f0e9f9c99a11ecff21904010f1a6b0cc827f3d83`, SDK unchanged at
+`cfa64ec4f589ea9765661834e1685ef1f2e14453`. Checks on 2026-10-24:
+
+- Desktop 459/459, Builder 40/40 plus UI build/manifest verification.
+- Core UI focused tests 28/28, UI typecheck and production build passed. Core
+  authorization suite 41/41 and server typecheck passed.
+- Source Preview E2E exited 0 including cleanup on that tuple. The actual Core
+  form registered two distinct Codex-local Assistants with different folders and
+  sandbox bypass off, leaving the original Agent unchanged. No CLI was run by
+  registration. The folder check covered matching, different and missing paths,
+  preserved settings/draft/attachments, denied invalid/unlinked/foreign contexts,
+  and sent no message. Static gates, intentional runtime rejection, feedback,
+  restored interactive Preview, archive/reveal, isolation and crash checks passed.
+- Source Workspace E2E also exited 0 including cleanup: exact Lead cancellation
+  with process termination, scoped history/detail, unknown usage and range
+  controls, refresh and 1024/1280/1440 responsive layouts passed, with no provider.
+- Native persistent DEV was restarted normally with existing login/data intact.
+  The Assistant roster and registration form were inspected, and the Windows
+  directory picker was opened and cancelled with no Agent created or saved.
+  Successful native selection payloads and stale/cancel/error cases are covered
+  by controller/component tests; a native successful folder selection was not
+  completed in this manual check.
+- The global token gate still reports repository-wide pre-existing findings;
+  none of this increment's changed UI paths appear in its findings. This is not
+  an all-gates-green claim. Full Core/Linux regression, dependency audit, actual
+  Google OAuth, remote Member, paid CLI authoring, signing and installer tests
+  were not rerun in this increment.
+
+The new E2E exposed an existing Board authorization dispatch bug: protected
+configuration actions intentionally map to no single permission key, but their
+grant handlers were placed after the unmapped-action denial. Core now reaches
+the existing direct/suggest/consent checks before that fallback; no grant bypass
+was added. Regression tests cover authorized reads/updates, denied no-grant and
+foreign-Workspace users, and suggest changes requiring consent.
+
+Private logs (not release evidence): `desktop/dist/agent-folder-preview-grants.log`,
+`agent-folder-desktop-grants.log`, `agent-folder-builder-check.log`,
+`agent-folder-core-tests.log`, `agent-folder-authorization-tests.log`,
+`agent-folder-core-ui-typecheck.log`, `agent-folder-core-server-typecheck.log`,
+`agent-folder-core-ui-build.log`, `agent-folder-token-gates.log`; screenshots in
+`desktop/dist/agent-folder-grants-observation/`.
+Workspace regression evidence: `desktop/dist/agent-folder-workspace.log` and
+`desktop/dist/agent-folder-workspace.png`.
+
+Earlier `agent-folder-preview.log` failed because the harness selected a button
+before scoped loading finished; `agent-folder-preview-final.log` assumed an
+already-failed process Agent would report unsupported instead of unavailable;
+`agent-folder-preview-accepted.log` exposed the real Core PATCH 403. These remain
+failed attempts, not acceptance evidence. A baseline unit run also correctly
+rejected the unstaged updated Core pin; staged and committed checks passed.
+The final passing log above supersedes them. Documentation commits do not change
+the tested implementation tuple.
 
 ## Deferred and Unverified
 
