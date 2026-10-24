@@ -64,8 +64,9 @@ test("project context response is minimized and rejects path-like display labels
     missingProject: false,
     project: { id: "project-1", displayName: "Weather Plugin", sourceLabel: "Developer Registry", verified: true, folderPath: "C:\\secret" },
   }), {
-    project: { displayName: "Weather Plugin", sourceLabel: "Developer Registry", verified: true },
+    project: { id: "project-1", displayName: "Weather Plugin", sourceLabel: "Developer Registry", verified: true },
     missingProject: false,
+    validationFeedbackState: "absent",
   });
   assert.equal(normalizeDeveloperProjectContextResponse({
     available: true, missingProject: false,
@@ -73,9 +74,33 @@ test("project context response is minimized and rejects path-like display labels
   }), null);
   assert.equal(normalizeDeveloperProjectContextResponse({ available: false, project: null, missingProject: true }), null);
   assert.deepEqual(normalizeDeveloperProjectContextResponse({ available: true, project: null, missingProject: false }), {
-    project: null, missingProject: false,
+    project: null, missingProject: false, validationFeedbackState: "absent",
   });
   assert.deepEqual(normalizeDeveloperProjectContextResponse({ available: true, project: null, missingProject: true }), {
-    project: null, missingProject: true,
+    project: null, missingProject: true, validationFeedbackState: "absent",
   });
+  assert.deepEqual(normalizeDeveloperProjectContextResponse({
+    available: true, project: null, missingProject: false, validationFeedback: null,
+  }), {
+    project: null, missingProject: false, validationFeedbackState: "absent",
+  });
+  assert.equal(normalizeDeveloperProjectContextResponse({
+    available: true, project: null, missingProject: false, validationFeedback: { status: "failed" },
+  }).validationFeedbackState, "invalid");
+  const withFailure = normalizeDeveloperProjectContextResponse({
+    available: true,
+    missingProject: false,
+    project: { id: "project-1", displayName: "Weather Plugin", sourceLabel: "Developer Registry", verified: false },
+    validationFeedback: {
+      schemaVersion: 1,
+      attemptId: "desktop.33333333-3333-4333-8333-333333333333",
+      kind: "gates",
+      status: "failed",
+      occurredAt: "2026-10-24T12:34:56.000Z",
+      diagnostics: [{ code: "GATE_FAILED", message: "Check one bounded diagnostic." }],
+    },
+  });
+  assert.equal(withFailure.validationFeedbackState, "valid");
+  assert.equal(withFailure.validationFeedback.status, "failed");
+  assert.equal(withFailure.project.id, "project-1");
 });

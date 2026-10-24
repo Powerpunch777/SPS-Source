@@ -1,3 +1,5 @@
+import { normalizeDeveloperValidationFeedback } from "./developer-validation-feedback.js";
+
 export const DEVELOPER_PROJECT_PLUGIN_ID = "sps.plugin-discovery";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,8 +42,12 @@ export function getDeveloperProjectBridge(host) {
 
 export function normalizeDeveloperProjectContextResponse(value) {
   if (!record(value) || value.available !== true || typeof value.missingProject !== "boolean") return null;
+  const hasFeedback = Object.hasOwn(value, "validationFeedback") && value.validationFeedback !== null;
+  const validationFeedback = hasFeedback ? normalizeDeveloperValidationFeedback(value.validationFeedback) : undefined;
+  const validationFeedbackState = !hasFeedback ? "absent" : validationFeedback ? "valid" : "invalid";
+  const feedbackFields = { validationFeedbackState, ...(validationFeedback ? { validationFeedback } : {}) };
   if (value.project === null) {
-    return { project: null, missingProject: value.missingProject };
+    return { project: null, missingProject: value.missingProject, ...feedbackFields };
   }
   if (!record(value.project) || value.missingProject || typeof value.project.id !== "string"
     || !value.project.id || typeof value.project.verified !== "boolean") return null;
@@ -50,7 +56,8 @@ export function normalizeDeveloperProjectContextResponse(value) {
   const sourceLabel = safeLabel(value.project.sourceLabel);
   if (!displayName || !sourceLabel) return null;
   return {
-    project: { displayName, sourceLabel, verified: value.project.verified },
+    project: { id: value.project.id, displayName, sourceLabel, verified: value.project.verified },
     missingProject: false,
+    ...feedbackFields,
   };
 }

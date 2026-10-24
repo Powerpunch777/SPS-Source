@@ -55,6 +55,21 @@ test("Desktop persists SDK v1-safe development diagnostics without coupling Prev
   assert.match(source, /PREVIEW_PLUGIN_READY/);
   assert.match(source, /PREVIEW_RENDERER_LOAD_FAILED/);
   assert.match(source, /PREVIEW_WORKER_RESTART_FAILED/);
+  assert.match(source, /PREVIEW_CANDIDATE_STARTED/);
+  assert.match(source, /PREVIEW_CANDIDATE_VERIFIED/);
+  assert.match(source, /DEVELOPER_GATES_STARTED/);
+  assert.match(source, /DEVELOPER_GATES_FINISHED/);
   assert.match(registryController, /ipcMain\.handle\("desktop:developer-list-preview-diagnostics"/);
   assert.match(registryController, /ipcMain\.handle\("desktop:developer-clear-preview-diagnostics"/);
+});
+
+test("Workspace validation feedback is read-only and resolved through its current Host project reference", async () => {
+  const source = await readFile(mainPath, "utf8");
+  const get = source.slice(source.indexOf("async function getDesktopDeveloperContext"), source.indexOf("async function openDesktopDeveloperContext"));
+  assert.match(get, /await resolveDesktopDeveloperContext\(input\)/);
+  assert.match(get, /buildDeveloperValidationFeedback/);
+  assert.match(get, /filters: \{ projectId: project.id, limit: 300 \}/);
+  assert.match(get, /currentBinding\?\.projectId !== binding\?\.projectId/);
+  assert.match(get, /assertRegistryOwner\(\)/);
+  assert.doesNotMatch(get, /runSpsDeveloperCommand|applyDeveloperCandidate|sendMessage|sourcePath:/);
 });

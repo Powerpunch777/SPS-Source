@@ -169,6 +169,7 @@ import { registerDesktopRegistryIpc } from "./desktop-registry-controller.mjs";
 import { resolveDeveloperPackageArtifact } from "./developer-package-artifact.mjs";
 import { normalizeDeveloperContext, getDeveloperContextLink, setDeveloperContextLink, clearDeveloperContextLink } from "./developer-context-store.mjs";
 import { registerDesktopDeveloperContextIpc } from "./desktop-developer-context-controller.mjs";
+import { buildDeveloperValidationFeedback } from "./developer-validation-feedback.mjs";
 import { assessSpsPluginCompatibility } from "./plugin-compatibility.mjs";
 import { loadSpsOfficialExtensionsCatalog } from "./official-extensions-catalog.mjs";
 import {
@@ -2038,6 +2039,12 @@ async function getDesktopDeveloperContext(input) {
   const binding = await getDeveloperContextLink({ vaultRoot: ownerVaultRoot(), context: resolved.context });
   const projects = binding ? (await loadDeveloperProjects({ vaultRoot: ownerVaultRoot() })).projects : [];
   const project = projects.find(entry => entry.id === binding?.projectId);
+  const validationFeedback = project ? buildDeveloperValidationFeedback({
+    projectId: project.id,
+    events: await listDeveloperDiagnostics({ ownerVault: ownerVaultRoot(), filters: { projectId: project.id, limit: 300 } }),
+  }) : null;
+  const currentBinding = await getDeveloperContextLink({ vaultRoot: ownerVaultRoot(), context: resolved.context });
+  if (currentBinding?.projectId !== binding?.projectId) throw new Error("Developer project changed. Refresh this context.");
   assertRegistryOwner();
   return {
     available: true,
@@ -2048,6 +2055,7 @@ async function getDesktopDeveloperContext(input) {
       verified: Boolean(project.lastKnownGood),
     } : null,
     missingProject: Boolean(binding && !project),
+    validationFeedback,
   };
 }
 
@@ -2244,8 +2252,15 @@ async function runDesktopDeveloperGates(projectId) {
   await requireReadyOwnerHost();
   return await withDeveloperProjectOperation(projectId, async () => {
     const project = await developerProjectRecord(projectId);
-    const runtime = await resolveDesktopDeveloperKit();
+    await appendDeveloperDiagnostic({
+      ownerVault: ownerVaultRoot(),
+      event: { origin: "desktop", category: "compatibility", level: "info",
+        code: "DEVELOPER_GATES_STARTED", message: "Host started build, static validation and Worker tests.",
+        details: { projectId } },
+    });
     const reports = [];
+    try {
+    const runtime = await resolveDesktopDeveloperKit();
     for (const command of ["build", "validate", "test"]) {
       let report;
       try {
@@ -2283,6 +2298,12 @@ async function runDesktopDeveloperGates(projectId) {
       projectId,
       candidate: { ...candidate, conformance },
     });
+    await appendDeveloperDiagnostic({
+      ownerVault: ownerVaultRoot(),
+      event: { origin: "desktop", category: "compatibility", level: "info",
+        code: "DEVELOPER_GATES_FINISHED", message: "Host finished the development gates. Preview runtime validation remains separate.",
+        details: { projectId, success: reports.every(report => report.success === true) } },
+    }).catch(() => console.warn("SPS development gates completed, but their feedback record is unavailable."));
     return {
       project: publicDeveloperProject(saved),
       reports: reports.map((report) => ({
@@ -2292,6 +2313,15 @@ async function runDesktopDeveloperGates(projectId) {
         diagnostics: report.result.diagnostics,
       })),
     };
+    } catch (error) {
+      await appendDeveloperDiagnostic({
+        ownerVault: ownerVaultRoot(),
+        event: { origin: "desktop", category: "compatibility", level: "error",
+          code: "DEVELOPER_GATES_FINISHED", message: "Host could not complete the development gates. Check Development diagnostics.",
+          details: { projectId, success: false } },
+      }).catch(() => console.warn("SPS development gate failure feedback could not be recorded."));
+      throw error;
+    }
   });
 }
 
@@ -2649,8 +2679,12 @@ async function applyDesktopDeveloperCandidate(projectId) {
     const project = await developerProjectRecord(projectId);
     if (!project.candidate) throw new Error("Run the development gates before applying this project.");
     const buildId = `build-${randomUUID()}`;
-    const preview = await startDesktopPluginPreview({ projectId, buildId });
+    await recordDesktopPluginPreviewDiagnostic({
+      projectId, buildId, phase: "activation", code: "PREVIEW_CANDIDATE_STARTED",
+      message: "Host started validation inside isolated Preview.",
+    });
     try {
+      const preview = await startDesktopPluginPreview({ projectId, buildId });
       await ensurePluginPreviewWorkspace(preview, project);
       const staged = await stageDeveloperCandidate({
         vaultRoot: ownerVaultRoot(),
@@ -2707,6 +2741,10 @@ async function applyDesktopDeveloperCandidate(projectId) {
           archiveRelativePath: staged.developmentArchiveRelativePath,
         },
       });
+      await recordDesktopPluginPreviewDiagnostic({
+        projectId, buildId, phase: "activation", code: "PREVIEW_CANDIDATE_VERIFIED",
+        message: "Host loaded and verified the candidate inside isolated Preview.",
+      }).catch(() => console.warn("SPS Preview verified the candidate, but its feedback record is unavailable."));
       return {
         applied: true,
         isolated: true,

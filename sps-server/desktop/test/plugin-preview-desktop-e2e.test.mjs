@@ -19,6 +19,9 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /verifyLiveBuilderChanges/);
   assert.match(harness, /liveRun.status, "succeeded"/);
   assert.match(harness, /installedInProduction: false/);
+  assert.match(harness, /failed Preview feedback reached the existing draft/);
+  assert.match(harness, /Adding feedback automatically sent an AI message/);
+  assert.match(harness, /PREVIEW_CANDIDATE_FAILED/);
   assert.match(harness, /SPS_DESKTOP_E2E_BINARY/);
   assert.match(harness, /SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS/);
   assert.match(harness, /parseE2eHostReadyTimeout/);

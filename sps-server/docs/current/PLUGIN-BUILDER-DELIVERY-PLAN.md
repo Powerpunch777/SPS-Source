@@ -307,6 +307,48 @@ npm run test:e2e:plugin-preview:live
 There is no new installer, production Agent configuration change, Core/DB/API
 change, SDK publication, fresh dependency audit or two-device/Stable claim.
 
+## Stage 6: Explicit Validation Feedback Handoff
+
+In source development; final acceptance results are recorded after testing.
+
+- Desktop records separate starts and outcomes for build/static-validation/Worker
+  gates and isolated Preview activation. Existing bounded diagnostics storage is
+  reused; no Core schema, permission model or SDK execution API is added.
+- The existing Host-only context read resolves the linked project again and
+  returns a minimal latest-attempt summary: attempt ID, kind, technical status,
+  timestamp and at most six redacted diagnostic codes/messages. It does not
+  return local paths, raw command logs or secrets. Unlinked/dangling contexts do
+  not gain access to another project's feedback.
+- Builder displays historical validation results separately from Lead run status
+  and last-known-good availability. Static gates passing is not full runtime
+  compatibility or business-quality approval. A fresh attempt excludes earlier
+  errors. An unfinished attempt is not silently treated as successful.
+- A Host explicitly requests **add failure to composer**. Builder refetches that
+  context and appends a bounded repair draft, retaining existing text/attachments.
+  Diagnostic contents are treated as untrusted evidence, not commands or grants.
+  There is no automatic send, retry, file edit, build, Preview or installation.
+- Duplicate attempts, full drafts, stale conversation/Workspace responses and
+  unavailable/invalid feedback must not overwrite input or silently send work.
+- Completed attempts stop at their terminal event. Later Preview reload errors
+  cannot retroactively rewrite the completed validation outcome. If a terminal
+  feedback write fails after a candidate was saved, the successful saved result
+  is not falsely reported as a failed build; feedback may remain unavailable or
+  unfinished, and a safe warning is logged. This ledger is not an atomic run DB.
+- Folder/CLI execution setup remains a separate decision. A navigation reference
+  is still not Source authorization or an Agent cwd mutation. Reusing an existing
+  Lead's cwd versus creating a dedicated authoring Agent requires explicit user
+  choice before implementation; this increment does not decide it implicitly.
+
+Pre-commit checks: Desktop 434/434 and Builder 36/36, build and manifest checks
+passed. The first source E2E reached failed-Preview feedback, preserved the draft
+and attachment, sent no AI message, then reached the restored interactive Preview.
+Its final diagnostic assertion failed because the older test rejected the word
+`secret` even inside the valid `secrets.use` capability vocabulary. The assertion
+now targets credential field names/token values; redaction unit cases remain.
+The failed log is retained at `desktop/dist/builder-feedback-preview.log` and is
+not a complete pass. The terminal-attempt fix and final UI changes require the
+fresh committed-source E2E recorded below after completion.
+
 ## Deferred and Unverified
 
 - Source-bound production authoring and remote Member authoring remain unverified.

@@ -484,6 +484,66 @@ try {
   await registry.evaluate("document.querySelector('.link-developer-context').click()");
   await waitPage(registry, page => page.text.includes("Linked: Preview Desktop E2E"), "explicit reference relink");
   step("verified context isolation, stale-window denial, explicit unlink and unchanged source files");
+  if (!liveAuthoring) {
+    step("checking failed Preview feedback without starting an AI run");
+    const manifestPath = path.join(pluginDirectory, "dist", "manifest.js");
+    const staticPath = path.join(pluginDirectory, "sps-plugin.json");
+    const originalManifest = await readFile(manifestPath);
+    const originalStatic = await readFile(staticPath);
+    const invalidManifest = originalManifest.toString("utf8").replace('primitives: []', 'primitives: [{ name: "invalid.fixture" }]');
+    assert.notEqual(invalidManifest, originalManifest.toString("utf8"));
+    const invalidStatic = JSON.parse(originalStatic.toString("utf8"));
+    invalidStatic.runtime.manifestSha256 = createHash("sha256").update(invalidManifest).digest("hex");
+    await writeFile(manifestPath, invalidManifest);
+    await writeFile(staticPath, `${JSON.stringify(invalidStatic, null, 2)}\n`);
+    const staticGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+    assert.deepEqual(staticGates.reports.map(report => report.success), [true, true, true]);
+    assert.equal((await workspace.evaluate(getContextExpression, true)).validationFeedback.status, "passed");
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000), /Invalid plugin manifest/);
+    const feedback = (await workspace.evaluate(getContextExpression, true)).validationFeedback;
+    assert.equal(feedback.status, "failed");
+    assert.equal(feedback.kind, "preview");
+    assert.ok(feedback.diagnostics.some(item => item.code === "PREVIEW_CANDIDATE_FAILED"));
+    const originalDraft = await workspace.evaluate("document.querySelector('.bc-composer textarea').value");
+    const attachmentsBefore = await workspace.evaluate("document.querySelectorAll('.bc-file-chip').length");
+    const readConversation = async () => {
+      const value = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
+        method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+      });
+      return value.data.conversations.find(item => item.id === developerContext.context.contextId);
+    };
+    const messagesBefore = (await readConversation()).messages.length;
+    await workspace.evaluate("document.querySelector('.bc-project-refresh').click()");
+    await waitPage(workspace, page => page.text.includes("Preview · 실패"), "failed Preview feedback in Builder");
+    await workspace.evaluate("document.querySelector('.bc-validation-feedback details').open = true");
+    await waitPage(workspace, page => page.text.includes("PREVIEW_CANDIDATE_FAILED"), "failed Preview diagnostic details");
+    await workspace.evaluate("document.querySelector('.bc-validation-add').click()");
+    const draftDeadline = Date.now() + 10_000;
+    let feedbackDraft = "";
+    while (Date.now() < draftDeadline) {
+      feedbackDraft = await workspace.evaluate("document.querySelector('.bc-composer textarea').value");
+      if (feedbackDraft.includes("PREVIEW_CANDIDATE_FAILED")) break;
+      await delay(100);
+    }
+    assert.ok(feedbackDraft.startsWith(originalDraft));
+    assert.ok(feedbackDraft.includes("PREVIEW_CANDIDATE_FAILED"));
+    assert.ok(!feedbackDraft.includes(pluginDirectory));
+    assert.equal(await workspace.evaluate("document.querySelectorAll('.bc-file-chip').length"), attachmentsBefore);
+    assert.equal((await readConversation()).messages.length, messagesBefore, "Adding feedback automatically sent an AI message.");
+    assert.equal(await workspace.evaluate("document.querySelector('.bc-validation-add').disabled"), true);
+    if (screenshotDirectory) {
+      const screenshot = await workspace.command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+      await writeFile(path.join(screenshotDirectory, "builder-validation-feedback.png"), Buffer.from(screenshot.data, "base64"));
+    }
+    await writeFile(manifestPath, originalManifest);
+    await writeFile(staticPath, originalStatic);
+    await workspace.evaluate(`(() => {
+      const textarea = document.querySelector('.bc-composer textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, ${JSON.stringify(originalDraft)});
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    step("failed Preview feedback reached the existing draft without changing attachments or sending a message");
+  }
   if (liveAuthoring) {
     step("sending real Builder authoring request to the dedicated workspace-write CLI Agent");
     const beforeFiles = await collectAuthoringSnapshot(pluginDirectory);
@@ -548,6 +608,7 @@ try {
     throw new Error(`${errorText(error)} Developer diagnostics: ${JSON.stringify(diagnosticResult)}`);
   }
   assert.deepEqual(gates.reports.map((report) => report.success), [true, true, true], JSON.stringify(gates.reports));
+  assert.equal((await workspace.evaluate(getContextExpression, true)).validationFeedback.status, "passed");
   await executeBuilderTool(workspace, runContext, "inspect-sps-plugin-build", {
     authoringSessionId,
     status: "passed",
@@ -564,6 +625,8 @@ try {
   assert.equal(applied.plugin?.status, "ready");
   linkedContext = await workspace.evaluate(getContextExpression, true);
   assert.equal(linkedContext.project.verified, true);
+  assert.equal(linkedContext.validationFeedback.kind, "preview");
+  assert.equal(linkedContext.validationFeedback.status, "passed");
 
   step("verifying isolated Preview and production Workspace coexist");
   const mainTarget = await waitTarget(debugPort, child, (entry) => entry.id === workspaceTarget.id, "main Workspace still open");
@@ -650,7 +713,8 @@ try {
   assert.ok(rendererFailure, `Preview renderer failure was not recorded: ${JSON.stringify(diagnostics)}`);
   const safeDiagnostics = JSON.stringify(diagnostics);
   assert.doesNotMatch(safeDiagnostics, new RegExp(pluginDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
-  assert.doesNotMatch(safeDiagnostics, /access_token|refresh_token|authorization|password|secret/i);
+  // Manifest errors may name the legitimate `secrets.use` capability.
+  assert.doesNotMatch(safeDiagnostics, /"(?:access_token|refresh_token|authorization|password|secret)"\s*:|Bearer\s+(?!\[redacted\])[A-Za-z0-9._~+/=-]{8,}|\bsk-[A-Za-z0-9_-]{12,}/i);
   await registryCall(registry, `window.spsRegistry.removeDeveloperProject(${JSON.stringify({ projectId: connected.id })})`);
   const disconnected = await workspace.evaluate(getContextExpression, true);
   assert.equal(disconnected.project, null);

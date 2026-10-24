@@ -1,6 +1,6 @@
 # Plugin Builder Chat
 
-Status: source development implementation, 2026-10-18. This is not a new
+Status: source development implementation, updated 2026-10-24. This is not a new
 installer or a Stable release. Existing installation and user data are unchanged.
 
 ## Ownership
@@ -24,6 +24,10 @@ support-matrix.json; they are not part of the published v0.11.0 tag.
 
 ## Verification
 
+The list below is historical initial-chat verification. For the current pinned
+Source/Core/SDK tuple, exact test counts, real CLI authoring/Preview results and
+remaining authorization boundaries, use [Plugin Builder Delivery Plan](PLUGIN-BUILDER-DELIVERY-PLAN.md).
+
 - Builder check: 14 tests.
 - Public SDK: 149 tests.
 - Core session context/runtime: 13 tests, including embedded Postgres context.
@@ -45,9 +49,10 @@ These are source-development results, not signed-package or two-device evidence.
 ## Remaining
 
 - Real-account Worker delegation/report end-to-end verification.
-- Execution cancellation and per-message model overrides; no fake stop control.
-- One-click result Preview connection. Current navigation opens plugin review;
-  it does not pretend to start a separate Preview.
+- Per-message model overrides. Exact-run cancellation is implemented with
+  process termination/state reconciliation; unresolved runs are not auto-retried.
+- Convenient Source/CLI authoring setup. Host-selected project references and
+  separate gated Preview exist, but a reference does not configure Agent cwd.
 - Image/binary attachments and file diff presentation.
 - A fresh installer, SDK release and complete release gates before distribution.
 
