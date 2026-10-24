@@ -419,8 +419,30 @@ gate debt is unchanged, not claimed resolved.
 - Final Local Node suite: 60/60, including active-ID collision rejection,
   cancellation of the original process, concurrent distinct IDs, and a real
   timeout/PID check confirming the child is dead before completion is accepted.
-  `execution-guards-node-tests.log` records the parent rerun. Desktop and source
-  Electron E2E checks will be recorded separately after integration.
+  `execution-guards-node-tests.log` records the parent rerun.
+
+Integrated verification: Core `8fe9b6d93b56f147b65c9b341507937adbb6da33`
+and Source implementation `3d575db7` (verification-only documentation follows).
+Full Desktop suite 374/374 after Node sync and Core pin. The isolated source
+Electron Workspace E2E exited 0, including cleanup: real Builder Send/Stop,
+process termination, scoped/unknown usage, period selection/refresh, and
+1024/1280/1440 layouts. These UI checks use mock Identity/no-provider fixtures;
+the neutral Node ownership guard is covered separately by DB and real-process
+tests, not claimed as an end-to-end remote Node test.
+
+Private ignored logs: `execution-guards-{unit,db,node-tests,typecheck,build,desktop,e2e}.log`
+under `desktop/dist`. Reproduce the 50-test Core set with
+`pnpm exec vitest run server/src/__tests__/sps-execution-timeout.test.ts server/src/__tests__/sps-node-usage.test.ts server/src/__tests__/sps-execution-observation.test.ts server/src/__tests__/sps-execution-summary.test.ts`;
+the DB set uses `pnpm exec vitest run server/src/__tests__/sps-nodes-routes.test.ts`.
+Node and Desktop use their respective `npm test`; source app smoke uses
+`SPS_DESKTOP_E2E_SOURCE=1`, `SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS=120000`, and
+`node scripts/smoke-workspace-surfaces-desktop.mjs`.
+
+The existing DEV app was normally exited and restarted without a data reset;
+the logged-in Workspace and Plugin Builder navigation were visually confirmed.
+No installer/tag/SDK release, fresh dependency audit, full Linux regression,
+paid-provider or physical two-PC validation is claimed. Stable prerequisites
+and prior global UI token-gate debt remain unchanged.
 
 ## Verification and Safety
 
