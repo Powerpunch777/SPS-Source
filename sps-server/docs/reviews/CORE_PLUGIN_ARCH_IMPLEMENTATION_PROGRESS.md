@@ -95,7 +95,9 @@ third-party CLI 로그인/네트워크/자식 트리, 무제한 파일 모드의
 - Core recovery/authz/routing/upgrade/autobuild + 빈 Workspace: 6파일, 103개 통과.
   Windows의 `pnpm` 직접 spawn 실패도 Node로 JS entrypoint를 실행하도록 수정했다.
   shell 실행은 추가하지 않았고 기존 3개 실패 autobuild 경로의 성공을 재확인했다.
-- Desktop 전체와 Native controller/store/update focused tests: 최종 통합 실행 기록을 따른다.
+- Desktop 전체 `npm test`: 501/501 통과. Core gitlink와 support matrix를 같은
+  Source 커밋에 고정한 뒤 재실행한 결과다. Native main frame/다른 renderer 거부,
+  저장과 적용 분리, 확인창 중 계정 변경 재검사, 수동 업데이트 정책을 포함한다.
 - Core 전체 30개 package typecheck, 전체 build, compatibility boundary: 통과.
 - UI token gate: 실패. 기존 다른 화면/테스트 파일의 색상 79개, bracket 36개,
   font-size 1개를 보고했다. 이번 변경의 home 파일은 보고 목록에 없다. 통과로
