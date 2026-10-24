@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { BUILDER_UI_AUTHORING_CONTRACT } from "./ui-authoring-contract.js";
 
 const namespace = "builder-chat";
 const stateKey = companyId => ({ scopeKind: "company", scopeId: companyId, namespace, stateKey: "conversations" });
@@ -198,6 +199,7 @@ export function createBuilderChat({ state, agents, logger = console }) {
       const prompt = [
         `Plugin Builder conversation ID: ${conversation.id}. You are its Lead.`,
         `Selected Worker Agent IDs: ${conversation.workerIds.join(", ") || "none"}.`,
+        BUILDER_UI_AUTHORING_CONTRACT,
         content,
         ...files.map(file => `Attached text file: ${file.name}\n${file.content}`),
       ].join("\n\n");
@@ -394,7 +396,7 @@ export function createBuilderChat({ state, agents, logger = console }) {
       const receiver = createRunEventReceiver(event => recordWorkerEvent(companyId, conversation.id, report.id, event), logger);
       sendAttempted = true;
       const result = await agents.sessions.sendMessage(session.sessionId, companyId, {
-        prompt: objective, reason: "Builder Worker assignment", onEvent: receiver.receive,
+        prompt: [BUILDER_UI_AUTHORING_CONTRACT, objective].join("\n\n"), reason: "Builder Worker assignment", onEvent: receiver.receive,
       });
       if (typeof result?.runId !== "string" || !result.runId) throw new Error("Worker run identity was not returned.");
       await mutate(companyId, conversations => {

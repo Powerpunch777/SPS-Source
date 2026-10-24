@@ -43,6 +43,25 @@ test("Builder sends once, preserves attachments and terminal replies", async () 
   assert.equal(messages[1].content,"Reply"); assert.equal(messages[1].status,"completed");
   assert.ok(callbacks.has("a:lead"));
 });
+test("Lead and Worker prompts share the UI authoring contract without losing user input", async () => {
+  const {service,sends}=harness();const chat=await service.create("a",{leadId:"lead",workerIds:["worker"]});
+  const userContent="Keep this user requirement exactly: render the status panel.";
+  await service.send("a",{conversationId:chat.id,message:userContent});
+  const workerObjective="Implement the requested status panel and report its named component.";
+  await service.delegate("a",{conversationId:chat.id,workerId:"worker",objective:workerObjective},{agentId:"lead"});
+  const requiredContractText=[
+    /Import React APIs from `react`/,
+    /host resolves external React, JSX runtime, and SDK bridge dependencies/,
+    /Do not assume `globalThis\.React` or `window\.React` exists/,
+    /named component declared by the plugin manifest/,
+    /Do not use Node-only APIs in browser UI code/,
+  ];
+  for (const prompt of sends) {
+    for (const requirement of requiredContractText) assert.match(prompt,requirement);
+  }
+  assert.ok(sends[0].includes(userContent));
+  assert.ok(sends[1].includes(workerObjective));
+});
 test("Builder rejects unsafe attachments before dispatch",async()=>{
   const {service,sends}=harness();const chat=await service.create("a",{leadId:"lead"});
   for(const file of [{name:"../secret",content:"x"},{name:"notes",content:"x".repeat(65537)}]){

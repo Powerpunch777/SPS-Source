@@ -1036,12 +1036,12 @@ try {
   await preview.evaluate(`location.assign(${JSON.stringify(`/${previewCompanies[0].issuePrefix}/builder-fixture`)})`);
   try {
     await waitPage(preview, page => {
-      if (page.text.includes("Builder Preview Fixture: failed to render")) {
+      if (page.text.includes(": failed to render")) {
         return true;
       }
       return page.text.includes("Builder Preview Fixture") && page.text.includes("Count: 0");
     }, "actual generated plugin UI");
-    const renderFailed = await preview.evaluate("document.body?.innerText.includes('Builder Preview Fixture: failed to render') === true");
+    const renderFailed = await preview.evaluate("document.body?.innerText.includes(': failed to render') === true");
     assert.equal(renderFailed, false, `Generated plugin render failed: ${JSON.stringify(preview.rendererErrors())}`);
   } catch (error) {
     throw new Error(`${errorText(error)} Renderer diagnostics: ${JSON.stringify(preview.rendererErrors())}`);

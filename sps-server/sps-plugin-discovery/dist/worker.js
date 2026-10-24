@@ -697,6 +697,17 @@ function runSpsWorker(plugin2, options = {}) {
 
 // src/builder-chat.js
 import { randomUUID } from "node:crypto";
+
+// src/ui-authoring-contract.js
+var BUILDER_UI_AUTHORING_CONTRACT = [
+  "Builder browser UI compatibility:",
+  "- Import React APIs from `react`; the host resolves external React, JSX runtime, and SDK bridge dependencies.",
+  "- Do not assume `globalThis.React` or `window.React` exists.",
+  "- Export the named component declared by the plugin manifest.",
+  "- Do not use Node-only APIs in browser UI code."
+].join("\n");
+
+// src/builder-chat.js
 var namespace = "builder-chat";
 var stateKey = (companyId) => ({ scopeKind: "company", scopeId: companyId, namespace, stateKey: "conversations" });
 var id = () => randomUUID();
@@ -903,6 +914,7 @@ function createBuilderChat({ state, agents, logger = console }) {
       const prompt = [
         `Plugin Builder conversation ID: ${conversation.id}. You are its Lead.`,
         `Selected Worker Agent IDs: ${conversation.workerIds.join(", ") || "none"}.`,
+        BUILDER_UI_AUTHORING_CONTRACT,
         content,
         ...files.map((file) => `Attached text file: ${file.name}
 ${file.content}`)
@@ -1099,7 +1111,7 @@ ${file.content}`)
       const receiver = createRunEventReceiver((event) => recordWorkerEvent(companyId, conversation.id, report2.id, event), logger);
       sendAttempted = true;
       const result = await agents.sessions.sendMessage(session.sessionId, companyId, {
-        prompt: objective,
+        prompt: [BUILDER_UI_AUTHORING_CONTRACT, objective].join("\n\n"),
         reason: "Builder Worker assignment",
         onEvent: receiver.receive
       });
