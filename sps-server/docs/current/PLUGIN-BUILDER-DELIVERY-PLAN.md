@@ -309,7 +309,8 @@ change, SDK publication, fresh dependency audit or two-device/Stable claim.
 
 ## Stage 6: Explicit Validation Feedback Handoff
 
-In source development; final acceptance results are recorded after testing.
+Implemented and verified in source development; this is not installer or Stable
+acceptance.
 
 - Desktop records separate starts and outcomes for build/static-validation/Worker
   gates and isolated Preview activation. Existing bounded diagnostics storage is
@@ -347,7 +348,53 @@ Its final diagnostic assertion failed because the older test rejected the word
 now targets credential field names/token values; redaction unit cases remain.
 The failed log is retained at `desktop/dist/builder-feedback-preview.log` and is
 not a complete pass. The terminal-attempt fix and final UI changes require the
-fresh committed-source E2E recorded below after completion.
+fresh committed-source E2E recorded below.
+
+Final acceptance on 2026-10-24 used clean Source implementation
+`2f832e052a81614633c6caf20b8cbe40cf2cc506`, unchanged Core
+`98ce2de643a51271323d2d0b26321ec4de7cf16f` and SDK
+`cfa64ec4f589ea9765661834e1685ef1f2e14453`:
+
+- Desktop 434/434 and Builder 36/36, UI build and manifest verification passed.
+- Source Preview E2E exited 0 including cleanup. An invalid runtime manifest
+  passed static gates but was correctly rejected by Core Preview. The actual
+  Builder button appended that scoped failure while preserving the existing
+  draft and attachment, exposing no project path and sending no AI message.
+  Duplicate insertion was disabled. Restoring the valid fixture produced a new
+  passed attempt and an interactive counter from 0 to 1; package/reveal,
+  production isolation, fixtures, Preview-only crash and dangling links passed.
+- Source Workspace E2E exited 0 including cleanup: exact Lead cancellation and
+  process exit, usage unknown-coverage/range selection, scoped history/detail,
+  refresh and responsive layouts passed. No provider was called.
+- Persistent DEV was restarted normally with the existing login/profile intact.
+  Native app inspection confirmed Builder and its work panel open. No production
+  Agent cwd, Source grant or user project configuration was changed.
+
+Private evidence (ignored development artifacts, not public release evidence):
+
+- `desktop/dist/builder-feedback-desktop-committed.log`
+- `desktop/dist/builder-feedback-plugin-final.log`
+- `desktop/dist/builder-feedback-preview-final.log`
+- `desktop/dist/builder-feedback-final-observation/builder-validation-feedback.png`
+- `desktop/dist/builder-feedback-workspace.log`
+- `desktop/dist/builder-feedback-workspace.png`
+
+Reproduce sequentially from `sps-server/desktop` in PowerShell:
+
+```powershell
+npm test
+$env:SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS = '120000'
+npm run test:e2e:plugin-preview
+$env:SPS_DESKTOP_E2E_SOURCE = '1'
+npm run test:e2e:workspace-surfaces
+```
+
+Run `npm run check` in `sps-server/sps-plugin-discovery` as well. This acceptance
+uses deterministic fixtures and mock Identity; it does not repeat Stage 5's real
+Luna authoring or send an AI repair request. There is no new installer, SDK
+publication, Core migration/API, fresh dependency audit or physical-device
+certification. Documentation commits after this section do not change the exact
+tested implementation above.
 
 ## Deferred and Unverified
 
