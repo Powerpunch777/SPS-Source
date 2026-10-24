@@ -25,6 +25,9 @@
 - [PLUGIN-DEVELOPER-PLATFORM-ko.md](PLUGIN-DEVELOPER-PLATFORM-ko.md):
   authoring-platform design. The public hands-on toolkit lives in
   [`sps-plugin-sdk`](https://github.com/Powerpunch777/sps-plugin-sdk).
+- [PLUGIN-BUILDER-DELIVERY-PLAN.md](PLUGIN-BUILDER-DELIVERY-PLAN.md):
+  current Builder delivery scope, verified source flows and remaining manual
+  project handoff; not a Stable acceptance report.
 - [PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md](PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md):
   staged Core completion plan for the public Runtime SDK, Developer Mode,
   Preview, Diagnostics, Core Marketplace Assistant, Plugin Builder, and

@@ -73,8 +73,8 @@ Implemented in source; final source E2E verification is recorded below:
   unchanged production plugin lifecycle. Restart and race handling are unit
   regressions, not claims of a real-provider or physical-device E2E.
 
-No test count, final E2E result or completion claim is recorded here until the
-parent appends the actual verification.
+The source verification below covers this bounded increment, not full Builder
+completion or release acceptance.
 
 ## Stage 3: Minimal Desktop Package Inspection
 
@@ -83,6 +83,67 @@ exact Vault-relative archive name, regular-file/link boundaries, size and SHA-25
 before revealing the archive in Explorer. The renderer supplies only a project
 ID, never an arbitrary path. This action does not install, activate, publish or
 infer user intent. No Core schema, route, API or SDK changes were needed.
+
+## Verification: 2026-10-24
+
+Implementation commits are `6aa2cd43` (Builder recovery and verified-package
+handoff) and `ba73f0095f143620704c7d51fd35c05b06f74f32` (port selection).
+Core remains `98ce2de643a51271323d2d0b26321ec4de7cf16f`; SDK remains
+`abfbd3692a59c126ae74f487e01d415eed38665e`. This is Desktop 0.4.136 source
+development, not a newly packaged installer or SDK release.
+
+- Builder `npm run check`: 26/26 tests, build and manifest verification passed.
+- Desktop `npm test`: 391/391, including 10 archive-resolver and 11 Owner Host
+  configuration tests; focused registry/preload/Preview contracts: 38/38.
+- Source Preview E2E at `ba73f009`: exit 0 including cleanup. It verified tool
+  registration, the five advisory authoring tools, real external SDK project
+  gates, an actual generated page/counter, verified archive inspection and the
+  **Show verified package** button, fixture reload, unchanged production plugin
+  lifecycle, and redacted diagnostics after deliberately crashing Preview.
+  The generated page screenshot was visually inspected. It is a functional test
+  fixture, not a production design or real AI-authored plugin.
+- Source Workspace E2E: exit 0 including cleanup. Builder Send/Stop targeted the
+  exact Lead run and verified process exit; usage/history and 1024/1280/1440
+  layouts also passed. This invocation began with the port-fallback source
+  already present, before its commit was made. It used mock Identity and a
+  no-provider process fixture, not a paid provider or remote physical Member.
+- Persistent DEV was normally restarted with the existing login/data intact;
+  Builder chat and its Lead/Worker work panel were opened and inspected.
+- Candidate documentation check and `git diff --check` passed. Core and SDK
+  were unchanged in this increment; no fresh full Core/Linux regression or
+  dependency audit is claimed.
+
+Preserved failures: the original Preview harness expected five tools instead of
+seven; an intermediate Worker-cancellation regression exposed a queued-write
+race, corrected before the passing rerun. The next source Preview run failed at
+new Host creation because the preferred database ports were occupied and the
+remaining range was reserved by Windows. Port selection now probes an
+OS-assigned, distinct loopback pair after exhausting the preferred range,
+rechecks availability, and leaves existing saved configurations unchanged. It
+does not alter Windows reservations, stop existing servers, or claim to retain
+the probe sockets until Host startup. The final Preview run passed afterward.
+
+Private ignored development records are in `desktop/dist/`:
+`builder-preview-baseline.log`, `builder-preview-flow.log`,
+`builder-preview-final.log` (port failure), `builder-preview-verified.log`,
+`builder-chat-final.log`, `builder-focused-desktop.log`, and
+`builder-desktop-verified.log`. They are not public release attestations.
+
+Reproduce from `sps-server/sps-plugin-discovery`: `npm run check`.
+From `sps-server/desktop`: `npm test`; for source Preview, set
+`SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS=120000` and run
+`node scripts/smoke-plugin-preview-desktop.mjs`. For Workspace surfaces, also set
+`SPS_DESKTOP_E2E_SOURCE=1` and run
+`node scripts/smoke-workspace-surfaces-desktop.mjs`.
+
+## Next Delivery Slice
+
+Make the existing manual external-project handoff understandable from a Builder
+conversation, without letting a Plugin choose arbitrary Host paths or mint
+verified build evidence. Then validate real-provider file authoring on an
+explicitly approved Source and connect that result through the same mandatory
+Desktop gates. Do not add installation as an implicit consequence of choosing
+or previewing a plugin.
 
 ## Deferred and Unverified
 
