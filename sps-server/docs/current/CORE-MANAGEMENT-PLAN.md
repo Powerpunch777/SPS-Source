@@ -176,6 +176,14 @@ Core regression, packaged installer, signed release or two-PC evidence is claime
 - Luna 6 xhigh implemented the public SDK and performed a bounded read-model
   review; parent completed Core plumbing, DB behavior, tests and app recovery.
 
+Final slice checks: public SDK 155/155, Builder check 16/16 and Desktop full
+`npm test` 373/373 (no exclusions). Source Electron Workspace E2E completed with
+exit 0 after real Send/Stop, process-exit/runtime assertions and responsive
+1024/1280/1440 checks. The persistent DEV Workspace also opened successfully with
+existing login and conversations. No usage-summary UI was added. Future required
+client methods must be applied together with protocol, implementation and mocks
+before treating a stopped DEV checkout as runnable.
+
 ## Verification and Safety
 
 Core DB-backed tests: tenant/plugin isolation, capability rejection, queued and
