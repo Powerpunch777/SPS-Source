@@ -25,10 +25,20 @@ const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const sdkRoot = path.join(desktopRoot, "node_modules", "@sonparkserver", "plugin-sdk");
 const sdkCliPath = path.join(sdkRoot, "cli", "sps-plugin.mjs");
+const liveCodexCommand = process.env.SPS_DESKTOP_E2E_CODEX_COMMAND?.trim();
 
 if (process.platform !== "win32") throw new Error("SPS Plugin Preview Desktop E2E targets Windows.");
 if (packagedBinary) await access(packagedBinary);
 else await access(sourceElectron);
+let liveCodexVersion = null;
+if (liveAuthoring) {
+  assert.ok(liveCodexCommand && path.isAbsolute(liveCodexCommand), "Live authoring requires SPS_DESKTOP_E2E_CODEX_COMMAND set to an absolute installed CLI path supporting the MXC sandbox.");
+  await access(liveCodexCommand);
+  const version = await execFileAsync(liveCodexCommand, ["--version"], { windowsHide: true, timeout: 10_000 });
+  liveCodexVersion = version.stdout.trim();
+  assert.match(liveCodexVersion, /^codex-cli [0-9][A-Za-z0-9.+-]*$/);
+  console.log(`[preview-e2e] using ${liveCodexVersion}`);
+}
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const base64Url = (value) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
@@ -344,7 +354,7 @@ try {
       body: {
         name: "Builder Live Author", role: "engineer", adapterType: "codex_local",
         adapterConfig: {
-          command: process.env.SPS_DESKTOP_E2E_CODEX_COMMAND?.trim() || "codex",
+          command: liveCodexCommand,
           engine: "cli", cwd: pluginDirectory, model: "gpt-6-luna", reasoningEffort: "xhigh", fastMode: true,
           dangerouslyBypassApprovalsAndSandbox: false,
           extraArgs: ["--sandbox", "workspace-write", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "-c", 'windows.sandbox="mxc"', "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=false"],
@@ -953,6 +963,7 @@ try {
     await writeFile(path.join(retained, "result.json"), `${JSON.stringify({
       schemaVersion: 1, evidenceKind: "development-smoke", model: "gpt-6-luna",
       reasoningEffort: "xhigh", fastMode: true, sandbox: "workspace-write",
+      cliVersion: liveCodexVersion,
       actualRunSucceeded: true, fileHashes: authoredFiles,
       packageSha256: liveArtifact.sha256, previewCounter: "Count: 1",
       installedInProduction: false, installedInIsolatedTestHost: liveTeam,
