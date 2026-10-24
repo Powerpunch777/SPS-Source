@@ -1,10 +1,11 @@
 # Builder Team Verification: 2026-10-24
 
-Status: partial isolated source-development verification; the final suite failed
-at generated plugin UI rendering. Not complete Builder, installer, production
-Identity, remote Member or Stable release acceptance.
+Status: the latest follow-up passed the complete isolated source-development
+fixture, including real authoring, repair, interactive Preview and explicit Host
+installation. Initial failed attempts are preserved below. This is not installer,
+production Identity, remote Member or Stable release acceptance.
 
-## Scope and Tuple
+## Initial Scope and Tuple
 
 This increment follows the UI audit and tests real local Lead-to-Worker plugin
 authoring rather than interpreting registered tool names or a mocked reply as
@@ -41,7 +42,7 @@ known test workflow under approval_policy=never. Production Agent policies are
 not changed, generic mutating RPC does not claim destructiveHint=false, and
 out-of-box real Agent approval UX remains a separate check.
 
-## Verification Record
+## Initial Verification Record
 
 - Desktop unit/contract tests: `480/480`.
 - Builder `npm run check`: `45/45`, UI build and manifest verification.
@@ -91,12 +92,13 @@ Private development logs under ignored `desktop/dist`:
   attempt before assigning a root cause. Do not increase a timeout or replace
   the generated UI with a harness-authored page to manufacture a pass.
 
-The normal Host Registry reopening correction is present in the final harness,
-but v7 did not reach it. Its end-to-end acceptance therefore remains pending.
+The normal Host Registry reopening correction was present in the v7 harness,
+but v7 did not reach it. Its acceptance was pending at that point and is now
+covered by the successful v9 follow-up below.
 Earlier v6 Preview success must not be combined with v7's unexecuted installation
 step and presented as one uninterrupted successful flow.
 
-### Next Builder Check
+### Follow-up Plan From the Initial Failure
 
 Retain a bounded, private copy of the four generated fixture files and sanitized
 renderer error details on failure, with an explicit failed/development evidence
@@ -131,6 +133,71 @@ runs. Local Registry keys are throwaway fixture keys, not official publisher
 credentials. Native folder selection for the fixture Registry is not manually
 certified by the injected test path. UI staging and exact confirmation remain
 explicit test actions, never AI installation.
+
+## Follow-up: Reproduced React Contract Failure
+
+The user's next request was to fix the rendering failure without starting the
+deferred Zod migration or replacing the installed application.
+
+`builder-team-live-v8.log` reproduced the failure. Its private four-file capture
+preserves an actual AI-generated UI module containing:
+
+```js
+const React = globalThis.React;
+const [count, setCount] = React.useState(0);
+```
+
+The retained module SHA-256 is
+`25683e87be81905623ec7b6ced9286d7bd6d926722a2218c88940587a515a277`.
+Core's existing loader supplies React through externalized `react` imports and
+the host bridge registry; it does not promise a `globalThis.React` variable.
+The module's global-runtime assumption was therefore invalid. The historical
+v7 module was deleted before capture, so this identifies the reproduced v8
+failure, not a recovered copy of v7's source.
+
+Corrections in Source implementation
+`c235c481a159a860ffbd69e0e721b8573d48714c` (Core/SDK tuple unchanged):
+
+- Plugin Builder supplies the same concise browser UI contract to both Lead and
+  Worker prompts: normal React imports, named manifest export, existing SDK
+  bridge/JSX runtime, no implicit React global or Node-only browser APIs.
+  Original user text/objectives, roles, working folders, grants, model settings
+  and installation policy are unchanged. No global React alias was added to Core.
+- The test harness retains only four bounded fixture files on failure, rejects
+  links/nonregular files/escapes and labels captures private development-failure,
+  never verified success. It does not read credential-store, environment or
+  raw-log files.
+  Captured fixture code is still untrusted private development material, not a
+  public or distributable package.
+- Renderer error collection is bounded and uses the existing credential/path
+  redactor. v8's CDP error array was empty; the preserved generated source, not a
+  claimed console stack trace, supplied the decisive evidence. The UI error wait
+  also no longer assumes a particular manifest display name.
+- Desktop tests `487/487`; Builder `46/46` with build/manifest verification;
+  existing Core React bridge/slot tests `17/17`. No dependency/Core/SDK change.
+- Fresh real-team v9 exited 0 with all cleanup complete on this implementation:
+  real Lead tool delegation, distinct Worker four-file authoring, deliberate
+  runtime manifest rejection, explicit feedback insertion without auto-send,
+  explicit repair submission and a second real Worker run changing only the two
+  allowed manifest/hash files all passed.
+- The new generated UI imports React normally. Its isolated Preview counter
+  changed from 0 to 1; Member/mobile/error fixtures, package/reveal, redacted
+  diagnostics, Preview-only renderer crash and surviving main Workspace passed.
+- The Host explicitly reopened the normal Registry view, opened the visible
+  source form, staged the exact verified archive without installation, then
+  confirmed installation. The installed page's counter also changed from 0 to
+  1. AI did not perform installation. Throwaway Registry keys and mock Identity
+  remained inside the disposable test environment.
+- Exact retained fixture archive SHA-256:
+  `2fb3a535f70944e147985064bb7c6a3452028324d6eec53438ae2bee986d7b2f`.
+  Its private development-smoke result records two real Worker runs and
+  `installedInProduction: false`; the retained bytes were rehashed independently.
+  This is a plugin fixture archive, not an SPS installer or a signed release.
+
+Private evidence: `desktop/dist/builder-render-desktop-final.log`,
+`builder-react-contract-plugin-check.log`, `builder-react-host-contract-tests.log`,
+`builder-team-live-v8.log`, `builder-team-live-v9.log`, and the private
+`live-builder-failure-*` directory. These are not Stable attestations.
 
 ## Security and Installation Hold
 

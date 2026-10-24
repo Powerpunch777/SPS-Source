@@ -496,6 +496,30 @@ The user explicitly deferred Zod migration and installed-app replacement pending
 Fresh production and full-graph security gates both fail; no waiver was added.
 No new installer or public Stable release was created.
 
+## Stage 9: Browser UI Contract and Complete Local Team Fixture
+
+The follow-up reproduced an actual generated UI using `globalThis.React`, which
+the host does not promise. Builder now supplies the existing external React
+import contract to both Lead and Worker without changing Core, SDK, workflow
+roles, Source grants, model settings or installation policy. Failed-fixture
+capture preserves four bounded private files; it never labels failures verified.
+
+Source `c235c481a159a860ffbd69e0e721b8573d48714c`, with the same Core/SDK tuple,
+passed Desktop `487/487`, Builder `46/46` plus build/manifest and Core React
+bridge/slot tests `17/17`. Real-team v9 exited 0 including cleanup: real Lead
+delegation, distinct Worker authoring, deliberate validation failure, explicit
+feedback and separate Worker repair, interactive isolated Preview, error/mobile/
+Member fixtures, package/reveal and Preview-only crash all passed. The Host then
+explicitly staged and confirmed installation of the exact same archive in the
+temporary Host and interacted with its installed page. No AI installation or
+user production-Host mutation occurred.
+
+The [team verification review](../reviews/BUILDER-TEAM-VERIFICATION-2026-10-24.md)
+retains the exact artifact hash, commands, failed attempts and acceptance limits.
+This verifies the explicitly authorized local fixture, not default approval UX
+on all user Agents or remote Node authoring. Zod migration, security remediation,
+installed-app replacement and Stable acceptance remain on their existing holds.
+
 ## Deferred and Unverified
 
 - Source-bound production authoring and remote Member authoring remain unverified.
