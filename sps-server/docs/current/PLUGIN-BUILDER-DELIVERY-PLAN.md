@@ -337,8 +337,8 @@ acceptance.
   unfinished, and a safe warning is logged. This ledger is not an atomic run DB.
 - Folder/CLI execution setup remains a separate decision. A navigation reference
   is still not Source authorization or an Agent cwd mutation. Reusing an existing
-  Lead's cwd versus creating a dedicated authoring Agent requires explicit user
-  choice before implementation; this increment does not decide it implicitly.
+  Lead's cwd versus creating a dedicated authoring Agent was deferred in this
+  increment. The later Stage 7 decision below resolves the product direction.
 
 Pre-commit checks: Desktop 434/434 and Builder 36/36, build and manifest checks
 passed. The first source E2E reached failed-Preview feedback, preserved the draft
@@ -395,6 +395,34 @@ Luna authoring or send an AI repair request. There is no new installer, SDK
 publication, Core migration/API, fresh dependency audit or physical-device
 certification. Documentation commits after this section do not change the exact
 tested implementation above.
+
+## Stage 7: Independent Agents and Default Working Folders
+
+User decision (2026-10-24): multiple Agents may reuse the same CLI account, with
+independent default working folders. Register a separate Agent explicitly instead
+of silently changing an existing Lead. Agent registration/settings remain Core;
+Lead/Worker selection remains Plugin Builder. A shared login shares provider
+limits, not additional quota. This work does not copy credentials between Agents.
+
+Implementation in progress:
+
+- Reuse Core Assistant registration and configuration APIs. Workspace lists every
+  nonterminated Assistant and always offers Add Assistant. The existing setup
+  redirect still applies only to a settled empty roster.
+- Core create/edit exposes the saved adapter cwd as a default folder, including
+  previously unconfigured Agents. Host-only native folder selection returns the
+  user's selection without saving or running anything; manual entry remains.
+- Neutral Assistant creation and adapter switching default permission/sandbox
+  bypass off. Existing saved Agent settings are not changed automatically.
+- Builder explicitly checks the selected Lead's saved Codex-local path against
+  its Host-linked development project. The minimized result contains IDs/status
+  only; no local paths, environment, command or credentials. Host/Workspace and
+  current binding are rechecked. Stale responses are discarded in the UI.
+- This is a lexical configuration snapshot, not an execution gate or proof of
+  actual cwd, sandbox, Source rights, file existence, login or CLI availability.
+  Other adapters and remote execution are not certified by the comparison.
+- No automatic Agent creation/selection, message sending, cwd mutation, grants,
+  installation, Core schema migration or SDK method is introduced.
 
 ## Deferred and Unverified
 

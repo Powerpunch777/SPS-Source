@@ -6,11 +6,17 @@ import {
   getDeveloperProjectBridge,
   normalizeDeveloperProjectContextResponse,
 } from "./developer-project-context.js";
+import { getDeveloperAgentFolderBridge, normalizeDeveloperAgentFolderCheckResponse } from "./developer-agent-folder.js";
 import { appendDeveloperValidationRepairRequest } from "./developer-validation-feedback.js";
 
 function desktopProjectBridge() {
   if (typeof window === "undefined") return null;
   return getDeveloperProjectBridge(window.spsDesktopWorkspace);
+}
+
+function desktopAgentFolderBridge() {
+  if (typeof window === "undefined") return null;
+  return getDeveloperAgentFolderBridge(window.spsDesktopWorkspace);
 }
 
 export function PluginBuilderPage({ context }) {
@@ -21,7 +27,8 @@ export function PluginBuilderPage({ context }) {
   const [workers, setWorkers] = useState([]), [draft, setDraft] = useState(""), [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [panel, setPanel] = useState(false), [panelWidth, setPanelWidth] = useState(300);
   const [projectState, setProjectState] = useState(null), [projectBusy, setProjectBusy] = useState(false), [validationBusy, setValidationBusy] = useState(false), [validationNotice, setValidationNotice] = useState("");
-  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null), projectRequest = useRef(0), projectRefresh = useRef(null), createdConversation = useRef(null), projectActionGeneration = useRef(0), projectActionCompany = useRef(context.companyId), projectActionScope = useRef(null), pastedValidationAttempts = useRef(new Set()), draftValue = useRef(draft), validationBusyRef = useRef(false), mounted = useRef(true);
+  const [agentFolderCheck, setAgentFolderCheck] = useState(null), [agentFolderCheckBusy, setAgentFolderCheckBusy] = useState(false);
+  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null), projectRequest = useRef(0), projectRefresh = useRef(null), createdConversation = useRef(null), projectActionGeneration = useRef(0), projectActionCompany = useRef(context.companyId), projectActionScope = useRef(null), pastedValidationAttempts = useRef(new Set()), draftValue = useRef(draft), validationBusyRef = useRef(false), agentFolderCheckBusyRef = useRef(false), mounted = useRef(true);
   const agents = data?.agents ?? [], conversations = data?.conversations ?? [];
   const conversation = conversations.find(item => item.id === selectedId);
   const projectConversation = conversation ?? (createdConversation.current?.id === selectedId ? createdConversation.current : null);
@@ -35,10 +42,12 @@ export function PluginBuilderPage({ context }) {
   const visibleProjectState = panel && projectState?.scopeKey === projectScopeKey ? projectState : null;
   const visibleProject = visibleProjectState?.kind === "ready" ? visibleProjectState.value.project : null;
   const validationFeedback = visibleProjectState?.kind === "ready" ? visibleProjectState.value.validationFeedback : null;
+  const agentFolderScopeKey = JSON.stringify([context.companyId, projectContextId, visibleProject?.id ?? null, selectedLeadId]);
+  const visibleAgentFolderCheck = panel && agentFolderCheck?.scopeKey === agentFolderScopeKey ? agentFolderCheck : null;
   const validationAttemptAdded = Boolean(validationFeedback && (pastedValidationAttempts.current.has(validationFeedback.attemptId)
     || draft.split(/\r?\n/).some(line => line.startsWith(`Validation attempt: ${validationFeedback.attemptId} (`))));
   draftValue.current = draft;
-  projectActionScope.current = { companyId: context.companyId, contextId: projectContextId, projectId: visibleProject?.id ?? null, panel, running };
+  projectActionScope.current = { companyId: context.companyId, contextId: projectContextId, projectId: visibleProject?.id ?? null, agentId: selectedLeadId, panel, running };
   useEffect(() => { const timer = setInterval(refresh, running ? 1500 : 10000); return () => clearInterval(timer); }, [refresh, running]);
   useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }); }, [selectedId, messages.length, messages.at(-1)?.status]);
   useEffect(() => () => resizeCleanup.current?.(), []);
@@ -123,7 +132,7 @@ export function PluginBuilderPage({ context }) {
     finally { setBusy(false); refresh(); }
   }
   async function openProjectContext() {
-    if (busy || projectBusy || validationBusy) return;
+    if (busy || projectBusy || validationBusy || agentFolderCheckBusy || agentFolderCheckBusyRef.current) return;
     const bridge = desktopProjectBridge();
     if (!bridge) {
       setProjectState({ scopeKey: projectScopeKey, kind: "host-only" });
@@ -159,6 +168,49 @@ export function PluginBuilderPage({ context }) {
       const contextId = targetConversation?.id ?? projectContextId;
       setProjectState({ scopeKey: JSON.stringify([context.companyId, contextId]), kind: "error" });
     } finally { setBusy(false); setProjectBusy(false); }
+  }
+  async function checkLeadFolder() {
+    if (busy || projectBusy || validationBusy || validationBusyRef.current || agentFolderCheckBusy || agentFolderCheckBusyRef.current
+      || running || !projectContextId || !visibleProject?.id || !selectedLeadId || !lead || visibleProjectState?.kind !== "ready") return;
+    const scope = { companyId: context.companyId, contextId: projectContextId };
+    const projectId = visibleProject.id;
+    const agentId = selectedLeadId;
+    const scopeKey = agentFolderScopeKey;
+    const bridge = desktopAgentFolderBridge();
+    if (!bridge) {
+      setAgentFolderCheck({ scopeKey, status: "unsupported" });
+      return;
+    }
+    const generation = projectActionGeneration.current;
+    const companyId = context.companyId;
+    const isCurrent = () => {
+      const current = projectActionScope.current;
+      return mounted.current && projectActionGeneration.current === generation
+        && projectActionCompany.current === companyId && current?.panel === true && !current.running
+        && current.companyId === companyId && current.contextId === scope.contextId
+        && current.projectId === projectId && current.agentId === agentId;
+    };
+    agentFolderCheckBusyRef.current = true;
+    setAgentFolderCheckBusy(true);
+    setAgentFolderCheck({ scopeKey, status: "checking" });
+    try {
+      const response = normalizeDeveloperAgentFolderCheckResponse(
+        await bridge.check(scope, agentId),
+        { projectId, agentId },
+      );
+      if (!isCurrent()) return;
+      setAgentFolderCheck({ scopeKey, status: response?.status ?? "unavailable" });
+    } catch {
+      if (isCurrent()) setAgentFolderCheck({ scopeKey, status: "unavailable" });
+    } finally {
+      agentFolderCheckBusyRef.current = false;
+      if (mounted.current) {
+        if (!isCurrent()) {
+          setAgentFolderCheck(current => current?.scopeKey === scopeKey && current.status === "checking" ? null : current);
+        }
+        setAgentFolderCheckBusy(false);
+      }
+    }
   }
   async function addValidationFeedbackToDraft() {
     if (busy || projectBusy || validationBusy || validationBusyRef.current || running || !projectContextId || !visibleProject?.id
@@ -262,7 +314,7 @@ export function PluginBuilderPage({ context }) {
         {files.length ? <div className="bc-file-chips">{files.map((file,index) => <span className="bc-file-chip" key={index}>{file.name}<button type="button" title="첨부 제거" aria-label={`${file.name} 첨부 제거`} onClick={() => setFiles(files.filter((_,i) => i!==index))}>x</button></span>)}</div> : null}
         <textarea aria-label="Lead에게 메시지" placeholder={lead ? `${lead.name}에게 메시지` : "먼저 Assistant를 등록하세요"} value={draft} maxLength={20000} disabled={busy || running || !lead} onChange={event => { draftValue.current = event.target.value; setDraft(event.target.value); }} onKeyDown={event => { if(event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
         <div className="bc-compose-tools"><button type="button" className="bc-icon" title="UTF-8 텍스트 파일 첨부" aria-label="텍스트 파일 첨부" disabled={busy || running || validationBusy} onClick={() => fileInput.current.click()}>+</button><input className="bc-hidden" ref={fileInput} type="file" multiple accept=".txt,.md,.json,.js,.ts,.jsx,.tsx,.css,.html,.yaml,.yml,.csv" onChange={attach} />
-          <select aria-label="Lead 선택" value={selectedLeadId} disabled={busy || running || validationBusy || Boolean(conversation)} onChange={event => { setLeadId(event.target.value); setWorkers(workers.filter(id => id!==event.target.value)); }}>{!agents.length ? <option value="">Lead 없음</option> : null}{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
+          <select aria-label="Lead 선택" value={selectedLeadId} disabled={busy || running || validationBusy || agentFolderCheckBusy || Boolean(conversation)} onChange={event => { projectActionGeneration.current++; setLeadId(event.target.value); setWorkers(workers.filter(id => id!==event.target.value)); }}>{!agents.length ? <option value="">Lead 없음</option> : null}{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
           <span className="bc-model" title="선택한 Agent의 모델·추론 설정을 사용합니다">{lead?.model || lead?.adapterType || ""}{lead?.effort ? ` · ${lead.effort}` : ""}</span><span className="bc-spacer" />{running ? <button type="button" className="bc-button" title="현재 Lead 응답만 중지" onClick={stopReply} disabled={busy || validationBusy || !activeMessage.runId}>{busy ? "중지 요청 중…" : cancelling ? "중지 재시도" : "응답 중지"}</button> : <button className="bc-button primary" disabled={busy || validationBusy || !lead || (!draft.trim() && !files.length)}>{busy ? "전송 중…" : "보내기"}</button>}
         </div></div>{notice ? <p className="bc-notice bc-error" role="alert">{notice}</p> : null}{!lead && !loading ? <p className="bc-notice bc-muted">이 Workspace에 실행 가능한 Assistant가 없습니다.</p> : null}
       </form>
@@ -281,8 +333,24 @@ export function PluginBuilderPage({ context }) {
           <div className="bc-project-name"><strong>{visibleProjectState.value.project.displayName}</strong><small>{visibleProjectState.value.project.sourceLabel}</small></div>
           <p title="현재 소스가 검증되었음을 의미하지 않습니다.">{visibleProjectState.value.project.verified ? "마지막 Preview 검증본 있음" : "마지막 Preview 검증본 없음"}</p>
           <small title="Developer Registry 연결만 수행하며 Source 또는 CLI 권한은 부여하지 않습니다.">Registry 연결은 Source/CLI 권한을 부여하지 않습니다.</small>
-          <button className="bc-button bc-project-open" disabled={busy || validationBusy} onClick={openProjectContext}>{projectBusy ? "여는 중…" : "검증·Preview 열기"}</button>
-          <button className="bc-button bc-project-refresh" disabled={busy || validationBusy} onClick={() => projectRefresh.current?.()}>새로고침</button>
+          <button className="bc-button bc-project-open" disabled={busy || validationBusy || agentFolderCheckBusy} onClick={openProjectContext}>{projectBusy ? "여는 중…" : "검증·Preview 열기"}</button>
+          <button className="bc-button bc-project-refresh" disabled={busy || validationBusy || agentFolderCheckBusy} onClick={() => projectRefresh.current?.()}>새로고침</button>
+          <div className="bc-agent-folder-check">
+            <button type="button" className="bc-button" disabled={busy || running || projectBusy || validationBusy || agentFolderCheckBusy || !lead} onClick={checkLeadFolder}>
+              {agentFolderCheckBusy ? "Lead 폴더 확인 중…" : "Lead 폴더 설정 확인"}
+            </button>
+            {visibleAgentFolderCheck ? <p role="status">{{
+              checking: "확인 중",
+              "configured-match": "마지막 확인: 설정 경로 일치",
+              "configured-different": "마지막 확인: 설정 경로 불일치",
+              "not-configured": "마지막 확인: 폴더 미설정",
+              unsupported: "폴더 설정 확인 미지원",
+              unavailable: "폴더 설정 확인 불가",
+            }[visibleAgentFolderCheck.status]}</p> : null}
+            <small title="저장된 설정 경로 문자열만 비교합니다. 실제 실행 cwd, CLI 로그인·샌드박스, Source 권한을 확인하지 않으며 Agent 설정을 변경하지 않습니다.">
+              저장 경로 문자열만 확인하며 실행 상태나 권한을 확인·변경하지 않습니다.
+            </small>
+          </div>
           <div className="bc-validation-feedback" aria-label="최근 검증 피드백">
             <strong>최근 검증</strong>
             {visibleProjectState.value.validationFeedbackState === "absent" ? <p>검증 시도가 없습니다.</p> : null}
@@ -293,7 +361,7 @@ export function PluginBuilderPage({ context }) {
                 <summary>진단 {validationFeedback.diagnostics.length}개</summary>
                 {validationFeedback.diagnostics.map((diagnostic, index) => <p key={`${diagnostic.code}-${index}`}><strong>{diagnostic.code}</strong> · {diagnostic.message}</p>)}
               </details> : null}
-              <button type="button" className="bc-button bc-validation-add" disabled={busy || running || validationBusy || projectBusy || validationFeedback.status !== "failed" || validationAttemptAdded} onClick={addValidationFeedbackToDraft}>
+              <button type="button" className="bc-button bc-validation-add" disabled={busy || running || validationBusy || projectBusy || agentFolderCheckBusy || validationFeedback.status !== "failed" || validationAttemptAdded} onClick={addValidationFeedbackToDraft}>
                 {validationBusy ? "검증 정보 확인 중…" : validationAttemptAdded ? "이미 입력창에 추가됨" : "검증 실패를 입력창에 추가"}
               </button>
             </> : null}

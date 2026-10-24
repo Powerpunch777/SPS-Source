@@ -5,6 +5,7 @@ export function registerDesktopDeveloperContextIpc({
   assertRegistryOwner,
   getDesktopDeveloperContext,
   openDesktopDeveloperContext,
+  checkDesktopDeveloperAgentFolder,
   getRegistryDeveloperContext,
   linkRegistryDeveloperContext,
   clearRegistryDeveloperContext,
@@ -16,6 +17,10 @@ export function registerDesktopDeveloperContextIpc({
   ipcMain.handle("desktop:workspace-developer-context-open", async (event, input) => {
     assertLocalOwnerWorkspace(event, "Developer project context");
     return await openDesktopDeveloperContext(input);
+  });
+  ipcMain.handle("desktop:workspace-developer-agent-folder-check", async (event, input) => {
+    assertLocalOwnerWorkspace(event, "Developer Agent folder check");
+    return await checkDesktopDeveloperAgentFolder(input);
   });
 
   ipcMain.handle("desktop:developer-context-get", async (event) => {

@@ -131,11 +131,63 @@ function normalizeDeveloperProjectContextResponse(value) {
   };
 }
 
+// src/ui/developer-agent-folder.js
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var DEVELOPER_PROJECT_ID = /^dev-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var STATUSES2 = /* @__PURE__ */ new Set([
+  "configured-match",
+  "configured-different",
+  "not-configured",
+  "unsupported",
+  "unavailable"
+]);
+var RESPONSE_KEYS = ["schemaVersion", "projectId", "agentId", "status"];
+var record3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function hasExactKeys2(value, keys) {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+function buildDeveloperAgentFolderCheckInput(scope, agentId) {
+  if (!record3(scope) || typeof scope.companyId !== "string" || !UUID2.test(scope.companyId) || typeof scope.contextId !== "string" || !UUID2.test(scope.contextId) || typeof agentId !== "string" || !UUID2.test(agentId)) return null;
+  return {
+    context: {
+      companyId: scope.companyId,
+      pluginId: DEVELOPER_PROJECT_PLUGIN_ID,
+      contextId: scope.contextId
+    },
+    agentId
+  };
+}
+function getDeveloperAgentFolderBridge(host) {
+  if (!record3(host) || typeof host.checkDeveloperAgentFolder !== "function") return null;
+  return Object.freeze({
+    check(scope, agentId) {
+      const input = buildDeveloperAgentFolderCheckInput(scope, agentId);
+      if (!input) throw new TypeError("A valid Workspace, conversation, and Lead are required.");
+      return host.checkDeveloperAgentFolder(input);
+    }
+  });
+}
+function normalizeDeveloperAgentFolderCheckResponse(value, expected) {
+  if (!record3(expected) || typeof expected.projectId !== "string" || !DEVELOPER_PROJECT_ID.test(expected.projectId) || typeof expected.agentId !== "string" || !UUID2.test(expected.agentId) || !record3(value) || !hasExactKeys2(value, RESPONSE_KEYS) || value.schemaVersion !== 1 || typeof value.projectId !== "string" || !DEVELOPER_PROJECT_ID.test(value.projectId) || typeof value.agentId !== "string" || !UUID2.test(value.agentId) || !STATUSES2.has(value.status) || value.projectId.toLowerCase() !== expected.projectId.toLowerCase() || value.agentId.toLowerCase() !== expected.agentId.toLowerCase()) return null;
+  return {
+    schemaVersion: 1,
+    projectId: value.projectId,
+    agentId: value.agentId,
+    status: value.status
+  };
+}
+
 // src/ui/DiscoveryPage.jsx
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 function desktopProjectBridge() {
   if (typeof window === "undefined") return null;
   return getDeveloperProjectBridge(window.spsDesktopWorkspace);
+}
+function desktopAgentFolderBridge() {
+  if (typeof window === "undefined") return null;
+  return getDeveloperAgentFolderBridge(window.spsDesktopWorkspace);
 }
 function PluginBuilderPage({ context }) {
   const { data, loading, error, refresh } = usePluginData("plugin-builder-workspace", { companyId: context.companyId });
@@ -145,7 +197,8 @@ function PluginBuilderPage({ context }) {
   const [workers, setWorkers] = useState([]), [draft, setDraft] = useState(""), [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [panel, setPanel] = useState(false), [panelWidth, setPanelWidth] = useState(300);
   const [projectState, setProjectState] = useState(null), [projectBusy, setProjectBusy] = useState(false), [validationBusy, setValidationBusy] = useState(false), [validationNotice, setValidationNotice] = useState("");
-  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null), projectRequest = useRef(0), projectRefresh = useRef(null), createdConversation = useRef(null), projectActionGeneration = useRef(0), projectActionCompany = useRef(context.companyId), projectActionScope = useRef(null), pastedValidationAttempts = useRef(/* @__PURE__ */ new Set()), draftValue = useRef(draft), validationBusyRef = useRef(false), mounted = useRef(true);
+  const [agentFolderCheck, setAgentFolderCheck] = useState(null), [agentFolderCheckBusy, setAgentFolderCheckBusy] = useState(false);
+  const end = useRef(null), fileInput = useRef(null), resizeCleanup = useRef(null), projectRequest = useRef(0), projectRefresh = useRef(null), createdConversation = useRef(null), projectActionGeneration = useRef(0), projectActionCompany = useRef(context.companyId), projectActionScope = useRef(null), pastedValidationAttempts = useRef(/* @__PURE__ */ new Set()), draftValue = useRef(draft), validationBusyRef = useRef(false), agentFolderCheckBusyRef = useRef(false), mounted = useRef(true);
   const agents = data?.agents ?? [], conversations = data?.conversations ?? [];
   const conversation = conversations.find((item) => item.id === selectedId);
   const projectConversation = conversation ?? (createdConversation.current?.id === selectedId ? createdConversation.current : null);
@@ -159,9 +212,11 @@ function PluginBuilderPage({ context }) {
   const visibleProjectState = panel && projectState?.scopeKey === projectScopeKey ? projectState : null;
   const visibleProject = visibleProjectState?.kind === "ready" ? visibleProjectState.value.project : null;
   const validationFeedback = visibleProjectState?.kind === "ready" ? visibleProjectState.value.validationFeedback : null;
+  const agentFolderScopeKey = JSON.stringify([context.companyId, projectContextId, visibleProject?.id ?? null, selectedLeadId]);
+  const visibleAgentFolderCheck = panel && agentFolderCheck?.scopeKey === agentFolderScopeKey ? agentFolderCheck : null;
   const validationAttemptAdded = Boolean(validationFeedback && (pastedValidationAttempts.current.has(validationFeedback.attemptId) || draft.split(/\r?\n/).some((line) => line.startsWith(`Validation attempt: ${validationFeedback.attemptId} (`))));
   draftValue.current = draft;
-  projectActionScope.current = { companyId: context.companyId, contextId: projectContextId, projectId: visibleProject?.id ?? null, panel, running };
+  projectActionScope.current = { companyId: context.companyId, contextId: projectContextId, projectId: visibleProject?.id ?? null, agentId: selectedLeadId, panel, running };
   useEffect(() => {
     const timer = setInterval(refresh, running ? 1500 : 1e4);
     return () => clearInterval(timer);
@@ -302,7 +357,7 @@ function PluginBuilderPage({ context }) {
     }
   }
   async function openProjectContext() {
-    if (busy || projectBusy || validationBusy) return;
+    if (busy || projectBusy || validationBusy || agentFolderCheckBusy || agentFolderCheckBusyRef.current) return;
     const bridge = desktopProjectBridge();
     if (!bridge) {
       setProjectState({ scopeKey: projectScopeKey, kind: "host-only" });
@@ -339,6 +394,45 @@ function PluginBuilderPage({ context }) {
     } finally {
       setBusy(false);
       setProjectBusy(false);
+    }
+  }
+  async function checkLeadFolder() {
+    if (busy || projectBusy || validationBusy || validationBusyRef.current || agentFolderCheckBusy || agentFolderCheckBusyRef.current || running || !projectContextId || !visibleProject?.id || !selectedLeadId || !lead || visibleProjectState?.kind !== "ready") return;
+    const scope = { companyId: context.companyId, contextId: projectContextId };
+    const projectId = visibleProject.id;
+    const agentId = selectedLeadId;
+    const scopeKey = agentFolderScopeKey;
+    const bridge = desktopAgentFolderBridge();
+    if (!bridge) {
+      setAgentFolderCheck({ scopeKey, status: "unsupported" });
+      return;
+    }
+    const generation = projectActionGeneration.current;
+    const companyId = context.companyId;
+    const isCurrent = () => {
+      const current = projectActionScope.current;
+      return mounted.current && projectActionGeneration.current === generation && projectActionCompany.current === companyId && current?.panel === true && !current.running && current.companyId === companyId && current.contextId === scope.contextId && current.projectId === projectId && current.agentId === agentId;
+    };
+    agentFolderCheckBusyRef.current = true;
+    setAgentFolderCheckBusy(true);
+    setAgentFolderCheck({ scopeKey, status: "checking" });
+    try {
+      const response = normalizeDeveloperAgentFolderCheckResponse(
+        await bridge.check(scope, agentId),
+        { projectId, agentId }
+      );
+      if (!isCurrent()) return;
+      setAgentFolderCheck({ scopeKey, status: response?.status ?? "unavailable" });
+    } catch {
+      if (isCurrent()) setAgentFolderCheck({ scopeKey, status: "unavailable" });
+    } finally {
+      agentFolderCheckBusyRef.current = false;
+      if (mounted.current) {
+        if (!isCurrent()) {
+          setAgentFolderCheck((current) => current?.scopeKey === scopeKey && current.status === "checking" ? null : current);
+        }
+        setAgentFolderCheckBusy(false);
+      }
     }
   }
   async function addValidationFeedbackToDraft() {
@@ -506,7 +600,8 @@ function PluginBuilderPage({ context }) {
           /* @__PURE__ */ jsxs("div", { className: "bc-compose-tools", children: [
             /* @__PURE__ */ jsx("button", { type: "button", className: "bc-icon", title: "UTF-8 \uD14D\uC2A4\uD2B8 \uD30C\uC77C \uCCA8\uBD80", "aria-label": "\uD14D\uC2A4\uD2B8 \uD30C\uC77C \uCCA8\uBD80", disabled: busy || running || validationBusy, onClick: () => fileInput.current.click(), children: "+" }),
             /* @__PURE__ */ jsx("input", { className: "bc-hidden", ref: fileInput, type: "file", multiple: true, accept: ".txt,.md,.json,.js,.ts,.jsx,.tsx,.css,.html,.yaml,.yml,.csv", onChange: attach }),
-            /* @__PURE__ */ jsxs("select", { "aria-label": "Lead \uC120\uD0DD", value: selectedLeadId, disabled: busy || running || validationBusy || Boolean(conversation), onChange: (event) => {
+            /* @__PURE__ */ jsxs("select", { "aria-label": "Lead \uC120\uD0DD", value: selectedLeadId, disabled: busy || running || validationBusy || agentFolderCheckBusy || Boolean(conversation), onChange: (event) => {
+              projectActionGeneration.current++;
               setLeadId(event.target.value);
               setWorkers(workers.filter((id) => id !== event.target.value));
             }, children: [
@@ -586,8 +681,20 @@ function PluginBuilderPage({ context }) {
           ] }),
           /* @__PURE__ */ jsx("p", { title: "\uD604\uC7AC \uC18C\uC2A4\uAC00 \uAC80\uC99D\uB418\uC5C8\uC74C\uC744 \uC758\uBBF8\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", children: visibleProjectState.value.project.verified ? "\uB9C8\uC9C0\uB9C9 Preview \uAC80\uC99D\uBCF8 \uC788\uC74C" : "\uB9C8\uC9C0\uB9C9 Preview \uAC80\uC99D\uBCF8 \uC5C6\uC74C" }),
           /* @__PURE__ */ jsx("small", { title: "Developer Registry \uC5F0\uACB0\uB9CC \uC218\uD589\uD558\uBA70 Source \uB610\uB294 CLI \uAD8C\uD55C\uC740 \uBD80\uC5EC\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", children: "Registry \uC5F0\uACB0\uC740 Source/CLI \uAD8C\uD55C\uC744 \uBD80\uC5EC\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." }),
-          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-open", disabled: busy || validationBusy, onClick: openProjectContext, children: projectBusy ? "\uC5EC\uB294 \uC911\u2026" : "\uAC80\uC99D\xB7Preview \uC5F4\uAE30" }),
-          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-refresh", disabled: busy || validationBusy, onClick: () => projectRefresh.current?.(), children: "\uC0C8\uB85C\uACE0\uCE68" }),
+          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-open", disabled: busy || validationBusy || agentFolderCheckBusy, onClick: openProjectContext, children: projectBusy ? "\uC5EC\uB294 \uC911\u2026" : "\uAC80\uC99D\xB7Preview \uC5F4\uAE30" }),
+          /* @__PURE__ */ jsx("button", { className: "bc-button bc-project-refresh", disabled: busy || validationBusy || agentFolderCheckBusy, onClick: () => projectRefresh.current?.(), children: "\uC0C8\uB85C\uACE0\uCE68" }),
+          /* @__PURE__ */ jsxs("div", { className: "bc-agent-folder-check", children: [
+            /* @__PURE__ */ jsx("button", { type: "button", className: "bc-button", disabled: busy || running || projectBusy || validationBusy || agentFolderCheckBusy || !lead, onClick: checkLeadFolder, children: agentFolderCheckBusy ? "Lead \uD3F4\uB354 \uD655\uC778 \uC911\u2026" : "Lead \uD3F4\uB354 \uC124\uC815 \uD655\uC778" }),
+            visibleAgentFolderCheck ? /* @__PURE__ */ jsx("p", { role: "status", children: {
+              checking: "\uD655\uC778 \uC911",
+              "configured-match": "\uB9C8\uC9C0\uB9C9 \uD655\uC778: \uC124\uC815 \uACBD\uB85C \uC77C\uCE58",
+              "configured-different": "\uB9C8\uC9C0\uB9C9 \uD655\uC778: \uC124\uC815 \uACBD\uB85C \uBD88\uC77C\uCE58",
+              "not-configured": "\uB9C8\uC9C0\uB9C9 \uD655\uC778: \uD3F4\uB354 \uBBF8\uC124\uC815",
+              unsupported: "\uD3F4\uB354 \uC124\uC815 \uD655\uC778 \uBBF8\uC9C0\uC6D0",
+              unavailable: "\uD3F4\uB354 \uC124\uC815 \uD655\uC778 \uBD88\uAC00"
+            }[visibleAgentFolderCheck.status] }) : null,
+            /* @__PURE__ */ jsx("small", { title: "\uC800\uC7A5\uB41C \uC124\uC815 \uACBD\uB85C \uBB38\uC790\uC5F4\uB9CC \uBE44\uAD50\uD569\uB2C8\uB2E4. \uC2E4\uC81C \uC2E4\uD589 cwd, CLI \uB85C\uADF8\uC778\xB7\uC0CC\uB4DC\uBC15\uC2A4, Source \uAD8C\uD55C\uC744 \uD655\uC778\uD558\uC9C0 \uC54A\uC73C\uBA70 Agent \uC124\uC815\uC744 \uBCC0\uACBD\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.", children: "\uC800\uC7A5 \uACBD\uB85C \uBB38\uC790\uC5F4\uB9CC \uD655\uC778\uD558\uBA70 \uC2E4\uD589 \uC0C1\uD0DC\uB098 \uAD8C\uD55C\uC744 \uD655\uC778\xB7\uBCC0\uACBD\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." })
+          ] }),
           /* @__PURE__ */ jsxs("div", { className: "bc-validation-feedback", "aria-label": "\uCD5C\uADFC \uAC80\uC99D \uD53C\uB4DC\uBC31", children: [
             /* @__PURE__ */ jsx("strong", { children: "\uCD5C\uADFC \uAC80\uC99D" }),
             visibleProjectState.value.validationFeedbackState === "absent" ? /* @__PURE__ */ jsx("p", { children: "\uAC80\uC99D \uC2DC\uB3C4\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." }) : null,
@@ -612,7 +719,7 @@ function PluginBuilderPage({ context }) {
                   diagnostic.message
                 ] }, `${diagnostic.code}-${index}`))
               ] }) : null,
-              /* @__PURE__ */ jsx("button", { type: "button", className: "bc-button bc-validation-add", disabled: busy || running || validationBusy || projectBusy || validationFeedback.status !== "failed" || validationAttemptAdded, onClick: addValidationFeedbackToDraft, children: validationBusy ? "\uAC80\uC99D \uC815\uBCF4 \uD655\uC778 \uC911\u2026" : validationAttemptAdded ? "\uC774\uBBF8 \uC785\uB825\uCC3D\uC5D0 \uCD94\uAC00\uB428" : "\uAC80\uC99D \uC2E4\uD328\uB97C \uC785\uB825\uCC3D\uC5D0 \uCD94\uAC00" })
+              /* @__PURE__ */ jsx("button", { type: "button", className: "bc-button bc-validation-add", disabled: busy || running || validationBusy || projectBusy || agentFolderCheckBusy || validationFeedback.status !== "failed" || validationAttemptAdded, onClick: addValidationFeedbackToDraft, children: validationBusy ? "\uAC80\uC99D \uC815\uBCF4 \uD655\uC778 \uC911\u2026" : validationAttemptAdded ? "\uC774\uBBF8 \uC785\uB825\uCC3D\uC5D0 \uCD94\uAC00\uB428" : "\uAC80\uC99D \uC2E4\uD328\uB97C \uC785\uB825\uCC3D\uC5D0 \uCD94\uAC00" })
             ] }) : null,
             validationNotice ? /* @__PURE__ */ jsx("p", { role: "status", children: validationNotice }) : null
           ] })

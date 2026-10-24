@@ -142,6 +142,8 @@ import {
   removeDeveloperProject,
   rollbackDeveloperProject,
 } from "./developer-project-store.mjs";
+import { readDeveloperAgentFolder } from "./developer-agent-folder-reader.mjs";
+import { chooseLocalAgentWorkingDirectory, registerDesktopAgentDirectoryIpc } from "./desktop-agent-directory-controller.mjs";
 import {
   createDeveloperCommandEnvironment,
   runSpsDeveloperCommand,
@@ -2057,6 +2059,16 @@ async function getDesktopDeveloperContext(input) {
     missingProject: Boolean(binding && !project),
     validationFeedback,
   };
+}
+
+async function checkDesktopDeveloperAgentFolder(input) {
+  return await readDeveloperAgentFolder(input, {
+    assertOwner: assertRegistryOwner,
+    resolveContext: resolveDesktopDeveloperContext,
+    getBinding: context => getDeveloperContextLink({ vaultRoot: ownerVaultRoot(), context }),
+    loadProjects: async () => (await loadDeveloperProjects({ vaultRoot: ownerVaultRoot() })).projects,
+    getAgent: agentId => ownerHostApi(`/agents/${encodeURIComponent(agentId)}`, { ownerBootstrap: true }),
+  });
 }
 
 async function openDesktopDeveloperContext(input) {
@@ -4602,7 +4614,14 @@ function registerIpc() {
   registerDesktopDeveloperContextIpc({
     ipcMain, assertLocalOwnerWorkspace, assertRegistryWindowEvent, assertRegistryOwner,
     getDesktopDeveloperContext, openDesktopDeveloperContext, getRegistryDeveloperContext,
+    checkDesktopDeveloperAgentFolder,
     linkRegistryDeveloperContext, clearRegistryDeveloperContext,
+  });
+  registerDesktopAgentDirectoryIpc({
+    ipcMain, assertLocalOwnerWorkspace,
+    chooseDirectory: () => chooseLocalAgentWorkingDirectory({
+      assertOwner: assertRegistryOwner, dialog, parentWindow: workspaceWindow,
+    }),
   });
   ipcMain.handle("desktop:official-extensions-load-catalog", async (event) => {
     if (!officialExtensionsWindow || officialExtensionsWindow.isDestroyed() || event.sender.id !== officialExtensionsWindow.webContents.id) {

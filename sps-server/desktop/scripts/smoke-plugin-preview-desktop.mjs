@@ -348,6 +348,36 @@ try {
   assert.ok(run?.id, `Plugin Builder E2E Agent did not create a run: ${JSON.stringify(run)}`);
   const runContext = { agentId: agent.id, runId: run.id, companyId: company.id, projectId: project.id };
 
+  step("registering two independent Assistants through the real Core form");
+  const originalAgentConfig = (await workspaceApi(workspace, `/api/agents/${agent.id}`)).adapterConfig;
+  const authoringAgents = [];
+  for (const [name, cwd] of [["Folder Author A", pluginDirectory], ["Folder Author B", path.dirname(pluginDirectory)]]) {
+    await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/assistants/new?adapterType=codex_local`)})`);
+    await waitPage(workspace, page => page.text.includes("Default working folder") && page.text.includes("Add Assistant"), "Core Assistant folder form");
+    await workspace.evaluate(`(() => {
+      const set = (selector, value) => {
+        const input = document.querySelector(selector);
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      set('[aria-label="Assistant name"]', ${JSON.stringify(name)});
+      set('[aria-label="Default working folder"]', ${JSON.stringify(cwd)});
+    })()`);
+    await workspace.evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Add Assistant').click()");
+    await waitPage(workspace, page => page.url.includes("/dashboard") && page.text.includes(name), "registered Assistant roster");
+    const registered = (await workspaceApi(workspace, `/api/companies/${company.id}/agents`)).find(item => item.name === name);
+    assert.ok(registered?.id);
+    assert.equal(registered.adapterType, "codex_local");
+    assert.equal(path.resolve(registered.adapterConfig.cwd), path.resolve(cwd));
+    assert.equal(registered.adapterConfig.dangerouslyBypassApprovalsAndSandbox, false);
+    authoringAgents.push(registered);
+  }
+  assert.notEqual(authoringAgents[0].id, authoringAgents[1].id);
+  assert.deepEqual((await workspaceApi(workspace, `/api/agents/${agent.id}`)).adapterConfig, originalAgentConfig);
+  assert.equal(await workspace.evaluate("[...document.querySelectorAll('a')].some(link => link.textContent.trim() === 'Add Assistant')"), true);
+  step("Core registered separate per-Agent folders without changing the original Agent or running a CLI");
+
   const toolDeadline = Date.now() + 30_000;
   let builderTools = [];
   while (Date.now() < toolDeadline) {
@@ -389,13 +419,13 @@ try {
   await waitPage(workspace, page => page.text.includes("Authoring projects"), "Builder authoring panel");
   await workspace.evaluate(`document.querySelector('.bc-evidence').open = true`);
   await waitPage(workspace, page => page.text.includes("SPS Preview Desktop E2E"), "Builder authoring project evidence");
-  if (liveAgent) {
+  {
     await workspace.evaluate(`(() => {
       const select = document.querySelector('[aria-label="Lead 선택"]');
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(liveAgent.id)});
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(liveAgent?.id ?? agent.id)});
       select.dispatchEvent(new Event('change', { bubbles: true }));
     })()`);
-    assert.equal(await workspace.evaluate("document.querySelector('[aria-label=\"Lead 선택\"]').value"), liveAgent.id);
+    assert.equal(await workspace.evaluate("document.querySelector('[aria-label=\"Lead 선택\"]').value"), liveAgent?.id ?? agent.id);
   }
   step("opening Developer Registry from Workspace");
   const opened = await workspace.evaluate("window.spsDesktopWorkspace?.openPluginRegistries ? window.spsDesktopWorkspace.openPluginRegistries() : Promise.reject(new Error('Workspace Registry bridge unavailable'))", true);
@@ -467,6 +497,48 @@ try {
   await assert.rejects(() => workspace.evaluate(`window.spsDesktopWorkspace.getDeveloperProjectContext(${JSON.stringify({ ...developerContext.context, sourcePath: pluginDirectory })})`, true));
   await workspace.evaluate("document.querySelector('.bc-project-refresh').click()");
   await waitPage(workspace, page => page.text.includes("Preview Desktop E2E"), "linked project in Builder");
+  await waitPage(workspace, page => page.text.includes("Lead 폴더 설정 확인"), "scoped Lead folder check action");
+  step("checking Lead folder configuration without changing Agent settings or sending a message");
+  const folderInput = { context: developerContext.context, agentId: conversation.leadId };
+  const checkFolder = value => workspace.evaluate(`window.spsDesktopWorkspace.checkDeveloperAgentFolder(${JSON.stringify(value)})`, true);
+  const leadBeforeCheck = await workspaceApi(workspace, `/api/agents/${conversation.leadId}`);
+  const folderDraft = await workspace.evaluate("document.querySelector('.bc-composer textarea').value");
+  const folderFiles = await workspace.evaluate("document.querySelectorAll('.bc-file-chip').length");
+  await workspace.evaluate("document.querySelector('.bc-agent-folder-check button').click()");
+  await waitPage(workspace, page => page.text.includes(liveAuthoring ? "설정 경로 일치" : "확인 미지원"), "read-only Lead folder comparison");
+  assert.deepEqual((await workspaceApi(workspace, `/api/agents/${conversation.leadId}`)).adapterConfig, leadBeforeCheck.adapterConfig);
+  assert.equal(await workspace.evaluate("document.querySelector('.bc-composer textarea').value"), folderDraft);
+  assert.equal(await workspace.evaluate("document.querySelectorAll('.bc-file-chip').length"), folderFiles);
+  assert.equal(JSON.stringify(await checkFolder(folderInput)).includes(pluginDirectory), false);
+  await assert.rejects(() => checkFolder({ context: otherContext, agentId: conversation.leadId }));
+  await assert.rejects(() => checkFolder({ ...folderInput, cwd: pluginDirectory }));
+  await assert.rejects(() => checkFolder({ context: { ...developerContext.context, companyId: otherCompany.id }, agentId: conversation.leadId }));
+  const folderAgent = await workspaceApi(workspace, `/api/companies/${company.id}/agents`, {
+    method: "POST", body: {
+      name: "Folder comparison fixture", role: "engineer", adapterType: "codex_local",
+      adapterConfig: { dangerouslyBypassApprovalsAndSandbox: false },
+      runtimeConfig: { heartbeat: { enabled: false } },
+    },
+  });
+  const fixtureFolderInput = { context: developerContext.context, agentId: folderAgent.id };
+  assert.equal((await checkFolder(fixtureFolderInput)).status, "not-configured");
+  for (const [cwd, expected] of [[path.dirname(pluginDirectory), "configured-different"], [pluginDirectory, "configured-match"]]) {
+    await workspaceApi(workspace, `/api/agents/${folderAgent.id}`, {
+      method: "PATCH", body: { adapterConfig: { cwd, dangerouslyBypassApprovalsAndSandbox: false } },
+    });
+    const before = await workspaceApi(workspace, `/api/agents/${folderAgent.id}`);
+    const result = await checkFolder(fixtureFolderInput);
+    assert.equal(result.status, expected);
+    assert.equal(result.projectId, connected.id);
+    assert.equal(result.agentId, folderAgent.id);
+    assert.equal(JSON.stringify(result).includes(pluginDirectory), false);
+    assert.deepEqual((await workspaceApi(workspace, `/api/agents/${folderAgent.id}`)).adapterConfig, before.adapterConfig);
+  }
+  const afterFolderCheck = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
+    method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
+  });
+  assert.deepEqual(afterFolderCheck.data.conversations.find(item => item.id === conversation.id).messages, [], "Folder check automatically sent a message");
+  step("Lead folder configured-match/mismatch/unset checks preserved settings, draft and attachments");
   if (screenshotDirectory) {
     const screenshot = await workspace.command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
     await writeFile(path.join(screenshotDirectory, "builder-linked-project.png"), Buffer.from(screenshot.data, "base64"));

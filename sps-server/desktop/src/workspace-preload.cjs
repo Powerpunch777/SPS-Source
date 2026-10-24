@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld("spsDesktopWorkspace", {
   revokeMemberInvite: (input) => ipcRenderer.invoke("desktop:workspace-revoke-member-invite", input),
   openPluginRegistries: () => ipcRenderer.invoke("desktop:workspace-open-plugin-registries"),
   getDeveloperProjectContext: (input) => ipcRenderer.invoke("desktop:workspace-developer-context-get", input),
+  checkDeveloperAgentFolder: (input) => ipcRenderer.invoke("desktop:workspace-developer-agent-folder-check", input),
+  chooseAgentWorkingDirectory: () => ipcRenderer.invoke("desktop:workspace-choose-agent-directory"),
   openDeveloperProjectContext: (input) => ipcRenderer.invoke("desktop:workspace-developer-context-open", input),
   // This Host-only bridge never exists on a Member Desktop or in a browser.
   listHostProjectSources: () => ipcRenderer.invoke("desktop:workspace-host-project-sources"),

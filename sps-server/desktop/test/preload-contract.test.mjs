@@ -373,10 +373,12 @@ test("exposes developer context navigation only through the Host Workspace and r
   const main = await readFile(mainPath, "utf8");
   assert.match(workspace, /getDeveloperProjectContext: \(input\) => ipcRenderer.invoke\("desktop:workspace-developer-context-get", input\)/);
   assert.match(workspace, /openDeveloperProjectContext: \(input\) => ipcRenderer.invoke\("desktop:workspace-developer-context-open", input\)/);
+  assert.match(workspace, /checkDeveloperAgentFolder: \(input\) => ipcRenderer.invoke\("desktop:workspace-developer-agent-folder-check", input\)/);
+  assert.match(workspace, /chooseAgentWorkingDirectory: \(\) => ipcRenderer.invoke\("desktop:workspace-choose-agent-directory"\)/);
   assert.doesNotMatch(workspace, /desktop:developer-context-(link|clear)|desktop:developer-(run-gates|apply-candidate)/);
   assert.match(registry, /desktop:developer-context-link/);
   assert.match(registry, /desktop:developer-context-clear/);
-  assert.doesNotMatch(`${preview}\n${setup}`, /desktop:(workspace-developer-context|developer-context)/);
+  assert.doesNotMatch(`${preview}\n${setup}`, /desktop:(workspace-developer-context|workspace-developer-agent-folder|workspace-choose-agent-directory|developer-context)/);
   assert.match(main, /registerDesktopDeveloperContextIpc\(\{/);
   assert.match(main, /registryDeveloperContext !== selection/);
   assert.match(main, /token !== selection.token/);

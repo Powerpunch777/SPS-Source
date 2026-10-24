@@ -6,6 +6,7 @@ import { registerDesktopDeveloperContextIpc } from "../src/desktop-developer-con
 const channels = [
   "desktop:workspace-developer-context-get",
   "desktop:workspace-developer-context-open",
+  "desktop:workspace-developer-agent-folder-check",
   "desktop:developer-context-get",
   "desktop:developer-context-link",
   "desktop:developer-context-clear",
@@ -27,6 +28,7 @@ function makeHarness(overrides = {}) {
     assertRegistryOwner: (...args) => { guards.push({ name: "registry-owner", args }); },
     getDesktopDeveloperContext: callback("getDesktopDeveloperContext"),
     openDesktopDeveloperContext: callback("openDesktopDeveloperContext"),
+    checkDesktopDeveloperAgentFolder: callback("checkDesktopDeveloperAgentFolder"),
     getRegistryDeveloperContext: callback("getRegistryDeveloperContext"),
     linkRegistryDeveloperContext: callback("linkRegistryDeveloperContext"),
     clearRegistryDeveloperContext: callback("clearRegistryDeveloperContext"),
@@ -93,6 +95,15 @@ test("forwards Registry context with only project ID and context token", async (
   ]);
 });
 
+test("forwards folder checks only after the local Host window guard", async () => {
+  const harness = makeHarness();
+  const input = { context: { companyId: "workspace" }, agentId: "agent" };
+  assert.deepEqual(await harness.handlers.get("desktop:workspace-developer-agent-folder-check")(harness.event, input), {
+    name: "checkDesktopDeveloperAgentFolder", args: [input],
+  });
+  assert.deepEqual(harness.guards, [{ name: "workspace", args: [harness.event, "Developer Agent folder check"] }]);
+});
+
 test("denies every workspace context channel for a wrong window or Member before callbacks", async () => {
   for (const denial of ["Wrong workspace window", "Owner workspace required"]) {
     const error = new Error(denial);
@@ -103,13 +114,13 @@ test("denies every workspace context channel for a wrong window or Member before
       },
     });
 
-    for (const channel of channels.slice(0, 2)) {
+    for (const channel of channels.slice(0, 3)) {
       await assert.rejects(harness.handlers.get(channel)(harness.event, { projectId: "p" }), (actual) => actual === error);
     }
     assert.equal(harness.calls.length, 0);
-    assert.deepEqual(harness.guards, channels.slice(0, 2).map(() => ({
+    assert.deepEqual(harness.guards, channels.slice(0, 3).map((channel) => ({
       name: "workspace",
-      args: [harness.event, "Developer project context"],
+      args: [harness.event, channel.endsWith("folder-check") ? "Developer Agent folder check" : "Developer project context"],
     })));
   }
 });
@@ -123,11 +134,11 @@ test("denies every Registry context channel from a wrong window before any other
     },
   });
 
-  for (const channel of channels.slice(2)) {
+  for (const channel of channels.slice(3)) {
     await assert.rejects(harness.handlers.get(channel)(harness.event, { projectId: "p" }), (actual) => actual === error);
   }
   assert.equal(harness.calls.length, 0);
-  assert.deepEqual(harness.guards, channels.slice(2).map(() => ({ name: "registry-window", args: [harness.event] })));
+  assert.deepEqual(harness.guards, channels.slice(3).map(() => ({ name: "registry-window", args: [harness.event] })));
 });
 
 test("denies every Registry context channel without Owner authority before callbacks", async () => {
@@ -139,11 +150,11 @@ test("denies every Registry context channel without Owner authority before callb
     },
   });
 
-  for (const channel of channels.slice(2)) {
+  for (const channel of channels.slice(3)) {
     await assert.rejects(harness.handlers.get(channel)(harness.event, { projectId: "p" }), (actual) => actual === error);
   }
   assert.equal(harness.calls.length, 0);
-  assert.deepEqual(harness.guards, channels.slice(2).flatMap(() => [
+  assert.deepEqual(harness.guards, channels.slice(3).flatMap(() => [
     { name: "registry-window", args: [harness.event] },
     { name: "registry-owner", args: [] },
   ]));
@@ -155,6 +166,7 @@ test("propagates callback errors without replacing them", async () => {
     const callbackName = [
       "getDesktopDeveloperContext",
       "openDesktopDeveloperContext",
+      "checkDesktopDeveloperAgentFolder",
       "getRegistryDeveloperContext",
       "linkRegistryDeveloperContext",
       "clearRegistryDeveloperContext",

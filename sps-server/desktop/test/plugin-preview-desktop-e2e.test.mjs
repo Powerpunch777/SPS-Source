@@ -30,6 +30,9 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /openPluginRegistries/);
   assert.match(harness, /getDeveloperProjectContext/);
   assert.match(harness, /openDeveloperProjectContext/);
+  assert.match(harness, /checkDeveloperAgentFolder/);
+  assert.match(harness, /Folder check automatically sent a message/);
+  assert.match(harness, /Lead folder configured-match\/mismatch\/unset checks preserved settings/);
   assert.match(harness, /link-developer-context/);
   assert.match(harness, /oldContextToken/);
   assert.match(harness, /Unsent plugin draft/);
