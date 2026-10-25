@@ -69,10 +69,42 @@ test("does not request close or force-stop an already terminal child", async () 
     forceStop() { forceStopCount += 1; },
   });
 
-  assert.deepEqual(result, { graceful: true, exitConfirmed: true, exitCode: null, signalCode: "SIGTERM" });
+  assert.deepEqual(result, { graceful: false, exitConfirmed: true, exitCode: null, signalCode: "SIGTERM" });
   assert.equal(requestCount, 0);
   assert.equal(forceStopCount, 0);
   assert.equal(child.listenerCount("exit"), 0);
+});
+
+test("only an orderly zero exit qualifies an already terminal child as graceful", async () => {
+  for (const [exitCode, signalCode, graceful] of [[0, null, true], [7, null, false], [0, "SIGTERM", false]]) {
+    const child = fakeChild({ exitCode, signalCode });
+    const result = await shutdownPreviewE2eDesktop({
+      child,
+      requestBrowserClose() { assert.fail("terminal child must not receive close"); },
+      forceStop() { assert.fail("terminal child must not be force-stopped"); },
+    });
+    assert.deepEqual(result, { graceful, exitConfirmed: true, exitCode, signalCode });
+  }
+});
+
+test("abnormal exit during the close request is confirmed but never graceful", async () => {
+  for (const [exitCode, signalCode] of [[7, null], [null, "SIGTERM"], [0, "SIGTERM"]]) {
+    const child = fakeChild();
+    const timers = fakeTimers();
+    const result = await shutdownPreviewE2eDesktop({
+      child,
+      requestBrowserClose() {
+        child.exitCode = exitCode;
+        child.signalCode = signalCode;
+        child.emit("exit", exitCode, signalCode);
+      },
+      forceStop() { assert.fail("confirmed abnormal exit must not be force-stopped again"); },
+      ...timerOptions(timers),
+    });
+    assert.deepEqual(result, { graceful: false, exitConfirmed: true, exitCode, signalCode });
+    assert.equal(child.listenerCount("exit"), 0);
+    assert.equal(timers.pending.size, 0);
+  }
 });
 
 test("force-stops once after graceful timeout and confirms the resulting exit", async () => {

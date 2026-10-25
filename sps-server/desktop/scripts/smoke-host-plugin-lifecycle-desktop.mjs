@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -18,9 +18,21 @@ const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const liveAgent = process.argv.includes("--live-agent");
 const deterministicAcp = path.join(desktopRoot, "scripts", "fixtures", "deterministic-marketplace-acp.mjs");
+const deterministicAgentCommand = `"${process.execPath}" "${deterministicAcp}"`;
+const syntheticOpenAiApiKey = "sk-test-sps-e2e-not-valid-for-provider";
+const credentialEnvironmentName = /(?:API[_-]?KEY|_KEY(?:_|$)|(?:ACCESS|REFRESH|AUTH)?[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)/i;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const textOf = (error) => error instanceof Error ? error.message : String(error);
 const encoded = (value) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
+
+function isolatedDeterministicEnvironment(codexHome) {
+  return {
+    ...Object.fromEntries(Object.keys(process.env)
+      .filter((name) => name.toUpperCase() !== "CODEX_HOME" && !credentialEnvironmentName.test(name))
+      .map((name) => [name, process.env[name]])),
+    CODEX_HOME: codexHome,
+  };
+}
 
 if (process.platform !== "win32") throw new Error("Host plugin lifecycle Desktop E2E targets Windows.");
 if (packagedBinary) await access(packagedBinary);
@@ -248,14 +260,21 @@ const identity = mockIdentity();
 const debugPort = await freePort();
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "sps-host-plugin-lifecycle-e2e-"));
 const userData = path.join(temporaryRoot, "user-data");
+const syntheticCodexHome = liveAgent ? null : path.join(temporaryRoot, "synthetic-codex-home");
 let child; let setup; let workspace; let registry; let output = ""; let company = null; let succeeded = false;
 
 try {
+  if (syntheticCodexHome) {
+    await mkdir(syntheticCodexHome, { recursive: true });
+    await writeFile(path.join(syntheticCodexHome, "auth.json"), `${JSON.stringify({
+      OPENAI_API_KEY: syntheticOpenAiApiKey,
+    }, null, 2)}\n`, "utf8");
+  }
   const identityState = await identity.start();
   const binary = packagedBinary || sourceElectron;
   child = spawn(binary, [`--user-data-dir=${userData}`, `--remote-debugging-port=${debugPort}`, "--remote-allow-origins=*", ...(packagedBinary ? [] : ["."])], {
     cwd: packagedBinary ? path.dirname(binary) : desktopRoot,
-    env: { ...process.env, SPS_IDENTITY_URL: identityState.origin, SPS_DESKTOP_E2E: "1", SPS_DESKTOP_E2E_USER_DATA_DIR: userData, SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1", SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1" },
+    env: { ...(syntheticCodexHome ? isolatedDeterministicEnvironment(syntheticCodexHome) : process.env), SPS_IDENTITY_URL: identityState.origin, SPS_DESKTOP_E2E: "1", SPS_DESKTOP_E2E_USER_DATA_DIR: userData, SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1", SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const capture = (chunk) => { output = `${output}${chunk}`.slice(-20000); };
@@ -284,10 +303,22 @@ try {
       adapterType: "codex_local",
       adapterConfig: liveAgent
         ? { engine: "acp" }
-        : { engine: "acp", agentCommand: `"${process.execPath}" "${deterministicAcp}"` },
+        : { engine: "acp", agentCommand: deterministicAgentCommand, env: { OPENAI_API_KEY: syntheticOpenAiApiKey } },
     },
   });
   assert.ok(lifecycleAgent?.id, "Host plugin lifecycle E2E could not create its Agent.");
+  if (!liveAgent) {
+    assert.equal(lifecycleAgent.adapterType, "codex_local", "Deterministic lifecycle E2E must use the local Codex adapter.");
+    assert.equal(lifecycleAgent.adapterConfig?.engine, "acp", "Deterministic lifecycle E2E must use ACP.");
+    assert.equal(lifecycleAgent.adapterConfig?.agentCommand, deterministicAgentCommand, "Deterministic lifecycle E2E must use its pinned local ACP fixture.");
+    const managedCodexHome = lifecycleAgent.adapterConfig?.env?.CODEX_HOME;
+    assert.equal(managedCodexHome?.type, "plain", "Core must return its canonical managed-home binding.");
+    assert.ok(typeof managedCodexHome.value === "string" && path.isAbsolute(managedCodexHome.value), "Core must create the managed per-Agent Codex home.");
+    const managedHomeRelative = path.relative(userData, managedCodexHome.value);
+    assert.ok(managedHomeRelative && !managedHomeRelative.startsWith("..") && !path.isAbsolute(managedHomeRelative), "Managed Codex home must stay in the isolated test userData.");
+    assert.ok(managedHomeRelative.endsWith(path.join("companies", company.id, "agents", lifecycleAgent.id, "codex-home")), "Core must preserve per-Agent credential isolation.");
+    assert.deepEqual(lifecycleAgent.adapterConfig?.env?.OPENAI_API_KEY, { type: "plain", value: syntheticOpenAiApiKey }, "Deterministic lifecycle E2E must use only its canonical synthetic key binding.");
+  }
 
   const before = lifecycleSnapshot(await api(workspace, "/api/plugins"));
   await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/company/settings/instance/plugins`)})`);

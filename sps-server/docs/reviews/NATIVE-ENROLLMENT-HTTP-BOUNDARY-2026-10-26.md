@@ -107,15 +107,24 @@ npx --offline pnpm@11.9.0 exec tsc --noEmit --strict --skipLibCheck --target ES2
   strict handler-test TypeScript rechecks. Existing build warnings remain.
 - No new schema/migration, dependency, public SDK method, UI route or Node grant.
 
-The previous Core `7233ff885` CI `40213936061` passed 15/15. It does not prove this
-new increment; fresh exact-head Core/Source CI is required. Source `d062d1c`
-PR run `40215021041` prepared-Host source app step passed while Windows packaged
-acceptance was still running. No partial job is re-labelled a full Windows pass.
-The actual compatibility-job audit still fails Zod High1243066 (no exception).
-That older Windows job subsequently failed its global WMI PostgreSQL cleanup
-query after functional Preview and graceful Main exit passed. The separate
-[owned-Job cleanup follow-up](WINDOWS-PREVIEW-JOB-CLEANUP-2026-10-26.md) preserves
-that failure and requires fresh hosted acceptance; it is not an enrollment bug.
+Exact Core `0d306bd46` PR workflow `40216576298` completed **15/15 successful
+jobs**, including the full Linux partitions, typecheck/build and aggregate.
+This does not prove Source Desktop acceptance, main inclusion or independent
+review. The previous Core `7233ff885` pass remains historical evidence only.
+
+Source `5211802` PR workflow `40216735206` is terminal **16/18 successful**:
+the compatibility job fails Zod High1243066 (no exception), while Windows job
+`121239389576` passed prepared Native Host source, packaged Workspace and Preview
+before failing Host plugin lifecycle. Its deterministic ACP fixture was stopped
+by the real Codex credential preflight, not a Native enrollment assertion.
+This failed workflow must not be reported as full Windows acceptance.
+
+Older Source `d062d1c` PR workflow `40215021041` failed its global WMI PostgreSQL
+cleanup query after functional Preview and graceful Main exit passed. The
+separate [owned-Job cleanup follow-up](WINDOWS-PREVIEW-JOB-CLEANUP-2026-10-26.md)
+preserves that failure and requires fresh hosted acceptance; it is not an
+enrollment bug. Source `8192f1e` implements that strict natural-exit gate, but
+its fresh workflows were still running when this checkpoint was recorded.
 
 ## Remaining Acceptance
 
@@ -127,6 +136,13 @@ renewal/issuer rotation, restore trust reset, Tailscale-free Source and separate
 Windows PCs remain required. No first connection or external LAN effect is
 qualified by these loopback tests. Source mock, physical two-PC and identical
 final signed-installer evidence stay distinct.
+
+The next source-only management slice should reuse the existing pairing store
+and captured Owner-session authority, with transaction-time reauthorization for
+issue/revoke. Attempt and active-invite caps remain explicit policy inputs;
+proposed 5/10 values are not approved product defaults. UI code publication also
+needs a usable Native origin/port contract: no code should pretend that the
+default-off, unmounted listener is already reachable. None is implemented here.
 
 Zod migration hold, current CI, UI-token findings, Core main/independent review,
 Identity rollout, code signing and same-byte two-PC release gates are unchanged.

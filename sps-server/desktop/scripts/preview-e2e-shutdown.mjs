@@ -71,7 +71,7 @@ async function waitForOperation(operation, timeoutMs, setTimer, clearTimer) {
 
 function result(graceful, snapshot) {
   return {
-    graceful,
+    graceful: graceful && snapshot.exitConfirmed && snapshot.exitCode === 0 && snapshot.signalCode === null,
     exitConfirmed: snapshot.exitConfirmed,
     exitCode: snapshot.exitCode,
     signalCode: snapshot.signalCode,

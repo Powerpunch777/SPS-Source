@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
 import { promisify } from "node:util";
 import test from "node:test";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE,
   previewE2eCleanupDisposition } from "../scripts/preview-e2e-cleanup-contract.mjs";
+import { shutdownPreviewE2eDesktop } from "../scripts/preview-e2e-shutdown.mjs";
 
 const local = { delegated: false, desktopExitConfirmed: true, desktopGraceful: true,
   postgresCleanupConfirmed: true, temporaryDataRemoved: true };
@@ -38,4 +40,16 @@ test("a standalone process using the pending flag cannot exit successfully", asy
   await assert.rejects(promisify(execFile)(process.execPath, ["--input-type=module", "-e", source, "--", OWNED_JOB_CLEANUP_ARGUMENT], {
     timeout: 5000, windowsHide: true,
   }), error => error.code === 76 && error.stdout === "owned-job-cleanup-pending");
+});
+
+test("a real abnormal Desktop process exit cannot qualify local or delegated cleanup", async () => {
+  const child = spawn(process.execPath, ["-e", "process.exit(7)"], { stdio: "ignore", windowsHide: true });
+  await once(child, "exit");
+  const stopped = await shutdownPreviewE2eDesktop({ child });
+  assert.deepEqual(stopped, { graceful: false, exitConfirmed: true, exitCode: 7, signalCode: null });
+  for (const delegated of [false, true]) {
+    assert.throws(() => previewE2eCleanupDisposition({ ...local, delegated,
+      desktopExitConfirmed: stopped.exitConfirmed, desktopGraceful: stopped.graceful,
+      postgresCleanupConfirmed: delegated ? null : true }), /cannot be accepted/);
+  }
 });
