@@ -1,6 +1,6 @@
 # No-AI Workspace 수용 검증
 
-기준일: 2026-10-25 KST. 상태: 소스 구현 완료 / 최종 Electron 연속 검증 진행 중.
+기준일: 2026-10-25 KST. 상태: 소스 구현 및 최종 Electron 연속 검증 통과.
 Desktop `0.4.137` 미출시 소스이며 설치된 앱 교체나 릴리스 게시가 아니다.
 
 ## 변경
@@ -21,21 +21,53 @@ Desktop `0.4.137` 미출시 소스이며 설치된 앱 교체나 릴리스 게�
 
 ## 고정값과 시험
 
+- Source: `427e3fafa3b740dd220c4bb27236a6044d6c77fa`. 후속 문서 커밋은 아래
+  결과만 기록한다. 런타임/harness를 바꾼 뒤 과거 실행을 최종 증거로 재사용하지 않는다.
 - Core: `02b3da6f42d5c53159a3eb2e14b6575326f8a946`.
 - SDK: `3ee0a3acd9badd881c13e91b29eac13569c036b3`, package `0.11.0`의 미출시 고정 소스.
 - Core 회귀: worker-manager / Workspace scheduler / Host client factory 3파일
-  **36/36**, 서버 typecheck 통과. 악의적 nested company 요청 거부와 legacy Host Job을 포함한다.
+  **36/36**, 서버 typecheck 및 서버 build 통과. 악의적 nested company 요청 거부와
+  legacy Host Job을 포함한다. build는 Electron 정리가 끝난 뒤 실행해 실행 중 산출물을 덮어쓰지 않았다.
 - 공개 SDK 전체 `npm test`: **157/157**, 외부 TypeScript consumer 검증 포함.
-- Desktop Worker/package/sync 새 검사: **15/15**. 전체 527개 최종 검사는 pin 고정 후 재실행한다.
+- Desktop 전체 `npm test`: **528/528**, 실패/skip 0. 새 Worker/package/sync 16개를 포함한다.
+- Windows source Electron `npm run test:e2e:no-ai-checklist`: 아래 모든 검사를
+  한 번의 연속 실행에서 통과했다. 임시 userData/Host, 가짜 로컬 Identity, 실제
+  Plugin bridge/Worker/저장소/Job을 사용했다. Windows job의 필수 단계로도 연결했으나
+  원격 CI 실행 성공을 이 로컬 결과로 대신하지 않는다. Workflow YAML 검사도 통과했다.
 - 첫 개발 Electron 실행들은 성공 증거가 아니다. 비활성 거부 메시지에 대한 시험
   assertion 누락, fixture 이벤트 접두사 중복, negative UI variant 경로 충돌을
-  발견하고 고쳤다. 최종 연속 실행의 성공 결과만 후속 기록한다.
+  발견하고 고쳤다. 정상 종료 시 CDP가 응답 없이 끊기는 경우도 발견해 종료 관측을
+  먼저 등록하고 실제 프로세스 exit code 0을 확인하도록 했다. 강제 종료로 재시작
+  검사를 통과시키지 않는다. 위 성공은 이 수정 이후의 최종 연속 실행뿐이다.
+
+| 수용 흐름 | 최종 소스 결과 |
+| --- | --- |
+| Agent 0개 진입, 기본 번들 비활성 시험 | 독립 빈 루트 및 플러그인 관리 왕복 통과 |
+| 임시 Plugin 명시 설치/활성화 | 비활성 상태의 데이터 접근 거부 후 활성화 |
+| 실제 UI 추가/checkbox 완료 | 데이터 저장, event handler 실제 호출과 카운터 증가 |
+| Workspace A/B | A UI/action 데이터만 변경, nested payload의 B 사칭 무효 |
+| 악의적 다른 Workspace state 조회 | 실제 Core scope gate가 거부 |
+| 악의적 Workspace A Job의 B 조회 | 실제 Job 실패 및 scope 오류, 정상 A Job 성공 |
+| capability 없는 read/write | 실제 Core가 data/action 거부, 쓰기 없음 |
+| UI 없는 Worker | manifest UI 없음, 정상 health/Job 등록 |
+| 수동 Job | 실행 기록 succeeded, A 카운터 증가/B 불변 |
+| 새로고침·Host 재시작 | 같은 임시 데이터의 items/event/job 카운터 보존 |
+| 비활성화/재활성화 | 비활성 호출 거부, 저장 데이터 보존 |
+| Plugin data 오류 → Native 복구 | 별도 재시작 진입, file UI/전용 bridge, Workspace bridge 없음 |
+| 렌더링 | 620/1000px 가로 넘침 없음, 원본 스크린샷 직접 검토 |
+| AI 선택성 | 두 Workspace Agent 0개, 모델/Gateway 미설정, Agent 실행 기록 0개 |
+
+위 마지막 행은 전체 프로세스의 네트워크 패킷 감사가 아니다. 실제 제공자 자격증명을
+설정하거나 호출하지 않았고 Worker의 허용 Host 호출도 단위 시험에서 제한했다.
+공개/릴리스용 개인정보 증거를 새로 만든 것은 아니며 원본 스크린샷은 ignored 개발
+디렉터리에만 있다. 기존 물리·서명·배포 게이트를 대체하지 않는다.
 
 재현 (`external/sps-core`):
 
 ```sh
 pnpm exec vitest run server/src/__tests__/plugin-worker-manager.test.ts server/src/__tests__/plugin-job-workspace-scheduler.test.ts packages/plugins/sdk/tests/host-client-factory.test.ts
 pnpm --filter @paperclipai/server typecheck
+pnpm --filter @paperclipai/server build
 ```
 
 재현 (`sps-server/desktop`, Windows PowerShell):

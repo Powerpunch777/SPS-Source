@@ -43,6 +43,10 @@
 
 ## Engineering evidence
 
+- [2026-10-25 No-AI Workspace acceptance](../reviews/NO-AI-WORKSPACE-ACCEPTANCE-2026-10-25.md):
+  real source Desktop UI/state/events/Jobs, Workspace and capability denials,
+  restart/Native recovery, and SDK synchronization and Job-scope fixes.
+
 - [2026-10-25 multi-backend reuse audit](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md):
   canonical public SDK/Core/Desktop inventory, implemented contracts versus
   planned model/OCE connectors, and remaining security/real-integration limits.

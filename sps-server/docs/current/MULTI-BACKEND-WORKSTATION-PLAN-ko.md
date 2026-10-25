@@ -1,10 +1,13 @@
 # SPS 범용 워크스테이션 / 다중 실행 백엔드 계획
 
-기준일: 2026-10-25 KST. 상태: Stage 0 조사·설계 정리 완료, 런타임 추가 구현 전.
+기준일: 2026-10-25 KST. 상태: Stage 0 완료, Stage 1 No-AI reference 소스 수용 통과.
 이 문서는 사용자의 다중 백엔드 전달 문서와 후속 **Core 비공개 / SDK 공개 유지**
 결정을 제품 문서에 정렬한다. 전달 문서의 예시 API를 실제 export로 간주하지 않는다.
 현행 근거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
 기존 UI/복구 이전은 [진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)을 따른다.
+Stage 1의 실제 변경·버그 재현·최종 시험 범위는
+[No-AI 수용 기록](../reviews/NO-AI-WORKSPACE-ACCEPTANCE-2026-10-25.md)으로 구분한다.
+모델 요청·키 브로커·OCE 등 후속 백엔드는 아직 구현 완료가 아니다.
 
 ## 1. 제품 결정과 비변경 범위
 
@@ -155,7 +158,11 @@ Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병
 코드 직접 이식/새 의존성을 도입하는 PR은 그 **정확한 버전의 라이선스·고지**를
 다시 확인한다. 이번 조사에서 외부 코드를 복사하거나 라이선스를 바꾸지 않았다.
 
-## 8. 검증·남은 결정
+## 8. Stage 0 검증 이력·남은 결정
+
+아래 시험은 Stage 0 당시의 고정값/범위다. 이후 Stage 1의 Core Job 보정, SDK
+optional type, 최종 528/157/36 시험과 source Electron 결과는 위 No-AI 수용 기록을
+따른다. Stage 0의 “미실행” 문장을 현재 Stage 1 상태로 해석하지 않는다.
 
 - 조사 baseline: Source `f353df0b78c8d6a5c139906a35c0504b7fbb4769`, Core
   `df26bea0148e163cd05efaa62aba6a2959d89870`, SDK

@@ -10,7 +10,9 @@
 구현 상태와 테스트 증거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
 [Core/Plugin 진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)으로 분리한다.
 
-1. 기존 UI/state/jobs/events/Node/session 계약 재사용과 No-AI reference부터 검증.
+1. No-AI reference의 소스 수용을 완료했다. 실제 UI/state/events/Workspace Job,
+   A/B 거부·Host 재시작·Native 복구는 [수용 기록](../reviews/NO-AI-WORKSPACE-ACCEPTANCE-2026-10-25.md)을 따른다.
+   Node/session 등 기존 계약은 필요한 후속 연결에서 개별 검증한다.
 2. 모델 요청·CLI·Agent 세션과 OCE 관리의 서로 다른 능력/권한/실행 소유권 정렬.
 3. Direct API와 CLI 사례는 mock/승인된 시험 범위에서 구현. 실키·고객 데이터·유료
    API 및 실제 게임 빌드 환경은 별도 확인.

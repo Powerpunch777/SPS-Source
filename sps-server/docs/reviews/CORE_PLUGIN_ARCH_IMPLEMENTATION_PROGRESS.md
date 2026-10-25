@@ -248,6 +248,25 @@ OpenClaw adapter의 mock 시험과 최신 실제 Gateway 호환성도 별도다.
 reference와 격리 Desktop 수용 시험이다. 이번 문서 변경으로 그 Plugin이 구현됐거나
 실제 사용자 환경에 설치된 것은 아니다. API/SDK/DB/의존성/실제 키 변경은 없다.
 
+## 다중 백엔드 Stage 1 / No-AI reference
+
+공개 SDK만 사용하는 임시 체크리스트 UI/Worker를 구현하고 source Electron에서
+UI action·저장·event·Workspace Job·새로고침·Host 재시작·독립 Native 복구까지
+한 번의 연속 실행으로 검증했다. A/B 분리와 capability 누락도 실제 Core 경로로
+거부됨을 확인했다. 기본 번들/사용자 계정·Vault/설치본은 바꾸지 않았다.
+[상세 수용 기록](NO-AI-WORKSPACE-ACCEPTANCE-2026-10-25.md)을 따른다.
+
+실제 시험에서 Desktop의 동일 버전 SDK 복사본이 오래돼 `performAction`이 없던
+문제를 찾아 fingerprint 동기화를 개발/시험/패키징 시작에 추가했다. Core의
+Workspace Job invocation이 `job.companyId`를 무시하던 문제는 실패 재현 후 수정했다.
+기존 Host Job scope는 유지한다. 공개 SDK의 누락된 optional `companyId` 타입만
+추가했으며 Core API/DB/runtime API/의존성/package version은 변경하지 않았다.
+
+고정 Source `427e3fafa3b740dd220c4bb27236a6044d6c77fa`, Core `02b3da6f...`, SDK
+`3ee0a3ac...`에서 Desktop 528/528, SDK 157/157, Core 표적 36/36과 서버 typecheck/build,
+No-AI source Electron을 통과했다. 원격 CI 성공, 실제 모델/Gateway/OCE·Member PC,
+서명 설치본·전체 Core 회귀·최신 의존성 감사나 보호 모드 자격 증거는 아니다.
+
 ## 다음 게이트
 
 독립 복구 경로의 장애 조합 검증을 보강하고 OS/renderer 실행 계약을 구체화한다.
