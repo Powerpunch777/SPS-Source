@@ -421,8 +421,21 @@ try {
   launchDesktop();
 
   async function closeDesktopForRestart() {
-    await (workspaceCdp ?? setupCdp).command("Browser.close");
-    await Promise.race([once(child, "exit"), delay(30_000).then(() => { throw new Error("Desktop graceful shutdown timed out."); })]);
+    if (child.exitCode === null) {
+      // Arm exit observation before closing CDP: Chromium can close the socket
+      // without acknowledging Browser.close, even after a clean process exit.
+      const exited = once(child, "exit");
+      let closeError;
+      void (workspaceCdp ?? setupCdp).command("Browser.close").catch(error => { closeError = error; });
+      let timer;
+      try {
+        await Promise.race([exited, new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Desktop graceful shutdown timed out: ${closeError?.message ?? "exit not observed"}`)), 30_000);
+        })]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     assert.equal(child.exitCode, 0, "Desktop must shut down cleanly before reusing its temporary Host");
     await workspaceCdp?.close().catch(() => undefined);
     await setupCdp?.close().catch(() => undefined);

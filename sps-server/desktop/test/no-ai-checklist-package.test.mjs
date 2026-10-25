@@ -55,8 +55,23 @@ test("No-AI Electron acceptance is opt-in, source-only, and never enters the Age
   assert.match(packageJson.scripts["test:e2e:no-ai-checklist"], /--no-ai-checklist/);
   assert.match(script, /noAiChecklist && !sourceElectron/);
   assert.match(script, /if \(noAiChecklist\) \{[\s\S]*?runNoAiChecklistAcceptance\([\s\S]*?\} else \{\s*\/\/ This fixture uses only an isolated/);
+  const closer = script.slice(script.indexOf("async function closeDesktopForRestart()"), script.indexOf("const setupTarget"));
+  assert.ok(closer.indexOf('once(child, "exit")') < closer.indexOf('.command("Browser.close")'), "Observe process exit before closing CDP");
+  assert.match(closer, /assert.equal\(child.exitCode, 0/);
+  assert.doesNotMatch(closer, /taskkill/);
   const acceptance = await readFile(new URL("../scripts/no-ai-checklist-acceptance.mjs", import.meta.url), "utf8");
   for (const step of ["await restart()", "await openRecovery()", "scope-probe", "denied-read", "denied-write", "jobs/${job.id}/trigger", "Page.reload"]) {
     assert.ok(acceptance.includes(step), `Missing acceptance boundary: ${step}`);
   }
+});
+
+test("Windows verification requires the No-AI source Electron acceptance", async () => {
+  const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
+  const step = workflow.slice(workflow.indexOf("- name: Run No-AI Workspace source Desktop E2E"));
+  assert.ok(step.startsWith("- name: Run No-AI"));
+  const sourceStep = step.split(/\r?\n\s+- name:/)[0];
+  assert.match(sourceStep, /timeout-minutes: 18/);
+  assert.match(sourceStep, /SPS_DESKTOP_E2E_SOURCE: "1"/);
+  assert.match(sourceStep, /run: npm run test:e2e:no-ai-checklist/);
+  assert.doesNotMatch(sourceStep, /continue-on-error|if:/);
 });

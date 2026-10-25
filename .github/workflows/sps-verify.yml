@@ -366,6 +366,14 @@ jobs:
         working-directory: sps-server/desktop
         run: npm run prepare:owner-host-runtime
 
+      - name: Run No-AI Workspace source Desktop E2E
+        timeout-minutes: 18
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_SOURCE: "1"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: npm run test:e2e:no-ai-checklist
+
       - name: Require clean Windows catalog build
         run: git -C external/sps-core diff --exit-code -- packages/skills-catalog/generated/catalog.json packages/teams-catalog/generated/catalog.json
 
