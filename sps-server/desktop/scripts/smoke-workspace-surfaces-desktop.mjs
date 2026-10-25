@@ -10,6 +10,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
+import { runNoAiChecklistAcceptance } from "./no-ai-checklist-acceptance.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +22,7 @@ const sourceElectron = process.env.SPS_DESKTOP_E2E_SOURCE === "1"
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const keepE2eData = process.env.SPS_DESKTOP_E2E_KEEP_DATA === "1";
 const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
+const noAiChecklist = process.argv.includes("--no-ai-checklist");
 
 if (process.platform !== "win32") {
   throw new Error("Workspace Surfaces Desktop E2E currently targets the Windows release.");
@@ -29,6 +31,7 @@ if (!packagedBinary && !sourceElectron) {
   throw new Error("Set SPS_DESKTOP_E2E_BINARY to a packaged SPS Desktop.exe.");
 }
 await access(packagedBinary || sourceElectron);
+if (noAiChecklist && !sourceElectron) throw new Error("The No-AI reference fixture is source-only acceptance, not packaged release evidence.");
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -390,10 +393,12 @@ let appOutput = "";
 try {
   const { origin: identityUrl, issued } = await mockIdentity.start();
   const binary = packagedBinary || sourceElectron;
-  child = spawn(binary, [
+  function launchDesktop(extraArgs = []) {
+    child = spawn(binary, [
     `--user-data-dir=${userDataDirectory}`,
     `--remote-debugging-port=${debugPort}`,
     "--remote-allow-origins=*",
+    ...extraArgs,
     ...(packagedBinary ? [] : ["."]),
   ], {
     cwd: packagedBinary ? path.dirname(binary) : path.resolve(scriptDirectory, ".."),
@@ -407,11 +412,23 @@ try {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const captureOutput = (chunk) => {
-    appOutput = `${appOutput}${chunk.toString()}`.slice(-24_000);
-  };
-  child.stdout?.on("data", captureOutput);
-  child.stderr?.on("data", captureOutput);
+    const captureOutput = (chunk) => {
+      appOutput = `${appOutput}${chunk.toString()}`.slice(-24_000);
+    };
+    child.stdout?.on("data", captureOutput);
+    child.stderr?.on("data", captureOutput);
+  }
+  launchDesktop();
+
+  async function closeDesktopForRestart() {
+    await (workspaceCdp ?? setupCdp).command("Browser.close");
+    await Promise.race([once(child, "exit"), delay(30_000).then(() => { throw new Error("Desktop graceful shutdown timed out."); })]);
+    assert.equal(child.exitCode, 0, "Desktop must shut down cleanly before reusing its temporary Host");
+    await workspaceCdp?.close().catch(() => undefined);
+    await setupCdp?.close().catch(() => undefined);
+    workspaceCdp = null;
+    setupCdp = null;
+  }
 
   const setupTarget = await waitForTarget(
     debugPort,
@@ -558,6 +575,33 @@ try {
     console.log("D2 neutral entry E2E: zero Agents/default activations, independent root, legacy Plugin Manager link, and 620/1000px fit.");
   }
 
+  if (noAiChecklist) {
+    await runNoAiChecklistAcceptance({
+      cdp: workspaceCdp, company, api, click, captureScreenshot, screenshotPath, temporaryRoot: userDataDirectory,
+      restart: async () => {
+        await closeDesktopForRestart();
+        launchDesktop();
+        workspaceCdp = await openCdp(await waitForTarget(debugPort, child,
+          target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""), "restarted No-AI Host Workspace", hostReadyTimeoutMs));
+        await waitForPage(workspaceCdp, page => page.body.includes("Workspace") || page.body.includes("checklist"), "restarted Workspace");
+        return workspaceCdp;
+      },
+      openRecovery: async () => {
+        await closeDesktopForRestart();
+        launchDesktop(["--sps-core-settings"]);
+        setupCdp = await openCdp(await waitForTarget(debugPort, child, target => target.title === "SPS Core Settings", "independent Native recovery"));
+        const recovery = await setupCdp.evaluate(`(async () => ({
+          status: await window.spsCoreSettings.getStatus(), origin: location.protocol,
+          workspaceBridge: typeof window.spsDesktopWorkspace, scripts: document.scripts.length
+        }))()`, true);
+        assert.equal(recovery.origin, "file:");
+        assert.equal(recovery.workspaceBridge, "undefined");
+        assert.equal(recovery.scripts, 1);
+        assert.ok(recovery.status.recovery);
+        if (screenshotPath) await captureScreenshot(setupCdp, path.join(path.dirname(screenshotPath), "no-ai-native-recovery.png"));
+      },
+    });
+  } else {
   // This fixture uses only an isolated, no-provider process. It neither uses
   // the developer's AI credentials nor changes their Workspace data.
   const assistants = await api(workspaceCdp, `/api/companies/${company.id}/agents`);
@@ -1015,6 +1059,7 @@ try {
   }
 
   console.log(`SPS Desktop Workspace Surfaces E2E passed (${packagedBinary ? "packaged" : "source"}).`);
+  }
 } catch (error) {
   const diagnostics = [];
   for (const [label, cdp] of [["setup", setupCdp], ["workspace", workspaceCdp]]) {
