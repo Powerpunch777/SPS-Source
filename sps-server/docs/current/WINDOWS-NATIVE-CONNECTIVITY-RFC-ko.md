@@ -20,7 +20,7 @@
   발급이나 세션 등록은 하지 않는다. LAN은 OFF이며 listener/방화벽 변경도 없다.
 - 비활성 Member 발급 primitive는 표준 PKCS#10 P-256/SHA-256 서명 요청을 사용하며, 개인키는 Member
   로컬 메모리에 두고 공개 요청에서 제외한다. Host의 별도 issuer가 명시적 90일 이하·issuer 유효기간
-  안의 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main/IPC/HTTP/SDK 호출자·제품 키 파일 저장·
+  안의 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main/IPC/HTTP/SDK 호출자·
   provisioning·갱신·새 GUI 흐름은 없다. 표준 TLS 1.3 loopback에서 새 인증서/올바른 키는 통과하고
   인증서 없음·다른 issuer·같은 issuer의 잘못된 EKU·다른 개인키는 거부했다(application bytes 0).
   CSR 서명 검증은 live TLS 키 소유 증명과 별개다. 자체 서명 프로토콜이나 Google 로그인·기기 승인·
@@ -29,7 +29,9 @@
   chain/profile·90일 상한·SKI/AKI를 검사한다. 공개 상태는 기기 승인이나 접근 권한이 아니다.
 - Windows Member pending capsule은 주입된 `safeStorage`로 serialized JSON을 암호화/복호화하며
   Identity issuer origin·subject·Host/device·신뢰된 server/issuer pins를 ciphertext 안에만 결속한다.
-  unit AES fixture는 DPAPI가 아니며 제품 filestore·Main/IPC·enrollment·GUI는 아직 없다.
+  private pending filestore도 소스로 구현됐다. Owner Vault 밖의 논리 account/Host/device slot에 first-writer/create-only로
+  저장하고 pins는 암호문 context에만 둔다. 덮어쓰기·삭제·자동복구는 없다. unit AES는 DPAPI가 아니며 caller는
+  격리 smoke뿐으로 Main/IPC·GUI·enrollment·발급 자격 저장 연결은 없다.
 - 미출시 v2 Host identity store는 DPAPI context를 Vault incarnation `dev`/`ino`/`birthtimeNs`에
   결속한다. 이는 로컬 lifecycle 결속이지 attestation이 아니다. 유효한 새 Vault에 slot이 없으면
   `not_prepared`이며 준비를 허용한다. 기존 slot과 함께 Vault incarnation이 없거나 재생성/손상된
@@ -44,6 +46,7 @@
 정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과
 [Member 인증서 검증](../reviews/NATIVE-MEMBER-CERTIFICATE-VERIFICATION-2026-10-25.md),
 [Member 자격 검증](../reviews/NATIVE-MEMBER-CREDENTIAL-VERIFICATION-2026-10-25.md)을 따른다.
+현재 파일 adapter의 정확한 증거는 [pending 저장 검증](../reviews/NATIVE-MEMBER-PENDING-STORE-VERIFICATION-2026-10-25.md)에 있다.
 
 ## 1. 목표와 비목표
 
@@ -86,13 +89,11 @@ TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은
 D7은 서버/Member 인증서 90일, 별도 issuer 365일 및 만료 전 기존 키·검증된 현재 신원을
 사용하는 갱신 정책의 승인이다. 갱신 threshold/issuer 회전 세부는 미정이고, 갱신 자체는
 미구현이다. 기존 Core Settings source E2E는 로컬 Electron 43.7.7에서 다시 통과했으나 잠긴 43.8.3 검증이 아니다.
-실제 Electron smoke는 runtime 일치 후 소유 fixture에서 Host identity와 Member 암호화 capsule 파일의
-생성/별도 프로세스 재독해를 검사한다. 로컬 43.7.7은 crypto 전 version mismatch로 거부된다.
-Source `3725d997` run `40179004485`는 Linux 전체 shard/build 통과 후 Windows·Zod로 전체 실패했다.
-Windows unit/bootstrap은 통과했지만 Native root validation은 실제 Electron 43.8.3에서 실패해 DPAPI 전 중단됐고,
-Settings/No-AI는 skipped였다. native realpath helper는 모든 ancestor 검사를 유지한다. 실제 8.3 alias 비교는
-로컬에서 미실행이므로 CI 원인은 아직 가설이며 새 CI가 필요하다. 잠긴 기본 바이너리 외 override 결과는 수용하지 않는다.
-정확한 수·명령·runtime 증거는 위 Member 자격 검증과 [계획 체크포인트](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)를 따른다.
+실제 Electron smoke는 새 pending filestore로 확장됐으나 로컬 43.7.7은 crypto 전 version mismatch로 거부된다.
+Source `d3ddbaa` run `40180490974`의 Windows job `121130316230`은 이전 Host/capsule Native smoke와
+Core Settings step을 통과했다. 새 filestore에 이 증거를 적용하지 않으며 최종 runtime JSON은 job 종료 뒤 확인한다.
+Owner runtime 준비는 성공했고 No-AI는 실행 중이다. 잠긴 기본 바이너리 외 override 결과는 수용하지 않는다.
+정확한 수·명령·runtime 증거는 위 pending 저장 검증과 [계획 체크포인트](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)를 따른다.
 Zod High `1243066` 보류·기존 Low 2건과 기존 복구/Source/Node 권한은 그대로다. 실제 고객 키/listener는 사용하지 않았다.
 
 신원 확인 전에는 사용자 access token·초대 secret·Workspace 자료를 보내지 않는다.
@@ -172,6 +173,28 @@ TTL·키 회전·rate limit·retention 세부 정책은 계약 PR의 명시적 �
 
 ## 5. HTTP, UI, 실시간 관측
 
+### 최초 등록의 다음 검수안: 발급과 등록의 두 단계
+
+아래는 아직 구현·활성화되지 않은 연결 순서다. CSR의 과거 서명 검증을 새 mTLS 연결의
+키 소유로 간주하지 않기 위해 두 경계를 분리한다. 별도 자체 PoP 서명은 만들지 않는다.
+
+1. Member는 전체 초대의 Host 인증서·지문과 실제 서버 인증 TLS를 먼저 대조한다.
+   그 뒤에만 현재 SPS 사용자 인증, 초대 secret 및 공개 CSR을 전송한다. Host는 현재
+   사용자·초대·Host/device/CSR를 검증하고 발급 기록을 결속하되 **아직 초대를 소비하지 않는다**.
+2. Member는 검증·보관한 인증서와 원래 키로 새 full mTLS 연결을 만든다. Host는 실제 TLS
+   peer 인증서, 같은 현재 사용자, 정확한 발급 기록·초대를 대조한 후 등록 트랜잭션에서
+   초대 소비와 **pending 기기** 생성을 함께 완료한다. 헤더/body의 기기 ID는 증거가 아니다.
+
+새 연결의 키 증명은 표준 [TLS CertificateVerify](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4.3)를
+사용한다. 최초 등록은 재개 세션·early data를 수용하지 않는 경로로 검증한다. 발급 전
+크기·시도·동시성·서명 예산과 만료를 제한하고 동일 요청은 동일 기록/인증서를 재사용해야 한다.
+서명 예산 수치·발급 기록 저장/정리·실패 복구·프로세스 간 키 전달의 실제 계약은 후속 검수다.
+
+pending 등록용 검사는 승인된 기기의 일반 API guard와 분리한다. 이 제한 경로가 임의 Core
+API/파일/WS 프록시가 되어서는 안 된다. 발급·로그인·mTLS 성공만으로 Host 승인이나 Workspace
+membership, Plugin, Node/CLI/Source grant를 만들지 않는다. 소비된 초대의 재등록과 철회 기기의
+권한 부활은 거부한다. 이 제안은 실제 listener/방화벽 활성화 승인이 아니다.
+
 보호된 HTTP·Artifact/파일·UI 서브리소스·WebSocket upgrade 모두 동일한 기기/사용자/
 Workspace 인가를 거쳐야 한다. 세션 cookie가 있거나 LAN 소켓이라는 이유로 기기
 검사를 생략하지 않는다. 현재 WebSocket 경로는 Express HTTP 미들웨어와 별도이므로
@@ -234,10 +257,10 @@ Member 연결/철회 API로 바꾸지 않는다. 새 연결만으로 `runs.dispa
 키 교체 시 이전 서비스/리스너를 반드시 폐기해야 한다. 새 pin 인스턴스의 거부 시험은
 모든 프로세스의 이전 키를 자동 철회했다는 증거가 아니다.
 
-Windows safeStorage를 기존 패턴에 맞춰 재사용한다. 이전 runtime의 프로세스 간 재독해 시험은
+Windows safeStorage를 기존 패턴에 맞춰 재사용한다. 이전 43.7.7 runtime의 프로세스 간 재독해 시험은
 잠긴 43.8.3의 DPAPI v2 양성 수용이 아니다. TPM/non-exportable 또는 같은 사용자 악성 프로세스 격리를 보장하지 않는다.
-Member 키와 Node 키는 별도 용도이며 Member 키의 파일/slot 저장·회전·폐기 규칙 연결은 후속이다.
-pending capsule의 메모리 암호화 API와 소유 smoke fixture 파일은 제품 filestore나 enrollment 구현이 아니다.
+Member 키와 Node 키는 별도 용도다. private pending filestore는 구현됐지만 앱 lifecycle·회전·폐기·발급 자격 저장은 후속이며
+소유 smoke fixture 통과도 enrollment나 Host 승인이 아니다.
 Host 이전/Owner Vault 복원은 기존 remote credential을 부활시키지 않고
 명시적 재승인을 요구한다. restore sanitizer에 새 자격 자료를 포함해야 한다.
 

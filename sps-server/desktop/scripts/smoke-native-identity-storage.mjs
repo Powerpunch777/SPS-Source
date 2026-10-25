@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, mkdtemp, readFile, realpath, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, readdir, rm } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeHostIdentityStore } from "../src/native-identity-store.mjs";
 import { createSpsNativeMemberKeyRequest } from "../src/native-member-certificates.mjs";
-import { createSpsNativeMemberPendingCapsule } from "../src/native-member-pending-capsule.mjs";
+import { createSpsNativeMemberPendingKeyStore } from "../src/native-member-pending-store.mjs";
 import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
 import { canonicalNativeSmokeDirectorySync } from "../src/native-identity-smoke-paths.mjs";
 import {
@@ -180,23 +180,36 @@ async function electronPhase() {
     const status = inspectSpsNativeHostIdentity(loaded);
     assert.equal(status.state, "identity_prepared");
     stage = "member_pending_reload";
-    const memberCapsule = createSpsNativeMemberPendingCapsule({ safeStorage });
     const memberContext = { identityIssuer: "https://identity.fixture.invalid", subject: "native-smoke-fixture-user",
       hostId: loaded.hostId, deviceKeyId: "22222222-2222-4222-8222-222222222222",
       serverSpkiSha256: status.serverSpkiSha256, issuerSpkiSha256: status.memberIssuerSpkiSha256 };
-    const memberFile = path.join(userDataDirectory, "native-member-pending-smoke.json");
+    const memberStoreOptions = { userDataDirectory, vaultDirectory, context: memberContext, safeStorage };
+    const memberStore = createSpsNativeMemberPendingKeyStore(memberStoreOptions);
     if (args[2] === "create") {
       stage = "member_pending_create";
+      assert.equal(await memberStore.read(), null);
       const keyRequest = await createSpsNativeMemberKeyRequest({ hostId: memberContext.hostId, deviceKeyId: memberContext.deviceKeyId });
-      await writeFile(memberFile, await memberCapsule.seal({ context: memberContext, keyRequest }), { flag: "wx", mode: 0o600 });
+      await memberStore.create(keyRequest);
     }
     stage = "member_pending_reload";
+    const memberDirectory = path.join(userDataDirectory, "native-connectivity", "member-pending");
+    const memberFiles = await readdir(memberDirectory);
+    assert.equal(memberFiles.length, 1);
+    const memberFile = path.join(memberDirectory, memberFiles[0]);
     const memberStat = await lstat(memberFile);
     assert.ok(memberStat.isFile() && !memberStat.isSymbolicLink() && memberStat.nlink === 1 && memberStat.size <= 96 * 1024);
     const memberBytes = await readFile(memberFile, "utf8");
     assert.doesNotMatch(memberBytes, /PRIVATE KEY|CERTIFICATE REQUEST|privateKeyPem|native-smoke-fixture-user/);
-    const memberKey = await memberCapsule.open(memberBytes, memberContext);
-    await assert.rejects(memberCapsule.open(memberBytes, { ...memberContext, subject: "different-fixture-user" }));
+    const memberKey = await memberStore.read();
+    assert.ok(memberKey);
+    await assert.rejects(memberStore.create(memberKey), { code: "ERR_SPS_NATIVE_MEMBER_PENDING_STORE_ALREADY_EXISTS" });
+    const anotherAccount = createSpsNativeMemberPendingKeyStore({ ...memberStoreOptions,
+      context: { ...memberContext, subject: "different-fixture-user" } });
+    assert.equal(await anotherAccount.read(), null);
+    const changedPin = createSpsNativeMemberPendingKeyStore({ ...memberStoreOptions,
+      context: { ...memberContext, issuerSpkiSha256: memberContext.issuerSpkiSha256 === "a".repeat(64) ? "b".repeat(64) : "a".repeat(64) } });
+    await assert.rejects(changedPin.read(), { code: "ERR_SPS_NATIVE_MEMBER_PENDING_STORE_CORRUPT" });
+    assert.equal((await readdir(vaultDirectory)).length, 0);
     const memberPendingSpkiSha256 = createHash("sha256")
       .update(createPublicKey(createPrivateKey(memberKey.privateKeyPem)).export({ type: "spki", format: "der" })).digest("hex");
     console.log(marker + JSON.stringify({

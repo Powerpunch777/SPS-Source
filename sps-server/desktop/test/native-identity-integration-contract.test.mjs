@@ -39,9 +39,10 @@ test("Windows verification runs real secure-storage reload and preserves SDK syn
   const smoke = await read("../scripts/smoke-native-identity-storage.mjs");
   assert.match(smoke, /\["create", "reload"\]/);
   assert.match(smoke, /safeStorage\.isEncryptionAvailable\(\)/);
-  assert.match(smoke, /createSpsNativeMemberPendingCapsule\(\{ safeStorage \}\)/);
+  assert.match(smoke, /createSpsNativeMemberPendingKeyStore\(memberStoreOptions\)/);
   assert.match(smoke, /report\.memberPendingSpkiSha256 !== created\.memberPendingSpkiSha256/);
-  assert.match(smoke, /memberCapsule\.open\(memberBytes, \{ \.\.\.memberContext, subject: "different-fixture-user" \}\)/);
+  assert.match(smoke, /assert\.equal\(await anotherAccount\.read\(\), null\)/);
+  assert.match(smoke, /assert\.rejects\(changedPin\.read\(\), \{ code: "ERR_SPS_NATIVE_MEMBER_PENDING_STORE_CORRUPT" \}\)/);
   assert.match(smoke, /if \(process\.versions\.electron\) \{\s*\/\/[^\n]*\n\s*void electronPhase\(\);/);
   assert.doesNotMatch(smoke, /await electronPhase\(\)/);
   assert.doesNotMatch(smoke, /--no-sandbox|new BrowserWindow|\.listen\(/);

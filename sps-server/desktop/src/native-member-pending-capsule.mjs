@@ -42,7 +42,7 @@ function method(target, name) {
   return null;
 }
 
-function validateContext(input) {
+export function validateSpsNativeMemberPendingContext(input) {
   const value = record(input, CONTEXT_KEYS);
   if (typeof value.identityIssuer !== "string" || value.identityIssuer.length > 2048) throw new Error("issuer");
   const issuer = new URL(value.identityIssuer);
@@ -58,6 +58,7 @@ function validateContext(input) {
   return Object.freeze({ identityIssuer: value.identityIssuer, subject: value.subject, hostId: value.hostId,
     deviceKeyId: value.deviceKeyId, serverSpkiSha256: value.serverSpkiSha256, issuerSpkiSha256: value.issuerSpkiSha256 });
 }
+const validateContext = validateSpsNativeMemberPendingContext;
 
 async function validateKeyRequest(input, context) {
   const value = record(input, KEY_KEYS);
