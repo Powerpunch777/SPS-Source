@@ -17,18 +17,26 @@
    registry·승인/철회·현재 Workspace 인가·선택적 mTLS/WS 경계와 일회용 pairing 저장은
    source 기반이다. 신뢰된 Host 전용 Core Settings에서 명시 확인 후 인증서를 준비하는
    좁은 경로가 연결됐다. 비활성 Member PKCS#10 요청/인증서 발급과 loopback mTLS 시험도 추가했다.
+   고정 issuer PEM/SPKI·Host/device·로컬 키/CSR·chain/profile을 검사하는 recipient validator와,
+   계정 issuer origin/subject·Host/device·신뢰 pins를 ciphertext 안에 결속하는 Windows pending capsule도 있다.
+   주입 safeStorage의 unit AES 시험이지 DPAPI 증거가 아니며 제품 filestore·Main/IPC·enrollment·GUI는 없다.
    이는 제품 enrollment·사용자 인증·기기 승인·Workspace/Node/Source grant가 아니다.
    LAN은 OFF: Native LAN listener·방화벽 변경·Member 발급 활성화·enrollment·세션 등록·갱신은 없다.
    D7은 server/Member 90일·issuer 365일과 기존 키 갱신 정책 승인이지, 실제
    갱신 구현은 아니다. 미출시 v2 DPAPI store의 Vault-incarnation 결속·복구·process-local
    interlock 한계는 [계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)에 기록한다.
-   소스 단위/설정 UI 검사는 통과했으나 잠긴 Electron 43.8.3 DPAPI 시험과 새 Source CI는 미완료다.
-   Windows CI의 8.3 경로 fixture 실패는 제품 guard를 완화하지 않고 수정했다. Zod High 보류 등
-   출시 Gate를 유지한다. 정확한 명령·수·runtime·CI revision은 아래 검증 기록에 모으며,
+   기존 설정 source E2E는 로컬 43.7.7에서 다시 통과했으나 잠긴 43.8.3 검증은 아니다. 확장된 실제 smoke의
+   Host/Member 암호화 파일 재독해는 소유 fixture 전용이며, 로컬은 version mismatch로 crypto 전에 거부된다.
+   Source `3725d997` run `40179004485`는 Linux 전체 shard/build와 Windows unit/bootstrap 통과 후
+   실제 43.8.3 Native root validation·Zod 실패로 끝났고 Settings/No-AI는 skipped였다. DPAPI 성공 증거는 없다.
+   root helper는 ancestor guard를 유지하고 native realpath를 사용한다. 로컬 8.3 비교는 미실행으로 원인 가설은 미확정이다.
+   기존 복구·Source·Node 권한과 Zod High `1243066` 보류·Low 2건 등 출시 Gate는 유지한다.
+   정확한 명령·수·runtime·CI revision은 아래 검증 기록에 모으며,
    개발 UI 결과를 서명 설치본 또는 두 PC 증거로 사용하지 않는다.
    [Member 기기 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과
    [pairing 저장 검증](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md),
    [Member 인증서 검증](../reviews/NATIVE-MEMBER-CERTIFICATE-VERIFICATION-2026-10-25.md),
+   [Member 자격 검증](../reviews/NATIVE-MEMBER-CREDENTIAL-VERIFICATION-2026-10-25.md),
    [설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)을 따른다.
 2. Native 초기 연결·승인·철회·복구를 0-Agent/0-Plugin에서도 제공한다. 기존 사용자
    인증·Workspace/Plugin·Node 실행 권한은 분리하고, HTTP/WS 양쪽에 적용한다.

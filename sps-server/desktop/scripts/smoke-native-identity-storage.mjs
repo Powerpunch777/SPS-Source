@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, mkdtemp, readFile, realpath, readdir, rm } from "node:fs/promises";
-import { lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { lstat, mkdtemp, readFile, realpath, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +9,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeHostIdentityStore } from "../src/native-identity-store.mjs";
+import { createSpsNativeMemberKeyRequest } from "../src/native-member-certificates.mjs";
+import { createSpsNativeMemberPendingCapsule } from "../src/native-member-pending-capsule.mjs";
+import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
+import { canonicalNativeSmokeDirectorySync } from "../src/native-identity-smoke-paths.mjs";
 import {
   createNativeIdentityFailureReport,
   formatNativeIdentityFailure,
@@ -26,6 +30,7 @@ const expectedElectronVersion = createRequire(import.meta.url)("../package-lock.
 const successKeys = [
   "phase", "result", "realWindowsSafeStorage", "electronRuntimeVersion", "nodeRuntimeVersion",
   "serverSpkiSha256", "memberIssuerSpkiSha256", "vaultUnchanged", "plaintextKeyAbsent",
+  "memberPendingKeyProtected", "memberPendingSpkiSha256",
 ];
 
 function failureReport(phase, stage, errorCode, electronRuntimeVersion = null, nodeRuntimeVersion = null) {
@@ -47,10 +52,12 @@ function parseSuccess(stdout, phase) {
     || actualKeys.some((key, index) => key !== [...successKeys].sort()[index])) return null;
   if (value.phase !== phase || value.result !== "passed" || value.realWindowsSafeStorage !== true
     || value.vaultUnchanged !== true || value.plaintextKeyAbsent !== true
+    || value.memberPendingKeyProtected !== true
     || !isNativeIdentityVersion(value.electronRuntimeVersion)
     || !isNativeIdentityVersion(value.nodeRuntimeVersion)
     || !isNativeIdentityFingerprint(value.serverSpkiSha256)
-    || !isNativeIdentityFingerprint(value.memberIssuerSpkiSha256)) return null;
+    || !isNativeIdentityFingerprint(value.memberIssuerSpkiSha256)
+    || !isNativeIdentityFingerprint(value.memberPendingSpkiSha256)) return null;
   return Object.fromEntries(successKeys.map(key => [key, value[key]]));
 }
 
@@ -96,19 +103,19 @@ async function electronPhase() {
     }
 
     // Electron's pre-ready configuration must finish before the first await.
-    const plainSync = directory => {
-      for (let current = path.resolve(directory);; current = path.dirname(current)) {
-        const stat = lstatSync(current);
-        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Linked smoke directory.");
-        if (path.dirname(current) === current) break;
-      }
-      return realpathSync(directory);
-    };
     stage = "root_validation";
-    const root = plainSync(args[1]);
-    const temp = plainSync(os.tmpdir());
-    if (path.dirname(root) !== temp || !path.basename(root).startsWith(prefix)) {
-      await emitFailure("unsafe_smoke_root");
+    let root, temp;
+    try { root = canonicalNativeSmokeDirectorySync(args[1]); }
+    catch { await emitFailure("smoke_root_directory_invalid"); app.exit(1); return; }
+    try { temp = canonicalNativeSmokeDirectorySync(os.tmpdir()); }
+    catch { await emitFailure("smoke_temp_directory_invalid"); app.exit(1); return; }
+    if (path.dirname(root) !== temp) {
+      await emitFailure("smoke_root_parent_mismatch");
+      app.exit(1);
+      return;
+    }
+    if (!path.basename(root).startsWith(prefix)) {
+      await emitFailure("smoke_root_prefix_invalid");
       app.exit(1);
       return;
     }
@@ -117,7 +124,8 @@ async function electronPhase() {
     stage = "user_data_setup";
     mkdirSync(userDataDirectory, { recursive: true });
     mkdirSync(vaultDirectory, { recursive: true });
-    if (plainSync(userDataDirectory) !== userDataDirectory || plainSync(vaultDirectory) !== vaultDirectory) {
+    if (canonicalNativeSmokeDirectorySync(userDataDirectory) !== userDataDirectory
+      || canonicalNativeSmokeDirectorySync(vaultDirectory) !== vaultDirectory) {
       await emitFailure("smoke_directory_setup_failed");
       app.exit(1);
       return;
@@ -171,11 +179,32 @@ async function electronPhase() {
     assert.equal((await readdir(vaultDirectory)).length, 0);
     const status = inspectSpsNativeHostIdentity(loaded);
     assert.equal(status.state, "identity_prepared");
+    stage = "member_pending_reload";
+    const memberCapsule = createSpsNativeMemberPendingCapsule({ safeStorage });
+    const memberContext = { identityIssuer: "https://identity.fixture.invalid", subject: "native-smoke-fixture-user",
+      hostId: loaded.hostId, deviceKeyId: "22222222-2222-4222-8222-222222222222",
+      serverSpkiSha256: status.serverSpkiSha256, issuerSpkiSha256: status.memberIssuerSpkiSha256 };
+    const memberFile = path.join(userDataDirectory, "native-member-pending-smoke.json");
+    if (args[2] === "create") {
+      stage = "member_pending_create";
+      const keyRequest = await createSpsNativeMemberKeyRequest({ hostId: memberContext.hostId, deviceKeyId: memberContext.deviceKeyId });
+      await writeFile(memberFile, await memberCapsule.seal({ context: memberContext, keyRequest }), { flag: "wx", mode: 0o600 });
+    }
+    stage = "member_pending_reload";
+    const memberStat = await lstat(memberFile);
+    assert.ok(memberStat.isFile() && !memberStat.isSymbolicLink() && memberStat.nlink === 1 && memberStat.size <= 96 * 1024);
+    const memberBytes = await readFile(memberFile, "utf8");
+    assert.doesNotMatch(memberBytes, /PRIVATE KEY|CERTIFICATE REQUEST|privateKeyPem|native-smoke-fixture-user/);
+    const memberKey = await memberCapsule.open(memberBytes, memberContext);
+    await assert.rejects(memberCapsule.open(memberBytes, { ...memberContext, subject: "different-fixture-user" }));
+    const memberPendingSpkiSha256 = createHash("sha256")
+      .update(createPublicKey(createPrivateKey(memberKey.privateKeyPem)).export({ type: "spki", format: "der" })).digest("hex");
     console.log(marker + JSON.stringify({
       phase: args[2], result: "passed", realWindowsSafeStorage: true,
       electronRuntimeVersion: process.versions.electron, nodeRuntimeVersion: process.versions.node,
       serverSpkiSha256: status.serverSpkiSha256, memberIssuerSpkiSha256: status.memberIssuerSpkiSha256,
       vaultUnchanged: true, plaintextKeyAbsent: true,
+      memberPendingKeyProtected: true, memberPendingSpkiSha256,
     }));
     clearTimeout(watchdog);
     app.exit(0);
@@ -187,7 +216,8 @@ async function electronPhase() {
           : stage === "user_data_setup" ? "smoke_directory_setup_failed"
             : stage === "runtime_validation" ? "electron_version_mismatch"
               : stage === "secure_storage" ? "secure_storage_unavailable"
-                : stage === "arguments" ? "invalid_invocation" : "identity_operation_failed";
+                : stage === "arguments" ? "invalid_invocation"
+                  : stage.startsWith("member_pending_") ? "member_pending_operation_failed" : "identity_operation_failed";
       await emitFailure(fallbackCode);
     }
     app?.exit(1);
@@ -260,6 +290,7 @@ async function orchestrate() {
           }
           if (created && (report.serverSpkiSha256 !== created.serverSpkiSha256
             || report.memberIssuerSpkiSha256 !== created.memberIssuerSpkiSha256
+            || report.memberPendingSpkiSha256 !== created.memberPendingSpkiSha256
             || report.electronRuntimeVersion !== created.electronRuntimeVersion
             || report.nodeRuntimeVersion !== created.nodeRuntimeVersion)) {
             failure = failureReport(phase, "identity_reload", "identity_operation_failed",
@@ -304,6 +335,7 @@ async function orchestrate() {
     console.log(JSON.stringify({ result: "passed", phases: ["create", "separate-process-reload"],
       realWindowsSafeStorage: true, customerDataUsed: false, osCertificateStoreChanged: false,
       listenerStarted: false, sameKeyAfterRestart: true,
+      memberPendingKeyProtected: true, sameMemberKeyAfterRestart: true,
       electronRuntimeVersion: created.electronRuntimeVersion, nodeRuntimeVersion: created.nodeRuntimeVersion }));
   }
 }

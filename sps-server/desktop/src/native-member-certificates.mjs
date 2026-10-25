@@ -1,6 +1,5 @@
 import "reflect-metadata";
 import { createPrivateKey, createPublicKey, randomBytes, webcrypto, X509Certificate } from "node:crypto";
-import { fromBER } from "asn1js";
 import {
   AuthorityKeyIdentifierExtension, BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
   KeyUsageFlags, KeyUsagesExtension, Name, Pkcs10CertificateRequest, Pkcs10CertificateRequestGenerator,
@@ -11,11 +10,11 @@ import { SPS_NATIVE_MEMBER_DEVICE_CERT_VALIDITY_DAYS } from "./native-connection
 import {
   nativeCertificateRecord as record, nativeCertificateUuid as uuid, nativeCertificateDate as date,
   decodeNativeCertificatePem as pem, encodeNativeCertificatePem as encodePem, nativeCertificatePublicDer as publicDer,
+  parseBoundedNativeCertificateDer, NATIVE_CERTIFICATE_PARSE_OPTIONS as PARSE_OPTIONS,
 } from "./native-certificate-primitives.mjs";
 
 const KEY_ALGORITHM = Object.freeze({ name: "ECDSA", namedCurve: "P-256" });
 const SIGNING_ALGORITHM = Object.freeze({ name: "ECDSA", hash: "SHA-256" });
-const PARSE_OPTIONS = Object.freeze({ berOptions: Object.freeze({ maxDepth: 16, maxNodes: 256, maxContentLength: 4096 }) });
 const MESSAGES = Object.freeze({
   native_member_request_invalid: "The Native Member certificate request is invalid.",
   native_member_key_generation_failed: "The Native Member key request could not be created.",
@@ -35,24 +34,14 @@ async function parseRequest(input) {
   if (value.v !== 1 || value.kind !== "sps.native.member-enrollment-request") throw new Error("kind");
   uuid(value.hostId); uuid(value.deviceKeyId);
   const bytes = pem(value.requestPem, "CERTIFICATE REQUEST");
-  if (bytes.length > 4096) throw new Error("size");
-  const complete = fromBER(bytes, PARSE_OPTIONS.berOptions);
-  if (complete.offset !== bytes.length || complete.result.error || complete.result.warnings.length) throw new Error("asn1");
-  const parts = complete.result.valueBlock.value;
+  const der = parseBoundedNativeCertificateDer(bytes);
+  const parts = der.valueBlock.value;
   const info = parts?.[0]?.valueBlock.value;
   if (!Array.isArray(parts) || parts.length !== 3 || !Array.isArray(info) || info.length !== 4
     || info[0].valueBlock.valueDec !== 0 || !Buffer.from(info[0].valueBlock.valueHexView).equals(Buffer.from([0]))
     || parts[1].valueBlock.value?.length !== 1 || parts[2].valueBlock.unusedBits !== 0
     || info[3].idBlock.tagClass !== 3 || info[3].idBlock.tagNumber !== 0
     || !info[3].idBlock.isConstructed || info[3].valueBlock.value?.length !== 0) throw new Error("profile");
-  const pending = [complete.result];
-  while (pending.length) {
-    const node = pending.pop();
-    if (node.lenBlock?.isIndefiniteForm || node.valueBlock?.error
-      || [node, node.idBlock, node.lenBlock].some(block => block?.error || block?.warnings?.length)) throw new Error("der");
-    if (node.idBlock.isConstructed && Array.isArray(node.valueBlock?.value)) pending.push(...node.valueBlock.value);
-  }
-  if (!Buffer.from(complete.result.toBER(false)).equals(bytes)) throw new Error("der");
   const request = new Pkcs10CertificateRequest(bytes, PARSE_OPTIONS);
   const publicKeyBytes = Buffer.from(request.publicKey.rawData);
   const publicKey = requireP256(createPublicKey({ key: publicKeyBytes, format: "der", type: "spki" }));

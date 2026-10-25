@@ -57,6 +57,8 @@ test("startup, watchdog, and version mismatch diagnostics preserve actionable sa
     report({ stage: "electron_startup", errorCode: "electron_startup_failed", electronRuntimeVersion: null, nodeRuntimeVersion: null }),
     report({ stage: "watchdog", errorCode: "smoke_watchdog_expired", electronRuntimeVersion: "43.8.3" }),
     report({ stage: "runtime_validation", errorCode: "electron_version_mismatch", electronRuntimeVersion: "43.7.7" }),
+    ...["smoke_root_directory_invalid", "smoke_temp_directory_invalid", "smoke_root_parent_mismatch", "smoke_root_prefix_invalid"]
+      .map(errorCode => report({ stage: "root_validation", errorCode })),
   ];
   for (const value of cases) {
     const parsed = parseNativeIdentityFailure(serializeNativeIdentityFailure(value), {

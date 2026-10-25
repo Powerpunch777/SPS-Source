@@ -9,6 +9,7 @@ import {
 import {
   nativeCertificateRecord as record, nativeCertificateUuid as uuid, nativeCertificateDate as date,
   decodeNativeCertificatePem as pem, encodeNativeCertificatePem as encodePem, nativeCertificatePublicDer as publicDer,
+  parseBoundedNativeCertificateDer, NATIVE_CERTIFICATE_PARSE_OPTIONS,
 } from "./native-certificate-primitives.mjs";
 
 const SIGNING_ALGORITHM = Object.freeze({ name: "ECDSA", hash: "SHA-256" });
@@ -48,22 +49,17 @@ function names(values) {
   return snapshot;
 }
 
-function checkPair(input, hostId, issuer) {
-  const pair = record(input, ["certificatePem", "privateKeyPem"]);
-  const der = pem(pair.certificatePem, "CERTIFICATE");
-  const privateDer = pem(pair.privateKeyPem, "PRIVATE KEY");
-  if (der.length > 4096 || privateDer.length > 2048) throw new Error("size");
+function checkCertificate(certificatePem, hostId, issuer) {
+  const der = pem(certificatePem, "CERTIFICATE");
+  parseBoundedNativeCertificateDer(der);
   const certificate = new X509Certificate(der);
-  const parsed = new ParsedCertificate(der);
-  const privateKey = createPrivateKey({ key: privateDer, type: "pkcs8", format: "der" });
+  const parsed = new ParsedCertificate(der, NATIVE_CERTIFICATE_PARSE_OPTIONS);
   if (parsed.signatureAlgorithm.name !== "ECDSA" || parsed.signatureAlgorithm.hash?.name !== "SHA-256"
-    || !certificate.raw.equals(der) || !privateKey.export({ type: "pkcs8", format: "der" }).equals(privateDer)
+    || !certificate.raw.equals(der)
     || certificate.subject !== `CN=SPS ${issuer ? "Member Issuer" : "Native Host"} ${hostId}`
     || certificate.subject !== certificate.issuer || !certificate.verify(certificate.publicKey)
-    || certificate.publicKey.asymmetricKeyType !== "ec" || privateKey.asymmetricKeyType !== "ec"
-    || certificate.publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1"
-    || privateKey.asymmetricKeyDetails?.namedCurve !== "prime256v1"
-    || !publicDer(certificate.publicKey).equals(publicDer(createPublicKey(privateKey)))) throw new Error("pair");
+    || certificate.publicKey.asymmetricKeyType !== "ec"
+    || certificate.publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1") throw new Error("certificate");
   const before = Date.parse(certificate.validFrom);
   const after = Date.parse(certificate.validTo);
   if (!Number.isFinite(before) || !Number.isFinite(after) || before >= after) throw new Error("dates");
@@ -89,7 +85,32 @@ function checkPair(input, hostId, issuer) {
     const values = names(entries.map(entry => entry.value));
     if (entries.some((entry, index) => entry.type !== (isIP(values[index]) ? "ip" : "dns"))) throw new Error("san");
   }
-  return { pair: Object.freeze(pair), certificate, before, after };
+  return { certificate, parsed, before, after };
+}
+
+function checkPair(input, hostId, issuer) {
+  const pair = record(input, ["certificatePem", "privateKeyPem"]);
+  const details = checkCertificate(pair.certificatePem, hostId, issuer);
+  const privateDer = pem(pair.privateKeyPem, "PRIVATE KEY");
+  try {
+    if (privateDer.length > 2048) throw new Error("size");
+    const privateKey = createPrivateKey({ key: privateDer, type: "pkcs8", format: "der" });
+    if (!privateKey.export({ type: "pkcs8", format: "der" }).equals(privateDer)
+      || privateKey.asymmetricKeyType !== "ec" || privateKey.asymmetricKeyDetails?.namedCurve !== "prime256v1"
+      || !publicDer(details.certificate.publicKey).equals(publicDer(createPublicKey(privateKey)))) throw new Error("pair");
+    return { ...details, pair: Object.freeze(pair) };
+  } finally { privateDer.fill(0); }
+}
+
+// Public material only. The caller supplies the Host identity learned over pinned TLS.
+export function validateSpsNativeMemberIssuerCertificate(certificatePem, hostId, now) {
+  try {
+    uuid(hostId);
+    if (!Number.isSafeInteger(now) || now <= 0) throw new Error("clock");
+    const details = checkCertificate(certificatePem, hostId, true);
+    if (now < details.before || now >= details.after) throw new Error("validity");
+    return details.certificate;
+  } catch { throw failure("native_identity_invalid"); }
 }
 
 function parseIdentity(input) {

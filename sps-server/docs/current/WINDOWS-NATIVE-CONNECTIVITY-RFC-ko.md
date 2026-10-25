@@ -20,11 +20,16 @@
   발급이나 세션 등록은 하지 않는다. LAN은 OFF이며 listener/방화벽 변경도 없다.
 - 비활성 Member 발급 primitive는 표준 PKCS#10 P-256/SHA-256 서명 요청을 사용하며, 개인키는 Member
   로컬 메모리에 두고 공개 요청에서 제외한다. Host의 별도 issuer가 명시적 90일 이하·issuer 유효기간
-  안의 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main/IPC/HTTP/SDK 호출자·키 파일 저장·
+  안의 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main/IPC/HTTP/SDK 호출자·제품 키 파일 저장·
   provisioning·갱신·새 GUI 흐름은 없다. 표준 TLS 1.3 loopback에서 새 인증서/올바른 키는 통과하고
   인증서 없음·다른 issuer·같은 issuer의 잘못된 EKU·다른 개인키는 거부했다(application bytes 0).
   CSR 서명 검증은 live TLS 키 소유 증명과 별개다. 자체 서명 프로토콜이나 Google 로그인·기기 승인·
   Workspace/Node/Source grant·새 enrollment를 구현한 것이 아니다.
+- Member recipient validator는 고정 issuer PEM/SPKI, Host/device RDN, 로컬 개인키/CSR,
+  chain/profile·90일 상한·SKI/AKI를 검사한다. 공개 상태는 기기 승인이나 접근 권한이 아니다.
+- Windows Member pending capsule은 주입된 `safeStorage`로 serialized JSON을 암호화/복호화하며
+  Identity issuer origin·subject·Host/device·신뢰된 server/issuer pins를 ciphertext 안에만 결속한다.
+  unit AES fixture는 DPAPI가 아니며 제품 filestore·Main/IPC·enrollment·GUI는 아직 없다.
 - 미출시 v2 Host identity store는 DPAPI context를 Vault incarnation `dev`/`ino`/`birthtimeNs`에
   결속한다. 이는 로컬 lifecycle 결속이지 attestation이 아니다. 유효한 새 Vault에 slot이 없으면
   `not_prepared`이며 준비를 허용한다. 기존 slot과 함께 Vault incarnation이 없거나 재생성/손상된
@@ -37,7 +42,8 @@
   코드를 받은 verified 사용자와 1시간/일회 소모다. 기기 승인·Workspace 권한은 별도다.
 
 정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과
-[Member 인증서 검증](../reviews/NATIVE-MEMBER-CERTIFICATE-VERIFICATION-2026-10-25.md)을 따른다.
+[Member 인증서 검증](../reviews/NATIVE-MEMBER-CERTIFICATE-VERIFICATION-2026-10-25.md),
+[Member 자격 검증](../reviews/NATIVE-MEMBER-CREDENTIAL-VERIFICATION-2026-10-25.md)을 따른다.
 
 ## 1. 목표와 비목표
 
@@ -79,19 +85,15 @@ TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은
 
 D7은 서버/Member 인증서 90일, 별도 issuer 365일 및 만료 전 기존 키·검증된 현재 신원을
 사용하는 갱신 정책의 승인이다. 갱신 threshold/issuer 회전 세부는 미정이고, 갱신 자체는
-미구현이다. Core Settings source Electron의 7개 모드는 기존 로컬 Electron 43.7.7에서
-재실행해 모두 통과했다. 단위/계약 및 Member loopback TLS 명령·수·상세 증거는 위 Member 검증 기록에 모은다.
-기존 43.7.7 결과는 잠긴 43.8.3 검증이나 DPAPI v2 양성 수용이 아니다. 새 Native smoke 첫 실행이
-도입된 `await electronPhase()` deadlock을 잡아 부모가 기존 `void` entry를 복구하고 regression
-assertion을 추가했다. 재시도는 `runtime_validation / electron_version_mismatch`로 fail closed하며
-actual 43.7.7, expected 43.8.3을 보고했다. 이는 진단 경로 검증이지 43.8.3 DPAPI 성공이 아니다.
-CI는 잠긴 기본 Electron 바이너리를 사용하며 override 실행은 수용 증거가 아니다. Source
-`928a5e5b680242d9a9ef61cd5ddabbd46c465417`의 두 Windows job은 8.3 alias fixture/mock 문제로 unit
-5건이 실패해 Native smoke·Core Settings·No-AI가 skipped였다. canonical fixture 수정은 제품 guard를
-완화하지 않으며 새 HEAD CI는 pending이다. production/full audit는 Zod High `1243066`과 기존 Low 2건을
-보고했고 예외 없이 High 보류를 유지한다. 그 외 새 경고는 없고 생성 보안 문서 검사는 통과했다.
-[설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)과 위 Member 검증을 따른다.
-실제 고객 키/listener는 사용하지 않았다.
+미구현이다. 기존 Core Settings source E2E는 로컬 Electron 43.7.7에서 다시 통과했으나 잠긴 43.8.3 검증이 아니다.
+실제 Electron smoke는 runtime 일치 후 소유 fixture에서 Host identity와 Member 암호화 capsule 파일의
+생성/별도 프로세스 재독해를 검사한다. 로컬 43.7.7은 crypto 전 version mismatch로 거부된다.
+Source `3725d997` run `40179004485`는 Linux 전체 shard/build 통과 후 Windows·Zod로 전체 실패했다.
+Windows unit/bootstrap은 통과했지만 Native root validation은 실제 Electron 43.8.3에서 실패해 DPAPI 전 중단됐고,
+Settings/No-AI는 skipped였다. native realpath helper는 모든 ancestor 검사를 유지한다. 실제 8.3 alias 비교는
+로컬에서 미실행이므로 CI 원인은 아직 가설이며 새 CI가 필요하다. 잠긴 기본 바이너리 외 override 결과는 수용하지 않는다.
+정확한 수·명령·runtime 증거는 위 Member 자격 검증과 [계획 체크포인트](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)를 따른다.
+Zod High `1243066` 보류·기존 Low 2건과 기존 복구/Source/Node 권한은 그대로다. 실제 고객 키/listener는 사용하지 않았다.
 
 신원 확인 전에는 사용자 access token·초대 secret·Workspace 자료를 보내지 않는다.
 신뢰하지 않은 discovery 응답이나 redirect를 따라 credential을 전달하지 않는다.
@@ -235,6 +237,7 @@ Member 연결/철회 API로 바꾸지 않는다. 새 연결만으로 `runs.dispa
 Windows safeStorage를 기존 패턴에 맞춰 재사용한다. 이전 runtime의 프로세스 간 재독해 시험은
 잠긴 43.8.3의 DPAPI v2 양성 수용이 아니다. TPM/non-exportable 또는 같은 사용자 악성 프로세스 격리를 보장하지 않는다.
 Member 키와 Node 키는 별도 용도이며 Member 키의 파일/slot 저장·회전·폐기 규칙 연결은 후속이다.
+pending capsule의 메모리 암호화 API와 소유 smoke fixture 파일은 제품 filestore나 enrollment 구현이 아니다.
 Host 이전/Owner Vault 복원은 기존 remote credential을 부활시키지 않고
 명시적 재승인을 요구한다. restore sanitizer에 새 자격 자료를 포함해야 한다.
 

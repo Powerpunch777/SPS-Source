@@ -1,4 +1,7 @@
+import { fromBER } from "asn1js";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const NATIVE_CERTIFICATE_PARSE_OPTIONS = Object.freeze({ berOptions: Object.freeze({ maxDepth: 16, maxNodes: 256, maxContentLength: 4096 }) });
 
 export function nativeCertificateRecord(value, keys) {
   if (!value || typeof value !== "object" || Array.isArray(value)
@@ -38,4 +41,19 @@ export function decodeNativeCertificatePem(value, label) {
 
 export function nativeCertificatePublicDer(key) {
   return key.export({ type: "spki", format: "der" });
+}
+
+export function parseBoundedNativeCertificateDer(bytes) {
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > 4096) throw new Error("size");
+  const complete = fromBER(bytes, NATIVE_CERTIFICATE_PARSE_OPTIONS.berOptions);
+  if (complete.offset !== bytes.length || complete.result.error || complete.result.warnings.length) throw new Error("asn1");
+  const pending = [complete.result];
+  while (pending.length) {
+    const node = pending.pop();
+    if (node.lenBlock?.isIndefiniteForm || node.valueBlock?.error
+      || [node, node.idBlock, node.lenBlock].some(block => block?.error || block?.warnings?.length)) throw new Error("der");
+    if (node.idBlock.isConstructed && Array.isArray(node.valueBlock?.value)) pending.push(...node.valueBlock.value);
+  }
+  if (!Buffer.from(complete.result.toBER(false)).equals(bytes)) throw new Error("der");
+  return complete.result;
 }
