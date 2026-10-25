@@ -19,6 +19,12 @@ const coreSettingsApi = Object.freeze({
   inspectTransfer: async () => {
     await ipcRenderer.invoke("desktop:core-settings-inspect-transfer");
   },
+  prepareNativeIdentity: (input) => {
+    if (!input || typeof input.serverAddress !== "string") {
+      return Promise.reject(new TypeError("A private certificate address is required."));
+    }
+    return ipcRenderer.invoke("desktop:core-settings-prepare-native-identity", { serverAddress: input.serverAddress });
+  },
 });
 
 contextBridge.exposeInMainWorld("spsCoreSettings", coreSettingsApi);

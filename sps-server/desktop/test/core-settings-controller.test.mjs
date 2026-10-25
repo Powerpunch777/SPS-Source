@@ -129,3 +129,37 @@ test("global shortcut conflicts are surfaced and only the owned shortcut is unre
   ctx.controller.dispose();
   assert.ok(ctx.calls.some(value => Array.isArray(value) && value[0] === "unregister" && value[1] === SPS_CORE_SETTINGS_SHORTCUT));
 });
+
+test("Native identity preparation is explicit, strict, cancelable and confined to the trusted settings frame", async () => {
+  const ctx = setup({ confirmNativeIdentity: async () => false, prepareNativeIdentity: async () => { ctx.calls.push("prepare"); } });
+  await ctx.controller.show();
+  await ctx.invoke("prepare-native-identity", [{ serverAddress: "192.168.1.10" }]);
+  assert.equal(ctx.calls.includes("prepare"), false);
+  for (const input of [{ serverAddress: "8.8.8.8" }, { serverAddress: "192.168.1.10", path: "outside" }, { serverAddress: "sps.test" }]) {
+    await assert.rejects(ctx.invoke("prepare-native-identity", [input]), TypeError);
+  }
+  await assert.rejects(ctx.invoke("prepare-native-identity", [{ serverAddress: "192.168.1.10" }], { sender: {}, senderFrame: {} }), /trusted Native/);
+  const approved = setup({ confirmNativeIdentity: async () => true, prepareNativeIdentity: async (input, options) => {
+    options.assertRequester();
+    approved.calls.push(["prepare", input]);
+  } });
+  await approved.controller.show();
+  await approved.invoke("prepare-native-identity", [{ serverAddress: "192.168.1.10" }]);
+  assert.equal(approved.calls.filter(value => value === "authorize").length, 2);
+  assert.ok(approved.calls.some(value => Array.isArray(value) && value[0] === "prepare" && value[1].serverAddress === "192.168.1.10"));
+});
+
+test("Native identity confirmation rechecks ownership and a closed window cannot prepare keys", async () => {
+  let ownsHost = true;
+  const ctx = setup({ authorizeMutation: async () => { if (!ownsHost) throw new Error("session ended"); },
+    confirmNativeIdentity: async () => { ownsHost = false; return true; },
+    prepareNativeIdentity: async () => { ctx.calls.push("prepare"); } });
+  await ctx.controller.show();
+  await assert.rejects(ctx.invoke("prepare-native-identity", [{ serverAddress: "192.168.1.10" }]), /could not complete/);
+  assert.equal(ctx.calls.includes("prepare"), false);
+  const closed = setup({ confirmNativeIdentity: async () => { closed.windows[0].destroy(); return true; },
+    prepareNativeIdentity: async () => { closed.calls.push("prepare"); } });
+  await closed.controller.show();
+  await assert.rejects(closed.invoke("prepare-native-identity", [{ serverAddress: "192.168.1.10" }]), /could not complete/);
+  assert.equal(closed.calls.includes("prepare"), false);
+});

@@ -3,10 +3,22 @@ const actionButtons = [...document.querySelectorAll("button[data-action]")];
 const pluginToggle = byId("plugins-disabled");
 const retryButton = byId("retry-status");
 const actionNotice = byId("action-notice");
+const nativePrepareButton = byId("prepare-native-identity");
+const nativeAddressInput = byId("native-certificate-address");
 const pending = new Set();
 
 let currentStatus = null;
+let nativeConnectivity = null;
 let statusLoading = false;
+
+const nativeIdentityStates = new Map([
+  ["not_prepared", "Not prepared"],
+  ["identity_prepared", "Identity prepared"],
+  ["identity_not_current", "Identity not current"],
+  ["recovery_required", "Recovery required"],
+  ["unavailable", "Unavailable"],
+  ["host_required", "Host required"],
+]);
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -14,6 +26,27 @@ function isRecord(value) {
 
 function isCoreStatus(value) {
   return isRecord(value) && isRecord(value.host) && isRecord(value.recovery);
+}
+
+function isEpochMilliseconds(value) {
+  return Number.isSafeInteger(value) && value > 0 && Number.isFinite(new Date(value).getTime());
+}
+
+function isNativeConnectivity(value) {
+  if (!isRecord(value) || !nativeIdentityStates.has(value.state) || value.lanEnabled !== false || typeof value.canPrepare !== "boolean") {
+    return false;
+  }
+  if (Object.hasOwn(value, "serverSpkiSha256") && (typeof value.serverSpkiSha256 !== "string" || value.serverSpkiSha256.length !== 64 || !/^[0-9a-f]{64}$/.test(value.serverSpkiSha256))) {
+    return false;
+  }
+  if (Object.hasOwn(value, "serverNotAfter") && !isEpochMilliseconds(value.serverNotAfter)) return false;
+  if (Object.hasOwn(value, "memberIssuerNotAfter") && !isEpochMilliseconds(value.memberIssuerNotAfter)) return false;
+  if (value.canPrepare !== (value.state === "not_prepared")) return false;
+  const hasCertificate = ["identity_prepared", "identity_not_current"].includes(value.state);
+  if (hasCertificate && (!Object.hasOwn(value, "serverSpkiSha256") || !isEpochMilliseconds(value.serverNotAfter)
+    || !isEpochMilliseconds(value.memberIssuerNotAfter))) return false;
+  if (!hasCertificate && ["serverSpkiSha256", "serverNotAfter", "memberIssuerNotAfter"].some(key => Object.hasOwn(value, key))) return false;
+  return true;
 }
 
 function safeText(value, fallback = "Unknown", maxLength = 100) {
@@ -34,18 +67,47 @@ function setNotice(message = "", isError = false) {
 
 function syncControls() {
   const busy = statusLoading || pending.size > 0;
+  byId("native-identity-form").hidden = nativeConnectivity?.canPrepare !== true || currentStatus?.canManageHost !== true;
   for (const button of actionButtons) {
     const ownerAction = ["restart-host", "export-host"].includes(button.dataset.action);
     button.disabled = busy || !currentStatus || (ownerAction && currentStatus.canManageHost === false)
       || (button.dataset.action === "open-workspace" && currentStatus.desktopStateAvailable === false);
   }
   pluginToggle.disabled = busy || currentStatus?.canManageHost === false || typeof currentStatus?.recovery?.pluginsDisabled !== "boolean";
+  nativePrepareButton.disabled = busy
+    || !nativeConnectivity
+    || nativeConnectivity.canPrepare !== true
+    || currentStatus?.canManageHost !== true
+    || !nativeAddressInput.value.trim();
   retryButton.disabled = busy;
+}
+
+function renderNativeConnectivity(value) {
+  nativeConnectivity = isNativeConnectivity(value) ? value : null;
+  byId("native-identity-state").textContent = nativeConnectivity
+    ? nativeIdentityStates.get(nativeConnectivity.state)
+    : "Unavailable";
+
+  const details = [
+    ["native-fingerprint-row", "native-fingerprint", nativeConnectivity?.serverSpkiSha256],
+    ["native-server-expiry-row", "native-server-expiry", isEpochMilliseconds(nativeConnectivity?.serverNotAfter)
+      ? new Date(nativeConnectivity.serverNotAfter).toISOString()
+      : null],
+    ["native-issuer-expiry-row", "native-issuer-expiry", isEpochMilliseconds(nativeConnectivity?.memberIssuerNotAfter)
+      ? new Date(nativeConnectivity.memberIssuerNotAfter).toISOString()
+      : null],
+  ];
+  for (const [rowId, valueId, text] of details) {
+    const row = byId(rowId);
+    row.hidden = typeof text !== "string";
+    byId(valueId).textContent = typeof text === "string" ? text : "";
+  }
 }
 
 function renderStatus(status) {
   currentStatus = status;
   const { host, recovery } = status;
+  renderNativeConnectivity(status.nativeConnectivity);
   byId("host-state").textContent = host.startupDeferred ? "Startup deferred (recovery)" : safeText(host.state);
   byId("desktop-state-error").hidden = status.desktopStateAvailable !== false;
   byId("app-version").textContent = safeText(status.appVersion);
@@ -79,6 +141,7 @@ function renderStatus(status) {
 
 function showStatusLoading() {
   currentStatus = null;
+  renderNativeConnectivity(null);
   statusLoading = true;
   byId("status-region").setAttribute("aria-busy", "true");
   byId("status-details").hidden = true;
@@ -99,6 +162,7 @@ async function loadStatus() {
     setNotice();
   } catch {
     currentStatus = null;
+    renderNativeConnectivity(null);
     byId("status-region").setAttribute("aria-busy", "false");
     byId("status-message").textContent = "Host status is unavailable. Try again.";
     retryButton.textContent = "Retry";
@@ -106,6 +170,26 @@ async function loadStatus() {
     setNotice("Status could not be loaded. Diagnostic details are hidden.", true);
   } finally {
     statusLoading = false;
+    syncControls();
+  }
+}
+
+async function prepareNativeIdentity() {
+  if (!currentStatus || statusLoading || pending.size > 0 || !nativeConnectivity
+    || nativeConnectivity.canPrepare !== true || currentStatus.canManageHost !== true || !nativeAddressInput.value.trim()) return;
+
+  pending.add("prepare-native-identity");
+  setNotice();
+  syncControls();
+  try {
+    const status = await window.spsCoreSettings.prepareNativeIdentity({ serverAddress: nativeAddressInput.value.trim() });
+    if (!isCoreStatus(status)) throw new Error("Invalid status response");
+    renderStatus(status);
+    setNotice("Preparation request completed.");
+  } catch {
+    setNotice("The action failed. Diagnostic details are hidden to protect credentials.", true);
+  } finally {
+    pending.delete("prepare-native-identity");
     syncControls();
   }
 }
@@ -162,5 +246,7 @@ for (const button of actionButtons) {
 }
 
 retryButton.addEventListener("click", () => void loadStatus());
+nativeAddressInput.addEventListener("input", () => syncControls());
+nativePrepareButton.addEventListener("click", () => void prepareNativeIdentity());
 window.addEventListener("focus", () => void loadStatus());
 void loadStatus();

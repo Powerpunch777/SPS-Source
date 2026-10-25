@@ -32,6 +32,14 @@ h2 { margin: 0; font-size: 15px; font-weight: 680; }
 .status-item { min-width: 0; padding: 8px 0; }
 .status-item dt { color: #68737d; font-size: 11px; }
 .status-item dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 620; }
+.native-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; }
+.native-item { min-width: 0; padding: 3px 0; }
+.native-item dt { color: #68737d; font-size: 11px; }
+.native-item dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 620; }
+.native-form { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.native-form label { font-size: 12px; font-weight: 650; }
+.native-form input { width: min(100%, 440px); min-height: 36px; padding: 7px 9px; border: 1px solid #cfd6dc; border-radius: 5px; color: #20252a; background: #fff; font-size: 13px; }
+.native-form .help-text { margin: 0 0 3px; }
 .inline-warning { margin-top: 10px; padding: 9px 10px; border-left: 3px solid #a76b20; color: #68430f; background: #fff8e9; font-size: 12px; line-height: 1.45; }
 .toggle-row { display: flex; align-items: flex-start; gap: 11px; cursor: pointer; }
 .toggle-row input { width: 17px; height: 17px; flex: 0 0 auto; margin: 2px 0 0; accent-color: #37414b; }
@@ -60,9 +68,11 @@ h2 { margin: 0; font-size: 15px; font-weight: 680; }
   .settings-shell { width: min(100% - 28px, 900px); padding-top: 18px; }
   .section { padding: 14px 0; }
   .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .native-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .action-row { align-items: flex-start; flex-direction: column; gap: 9px; }
 }
 
 @media (max-width: 380px) {
   .status-grid { grid-template-columns: 1fr; }
+  .native-grid { grid-template-columns: 1fr; }
 }

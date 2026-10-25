@@ -1,18 +1,49 @@
 # SPS Windows 내장 연결 계획
 
-기준일: 2026-10-25 KST. 상태: **Stage 0 완료, Stage 1/2a 소스 기반 구현 중; 내장 LAN 미지원**.
+기준일: 2026-10-25 KST. 상태: **Stage 0 완료, Core 2a 진행 중, Desktop 2b 일부 연결; 내장 LAN 미지원**.
 사용자가 전달한 Windows-First Native Connectivity 인계서와 목표 교체 요청을
 반영한다. 이 문서는 네트워크 변경, 설치본 교체, 운영 배포 승인이 아니다.
 
 승인 D1의 비활성 초대 codec과 연결별 공개 인증서/TLS 확인은 소스 시험을 통과했다
-(codec 25건, TLS 12건, 전체 Desktop 572/572). TLS는 임시 loopback 시험 서버만
+(codec 25건, TLS 12건). TLS는 임시 loopback 시험 서버만
 사용했다. 별도 Core 기기 registry·승인/철회·현재 Workspace 인가, 실제 loopback
 mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS listener·
-최초 pairing·기기 인증서 발급에는 연결하지 않았으므로 내장 LAN 지원 완료가 아니다.
+최초 pairing·Member 기기 인증서 발급에는 연결하지 않았으므로 내장 LAN 지원 완료가 아니다.
 정확한 범위와 명령은 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
 그다음 내부 pairing 저장 계층은 원자적 일회용 소비·시도 제한·Host/서버 지문 결속과
 가입 전 사용자의 pending 기기 생성까지 추가했다. 아직 실제 최초 연결 프로토콜은 아니다.
 [pairing 저장 계층 검증](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)을 따른다.
+
+## 현재 체크포인트
+
+신뢰된 Host 전용 Core Settings에서 명시적으로 확인한 뒤 Host 인증서 준비를 실행하는
+좁은 경로가 연결됐다. 이는 Member 기기 인증서 발급이나 등록 UI가 아니다. Native LAN은
+계속 OFF이며 Native LAN listener나 방화벽 변경은 없다. Member 발급·세션 등록·인증서 갱신도 없다.
+
+D7 승인값은 서버/Member 인증서 90일, 별도 issuer 365일이다. 만료 전 기존 키와 검증된
+현재 신원을 쓰는 갱신 정책도 승인됐지만 갱신은 구현되지 않았다. 미출시 v2 Host identity
+store는 DPAPI 암호화 context를 Vault incarnation의 `dev`/`ino`/`birthtimeNs`에 결속한다.
+이는 로컬 lifecycle 결속이지 attestation이 아니다. 유효한 새 Vault에 slot이 없으면
+`not_prepared`이며 준비를 허용한다. 기존 slot이 있는데 Vault incarnation이 없거나 재생성됐거나
+slot이 손상/연결됨/legacy인 경우 명시적 복구가 필요하며 자동 교체하지 않는다. restore 시
+slot 상태 미상은 fail closed다. Restore gate는 restore 전체와 비동기 Host activation 동안
+Host 시작 및 connection/account 변경을 상호 배제하고 captured account/routing context를 재검사한다.
+Store 권한 guard는 마지막 async binding 확인 전후 모두 검사한다. 이는 process-local gate이며 OS lock이나
+transactional filesystem rollback은 보장하지 않는다. Promotion 뒤 activation이 실패하면 복원 데이터는
+유지되고 오류도 이를 명시한다.
+
+최종 Desktop 전체 unit은 **654/654 (skip 없음)**, focused command는 **75/75** 통과했다. Core Settings source
+Electron의 7개 모드도 재실행해 기존 로컬 Electron **43.7.7**에서 모두 통과했다. 이는 잠긴
+Electron **43.8.3** 또는 DPAPI v2의 양성 수용 증거가 아니다. 새 Native smoke 첫 실행이
+도입된 `await electronPhase()` deadlock을 잡아 부모가 기존 `void` entry를 복구하고 regression
+assertion을 추가했다. 재시도는 `runtime_validation / electron_version_mismatch`로 fail closed했고
+actual `43.7.7`, Node `24.21.0`, expected `43.8.3`을 보고했다. 이는 fail-closed 진단 확인이지
+43.8.3 DPAPI 성공이 아니다. CI는 lock-default Electron binary를 사용하며 override 실행을 수용 증거로
+보지 않는다. 정확한 Source `9c3c145abc536fa9add5d6e6f5f87fc7d2b6d404` CI run `40175609939`는
+9개 Linux shard와 Core full typecheck/build는 통과했고, Windows Native identity smoke 및 Zod High
+`1243066` production gate 때문에 전체 실패했다(예외 없음). Windows No-AI 단계는 skipped였다.
+Core run `40175522247`은 고정 Core revision에서 15 jobs 성공했다. 진단 mismatch는 로컬에서 확인됐고
+이 수정을 포함한 새 CI는 아직 없다. [설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)을 따른다.
 
 ## 1. 변경된 우선순위
 
@@ -146,7 +177,7 @@ D4~D5와 키 회전·최대 TTL·rate limit·보관 기간·listener 배치의 �
 | 0 완료 | 11영역 코드 감사·현재 시퀀스·RFC·결정 목록·문서 정렬 | `f5171ef83473fc538a7b5db6576c3c99ab05cebe` 문서 checkpoint. 런타임/DB/키/지원표 불변 |
 | 1 계약 중 | D1~D3 승인, 초대/서버 인증서·TLS source 시험, Member 세션·철회·Native 복구의 세부 계약 | HTTP/WS/서브리소스의 단일 인가, 기기 registry와 키/세션 정책 검수. 아직 외부 노출 없음 |
 | 2a Core 진행 | 기기 registry/승인·철회·현재 인가·TLS peer/WS 검사와 내부 일회용 pairing 저장 계층 구현 | 최초 연결 인증/TLS adapter·Native ingress·HTTP 전체 경로/실제 LAN은 미완료 |
-| 2b Desktop | Native 설정과 Member 클라이언트, 0-Agent/0-Plugin 복구 | 임시 source Electron, 브라우저·Plugin bridge 승격 차단, 재시작/중단·철회 수용. 실제 LAN은 별도 동의 |
+| 2b Desktop 일부 | 신뢰된 Host-only Core Settings 명시 확인 후 인증서 준비까지 연결 | 최종 Desktop 654/654 (skip 없음), focused command 75/75, 7개 source Electron 모드가 43.7.7에서 통과; lock-default smoke는 43.7.7/43.8.3 mismatch에서 fail closed. 43.8.3 DPAPI 양성 증거·Member 클라이언트/발급·복구 UI 미완료 |
 | 2c 실제 LAN | 승인된 시험 데이터로 Windows 두 PC | Tailscale 없는 A/B 연결, 잘못된 서버/사용자/기기·Workspace 거부, 실제 포트/버전/tuple 증거. 미통과시 opt-in 해제 |
 | 3 SDK | 승인 Connection read/status부터, scoped observe | 실제 handler → SDK 선언/worker → packed consumer → Desktop 수용, missing invocation/capability·A/B 거부. 관리 mutation은 비공개 |
 | 4 통합 | D4 Source, Owner 복구, 로그아웃·키 회전·연결 복구 | API·Source·Node를 독립 검증. 철회/복원 후 권한 부활 없음. 기존 초대/데이터 유지 |
@@ -189,8 +220,9 @@ Zod major/설치본 교체 보류, 전체 최신 CI, Identity 운영 rollout, �
 
 Stage 0에서는 실행 코드를 바꾸지 않았다. Stage 1은 독립 초대 계약과 서버 인증서/
 TLS 확인 시험을 추가했다. Stage 2a는 additive migration 0165와 Core 기기 관리 계약을
-추가하며, 실제 사용자 DB가 아니라 임시 DB에서 검증한다. Native 관리 router는 신뢰된
-`nativeConnectivityHostId`가 있을 때만 mount되고 제품 startup에는 아직 전달하지 않는다.
+추가하며, 실제 사용자 DB가 아니라 임시 DB에서 검증한다. Core 기기 관리 API router는 신뢰된
+`nativeConnectivityHostId`가 있을 때만 mount되고 제품 startup에서 아직 이 ID를 전달하지 않는다.
+이는 위에 연결된 로컬 Core Settings Host 인증서 준비 경로와는 별개다.
 신규 WS guard도 전용 Native ingress용 opt-in이며 기존 local/Agent/TS listener에 붙이지 않는다.
 
 내부 pairing 저장 계층은 migration 0166으로 소비/이벤트와 pending 생성을 함께 검증했다.
@@ -198,8 +230,10 @@ TLS 확인 시험을 추가했다. Stage 2a는 additive migration 0165와 Core �
 초대 대상/기본 TTL은 D6으로 확정했다. Desktop의 비활성 요청 기본값은 any-verified-user와
 1시간이며, 범용 Core 저장 계층은 여전히 명시적인 정책 입력을 요구한다.
 
-비활성 Host PKI/암호화 보관의 격리 시험은 [키 보관 검증](../reviews/NATIVE-HOST-IDENTITY-VERIFICATION-2026-10-25.md)에 기록한다.
-다음은 이 기반의 Native 설정/복원 생명주기 연결·기기 발급·pairing 전송 결속과 기본 off Native ingress,
-0-Agent/0-Plugin 설정·복구 UI다. 전체 HTTP/WS/서브리소스 인가·철회와 실제 두 PC는
+Host PKI/암호화 보관 및 버전별 한계는 [키 보관 검증](../reviews/NATIVE-HOST-IDENTITY-VERIFICATION-2026-10-25.md)에 기록한다.
+자세한 restore 경합과 오류 동작은 [설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)에 기록한다.
+다음은 기존 slot과 Vault incarnation이 불일치하거나 손상된 경우의 명시적 복구·restore lifecycle을 연결하고,
+Member 발급·pairing 전송 결속·0-Agent/0-Plugin 복구 UI를 구현하는 일이다. 기본 off Native ingress,
+전체 HTTP/WS/서브리소스 인가·철회와 실제 두 PC는
 후속 수용 Gate다. OS 키/인증서 저장소·방화벽·Tailscale·설치본·고객 데이터를 변경하는
 명령은 실행하지 않는다. 검수/동의 전 실제 LAN·WAN·Linux·고객 환경으로 확대하지 않는다.

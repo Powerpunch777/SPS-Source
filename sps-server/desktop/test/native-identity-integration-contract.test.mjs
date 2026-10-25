@@ -1,13 +1,33 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const read = relative => readFile(new URL(relative, import.meta.url), "utf8");
 
-test("Native identity generation remains inactive outside its explicit isolated smoke", async () => {
-  for (const name of ["main.mjs", "preload.cjs", "core-settings-preload.cjs", "core-settings-controller.mjs"]) {
-    assert.doesNotMatch(await read(`../src/${name}`), /native-identity-(?:certificates|store)|createSpsNativeHostIdentity/);
-  }
+test("the authoritative Native secure-storage smoke refuses an arbitrary runtime override", { skip: process.platform !== "win32" }, async () => {
+  await assert.rejects(promisify(execFile)(process.execPath, [fileURLToPath(new URL("../scripts/smoke-native-identity-storage.mjs", import.meta.url))], {
+    env: { ...process.env, SPS_NATIVE_IDENTITY_SMOKE_ELECTRON_BINARY: "fixture-untrusted.exe" },
+    windowsHide: true, timeout: 10_000,
+  }), failure => {
+    assert.match(failure.stderr, /runtime_override_disallowed/);
+    assert.doesNotMatch(failure.stderr, /fixture-untrusted/);
+    assert.doesNotMatch(failure.stdout, /realWindowsSafeStorage/);
+    return true;
+  });
+});
+
+test("only the trusted Core Settings confirmation can request Native identity preparation", async () => {
+  assert.doesNotMatch(await read("../src/preload.cjs"), /prepareNativeIdentity|native-identity|core-settings-prepare/);
+  assert.match(await read("../src/core-settings-preload.cjs"), /core-settings-prepare-native-identity/);
+  const settings = await read("../src/core-settings-controller.mjs");
+  assert.match(settings, /if \(await confirmNativeIdentity\(window, validated\)\) \{\s*assertSender\(event\);\s*await authorizeMutation\(\);\s*assertSender\(event\);/);
+  const main = await read("../src/main.mjs");
+  assert.doesNotMatch(main, /createSpsNativeHostIdentity\(/);
+  assert.match(main, /buttons: \["Cancel", "Prepare identity"\], defaultId: 0, cancelId: 0/);
+  assert.match(main, /nativeConnectivity: await ensureNativeIdentityController\(\)\.inspect\(\)/);
   const certificates = await read("../src/native-identity-certificates.mjs");
   assert.doesNotMatch(certificates, /node:(?:child_process|fs|tls)|safeStorage|setCertificateVerifyProc|certificate-error/);
 });
@@ -19,6 +39,8 @@ test("Windows verification runs real secure-storage reload and preserves SDK syn
   const smoke = await read("../scripts/smoke-native-identity-storage.mjs");
   assert.match(smoke, /\["create", "reload"\]/);
   assert.match(smoke, /safeStorage\.isEncryptionAvailable\(\)/);
+  assert.match(smoke, /if \(process\.versions\.electron\) \{\s*\/\/[^\n]*\n\s*void electronPhase\(\);/);
+  assert.doesNotMatch(smoke, /await electronPhase\(\)/);
   assert.doesNotMatch(smoke, /--no-sandbox|new BrowserWindow|\.listen\(/);
 });
 

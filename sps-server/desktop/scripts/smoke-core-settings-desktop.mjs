@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -29,6 +29,9 @@ await once(server, "listening");
 const port = server.address().port;
 await new Promise(resolve => server.close(resolve));
 const userData = await mkdtemp(path.join(os.tmpdir(), "sps-core-settings-e2e-"));
+const fixtureStat = await lstat(userData);
+const fixtureCanonical = await realpath(userData);
+const fixtureTemp = await realpath(os.tmpdir());
 if (corruptRecovery) await writeFile(path.join(userData, "core-recovery.json"), "not-json");
 const desktopStatePath = path.join(userData, "sps-desktop-state.json");
 if (corruptDesktopState) await writeFile(desktopStatePath, "not-json-preserve-this");
@@ -106,6 +109,9 @@ try {
   assert.match(status.body, /Recovery/);
   const settings = await evaluate("window.spsCoreSettings.getStatus()");
   assert.equal(settings.canManageHost, false);
+  assert.deepEqual(settings.nativeConnectivity, { state: "host_required", lanEnabled: false, canPrepare: false });
+  assert.equal(await evaluate("document.querySelector('#prepare-native-identity').disabled"), true);
+  assert.equal(await evaluate("document.querySelector('#native-identity-state').textContent"), "Host required");
   assert.equal(settings.desktopStateAvailable, !stateUnavailable);
   assert.equal(settings.host.startupDeferred, true);
   assert.equal(settings.recovery.pluginsDisabled, corruptRecovery);
@@ -135,6 +141,7 @@ try {
     assert.equal(settings.host.lastError, null, "Recovery-only launch must not try to parse/start the broken Host.");
   }
   await assert.rejects(access(path.join(userData, "owner-host-runtime")), { code: "ENOENT" });
+  await assert.rejects(access(path.join(userData, "native-connectivity")), { code: "ENOENT" });
   await assert.rejects(access(path.join(userData, "owner-vault", "database")), { code: "ENOENT" });
   const screenshotRoot = process.env.SPS_DESKTOP_E2E_SCREENSHOT_DIR?.trim();
   if (screenshotRoot) await mkdir(screenshotRoot, { recursive: true });
@@ -168,7 +175,15 @@ try {
   assert.ok(path.basename(userData).startsWith("sps-core-settings-e2e-"));
   let cleaned = false;
   for (let attempt = 0; attempt < 20; attempt++) {
-    try { await rm(userData, { recursive: true, force: true }); cleaned = true; break; } catch { await pause(250); }
+    const current = await lstat(userData);
+    const canonical = await realpath(userData);
+    assert.equal(current.isDirectory() && !current.isSymbolicLink(), true);
+    assert.equal(current.dev, fixtureStat.dev);
+    assert.equal(current.ino, fixtureStat.ino);
+    assert.equal(canonical, fixtureCanonical);
+    assert.equal(path.dirname(canonical), fixtureTemp);
+    assert.ok(path.basename(canonical).startsWith("sps-core-settings-e2e-"));
+    try { await rm(canonical, { recursive: true, force: true }); cleaned = true; break; } catch { await pause(250); }
   }
   assert.equal(cleaned, true, "Could not remove isolated Core Settings test data.");
 }

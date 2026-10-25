@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { validateSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
 
 const STORE_KIND = "sps.native.host-identity-store";
+const STORE_VERSION = 2;
 const MAX_PLAINTEXT_BYTES = 256 * 1024;
 const MAX_CIPHERTEXT_BYTES = 512 * 1024;
 const MAX_FILE_BYTES = 700 * 1024;
@@ -39,6 +40,39 @@ function requireAbsoluteDirectory(value) {
   return path.resolve(value);
 }
 
+function vaultIncarnation(stat) {
+  if (!stat?.isDirectory?.() || stat.isSymbolicLink?.()) throw storeError(ERROR_CODES.storage);
+  const values = [stat.dev, stat.ino, stat.birthtimeNs];
+  if (values.some(value => typeof value !== "bigint" || value <= 0n)) {
+    throw storeError(ERROR_CODES.storage);
+  }
+  return Object.freeze({
+    dev: stat.dev.toString(10),
+    ino: stat.ino.toString(10),
+    birthtimeNs: stat.birthtimeNs.toString(10),
+  });
+}
+
+async function readVaultIncarnation(directory) {
+  try {
+    return vaultIncarnation(await fs.lstat(directory, { bigint: true }));
+  } catch (error) {
+    if (isStoreError(error)) throw error;
+    throw storeError(ERROR_CODES.storage);
+  }
+}
+
+function sameStorePaths(left, right) {
+  return left.userDataDirectory === right.userDataDirectory
+    && left.vaultDirectory === right.vaultDirectory
+    && left.credentialsDirectory === right.credentialsDirectory
+    && left.file === right.file;
+}
+
+function sameVaultIncarnation(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.birthtimeNs === right.birthtimeNs;
+}
+
 async function canonicalDirectory(input) {
   const resolved = requireAbsoluteDirectory(input);
   const parsed = path.parse(resolved);
@@ -51,6 +85,29 @@ async function canonicalDirectory(input) {
   const canonical = await fs.realpath(resolved);
   const stat = await fs.lstat(canonical);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw storeError(ERROR_CODES.storage);
+  return canonical;
+}
+
+async function canonicalDirectoryAllowMissing(input) {
+  const resolved = requireAbsoluteDirectory(input);
+  const parsed = path.parse(resolved);
+  let current = parsed.root;
+  const rootStat = await fs.lstat(current);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw storeError(ERROR_CODES.storage);
+  let canonical = await fs.realpath(current);
+  const segments = resolved.slice(parsed.root.length).split(path.sep).filter(Boolean);
+  for (let index = 0; index < segments.length; index += 1) {
+    current = path.join(current, segments[index]);
+    let stat;
+    try {
+      stat = await fs.lstat(current);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      return path.resolve(canonical, ...segments.slice(index));
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw storeError(ERROR_CODES.storage);
+    canonical = await fs.realpath(current);
+  }
   return canonical;
 }
 
@@ -84,9 +141,11 @@ async function directoryAt(parent, name, { create = false } = {}) {
   return canonical;
 }
 
-async function resolveStorePaths(userDataInput, vaultInput, createDirectories) {
+async function resolveStorePaths(userDataInput, vaultInput, createDirectories, { allowMissingVault = false } = {}) {
   const userDataDirectory = await canonicalDirectory(userDataInput);
-  const vaultDirectory = await canonicalDirectory(vaultInput);
+  const vaultDirectory = allowMissingVault
+    ? await canonicalDirectoryAllowMissing(vaultInput)
+    : await canonicalDirectory(vaultInput);
   const nativeRoot = path.join(userDataDirectory, "native-connectivity");
   const overlaps = (root, child) => {
     const relative = path.relative(root, child);
@@ -101,7 +160,7 @@ async function resolveStorePaths(userDataInput, vaultInput, createDirectories) {
   let credentialsDirectory = await directoryAt(nativeConnectivityDirectory, "credentials", { create: createDirectories });
   if (!credentialsDirectory) return null;
   assertContained(userDataDirectory, credentialsDirectory);
-  const slot = createHash("sha256").update(vaultDirectory, "utf8").digest("hex");
+  const slot = createHash("sha256").update(vaultDirectory.toLowerCase(), "utf8").digest("hex");
   return {
     userDataDirectory,
     vaultDirectory,
@@ -257,11 +316,48 @@ export function createSpsNativeHostIdentityStore({
     }
   }
 
+  async function safePresencePaths() {
+    try {
+      return await resolveStorePaths(userDataInput, vaultInput, false, { allowMissingVault: true });
+    } catch (error) {
+      if (isStoreError(error)) throw error;
+      throw storeError(ERROR_CODES.storage);
+    }
+  }
+
+  async function safeBinding(createDirectories) {
+    const paths = await safePaths(createDirectories);
+    if (!paths) return null;
+    return { paths, incarnation: await readVaultIncarnation(paths.vaultDirectory) };
+  }
+
+  async function assertCurrentBinding(paths, incarnation, createDirectories = false) {
+    const current = await safeBinding(createDirectories);
+    if (!current || !sameStorePaths(paths, current.paths)
+      || !sameVaultIncarnation(incarnation, current.incarnation)) throw storeError(ERROR_CODES.storage);
+    return current.paths;
+  }
+
   return Object.freeze({
+    inspectPresence() {
+      return serialize(async () => {
+        const paths = await safePresencePaths();
+        if (!paths) return Object.freeze({ state: "absent" });
+        try {
+          await fs.lstat(paths.file);
+          return Object.freeze({ state: "present" });
+        } catch (error) {
+          if (error?.code === "ENOENT") return Object.freeze({ state: "absent" });
+          throw storeError(ERROR_CODES.storage);
+        }
+      });
+    },
+
     read() {
       return serialize(async () => {
-        const paths = await safePaths(false);
-        if (!paths) return null;
+        const binding = await safeBinding(false);
+        if (!binding) return null;
+        const { paths, incarnation } = binding;
         let stat;
         try {
           stat = await existingFile(paths.file);
@@ -269,20 +365,23 @@ export function createSpsNativeHostIdentityStore({
           if (isStoreError(error)) throw error;
           throw storeError(ERROR_CODES.storage);
         }
-        if (!stat) return null;
+        if (!stat) {
+          await assertCurrentBinding(paths, incarnation);
+          return null;
+        }
         let raw;
         try {
-          const current = await safePaths(false);
-          if (!current || current.file !== paths.file) throw storeError(ERROR_CODES.storage);
+          await assertCurrentBinding(paths, incarnation);
           raw = await readBoundedFile(paths.file, stat);
         } catch (error) {
           if (error?.code === ERROR_CODES.corrupt) throw error;
           throw storeError(ERROR_CODES.storage);
         }
 
+        let identity;
         try {
           const outer = parseCanonicalJson(raw, ["v", "kind", "ciphertext"], MAX_FILE_BYTES);
-          if (outer.v !== 1 || outer.kind !== STORE_KIND || typeof outer.ciphertext !== "string"
+          if (outer.v !== STORE_VERSION || outer.kind !== STORE_KIND || typeof outer.ciphertext !== "string"
             || outer.ciphertext.length === 0 || outer.ciphertext.length > Math.ceil(MAX_CIPHERTEXT_BYTES / 3) * 4
             || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(outer.ciphertext)) {
             throw storeError(ERROR_CODES.corrupt);
@@ -293,20 +392,42 @@ export function createSpsNativeHostIdentityStore({
           const plaintext = safeStorage.decryptString(encrypted);
           const envelope = parseCanonicalJson(plaintext, ["v", "kind", "context", "identity"]);
           const context = envelope.context;
-          if (envelope.v !== 1 || envelope.kind !== STORE_KIND
+          const contextIncarnation = context?.vaultIncarnation;
+          if (envelope.v !== STORE_VERSION || envelope.kind !== STORE_KIND
             || !context || typeof context !== "object" || Array.isArray(context)
-            || Object.keys(context).join(",") !== "userDataDirectory,vaultDirectory"
+            || Object.keys(context).join(",") !== "userDataDirectory,vaultDirectory,vaultIncarnation"
             || context.userDataDirectory !== paths.userDataDirectory
-            || context.vaultDirectory !== paths.vaultDirectory) throw storeError(ERROR_CODES.corrupt);
-          return validatedIdentity(validateIdentity, envelope.identity, ERROR_CODES.corrupt);
+            || context.vaultDirectory !== paths.vaultDirectory
+            || !contextIncarnation || typeof contextIncarnation !== "object" || Array.isArray(contextIncarnation)
+            || Object.keys(contextIncarnation).join(",") !== "dev,ino,birthtimeNs"
+            || contextIncarnation.dev !== incarnation.dev || contextIncarnation.ino !== incarnation.ino
+            || contextIncarnation.birthtimeNs !== incarnation.birthtimeNs) throw storeError(ERROR_CODES.corrupt);
+          identity = validatedIdentity(validateIdentity, envelope.identity, ERROR_CODES.corrupt);
         } catch (error) {
           if (error?.code === ERROR_CODES.corrupt) throw error;
           throw storeError(ERROR_CODES.corrupt);
         }
+        await assertCurrentBinding(paths, incarnation);
+        return identity;
       });
     },
 
-    create(identity) {
+    create(identity, options = {}) {
+      if (!options || typeof options !== "object" || ![Object.prototype, null].includes(Object.getPrototypeOf(options))) {
+        throw storeError(ERROR_CODES.options);
+      }
+      const descriptors = Object.getOwnPropertyDescriptors(options);
+      if (Reflect.ownKeys(descriptors).some(key => key !== "beforeCommit" || !descriptors[key].enumerable
+        || !Object.hasOwn(descriptors[key], "value"))) throw storeError(ERROR_CODES.options);
+      const authorizeCommit = descriptors.beforeCommit?.value;
+      if (authorizeCommit !== undefined && typeof authorizeCommit !== "function") throw storeError(ERROR_CODES.options);
+      const requireCommitAuthority = () => {
+        const authorized = authorizeCommit?.();
+        if (authorized !== undefined) {
+          if (authorized instanceof Promise) void authorized.catch(() => {});
+          throw storeError(ERROR_CODES.options);
+        }
+      };
       return serialize(async () => {
         const validated = validatedIdentity(validateIdentity, identity, ERROR_CODES.invalidIdentity);
         let identityJson;
@@ -322,7 +443,9 @@ export function createSpsNativeHostIdentityStore({
         } catch {
           throw storeError(ERROR_CODES.invalidIdentity);
         }
-        const paths = await safePaths(true);
+        const binding = await safeBinding(true);
+        if (!binding) throw storeError(ERROR_CODES.storage);
+        const { paths, incarnation } = binding;
         let current;
         try {
           current = await existingFile(paths.file, { rejectInvalid: false });
@@ -332,11 +455,12 @@ export function createSpsNativeHostIdentityStore({
         if (current) throw storeError(ERROR_CODES.exists);
 
         const plaintext = JSON.stringify({
-          v: 1,
+          v: STORE_VERSION,
           kind: STORE_KIND,
           context: {
             userDataDirectory: paths.userDataDirectory,
             vaultDirectory: paths.vaultDirectory,
+            vaultIncarnation: incarnation,
           },
           identity: canonicalIdentity,
         });
@@ -351,14 +475,13 @@ export function createSpsNativeHostIdentityStore({
         if (!Buffer.isBuffer(encrypted) || encrypted.length === 0 || encrypted.length > MAX_CIPHERTEXT_BYTES) {
           throw storeError(ERROR_CODES.storage);
         }
-        const serialized = JSON.stringify({ v: 1, kind: STORE_KIND, ciphertext: encrypted.toString("base64") });
+        const serialized = JSON.stringify({ v: STORE_VERSION, kind: STORE_KIND, ciphertext: encrypted.toString("base64") });
         if (Buffer.byteLength(serialized, "utf8") > MAX_FILE_BYTES) throw storeError(ERROR_CODES.storage);
 
         const temporary = path.join(paths.credentialsDirectory, `.host-identity-${randomUUID()}.tmp`);
         let temporaryIdentity;
         try {
-          const currentPaths = await safePaths(true);
-          if (!currentPaths || currentPaths.file !== paths.file) throw storeError(ERROR_CODES.storage);
+          await assertCurrentBinding(paths, incarnation, true);
           const handle = await fs.open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
           try {
             temporaryIdentity = await handle.stat();
@@ -367,13 +490,16 @@ export function createSpsNativeHostIdentityStore({
           } finally {
             await handle.close();
           }
-          const beforeCommit = await safePaths(false);
-          if (!beforeCommit || beforeCommit.file !== paths.file) throw storeError(ERROR_CODES.storage);
+          await assertCurrentBinding(paths, incarnation);
           const temporaryStat = await fs.lstat(temporary);
           if (!temporaryStat.isFile() || temporaryStat.isSymbolicLink() || temporaryStat.nlink !== 1
             || !sameFileIdentity(temporaryStat, temporaryIdentity)) throw storeError(ERROR_CODES.storage);
           const finalStat = await existingFile(paths.file, { rejectInvalid: false });
           if (finalStat) throw storeError(ERROR_CODES.exists);
+          requireCommitAuthority();
+          await assertCurrentBinding(paths, incarnation);
+          // Check both the filesystem and authority again; neither check grants access.
+          requireCommitAuthority();
           try {
             await fs.link(temporary, paths.file);
           } catch (error) {
@@ -381,7 +507,7 @@ export function createSpsNativeHostIdentityStore({
             throw error;
           }
           // A crash between link and unlink leaves a two-link slot; reads reject it and never repair or overwrite it.
-          const afterCommit = await safePaths(false);
+          const afterCommit = await assertCurrentBinding(paths, incarnation);
           const linkedStat = await fs.lstat(paths.file);
           const temporaryAfterLink = await fs.lstat(temporary);
           if (!afterCommit || afterCommit.file !== paths.file || !linkedStat.isFile() || linkedStat.isSymbolicLink()
@@ -390,13 +516,12 @@ export function createSpsNativeHostIdentityStore({
             || temporaryAfterLink.nlink !== 2 || !sameFileIdentity(temporaryAfterLink, temporaryIdentity)) {
             throw storeError(ERROR_CODES.storage);
           }
-          const beforeCleanup = await safePaths(false);
-          if (!beforeCleanup || beforeCleanup.file !== paths.file) throw storeError(ERROR_CODES.storage);
+          await assertCurrentBinding(paths, incarnation);
           await fs.unlink(temporary);
           temporaryIdentity = null;
-          const beforeSync = await safePaths(false);
-          if (!beforeSync || beforeSync.file !== paths.file) throw storeError(ERROR_CODES.storage);
+          await assertCurrentBinding(paths, incarnation);
           await syncDirectory(paths.credentialsDirectory);
+          await assertCurrentBinding(paths, incarnation);
           return validated;
         } catch (error) {
           if (isStoreError(error)) throw error;

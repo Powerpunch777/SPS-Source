@@ -4,6 +4,10 @@ Date: 2026-10-25 KST. Status: **inactive source foundation, isolated Windows sec
 This is not a Native LAN launch, enabled settings feature, installed-app acceptance,
 physical two-PC result, or signed-release qualification.
 
+Historical foundation checkpoint: current Settings and restore integration is
+recorded in the [subsequent lifecycle review](NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md).
+The unconnected-callsite statements below describe this foundation revision only.
+
 ## Approved Policy And Scope
 
 D6 remains one hour and one successful registration per invitation. D7 approves

@@ -1,9 +1,10 @@
 # RFC: Windows LAN trusted connectivity v0
 
-작성일: 2026-10-25. 상태: **D1~D3 제품 정책 승인 / 세부 프로토콜 작업 중 / LAN 활성화 승인 아님**.
+작성일: 2026-10-25. 상태: **D1~D3·D7 정책 승인 / 좁은 Host 인증서 준비 연결 / Native LAN OFF**.
 [계획과 결정 목록](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 Stage 0 산출물이다.
 개념 이름 전체가 현재 export·endpoint를 뜻하지 않는다. 일부 Core 기기 관리 계약은
-아래 소스 기반으로 구현됐지만 제품 startup과 실제 Native LAN에는 아직 연결하지 않는다.
+소스 기반으로 구현됐고, 신뢰된 Host 전용 Core Settings의 명시 확인 인증서 준비 경로만 연결됐다.
+실제 Native LAN ingress는 연결되지 않았고 LAN은 사용할 수 없다.
 
 ## 현재 소스 기반
 
@@ -15,7 +16,15 @@
   authorized clientAuth peer를 검증하고 매번 현재 인가를 조회한다. 시험은 loopback만 사용한다.
 - 선택적 WS guard는 upgrade와 이벤트 전달 전 로그인 세션·기기 권한을 재검사한다.
   기존 local/Agent 경로에는 적용하지 않는다. 제품 Native ingress는 아직 없다.
-- 인증서 발급/키 보관·최초 pairing·HTTP/파일/기타 WS 전체 경계·Native UI·물리 두 PC는 후속이다.
+- Core Settings는 신뢰된 Host 전용의 명시 확인을 거쳐 Host 인증서 준비를 호출한다. Member
+  발급이나 세션 등록은 하지 않는다. LAN은 OFF이며 listener/방화벽 변경도 없다.
+- 미출시 v2 Host identity store는 DPAPI context를 Vault incarnation `dev`/`ino`/`birthtimeNs`에
+  결속한다. 이는 로컬 lifecycle 결속이지 attestation이 아니다. 유효한 새 Vault에 slot이 없으면
+  `not_prepared`이며 준비를 허용한다. 기존 slot과 함께 Vault incarnation이 없거나 재생성/손상된
+  경우 명시적 복구가 필요하고 자동 교체하지 않는다. restore 시 상태 미상은 fail closed다.
+- Host 시작/restore interlock은 captured account를 쓰는 process-local guard이며 OS lock 보장은 없다.
+- Member 인증서 발급·session enrollment·갱신·최초 pairing 전송·HTTP/파일/기타 WS 전체 경계·
+  전체 Member UI·물리 두 PC는 후속이다.
 - 내부 pairing 저장 계층은 가입 전 verified 계정의 pending 등록과 일회용 소비를 같은
   트랜잭션으로 처리한다. HTTP/인증/TLS 호출자는 미연결이다. D6 승인으로 Desktop 기본값은
   코드를 받은 verified 사용자와 1시간/일회 소모다. 기기 승인·Workspace 권한은 별도다.
@@ -60,9 +69,20 @@ TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은
 강제하지 않는다. 자체 challenge 서명 알고리즘, 인증서 오류 무시, 앱 전역 CA/TLS 검증
 해제는 대안이 아니다.
 
-D7은 기본값과 갱신 원칙의 승인이다. 갱신 threshold와 issuer 회전 세부는 미정이다.
-현재 유효기간 계산 helper와 비활성 Host PKI/암호화 보관 primitive를 격리 시험했으며,
-기기 발급·실제 갱신·mTLS ingress와 제품 UI 연결은 미구현이다. 실제 고객 키/listener는 사용하지 않았다.
+D7은 서버/Member 인증서 90일, 별도 issuer 365일 및 만료 전 기존 키·검증된 현재 신원을
+사용하는 갱신 정책의 승인이다. 갱신 threshold/issuer 회전 세부는 미정이고, 갱신 자체는
+미구현이다. Core Settings source Electron의 7개 모드는 기존 로컬 Electron 43.7.7에서
+재실행해 모두 통과했다. 단위/계약 검사의 정확한 수와 명령은 아래 lifecycle 검증 기록에 모은다.
+기존 43.7.7 결과는 잠긴 43.8.3 검증이나 DPAPI v2 양성 수용이 아니다. 새 Native smoke 첫 실행이
+도입된 `await electronPhase()` deadlock을 잡아 부모가 기존 `void` entry를 복구하고 regression
+assertion을 추가했다. 재시도는 `runtime_validation / electron_version_mismatch`로 fail closed하며
+actual 43.7.7, expected 43.8.3을 보고했다. 이는 진단 경로 검증이지 43.8.3 DPAPI 성공이 아니다.
+CI는 잠긴 기본 Electron 바이너리를 사용하며 override 실행은 수용 증거가 아니다. Source
+`9c3c145abc536fa9add5d6e6f5f87fc7d2b6d404` run `40175609939`는 9개 Linux shard와 Core 전체
+typecheck/build 통과, Windows Native identity smoke와 Zod High `1243066` 실패(예외 없음), Windows
+No-AI skipped로 전체 실패했다. Core run `40175522247`은 같은 Core revision의 15 jobs 성공이다.
+smoke 진단 수정 후 새 CI는 pending이다. [설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)을 따른다.
+실제 고객 키/listener는 사용하지 않았다.
 
 신원 확인 전에는 사용자 access token·초대 secret·Workspace 자료를 보내지 않는다.
 신뢰하지 않은 discovery 응답이나 redirect를 따라 credential을 전달하지 않는다.
@@ -96,7 +116,8 @@ codec 자체는 인증을 하지 않는다. 별도 `native-connection-tls.mjs`�
 TLS probe는 HTTP나 자격정보를 전송하지 않는다. 결과 `tls_peer_verified`는
 해당 TLS 상대의 키 소유 확인일 뿐 SPS Host ID·Google 사용자·Member 승인·Workspace
 인가·Core readiness가 아니다. 후속 Core handshake에서 Host ID를 결속해야 한다.
-현재 `main`/preload/기존 join/공개 SDK에 연결하지 않았고 시험 서버는 loopback뿐이다.
+Host 인증서 준비는 현재 Core Settings의 신뢰된 Host-only main/preload 경로에 연결돼 있다.
+기존 join·공개 SDK·Native LAN listener에는 연결하지 않았고 시험 TLS 서버는 loopback뿐이다.
 원문 secret은 로그나 오류에 포함하지 않는다. 초대가 실행/Source grant를 부여하지 않는다.
 
 문법적으로 정상인 envelope는 **신뢰되지 않은 입력**이다. TLS verifier는 현재 시각의
@@ -105,8 +126,12 @@ TLS probe는 HTTP나 자격정보를 전송하지 않는다. 결과 `tls_peer_ve
 저장 계층은 secret 소비와 계정/pending 기기 결속을 구현했지만, 실제 세션·키 소유와
 TLS 상대를 확인하는 endpoint를 아직 제공하지 않는다.
 SPKI pin은 이 첫 계약에서 서버 인증서 공개키의 DER SubjectPublicKeyInfo 해시다.
-별도 안정 Host identity/키 수명주기·회전·복원 규칙은 아직 미구현이다. D7의 서버 인증서
-유효기간은 결정됐지만 서버 인증서 갱신과 pin 갱신/배포는 구현되지 않았고 세부 회전 계약도 남아 있다.
+미출시 v2 Host identity store와 좁은 준비 진입점은 있으나, 이는 인증서 attestation이나
+운영용 키 수명주기가 아니다. 유효한 새 Vault에 slot이 없는 상태는 `not_prepared`이며 준비할 수 있다.
+기존 slot의 Vault incarnation이 없거나 재생성/손상된 경우에는 명시적 복구가 필요하고 restore 시
+unknown은 fail closed다. Host 시작/restore interlock은
+process-local이며 OS lock은 보장하지 않는다. D7의 server certificate 갱신과 pin 갱신/배포는
+미구현이고 세부 회전 계약도 남아 있다.
 전송 채널에서 코드 전체를 바꾼 공격자는 지문도 바꿀 수 있으므로, 코드 자체는
 독립된 신뢰점이나 Host 서명이 아니다. 기존 신뢰 Host의 pin 변경은 별도 재확인이다.
 

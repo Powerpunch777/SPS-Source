@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { createSpsSetupWindowPreferences } from "./window-security.mjs";
+import { requireSpsNativeIdentityPreparationInput } from "./native-identity-controller.mjs";
 
 export const SPS_CORE_SETTINGS_SHORTCUT = "CommandOrControl+Alt+S";
 
@@ -25,6 +26,8 @@ export function createCoreSettingsController({
   checkUpdates,
   exportHost,
   inspectTransfer,
+  confirmNativeIdentity,
+  prepareNativeIdentity,
 }) {
   let window = null;
   let registered = false;
@@ -90,7 +93,7 @@ export function createCoreSettingsController({
         assertSender(event);
         if ((!input && args.length !== 0) || (input && args.length !== 1)) throw new Error("Unexpected Core Settings arguments.");
         if (writes) await authorizeMutation();
-        const run = () => action(args[0]);
+        const run = () => action(args[0], event);
         try { return await (writes ? mutate(run) : run()); }
         catch (error) {
           if (error instanceof TypeError) throw error;
@@ -116,6 +119,19 @@ export function createCoreSettingsController({
     bind("check-updates", async () => { await checkUpdates(); return status(); });
     bind("export-host", async () => { await exportHost(); }, { writes: true });
     bind("inspect-transfer", async () => { await inspectTransfer(); });
+    bind("prepare-native-identity", async (input, event) => {
+      const validated = requireSpsNativeIdentityPreparationInput(input);
+      if (typeof confirmNativeIdentity !== "function" || typeof prepareNativeIdentity !== "function") {
+        throw new Error("Native identity preparation is unavailable.");
+      }
+      if (await confirmNativeIdentity(window, validated)) {
+        assertSender(event);
+        await authorizeMutation();
+        assertSender(event);
+        await prepareNativeIdentity(validated, { assertRequester: () => assertSender(event) });
+      }
+      return status();
+    }, { writes: true, input: true });
   }
 
   function registerShortcut() {

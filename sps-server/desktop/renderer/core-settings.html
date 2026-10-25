@@ -62,6 +62,43 @@
         </div>
       </section>
 
+      <section class="section" aria-labelledby="native-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="native-heading">Native LAN (in development)</h2>
+            <p class="muted">LAN access is off and not active. Preparing an identity does not enable LAN access.</p>
+          </div>
+        </div>
+        <dl class="native-grid">
+          <div class="native-item">
+            <dt>LAN access</dt>
+            <dd>Off · not active</dd>
+          </div>
+          <div class="native-item">
+            <dt>Host identity</dt>
+            <dd id="native-identity-state" role="status" aria-live="polite">Unavailable</dd>
+          </div>
+          <div class="native-item native-detail" id="native-fingerprint-row" hidden>
+            <dt>Server SHA-256 fingerprint</dt>
+            <dd id="native-fingerprint"></dd>
+          </div>
+          <div class="native-item native-detail" id="native-server-expiry-row" hidden>
+            <dt>Server certificate expires</dt>
+            <dd id="native-server-expiry"></dd>
+          </div>
+          <div class="native-item native-detail" id="native-issuer-expiry-row" hidden>
+            <dt>Member issuer expires</dt>
+            <dd id="native-issuer-expiry"></dd>
+          </div>
+        </dl>
+        <div class="native-form" id="native-identity-form" hidden>
+          <label for="native-certificate-address">Certificate address</label>
+          <input id="native-certificate-address" type="text" inputmode="text" autocomplete="off" spellcheck="false" aria-describedby="native-address-help" />
+          <p class="help-text" id="native-address-help">Enter a private IPv4 or ULA address, for example 192.168.1.10.</p>
+          <button id="prepare-native-identity" class="button secondary" type="button" disabled>Prepare host identity</button>
+        </div>
+      </section>
+
       <section class="section" aria-labelledby="recovery-heading">
         <div class="section-heading compact-heading">
           <div>

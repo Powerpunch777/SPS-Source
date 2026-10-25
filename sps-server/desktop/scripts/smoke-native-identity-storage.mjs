@@ -9,11 +9,50 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeHostIdentityStore } from "../src/native-identity-store.mjs";
+import {
+  createNativeIdentityFailureReport,
+  formatNativeIdentityFailure,
+  isNativeIdentityFingerprint,
+  isNativeIdentityVersion,
+  parseNativeIdentityFailure,
+  serializeNativeIdentityFailure,
+} from "../src/native-identity-smoke-diagnostics.mjs";
 
 const run = promisify(execFile);
 const entry = fileURLToPath(import.meta.url);
 const prefix = "sps-native-identity-smoke-";
 const marker = "SPS_NATIVE_IDENTITY_SMOKE=";
+const expectedElectronVersion = createRequire(import.meta.url)("../package-lock.json").packages["node_modules/electron"].version;
+const successKeys = [
+  "phase", "result", "realWindowsSafeStorage", "electronRuntimeVersion", "nodeRuntimeVersion",
+  "serverSpkiSha256", "memberIssuerSpkiSha256", "vaultUnchanged", "plaintextKeyAbsent",
+];
+
+function failureReport(phase, stage, errorCode, electronRuntimeVersion = null, nodeRuntimeVersion = null) {
+  return createNativeIdentityFailureReport({
+    phase, stage, errorCode, electronRuntimeVersion, nodeRuntimeVersion, expectedElectronVersion,
+  });
+}
+
+function parseSuccess(stdout, phase) {
+  if (typeof stdout !== "string") return null;
+  const lines = stdout.split(/\r?\n/).filter(line => line.startsWith(marker));
+  if (lines.length !== 1) return null;
+  let value;
+  try { value = JSON.parse(lines[0].slice(marker.length)); }
+  catch { return null; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const actualKeys = Object.keys(value).sort();
+  if (actualKeys.length !== successKeys.length
+    || actualKeys.some((key, index) => key !== [...successKeys].sort()[index])) return null;
+  if (value.phase !== phase || value.result !== "passed" || value.realWindowsSafeStorage !== true
+    || value.vaultUnchanged !== true || value.plaintextKeyAbsent !== true
+    || !isNativeIdentityVersion(value.electronRuntimeVersion)
+    || !isNativeIdentityVersion(value.nodeRuntimeVersion)
+    || !isNativeIdentityFingerprint(value.serverSpkiSha256)
+    || !isNativeIdentityFingerprint(value.memberIssuerSpkiSha256)) return null;
+  return Object.fromEntries(successKeys.map(key => [key, value[key]]));
+}
 
 async function plainDirectory(directory) {
   const resolved = path.resolve(directory);
@@ -26,41 +65,91 @@ async function plainDirectory(directory) {
 }
 
 async function electronPhase() {
-  const { app, safeStorage } = createRequire(import.meta.url)("electron");
   const args = process.argv.slice(2);
-  if (args.length !== 3 || args[0] !== "--isolated-native-identity" || !["create", "reload"].includes(args[2])) {
-    throw new Error("Invalid isolated Native identity smoke invocation.");
-  }
-  // Electron's pre-ready configuration must finish before the first await.
-  const plainSync = directory => {
-    for (let current = path.resolve(directory);; current = path.dirname(current)) {
-      const stat = lstatSync(current);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Linked smoke directory.");
-      if (path.dirname(current) === current) break;
-    }
-    return realpathSync(directory);
+  const phase = args[2] === "reload" ? "reload" : "create";
+  let stage = "electron_startup";
+  let app;
+  let watchdog;
+  let failureReported = false;
+  const emitFailure = (errorCode, failureStage = stage) => {
+    if (failureReported) return;
+    failureReported = true;
+    const line = serializeNativeIdentityFailure(failureReport(
+      phase, failureStage, errorCode, process.versions.electron ?? null, process.versions.node ?? null,
+    ));
+    if (!line) return Promise.resolve();
+    return new Promise(resolve => {
+      try { process.stderr.write(`${line}\n`, resolve); }
+      catch { resolve(); }
+    });
   };
-  const root = plainSync(args[1]);
-  const temp = plainSync(os.tmpdir());
-  if (path.dirname(root) !== temp || !path.basename(root).startsWith(prefix)) throw new Error("Invalid isolated smoke root.");
-  const userDataDirectory = path.join(root, "electron-user-data");
-  const vaultDirectory = path.join(root, "empty-owner-vault");
-  mkdirSync(userDataDirectory, { recursive: true });
-  mkdirSync(vaultDirectory, { recursive: true });
-  if (plainSync(userDataDirectory) !== userDataDirectory || plainSync(vaultDirectory) !== vaultDirectory) {
-    throw new Error("Native identity smoke directories changed.");
-  }
-  app.setPath("userData", userDataDirectory);
-  app.disableHardwareAcceleration();
-  const watchdog = setTimeout(() => app.exit(2), 30_000);
+
   try {
+    const electron = createRequire(import.meta.url)("electron");
+    ({ app } = electron);
+    const { safeStorage } = electron;
+    if (args.length !== 3 || args[0] !== "--isolated-native-identity" || !["create", "reload"].includes(args[2])) {
+      stage = "arguments";
+      await emitFailure("invalid_invocation");
+      app.exit(1);
+      return;
+    }
+
+    // Electron's pre-ready configuration must finish before the first await.
+    const plainSync = directory => {
+      for (let current = path.resolve(directory);; current = path.dirname(current)) {
+        const stat = lstatSync(current);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Linked smoke directory.");
+        if (path.dirname(current) === current) break;
+      }
+      return realpathSync(directory);
+    };
+    stage = "root_validation";
+    const root = plainSync(args[1]);
+    const temp = plainSync(os.tmpdir());
+    if (path.dirname(root) !== temp || !path.basename(root).startsWith(prefix)) {
+      await emitFailure("unsafe_smoke_root");
+      app.exit(1);
+      return;
+    }
+    const userDataDirectory = path.join(root, "electron-user-data");
+    const vaultDirectory = path.join(root, "empty-owner-vault");
+    stage = "user_data_setup";
+    mkdirSync(userDataDirectory, { recursive: true });
+    mkdirSync(vaultDirectory, { recursive: true });
+    if (plainSync(userDataDirectory) !== userDataDirectory || plainSync(vaultDirectory) !== vaultDirectory) {
+      await emitFailure("smoke_directory_setup_failed");
+      app.exit(1);
+      return;
+    }
+    app.setPath("userData", userDataDirectory);
+    app.disableHardwareAcceleration();
+    watchdog = setTimeout(() => {
+      void emitFailure("smoke_watchdog_expired", "watchdog").then(() => app.exit(2));
+    }, 30_000);
+
+    stage = "app_ready";
     await app.whenReady();
-    const expectedElectron = createRequire(import.meta.url)("../package-lock.json").packages["node_modules/electron"].version;
-    assert.equal(process.versions.electron, expectedElectron, "The smoke runtime must match the installed dependency version.");
-    assert.equal(safeStorage.isEncryptionAvailable(), true, "Real Windows secure storage is required.");
+    stage = "runtime_validation";
+    if (process.versions.electron !== expectedElectronVersion) {
+      await emitFailure("electron_version_mismatch");
+      clearTimeout(watchdog);
+      app.exit(1);
+      return;
+    }
+    stage = "secure_storage";
+    if (safeStorage.isEncryptionAvailable() !== true) {
+      await emitFailure("secure_storage_unavailable");
+      clearTimeout(watchdog);
+      app.exit(1);
+      return;
+    }
+
+    stage = "identity_store";
     const store = createSpsNativeHostIdentityStore({ userDataDirectory, vaultDirectory, safeStorage });
     if (args[2] === "create") {
       assert.equal(await store.read(), null);
+      stage = "identity_create";
       const now = Math.floor(Date.now() / 1000) * 1000;
       const identity = await createSpsNativeHostIdentity({
         hostId: "11111111-1111-4111-8111-111111111111", hostnames: ["127.0.0.1"],
@@ -69,9 +158,11 @@ async function electronPhase() {
       await store.create(identity);
       assert.equal((await store.read()).server.privateKeyPem, identity.server.privateKeyPem);
     }
+    stage = "identity_reload";
     const loaded = await store.read();
     assert.ok(loaded);
     await assert.rejects(store.create(loaded), { code: "ERR_SPS_NATIVE_IDENTITY_ALREADY_EXISTS" });
+    stage = "storage_validation";
     const credentials = path.join(userDataDirectory, "native-connectivity", "credentials");
     const files = await readdir(credentials);
     assert.equal(files.length, 1);
@@ -89,76 +180,135 @@ async function electronPhase() {
     clearTimeout(watchdog);
     app.exit(0);
   } catch {
-    clearTimeout(watchdog);
-    console.error("Isolated Native identity secure-storage checks failed. No customer data was used.");
-    app.exit(1);
+    if (watchdog) clearTimeout(watchdog);
+    if (!failureReported) {
+      const fallbackCode = stage === "electron_startup" || stage === "app_ready" ? "electron_startup_failed"
+        : stage === "root_validation" ? "unsafe_smoke_root"
+          : stage === "user_data_setup" ? "smoke_directory_setup_failed"
+            : stage === "runtime_validation" ? "electron_version_mismatch"
+              : stage === "secure_storage" ? "secure_storage_unavailable"
+                : stage === "arguments" ? "invalid_invocation" : "identity_operation_failed";
+      await emitFailure(fallbackCode);
+    }
+    app?.exit(1);
   }
 }
 
 async function orchestrate() {
-  if (process.platform !== "win32" || process.argv.length !== 2) throw new Error("This isolated secure-storage smoke requires Windows and no arguments.");
-  const temp = await plainDirectory(os.tmpdir());
-  const override = process.env.SPS_NATIVE_IDENTITY_SMOKE_ELECTRON_BINARY;
-  let binary = path.resolve(path.dirname(entry), "../node_modules/electron/dist/electron.exe");
-  if (override !== undefined) {
-    if (!path.isAbsolute(override)) throw new Error("An isolated Electron override must be an absolute executable path.");
-    const directory = await plainDirectory(path.dirname(override));
-    const relative = path.relative(temp, directory);
-    const binaryStat = await lstat(override);
-    if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
-      || path.basename(override) !== "electron.exe" || !binaryStat.isFile() || binaryStat.isSymbolicLink()
-      || await realpath(override) !== path.join(directory, "electron.exe")) throw new Error("Invalid isolated Electron override.");
-    binary = override;
-  }
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  delete env.NODE_OPTIONS;
-  const root = await mkdtemp(path.join(temp, prefix));
-  const original = await lstat(root);
-  const canonical = await plainDirectory(root);
+  let temp;
+  let root;
+  let original;
+  let canonical;
   let created;
+  let failure;
+  let succeeded = false;
+  let phase = "create";
+  let parentStage = "orchestration";
   try {
-    for (const phase of ["create", "reload"]) {
-      const pending = run(binary, [entry, "--isolated-native-identity", root, phase], {
-        env, windowsHide: true, timeout: 45_000, maxBuffer: 64 * 1024,
-      });
-      let output;
-      try { output = await pending; }
-      catch { throw new Error(`Isolated Native identity ${phase} process failed; raw process output was withheld.`); }
-      finally {
-        if (pending.child?.exitCode === null) {
-          await run("taskkill", ["/pid", String(pending.child.pid), "/t", "/f"], { windowsHide: true, timeout: 10_000 }).catch(() => {});
-        }
+    if (process.platform !== "win32" || process.argv.length !== 2) {
+      failure = failureReport(phase, "orchestration", "orchestration_failed");
+    } else {
+      parentStage = "root_validation";
+      temp = await plainDirectory(os.tmpdir());
+      const binary = path.resolve(path.dirname(entry), "../node_modules/electron/dist/electron.exe");
+      if (Object.hasOwn(process.env, "SPS_NATIVE_IDENTITY_SMOKE_ELECTRON_BINARY")) {
+        failure = failureReport(phase, "runtime_validation", "runtime_override_disallowed");
       }
-      const lines = output.stdout.split(/\r?\n/).filter(line => line.startsWith(marker));
-      assert.equal(lines.length, 1);
-      const report = JSON.parse(lines[0].slice(marker.length));
-      assert.equal(report.phase, phase);
-      assert.equal(report.result, "passed");
-      if (created) {
-        assert.equal(report.serverSpkiSha256, created.serverSpkiSha256);
-        assert.equal(report.memberIssuerSpkiSha256, created.memberIssuerSpkiSha256);
-        assert.equal(report.electronRuntimeVersion, created.electronRuntimeVersion);
-        assert.equal(report.nodeRuntimeVersion, created.nodeRuntimeVersion);
-      } else created = report;
+      if (!failure) {
+        const env = { ...process.env };
+        delete env.ELECTRON_RUN_AS_NODE;
+        delete env.NODE_OPTIONS;
+        parentStage = "user_data_setup";
+        root = await mkdtemp(path.join(temp, prefix));
+        original = await lstat(root);
+        parentStage = "root_validation";
+        canonical = await plainDirectory(root);
+        parentStage = "electron_startup";
+        for (phase of ["create", "reload"]) {
+          const pending = run(binary, [entry, "--isolated-native-identity", root, phase], {
+            env, windowsHide: true, timeout: 45_000, maxBuffer: 64 * 1024,
+          });
+          let output;
+          try { output = await pending; }
+          catch (error) {
+            const childFailure = parseNativeIdentityFailure(error?.stderr, { phase, expectedElectronVersion });
+            failure = childFailure ?? failureReport(
+              phase,
+              error?.code === "ETIMEDOUT" ? "watchdog" : "electron_startup",
+              error?.code === "ETIMEDOUT" ? "smoke_watchdog_expired" : "electron_process_failed",
+            );
+          } finally {
+            if (pending.child?.exitCode === null) {
+              await run("taskkill", ["/pid", String(pending.child.pid), "/t", "/f"], { windowsHide: true, timeout: 10_000 }).catch(() => {});
+            }
+          }
+          if (failure) break;
+          const childFailure = parseNativeIdentityFailure(output.stderr, { phase, expectedElectronVersion });
+          if (childFailure) {
+            failure = childFailure;
+            break;
+          }
+          const report = parseSuccess(output.stdout, phase);
+          if (!report) {
+            failure = failureReport(phase, "child_protocol", "child_report_invalid");
+            break;
+          }
+          if (report.electronRuntimeVersion !== expectedElectronVersion) {
+            failure = failureReport(phase, "runtime_validation", "electron_version_mismatch",
+              report.electronRuntimeVersion, report.nodeRuntimeVersion);
+            break;
+          }
+          if (created && (report.serverSpkiSha256 !== created.serverSpkiSha256
+            || report.memberIssuerSpkiSha256 !== created.memberIssuerSpkiSha256
+            || report.electronRuntimeVersion !== created.electronRuntimeVersion
+            || report.nodeRuntimeVersion !== created.nodeRuntimeVersion)) {
+            failure = failureReport(phase, "identity_reload", "identity_operation_failed",
+              report.electronRuntimeVersion, report.nodeRuntimeVersion);
+            break;
+          }
+          if (!created) created = report;
+        }
+        succeeded = !failure && Boolean(created);
+      }
     }
+  } catch {
+    if (!failure) {
+      const code = parentStage === "root_validation" ? "unsafe_smoke_root"
+        : parentStage === "user_data_setup" ? "smoke_directory_setup_failed"
+          : parentStage === "electron_startup" ? "electron_process_failed" : "orchestration_failed";
+      const stage = ["root_validation", "user_data_setup", "electron_startup"].includes(parentStage)
+        ? parentStage : "orchestration";
+      failure = failureReport(phase, stage, code);
+    }
+  }
+  if (root && original && canonical) {
+    try {
+      parentStage = "owned_temp_cleanup";
+      const current = await lstat(root);
+      if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== original.dev || current.ino !== original.ino
+        || await plainDirectory(root) !== canonical || path.dirname(canonical) !== temp
+        || !path.basename(canonical).startsWith(prefix)) {
+        if (!failure) failure = failureReport(phase, "owned_temp_cleanup", "owned_temp_cleanup_refused");
+      } else await rm(root, { recursive: true });
+    } catch {
+      if (!failure) failure = failureReport(phase, "owned_temp_cleanup", "owned_temp_cleanup_refused");
+    }
+  }
+
+  if (failure) {
+    const line = serializeNativeIdentityFailure(failure);
+    if (line) console.error(line);
+    console.error(formatNativeIdentityFailure(failure));
+    process.exitCode = 1;
+  } else if (succeeded && created) {
     console.log(JSON.stringify({ result: "passed", phases: ["create", "separate-process-reload"],
       realWindowsSafeStorage: true, customerDataUsed: false, osCertificateStoreChanged: false,
       listenerStarted: false, sameKeyAfterRestart: true,
       electronRuntimeVersion: created.electronRuntimeVersion, nodeRuntimeVersion: created.nodeRuntimeVersion }));
-  } finally {
-    const current = await lstat(root);
-    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== original.dev || current.ino !== original.ino
-      || await plainDirectory(root) !== canonical || path.dirname(canonical) !== temp
-      || !path.basename(canonical).startsWith(prefix)) throw new Error("Refusing unsafe Native identity smoke cleanup.");
-    await rm(root, { recursive: true });
   }
 }
 
 if (process.versions.electron) {
-  // Let Electron finish loading its ESM entry before waiting for app readiness.
-  void electronPhase().catch(() => {
-    console.error("Isolated Native identity initialization failed.");
-    createRequire(import.meta.url)("electron").app.exit(1);
-  });
+  // app.whenReady() must not block Electron's ESM entry evaluation.
+  void electronPhase();
 } else await orchestrate();

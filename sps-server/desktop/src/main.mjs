@@ -9,6 +9,9 @@ import { resolveSpsE2eUserDataDirectory } from "./e2e-user-data.mjs";
 import { resolveDesktopDevelopment, watchDevelopmentSurfaces } from "./development-mode.mjs";
 import { coreRecoveryEnvironment, loadCoreRecoverySettings, saveCoreRecoverySettings } from "./core-recovery-store.mjs";
 import { createCoreSettingsController } from "./core-settings-controller.mjs";
+import { createSpsNativeHostIdentityStore } from "./native-identity-store.mjs";
+import { assertSpsNativeHostCredentialsAbsentForRestore, createSpsNativeIdentityController } from "./native-identity-controller.mjs";
+import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
 import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
 import {
   cancelSpsNodeCommands,
@@ -251,6 +254,9 @@ let pluginPreviewClosing = false;
 const activeDeveloperProjectOperations = new Set();
 let officialExtensionsWindow = null;
 let coreSettingsController = null;
+let nativeIdentityController = null;
+const nativeIdentityStores = new Map();
+const ownerVaultOperations = createSpsOwnerVaultOperationGate();
 let ownerHostRecoveryPluginsDisabled = null;
 let state = emptyState();
 let desktopStateUnavailable = false;
@@ -617,11 +623,13 @@ function openSpsExternalUrl(value) {
 
 async function startDesktopAccountSignIn() {
   if (desktopStateUnavailable) throw new Error("Repair SPS Desktop connection settings before signing in.");
-  return desktopAccountController.signIn();
+  if (ownerVaultOperations.isRestoring()) throw new Error("Wait for the SPS Host restore to finish before changing accounts.");
+  return ownerVaultOperations.changeConnection(() => desktopAccountController.signIn());
 }
 
 async function signOutDesktopAccount() {
-  return desktopAccountController.signOut();
+  if (ownerVaultOperations.isRestoring()) throw new Error("Wait for the SPS Host restore to finish before signing out.");
+  return ownerVaultOperations.changeConnection(() => desktopAccountController.signOut());
 }
 
 function currentTeamCredentials() {
@@ -1274,6 +1282,33 @@ function ownerVaultRoot() {
   return developmentMode?.vaultRoot ?? path.join(app.getPath("userData"), "owner-vault");
 }
 
+function nativeIdentityStore(context = { userDataDirectory: app.getPath("userData"), vaultDirectory: ownerVaultRoot() }) {
+  const key = `${context.userDataDirectory}\0${context.vaultDirectory}`;
+  if (!nativeIdentityStores.has(key)) {
+    nativeIdentityStores.set(key, createSpsNativeHostIdentityStore({ ...context, safeStorage }));
+  }
+  return nativeIdentityStores.get(key);
+}
+
+function nativeIdentityAuthority() {
+  if (desktopStateUnavailable || ownerVaultOperations.isRestoring() || !isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) return null;
+  try { requireSpsOwnerHostOrigin(state.profile.hubUrl); } catch { return null; }
+  return { ownerSubject: currentDesktopAccountSubject(), userDataDirectory: app.getPath("userData"), vaultDirectory: ownerVaultRoot() };
+}
+
+function ensureNativeIdentityController() {
+  if (!nativeIdentityController) nativeIdentityController = createSpsNativeIdentityController({
+    getAuthority: nativeIdentityAuthority,
+    authenticateHost: async () => {
+      if (!nativeIdentityAuthority() || !await ensureDesktopIdentityAccessToken() || !nativeIdentityAuthority()) {
+        throw new Error("The signed-in local Host session is required.");
+      }
+    },
+    getStore: nativeIdentityStore,
+  });
+  return nativeIdentityController;
+}
+
 async function materializeCurrentSpsOwnerHostRuntime() {
   if (ownerHostRuntimePromise) return ownerHostRuntimePromise;
   ownerHostRuntimePromise = (async () => {
@@ -1575,9 +1610,10 @@ async function ensureOwnerHostManager() {
   return { ...ownerHost, defaultMemory, url };
 }
 
-async function activateOwnerHostProfile() {
+async function activateOwnerHostProfile(expectedSubject = null) {
   const account = currentDesktopAccount();
   if (!account) throw new Error("Sign in to SPS before activating this SPS Owner Host.");
+  if (expectedSubject && account.subject !== expectedSubject) throw new Error("The SPS account changed during Host startup.");
   if (state.ownerHostOwnerSubject && state.ownerHostOwnerSubject !== account.subject) {
     throw new Error("This computer already hosts an SPS Server for a different SPS account. Sign in with that Owner account to manage it.");
   }
@@ -1602,7 +1638,13 @@ async function activateOwnerHostProfile() {
   return publicStatus();
 }
 
-async function startOwnerHost({ activate = false } = {}) {
+async function startOwnerHost({ activate = false, restorePermit, expectedOwnerSubject = null } = {}) {
+  const expectedSubject = activate ? expectedOwnerSubject ?? currentDesktopAccountSubject() : null;
+  if (activate && !expectedSubject) throw new Error("Sign in to SPS before starting the local Host.");
+  return ownerVaultOperations.start(() => startOwnerHostWithContext({ activate, expectedSubject }), { restorePermit });
+}
+
+async function startOwnerHostWithContext({ activate, expectedSubject }) {
   const ownerHost = await ensureOwnerHostManager();
   backgroundStartupDeferred = false;
   ownerHostStatus = {
@@ -1655,7 +1697,7 @@ async function startOwnerHost({ activate = false } = {}) {
     if (!ownerHostIsReady()) {
       throw new Error(ownerHostStatus.lastError || "SPS Owner Host did not become ready.");
     }
-    await activateOwnerHostProfile();
+    await activateOwnerHostProfile(expectedSubject);
     await ensureInitialOwnerHostCompany();
     // A previously installed Team Workplane is company-scoped. Bind it only
     // after the local Owner identity and initial company are both available.
@@ -3061,23 +3103,46 @@ function runOwnerHostRestoreProcess({ command, cwd, helperPath, configPath, back
 }
 
 async function restoreOwnerServerFromTransfer() {
+  return ownerVaultOperations.restore(restorePermit => restoreOwnerServerFromTransferLocked(restorePermit));
+}
+
+async function restoreOwnerServerFromTransferLocked(restorePermit) {
   const account = currentDesktopAccount();
   if (!account) throw new Error("Sign in to SPS before restoring an SPS Server.");
+  if (desktopAccountController?.getStatus().pending) throw new Error("Finish the current SPS sign-in before restoring a Host.");
   if (ownerHostIsReady()) throw new Error("Stop the current SPS Owner Host before restoring a Server.");
   if (state.ownerHostOwnerSubject || isOwnerHostProfile()) {
     throw new Error("SPS Host restore is allowed only on a fresh Host that has never been activated.");
   }
-
   const targetRoot = ownerVaultRoot();
-  await assertSpsOwnerVaultRestoreTarget({ vaultRoot: targetRoot });
+  const originalProfile = state.profile;
+  const originalRouting = JSON.stringify(state.profile);
+  const assertRestoreAccount = () => {
+    if (desktopStateUnavailable || currentDesktopAccountSubject() !== account.subject
+      || state.ownerHostOwnerSubject || state.profile !== originalProfile || JSON.stringify(state.profile) !== originalRouting
+      || ownerHostIsReady() || ownerVaultRoot() !== targetRoot) {
+      throw new Error("The fresh Host or signed-in account changed during restore.");
+    }
+  };
+  const assertFreshRestoreContext = async () => {
+    assertRestoreAccount();
+    const target = await assertSpsOwnerVaultRestoreTarget({ vaultRoot: targetRoot });
+    await assertSpsNativeHostCredentialsAbsentForRestore(nativeIdentityStore());
+    assertRestoreAccount();
+    return target;
+  };
+  if (!await ensureDesktopIdentityAccessToken()) throw new Error("A current SPS sign-in is required before restoring a Host.");
+  await assertFreshRestoreContext();
   const selection = await dialog.showOpenDialog(mainWindow ?? undefined, {
     title: "Choose an SPS Server transfer folder to restore",
     properties: ["openDirectory"],
   });
   if (selection.canceled || !selection.filePaths[0]) return null;
+  await assertFreshRestoreContext();
 
   const inspected = await inspectSpsOwnerVaultTransfer({ bundleRoot: selection.filePaths[0] });
   const stagingRoot = path.join(app.getPath("userData"), `owner-vault.restore-${randomUUID()}`);
+  let promoted = false;
   try {
     const stagingConfig = await ensureSpsOwnerHostConfig({ vaultRoot: stagingRoot });
     const imported = await importSpsOwnerVaultTransfer({ bundleRoot: inspected.bundleRoot, vaultRoot: stagingRoot });
@@ -3118,12 +3183,17 @@ async function restoreOwnerServerFromTransfer() {
       update: (config) => rebaseSpsOwnerHostConfigPaths(config, { vaultRoot: targetRoot }),
     });
 
-    const finalTarget = await assertSpsOwnerVaultRestoreTarget({ vaultRoot: targetRoot });
+    const finalTarget = await assertFreshRestoreContext();
+    assertRestoreAccount();
     if (finalTarget.reason === "bootstrap-only") {
-      await fs.rm(targetRoot, { recursive: true, force: true });
+      if (path.resolve(finalTarget.root) !== path.resolve(targetRoot)) throw new Error("The fresh Host restore path changed.");
+      await fs.rm(finalTarget.root, { recursive: true, force: true });
     }
+    assertRestoreAccount();
     await fs.rename(stagingRoot, targetRoot);
-    await startOwnerHost({ activate: true });
+    promoted = true;
+    assertRestoreAccount();
+    await startOwnerHost({ activate: true, restorePermit, expectedOwnerSubject: account.subject });
     await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
     await dialog.showMessageBox(mainWindow ?? undefined, {
       type: "info",
@@ -3133,6 +3203,9 @@ async function restoreOwnerServerFromTransfer() {
     });
     return publicStatus();
   } catch (error) {
+    if (promoted) {
+      throw new Error("The restored SPS data was retained, but Host activation did not finish. Sign in with the original restoring account and reopen the local Host. Do not import another transfer over this Vault.", { cause: error });
+    }
     await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
@@ -3431,6 +3504,10 @@ async function revokeMemberInvite(input) {
 }
 
 async function saveRemoteProfile(input) {
+  return ownerVaultOperations.changeConnection(() => saveRemoteProfileWithContext(input));
+}
+
+async function saveRemoteProfileWithContext(input) {
   const companyId = String(input?.companyId ?? "").trim();
   const displayName = String(input?.displayName ?? "").trim();
   const hubUrl = requireSpsHubOrigin(input?.hubUrl);
@@ -3479,6 +3556,11 @@ async function saveRemoteProfile(input) {
 }
 
 async function acceptInviteCode(input) {
+  if (ownerVaultOperations.isRestoring()) throw new Error("Wait for the SPS Host restore to finish before changing servers.");
+  return ownerVaultOperations.changeConnection(() => acceptInviteCodeWithContext(input));
+}
+
+async function acceptInviteCodeWithContext(input) {
   if (isOwnerHostProfile()) {
     throw new Error("This SPS Owner Host creates member invitations; it does not join another team.");
   }
@@ -3857,6 +3939,7 @@ function ensureCoreSettingsController() {
         desktopStateAvailable: !desktopStateUnavailable,
         host: { state: host.state, startupDeferred: backgroundStartupDeferred, lastError: host.lastError ? redactLocalDiagnostic(host.lastError) : null },
         recovery: { ...recovery, needsRestart: ownerHostRecoveryPluginsDisabled !== null && recovery.pluginsDisabled !== ownerHostRecoveryPluginsDisabled },
+        nativeConnectivity: await ensureNativeIdentityController().inspect(),
       };
     },
     authorizeMutation: assertRegistryOwner,
@@ -3894,6 +3977,16 @@ function ensureCoreSettingsController() {
     checkUpdates: checkForDesktopBetaUpdate,
     exportHost: exportOwnerVaultTransfer,
     inspectTransfer: inspectOwnerVaultTransfer,
+    confirmNativeIdentity: async (parentWindow, { serverAddress }) => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Prepare a local Native Host identity?",
+        message: "Create protected server and device-issuer keys on this computer?",
+        detail: `Certificate address: ${serverAddress}\n\nServer certificate: 90 days. Device-issuer CA: 365 days. Keys remain in Windows secure storage, outside server exports. This does not enable LAN, open a port, approve a device, or replace existing credentials.`,
+        buttons: ["Cancel", "Prepare identity"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
+    prepareNativeIdentity: (input, options) => ensureNativeIdentityController().prepare(input, options),
   });
   return coreSettingsController;
 }
@@ -4799,7 +4892,7 @@ function registerIpc() {
     const health = await probeSpsHub({ hubUrl });
     return { hubUrl, health };
   });
-  ipcMain.handle("desktop:use-owner-host", async () => {
+  ipcMain.handle("desktop:use-owner-host", async () => ownerVaultOperations.changeConnection(async () => {
     if (!currentAccountOwnsOwnerHost() && state.ownerHostOwnerSubject) {
       throw new Error("This SPS Owner Host belongs to a different SPS account. Join it with an invitation instead.");
     }
@@ -4811,7 +4904,7 @@ function registerIpc() {
     await startOwnerHost({ activate: true });
     await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
     return publicStatus();
-  });
+  }));
   ipcMain.handle("desktop:refresh-owner-host-companies", async () => {
     await refreshOwnerHostCompanies();
     return publicStatus();

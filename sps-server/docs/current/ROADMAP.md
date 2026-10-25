@@ -13,17 +13,19 @@
 
 1. Windows Desktop/Host/Member/Node를 우선 안정화하고, 외부 Tailscale 없이 동작하는
    내장 **LAN** 경로를 개발한다. Stage 0 감사는 완료했고, 전체 초대코드와 서버 지문
-   확인(D1)이 승인됐다. 지금은 비활성 계약/시험 단계이며 실제 연결은 아직 미구현이다.
-   PC별 mTLS 인증서(D2), LAN 기본 off/명시 사설망 opt-in(D3)도 승인됐다. 서버 인증서/
-   TLS 소스 시험 뒤 Core 기기 registry/승인·철회·현재 Workspace 인가와 선택적
-   mTLS/WS 경계의 소스 기반을 추가했다. 앱 최초 pairing·발급·LAN listener와
-   실제 두 PC는 미완료다. [Member 기기 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
-   이어서 [일회용 pairing 저장 계층](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)의
-   원자적 소비·재생/경합 거부와 가입 전 pending 등록을 구현했다. 실제 초기 연결은 후속이다.
-   D7의 인증서 90일/CA 365일 기본값을 승인받고, 별도 서버/CA 키의 생성·암호화 보관과
-   실제 Windows safeStorage의 프로세스 간 재독해를 격리 시험했다.
-   [Host 키 보관 검증](../reviews/NATIVE-HOST-IDENTITY-VERIFICATION-2026-10-25.md)은
-   UI·기기 발급·갱신·LAN/물리 두 PC 완료 증거가 아니다.
+   확인(D1), PC별 mTLS 인증서(D2), LAN 기본 off/명시 opt-in(D3)이 승인됐다. Core 기기
+   registry·승인/철회·현재 Workspace 인가·선택적 mTLS/WS 경계와 일회용 pairing 저장은
+   source 기반이다. 신뢰된 Host 전용 Core Settings에서 명시 확인 후 인증서를 준비하는
+   좁은 경로가 연결됐다. LAN은 OFF: Native LAN listener·방화벽 변경·Member 발급·세션 등록·
+   갱신은 없다. D7은 server/Member 90일·issuer 365일과 기존 키 갱신 정책 승인이지, 실제
+   갱신 구현은 아니다. 미출시 v2 DPAPI store의 Vault-incarnation 결속·복구·process-local
+   interlock 한계는 [계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)에 기록한다.
+   소스 단위/설정 UI 검사는 통과했지만 잠긴 Electron 43.8.3 DPAPI 시험과 이 Source의 새 CI는 미완료다.
+   Zod High 보류를 포함한 기존 출시 Gate도 유지한다. 명령·정확한 수·runtime·CI revision은 아래
+   lifecycle 검증 기록에 모으고, 개발 UI 결과를 서명 설치본 또는 두 PC 증거로 사용하지 않는다.
+   [Member 기기 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과
+   [pairing 저장 검증](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md),
+   [설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)을 따른다.
 2. Native 초기 연결·승인·철회·복구를 0-Agent/0-Plugin에서도 제공한다. 기존 사용자
    인증·Workspace/Plugin·Node 실행 권한은 분리하고, HTTP/WS 양쪽에 적용한다.
 3. API·Owner 복구·Host Source/SMB의 별도 의존성을 이전/검증한다. 실제 Windows 두 PC와

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
-import { lstat, link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdirSync, promises as nodeFs, rmdirSync } from "node:fs";
+import { lstat, link, mkdir, mkdtemp, readFile, readdir, realpath, rm, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,7 +22,7 @@ const validIdentity = Object.freeze({
   }),
 });
 
-function makeSafeStorage({ failDecrypt = false } = {}) {
+function makeSafeStorage({ failDecrypt = false, onDecrypt = () => {} } = {}) {
   const key = randomBytes(32);
   return {
     isEncryptionAvailable: () => true,
@@ -32,6 +33,7 @@ function makeSafeStorage({ failDecrypt = false } = {}) {
       return Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]);
     },
     decryptString(value) {
+      onDecrypt();
       if (failDecrypt) throw new Error("fake authentication failed");
       if (value.length < 28) throw new Error("fake ciphertext is invalid");
       const decipher = createDecipheriv("aes-256-gcm", key, value.subarray(0, 12));
@@ -130,14 +132,32 @@ function storeFor(paths, overrides = {}) {
   });
 }
 
+function replaceEmptyVault(paths) {
+  rmdirSync(paths.vaultDirectory);
+  mkdirSync(paths.vaultDirectory);
+}
+
 async function credentialsDirectory(userDataDirectory) {
   return path.join(userDataDirectory, "native-connectivity", "credentials");
 }
 
 async function slotFile(userDataDirectory, vaultDirectory) {
   const canonicalVault = await realpath(vaultDirectory);
-  const slot = createHash("sha256").update(canonicalVault, "utf8").digest("hex");
+  const slot = createHash("sha256").update(canonicalVault.toLowerCase(), "utf8").digest("hex");
   return path.join(await credentialsDirectory(userDataDirectory), `host-identity-${slot}.json`);
+}
+
+async function removeEmptyOwnedVault(paths) {
+  const rootStat = await lstat(paths.root);
+  const canonicalRoot = await realpath(paths.root);
+  const vaultStat = await lstat(paths.vaultDirectory);
+  assert.equal(rootStat.isSymbolicLink(), false);
+  assert.equal(rootStat.isDirectory(), true);
+  assert.equal(vaultStat.isSymbolicLink(), false);
+  assert.equal(vaultStat.isDirectory(), true);
+  assert.equal(await realpath(path.dirname(paths.vaultDirectory)), canonicalRoot);
+  assert.equal(await realpath(paths.vaultDirectory), path.resolve(paths.vaultDirectory));
+  await rmdir(paths.vaultDirectory);
 }
 
 test("requires Windows and available safeStorage without importing Electron", () => {
@@ -167,6 +187,76 @@ test("never places credential storage inside or around an exported Owner Vault",
   await assert.rejects(storeFor({ ...paths, vaultDirectory: nestedVault }).create(validIdentity), {
     code: "ERR_SPS_NATIVE_IDENTITY_STORE_OPTIONS",
   });
+
+  const childVault = path.join(paths.root, "child-vault");
+  await mkdir(childVault);
+  const parentUserDataStore = storeFor({ userDataDirectory: paths.root, vaultDirectory: childVault });
+  assert.deepEqual(await parentUserDataStore.inspectPresence(), { state: "absent" });
+  await parentUserDataStore.create(validIdentity);
+  assert.equal(await parentUserDataStore.read(), validIdentity);
+});
+
+test("inspectPresence is frozen, bounded, and detects a corrupt slot for a deleted Vault without decrypting", async t => {
+  const paths = await fixture(t);
+  let decryptCalls = 0;
+  const safeStorage = makeSafeStorage({ onDecrypt: () => { decryptCalls += 1; } });
+  const store = storeFor(paths, { safeStorage });
+  assert.deepEqual(await store.inspectPresence(), { state: "absent" });
+  assert.equal(Object.isFrozen(await store.inspectPresence()), true);
+  await store.create(validIdentity);
+  const file = await slotFile(paths.userDataDirectory, paths.vaultDirectory);
+  await writeFile(file, "unknown future credential format");
+
+  await removeEmptyOwnedVault(paths);
+  const missingVault = path.join(paths.root, "OWNER-VAULT");
+  const staleStore = storeFor({ ...paths, vaultDirectory: missingVault }, { safeStorage });
+  const presence = await staleStore.inspectPresence();
+  assert.deepEqual(presence, { state: "present" });
+  assert.equal(Object.isFrozen(presence), true);
+  assert.equal(decryptCalls, 0);
+  await assert.rejects(staleStore.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+  await assert.rejects(staleStore.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+  assert.equal(decryptCalls, 0);
+});
+
+test("a completely missing Vault without credentials is absent and inspection creates no directories", async t => {
+  const paths = await fixture(t);
+  await removeEmptyOwnedVault(paths);
+  const missingVault = path.join(paths.root, "missing-parent", "owner-vault");
+  const store = storeFor({ ...paths, vaultDirectory: missingVault });
+  const presence = await store.inspectPresence();
+  assert.deepEqual(presence, { state: "absent" });
+  assert.equal(Object.isFrozen(presence), true);
+  await assert.rejects(readdir(path.join(paths.userDataDirectory, "native-connectivity")), { code: "ENOENT" });
+});
+
+test("inspectPresence rejects non-directory ancestors and invalid credential directories with static errors", async t => {
+  const paths = await fixture(t);
+  const blockedVaultParent = path.join(paths.root, "vault-parent-file");
+  await writeFile(blockedVaultParent, "not a directory");
+  const blockedVaultStore = storeFor({ ...paths, vaultDirectory: path.join(blockedVaultParent, "vault") });
+  await assert.rejects(blockedVaultStore.inspectPresence(), error => {
+    assert.equal(error.code, "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED");
+    assert.equal(Object.hasOwn(error, "cause"), false);
+    return true;
+  });
+
+  const credentialRoot = path.join(paths.userDataDirectory, "native-connectivity");
+  await writeFile(credentialRoot, "not a directory");
+  await assert.rejects(storeFor(paths).inspectPresence(), {
+    code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED",
+  });
+});
+
+test("inspectPresence treats a directory at the expected slot path as present", async t => {
+  const paths = await fixture(t);
+  const credentials = await credentialsDirectory(paths.userDataDirectory);
+  await mkdir(credentials, { recursive: true });
+  const file = await slotFile(paths.userDataDirectory, paths.vaultDirectory);
+  await mkdir(file);
+  const presence = await storeFor(paths).inspectPresence();
+  assert.deepEqual(presence, { state: "present" });
+  assert.equal(Object.isFrozen(presence), true);
 });
 
 test("persists only encrypted canonical data under application userData and reads validated identity", async t => {
@@ -183,7 +273,7 @@ test("persists only encrypted canonical data under application userData and read
   const outer = JSON.parse(raw);
   assert.equal(raw, JSON.stringify(outer));
   assert.deepEqual(Object.keys(outer), ["v", "kind", "ciphertext"]);
-  assert.equal(outer.v, 1);
+  assert.equal(outer.v, 2);
   assert.equal(outer.kind, "sps.native.host-identity-store");
   assert.equal(Buffer.from(outer.ciphertext, "base64").toString("base64"), outer.ciphertext);
   for (const secret of [validIdentity.hostId, ...Object.values(validIdentity.server), ...Object.values(validIdentity.memberIssuer)]) {
@@ -216,6 +306,120 @@ test("uses the default certificate validator for identities saved and reloaded b
   assert.equal(Object.isFrozen(reloaded.memberIssuer), true);
 });
 
+test("a recreated Vault cannot read or adopt a valid credential from its previous incarnation", async t => {
+  const paths = await fixture(t);
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const identity = await createSpsNativeHostIdentity({
+    hostId: validIdentity.hostId,
+    hostnames: ["localhost", "127.0.0.1"],
+    notBefore: now - 60_000,
+    notAfter: now + 5 * 60_000,
+    issuerNotAfter: now + 10 * 60_000,
+  });
+  const store = createSpsNativeHostIdentityStore({
+    ...paths,
+    safeStorage: makeSafeStorage(),
+    platform: "win32",
+  });
+  await store.create(identity);
+  assert.deepEqual(await store.read(), identity);
+  const previous = await lstat(paths.vaultDirectory, { bigint: true });
+
+  await removeEmptyOwnedVault(paths);
+  await mkdir(paths.vaultDirectory);
+  const replacement = await lstat(paths.vaultDirectory, { bigint: true });
+  assert.notDeepEqual(
+    [previous.dev, previous.ino, previous.birthtimeNs],
+    [replacement.dev, replacement.ino, replacement.birthtimeNs],
+  );
+
+  assert.deepEqual(await store.inspectPresence(), { state: "present" });
+  await assert.rejects(store.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
+  const file = await slotFile(paths.userDataDirectory, paths.vaultDirectory);
+  const beforeCreate = await readFile(file);
+  await assert.rejects(store.create(identity), { code: "ERR_SPS_NATIVE_IDENTITY_ALREADY_EXISTS" });
+  assert.deepEqual(await readFile(file), beforeCreate);
+});
+
+test("version 1 credentials stay present and are never decrypted, migrated, or overwritten", async t => {
+  const paths = await fixture(t);
+  let decryptCalls = 0;
+  const safeStorage = makeSafeStorage({ onDecrypt: () => { decryptCalls += 1; } });
+  const store = storeFor(paths, { safeStorage });
+  await store.create(validIdentity);
+  const file = await slotFile(paths.userDataDirectory, paths.vaultDirectory);
+  const oldEnvelope = JSON.stringify({
+    v: 1,
+    kind: "sps.native.host-identity-store",
+    context: { userDataDirectory: await realpath(paths.userDataDirectory), vaultDirectory: await realpath(paths.vaultDirectory) },
+    identity: validIdentity,
+  });
+  const oldSlot = JSON.stringify({
+    v: 1,
+    kind: "sps.native.host-identity-store",
+    ciphertext: safeStorage.encryptString(oldEnvelope).toString("base64"),
+  });
+  await writeFile(file, oldSlot, "utf8");
+
+  assert.deepEqual(await store.inspectPresence(), { state: "present" });
+  await assert.rejects(store.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
+  await assert.rejects(store.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_ALREADY_EXISTS" });
+  assert.equal(await readFile(file, "utf8"), oldSlot);
+  assert.equal(decryptCalls, 0);
+});
+
+test("rejects altered version 2 Vault incarnation context fields", async t => {
+  const paths = await fixture(t);
+  const safeStorage = makeSafeStorage();
+  const store = storeFor(paths, { safeStorage });
+  await store.create(validIdentity);
+  const file = await slotFile(paths.userDataDirectory, paths.vaultDirectory);
+  const originalBytes = await readFile(file);
+  const outer = JSON.parse(originalBytes.toString("utf8"));
+  const envelope = JSON.parse(safeStorage.decryptString(Buffer.from(outer.ciphertext, "base64")));
+  assert.equal(outer.v, 2);
+  assert.equal(envelope.v, 2);
+  assert.deepEqual(Object.keys(envelope.context), ["userDataDirectory", "vaultDirectory", "vaultIncarnation"]);
+  assert.deepEqual(Object.keys(envelope.context.vaultIncarnation), ["dev", "ino", "birthtimeNs"]);
+
+  for (const field of ["dev", "ino", "birthtimeNs"]) {
+    const tampered = structuredClone(envelope);
+    tampered.context.vaultIncarnation[field] = (BigInt(tampered.context.vaultIncarnation[field]) + 1n).toString(10);
+    const ciphertext = safeStorage.encryptString(JSON.stringify(tampered));
+    await writeFile(file, JSON.stringify({ v: 2, kind: outer.kind, ciphertext: ciphertext.toString("base64") }), "utf8");
+    await assert.rejects(store.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
+  }
+  await writeFile(file, originalBytes);
+  assert.deepEqual(await store.read(), validIdentity);
+});
+
+test("rejects unavailable or non-positive BigInt Vault incarnation metadata", async t => {
+  const paths = await fixture(t);
+  const store = storeFor(paths);
+  await store.create(validIdentity);
+  const originalLstat = nodeFs.lstat;
+
+  for (const [field, replacement] of [["dev", 0n], ["ino", 0n], ["birthtimeNs", 0n], ["birthtimeNs", undefined]]) {
+    t.mock.method(nodeFs, "lstat", async function (target, options) {
+      const stat = await Reflect.apply(originalLstat, nodeFs, [target, options]);
+      if (options?.bigint !== true || path.resolve(target) !== path.resolve(paths.vaultDirectory)) return stat;
+      return {
+        dev: field === "dev" ? replacement : stat.dev,
+        ino: field === "ino" ? replacement : stat.ino,
+        birthtimeNs: field === "birthtimeNs" ? replacement : stat.birthtimeNs,
+        isDirectory: () => stat.isDirectory(),
+        isSymbolicLink: () => stat.isSymbolicLink(),
+      };
+    });
+    try {
+      await assert.rejects(store.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+      await assert.rejects(store.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+    } finally {
+      t.mock.restoreAll();
+    }
+  }
+});
+
 test("create is create-only even when the existing slot is corrupt", async t => {
   const paths = await fixture(t);
   const store = storeFor(paths);
@@ -237,7 +441,7 @@ test("rejects malformed, noncanonical, plaintext, and oversized store files", as
     Buffer.from("{"),
     Buffer.from(" \"duplicate\":1"),
     Buffer.from([0xff, 0xfe, 0xfd]),
-    Buffer.from(JSON.stringify({ v: 1, kind: "sps.native.host-identity-store", ciphertext: "!!!!" })),
+    Buffer.from(JSON.stringify({ v: 2, kind: "sps.native.host-identity-store", ciphertext: "!!!!" })),
     Buffer.from(JSON.stringify(validIdentity)),
     Buffer.alloc(700 * 1024 + 1, 0x61),
   ]) {
@@ -311,9 +515,11 @@ test("rejects linked roots, junctioned storage directories, and linked slot file
 
   const linkedVault = path.join(paths.root, "linked-vault");
   await symlink(outside, linkedVault, process.platform === "win32" ? "junction" : "dir");
-  await assert.rejects(storeFor({ userDataDirectory: paths.userDataDirectory, vaultDirectory: linkedVault }).read(), {
+  const linkedVaultStore = storeFor({ userDataDirectory: paths.userDataDirectory, vaultDirectory: linkedVault });
+  await assert.rejects(linkedVaultStore.read(), {
     code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED",
   });
+  await assert.rejects(linkedVaultStore.inspectPresence(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
 
   const junctionPaths = { userDataDirectory: paths.userDataDirectory, vaultDirectory: paths.vaultDirectory };
   const junctionStore = storeFor(junctionPaths);
@@ -321,6 +527,7 @@ test("rejects linked roots, junctioned storage directories, and linked slot file
   const linkedCredentials = path.join(paths.userDataDirectory, "native-connectivity", "credentials");
   await symlink(outside, linkedCredentials, process.platform === "win32" ? "junction" : "dir");
   await assert.rejects(junctionStore.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+  await assert.rejects(junctionStore.inspectPresence(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
   assert.deepEqual(await readdir(outside), []);
 
   assert.equal((await lstat(linkedCredentials)).isSymbolicLink(), true);
@@ -332,6 +539,7 @@ test("rejects linked roots, junctioned storage directories, and linked slot file
   await symlink(linkedFile, file);
   await assert.rejects(junctionStore.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
   await assert.rejects(junctionStore.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_ALREADY_EXISTS" });
+  assert.deepEqual(await junctionStore.inspectPresence(), { state: "present" });
   assert.equal(await readFile(linkedFile, "utf8"), "outside sentinel");
 
   await rm(file);
@@ -350,4 +558,76 @@ test("validates before creating storage and rejects malformed identity input", a
   });
   await assert.rejects(readdir(path.join(paths.userDataDirectory, "native-connectivity")), { code: "ENOENT" });
   assert.equal(await storeFor(paths).read(), null);
+});
+
+test("a synchronous pre-commit authority guard can cancel without publishing a credential slot", async t => {
+  const paths = await fixture(t);
+  const store = storeFor(paths);
+  await assert.rejects(store.create(validIdentity, { beforeCommit: () => { throw new Error("private authority diagnostic"); } }), {
+    code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED",
+  });
+  assert.deepEqual(await store.inspectPresence(), { state: "absent" });
+  assert.equal((await readdir(await credentialsDirectory(paths.userDataDirectory))).length, 0);
+  await assert.rejects(store.create(validIdentity, { beforeCommit: () => Promise.reject(new Error("private async diagnostic")) }), {
+    code: "ERR_SPS_NATIVE_IDENTITY_STORE_OPTIONS",
+  });
+  assert.deepEqual(await store.inspectPresence(), { state: "absent" });
+  let invoked = false;
+  const options = Object.defineProperty({}, "beforeCommit", { enumerable: true, get() { invoked = true; return () => {}; } });
+  assert.throws(() => store.create(validIdentity, options), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_OPTIONS" });
+  assert.equal(invoked, false);
+});
+
+test("a Vault replaced inside the synchronous pre-commit guard cannot receive the pending identity", async t => {
+  const paths = await fixture(t);
+  const store = storeFor(paths);
+  await assert.rejects(store.create(validIdentity, {
+    beforeCommit: () => replaceEmptyVault(paths),
+  }), error => {
+    assert.equal(error.code, "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED");
+    assert.equal(error.message.includes(paths.vaultDirectory), false);
+    assert.equal(Object.hasOwn(error, "cause"), false);
+    return true;
+  });
+  assert.deepEqual(await store.inspectPresence(), { state: "absent" });
+  assert.deepEqual((await readdir(await credentialsDirectory(paths.userDataDirectory))).filter(name => name.endsWith(".tmp")), []);
+});
+
+test("authority revoked during the final asynchronous Vault check cannot publish a credential slot", async t => {
+  const paths = await fixture(t);
+  const store = storeFor(paths);
+  const originalLstat = nodeFs.lstat;
+  let guardCalls = 0;
+  let revoked = false;
+  nodeFs.lstat = async (...args) => {
+    const result = await originalLstat(...args);
+    if (guardCalls > 0 && args[0] === paths.vaultDirectory && args[1]?.bigint === true) {
+      await new Promise(resolve => setImmediate(() => { revoked = true; resolve(); }));
+    }
+    return result;
+  };
+  try {
+    await assert.rejects(store.create(validIdentity, { beforeCommit: () => {
+      guardCalls++;
+      if (revoked) throw new Error("requester no longer authorized");
+    } }), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+  } finally { nodeFs.lstat = originalLstat; }
+  assert.equal(revoked, true);
+  assert.equal(guardCalls, 2);
+  assert.deepEqual(await store.inspectPresence(), { state: "absent" });
+  assert.deepEqual(await readdir(await credentialsDirectory(paths.userDataDirectory)), []);
+});
+
+test("a Vault replaced during decryption fails before read returns an identity", async t => {
+  const paths = await fixture(t);
+  const safeStorage = makeSafeStorage({ onDecrypt: () => replaceEmptyVault(paths) });
+  const writer = storeFor(paths, { safeStorage });
+  await writer.create(validIdentity);
+  const reader = storeFor(paths, { safeStorage });
+  await assert.rejects(reader.read(), error => {
+    assert.equal(error.code, "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED");
+    assert.equal(error.message.includes(paths.vaultDirectory), false);
+    assert.equal(Object.hasOwn(error, "cause"), false);
+    return true;
+  });
 });

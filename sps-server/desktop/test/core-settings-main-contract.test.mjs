@@ -46,7 +46,7 @@ test("recovery launch and unreadable connection settings never enter automatic H
 });
 
 test("recovery mode reaches Core and suppresses default-memory startup while disabled", () => {
-  const ownerHostSetup = section("async function ensureOwnerHostManager() {", "async function activateOwnerHostProfile() {");
+  const ownerHostSetup = section("async function ensureOwnerHostManager() {", "async function activateOwnerHostProfile(");
   assert.match(ownerHostSetup, /const recovery = await loadCoreRecoverySettings\(\{ userDataPath: app\.getPath\("userData"\) \}\);/);
   assert.match(ownerHostSetup, /const defaultMemoryEnabled = isSpsDefaultMemoryEnabled\(\) && !recovery\.pluginsDisabled;/);
   assert.match(ownerHostSetup, /const defaultMemory = defaultMemoryEnabled\s*\? await ensureSpsDefaultMemoryConfig\(\{ ownerVaultRoot: vaultRoot \}\)\s*: null;/);

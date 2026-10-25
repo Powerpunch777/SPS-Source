@@ -82,7 +82,8 @@ test("offers Host restore before activation and explains the fresh-Host boundary
   assert.match(onboardingRenderer, /restoreOwnerServer\(\)/);
   assert.match(main, /SPS Host restore is allowed only on a fresh Host/);
   assert.match(main, /state\.ownerHostOwnerSubject \|\| isOwnerHostProfile\(\)/);
-  assert.doesNotMatch(main, /state\.ownerHostOwnerSubject \|\| state\.profile/);
+  const restoreAdmission = main.slice(main.indexOf("async function restoreOwnerServerFromTransferLocked("), main.indexOf("const targetRoot = ownerVaultRoot();", main.indexOf("async function restoreOwnerServerFromTransferLocked(")));
+  assert.doesNotMatch(restoreAdmission, /state\.ownerHostOwnerSubject \|\| state\.profile/);
   assert.match(main, /await runOwnerHostRestoreProcess\(/);
   assert.match(main, /await startOwnerHost\(\{ activate: true \}\)/);
 });
