@@ -174,6 +174,39 @@ source Electron의 실제 최소 정보/권한·scope·Node binding/철회 및 �
 연속 수용을 통과했다. 정확한 tuple과 실패/수정 이력은 위 수용 기록을 따른다.
 
 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
+
+### Stage 3a: Host 내부 모델 전송과 Secret 결속 기반
+
+Direct API 전체를 한 번에 공개하지 않고, 우선 기존 Secret 저장소와 binding을
+재사용하는 내부 primitive를 구현한다. 고정된 Host endpoint/model로 Responses
+호환 텍스트 요청 한 번만 수행한다. Plugin/renderer에 키를 반환하거나 현재
+차단된 secrets.resolve를 켜지 않는다. 공개 SDK/RPC/capability/UI 등록은 없다.
+
+- Host가 명시한 HTTPS endpoint만 사용한다. 로컬 시험/모델의 HTTP는 명시 opt-in한
+  숫자 loopback에 한하며 localhost도 127.0.0.1로 고정한다. redirect·자동 재시도·
+  다른 backend fallback·tool/session·background·provider storage는 사용하지 않는다.
+- 입력/응답 바이트, 출력 토큰, 전체 대기 시간과 인스턴스별 동시 요청을 제한한다.
+  취소/timeout을 무시하는 키 조회·전송/정리 작업은 완료될 때까지 슬롯을 유지한다.
+  크기×동시성의 요청/응답 버퍼 합계는 8MiB 이내다. 이는 heap/OS/전역·분산 자원
+  제한이나 제공자의 작업·과금 중단 증명이 아니다.
+- 기존 암호화 Secret과 Plugin instance binding의 예약 목적 경로를 확인한다.
+  Workspace/Plugin/connection/binding/사용할 버전을 같은 SQL 스냅샷에서 검사하고,
+  비동기 키 조회 뒤 삭제·재결속·latest rotation·버전 철회를 다시 확인한다.
+  latest는 current만, 명시적 버전 pin은 사용 가능한 previous도 허용한다.
+- 응답은 텍스트/거절, 기술적 completed/incomplete, 검증된 보고 토큰만 투영한다.
+  오류/annotation/provider 식별자와 reasoning 원문은 전달하지 않는다. usage 미제공은
+  unknown이며 가격을 추정하지 않는다. 정확한 키 echo는 거부하나, 승인된 악성
+  제공자가 키를 변형·유출하는 위협이나 JS 메모리 소거를 해결한 것은 아니다.
+
+이는 **공개 handle broker 완료가 아니다**. connection UUID는 현재 예약 목적
+식별자일 뿐 durable endpoint/model 연결 레코드나 grant가 아니다. binding도 실행
+권한이 아니다. 후속 Stage 3b에서 Host 소유의 영속 연결/Plugin grant, 인증된
+invocation/활성화·capability 재검사, 새 model lane의 기록/idempotency/재시작 및
+결과 전달 시 철회를 묶은 뒤 공개 SDK/UI를 연결한다. 현재 limit는 인스턴스별이므로
+공개 호출마다 새 인스턴스를 만들어 quota를 우회하지 않게 수명주기를 설계한다.
+마지막 검증과 외부 전송 자체가 원자적인 것도 아니다. 실제 키/유료 호출, 설치본
+교체나 production 보호 인증 없이 가짜 키·격리 DB·로컬 HTTP mock으로 먼저 검증한다.
+
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되
 정의하지 않은 보안/종료 보장을 선행 조건처럼 가정하지 않는다. 기존 전체 A~L의
 안전성·수명주기 항목을 삭제하거나 조사만으로 완료 표시하지 않는다.
