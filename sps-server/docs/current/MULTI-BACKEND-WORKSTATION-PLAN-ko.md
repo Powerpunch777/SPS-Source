@@ -16,6 +16,7 @@ Stage 2c의 안전한 Agent 조회·Node freshness 보정은
 [Agent 조회 수용 기록](../reviews/AGENT-EXECUTION-DESCRIPTOR-ACCEPTANCE-2026-10-25.md)을 따른다.
 모델 요청의 mock-first 구현 범위는 아래 Stage 3b로 구분한다. OCE와 실제 제공자
 인증을 포함한 전체 다중 백엔드 목표가 완료된 것은 아니다.
+Stage 3b의 최종 통합/실제 앱 상태는 [모델 broker 검증 기록](../reviews/MODEL-BROKER-ACCEPTANCE-2026-10-25.md)을 따른다.
 
 ## 1. 제품 결정과 비변경 범위
 

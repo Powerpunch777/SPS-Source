@@ -23,6 +23,7 @@
 3. Direct API Stage 3a의 내부 전송/Secret 기반에 Stage 3b의 Host 연결·grant,
    공개 `models.list/submit/get/cancel`, 중복 방지 Run과 별도 실행 기록을 결속했다.
    설정 UI·실제 제공자 인증은 아직 없고 mock-first source 범위다.
+   [Stage 3b 검증 상태](../reviews/MODEL-BROKER-ACCEPTANCE-2026-10-25.md)를 따른다.
    [Stage 3a 검증](../reviews/MODEL-TRANSPORT-FOUNDATION-ACCEPTANCE-2026-10-25.md)은
    당시 내부 기반의 증거로만 유지한다. CLI 사례도 승인된 시험 범위에서 구현한다.
    실키·고객 데이터·유료 API 및 실제 게임 빌드 환경은 별도 확인.
