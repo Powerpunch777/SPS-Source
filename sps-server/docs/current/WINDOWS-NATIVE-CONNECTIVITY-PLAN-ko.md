@@ -22,15 +22,27 @@ Core `0955e8f63`에 초대별 공개 발급 기록과 두 단계 등록의 내�
 기존 pairing 계층을 재사용한다. 동일 발급 재요청·재시작은 같은 인증서를 반환하고, 중복 서명·
 발급 중 결속 변경·철회·만료·철회 키 부활은 거부한다. migration `0167_absurd_loki`는 새 공개
 발급 자료만 추가하고 restore는 이를 pairing 전에 삭제한다. Core 집중 **40/40** 및 전체
-typecheck/build는 통과했다. Main 서명 IPC·실제 세션 인증 caller·등록 UI·TLS ingress는 아직 없으므로
+typecheck/build는 통과했다. 실제 세션 인증 caller·등록 UI·TLS ingress는 아직 없으므로
 이것은 앱 최초 연결 수용이 아니다. [등록 조정 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
 
-Source `1cddbcf7`의 CI `40183986226` / `40183990969`는 실패했다. Windows job
-`121140772485`에서 실행기 probe 5개가 `0xC0000142` 등으로 실패해 Native/Settings/No-AI가
-실행되지 않았다. 새 CI-only helper는 시험 전용 window station/desktop과 사용자/SYSTEM ACL을
-사용하고 기존 OS ACL은 변경하지 않는다. 로컬 **8/8**, Desktop **715 total / 714 pass / 0 fail /
-1 skip**이나, elevated runner의 원인 해결은 새 exact-HEAD CI로 확인 전이다. 앞선 `425000cb`
-DPAPI 성공은 해당 과거 revision에만 적용한다. Zod 보류와 기존 출시 게이트도 유지한다.
+후속 Main 서명 채널은 직접 소유한 Core 자식의 Node IPC에만 연결한다. Core의 명시적 factory는
+공개 Host/issuer 핀을 캡처하고 기존 enrollment service를 조합한다. 개인키·계정 token·파일 경로는
+채널로 전달하지 않으며 renderer/preload/Plugin SDK API는 추가하지 않는다. Main은 현재 Host 세션과
+identity store를 서명 전후 확인하고 계정/서버 변경·restore generation 변화 뒤 이전 채널을 거부한다.
+취소·시간 초과는 실제 작업 종료 증거가 아니며, 실제 작업이 settle할 때까지 Main 동시성 slot을 유지한다.
+Core factory는 자동 시작하지 않는다. Native 세션 인증·발급 자격 저장·등록 UI·LAN listener는 여전히 후속이다.
+정확한 한도·실행 명령·증거 범위는 [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)에 모은다.
+
+Source `1e6152a8`의 CI `40185474383` / `40185477664`는 각각 18개 job 중 16개 성공·2개 실패다.
+9개 Linux shard와 full Linux typecheck/build는 통과했지만 Windows unit은 **715 total / 709 pass /
+5 fail / 1 skip**으로 Native/Settings/No-AI 이후 시험이 실행되지 않았다. 시험 전용 window station/
+desktop 보완만으로 `0xC0000142`가 해결되지 않았다. 후속 CI-only helper는 새 restricted token의
+default DACL에 동일 사용자 SID를 추가하고 기존 ACE 보존·Admin deny-only를 확인한다.
+기존 OS ACL·계정·방화벽은 변경하지 않는다. 로컬 **8/8**은 통과했지만 elevated runner 원인은
+새 exact-HEAD CI 전까지 미입증이다. Core `0955e8f63` PR CI `40185340099`는 15/15 job 통과했고,
+별도 review workflow는 Dependency Graph 미활성으로 실패했다. 앞선 `425000cb` DPAPI 성공은
+그 과거 revision에만 적용한다. [CI 채널 관측](../reviews/NATIVE-CI-CHANNEL-CHECKPOINT-2026-10-25.md)과
+Zod 보류·기존 출시 게이트를 유지한다.
 
 신뢰된 Host 전용 Core Settings에서 명시적으로 확인한 뒤 Host 인증서 준비를 실행하는
 좁은 경로가 연결됐다. 이는 Member 기기 인증서 발급이나 등록 UI가 아니다. Native LAN은
@@ -38,8 +50,8 @@ DPAPI 성공은 해당 과거 revision에만 적용한다. Zod 보류와 기존 
 
 비활성 Member 발급 primitive는 표준 PKCS#10 P-256/SHA-256 서명 요청을 사용한다. Member 개인키는
 로컬 메모리에 두고 공개 요청에서는 제외한다. Host의 별도 issuer가 명시적 유효기간 90일 이하이며
-issuer 유효기간 안에 드는 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main/IPC/HTTP/SDK
-호출자·provisioning·갱신·새 GUI 흐름은 없다. 표준 TLS 1.3 loopback에서 새 인증서와
+issuer 유효기간 안에 드는 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main 내부 서명 채널은
+추가됐지만 HTTP/SDK·provisioning·갱신·새 GUI 흐름은 없다. 표준 TLS 1.3 loopback에서 새 인증서와
 올바른 키는 통과하고, 인증서 없음·다른 issuer·같은 issuer의 잘못된 EKU·다른 개인키는 거부했다.
 application bytes는 0이다. CSR 서명 검증과 live TLS 키 소유 증명은 별개이며 자체 서명 프로토콜을
 추가하지 않는다. Google 로그인·기기 승인·Workspace/Node/Source grant·새 enrollment 증거도 아니다.

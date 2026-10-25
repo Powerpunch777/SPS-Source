@@ -11,6 +11,7 @@ import { coreRecoveryEnvironment, loadCoreRecoverySettings, saveCoreRecoverySett
 import { createCoreSettingsController } from "./core-settings-controller.mjs";
 import { createSpsNativeHostIdentityStore } from "./native-identity-store.mjs";
 import { assertSpsNativeHostCredentialsAbsentForRestore, createSpsNativeIdentityController } from "./native-identity-controller.mjs";
+import { createSpsNativeMemberMainSigner } from "./native-member-main-signer.mjs";
 import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
 import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
 import {
@@ -256,7 +257,9 @@ let officialExtensionsWindow = null;
 let coreSettingsController = null;
 let nativeIdentityController = null;
 const nativeIdentityStores = new Map();
-const ownerVaultOperations = createSpsOwnerVaultOperationGate();
+const ownerVaultOperations = createSpsOwnerVaultOperationGate({
+  onInvalidation: () => ownerHostManager?.invalidateNativeSigner(),
+});
 let ownerHostRecoveryPluginsDisabled = null;
 let state = emptyState();
 let desktopStateUnavailable = false;
@@ -1291,7 +1294,7 @@ function nativeIdentityStore(context = { userDataDirectory: app.getPath("userDat
 }
 
 function nativeIdentityAuthority() {
-  if (desktopStateUnavailable || ownerVaultOperations.isRestoring() || !isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) return null;
+  if (desktopStateUnavailable || ownerVaultOperations.isRestoring() || ownerVaultOperations.isChangingConnection() || !isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) return null;
   try { requireSpsOwnerHostOrigin(state.profile.hubUrl); } catch { return null; }
   return { ownerSubject: currentDesktopAccountSubject(), userDataDirectory: app.getPath("userData"), vaultDirectory: ownerVaultRoot() };
 }
@@ -1488,6 +1491,18 @@ async function ensureOwnerHostManager() {
     })
     : null;
   ownerHostManager = createSpsOwnerHostManager({
+    createNativeSigner: () => createSpsNativeMemberMainSigner({
+      getAuthority: () => {
+        const current = isQuitting ? null : nativeIdentityAuthority();
+        return current && { ...current, generation: ownerVaultOperations.connectionGeneration() };
+      },
+      authenticateHost: async () => {
+        if (!nativeIdentityAuthority() || !await ensureDesktopIdentityAccessToken() || !nativeIdentityAuthority()) {
+          throw new Error("The signed-in local Host session is required.");
+        }
+      },
+      getStore: context => nativeIdentityStore({ userDataDirectory: context.userDataDirectory, vaultDirectory: context.vaultDirectory }),
+    }),
     url,
     resolveRuntime: async () => {
       const recovery = await loadCoreRecoverySettings({ userDataPath: app.getPath("userData") });

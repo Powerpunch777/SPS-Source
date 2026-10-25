@@ -28,7 +28,7 @@ test("Windows CI E2E uses a checked reduced same-user token and reports owned-ob
   assert.equal(output[0].restrictedE2eDesktop, true);
   assert.equal(typeof output[0].privateWindowStation, "boolean");
   assert.deepEqual(output.slice(1, 3), [
-    { restrictedE2eChild: true, administratorEnabled: false, powerUsersEnabled: false, privilegesReduced: true, sameUserToken: true },
+    { restrictedE2eChild: true, administratorEnabled: false, powerUsersEnabled: false, privilegesReduced: true, sameUserToken: true, administratorDenied: true, userDefaultDacl: true },
     { ownedJobEmpty: true },
   ]);
   assert.equal(result.stderr, "");

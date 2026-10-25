@@ -54,3 +54,34 @@ test("connection changes and restore exclude each other until their asynchronous
   await assert.rejects(gate.changeConnection(() => { throw new Error("connection failed"); }), /connection failed/);
   await gate.restore(() => {});
 });
+
+test("connection generation fences same-account ABA and failed mutations without treating Host starts as a new account", async () => {
+  const gate = createSpsOwnerVaultOperationGate();
+  assert.equal(gate.connectionGeneration(), 0n); assert.equal(gate.isChangingConnection(), false);
+  await gate.start(() => {}); assert.equal(gate.connectionGeneration(), 0n);
+  await gate.changeConnection(async () => { assert.equal(gate.isChangingConnection(), true); assert.equal(gate.connectionGeneration(), 1n); });
+  assert.equal(gate.isChangingConnection(), false);
+  await assert.rejects(gate.changeConnection(() => { throw new Error("fixture"); }));
+  assert.equal(gate.connectionGeneration(), 2n);
+  await gate.restore(() => {}); assert.equal(gate.connectionGeneration(), 3n);
+});
+
+test("invalidation precedes account and restore mutations, including failed actions", async () => {
+  const events = [];
+  const gate = createSpsOwnerVaultOperationGate({ onInvalidation: () => { events.push(`invalidate:${gate.connectionGeneration()}`); } });
+  await gate.changeConnection(() => { events.push("change"); });
+  await assert.rejects(gate.changeConnection(() => { events.push("failed-change"); throw new Error("fixture"); }));
+  await gate.restore(() => { events.push("restore"); });
+  assert.deepEqual(events, ["invalidate:1", "change", "invalidate:2", "failed-change", "invalidate:3", "restore"]);
+});
+
+test("invalidation failure aborts mutation without leaving the gate locked", async () => {
+  let fail = true, invoked = false;
+  const gate = createSpsOwnerVaultOperationGate({ onInvalidation: () => { if (fail) throw new Error("fixture invalidation failed"); } });
+  await assert.rejects(gate.changeConnection(() => { invoked = true; }), /invalidation failed/);
+  assert.equal(invoked, false); assert.equal(gate.isChangingConnection(), false);
+  await assert.rejects(gate.restore(() => { invoked = true; }), /invalidation failed/);
+  assert.equal(invoked, false); assert.equal(gate.isRestoring(), false);
+  fail = false;
+  await gate.restore(() => {});
+});

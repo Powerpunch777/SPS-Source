@@ -48,6 +48,20 @@ test("Windows verification runs real secure-storage reload and preserves SDK syn
   assert.doesNotMatch(smoke, /--no-sandbox|new BrowserWindow|\.listen\(/);
 });
 
+test("the Native signer stays in owned Main-to-Core IPC, outside renderer and Plugin interfaces", async () => {
+  for (const file of ["../src/preload.cjs", "../src/core-settings-preload.cjs", "../src/registry-preload.cjs",
+    "../src/workspace-preload.cjs", "../src/plugin-preview-preload.cjs", "../src/official-extensions-preload.cjs"])
+    assert.doesNotMatch(await read(file), /sps\.native\.signer|native-member-main-signer|native-member-signer-channel/);
+  const main = await read("../src/main.mjs");
+  assert.match(main, /createNativeSigner: \(\) => createSpsNativeMemberMainSigner/);
+  assert.match(main, /generation: ownerVaultOperations\.connectionGeneration\(\)/);
+  assert.match(main, /ownerVaultOperations\.isChangingConnection\(\)/);
+  assert.match(main, /onInvalidation: \(\) => ownerHostManager\?\.invalidateNativeSigner\(\)/);
+  assert.doesNotMatch(main, /ipcMain\.handle\(["'][^"']*(?:native.*sign|sign.*native)/);
+  const signer = await read("../src/native-member-main-signer.mjs");
+  assert.doesNotMatch(signer, /createSpsNativeHostIdentity\(|\.writeFile\(|\.listen\(|setCertificateVerifyProc|process\.env/);
+});
+
 test("declares and retains the certificate library and reflection license notices", async () => {
   const manifest = JSON.parse(await read("../package.json"));
   assert.equal(manifest.dependencies["@peculiar/x509"], "2.2.0");

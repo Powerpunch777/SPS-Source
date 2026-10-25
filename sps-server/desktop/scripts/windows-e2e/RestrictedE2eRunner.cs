@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 
@@ -12,6 +13,7 @@ public static class RestrictedE2eRunner
 {
     static string stage = "arguments";
     [StructLayout(LayoutKind.Sequential)] struct SidAttributes { public IntPtr Sid; public uint Attributes; }
+    [StructLayout(LayoutKind.Sequential)] struct TokenDefaultDacl { public IntPtr DefaultDacl; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct StartupInfo
     {
         public int Size; public string Reserved; public string Desktop; public string Title;
@@ -57,6 +59,7 @@ public static class RestrictedE2eRunner
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int kind, IntPtr value, int length, out int returned);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool SetTokenInformation(IntPtr token, int kind, IntPtr value, int length);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool LookupPrivilegeNameW(string system, IntPtr luid, StringBuilder name, ref int length);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool ConvertStringSidToSidW(string sid, out IntPtr result);
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr pointer);
@@ -79,6 +82,149 @@ public static class RestrictedE2eRunner
         if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), operation);
     }
     static bool Valid(IntPtr handle) { return handle != IntPtr.Zero && handle != new IntPtr(-1); }
+    static IntPtr ReadTokenInformation(IntPtr token, int kind, out int length)
+    {
+        length = 0;
+        bool available = GetTokenInformation(token, kind, IntPtr.Zero, 0, out length);
+        int error = Marshal.GetLastWin32Error();
+        if (available || error != 122 || length <= 0 || length > 1048576)
+            throw new Win32Exception(error, "Read token information size");
+        IntPtr data = Marshal.AllocHGlobal(length);
+        if (!GetTokenInformation(token, kind, data, length, out length))
+        {
+            error = Marshal.GetLastWin32Error();
+            Marshal.FreeHGlobal(data);
+            throw new Win32Exception(error, "Read token information");
+        }
+        return data;
+    }
+    static SecurityIdentifier TokenUserSid(IntPtr token)
+    {
+        using (var identity = new WindowsIdentity(token))
+        {
+            if (identity.User == null) throw new InvalidOperationException("Token has no user SID");
+            return identity.User;
+        }
+    }
+    static RawAcl ReadDefaultDacl(IntPtr token)
+    {
+        int length;
+        IntPtr data = ReadTokenInformation(token, 6, out length);
+        try
+        {
+            if (length < IntPtr.Size) throw new InvalidOperationException("Invalid default DACL size");
+            IntPtr acl = Marshal.ReadIntPtr(data);
+            if (!Valid(acl)) throw new InvalidOperationException("Restricted token has a null default DACL");
+            int aclSize = Marshal.ReadInt16(acl, 2) & 0xFFFF;
+            if (aclSize < 8) throw new InvalidOperationException("Invalid default DACL length");
+            byte[] aclBytes = new byte[aclSize];
+            Marshal.Copy(acl, aclBytes, 0, aclSize);
+            return new RawAcl(aclBytes, 0);
+        }
+        finally { Marshal.FreeHGlobal(data); }
+    }
+    static bool HasUserFullAccess(RawAcl acl, SecurityIdentifier user)
+    {
+        for (int index = 0; index < acl.Count; index++)
+        {
+            QualifiedAce ace = acl[index] as QualifiedAce;
+            if (ace != null && ace.AceQualifier == AceQualifier.AccessAllowed
+                && ace.SecurityIdentifier.Equals(user) && (ace.AccessMask & 0x10000000) != 0)
+                return true;
+        }
+        return false;
+    }
+    static bool SameAce(GenericAce left, GenericAce right)
+    {
+        if (left.BinaryLength != right.BinaryLength) return false;
+        byte[] leftBytes = new byte[left.BinaryLength], rightBytes = new byte[right.BinaryLength];
+        left.GetBinaryForm(leftBytes, 0); right.GetBinaryForm(rightBytes, 0);
+        for (int index = 0; index < leftBytes.Length; index++)
+            if (leftBytes[index] != rightBytes[index]) return false;
+        return true;
+    }
+    static bool HasAcePrefix(RawAcl acl, RawAcl prefix)
+    {
+        if (acl.Count < prefix.Count) return false;
+        for (int index = 0; index < prefix.Count; index++)
+            if (!SameAce(acl[index], prefix[index])) return false;
+        return true;
+    }
+    static void AddUserToRestrictedTokenDacl(IntPtr token)
+    {
+        SecurityIdentifier user = TokenUserSid(token);
+        RawAcl original = ReadDefaultDacl(token);
+        for (int index = 0; index < original.Count; index++)
+        {
+            QualifiedAce ace = original[index] as QualifiedAce;
+            if (ace != null && ace.AceQualifier == AceQualifier.AccessDenied
+                && ace.SecurityIdentifier.Equals(user))
+                throw new InvalidOperationException("Token default DACL denies its user SID");
+        }
+        if (HasUserFullAccess(original, user)) return;
+
+        var updated = new RawAcl(original.Revision, original.Count + 1);
+        for (int index = 0; index < original.Count; index++)
+            updated.InsertAce(updated.Count, original[index]);
+        updated.InsertAce(updated.Count, new CommonAce(AceFlags.None, AceQualifier.AccessAllowed,
+            unchecked((int)0x10000000), user, false, null));
+        if (!HasAcePrefix(updated, original))
+            throw new InvalidOperationException("Token default DACL did not preserve existing ACEs");
+
+        byte[] aclBytes = new byte[updated.BinaryLength];
+        updated.GetBinaryForm(aclBytes, 0);
+        IntPtr aclData = Marshal.AllocHGlobal(aclBytes.Length);
+        IntPtr information = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(TokenDefaultDacl)));
+        try
+        {
+            Marshal.Copy(aclBytes, 0, aclData, aclBytes.Length);
+            Marshal.StructureToPtr(new TokenDefaultDacl { DefaultDacl = aclData }, information, false);
+            Require(SetTokenInformation(token, 6, information, Marshal.SizeOf(typeof(TokenDefaultDacl))),
+                "Set restricted token default DACL");
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(information);
+            Marshal.FreeHGlobal(aclData);
+        }
+
+        RawAcl actual = ReadDefaultDacl(token);
+        if (actual.Count != updated.Count || !HasAcePrefix(actual, original)
+            || !SameAce(actual[actual.Count - 1], updated[updated.Count - 1]))
+            throw new InvalidOperationException("Restricted token default DACL changed existing ACEs");
+        if (!HasUserFullAccess(actual, user))
+            throw new InvalidOperationException("Restricted token default DACL did not retain user access");
+    }
+    static bool CurrentTokenDaclAllowsUser()
+    {
+        IntPtr token = IntPtr.Zero;
+        Require(OpenProcessToken(GetCurrentProcess(), 8, out token), "Read child default DACL token");
+        try { return HasUserFullAccess(ReadDefaultDacl(token), TokenUserSid(token)); }
+        finally { if (Valid(token)) CloseHandle(token); }
+    }
+    static bool CheckAdministratorsDenyOnly(IntPtr token)
+    {
+        int length;
+        IntPtr data = ReadTokenInformation(token, 2, out length);
+        try
+        {
+            int offset = (IntPtr.Size + 3) & ~3;
+            int entrySize = Marshal.SizeOf(typeof(SidAttributes));
+            int count = length >= 4 ? Marshal.ReadInt32(data) : -1;
+            if (count < 0 || offset > length || count > (length - offset) / entrySize)
+                throw new InvalidOperationException("Invalid token group information");
+            var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            for (int index = 0; index < count; index++)
+            {
+                var group = (SidAttributes)Marshal.PtrToStructure(IntPtr.Add(data, offset + index * entrySize), typeof(SidAttributes));
+                if (!new SecurityIdentifier(group.Sid).Equals(administrators)) continue;
+                if ((group.Attributes & 0x10) == 0 || (group.Attributes & 0x4) != 0)
+                    throw new InvalidOperationException("Administrators SID is not deny-only");
+            }
+            return true;
+        }
+        finally { Marshal.FreeHGlobal(data); }
+    }
     static string Quote(string value)
     {
         if (value == null || value.IndexOf('\0') >= 0) throw new ArgumentException("Invalid launcher argument");
@@ -153,8 +299,10 @@ public static class RestrictedE2eRunner
         var principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
         if (principal.IsInRole(WindowsBuiltInRole.Administrator) || principal.IsInRole(WindowsBuiltInRole.PowerUser))
             throw new InvalidOperationException("Child token retains administrative group authority");
-        CheckPrivileges();
-        Console.WriteLine("{\"restrictedE2eChild\":true,\"administratorEnabled\":false,\"powerUsersEnabled\":false,\"privilegesReduced\":true,\"sameUserToken\":true}");
+        bool administratorDenied = CheckPrivileges();
+        bool userDefaultDacl = CurrentTokenDaclAllowsUser();
+        if (!administratorDenied || !userDefaultDacl) throw new InvalidOperationException("Child token security checks failed");
+        Console.WriteLine("{\"restrictedE2eChild\":true,\"administratorEnabled\":false,\"powerUsersEnabled\":false,\"privilegesReduced\":true,\"sameUserToken\":true,\"administratorDenied\":" + (administratorDenied ? "true" : "false") + ",\"userDefaultDacl\":" + (userDefaultDacl ? "true" : "false") + "}");
         if (mode == "probe") return 0;
         if (mode == "probe-exit") return 7;
         if (mode == "probe-native-exit") return unchecked((int)0xC0000142);
@@ -184,7 +332,7 @@ public static class RestrictedE2eRunner
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs");
         return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs");
     }
-    static void CheckPrivileges()
+    static bool CheckPrivileges()
     {
         IntPtr token = IntPtr.Zero, data = IntPtr.Zero;
         try
@@ -202,6 +350,7 @@ public static class RestrictedE2eRunner
                 Require(LookupPrivilegeNameW(null, IntPtr.Add(data, 4 + index * 12), name, ref size), "Resolve child privilege");
                 if (name.ToString() != "SeChangeNotifyPrivilege") throw new InvalidOperationException("Child retains extra privilege");
             }
+            return CheckAdministratorsDenyOnly(token);
         }
         finally { if (data != IntPtr.Zero) Marshal.FreeHGlobal(data); if (Valid(token)) CloseHandle(token); }
     }
@@ -336,7 +485,7 @@ public static class RestrictedE2eRunner
         int resultCode = 125;
         try
         {
-            Require(OpenProcessToken(GetCurrentProcess(), 0x000B, out token), "Open caller token");
+            Require(OpenProcessToken(GetCurrentProcess(), 0x008B, out token), "Open caller token");
             Require(ConvertStringSidToSidW("S-1-5-32-544", out admin), "Allocate Administrators SID");
             Require(ConvertStringSidToSidW("S-1-5-32-547", out power), "Allocate Power Users SID");
             var disabled = new[] { new SidAttributes { Sid = admin }, new SidAttributes { Sid = power } };
@@ -344,6 +493,8 @@ public static class RestrictedE2eRunner
             using (var original = new WindowsIdentity(token))
             using (var reduced = new WindowsIdentity(restricted))
                 if (original.User != reduced.User) throw new InvalidOperationException("Restricted token changed user");
+            stage = "token_dacl_setup";
+            AddUserToRestrictedTokenDacl(restricted);
             job = CreateJobObjectW(IntPtr.Zero, null); Require(Valid(job), "Create E2E job");
             var limits = new ExtendedLimits(); limits.Basic.Flags = 0x2000; // KILL_ON_JOB_CLOSE, no breakaway.
             Require(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(typeof(ExtendedLimits))), "Set E2E job cleanup");

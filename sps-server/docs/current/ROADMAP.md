@@ -30,11 +30,18 @@
    Source `425000cb` CI는 실제 Host/새 Member filestore의 Windows safeStorage 프로세스 간 재독해를
    Electron 43.8.3 / Node 24.22.0에서 통과했다. Settings와 9개 Linux shard/typecheck/build도 통과했지만
    No-AI의 elevated PostgreSQL 거부와 Zod gate로 전체 실패다. Source `1cddbcf7`의 첫 CI 실행기 보완도
-   Windows 초기화 오류로 unit 5개 실패해 뒤 E2E가 건너뛰어졌다. 새 시험 전용 desktop 보완은 로컬
-   8/8 및 Desktop 715 total / 714 pass / 0 fail / 1 skip이나 elevated CI는 검증 전이다.
+   Windows 초기화 오류로 unit 5개 실패해 뒤 E2E가 건너뛰어졌다. Source `1e6152a8`의 시험 전용
+   desktop 후속도 동일하게 unit 5개 실패했고 Native/Settings/No-AI는 실행되지 않았다. 새 restricted token의
+   default DACL에 사용자 SID를 추가하는 보완은 로컬 8/8이나 elevated CI는 검증 전이다.
    Core `0955e8f63`은 초대별 공개 발급 기록과 실제 mTLS 소켓 완료를 조정하는 비활성 내부 서비스를
    추가했다. 발급은 초대를 소비하지 않고 완료 때만 pending 등록·소비·감사를 원자적으로 처리한다.
-   집중 40/40 및 Core 전체 typecheck/build 통과이며 Main signer IPC/실제 session caller/등록 UI/ingress는 없다.
+   해당 revision의 집중 40/40·전체 typecheck/build와 Core PR CI 15/15 job은 통과했다.
+   후속으로 직접 소유한 Main→Core 자식의 공개 서명 IPC 및 명시적 Core factory를 추가했다.
+   Main은 현재 Host 세션/저장 identity/account generation을 재확인하고 개인키를 전달하지 않는다.
+   중복 Host start는 하나로 합치며 start 중 stop은 늦은 spawn을 차단한다. 채널 disconnect/dispose는
+   새 호출과 마지막 DB write를 차단한다. 실제 session caller/등록 UI/ingress·자격 저장·갱신은 아직 없다.
+   [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)과
+   [CI 채널 관측](../reviews/NATIVE-CI-CHANNEL-CHECKPOINT-2026-10-25.md)을 따른다.
    [등록 조정·CI 후속 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
    기존 복구·Source·Node 권한과 Zod High `1243066` 보류·Low 2건 등 출시 Gate는 유지한다.
    UI token gate·Tailscale-free Source·Host 승인/복구 UI도 미완료다.

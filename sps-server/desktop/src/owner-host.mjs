@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn as spawnChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { attachSpsNativeMemberSignerChannel } from "./native-member-signer-channel.mjs";
 
 function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
@@ -339,12 +340,17 @@ export function createSpsOwnerHostManager({
   // minutes while Windows inspects its native runtime files.
   startupAttempts = 720,
   terminateTree = terminateWindowsProcessTree,
+  createNativeSigner = null,
 } = {}) {
   if (!url) throw new Error("SPS Owner Host URL is required.");
   let ownedChild = null;
   let lastError = null;
   let startedAt = null;
-  let childOutput = "";
+  let nativeChannel = null;
+  let lifecycleGeneration = 0;
+  let startPromise = null;
+  let startPromiseGeneration = null;
+  const stopsInFlight = new Set();
 
   async function inspect() {
     const health = await healthAt(url, fetchImpl);
@@ -368,19 +374,22 @@ export function createSpsOwnerHostManager({
     return { state: "stopped", owned: false, url, health: null, startedAt: null, lastError };
   }
 
-  async function start() {
+  async function startOwned(generation) {
     const current = await inspect();
+    if (generation !== lifecycleGeneration) return inspect();
     if (current.state !== "stopped") return current;
     const runtime = await resolveRuntime();
+    if (generation !== lifecycleGeneration) return inspect();
     if (!runtime) {
       lastError = "SPS Owner Host runtime is not installed on this computer.";
       return inspect();
     }
 
     try {
+      if (generation !== lifecycleGeneration) return inspect();
       const child = spawn(runtime.command, runtime.args, {
         cwd: runtime.cwd,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: createNativeSigner ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
         windowsHide: true,
         env: {
           ...baseEnvironment,
@@ -389,16 +398,38 @@ export function createSpsOwnerHostManager({
         },
       });
       ownedChild = child;
+      let childChannel = null;
+      if (createNativeSigner) {
+        let signer;
+        try {
+          signer = createNativeSigner();
+          childChannel = attachSpsNativeMemberSignerChannel(child, signer, { isCurrent: () => ownedChild === child });
+          nativeChannel = childChannel;
+        } catch {
+          // Native signing is unavailable, not an alternative route to Owner
+          // authority. Preserve the ordinary Host when no channel can attach.
+          childChannel?.dispose();
+          try { signer?.dispose(); } catch { /* Native remains unavailable. */ }
+          if (nativeChannel === childChannel) nativeChannel = null;
+        }
+      }
       startedAt = new Date().toISOString();
       lastError = null;
-      childOutput = "";
+      let childOutput = "";
       const captureOutput = (chunk) => {
+        if (ownedChild !== child) return;
         childOutput = `${childOutput}${String(chunk)}`.slice(-8_000);
       };
       child.stdout?.on("data", captureOutput);
       child.stderr?.on("data", captureOutput);
-      child.once("error", (error) => { lastError = asMessage(error); });
+      child.once("error", (error) => {
+        if (ownedChild !== child) return;
+        lastError = asMessage(error);
+      });
       child.once("exit", (code) => {
+        if (ownedChild !== child) return;
+        childChannel?.dispose();
+        if (nativeChannel === childChannel) nativeChannel = null;
         if (code && code !== 0) {
           const details = hostDiagnostics(childOutput);
           lastError = `SPS Owner Host exited with code ${code}.${details ? ` ${details}` : ""}`;
@@ -413,15 +444,43 @@ export function createSpsOwnerHostManager({
 
     for (let attempt = 0; attempt < startupAttempts; attempt += 1) {
       await delay(500);
+      if (generation !== lifecycleGeneration) return inspect();
       const state = await inspect();
+      if (generation !== lifecycleGeneration) return inspect();
       if (state.state === "running") return state;
       if (state.state === "stopped") return state;
     }
+    if (generation !== lifecycleGeneration) return inspect();
     lastError = "SPS Owner Host did not become ready in time.";
     return inspect();
   }
 
-  async function stop({ force = false } = {}) {
+  function start() {
+    if (stopsInFlight.size) {
+      return Promise.all([...stopsInFlight]).then(() => start());
+    }
+    if (startPromise && startPromiseGeneration === lifecycleGeneration) return startPromise;
+    const generation = lifecycleGeneration;
+    const operation = startOwned(generation);
+    startPromise = operation;
+    startPromiseGeneration = generation;
+    const clearStart = () => {
+      if (startPromise !== operation) return;
+      startPromise = null;
+      startPromiseGeneration = null;
+    };
+    void operation.then(clearStart, clearStart);
+    return operation;
+  }
+
+  function invalidateNativeSigner() {
+    const channel = nativeChannel;
+    nativeChannel = null;
+    channel?.dispose();
+  }
+
+  async function stopOwned({ force = false } = {}) {
+    invalidateNativeSigner();
     const child = ownedChild;
     if (child && child.exitCode == null) {
       if (force) {
@@ -437,5 +496,14 @@ export function createSpsOwnerHostManager({
     return inspect();
   }
 
-  return { inspect, start, stop };
+  function stop(options) {
+    lifecycleGeneration += 1;
+    const operation = stopOwned(options);
+    stopsInFlight.add(operation);
+    const clearStop = () => stopsInFlight.delete(operation);
+    void operation.then(clearStop, clearStop);
+    return operation;
+  }
+
+  return { inspect, start, stop, invalidateNativeSigner };
 }

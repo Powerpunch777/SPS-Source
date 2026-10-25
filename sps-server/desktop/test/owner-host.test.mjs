@@ -16,6 +16,26 @@ function response(payload) {
   return { ok: true, json: async () => payload };
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function fakeChild(onKill = () => {}) {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.connected = true;
+  child.send = (_message, callback) => { callback?.(null); return true; };
+  child.disconnect = () => {
+    if (!child.connected) return;
+    child.connected = false;
+    child.emit("disconnect");
+  };
+  child.kill = () => onKill(child);
+  return child;
+}
+
 test("starts an internal Owner Host when its runtime is available", async () => {
   let healthy = false;
   const child = new EventEmitter();
@@ -31,6 +51,150 @@ test("starts an internal Owner Host when its runtime is available", async () => 
 
   assert.equal((await manager.start()).state, "running");
   assert.equal((await manager.stop()).state, "stopped");
+});
+
+test("shares concurrent start calls and spawns only one owned child", async () => {
+  const runtimeGate = deferred();
+  const runtimeStarted = deferred();
+  let healthy = false, runtimeCalls = 0, spawnCalls = 0;
+  const child = fakeChild((value) => { healthy = false; value.exitCode = 0; value.emit("exit", 0); });
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310",
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => {
+      runtimeCalls++;
+      runtimeStarted.resolve();
+      await runtimeGate.promise;
+      return { command: "node", args: ["host.mjs"] };
+    },
+    spawn: () => { spawnCalls++; healthy = true; return child; },
+    delay: async () => {},
+  });
+
+  const first = manager.start();
+  const second = manager.start();
+  assert.strictEqual(second, first);
+  await runtimeStarted.promise;
+  assert.equal(runtimeCalls, 1);
+  runtimeGate.resolve();
+  assert.equal((await first).state, "running");
+  assert.equal(spawnCalls, 1);
+  await manager.stop();
+});
+
+test("stop fences a start awaiting runtime resolution from spawning afterward", async () => {
+  const runtimeGate = deferred();
+  const runtimeStarted = deferred();
+  let spawnCalls = 0;
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310",
+    fetchImpl: async () => ({ ok: false }),
+    resolveRuntime: async () => {
+      runtimeStarted.resolve();
+      await runtimeGate.promise;
+      return { command: "node", args: ["host.mjs"] };
+    },
+    spawn: () => { spawnCalls++; return fakeChild(); },
+  });
+
+  const starting = manager.start();
+  await runtimeStarted.promise;
+  assert.equal((await manager.stop()).state, "stopped");
+  runtimeGate.resolve();
+  assert.equal((await starting).state, "stopped");
+  assert.equal(spawnCalls, 0);
+});
+
+test("a late old-child exit cannot revoke the replacement child's signer channel", async () => {
+  const children = [], disposed = [];
+  let healthyChild = null;
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310",
+    fetchImpl: async () => healthyChild ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    spawn: () => {
+      const child = fakeChild();
+      children.push(child);
+      healthyChild = child;
+      return child;
+    },
+    startupAttempts: 1,
+    delay: async () => {},
+    createNativeSigner: () => {
+      const index = disposed.length;
+      disposed.push(0);
+      return { inspect: async () => ({}), sign: async () => ({}), dispose: () => { disposed[index]++; } };
+    },
+    terminateTree: async () => { healthyChild = null; },
+  });
+
+  assert.equal((await manager.start()).state, "running");
+  await manager.stop({ force: true });
+  assert.equal(disposed[0], 1);
+  assert.equal((await manager.start()).state, "running");
+  const replacement = children[1];
+  assert.equal(replacement.listenerCount("message"), 1);
+
+  children[0].exitCode = 0;
+  children[0].emit("exit", 0);
+  assert.equal((await manager.inspect()).owned, true);
+  assert.equal(replacement.listenerCount("message"), 1);
+  assert.equal(disposed[1], 0);
+  await manager.stop({ force: true });
+  assert.equal(disposed[1], 1);
+});
+
+test("invalidating Native signing disconnects only IPC and never reattaches to a live Host", async () => {
+  let healthy = false, spawnCalls = 0, signerCreations = 0, signCalls = 0, disposed = 0, killCalls = 0;
+  const child = fakeChild((value) => {
+    killCalls++;
+    healthy = false;
+    value.exitCode = 0;
+    value.emit("exit", 0);
+  });
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310",
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    spawn: () => { spawnCalls++; healthy = true; return child; },
+    startupAttempts: 1,
+    delay: async () => {},
+    createNativeSigner: () => {
+      signerCreations++;
+      return {
+        inspect: async () => ({}),
+        sign: async () => { signCalls++; return {}; },
+        dispose: () => { disposed++; },
+      };
+    },
+  });
+
+  assert.equal((await manager.start()).state, "running");
+  assert.equal(child.listenerCount("message"), 1);
+  manager.invalidateNativeSigner();
+
+  assert.equal(child.exitCode, null);
+  assert.equal(child.connected, false);
+  assert.equal(child.listenerCount("message"), 0);
+  assert.equal(disposed, 1);
+  assert.equal(killCalls, 0);
+  assert.equal((await manager.inspect()).state, "running");
+  assert.equal((await manager.start()).state, "running");
+  child.emit("message", {
+    v: 1,
+    kind: "sps.native.signer.request",
+    id: "11111111-1111-4111-8111-111111111111",
+    operation: "sign",
+    payload: {},
+  });
+  assert.equal(spawnCalls, 1);
+  assert.equal(signerCreations, 1);
+  assert.equal(signCalls, 0);
+  assert.equal(disposed, 1);
+  assert.equal(killCalls, 0);
+
+  await manager.stop();
+  assert.equal(killCalls, 1);
 });
 
 test("uses a caller-provided environment boundary instead of inheriting production secrets", async () => {
@@ -63,6 +227,24 @@ test("uses a caller-provided environment boundary instead of inheriting producti
   assert.equal(spawnedEnvironment.OPENAI_API_KEY, undefined);
   assert.equal(spawnedEnvironment.SPS_PRODUCTION_SECRET, undefined);
   await manager.stop();
+});
+
+test("only a directly owned Core process gets the private signer IPC and stop revokes it before process exit", async () => {
+  const child = fakeChild();
+  let disposed = 0, options;
+  const manager = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", fetchImpl: async () => ({ ok: false }),
+    resolveRuntime: async () => ({ command: "node", args: ["fixture.mjs"] }), startupAttempts: 0,
+    createNativeSigner: () => ({ inspect: async () => {}, sign: async () => {}, dispose: () => { disposed++; } }),
+    spawn: (_command, _args, value) => { options = value; return child; },
+    terminateTree: async () => { assert.equal(disposed, 1); child.exitCode = 0; child.emit("exit", 0); },
+  });
+  await manager.start(); assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe", "ipc"]);
+  assert.equal(child.listenerCount("message"), 1); await manager.stop({ force: true });
+  assert.equal(child.listenerCount("message"), 0); assert.equal(child.connected, false); assert.equal(disposed, 1);
+  let attached = false;
+  const existing = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", fetchImpl: async () => response({ status: "ok" }),
+    createNativeSigner: () => { attached = true; }, spawn: () => { throw new Error("Must not spawn"); } });
+  assert.equal((await existing.start()).state, "running-existing"); assert.equal(attached, false);
 });
 
 test("recovers an owned Host that becomes healthy after a bounded startup wait", async () => {

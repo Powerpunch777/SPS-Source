@@ -20,8 +20,8 @@
   발급이나 세션 등록은 하지 않는다. LAN은 OFF이며 listener/방화벽 변경도 없다.
 - 비활성 Member 발급 primitive는 표준 PKCS#10 P-256/SHA-256 서명 요청을 사용하며, 개인키는 Member
   로컬 메모리에 두고 공개 요청에서 제외한다. Host의 별도 issuer가 명시적 90일 이하·issuer 유효기간
-  안의 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main/IPC/HTTP/SDK 호출자·
-  provisioning·갱신·새 GUI 흐름은 없다. 표준 TLS 1.3 loopback에서 새 인증서/올바른 키는 통과하고
+  안의 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main 내부 서명 IPC는 추가됐지만
+  HTTP/SDK·provisioning·갱신·새 GUI 흐름은 없다. 표준 TLS 1.3 loopback에서 새 인증서/올바른 키는 통과하고
   인증서 없음·다른 issuer·같은 issuer의 잘못된 EKU·다른 개인키는 거부했다(application bytes 0).
   CSR 서명 검증은 live TLS 키 소유 증명과 별개다. 자체 서명 프로토콜이나 Google 로그인·기기 승인·
   Workspace/Node/Source grant·새 enrollment를 구현한 것이 아니다.
@@ -46,8 +46,14 @@
   신뢰된 signer callback 뒤 초대·전체 결속 tuple을 재검사해 공개한다. 실제 authorized/non-resumed
   TLS 1.3 소켓의 정확한 발급 leaf만 원자적 소비·pending 등록에 쓴다. 서명 timeout/동시성은
   명시적인 인스턴스 한도이며 무응답 signer는 종료까지 slot을 유지한다. 재시작 중단 기록은
-  자동 재서명하지 않는다. 실제 session caller/Main IPC/ingress/UI는 없고 DB verified flag는 로그인 증거가 아니다.
+  자동 재서명하지 않는다. 실제 session caller/ingress/UI는 없고 DB verified flag는 로그인 증거가 아니다.
   집중 40/40 및 Core typecheck/build는 소스 증거이며 실제 앱/LAN/두 PC 수용이 아니다.
+- 직접 소유한 Main→Core 자식 IPC의 공개 인증서 서명 채널과 Core 명시적 composition factory를 추가했다.
+  Main만 로컬 Host 세션·저장 identity를 확인하며 개인키·계정 token·경로는 전달하지 않는다.
+  계정/서버 변경·restore generation, 취소·timeout·disconnect·dispose 후 결과를 차단하고 Core의
+  마지막 트랜잭션 write도 lifecycle guard로 거부한다. factory는 자동 활성화하지 않는다.
+  이 채널은 Native 로그인/기기 승인/Workspace/Node/Source 권한이나 OS 격리를 대신하지 않는다.
+  [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)을 따른다.
 
 정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과
 [Member 인증서 검증](../reviews/NATIVE-MEMBER-CERTIFICATE-VERIFICATION-2026-10-25.md),
@@ -217,7 +223,7 @@ TTL·키 회전·rate limit·retention 세부 정책은 계약 PR의 명시적 �
 크기·시도·동시성·서명 예산과 만료를 제한하고 동일 요청은 동일 기록/인증서를 재사용해야 한다.
 Core 저장은 migration 0167의 초대별 공개 기록이며 예산/수명은 명시 생성자 입력이다. 동일 committed
 재요청은 같은 인증서를 반환하고, 실패/중단 signing은 자동 재서명하지 않는다. 실제 프로세스 간
-Main signer 채널·사용자 세션 결속·retention 정리·GUI 실패 복구는 후속이다. private key/전체 CSR/초대 secret은
+사용자 세션 결속·retention 정리·GUI 실패 복구는 후속이다. Main signer 채널은 내부에만 추가했으며 private key/전체 CSR/초대 secret은
 발급 테이블에 저장하지 않는다. [정확한 검증과 제한](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
 
 pending 등록용 검사는 승인된 기기의 일반 API guard와 분리한다. 이 제한 경로가 임의 Core
