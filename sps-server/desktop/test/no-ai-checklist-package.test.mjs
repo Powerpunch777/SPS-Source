@@ -101,6 +101,40 @@ test("No-AI Electron acceptance is opt-in, source-only, and never enters the Age
   }
 });
 
+test("waits for Native recovery renderer readiness before refreshing devices", async () => {
+  const script = await readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8");
+  const descriptionStart = script.indexOf("async function describePage(cdp)");
+  const descriptionEnd = script.indexOf("\nasync function click", descriptionStart);
+  const description = script.slice(descriptionStart, descriptionEnd);
+  for (const state of [
+    'hostBusy: statusRegion.getAttribute("aria-busy") === "true"',
+    'hostMessage: document.querySelector("#status-message")?.textContent?.trim() ?? null',
+    'devicesBusy: devicesStatus?.getAttribute("aria-busy") === "true"',
+    'devicesMessage: devicesStatus?.textContent?.trim() ?? null',
+    'refreshDisabled: refreshButton ? refreshButton.disabled : null',
+  ]) {
+    assert.ok(description.includes(state), `Native recovery readiness snapshot is missing ${state}`);
+  }
+
+  const recoveryStart = script.indexOf("openRecovery: async () => {");
+  const waitAt = script.indexOf("await waitForPage(setupCdp, page => page.nativeManagement?.hostBusy === false", recoveryStart);
+  const clickAt = script.indexOf('await click(setupCdp, "#refresh-native-devices", "Refresh Native device management without Agent or Plugin dependencies")', recoveryStart);
+  assert.ok(recoveryStart >= 0 && waitAt > recoveryStart && clickAt > waitAt,
+    "Wait for loaded Native recovery state before the existing Refresh click");
+  const readinessWait = script.slice(waitAt, clickAt);
+  for (const requirement of [
+    'page.nativeManagement.hostMessage === "Current local desktop status."',
+    'page.nativeManagement.devicesBusy === false',
+    'page.nativeManagement.devicesMessage === "Prepare Host identity first"',
+    'page.nativeManagement.refreshDisabled === false',
+  ]) {
+    assert.ok(readinessWait.includes(requirement), `Native recovery wait must require ${requirement}`);
+  }
+  assert.equal((readinessWait.match(/await waitForPage\(/g) || []).length, 1, "Use one bounded readiness wait, not retries");
+  assert.match(script, /async function waitForPage\(cdp, predicate, description, timeoutMs = 45_000\)/,
+    "Keep the existing page-wait deadline");
+});
+
 test("Windows verification requires the No-AI source Electron acceptance", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
   const step = workflow.slice(workflow.indexOf("- name: Run No-AI Workspace source Desktop E2E"));

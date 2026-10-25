@@ -1,6 +1,6 @@
 # SPS Windows 내장 연결 계획
 
-기준일: 2026-10-25 KST. 상태: **Stage 0 완료, Core 2a 진행 중, Desktop 2b 일부 연결; 내장 LAN 미지원**.
+기준일: 2026-10-26 KST. 상태: **Stage 0 완료, Core 2a 진행 중, Desktop 2b 일부 연결; 내장 LAN 미지원**.
 사용자가 전달한 Windows-First Native Connectivity 인계서와 목표 교체 요청을
 반영한다. 이 문서는 네트워크 변경, 설치본 교체, 운영 배포 승인이 아니다.
 
@@ -15,6 +15,13 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 [pairing 저장 계층 검증](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)을 따른다.
 
 ## 현재 체크포인트
+
+후속 [Host 초대 관리](../reviews/NATIVE-HOST-PAIRING-MANAGEMENT-2026-10-26.md)는
+기존 저장소를 재사용하는 비활성 Owner 세션 facade다. 1시간·검증된 수신자 요청이라는
+승인 범위만 고정하고 시도/활성 초대 수는 명시적 입력으로 남겼다. 트랜잭션 중 권한
+상실은 발급/취소와 감사 기록을 롤백하지만, 커밋 후 연결 상실은 결과만 보류하고
+이미 커밋한 상태를 되돌리지 않는다. 실제 세션·임시 DB 시험이지 앱의 초대 버튼,
+네트워크 listener, 자동 재시도 또는 두 PC 최초 연결 수용이 아니다.
 
 후속 [등록 HTTP 경계](../reviews/NATIVE-ENROLLMENT-HTTP-BOUNDARY-2026-10-26.md)는
 기존 세션·pairing·발급 계층을 재사용하는 비활성 전용 핸들러다. 두 내부 경로만 받으며

@@ -321,7 +321,20 @@ async function describePage(cdp) {
     historyReady: document.querySelector('[aria-label="Refresh execution history"]')?.disabled === false,
     historyLane: document.querySelector('[aria-label="Execution lane"]')?.value,
     historyRunIds: [...document.querySelectorAll('[data-testid="sps-plugin-executions"] button[aria-label^="View execution "]')].map(button => button.getAttribute('aria-label').slice(15)),
-    historyDetail: document.querySelector('[data-testid="sps-execution-detail"]')?.innerText?.slice(0, 4000) || "" })`);
+    historyDetail: document.querySelector('[data-testid="sps-execution-detail"]')?.innerText?.slice(0, 4000) || "",
+    nativeManagement: (() => {
+      const statusRegion = document.querySelector("#status-region");
+      if (!statusRegion) return null;
+      const devicesStatus = document.querySelector("#native-devices-status");
+      const refreshButton = document.querySelector("#refresh-native-devices");
+      return {
+        hostBusy: statusRegion.getAttribute("aria-busy") === "true",
+        hostMessage: document.querySelector("#status-message")?.textContent?.trim() ?? null,
+        devicesBusy: devicesStatus?.getAttribute("aria-busy") === "true",
+        devicesMessage: devicesStatus?.textContent?.trim() ?? null,
+        refreshDisabled: refreshButton ? refreshButton.disabled : null,
+      };
+    })() })`);
 }
 
 async function click(cdp, selector, label) {
@@ -700,6 +713,12 @@ try {
         const devicesBeforePreparation = await setupCdp.evaluate("window.spsCoreSettings.listNativeDevices()", true);
         assert.deepEqual(devicesBeforePreparation, { state: "identity_required", lanEnabled: false, devices: [] },
           "A signed-in Owner without prepared Native keys must not invent device state or enable LAN.");
+        await waitForPage(setupCdp, page => page.nativeManagement?.hostBusy === false
+          && page.nativeManagement.hostMessage === "Current local desktop status."
+          && page.nativeManagement.devicesBusy === false
+          && page.nativeManagement.devicesMessage === "Prepare Host identity first"
+          && page.nativeManagement.refreshDisabled === false,
+        "loaded Native recovery Host status, identity-required device state, and enabled refresh control");
         await click(setupCdp, "#refresh-native-devices", "Refresh Native device management without Agent or Plugin dependencies");
         await waitForPage(setupCdp, page => !page.body.includes("Loading native devices..."), "Native device management unavailable state");
         if (screenshotPath) await captureScreenshot(setupCdp, path.join(path.dirname(screenshotPath), "no-ai-native-recovery.png"));
