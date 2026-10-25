@@ -1,6 +1,6 @@
 # SPS 범용 워크스테이션 / 다중 실행 백엔드 계획
 
-기준일: 2026-10-25 KST. 상태: Stage 0 완료, Stage 1 No-AI reference 소스 수용 통과.
+기준일: 2026-10-25 KST. 상태: Stage 0/1 완료, Stage 2a Node 연결 관측 소스 구현.
 이 문서는 사용자의 다중 백엔드 전달 문서와 후속 **Core 비공개 / SDK 공개 유지**
 결정을 제품 문서에 정렬한다. 전달 문서의 예시 API를 실제 export로 간주하지 않는다.
 현행 근거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
@@ -32,8 +32,8 @@ Stage 1의 실제 변경·버그 재현·최종 시험 범위는
 
 | 목적 | 재사용 | 추가가 필요한 부분 / 현행 한계 |
 | --- | --- | --- |
-| AI 없는 UI·데이터·자동화 | 공개 SDK `ui`, `platform`의 data/actions/state/events/jobs, portable Worker | 단일 No-AI 앱의 Desktop 전체 흐름 증거는 별도로 필요 |
-| 승인된 CLI 실행 | `runtime.runtimes`, execution grants, `runs.dispatch/get/list/listEvents/cancel`, Node lease | 등록된 Runner 범위이며 임의 executable/cwd를 받는 일반 CLI API가 아님 |
+| AI 없는 UI·데이터·자동화 | 공개 SDK `ui`, `platform`의 data/actions/state/events/jobs, portable Worker | Stage 1 임시 reference의 source Desktop 수용 통과. 실제 고객 앱/설치본 증거와는 별도 |
+| 승인된 CLI 실행 | `runtime.runtimes`, execution grants, `runs.dispatch/get/list/listEvents/cancel`, Node lease | Stage 2a optional 연결 관측 추가. 등록된 Runner 범위이며 임의 executable/cwd를 받는 일반 CLI API가 아님 |
 | Agent 대화/취소 | 공개 SDK **`platform`**의 `agents.sessions.create/list/sendMessage/getRun/cancel` | 내부 SDK와 공개 facade의 옵션/close 차이, 실제 backend별 능력·종료 증거 확인 |
 | 기술 관측 | `executions.list/get/summarize`, provenance-aware usage, Artifacts | 기존 lane은 node/agent_session. 모델 요청·OCE 배포를 임의로 기존 lane에 위장하지 않음 |
 | 일반 OpenClaw | 기존 `openclaw_gateway` 어댑터와 mock WS 시험 | 최신 pairing/challenge, 재연결·승인·취소·세션·Secret 범위를 재검증 |
@@ -112,6 +112,22 @@ Host의 Windows 폴더 문자열을 Gateway/Harness의 cwd로 전송하는 계�
 | 5 Gateway | 기존 adapter의 고정 버전 호환부터, 이후 세션 기능 | challenge/pairing/device scope, 재연결 snapshot, seq gap, 취소 pending, 명시 버전 오류. 이전 lane으로 무음 fallback 금지 |
 | 6 OCE | 별도 control-plane binding과 mock read-only inspection | Installation/Namespace/Agent/Revision 정확 매핑, OCE IAM 거부·redaction. 배포/중지 mutation은 별도 사용자 승인 |
 | 7 Builder/첫 workstation | 기존 Lead/Worker에서 필요한 backend만 선택, Preview/build/package 재사용 | 요구→제작→Preview→Host 명시 설치→실사용. 두 PC·Source와 최종 설치본 검증을 별도 수행 |
+
+### Stage 2a: Node 연결 관측의 좁은 구현
+
+새 통합 backend registry나 전역 실행 엔진 대신 기존 `sps.runtimes.list`에
+optional `connection` DTO만 추가한다. 과거 Host가 필드를 생략하면 unknown이다.
+실행 주체 `node`, 별도 execution grant 필요, heartbeat 기반 상태와 관측 시각을
+제공한다. active/키 검증/유효한 최근 heartbeat가 모두 맞아야 online이며, 철회·
+미검증·과거·미래/누락 시각을 구분한다. 최근 관측이 CLI 로그인·사용 가능·권한을
+증명하지 않는다. credential/availability 정보와 dispatch 시 재검사를 그대로 둔다.
+
+읽기 권한만 가진 임시 Worker로 실제 Desktop→공개 SDK→Core 조회를 확인한다.
+모의 Node의 서명 heartbeat/Host 승인/철회와 A/B Workspace 분리를 실제 API로
+검증하되 CLI 명령·실제 Provider·원격 PC는 실행하지 않는다. DB 시험은 조회가
+grant/run을 생성하지 않는 점과 Node/Runner 양쪽 tenant 검사를 포함한다.
+이 단계에는 UI 변경, DB migration, 새 Secret 읽기, 실제 키 또는 의존성 전환이 없다.
+Agent/모델/OCE 연결과 취소·복구 지원은 아직 별도 후속 범위다.
 
 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되

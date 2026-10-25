@@ -22,7 +22,8 @@ const sourceElectron = process.env.SPS_DESKTOP_E2E_SOURCE === "1"
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const keepE2eData = process.env.SPS_DESKTOP_E2E_KEEP_DATA === "1";
 const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
-const noAiChecklist = process.argv.includes("--no-ai-checklist");
+const runtimeDiscovery = process.argv.includes("--runtime-discovery");
+const noAiChecklist = runtimeDiscovery || process.argv.includes("--no-ai-checklist");
 
 if (process.platform !== "win32") {
   throw new Error("Workspace Surfaces Desktop E2E currently targets the Windows release.");
@@ -590,7 +591,7 @@ try {
 
   if (noAiChecklist) {
     await runNoAiChecklistAcceptance({
-      cdp: workspaceCdp, company, api, click, captureScreenshot, screenshotPath, temporaryRoot: userDataDirectory,
+      cdp: workspaceCdp, company, api, click, captureScreenshot, screenshotPath, temporaryRoot: userDataDirectory, runtimeDiscovery,
       restart: async () => {
         await closeDesktopForRestart();
         launchDesktop();

@@ -23,6 +23,13 @@ test("UI-less variant has no UI entrypoint or UI capabilities", () => {
   assert.ok(!manifest.capabilities.some(value => value.startsWith("ui.")));
 });
 
+test("runtime inspection opts into existing read-only discovery without execution authority", () => {
+  const manifest = checklistManifest({ withUi: false, runtimeDiscovery: true });
+  assert.ok(manifest.capabilities.includes("sps.runtimes.read"));
+  assert.deepEqual(manifest.sps.primitives, ["runtimes.list"]);
+  assert.ok(!manifest.capabilities.some(value => /dispatch|executionGrants|secrets|agent\.sessions/.test(value)));
+});
+
 test("negative variants remove the actual Host capability without bypassing the Worker", () => {
   assert.ok(!checklistManifest({ omitCapability: "plugin.state.write" }).capabilities.includes("plugin.state.write"));
   assert.ok(checklistManifest({ omitCapability: "plugin.state.write" }).capabilities.includes("plugin.state.read"));
@@ -72,6 +79,16 @@ test("Windows verification requires the No-AI source Electron acceptance", async
   const sourceStep = step.split(/\r?\n\s+- name:/)[0];
   assert.match(sourceStep, /timeout-minutes: 18/);
   assert.match(sourceStep, /SPS_DESKTOP_E2E_SOURCE: "1"/);
-  assert.match(sourceStep, /run: npm run test:e2e:no-ai-checklist/);
+  assert.match(sourceStep, /run: npm run test:e2e:runtime-discovery/);
   assert.doesNotMatch(sourceStep, /continue-on-error|if:/);
+});
+
+test("runtime discovery extends the No-AI path and uses the signed simulated Node protocol", async () => {
+  const script = await readFile(new URL("../scripts/runtime-discovery-acceptance.mjs", import.meta.url), "utf8");
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.match(packageJson.scripts["test:e2e:runtime-discovery"], /--runtime-discovery/);
+  for (const contract of ["createSignedHeartbeat", '"recently_seen"', '"execution_grant_required"', '"inactive"', "read(secondCompany.id)", "credentialStatus"]) {
+    assert.ok(script.includes(contract), `Missing runtime acceptance case ${contract}`);
+  }
+  assert.doesNotMatch(script, /\.runs\.dispatch|execFile|spawn\(/);
 });

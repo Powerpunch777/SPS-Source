@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { createChecklistPackage, CHECKLIST_PLUGIN_KEY } from "./no-ai-checklist-package.mjs";
+import { runRuntimeDiscoveryAcceptance } from "./runtime-discovery-acceptance.mjs";
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -25,7 +26,7 @@ async function assertDenied(cdp, url, body, label) {
   assert.match(JSON.stringify(result.body), /capability|scope|not enabled|disabled|denied|outside|permission/i, `${label} failed for an unrelated reason: ${JSON.stringify(result)}`);
 }
 
-export async function runNoAiChecklistAcceptance({ cdp, company, api, click, restart, openRecovery, captureScreenshot, screenshotPath, temporaryRoot }) {
+export async function runNoAiChecklistAcceptance({ cdp, company, api, click, restart, openRecovery, captureScreenshot, screenshotPath, temporaryRoot, runtimeDiscovery = false }) {
   let workspace = cdp;
   const request = (url, options) => api(workspace, url, options);
   const data = (plugin, companyId = company.id, params = {}) => request(`/api/plugins/${plugin.id}/data/checklist`, {
@@ -54,6 +55,7 @@ export async function runNoAiChecklistAcceptance({ cdp, company, api, click, res
   const second = await request("/api/companies", { method: "POST", body: { name: "No-AI scope B" } });
   assert.ok(second.id && second.issuePrefix);
   await activate(plugin, second.id, true);
+  if (runtimeDiscovery) await runRuntimeDiscoveryAcceptance({ cdp: workspace, company, secondCompany: second, api, temporaryRoot });
 
   const pageUrl = `/${company.issuePrefix}/plugins/${plugin.id}`;
   await workspace.evaluate(`location.assign(${JSON.stringify(pageUrl)})`);
