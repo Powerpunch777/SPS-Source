@@ -30,7 +30,7 @@ typecheck/build는 통과했다. 실제 세션 인증 caller·등록 UI·TLS ing
 채널로 전달하지 않으며 renderer/preload/Plugin SDK API는 추가하지 않는다. Main은 현재 Host 세션과
 identity store를 서명 전후 확인하고 계정/서버 변경·restore generation 변화 뒤 이전 채널을 거부한다.
 취소·시간 초과는 실제 작업 종료 증거가 아니며, 실제 작업이 settle할 때까지 Main 동시성 slot을 유지한다.
-Core factory는 자동 시작하지 않는다. 제품 Native 세션 인증 경로·발급 자격 저장·등록 UI·LAN listener는 여전히 후속이다.
+Core factory는 자동 시작하지 않는다. 제품 Native 세션 인증 경로·발급 자격 저장 caller·등록 UI·LAN listener는 여전히 후속이다.
 정확한 한도·실행 명령·증거 범위는 [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)에 모은다.
 
 후속 비활성 session adapter는 실제 SPS Identity 세션 쿠키에서 사용자를 도출하고, DB 트랜잭션에서
@@ -40,6 +40,23 @@ IncomingMessage·POST/JSON을 요구하고 browser origin·Authorization·본문
 새 제품 route/listener나 Google 흐름은 만들지 않았다. 로컬 Core logout과 DB 처리의 순서 보장이지
 중앙 Google 로그아웃의 즉시 전파·COMMIT 순간까지의 시간 정지 보장은 아니다.
 [세션 결속 검증](../reviews/NATIVE-SESSION-ENROLLMENT-VERIFICATION-2026-10-25.md)에 최종 증거를 기록한다.
+
+후속 Member issued companion은 기존 pending 키 파일을 변경하지 않고 공개 발급 응답만 별도
+암호화 파일에 create-only로 저장한다. 다시 읽을 때 현재 계정/Host/device/pins·원래 키/CSR·
+인증서 chain/profile/만료를 재검증한다. 초대 완료 기한과 인증서 수명은 다르며, 초대 기한이
+지났다는 이유만으로 아직 유효한 인증서를 폐기하지 않는다. 저장 후 guard 실패는 오류를
+반환해도 파일이 남을 수 있으며 filesystem rollback·자동 복구·기기 승인은 아니다.
+실제 loopback TLS 1.3 재독해 시험을 포함한 집중 37/37, Desktop 761 total/760 pass/1 skip은
+소스 증거다. unit AES는 DPAPI가 아니며 새 companion의 Windows DPAPI CI는 아직 미실행이다.
+Main/IPC·앱 enrollment caller·LAN listener·갱신은 연결하지 않았다.
+[발급 자격 저장 검증](../reviews/NATIVE-MEMBER-ISSUED-STORE-VERIFICATION-2026-10-25.md)을 따른다.
+
+직전 Source `7311041b` push CI `40190150149`는 18개 job 중 16개 성공·2개 실패다.
+9개 Linux shard/full typecheck/build와 Windows Native DPAPI·Settings·No-AI·packaged Workspace
+surface까지 통과했지만 packaged Plugin Preview는 실제 Assistant 등록 폼의 서버 오류로
+roster 대기에 실패했다. 이전 embedded PostgreSQL chmod 오류와 구별하며 Preview 성공으로
+기록하지 않는다. 보안 정책은 보류된 Zod High로 계속 차단된다. Core `ed45c51c` PR CI
+`40190064373`는 15/15 job 통과했다. 이 CI는 후속 issued companion의 증거가 아니다.
 
 Source `1e6152a8`의 CI `40185474383` / `40185477664`는 각각 18개 job 중 16개 성공·2개 실패다.
 9개 Linux shard와 full Linux typecheck/build는 통과했지만 Windows unit은 **715 total / 709 pass /
@@ -81,7 +98,7 @@ Identity issuer origin·subject·Host/device·신뢰된 server/issuer pins를 ci
 unit의 AES fixture는 DPAPI 증거가 아니다. 실제 private pending filestore adapter도 소스로 구현됐다.
 Owner Vault 밖의 userData에 논리 account issuer/subject·Host/device slot을 만들고 first-writer/create-only로 저장한다.
 server/issuer pins는 slot 이름이 아닌 암호문 context에만 결속하므로 pin 변경으로 새 키를 조용히 채택하지 않는다.
-덮어쓰기·삭제·자동복구는 없으며 현재 caller는 격리 smoke뿐이다. Main/IPC·GUI·enrollment·발급 자격 저장 caller는
+덮어쓰기·삭제·자동복구는 없으며 현재 caller는 격리 smoke뿐이다. 발급 자격 companion도 같은 저장 경계를 재사용하지만 Main/IPC·GUI·enrollment caller는
 없고 기존 복구·Source·Node 권한은 불변이다. [pending 저장 검증](../reviews/NATIVE-MEMBER-PENDING-STORE-VERIFICATION-2026-10-25.md)을 따른다.
 
 D7 승인값은 서버/Member 인증서 90일, 별도 issuer 365일이다. 만료 전 기존 키와 검증된

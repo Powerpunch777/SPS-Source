@@ -9,9 +9,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeHostIdentityStore } from "../src/native-identity-store.mjs";
-import { createSpsNativeMemberKeyRequest } from "../src/native-member-certificates.mjs";
+import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate, publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
 import { createSpsNativeMemberPendingKeyStore } from "../src/native-member-pending-store.mjs";
-import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
 import { canonicalNativeSmokeDirectorySync } from "../src/native-identity-smoke-paths.mjs";
 import {
   createNativeIdentityFailureReport,
@@ -31,6 +31,7 @@ const successKeys = [
   "phase", "result", "realWindowsSafeStorage", "electronRuntimeVersion", "nodeRuntimeVersion",
   "serverSpkiSha256", "memberIssuerSpkiSha256", "vaultUnchanged", "plaintextKeyAbsent",
   "memberPendingKeyProtected", "memberPendingSpkiSha256",
+  "memberIssuedCredentialProtected", "memberIssuedCertificateSha256",
 ];
 
 function failureReport(phase, stage, errorCode, electronRuntimeVersion = null, nodeRuntimeVersion = null) {
@@ -53,11 +54,13 @@ function parseSuccess(stdout, phase) {
   if (value.phase !== phase || value.result !== "passed" || value.realWindowsSafeStorage !== true
     || value.vaultUnchanged !== true || value.plaintextKeyAbsent !== true
     || value.memberPendingKeyProtected !== true
+    || value.memberIssuedCredentialProtected !== true
     || !isNativeIdentityVersion(value.electronRuntimeVersion)
     || !isNativeIdentityVersion(value.nodeRuntimeVersion)
     || !isNativeIdentityFingerprint(value.serverSpkiSha256)
     || !isNativeIdentityFingerprint(value.memberIssuerSpkiSha256)
-    || !isNativeIdentityFingerprint(value.memberPendingSpkiSha256)) return null;
+    || !isNativeIdentityFingerprint(value.memberPendingSpkiSha256)
+    || !isNativeIdentityFingerprint(value.memberIssuedCertificateSha256)) return null;
   return Object.fromEntries(successKeys.map(key => [key, value[key]]));
 }
 
@@ -194,8 +197,8 @@ async function electronPhase() {
     stage = "member_pending_reload";
     const memberDirectory = path.join(userDataDirectory, "native-connectivity", "member-pending");
     const memberFiles = await readdir(memberDirectory);
-    assert.equal(memberFiles.length, 1);
-    const memberFile = path.join(memberDirectory, memberFiles[0]);
+    assert.equal(memberFiles.length, args[2] === "create" ? 1 : 2);
+    const memberFile = path.join(memberDirectory, memberFiles.find(name => !name.endsWith(".issued.json")));
     const memberStat = await lstat(memberFile);
     assert.ok(memberStat.isFile() && !memberStat.isSymbolicLink() && memberStat.nlink === 1 && memberStat.size <= 96 * 1024);
     const memberBytes = await readFile(memberFile, "utf8");
@@ -209,6 +212,32 @@ async function electronPhase() {
     const changedPin = createSpsNativeMemberPendingKeyStore({ ...memberStoreOptions,
       context: { ...memberContext, issuerSpkiSha256: memberContext.issuerSpkiSha256 === "a".repeat(64) ? "b".repeat(64) : "a".repeat(64) } });
     await assert.rejects(changedPin.read(), { code: "ERR_SPS_NATIVE_MEMBER_PENDING_STORE_CORRUPT" });
+    if (args[2] === "create") {
+      stage = "member_issued_create";
+      const now = Math.floor(Date.now() / 1000) * 1000;
+      const issued = await issueSpsNativeMemberCertificate({ hostIdentity: loaded,
+        request: await publicSpsNativeMemberEnrollmentRequest(memberKey), notBefore: now,
+        notAfter: now + 120_000, now });
+      await memberStore.createIssued({ enrollmentId: "33333333-3333-4333-8333-333333333333",
+        certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
+        issuerCertificate: new X509Certificate(issued.issuerCertificatePem).raw.toString("base64url"),
+        expiresAt: new Date(now + 60_000).toISOString() });
+    }
+    stage = "member_issued_reload";
+    const prepared = await memberStore.readIssued();
+    assert.ok(prepared);
+    assert.equal(prepared.credential.privateKeyPem, memberKey.privateKeyPem);
+    await assert.rejects(memberStore.createIssued(prepared.issuance), { code: "ERR_SPS_NATIVE_MEMBER_PENDING_STORE_ALREADY_EXISTS" });
+    await assert.rejects(changedPin.readIssued(), { code: "ERR_SPS_NATIVE_MEMBER_PENDING_STORE_CORRUPT" });
+    const issuedFiles = (await readdir(memberDirectory)).filter(name => name.endsWith(".issued.json"));
+    assert.equal(issuedFiles.length, 1);
+    const issuedBytes = await readFile(path.join(memberDirectory, issuedFiles[0]), "utf8");
+    assert.doesNotMatch(issuedBytes, /PRIVATE KEY|CERTIFICATE|privateKeyPem|requestPem|native-smoke-fixture-user/);
+    const issuedPlaintext = safeStorage.decryptString(Buffer.from(JSON.parse(issuedBytes).ciphertext, "base64"));
+    assert.doesNotMatch(issuedPlaintext, /PRIVATE KEY|CERTIFICATE REQUEST|privateKeyPem|requestPem|pairingSecret/);
+    assert.equal(await readFile(memberFile, "utf8"), memberBytes);
+    assert.equal((await lstat(memberFile)).ino, memberStat.ino);
+    const memberIssuedCertificateSha256 = createHash("sha256").update(new X509Certificate(prepared.credential.certificatePem).raw).digest("hex");
     assert.equal((await readdir(vaultDirectory)).length, 0);
     const memberPendingSpkiSha256 = createHash("sha256")
       .update(createPublicKey(createPrivateKey(memberKey.privateKeyPem)).export({ type: "spki", format: "der" })).digest("hex");
@@ -218,6 +247,7 @@ async function electronPhase() {
       serverSpkiSha256: status.serverSpkiSha256, memberIssuerSpkiSha256: status.memberIssuerSpkiSha256,
       vaultUnchanged: true, plaintextKeyAbsent: true,
       memberPendingKeyProtected: true, memberPendingSpkiSha256,
+      memberIssuedCredentialProtected: true, memberIssuedCertificateSha256,
     }));
     clearTimeout(watchdog);
     app.exit(0);
@@ -230,7 +260,7 @@ async function electronPhase() {
             : stage === "runtime_validation" ? "electron_version_mismatch"
               : stage === "secure_storage" ? "secure_storage_unavailable"
                 : stage === "arguments" ? "invalid_invocation"
-                  : stage.startsWith("member_pending_") ? "member_pending_operation_failed" : "identity_operation_failed";
+                  : stage.startsWith("member_pending_") || stage.startsWith("member_issued_") ? "member_pending_operation_failed" : "identity_operation_failed";
       await emitFailure(fallbackCode);
     }
     app?.exit(1);
@@ -304,6 +334,7 @@ async function orchestrate() {
           if (created && (report.serverSpkiSha256 !== created.serverSpkiSha256
             || report.memberIssuerSpkiSha256 !== created.memberIssuerSpkiSha256
             || report.memberPendingSpkiSha256 !== created.memberPendingSpkiSha256
+            || report.memberIssuedCertificateSha256 !== created.memberIssuedCertificateSha256
             || report.electronRuntimeVersion !== created.electronRuntimeVersion
             || report.nodeRuntimeVersion !== created.nodeRuntimeVersion)) {
             failure = failureReport(phase, "identity_reload", "identity_operation_failed",
@@ -349,6 +380,7 @@ async function orchestrate() {
       realWindowsSafeStorage: true, customerDataUsed: false, osCertificateStoreChanged: false,
       listenerStarted: false, sameKeyAfterRestart: true,
       memberPendingKeyProtected: true, sameMemberKeyAfterRestart: true,
+      memberIssuedCredentialProtected: true, sameMemberCertificateAfterRestart: true,
       electronRuntimeVersion: created.electronRuntimeVersion, nodeRuntimeVersion: created.nodeRuntimeVersion }));
   }
 }

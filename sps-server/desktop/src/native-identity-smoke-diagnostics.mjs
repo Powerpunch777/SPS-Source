@@ -15,6 +15,8 @@ const stages = new Set([
   "storage_validation",
   "member_pending_create",
   "member_pending_reload",
+  "member_issued_create",
+  "member_issued_reload",
   "watchdog",
   "child_protocol",
   "owned_temp_cleanup",

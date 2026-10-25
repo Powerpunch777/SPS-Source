@@ -21,7 +21,11 @@
    계정 issuer origin/subject·Host/device·신뢰 pins를 ciphertext 안에 결속하는 Windows pending capsule도 있다.
    private pending filestore도 구현됐다. Owner Vault 밖의 논리 account/Host/device slot에 first-writer/create-only로
    저장하고 pins는 암호문 안에만 둔다. 덮어쓰기·삭제·자동복구는 없고 caller는 격리 smoke뿐이다.
-   unit AES는 DPAPI 증거가 아니며 Main/IPC·GUI·enrollment·발급 자격 저장 연결은 없다.
+   발급 응답은 기존 키를 보존한 별도 create-only issued companion에 암호화 저장하고 재독해 시
+   pins·원래 키/CSR·chain/profile·현재 인증서 만료를 검사한다. 새 Host issuer는 이전 인증서를
+   실제 loopback TLS 1.3에서 거부했다. unit AES는 DPAPI 증거가 아니며 새 companion의 Windows CI와
+   Main/IPC·GUI·enrollment caller 연결은 아직 없다. 저장 후 guard 실패는 파일 rollback을 보장하지 않는다.
+   [발급 자격 저장 검증](../reviews/NATIVE-MEMBER-ISSUED-STORE-VERIFICATION-2026-10-25.md)을 따른다.
    이는 제품 enrollment·사용자 인증·기기 승인·Workspace/Node/Source grant가 아니다.
    LAN은 OFF: Native LAN listener·방화벽 변경·Member 발급 활성화·enrollment·세션 등록·갱신은 없다.
    D7은 server/Member 90일·issuer 365일과 기존 키 갱신 정책 승인이지, 실제
@@ -39,12 +43,16 @@
    후속으로 직접 소유한 Main→Core 자식의 공개 서명 IPC 및 명시적 Core factory를 추가했다.
    Main은 현재 Host 세션/저장 identity/account generation을 재확인하고 개인키를 전달하지 않는다.
    중복 Host start는 하나로 합치며 start 중 stop은 늦은 spawn을 차단한다. 채널 disconnect/dispose는
-   새 호출과 마지막 DB write를 차단한다. 제품 session caller/등록 UI/ingress·자격 저장·갱신은 아직 없다.
+   새 호출과 마지막 DB write를 차단한다. 제품 session caller/등록 UI/ingress·자격 저장 caller·갱신은 아직 없다.
    비활성 session adapter는 실제 SPS Identity 쿠키와 exact session/user/expiry를 발급·등록 트랜잭션에
    결속하며 wrong-secret 예산 전·마지막 write 뒤 재검사한다. 다른 user guard 조합은 거부하고,
    local logout은 shared row lock으로 순서를 정한다. 제품 session exchange/route mount는 아직 없고
    실제 HTTPS·fixture RSA session·mTLS 소스 시험을 물리 PC나 Google 운영 증거로 사용하지 않는다.
    [세션 결속 검증](../reviews/NATIVE-SESSION-ENROLLMENT-VERIFICATION-2026-10-25.md)을 따른다.
+   Source `7311041b` push CI `40190150149`는 16/18 job 성공이다. 9개 Linux shard/full build와
+   Windows Native DPAPI·Settings·No-AI·packaged Workspace surface는 통과했지만 packaged Preview는
+   실제 Assistant 등록의 서버 오류로 실패했고 Zod gate도 차단됐다. Core `ed45c51c` PR CI
+   `40190064373`는 15/15 성공이다. 이 CI를 후속 issued companion 검증으로 재사용하지 않는다.
    [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)과
    [CI 채널 관측](../reviews/NATIVE-CI-CHANNEL-CHECKPOINT-2026-10-25.md)을 따른다.
    [등록 조정·CI 후속 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.

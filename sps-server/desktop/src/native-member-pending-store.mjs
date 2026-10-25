@@ -1,8 +1,9 @@
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, X509Certificate } from "node:crypto";
 import { nativeCertificateRecord as record } from "./native-certificate-primitives.mjs";
 import { createSpsNativeMemberPendingCapsule, validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
+import { createSpsNativeMemberIssuedCapsule } from "./native-member-issued-capsule.mjs";
 
 const MAX_BYTES = 96 * 1024;
 const errors = Object.freeze({
@@ -110,6 +111,7 @@ export function createSpsNativeMemberPendingKeyStore(options) {
     context = validateSpsNativeMemberPendingContext(config.context);
   } catch { throw fail("OPTIONS"); }
   const capsule = createSpsNativeMemberPendingCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
+  const issuedCapsule = createSpsNativeMemberIssuedCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
   const slot = createHash("sha256").update(JSON.stringify({ identityIssuer: context.identityIssuer, subject: context.subject,
     hostId: context.hostId, deviceKeyId: context.deviceKeyId })).digest("hex");
   let queue = Promise.resolve();
@@ -118,17 +120,17 @@ export function createSpsNativeMemberPendingKeyStore(options) {
     queue = result.catch(() => {});
     return result;
   }
-  async function paths(create = false) {
+  async function paths(create = false, kind = "pending") {
     const root = await directory(config.userDataDirectory), vault = await directory(config.vaultDirectory, true);
     const native = path.join(root, "native-connectivity");
     if (isWithin(vault, native) || isWithin(native, vault)) throw fail("OPTIONS");
     const nativeRoot = await childDirectory(root, "native-connectivity", create);
     const folder = nativeRoot && await childDirectory(nativeRoot, "member-pending", create);
-    return folder ? { root, folder, file: path.join(folder, `${slot}.json`),
+    return folder ? { root, folder, kind, file: path.join(folder, kind === "issued" ? `${slot}.issued.json` : `${slot}.json`),
       rootIdentity: await directoryIdentity(root), folderIdentity: await directoryIdentity(folder) } : null;
   }
   async function recheck(expected) {
-    const current = await paths();
+    const current = await paths(false, expected.kind);
     if (!current || current.root !== expected.root || current.folder !== expected.folder || current.file !== expected.file
       || !sameDirectory(current.rootIdentity, expected.rootIdentity)
       || !sameDirectory(current.folderIdentity, expected.folderIdentity)) throw fail("FAILED");
@@ -146,6 +148,87 @@ export function createSpsNativeMemberPendingKeyStore(options) {
       await fs.unlink(temporary);
     } catch { /* Never clean through a replaced path. */ }
   }
+
+  async function readPending() {
+    const target = await paths();
+    if (!target) return null;
+    const stat = await slotStat(target.file);
+    if (!stat) { await recheck(target); return null; }
+    const bytes = await boundedRead(target.file, stat);
+    const key = await capsule.open(bytes, context);
+    await recheck(target);
+    if (!sameFile(stat, await slotStat(target.file))) throw fail("CORRUPT");
+    return { key, target, stat, bytes };
+  }
+  async function recheckPending(expected) {
+    await recheck(expected.target);
+    const current = await slotStat(expected.target.file);
+    if (!current || !sameFile(current, expected.stat)
+      || await boundedRead(expected.target.file, current) !== expected.bytes) throw fail("CORRUPT");
+    await recheck(expected.target);
+  }
+  function commitGuard(input) {
+    let guard;
+    try {
+      const descriptors = Object.getOwnPropertyDescriptors(input);
+      const hasGuard = Object.hasOwn(descriptors, "beforeCommit");
+      guard = record(input, hasGuard ? ["beforeCommit"] : []).beforeCommit;
+      if (guard !== undefined && typeof guard !== "function") throw fail("OPTIONS");
+    } catch { throw fail("OPTIONS"); }
+    return () => {
+      const result = guard?.();
+      if (result !== undefined) {
+        if (result instanceof Promise) void result.catch(() => {});
+        throw fail("OPTIONS");
+      }
+    };
+  }
+  function requireCurrentIssued(value) {
+    const now = Date.now();
+    for (const pem of [value.credential.certificatePem, value.credential.issuerCertificatePem]) {
+      const certificate = new X509Certificate(pem);
+      if (Date.parse(certificate.validFrom) > now || Date.parse(certificate.validTo) <= now) throw fail("CORRUPT");
+    }
+    return value;
+  }
+  async function createOnly(kind, prepare, authorize) {
+    let temporary, owned, target;
+    try {
+      const { encrypted, validated, pending } = await prepare();
+      target = await paths(true, kind);
+      if (await slotStat(target.file, false)) throw fail("ALREADY_EXISTS");
+      temporary = path.join(target.folder, `.pending-${randomUUID()}.tmp`);
+      await recheck(target);
+      const handle = await fs.open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+      try { owned = await handle.stat(); await handle.writeFile(encrypted, "utf8"); await handle.sync(); }
+      finally { await handle.close(); }
+      authorize();
+      await recheck(target);
+      const stat = await fs.lstat(temporary);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !sameFile(stat, owned)) throw fail("FAILED");
+      if (await slotStat(target.file, false)) throw fail("ALREADY_EXISTS");
+      if (pending) await recheckPending(pending);
+      authorize();
+      try { await fs.link(temporary, target.file); } catch (error) {
+        if (error?.code === "EEXIST") throw fail("ALREADY_EXISTS");
+        throw error;
+      }
+      await recheck(target);
+      const linked = await fs.lstat(target.file), temporaryLinked = await fs.lstat(temporary);
+      if (!linked.isFile() || linked.isSymbolicLink() || linked.nlink !== 2 || !sameFile(linked, owned)
+        || !temporaryLinked.isFile() || temporaryLinked.isSymbolicLink() || temporaryLinked.nlink !== 2
+        || !sameFile(temporaryLinked, owned)) throw fail("FAILED");
+      await fs.unlink(temporary); owned = null;
+      await syncDirectory(target.folder);
+      await recheck(target);
+      if (pending) await recheckPending(pending);
+      if (!sameFile(linked, await slotStat(target.file))) throw fail("FAILED");
+      if (kind === "issued") requireCurrentIssued(validated);
+      authorize();
+      return validated;
+    } catch (error) { throw fail(internalFailures.get(error) ?? "FAILED"); }
+    finally { if (temporary && target) await cleanupTemporary(temporary, owned, target); }
+  }
   return Object.freeze({
     inspectPresence() {
       return serialize(async () => {
@@ -158,69 +241,43 @@ export function createSpsNativeMemberPendingKeyStore(options) {
     read() {
       return serialize(async () => {
         try {
-          const target = await paths();
-          if (!target) return null;
-          const stat = await slotStat(target.file);
-          if (!stat) { await recheck(target); return null; }
-          const key = await capsule.open(await boundedRead(target.file, stat), context);
-          await recheck(target);
-          if (!sameFile(stat, await slotStat(target.file))) throw fail("CORRUPT");
-          return key;
+          return (await readPending())?.key ?? null;
         } catch { throw fail("CORRUPT"); }
       });
     },
     create(keyRequest, input = {}) {
-      let guard;
-      try {
-        const descriptors = Object.getOwnPropertyDescriptors(input);
-        const hasGuard = Object.hasOwn(descriptors, "beforeCommit");
-        guard = record(input, hasGuard ? ["beforeCommit"] : []).beforeCommit;
-        if (guard !== undefined && typeof guard !== "function") throw fail("OPTIONS");
-      } catch { throw fail("OPTIONS"); }
-      const authorize = () => {
-        const result = guard?.();
-        if (result !== undefined) {
-          if (result instanceof Promise) void result.catch(() => {});
-          throw fail("OPTIONS");
-        }
-      };
+      const authorize = commitGuard(input);
+      return serialize(() => createOnly("pending", async () => {
+        const encrypted = await capsule.seal({ context, keyRequest });
+        return { encrypted, validated: await capsule.open(encrypted, context) };
+      }, authorize));
+    },
+    readIssued() {
       return serialize(async () => {
-        let temporary, owned, target;
         try {
-          const encrypted = await capsule.seal({ context, keyRequest });
-          const validated = await capsule.open(encrypted, context);
-          target = await paths(true);
-          if (await slotStat(target.file, false)) throw fail("ALREADY_EXISTS");
-          temporary = path.join(target.folder, `.pending-${randomUUID()}.tmp`);
+          const target = await paths(false, "issued");
+          if (!target) return null;
+          const stat = await slotStat(target.file);
+          if (!stat) { await recheck(target); return null; }
+          const pending = await readPending();
+          if (!pending) throw fail("CORRUPT");
+          const result = await issuedCapsule.open(await boundedRead(target.file, stat), context, pending.key);
           await recheck(target);
-          const handle = await fs.open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-          try { owned = await handle.stat(); await handle.writeFile(encrypted, "utf8"); await handle.sync(); }
-          finally { await handle.close(); }
-          authorize();
-          await recheck(target);
-          const stat = await fs.lstat(temporary);
-          if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !sameFile(stat, owned)) throw fail("FAILED");
-          if (await slotStat(target.file, false)) throw fail("ALREADY_EXISTS");
-          authorize();
-          try { await fs.link(temporary, target.file); } catch (error) {
-            if (error?.code === "EEXIST") throw fail("ALREADY_EXISTS");
-            throw error;
-          }
-          await recheck(target);
-          const linked = await fs.lstat(target.file);
-          const temporaryLinked = await fs.lstat(temporary);
-          if (!linked.isFile() || linked.isSymbolicLink() || linked.nlink !== 2 || !sameFile(linked, owned)
-            || !temporaryLinked.isFile() || temporaryLinked.isSymbolicLink() || temporaryLinked.nlink !== 2
-            || !sameFile(temporaryLinked, owned)) throw fail("FAILED");
-          await fs.unlink(temporary); owned = null;
-          await syncDirectory(target.folder);
-          await recheck(target);
-          if (!sameFile(linked, await slotStat(target.file))) throw fail("FAILED");
-          return validated;
-        } catch (error) {
-          throw fail(internalFailures.get(error) ?? "FAILED");
-        } finally { if (temporary && target) await cleanupTemporary(temporary, owned, target); }
+          await recheckPending(pending);
+          if (!sameFile(stat, await slotStat(target.file))) throw fail("CORRUPT");
+          return requireCurrentIssued(result);
+        } catch { throw fail("CORRUPT"); }
       });
+    },
+    createIssued(issuance, input = {}) {
+      const authorize = commitGuard(input);
+      return serialize(() => createOnly("issued", async () => {
+        const pending = await readPending();
+        if (!pending) throw fail("CORRUPT");
+        const encrypted = await issuedCapsule.seal({ context, keyRequest: pending.key, issuance });
+        const validated = await issuedCapsule.open(encrypted, context, pending.key);
+        return { encrypted, validated, pending };
+      }, authorize));
     },
   });
 }

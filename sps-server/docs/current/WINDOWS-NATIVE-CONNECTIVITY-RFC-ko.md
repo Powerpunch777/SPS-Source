@@ -31,7 +31,14 @@
   Identity issuer origin·subject·Host/device·신뢰된 server/issuer pins를 ciphertext 안에만 결속한다.
   private pending filestore도 소스로 구현됐다. Owner Vault 밖의 논리 account/Host/device slot에 first-writer/create-only로
   저장하고 pins는 암호문 context에만 둔다. 덮어쓰기·삭제·자동복구는 없다. unit AES는 DPAPI가 아니며 caller는
-  격리 smoke뿐으로 Main/IPC·GUI·enrollment·발급 자격 저장 연결은 없다.
+  격리 smoke뿐으로 Main/IPC·GUI·enrollment caller 연결은 없다.
+- Member issued companion은 원래 pending 키 파일과 별개의 create-only 암호화 파일에 공개
+  발급 응답만 저장한다. 신뢰된 account/Host/device/pins·원래 키/CSR·chain/profile·현재 인증서
+  만료를 재검증하며 초대 완료 기한을 인증서 만료로 취급하지 않는다. 저장 후 guard 실패에도
+  파일이 남을 수 있고 자동 삭제/덮어쓰기/rollback은 하지 않는다. 재독해한 원래 키의 실제
+  loopback TLS 1.3 handshake는 소스 증거이며 새 Host issuer는 이전 인증서를 거부한다.
+  새 companion의 실제 Windows DPAPI·앱 enrollment·LAN·두 PC·갱신은 미검증이다.
+  [발급 자격 저장 검증](../reviews/NATIVE-MEMBER-ISSUED-STORE-VERIFICATION-2026-10-25.md)을 따른다.
 - 미출시 v2 Host identity store는 DPAPI context를 Vault incarnation `dev`/`ino`/`birthtimeNs`에
   결속한다. 이는 로컬 lifecycle 결속이지 attestation이 아니다. 유효한 새 Vault에 slot이 없으면
   `not_prepared`이며 준비를 허용한다. 기존 slot과 함께 Vault incarnation이 없거나 재생성/손상된
@@ -303,7 +310,7 @@ Migration 0167은 초대별 공개 발급 기록을 추가하고 restore는 이�
 
 Windows safeStorage를 기존 패턴에 맞춰 재사용한다. 이전 43.7.7 runtime의 프로세스 간 재독해 시험은
 잠긴 43.8.3의 DPAPI v2 양성 수용이 아니다. TPM/non-exportable 또는 같은 사용자 악성 프로세스 격리를 보장하지 않는다.
-Member 키와 Node 키는 별도 용도다. private pending filestore는 구현됐지만 앱 lifecycle·회전·폐기·발급 자격 저장은 후속이며
+Member 키와 Node 키는 별도 용도다. private pending/issued filestore는 구현됐지만 앱 lifecycle·회전·폐기·발급 자격 저장 caller는 후속이며
 소유 smoke fixture 통과도 enrollment나 Host 승인이 아니다.
 Host 이전/Owner Vault 복원은 기존 remote credential을 부활시키지 않고
 명시적 재승인을 요구한다. restore sanitizer에 새 자격 자료를 포함해야 한다.

@@ -41,6 +41,10 @@ test("Windows verification runs real secure-storage reload and preserves SDK syn
   assert.match(smoke, /safeStorage\.isEncryptionAvailable\(\)/);
   assert.match(smoke, /createSpsNativeMemberPendingKeyStore\(memberStoreOptions\)/);
   assert.match(smoke, /report\.memberPendingSpkiSha256 !== created\.memberPendingSpkiSha256/);
+  assert.match(smoke, /report\.memberIssuedCertificateSha256 !== created\.memberIssuedCertificateSha256/);
+  assert.match(smoke, /await memberStore\.createIssued\(/);
+  assert.match(smoke, /await memberStore\.readIssued\(\)/);
+  assert.match(smoke, /sameMemberCertificateAfterRestart: true/);
   assert.match(smoke, /assert\.equal\(await anotherAccount\.read\(\), null\)/);
   assert.match(smoke, /assert\.rejects\(changedPin\.read\(\), \{ code: "ERR_SPS_NATIVE_MEMBER_PENDING_STORE_CORRUPT" \}\)/);
   assert.match(smoke, /if \(process\.versions\.electron\) \{\s*\/\/[^\n]*\n\s*void electronPhase\(\);/);
@@ -58,6 +62,7 @@ test("the Native signer stays in owned Main-to-Core IPC, outside renderer and Pl
   assert.match(main, /ownerVaultOperations\.isChangingConnection\(\)/);
   assert.match(main, /onInvalidation: \(\) => ownerHostManager\?\.invalidateNativeSigner\(\)/);
   assert.doesNotMatch(main, /ipcMain\.handle\(["'][^"']*(?:native.*sign|sign.*native)/);
+  assert.doesNotMatch(main, /\.createIssued\(|\.readIssued\(/);
   const signer = await read("../src/native-member-main-signer.mjs");
   assert.doesNotMatch(signer, /createSpsNativeHostIdentity\(|\.writeFile\(|\.listen\(|setCertificateVerifyProc|process\.env/);
 });
