@@ -3,7 +3,8 @@
 기준일: 2026-10-25 KST. **계획용 추정치이며 확정 납기나 자동 실행 시간 보장이 아니다.**
 현재 Source는 Windows `0.4.137` 개발 후보이며 새로운 서명 설치본이 아니다.
 [Windows 내장 연결 계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 D1은 승인됐고,
-실제 LAN transport·기기 승인·Tailscale 없는 Source 이전은 아직 구현/수용 전이다.
+D2 기기별 mTLS와 D3 LAN 기본 off 정책도 승인됐다. loopback TLS 확인 소스 시험은
+통과했으나 실제 LAN·기기 승인·Tailscale 없는 Source 이전은 아직 구현/수용 전이다.
 
 ## 1. 무엇을 완성으로 볼 것인가
 
@@ -27,7 +28,7 @@
 
 | 남은 작업 | 핵심 의존성 / 불확실성 |
 | --- | --- |
-| D1 계약, D2 기기 신원·키 수명, D3 TLS ingress/포트·방화벽 | 선택 검수 전 실제 listener/기기 자격을 켜지 않음 |
+| D1~D3 승인 정책의 세부 신원·키 수명·TLS ingress/포트 계약 | 실제 listener/방화벽 변경·장비 시험은 별도 동의 |
 | Host/Member TLS·pairing·세션·철회 및 HTTP/WS 인가 | 서버 신뢰 배포, challenge 경합/재생, A/B/Plugin 경계 |
 | Native 최초 설정·진단·복구 | 0-Agent/0-Plugin, 손상 설정·Plugin hang, 원격 renderer와 관리 IPC 분리 |
 | D4 Source/SMB 이전과 Owner 복구 | 파일 경로·링크·충돌·철회·Node 자격, 기존 데이터/공유 보존 |
@@ -44,7 +45,7 @@ Luna에 독립된 구현·테스트·문서 검토를 병렬로 맡길 수 있�
 
 - 범위를 Windows LAN/현재 Core·공개 SDK·기존 Builder의 1차 제품에 고정한다.
   WAN·Linux·Marketplace 결제·모든 외부 AI/기업 환경은 포함하지 않는다.
-- D2~D4 결정, 별도 Windows Member PC와 시험용 계정, 운영 Identity·서명·독립 승인
+- D1~D3 세부 계약/D4 결정, 별도 Windows Member PC와 시험용 계정, 운영 Identity·서명·독립 승인
   준비가 개발과 병행된다는 전제다. 사용자 결정/장비/외부 서비스 대기 시간은 납기로
   확약할 수 없으며, 해결하지 않은 Gate는 출시를 계속 차단한다.
 - 보안 major 보류를 일정 때문에 임의 해제하거나 예외 처리하지 않는다. 전체 CI나

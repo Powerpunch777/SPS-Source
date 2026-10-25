@@ -211,9 +211,85 @@ review is not release approval or proof of deferred TLS/pairing behavior.
 
 ## Next boundary
 
-Stage 0 was documentation only; Stage 1 now has an inactive source-tested D1
-data contract. Resolve TLS identity binding, D2-D3 and review the protocol before
-introducing a TLS listener/device credentials or broadening network exposure.
+Stage 0 was documentation only; Stage 1 began with the inactive D1 data contract.
+The following checkpoint extends that foundation without activating LAN access.
+
+## Stage 1b: public certificate and TLS peer check
+
+The user approved D2 (PC-specific Member mTLS certificates, separate from Google
+and Node/CLI authority; reinstall/key loss requires reapproval) and D3 (LAN off
+by default, explicit Host opt-in for a selected private network/dedicated port).
+Actual firewall changes and physical LAN tests still require confirmation.
+Source base: `cc1da3570c3ccaee64b91c38421f3c19c8f3d7a2`; Core/SDK pins unchanged.
+
+### Implementation and scope
+
+- The unpublished `SPSLAN1-` draft is replaced by **`SPSLAN2-`, v2** carrying a
+  bounded public DER certificate, in addition to its SHA-256 SPKI pin. Per-code
+  cap is 8192 ASCII bytes; public DER is 1-4096 bytes. Existing product `SPS2-`
+  invitations are unchanged; no automatic old-draft migration or acceptance.
+- `desktop/src/native-connection-tls.mjs` validates exact X.509 DER, self-signature,
+  non-CA serverAuth purpose, SAN address, certificate dates and the pinned SPKI.
+  It separately checks invitation issue/expiry time; maximum TTL/clock skew and
+  atomic one-time pairing consumption remain future Host responsibilities.
+- A fresh TLS connection uses only the invited public certificate as per-call
+  `ca`, `rejectUnauthorized: true`, TLS 1.3, normal hostname verification and an
+  exact actual-peer DER check. No OS/global CA store, certificate bypass, session
+  reuse, HTTP redirect, downgrade, retry or alternative backend is introduced.
+- The probe sends **no application bytes**: no Identity token, invitation secret,
+  HTTP request or client private key. `tls_peer_verified` proves the TLS peer,
+  not SPS Host ID, Google login, Member/device approval, Workspace authority,
+  CLI readiness or connectivity of a different device. This is not mTLS yet.
+- Bounded timeout/cancellation and every error close the owned client socket.
+  Only static safe errors are exposed. The invitation is rechecked after the
+  actual handshake to avoid reporting success after its expiry.
+- No main/preload/join/UI/public SDK/Core listener wiring, DB migration, permanent
+  key/OS certificate/firewall change, installed-app replacement or deployment.
+
+### Validation
+
+```powershell
+# Working directory: sps-server/desktop
+node --check src/native-connection-tls.mjs
+node --test test/native-connection-invite.test.mjs test/native-connection-tls.test.mjs test/invite.test.mjs
+npm test
+node scripts/current-candidate-doc.mjs --check
+```
+
+Final results: **43/43** targeted (25 codec + 12 TLS + 6 legacy), **572/572** full
+Desktop, zero failures/skips. The first bounded TLS run passed 10/10 before two
+additional denial cases; that earlier count is not the final suite. No fresh
+whole-Core/SDK, dependency audit, Electron or physical two-PC result is claimed.
+Generated candidate and whitespace checks pass; all 31 local links in the five
+changed documents resolve. Core/SDK remain clean at the same pins, transport
+support stays Tailscale, and main/preload files do not import the new modules.
+
+TLS tests use real loopback sockets with dynamically generated synthetic ECDSA
+P-256 certificates. Node `v26.4.0`, Git OpenSSL `3.5.7` on Windows were observed.
+OpenSSL is a **test fixture tool**, not a new product runtime requirement. Helper
+generation/version commands are bounded, use no shell, and fail rather than skip
+when the executable is absent. Keys/public fixtures are temporary, never committed
+or imported into the OS store, and cleanup validates the owned canonical temp path.
+
+Passing cases include real TLS 1.3, no application data, different actual server
+key, mismatched pin before connect, SAN mismatch, certificate expiry/not-yet-valid,
+invalid self-signature/DER/trailing bytes, CA/Member-purpose cert rejection,
+TLS 1.2 refusal, timeout, cancellation/pre-abort, and post-handshake invitation
+expiry. All listener sockets are loopback and cleaned by test hooks.
+
+Bounded Luna xhigh tasks handled codec/tests and the fixture helper; the
+coordinator implemented/reviewed the verifier and probe, added denial cases and
+ran integration/full Desktop tests. A separate static TLS review found no
+actionable issue. This is internal review, not independent release approval.
+
+## Next implementation boundary
+
+Add the separate Member device registry and current user/device authority,
+then an explicitly disabled Core TLS ingress with shared HTTP/WS denial and
+revocation semantics. Resolve key lifecycle/enrollment, bootstrap limits and
+Source D4 before their effects. A Node's existing pending registration is not
+Member TLS approval and is not permission to execute work. Review deployment
+and lifecycle cleanup before any actual LAN listener/firewall activation.
 Do not remove TS requirements until API, Owner recovery and Host Source access
 are independently qualified. Follow the [plan](../current/WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)
 for small PRs, denial tests, Source migration, and rollback.

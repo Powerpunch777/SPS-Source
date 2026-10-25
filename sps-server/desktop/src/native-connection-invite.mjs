@@ -1,11 +1,14 @@
-const SPS_NATIVE_INVITE_PREFIX = "SPSLAN1-";
-const MAX_NATIVE_INVITE_CODE_LENGTH = 2048;
+const SPS_NATIVE_INVITE_PREFIX = "SPSLAN2-";
+const MAX_NATIVE_INVITE_CODE_LENGTH = 8192;
+const MAX_SERVER_CERTIFICATE_BYTES = 4096;
+const MAX_SERVER_CERTIFICATE_LENGTH = 5462;
 const NATIVE_INVITE_KEYS = Object.freeze([
   "v",
   "kind",
   "hostId",
   "origin",
   "spkiSha256",
+  "serverCertificate",
   "pairingId",
   "pairingSecret",
   "issuedAt",
@@ -16,10 +19,9 @@ const SPKI_SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // This is an untrusted invitation codec, not TLS, pairing, or device authentication.
-// SPKI interpretation and enrollment, TLS validation, trusted out-of-band transfer,
-// and server-side expiry and one-time consumption remain necessary prerequisites.
-// A valid code is not proof of an authenticated server or approved device; customer-CA
-// trust policy is intentionally outside this Stage-1 contract.
+// The certificate is opaque public DER here: X.509 parsing, pin matching, validity-time
+// and authority checks, trusted transfer, and server-side expiry/one-time use remain
+// prerequisites. A valid code is not proof of an authenticated server or approved device.
 
 function requirePlainDataRecord(record) {
   if (record === null || typeof record !== "object" || Array.isArray(record)) {
@@ -47,12 +49,28 @@ function requirePlainDataRecord(record) {
 }
 
 function validatePrimitives(record) {
-  if (record.v !== 1 || record.kind !== "sps.native-lan.pairing") throw new TypeError("Invalid record");
+  if (record.v !== 2 || record.kind !== "sps.native-lan.pairing") throw new TypeError("Invalid record");
   if (typeof record.hostId !== "string" || !UUID_PATTERN.test(record.hostId)) throw new TypeError("Invalid record");
   if (typeof record.origin !== "string" || record.origin.length > MAX_NATIVE_INVITE_CODE_LENGTH) {
     throw new TypeError("Invalid record");
   }
   if (typeof record.spkiSha256 !== "string" || !SPKI_SHA256_PATTERN.test(record.spkiSha256)) {
+    throw new TypeError("Invalid record");
+  }
+  if (
+    typeof record.serverCertificate !== "string" ||
+    record.serverCertificate.length === 0 ||
+    record.serverCertificate.length > MAX_SERVER_CERTIFICATE_LENGTH ||
+    !BASE64URL_PATTERN.test(record.serverCertificate)
+  ) {
+    throw new TypeError("Invalid record");
+  }
+  const serverCertificate = Buffer.from(record.serverCertificate, "base64url");
+  if (
+    serverCertificate.length === 0 ||
+    serverCertificate.length > MAX_SERVER_CERTIFICATE_BYTES ||
+    serverCertificate.toString("base64url") !== record.serverCertificate
+  ) {
     throw new TypeError("Invalid record");
   }
   if (typeof record.pairingId !== "string" || !UUID_PATTERN.test(record.pairingId)) {
@@ -103,6 +121,7 @@ function makeOrderedRecord(values) {
     hostId: values.hostId,
     origin: values.origin,
     spkiSha256: values.spkiSha256,
+    serverCertificate: values.serverCertificate,
     pairingId: values.pairingId,
     pairingSecret: values.pairingSecret,
     issuedAt: values.issuedAt,

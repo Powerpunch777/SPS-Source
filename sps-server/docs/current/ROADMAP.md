@@ -14,7 +14,8 @@
 1. Windows Desktop/Host/Member/Node를 우선 안정화하고, 외부 Tailscale 없이 동작하는
    내장 **LAN** 경로를 개발한다. Stage 0 감사는 완료했고, 전체 초대코드와 서버 지문
    확인(D1)이 승인됐다. 지금은 비활성 계약/시험 단계이며 실제 연결은 아직 미구현이다.
-   Member 기기 자격·listener/방화벽 결정 뒤 실제 연결을 작은 구현으로 진행한다.
+   PC별 mTLS 인증서(D2), LAN 기본 off/명시 사설망 opt-in(D3)도 승인됐다. 서버 인증서/
+   TLS 소스 시험은 통과했으나 Core 기기 승인·실제 LAN은 아직 미구현이다.
 2. Native 초기 연결·승인·철회·복구를 0-Agent/0-Plugin에서도 제공한다. 기존 사용자
    인증·Workspace/Plugin·Node 실행 권한은 분리하고, HTTP/WS 양쪽에 적용한다.
 3. API·Owner 복구·Host Source/SMB의 별도 의존성을 이전/검증한다. 실제 Windows 두 PC와

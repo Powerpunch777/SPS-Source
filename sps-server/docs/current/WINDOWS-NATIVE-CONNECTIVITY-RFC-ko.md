@@ -1,6 +1,6 @@
 # RFC: Windows LAN trusted connectivity v0
 
-작성일: 2026-10-25. 상태: **D1 승인 / 나머지 설계 초안 / 네트워크 활성화 승인 아님**.
+작성일: 2026-10-25. 상태: **D1~D3 제품 정책 승인 / 세부 프로토콜 작업 중 / LAN 활성화 승인 아님**.
 [계획과 결정 목록](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 Stage 0 산출물이다.
 여기 쓰인 자원·operation 이름은 개념이며 현재 export·endpoint·DB 테이블이 아니다.
 
@@ -33,8 +33,10 @@ LAN 도청/중간자·거짓 서버·초대 탈취·재생·미승인/철회 기
 
 TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은 전체 초대코드에 Host
 서버 지문을 담아 신뢰한 별도 채널로 전달하고 앱에서 확인하는 방식으로 승인됐다.
-고객 관리 CA는 후속이다. Member mTLS 또는 표준 PoP, ingress 배치와 포트는
-D2~D3 결정 뒤 확정한다. 자체 challenge
+고객 관리 CA는 후속이다. D2는 PC별 별도 Member mTLS 인증서와 Host 승인 방식으로
+승인됐다. D3는 LAN 기본 꺼짐·명시 opt-in·선택 사설망/전용 TLS 포트이며 실제
+방화벽/LAN 시험은 별도 동의가 필요하다. 발급/회전·listener 배치·구체적 포트는
+세부 계약 검수 대상이다. 자체 challenge
 서명 알고리즘, 인증서 오류 무시, 앱 전역 CA/TLS 검증 해제는 대안이 아니다.
 
 신원 확인 전에는 사용자 access token·초대 secret·Workspace 자료를 보내지 않는다.
@@ -53,16 +55,30 @@ Core의 기존 `local_trusted` 모드는 loopback 전용이다. bind를 LAN으�
 
 ## 4. 승인된 D1과 페어링/세션 상태기계 제안
 
-첫 계약 구현은 네트워크 부작용이 없는 **초대 envelope codec**에 한정한다.
-이 코드는 `main`/preload/기존 join URI/공개 SDK에 연결하지 않고, 새 제품 지원으로
-광고하지 않는다. HTTPS origin과 Host 식별/지문·pairing 식별/secret·발행/만료 시각을
-정확한 schema와 bounded canonical UTF-8/base64url로 다룬다. 원문 secret은 로그나
-오류에 포함하지 않는다. Node/Workspace grant나 Member 승인 정보를 초대가 부여하지 않는다.
+초기 `SPSLAN1-`은 미출시 source draft였다. 실제 TLS에서 전역 검증 해제 없이
+명시적인 연결별 신뢰 자료를 제공하기 위해 **`SPSLAN2-`, v2**에 공개 서버 인증서
+DER을 추가했다. 이전 draft는 거부하며 기존 제품 `SPS2-` 초대는 그대로다.
+전체 코드는 최대 8192 ASCII bytes, 공개 DER candidate는 1~4096 bytes의 canonical
+base64url이다. HTTPS origin, Host ID, SHA-256 SPKI pin, 공개 인증서, pairing ID와
+32-byte secret, epoch-ms 발행/만료 시각을 정확한 schema/canonical JSON으로 다룬다.
 
-문법적으로 정상인 envelope는 **신뢰되지 않은 입력**이다. TTL/현재 시각/일회성
-소비·사용자/기기 결속은 향후 Host 프로토콜에서 검사하며 codec이 대신하지 않는다.
-서버 지문의 TLS 인증서/SPKI·Host 신원 수명주기 연결은 실제 TLS 계약 검수 대상이고,
-데이터 필드가 있다는 이유로 그 인증·회전·서명 보장을 구현했다고 간주하지 않는다.
+codec 자체는 인증을 하지 않는다. 별도 `native-connection-tls.mjs`는 공개 인증서의
+자기 서명·서버 용도·SAN·기간·정확한 DER·SPKI를 검사하고, 그 인증서만 `ca`에
+넣은 새 TLS 연결에서 `rejectUnauthorized: true`로 상대를 확인한다. OS/앱 전역 CA,
+인증서 검사 해제, 임의 root fallback이나 인증서 자동 회전은 없다. 이 첫 구현은
+명시적 self-signed server leaf에 한정하며 고객 관리 CA/체인은 지원하지 않는다.
+
+TLS probe는 HTTP나 자격정보를 전송하지 않는다. 결과 `tls_peer_verified`는
+해당 TLS 상대의 키 소유 확인일 뿐 SPS Host ID·Google 사용자·Member 승인·Workspace
+인가·Core readiness가 아니다. 후속 Core handshake에서 Host ID를 결속해야 한다.
+현재 `main`/preload/기존 join/공개 SDK에 연결하지 않았고 시험 서버는 loopback뿐이다.
+원문 secret은 로그나 오류에 포함하지 않는다. 초대가 실행/Source grant를 부여하지 않는다.
+
+문법적으로 정상인 envelope는 **신뢰되지 않은 입력**이다. TLS verifier는 현재 시각의
+발행/만료와 인증서 유효기간을 검사하지만 최대 TTL/시계 오차·원자적 일회성 소비·
+사용자/기기 결속은 향후 Host 프로토콜의 책임이다. codec이 대신하지 않는다.
+SPKI pin은 이 첫 계약에서 서버 인증서 공개키의 DER SubjectPublicKeyInfo 해시다.
+별도 안정 Host identity/키 수명주기·회전·복원 규칙은 아직 미구현이다.
 전송 채널에서 코드 전체를 바꾼 공격자는 지문도 바꿀 수 있으므로, 코드 자체는
 독립된 신뢰점이나 Host 서명이 아니다. 기존 신뢰 Host의 pin 변경은 별도 재확인이다.
 
@@ -114,8 +130,8 @@ Workspace 인가를 거쳐야 한다. 세션 cookie가 있거나 LAN 소켓이�
   기본 session 전역 검증 해제나 범용 certificate-error 수락은 금지한다.
 - `checkServerIdentity`의 hostname 검사만으로 X.509 체인·유효기간·pin 정책을 모두
   대체하지 않는다. 임시 self-signed fixture 통과도 실제 Host 신뢰 배포 수용이 아니다.
-- Member mTLS와 표준 PoP의 선택은 D2 검수다. PoP 이름만 붙인 자체 서명 프로토콜을
-  만들지 않고, HTTP/WS/서브리소스 전체에 일관되게 적용 가능한지 확인한다.
+- 승인 D2는 Member mTLS다. 자체 PoP를 병행 구현하지 않는다. 실제 client 인증서
+  발급·보관/현재 승인·사용자 결속·HTTP/WS/서브리소스 검사는 아직 후속이다.
 
 ## 6. 공개 SDK의 최소 표면 제안
 
@@ -160,7 +176,7 @@ TLS exception/endpoint/key/사용자 자료를 Plugin 오류에 흘리지 않는
 
 ## 8. RFC 승인 전 통과 조건
 
-- 승인 D1과 미확정 D2~D3, 키 교체/만료/복원·Host 검증 UX가 사용자 결정에 정렬됨.
+- 승인 D1~D3와 키 교체/만료/복원·Host 검증 UX의 세부 계약이 사용자 결정에 정렬됨.
 - 라이브러리·TLS/client 인증의 Windows/Electron 지원·라이선스·업데이트 책임 확인.
 - 거짓 서버·같은 초대의 다른 Host/기기·병렬 소비·재생·철회·A/B 테스트 명세.
 - HTTP/WS/서브리소스/Native sender와 Plugin invocation의 동일한 거부 조건.
@@ -176,6 +192,9 @@ TLS exception/endpoint/key/사용자 자료를 Plugin 오류에 흘리지 않는
 - [Electron session 인증서 검증](https://www.electronjs.org/docs/latest/api/session#sessetcertificateverifyprocproc):
   session별 인증서 검증과 cache 동작 검토 자료. 새 검증 hook을 설치했다는 뜻이 아니다.
 - [표준 OAuth DPoP](https://www.rfc-editor.org/rfc/rfc9449.html): D2의 PoP 비교 자료다.
-  SPS가 채택/구현했다거나 모든 WebSocket·renderer 요구를 해결한다는 뜻이 아니다.
+  최종 선택은 Member mTLS이며 DPoP 구현을 추가하지 않는다.
+- [표준 Mutual TLS와 인증서 결속](https://www.rfc-editor.org/rfc/rfc8705.html):
+  사용자 token과 client 인증서 결속의 검토 근거다. SPS가 이 OAuth profile 전체를
+  구현했다는 뜻이 아니며 별도 SPS Identity/Workspace 인가는 계속 필요하다.
 - [Tailscale Serve 공식 문서](https://tailscale.com/docs/features/tailscale-serve):
   현행 호환 경로만 설명한다. 새 내장 LAN의 사용자/기기 인증 근거로 사용하지 않는다.
