@@ -13,8 +13,16 @@ owns external project connection, mandatory build gates, package staging and
 isolated Preview. Do not add Core APIs or lifecycle policy to close a Builder UI
 gap.
 
-The current engineering priority is Plugin Builder delivery on the existing
-Core baseline. Keep follow-up bounded to the existing Plugin and Desktop surfaces. Embedded
+The 2026-10-25 workstation direction keeps Builder as an optional authoring
+consumer of existing public SDK platform sessions and Desktop Preview, not the
+Core workflow or the only authoring route. Follow the
+[multi-backend plan](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) for current priorities:
+No-AI reference first, then minimally adapted execution paths; OCE management
+stays separate from Agent conversation. Existing Lead/Worker behavior is retained,
+not automatically replaced by OpenClaw orchestration. The dated evidence below
+remains historical and does not qualify new backends.
+
+Keep follow-up bounded to the existing Plugin and Desktop surfaces. Embedded
 Tailscale work, usage budgets/admission, advanced execution recovery and Stable
 release work are deferred.
 

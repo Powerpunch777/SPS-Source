@@ -4,10 +4,22 @@ Last updated: 2026-10-25
 
 ## Purpose
 
-SPS is a Windows Desktop product for individuals and small teams that want to
-assemble an AI-enabled work environment from plugins. It starts as a neutral
-Workspace, not as a pre-decided company chart, Task board, Room model, or
-memory policy.
+SPS is a customizable workstation platform for individuals, teams and
+customer-specific programs. Core supplies reusable technical infrastructure;
+plugins define each program. AI is optional. The initial supported client remains
+Windows Desktop; this direction does not qualify enterprise hosting or other
+operating systems. A neutral Workspace does not imply a company chart, Task
+board, Room model, Agent requirement or memory policy.
+
+The business direction prioritizes one useful game-development workstation and
+reusable customer-specific plugin delivery. Public self-service Marketplace and
+payments are not prerequisites. SPS Core stays private and the Plugin SDK public;
+no repository visibility or license is changed by this plan.
+
+The [multi-backend plan](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) defines the new
+execution priorities and first bounded implementation. Its
+[reuse audit](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md) distinguishes
+existing source contracts from new targets and actual verification.
 
 The first product path is a Host computer that runs the SPS Server locally.
 Members may join through Tailscale and use approved Agent runtimes on their
@@ -70,6 +82,27 @@ protect the remote path; they do not provide that stronger local-process
 isolation.
 
 ## Product Boundary
+
+### Optional execution and external management
+
+Plugins may use no AI, direct model requests, approved CLI execution or an
+external Agent runtime. Model inference, process lifecycle and Agent sessions
+are not interchangeable operations. OCE is a separate optional Agent deployment
+and management control plane; it is not the common model API or the owner of
+SPS local plugins. No adapter is selected or installed automatically.
+
+The existing Node run/grant/usage contracts and public SDK `platform` Agent
+sessions are reuse candidates. The current OpenClaw Gateway adapter must be
+qualified against pinned client/Gateway versions; its presence and mock tests
+do not qualify OCE or a real deployment. Generic model inference and the OCE
+connector remain planned. Exact backend identity, run ownership, capability
+support and cancellation evidence must remain visible.
+
+Host Sources do not automatically become paths in a remote Gateway or Harness.
+Approved data transfer, immutable revision and explicit result-application rules
+are required before remote file work. Workspace policy, external resource
+authority and actual OS/renderer isolation are independent checks. No existing
+credentials, files, access grants or installations are migrated by this design.
 
 ### SPS Core owns the reusable technical foundation
 

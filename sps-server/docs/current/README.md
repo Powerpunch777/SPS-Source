@@ -6,6 +6,7 @@
 | --- | --- |
 | Light UI direction, typography, shared surfaces, and Builder layout | [SPS-LIGHT-UI-PLAN-ko.md](SPS-LIGHT-UI-PLAN-ko.md) |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
+| AI-optional workstation direction, backend reuse, OCE boundary and first implementation scope | [MULTI-BACKEND-WORKSTATION-PLAN-ko.md](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) |
 | Exact Desktop, Core, SDK, and bundled-extension candidate | [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md) |
 | Production dependency audit gate and expiring exceptions | [DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md) |
 | Workspace Shell Provider, generic Dashboard, and generic Inbox contract | [WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md](WORKSPACE-SHELL-DASHBOARD-INBOX-ko.md) |
@@ -41,6 +42,10 @@
   breaking existing Vaults or plugins.
 
 ## Engineering evidence
+
+- [2026-10-25 multi-backend reuse audit](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md):
+  canonical public SDK/Core/Desktop inventory, implemented contracts versus
+  planned model/OCE connectors, and remaining security/real-integration limits.
 
 - [2026-10-24 UI flow audit](../reviews/UI-FLOW-AUDIT-2026-10-24.md): current
   navigation, cross-Workspace state, Builder drafts and Desktop recovery fixes;

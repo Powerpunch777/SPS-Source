@@ -3,7 +3,7 @@
 기준일: 2026-10-25 KST. 사용자 승인 후 진행 중인 소스 변경이다.
 설치된 앱 교체, Stable 게시, 기존 사용자 데이터 이전을 뜻하지 않는다.
 Desktop 버전 표기는 미출시 `0.4.137` 소스 단계이며, Core pin은
-`df26bea0148e163cd05efaa62aba6a2959d89870`다. 이 변경으로 설치본/manifest를
+`8c2a4989b32bf6661223df5e0330c68741590d08`다. 이 변경으로 설치본/manifest를
 새로 만들지 않았으며 이전 패키지나 E2E를 이 새 Source의 증거로 재사용하지 않는다.
 
 ## 결정
@@ -220,6 +220,29 @@ Plugin Settings 반응형 검증도 같은 실행에서 통과했다. 원본 스
 같은 Core UI output을 덮어쓰는 build를 동시에 수행하지 않는다. 되돌리기는 이
 entry/router commit을 revert하는 범위이며, 새 DB migration이나 사용자 저장값
 변환은 없다. 이번 Source 후속 커밋은 이 검증 기록만 추가한다.
+
+## 다중 백엔드 Stage 0 / 조사와 문서 정렬
+
+제품 방향은 AI 선택형 범용 워크스테이션으로 정렬했다. Core 비공개 / SDK 공개,
+현재 Windows/Tailscale/로그인, 기존 데이터와 보호 미지원 차단은 그대로 유지한다.
+[계획](../current/MULTI-BACKEND-WORKSTATION-PLAN-ko.md)과
+[재사용 감사](MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md)를 추가했다.
+Core 후속 커밋은 README/계약 문서만 바꾸며 D2 런타임은 변경하지 않는다.
+
+공개 SDK의 `platform`에는 이미 Agent session API가 있다. 현재 pinned source와
+공개 `v0.11.0` tag의 차이를 구분하고 API를 중복 설계하지 않는다. 일반 Node 실행은
+grant/Runner 범위이며 임의 CLI 명령 API가 아니다. `secrets.resolve` 현행 handler는
+실패 폐쇄이고 handle-only broker, 범용 모델 요청, OCE 전용 Connector는 미구현이다.
+OpenClaw adapter의 mock 시험과 최신 실제 Gateway 호환성도 별도다.
+
+이번 SDK `npm test` 157/157, Core Gateway/session/job/Node 표적 4파일 40/40은
+모델/실제 Gateway/OCE/물리 Node를 호출하지 않는 소스 시험이다. 조사 baseline과
+정확한 재현 명령은 위 계획/감사에 기록한다. 전체 Core 회귀·실제 Electron·최신
+의존성 감사·설치본·두 PC 증거를 새로 확보한 것으로 표시하지 않는다.
+
+다음 최소 구현은 기존 ui/platform/state/events/jobs로 만드는 임시 No-AI 체크리스트
+reference와 격리 Desktop 수용 시험이다. 이번 문서 변경으로 그 Plugin이 구현됐거나
+실제 사용자 환경에 설치된 것은 아니다. API/SDK/DB/의존성/실제 키 변경은 없다.
 
 ## 다음 게이트
 

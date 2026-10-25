@@ -4,25 +4,32 @@ This is the private product source repository for SPS. The public product
 overview, downloads, and feedback routes live at
 [Powerpunch777/SPS](https://github.com/Powerpunch777/SPS).
 
-SPS is a Desktop-first platform for building AI work environments from plugins.
+SPS is a Desktop-first platform for building customizable workstations from
+plugins. AI is optional; customer-specific programs may use model APIs, CLI
+tools, external Agent runtimes, or no AI at all.
 
-SPS Core manages the Desktop Host, Agents, Nodes, execution records, plugin runtime, and plugin lifecycle. It does not prescribe a company hierarchy, a Room/Task model, a human permission model, a memory strategy, or a development domain.
+SPS Core manages the Desktop Host, optional Agent execution, Nodes, execution
+records, plugin runtime and lifecycle. Core enforces technical access boundaries
+without prescribing a company hierarchy, Room/Task model, business role
+hierarchy, memory strategy or development domain.
 
-## First Company
+## First Workspace
 
 1. Sign in to SPS Desktop and create or join a server.
-2. A new server creates an empty Company.
-3. Connect and verify one Agent. This is required.
-4. SPS Desktop starts the bundled `Plugin Discovery & Builder` tool provider.
-5. Talk to the Agent to discover, design, or build the plugins and Packs you need.
-6. Use `Settings > Plugins` to inspect Catalog results and manage installed plugins.
+2. A new server creates a neutral Workspace. No Agent is required.
+3. Use `Settings > Plugins` to inspect and explicitly manage plugins.
+4. The current source candidate bundles and initially enables Plugin Builder;
+   this is a product default, not a Core requirement. A Workspace with no
+   selected usable Shell has an independent empty entry.
+5. For AI-assisted authoring, connect an authorized Agent in Plugin Builder.
+   Ordinary plugin use and manual SDK authoring do not require an AI account.
 
 The Catalog is not a separate application. It is the discovery area inside `Settings > Plugins`. A selected recommendation has no automatic lifecycle side effect; Agents decide how to respond to user requests using the available tools. Plugin packages and workers are installed once on the Owner Host, while each Company independently enables or disables the installed extensions it uses.
 
 ## Repository Layout
 
 ```text
-external/sps-core/       Private SPS product Core (tracked from its stable main branch)
+external/sps-core/       Private SPS product Core (exact revision pinned by the support matrix)
 external/sps-plugin-sdk/ Public plugin authoring SDK and CLI (pinned submodule)
 sps-server/              SPS Desktop, Host, Node, plugin runtime, and first-party extensions
 ```
@@ -36,6 +43,7 @@ private repository.
 Current product decisions live in [sps-server/docs/current](sps-server/docs/current/README.md).
 
 - [Product model](sps-server/docs/current/PRODUCT-MODEL-ko.md)
+- [Multi-backend workstation plan](sps-server/docs/current/MULTI-BACKEND-WORKSTATION-PLAN-ko.md)
 - [Plugin developer platform](sps-server/docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)
 - [Roadmap](sps-server/docs/current/ROADMAP.md)
 - [Workspace plugin activation](sps-server/docs/current/WORKSPACE-PLUGIN-ACTIVATION.md)

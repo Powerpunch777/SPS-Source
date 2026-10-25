@@ -2,6 +2,11 @@
 
 기준일: 2026-10-25 KST. 상태: 사용자 구현 승인, 단계별 진행 중.
 
+제품의 AI 선택형 다중 백엔드 전환과 첫 구현 순서는
+[범용 워크스테이션 계획](../current/MULTI-BACKEND-WORKSTATION-PLAN-ko.md)을 함께 따른다.
+이 문서의 A~L 안전성/수명주기 요구는 계속 유효하다. OCE Connector를 추가하는 것이
+SPS Plugin·renderer·Vault 격리나 Workspace stop의 대체 또는 완료 증거는 아니다.
+
 이 계획은 [현행 감사](CORE_PLUGIN_ARCH_GAP_AUDIT.md)와
 [보안 실현 가능성](CORE_PLUGIN_SECURITY_FEASIBILITY.md)을 기반으로 한다.
 새 목표 전체를 구현 완료로 표시하지 않는다. Phase 0 감사는 당시 고정 리비전의

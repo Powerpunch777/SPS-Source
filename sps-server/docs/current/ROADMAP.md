@@ -1,6 +1,32 @@
 # SPS 구현 로드맵
 
-최종 갱신: 2026-07-30
+최종 갱신: 2026-10-25
+
+## 현재 우선순위
+
+제품은 **AI 선택형 범용 워크스테이션**이며 Core 비공개·SDK 공개를 유지한다.
+현재 제품 계약은 [아키텍처](PRODUCT-ARCHITECTURE-ko.md), 다중 실행 경로의 구현
+순서·수용 기준은 [다중 백엔드 계획](MULTI-BACKEND-WORKSTATION-PLAN-ko.md)이다.
+구현 상태와 테스트 증거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
+[Core/Plugin 진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)으로 분리한다.
+
+1. 기존 UI/state/jobs/events/Node/session 계약 재사용과 No-AI reference부터 검증.
+2. 모델 요청·CLI·Agent 세션과 OCE 관리의 서로 다른 능력/권한/실행 소유권 정렬.
+3. Direct API와 CLI 사례는 mock/승인된 시험 범위에서 구현. 실키·고객 데이터·유료
+   API 및 실제 게임 빌드 환경은 별도 확인.
+4. 기존 Gateway adapter의 고정 버전 호환을 검증하고 OCE는 별도 read-only Connector부터.
+5. 기존 Builder/Preview를 소비자로 연결하고 게임 개발 워크스테이션의 실제 사용을 실증.
+
+선택적 Primary/Extension·UI 자유, Native 복구, OS/renderer 보호, Workspace stop·
+데이터 수명주기는 기존 [비파괴 이전 계획](../reviews/CORE_PLUGIN_ARCH_MIGRATION_PLAN.md)을
+이어간다. 다중 백엔드 조사로 완료 처리하거나 OCE로 대체하지 않는다. 서명·Identity·
+최신 보안/의존성·Linux·물리 두 PC 릴리스 게이트 역시 별도 유지한다.
+
+## 2026-07-30 계획 이력
+
+아래의 완료/다음 단계 표기는 당시 범위의 기록이며 현재 후보나 2026-10-25 목표
+완료 판정으로 사용하지 않는다. Agent 필수 연결·필수 공통 Shell을 전제한 문장은
+위 현재 계약으로 대체된다. 기존 증거는 날짜/tuple과 함께 보존한다.
 
 현재 제품 정의는 [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md)이며, 자세한 구현
 순서는 [CORE-WORKSPACE-PLUGIN-BASELINE-PLAN-ko.md](CORE-WORKSPACE-PLUGIN-BASELINE-PLAN-ko.md)를 따른다.

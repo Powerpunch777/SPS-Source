@@ -27,12 +27,20 @@ The worker SDK exposes the following methods through `ctx.sps`.
 | `runtimes.list(companyId, options)` | `sps.runtimes.read` | Node and Runner metadata. Provider credentials remain on the Node. |
 | `executionGrants.list/upsert/revoke` | `sps.executionGrants.read` or `sps.executionGrants.write` | A plugin-owned technical allowance keyed by `subjectKey`. |
 | `runs.dispatch` | `sps.runs.dispatch` | Queues the selected Runner through an active grant. The plugin cannot choose a raw command or working directory. |
-| `runs.get/listEvents` | `sps.runs.read` | Run status and ordered stdout/stderr events. |
+| `runs.get/list/listEvents` | `sps.runs.read` | Own-Plugin Run status, bounded list and ordered stdout/stderr events. |
+| `runs.cancel` | `sps.runs.cancel` | Cancellation request; claimed work remains pending until the signed Node confirms completion. |
+| `executions.list/get/summarize` | `sps.executions.read` | Own-Plugin safe cross-lane technical history/usage, not a bill or workflow acceptance. |
 | `artifacts.publish` | `sps.artifacts.write` | A title, summary, structured data, and optional `https` reference. |
 | `artifacts.list` | `sps.artifacts.read` | Only artifacts published by the calling plugin in that company. |
 
-`ctx.secrets.resolve()` remains the implementation of the Profile
-`secrets.use` primitive and requires `secrets.read-ref`.
+The retained `ctx.secrets.resolve()` signature returns a string and requires
+`secrets.read-ref`, but the current Host handler deliberately refuses resolution
+until explicit company-scoped config/runtime bindings exist. The Profile's
+`secrets.use` declaration is not a working handle-only credential broker or a
+guarantee that arbitrary plugins cannot read a same-user Vault. Do not enable
+this legacy interface as a Direct API/OCE shortcut. The current multi-backend
+target and its unimplemented broker are described in the
+[workstation plan](MULTI-BACKEND-WORKSTATION-PLAN-ko.md).
 
 ## Execution Lifecycle
 
@@ -72,6 +80,8 @@ that the matching capability is present:
 | `runtimes.list` | `sps.runtimes.read` |
 | `runtimes.dispatch` | `sps.runs.dispatch` |
 | `runs.observe` | `sps.runs.read` |
+| `runs.cancel` | `sps.runs.cancel` |
+| `executions.observe` | `sps.executions.read` |
 | `artifacts.write` | `sps.artifacts.write` |
 | `secrets.use` | `secrets.read-ref` |
 
