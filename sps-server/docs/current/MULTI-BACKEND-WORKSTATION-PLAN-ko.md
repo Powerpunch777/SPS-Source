@@ -134,6 +134,20 @@ Agent/모델/OCE 연결과 취소·복구 지원은 아직 별도 후속 범위�
 실제 source Electron의 모의 Node 조회와 기존 No-AI 전체 수용을 통과했다. 실제
 CLI/원격 PC/설치본 수용은 아니며 위 상세 기록으로 증거 범위를 고정한다.
 
+### Stage 2b: 호출 전 Host API 등록 확인
+
+기존 초기화 메시지에 optional `spsHost` snapshot을 추가한다. 공개 Runtime/Agent
+session API 중 실제 등록된 Host handler 이름만 제공하며 Worker callback 목록과
+구분한다. 공개 SDK reader는 구 Host의 미제공/모르는 계약을 unknown으로 다룬다.
+SDK/제품 버전만 보고 호출 가능하다고 추정하지 않고, 미지의 미래 method도 지원
+목록에 넣지 않는다. 비정상 snapshot은 거부하며 키/경로/tenant 자료는 포함하지 않는다.
+
+이는 API 등록 상태이며 Plugin 권한·Workspace 활성화·실제 backend 설정/로그인/
+readiness 판정이 아니다. 목록에 있는 Runtime API도 capability가 없으면 실제 호출은
+거부되어야 한다. 초기화/Worker 재시작 시 새 snapshot을 만들고 매 호출의 기존
+검사는 유지한다. 모델 API/OCE broker는 이 단계를 통해 구현된 것으로 표시하지 않는다.
+DB migration/새 endpoint/무음 fallback 없이 기존 transport를 확장한다.
+
 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되
 정의하지 않은 보안/종료 보장을 선행 조건처럼 가정하지 않는다. 기존 전체 A~L의

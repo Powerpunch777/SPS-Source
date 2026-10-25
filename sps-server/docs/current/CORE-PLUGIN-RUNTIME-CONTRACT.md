@@ -21,6 +21,25 @@ role, approval, memory record, or project phase.
 
 The worker SDK exposes the following methods through `ctx.sps`.
 
+### Registered Host API Snapshot
+
+The optional initialization `spsHost` snapshot reports `contractVersion: "1.0"`
+and registered public Runtime/Agent-session RPC names. It is distinct from the
+Worker callback `supportedMethods`. The public Runtime helper
+`readSpsHostSupport(initializeParams)` validates and copies this snapshot without
+calling the Host. An older Host or unknown contract gives `state: "unknown"`;
+missing APIs in a reported snapshot are not registered in that snapshot.
+Unknown future method names are not treated as recognized support.
+
+This is **registration only**, not the calling plugin's granted capabilities,
+Workspace/Agent/Node access, configured resources, live health or readiness.
+The real Host gates remain authoritative on every call. There is no automatic
+retry, backend substitution, capability grant or execution. A Worker without
+`sps.runtimes.read` may see a registered method name but cannot call it. The list
+contains no secrets, paths, endpoint or tenant identifiers and is regenerated
+on Worker restart. Direct model API/OCE/secret APIs are not advertised; actual
+backend-specific negotiation remains a later contract.
+
 | API | Capability | Safe result |
 | --- | --- | --- |
 | `workspaceSources.list(companyId)` | `sps.workspaceSources.read` | Source id, display name, status, route availability. Never a Host path or credential. |

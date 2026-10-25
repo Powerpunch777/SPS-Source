@@ -18,6 +18,31 @@ export async function runRuntimeDiscoveryAcceptance({ cdp, company, secondCompan
   const read = async (companyId = company.id) => (await call(`/api/plugins/${plugin.id}/data/runtime-connections`, {
     method: "POST", body: { companyId },
   })).data;
+  const support = (await call(`/api/plugins/${plugin.id}/data/host-api-support`, {
+    method: "POST", body: { companyId: company.id },
+  })).data;
+  assert.equal(support.state, "reported");
+  assert.equal(support.contractVersion, "1.0");
+  assert.ok(support.operations.includes("sps.runtimes.list"));
+  assert.ok(support.operations.includes("agents.sessions.create"));
+  assert.ok(!support.operations.some(operation => /secret|model|oce|install/.test(operation)));
+  assert.deepEqual(Object.keys(support).sort(), ["contractVersion", "operations", "state"]);
+  const deniedFixture = await createChecklistPackage(path.join(temporaryRoot, "reference-plugins", "runtime-denied"), {
+    id: "local.runtime-denied", withUi: false, runtimeDiscovery: true, omitCapability: "sps.runtimes.read",
+  });
+  // The negative fixture omits its primitive too, so installation remains valid.
+  await call("/api/plugins/install", { method: "POST", body: { packageName: deniedFixture.directory, isLocalPath: true } });
+  const deniedPlugin = (await call("/api/plugins")).find(item => item.pluginKey === "local.runtime-denied");
+  assert.equal(deniedPlugin?.status, "ready");
+  await call(`/api/plugins/${deniedPlugin.id}/companies/${company.id}/activation`, { method: "PUT", body: { enabled: true } });
+  const deniedSupport = (await call(`/api/plugins/${deniedPlugin.id}/data/host-api-support`, {
+    method: "POST", body: { companyId: company.id },
+  })).data;
+  assert.ok(deniedSupport.operations.includes("sps.runtimes.list"), "Registered API reporting is not a permission grant");
+  await assert.rejects(call(`/api/plugins/${deniedPlugin.id}/data/runtime-connections`, {
+    method: "POST", body: { companyId: company.id },
+  }), /capability|permission|not allowed|denied/i);
+  console.log("[host-support] public SDK read registered Runtime/Agent APIs; no model/Secret/OCE claim, and missing runtime capability still denied");
   assert.deepEqual(await read(), []);
   const identity = createNodeIdentity();
   const node = await call(`/api/companies/${company.id}/sps-nodes`, {

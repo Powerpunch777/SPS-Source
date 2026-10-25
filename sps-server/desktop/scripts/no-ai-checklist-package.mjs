@@ -22,7 +22,7 @@ export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, om
     capabilities: [...CHECKLIST_PACKAGE_CAPABILITIES, ...(ui.capabilities ?? []), ...(runtimeDiscovery ? ["sps.runtimes.read"] : [])].filter(value => value !== omitCapability),
     entrypoints: { worker: "./dist/worker.js", ...(ui.entrypoints ?? {}) },
     companyActivation: { defaultEnabled: false },
-    sps: { contractVersion: "2.0", primitives: runtimeDiscovery ? ["runtimes.list"] : [] },
+    sps: { contractVersion: "2.0", primitives: runtimeDiscovery && omitCapability !== "sps.runtimes.read" ? ["runtimes.list"] : [] },
     jobs: [{ jobKey: "checklist-audit", displayName: "Checklist audit", scope: "workspace" }],
   });
 }
@@ -39,14 +39,14 @@ export async function createChecklistPackage(directory, options = {}) {
   await writeFile(path.join(directory, "src", "worker.mjs"), [
     'import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";',
     'import { defineSpsPlatformContract } from "@sonparkserver/plugin-sdk/platform";',
-    ...(options.runtimeDiscovery ? ['import { createSpsRuntimeClient } from "@sonparkserver/plugin-sdk/runtime";'] : []),
+    ...(options.runtimeDiscovery ? ['import { createSpsRuntimeClient, readSpsHostSupport } from "@sonparkserver/plugin-sdk/runtime";'] : []),
     'import { createChecklistPlugin } from "./checklist.mjs";',
     "const plugin = createChecklistPlugin();",
     ...(options.runtimeDiscovery ? [
-      "let runtime;",
+      "let runtime, hostSupport;",
       "const original = plugin.handlers.platform;",
-      "const platform = defineSpsPlatformContract({ ...original, data: [...original.data, { key: 'runtime-connections', handler: params => runtime.runtimes.list(params.companyId) }] });",
-      "runSpsWorker(defineSpsPlugin({ ...plugin.handlers, initialize(context) { runtime = createSpsRuntimeClient(context.spsTransport); }, platform }));",
+      "const platform = defineSpsPlatformContract({ ...original, data: [...original.data, { key: 'runtime-connections', handler: params => runtime.runtimes.list(params.companyId) }, { key: 'host-api-support', handler: () => hostSupport }] });",
+      "runSpsWorker(defineSpsPlugin({ ...plugin.handlers, initialize(context) { runtime = createSpsRuntimeClient(context.spsTransport); hostSupport = readSpsHostSupport(context.params); }, platform }));",
     ] : options.probeScope ? [
       "const original = plugin.handlers.platform;",
       "const platform = defineSpsPlatformContract({ ...original, data: [...original.data, { key: 'scope-probe',",

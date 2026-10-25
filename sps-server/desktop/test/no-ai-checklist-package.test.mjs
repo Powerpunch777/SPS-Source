@@ -35,6 +35,12 @@ test("negative variants remove the actual Host capability without bypassing the 
   assert.ok(checklistManifest({ omitCapability: "plugin.state.write" }).capabilities.includes("plugin.state.read"));
 });
 
+test("Host support negative fixture can initialize without receiving Runtime permission", () => {
+  const manifest = checklistManifest({ withUi: false, runtimeDiscovery: true, omitCapability: "sps.runtimes.read" });
+  assert.ok(!manifest.capabilities.includes("sps.runtimes.read"));
+  assert.deepEqual(manifest.sps.primitives, []);
+});
+
 test("public authoring bundler creates a self-contained temporary reference package", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "sps-no-ai-package-test-"));
   try {
@@ -87,7 +93,7 @@ test("runtime discovery extends the No-AI path and uses the signed simulated Nod
   const script = await readFile(new URL("../scripts/runtime-discovery-acceptance.mjs", import.meta.url), "utf8");
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.match(packageJson.scripts["test:e2e:runtime-discovery"], /--runtime-discovery/);
-  for (const contract of ["createSignedHeartbeat", '"recently_seen"', '"execution_grant_required"', '"inactive"', "read(secondCompany.id)", "credentialStatus"]) {
+  for (const contract of ["createSignedHeartbeat", '"recently_seen"', '"execution_grant_required"', '"inactive"', "read(secondCompany.id)", "credentialStatus", "host-api-support", "deniedSupport", "assert.rejects"]) {
     assert.ok(script.includes(contract), `Missing runtime acceptance case ${contract}`);
   }
   assert.doesNotMatch(script, /\.runs\.dispatch|execFile|spawn\(/);
