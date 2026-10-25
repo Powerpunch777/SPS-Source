@@ -134,3 +134,42 @@ materialized package also existed, but development Host selection explicitly
 passes no packaged runtime roots; mere archive presence is not loaded-Host
 provenance. This source success neither repairs nor supersedes the separate
 packaged-CI Assistant registration failure.
+
+## Packaged Preview Failure Follow-Up
+
+The failure is not yet assigned a root cause. The harness now stops promptly if
+the real registration form reports `Internal server error`, retaining the same
+dashboard/Agent-name success assertion rather than waiting out the roster timer.
+A failure-only helper reads at most 64 KiB from an at-most-8 MiB `server.log`
+under the harness's exact temp profile. It rejects symlink/junction/hardlink and
+directory/file identity changes, performs strict UTF-8 decoding, and returns at
+most five structured errors. It never returns raw messages, stack, URL, request
+headers/body or arbitrary error type/code: only fixed type/code/category and a
+message SHA-256. Only known POSIX/module and explicitly listed SQLSTATE codes
+are returned. Missing/unstructured/unreadable logs give a static diagnostic
+state, not a fabricated explanation or a successful E2E result. A tail can miss
+an earlier error, so capture is not guaranteed.
+
+The existing catch no longer redistributes child stdout/stderr or screen
+URL/title/body text; it drains the pipes, emits only document-ready/server-error
+booleans, and fingerprints rather than reprints the original exception. This
+change is limited to that failure path, not a claim that all test tooling or OS
+process output is a complete privacy sandbox. Path rechecks are best-effort
+JavaScript filesystem checks, not an atomic OS directory-handle boundary.
+
+Focused diagnostics/contract command:
+
+```sh
+node --test test/preview-e2e-host-diagnostics.test.mjs test/plugin-preview-desktop-e2e.test.mjs
+```
+
+Result: **7/7**. Final `npm test` with the diagnostic changes passes **767 total /
+766 pass / 0 fail / 1 pre-existing skip**. These checks do not qualify the packaged
+Preview route. The next exact-HEAD Windows CI must test the issued companion and
+packaged app together.
+
+The isolated source Preview E2E was rerun successfully after the initial helper
+integration and before the final failure-output tightening above. Happy-path
+UI/Preview and owned cleanup passed again. The final failure-only tightening is
+covered by the focused helper/contract tests and final full suite, not a claimed
+new packaged or deliberate server-failure E2E success.

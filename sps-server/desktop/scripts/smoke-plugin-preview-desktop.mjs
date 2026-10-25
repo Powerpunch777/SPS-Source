@@ -17,6 +17,7 @@ import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { buildLiveBuilderPrompt, collectAuthoringSnapshot, verifyLiveBuilderChanges } from "./live-builder-authoring.mjs";
 import { buildLiveBuilderTeamPrompt, buildLiveBuilderRepairPrompt, verifyLiveBuilderTeamReport } from "./live-builder-team-authoring.mjs";
 import { captureLiveBuilderFailureArtifact } from "./live-builder-failure-artifact.mjs";
+import { collectPreviewE2eHostDiagnostics } from "./preview-e2e-host-diagnostics.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -458,7 +459,7 @@ const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "sps-plugin-preview-d
 const userData = path.join(temporaryRoot, "user-data");
 const pluginDirectory = path.join(temporaryRoot, "external-plugin");
 const packageArchivePath = path.join(temporaryRoot, "artifacts", "preview-desktop-e2e.spsplugin");
-let child; let setup; let workspace; let registry; let preview; let workspaceTarget; let output = "";
+let child; let setup; let workspace; let registry; let preview; let workspaceTarget;
 let liveAgent = null;
 let liveWorker = null;
 const liveWorkerRunIds = [];
@@ -478,8 +479,8 @@ try {
     env: { ...process.env, SPS_IDENTITY_URL: identityState.origin, SPS_DESKTOP_E2E: "1", SPS_DESKTOP_E2E_USER_DATA_DIR: userData, SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1", SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const capture = (chunk) => { output = `${output}${chunk}`.slice(-16_000); };
-  child.stdout?.on("data", capture); child.stderr?.on("data", capture);
+  // Drain child pipes without redistributing untrusted raw output on failure.
+  child.stdout?.resume(); child.stderr?.resume();
 
   setup = await cdpFor(await waitTarget(debugPort, child, (entry) => entry.title === "SPS Desktop", "SPS sign-in window"));
   await waitPage(setup, (page) => page.text.includes("SPS"), "SPS sign-in UI");
@@ -559,7 +560,11 @@ try {
       set('[aria-label="Default working folder"]', ${JSON.stringify(cwd)});
     })()`);
     await workspace.evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Add Agent').click()");
-    await waitPage(workspace, page => page.url.includes("/dashboard") && page.text.includes(name), "registered Assistant roster");
+    const registration = await waitPage(workspace, page =>
+      page.url.includes("/dashboard") && page.text.includes(name)
+      || page.text.includes("Internal server error"), "registered Assistant roster");
+    assert.ok(registration.url.includes("/dashboard") && registration.text.includes(name),
+      "Assistant registration returned a server error before the roster loaded.");
     const registered = (await workspaceApi(workspace, `/api/companies/${company.id}/agents`)).find(item => item.name === name);
     assert.ok(registered?.id);
     assert.equal(registered.adapterType, "codex_local");
@@ -1210,6 +1215,7 @@ try {
   console.log(`SPS Plugin Preview Desktop E2E passed (${packagedBinary ? "packaged" : "source"}${liveAuthoring ? ", live CLI authoring" : ""}).`);
 } catch (error) {
   const notes = [];
+  notes.push(`Owner Host error summary: ${JSON.stringify(await collectPreviewE2eHostDiagnostics({ fixtureRoot: temporaryRoot }))}`);
   if (liveAuthoring) {
     try {
       const retained = await captureLiveBuilderFailureArtifact({ fixtureRoot: pluginDirectory, desktopRoot });
@@ -1226,12 +1232,12 @@ try {
   if (!safeFeedbackFailure) {
     for (const [name, cdp] of [["setup", setup], ["workspace", workspace], ["registry", registry], ["preview", preview]]) {
       if (!cdp) continue;
-      try { notes.push(`${name}: ${JSON.stringify(await cdp.evaluate("({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 2000) || '' })"))}`); } catch (diagnosticError) { notes.push(`${name}: ${errorText(diagnosticError)}`); }
+      try { notes.push(`${name}: ${JSON.stringify(await cdp.evaluate("({ documentReady: document.readyState === 'complete', serverErrorVisible: document.body?.innerText?.includes('Internal server error') === true })"))}`); }
+      catch { notes.push(`${name}: unavailable`); }
     }
   }
-  acceptanceFailure = new Error(safeFeedbackFailure
-    ? `${errorText(error)}\n${notes.join("\n")}`
-    : `${errorText(error)}\n${notes.join("\n")}\n${output.trim()}`);
+  const failureSha256 = createHash("sha256").update(errorText(error)).digest("hex");
+  acceptanceFailure = new Error(`SPS Plugin Preview E2E failed (feedbackSnapshot=${safeFeedbackFailure}, failureSha256=${failureSha256}).\n${notes.join("\n")}`);
   throw acceptanceFailure;
 } finally {
   step("cleaning isolated E2E processes and data");

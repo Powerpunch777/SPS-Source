@@ -57,6 +57,13 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /listPreviewDiagnostics/);
   assert.match(harness, /waitFixture/);
   assert.match(harness, /workspaceTarget/);
+  assert.match(harness, /page\.text\.includes\("Internal server error"\)/);
+  assert.match(harness, /assert\.ok\(registration\.url\.includes\("\/dashboard"\) && registration\.text\.includes\(name\)/);
+  assert.match(harness, /collectPreviewE2eHostDiagnostics\(\{ fixtureRoot: temporaryRoot \}\)/);
+  const failureCatch = harness.slice(harness.indexOf("} catch (error) {\n  const notes = [];"), harness.indexOf('} finally {\n  step("cleaning isolated'));
+  assert.match(failureCatch, /failureSha256/);
+  assert.match(failureCatch, /serverErrorVisible/);
+  assert.doesNotMatch(failureCatch, /output\.trim|title: document\.title|url: location\.href|text: document\.body/);
   assert.match(harness, /stopTree/);
   assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
 });

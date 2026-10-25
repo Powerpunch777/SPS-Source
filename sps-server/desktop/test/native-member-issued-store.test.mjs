@@ -563,4 +563,3 @@ test("rejects issued symlinks, hardlinks, and directories without following or o
     await assert.rejects(store.createIssued(await makeIssuance()), storeError("ALREADY_EXISTS"));
   });
 });
-
