@@ -45,7 +45,7 @@ export async function runRuntimeDiscoveryAcceptance({ cdp, company, secondCompan
   await call(`/api/sps-nodes/${node.id}/revoke`, { method: "POST", body: {} });
   const [revoked] = await read();
   assert.equal(revoked.id, runtime.id);
-  assert.equal(revoked.online, false);
+  assert.equal(revoked.online, true, "Legacy heartbeat liveness must not silently become an approval check");
   assert.equal(revoked.connection.state, "inactive");
   console.log("[runtime-discovery] public SDK/Core bridge: signed simulated heartbeat, recent observation != CLI login/grant, A/B scope and revoke projection passed; no CLI command dispatched");
 }

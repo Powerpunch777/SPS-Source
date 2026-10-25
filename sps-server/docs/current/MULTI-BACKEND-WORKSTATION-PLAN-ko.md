@@ -118,8 +118,9 @@ Host의 Windows 폴더 문자열을 Gateway/Harness의 cwd로 전송하는 계�
 새 통합 backend registry나 전역 실행 엔진 대신 기존 `sps.runtimes.list`에
 optional `connection` DTO만 추가한다. 과거 Host가 필드를 생략하면 unknown이다.
 실행 주체 `node`, 별도 execution grant 필요, heartbeat 기반 상태와 관측 시각을
-제공한다. active/키 검증/유효한 최근 heartbeat가 모두 맞아야 online이며, 철회·
-미검증·과거·미래/누락 시각을 구분한다. 최근 관측이 CLI 로그인·사용 가능·권한을
+제공한다. 새 connection은 active/키 검증/유효한 최근 heartbeat가 모두 맞아야
+recently_seen이며, 철회·미검증·과거·미래/누락 시각을 구분한다. 기존 online의
+heartbeat-only 의미는 보존하며 철회 직후에도 true일 수 있다. 최근 관측이 CLI 로그인·사용 가능·권한을
 증명하지 않는다. credential/availability 정보와 dispatch 시 재검사를 그대로 둔다.
 
 읽기 권한만 가진 임시 Worker로 실제 Desktop→공개 SDK→Core 조회를 확인한다.

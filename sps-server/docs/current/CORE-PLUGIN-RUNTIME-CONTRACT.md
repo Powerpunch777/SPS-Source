@@ -41,7 +41,7 @@ The worker SDK exposes the following methods through `ctx.sps`.
 There is no new endpoint, database table, or permission grant.
 
 - `recently_seen`: active, key-verified Node with a valid, non-future heartbeat
-  within two minutes. The existing `online` boolean is true only in this case.
+  within two minutes.
 - `inactive`: Node is not active, including pending or revoked Nodes.
 - `unverified`: active Node has no valid key-verification timestamp.
 - `offline`: the valid last heartbeat is older than two minutes.
@@ -51,7 +51,10 @@ There is no new endpoint, database table, or permission grant.
 This is a cached Host observation, not a live socket/provider probe, CLI login,
 Runner readiness check, or execution authorization. `observedAt` records the
 valid historical heartbeat even for an inactive Node; invalid/future evidence
-is omitted as `null`. Existing credential and availability fields stay separate.
+is omitted as `null`. The legacy `online` boolean retains heartbeat-only liveness
+regardless of approval: it may remain true after revocation until the heartbeat
+expires. Missing, invalid and future heartbeats are false. Existing credential
+and availability fields stay separate.
 Execution still requires an active grant and current dispatch checks. Listing
 does not create grants or runs and cannot expose another Workspace through an
 inconsistent Node/Runner association. This Node-only addition is not a generic
