@@ -138,7 +138,7 @@ test("release verification runs every Windows Desktop E2E before publishing", as
   assert.match(workflow, /npm run prepare:owner-host-runtime/);
   assert.match(workflow, /electron-builder --win dir --publish never/);
   assert.match(workflow, /SPS_DESKTOP_E2E_BINARY:/);
-  assert.match(workflow, /npm run test:e2e:workspace-surfaces/);
-  assert.match(workflow, /npm run test:e2e:plugin-preview/);
-  assert.match(workflow, /npm run test:e2e:host-plugin-lifecycle/);
+  assert.match(workflow, /run-windows-ci-e2e\.ps1 -Mode workspace-surfaces/);
+  assert.match(workflow, /run-windows-ci-e2e\.ps1 -Mode plugin-preview/);
+  assert.match(workflow, /run-windows-ci-e2e\.ps1 -Mode host-plugin-lifecycle/);
 });

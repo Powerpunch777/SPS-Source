@@ -106,9 +106,10 @@ test("Windows verification requires the No-AI source Electron acceptance", async
   const step = workflow.slice(workflow.indexOf("- name: Run No-AI Workspace source Desktop E2E"));
   assert.ok(step.startsWith("- name: Run No-AI"));
   const sourceStep = step.split(/\r?\n\s+- name:/)[0];
-  assert.match(sourceStep, /timeout-minutes: 18/);
+  assert.match(sourceStep, /timeout-minutes: 20/);
+  assert.match(sourceStep, /shell: powershell/);
   assert.match(sourceStep, /SPS_DESKTOP_E2E_SOURCE: "1"/);
-  assert.match(sourceStep, /run: npm run test:e2e:runtime-discovery/);
+  assert.match(sourceStep, /run: \.\\scripts\\run-windows-ci-e2e\.ps1 -Mode runtime-discovery/);
   assert.doesNotMatch(sourceStep, /continue-on-error|if:/);
 });
 

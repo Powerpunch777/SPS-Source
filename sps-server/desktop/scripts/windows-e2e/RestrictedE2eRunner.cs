@@ -1,0 +1,320 @@
+using System;
+using System.ComponentModel;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Text;
+
+// CI/test launcher only. Same-user privilege reduction is not a Plugin sandbox.
+public static class RestrictedE2eRunner
+{
+    static string stage = "arguments";
+    [StructLayout(LayoutKind.Sequential)] struct SidAttributes { public IntPtr Sid; public uint Attributes; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct StartupInfo
+    {
+        public int Size; public string Reserved; public string Desktop; public string Title;
+        public uint X, Y, XSize, YSize, XCountChars, YCountChars, FillAttribute, Flags;
+        public ushort ShowWindow, Reserved2; public IntPtr ReservedPointer, Input, Output, Error;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct StartupInfoEx { public StartupInfo Startup; public IntPtr Attributes; }
+    [StructLayout(LayoutKind.Sequential)] struct ProcessInfo { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }
+    [StructLayout(LayoutKind.Sequential)] struct IoCounters { public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes; }
+    [StructLayout(LayoutKind.Sequential)] struct BasicLimits
+    {
+        public long ProcessTime, JobTime; public uint Flags; public UIntPtr MinWorkingSet, MaxWorkingSet;
+        public uint ActiveProcesses; public UIntPtr Affinity; public uint Priority, SchedulingClass;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct ExtendedLimits
+    {
+        public BasicLimits Basic; public IoCounters Io; public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct SecurityAttributes { public int Size; public IntPtr Descriptor; public int Inherit; }
+    [StructLayout(LayoutKind.Sequential)] struct Accounting
+    {
+        public long UserTime, KernelTime, PeriodUserTime, PeriodKernelTime;
+        public uint PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses;
+    }
+
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int kind);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateFileW(string path, uint access, uint sharing, ref SecurityAttributes attributes, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, uint flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returned);
+    [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int kind, IntPtr value, int length, out int returned);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool LookupPrivilegeNameW(string system, IntPtr luid, StringBuilder name, ref int length);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool ConvertStringSidToSidW(string sid, out IntPtr result);
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr pointer);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool CreateRestrictedToken(IntPtr existing, uint flags, uint disableCount, [In] SidAttributes[] disable, uint deleteCount, IntPtr delete, uint restrictCount, IntPtr restrict, out IntPtr token);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessAsUserW(IntPtr token, string application, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string directory, ref StartupInfoEx startup, out ProcessInfo info);
+
+    static void Require(bool ok, string operation)
+    {
+        if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), operation);
+    }
+    static bool Valid(IntPtr handle) { return handle != IntPtr.Zero && handle != new IntPtr(-1); }
+    static string Quote(string value)
+    {
+        if (value == null || value.IndexOf('\0') >= 0) throw new ArgumentException("Invalid launcher argument");
+        var result = new StringBuilder("\"");
+        int slashes = 0;
+        foreach (char c in value)
+        {
+            if (c == '\\') { slashes++; continue; }
+            if (c == '"') { result.Append('\\', slashes * 2 + 1); result.Append(c); }
+            else { result.Append('\\', slashes); result.Append(c); }
+            slashes = 0;
+        }
+        result.Append('\\', slashes * 2); result.Append('"');
+        return result.ToString();
+    }
+    static string Command(string executable, params string[] args)
+    {
+        var command = new StringBuilder(Quote(executable));
+        foreach (string arg in args) command.Append(' ').Append(Quote(arg));
+        return command.ToString();
+    }
+    static bool Mode(string value)
+    {
+        return value == "probe" || value == "probe-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
+            || value == "runtime-discovery" || value == "workspace-surfaces"
+            || value == "plugin-preview" || value == "host-plugin-lifecycle";
+    }
+    static IntPtr EnvironmentBlock()
+    {
+        // Preserve Windows/Node discovery and the three explicit fixture settings,
+        // not CI credentials or arbitrary SPS/provider execution configuration.
+        var allowed = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in new[] {
+            "SystemRoot", "WINDIR", "SystemDrive", "ComSpec", "PATH", "PATHEXT", "TEMP", "TMP",
+            "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)",
+            "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432",
+            "HOME", "HOMEDRIVE", "HOMEPATH", "GITHUB_ACTIONS", "RUNNER_OS", "CI",
+            "SPS_DESKTOP_E2E_SOURCE", "SPS_DESKTOP_E2E_BINARY", "SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS"
+        })
+        {
+            string value = Environment.GetEnvironmentVariable(name);
+            if (value != null) allowed.Add(name, value);
+        }
+        var block = new StringBuilder();
+        foreach (var entry in allowed) block.Append(entry.Key).Append('=').Append(entry.Value).Append('\0');
+        block.Append('\0');
+        return Marshal.StringToHGlobalUni(block.ToString());
+    }
+    static int RunNode(string node, string directory, string script, params string[] args)
+    {
+        stage = "child_script";
+        var arguments = new StringBuilder(Quote(Path.Combine(directory, "scripts", script)));
+        foreach (string arg in args) arguments.Append(' ').Append(Quote(arg));
+        var start = new ProcessStartInfo(node, arguments.ToString());
+        start.WorkingDirectory = directory; start.UseShellExecute = false; start.CreateNoWindow = true;
+        start.RedirectStandardInput = true; start.RedirectStandardOutput = true; start.RedirectStandardError = true;
+        start.StandardOutputEncoding = Encoding.UTF8; start.StandardErrorEncoding = Encoding.UTF8;
+        start.EnvironmentVariables.Remove("NODE_OPTIONS");
+        start.EnvironmentVariables.Remove("ELECTRON_RUN_AS_NODE");
+        using (var process = new Process())
+        {
+            process.StartInfo = start;
+            process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs value) { if (value.Data != null) Console.Out.WriteLine(value.Data); };
+            process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs value) { if (value.Data != null) Console.Error.WriteLine(value.Data); };
+            process.Start(); process.StandardInput.Close(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
+            process.WaitForExit(); return process.ExitCode;
+        }
+    }
+    static int Child(string mode, string node, string directory)
+    {
+        stage = "child_token";
+        var principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
+        if (principal.IsInRole(WindowsBuiltInRole.Administrator) || principal.IsInRole(WindowsBuiltInRole.PowerUser))
+            throw new InvalidOperationException("Child token retains administrative group authority");
+        CheckPrivileges();
+        Console.WriteLine("{\"restrictedE2eChild\":true,\"administratorEnabled\":false,\"powerUsersEnabled\":false,\"privilegesReduced\":true,\"sameUserToken\":true}");
+        if (mode == "probe") return 0;
+        if (mode == "probe-exit") return 7;
+        if (mode == "probe-timeout") { System.Threading.Thread.Sleep(60000); return 1; }
+        if (mode == "probe-descendant")
+        {
+            var start = new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName, "--probe-leaf");
+            start.UseShellExecute = false; start.CreateNoWindow = true;
+            using (var descendant = Process.Start(start))
+            {
+                if (descendant.HasExited) throw new InvalidOperationException("Missing owned descendant");
+                Console.WriteLine("{\"ownedDescendantCreated\":true}");
+            }
+            return 0;
+        }
+        if (mode == "probe-node") return RunNode(node, directory, "windows-e2e/probe-node.mjs", "a \"quoted\" value", "tail\\", "unicode-\uD55C\uAE00");
+        if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true"
+            || Environment.GetEnvironmentVariable("RUNNER_OS") != "Windows")
+            throw new InvalidOperationException("Desktop launch mode is restricted to Windows CI");
+        foreach (string script in new[] { "sync-local-desktop-node.mjs", "sync-local-plugin-sdk.mjs" })
+        {
+            int code = RunNode(node, directory, script);
+            if (code != 0) return code;
+        }
+        if (mode == "runtime-discovery") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--runtime-discovery");
+        if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs");
+        if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs");
+        return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs");
+    }
+    static void CheckPrivileges()
+    {
+        IntPtr token = IntPtr.Zero, data = IntPtr.Zero;
+        try
+        {
+            Require(OpenProcessToken(GetCurrentProcess(), 8, out token), "Read child token");
+            int length; GetTokenInformation(token, 3, IntPtr.Zero, 0, out length);
+            if (length < 4 || length > 16384) throw new InvalidOperationException("Invalid privilege size");
+            data = Marshal.AllocHGlobal(length);
+            Require(GetTokenInformation(token, 3, data, length, out length), "Read child privileges");
+            int count = Marshal.ReadInt32(data);
+            if (count < 0 || count > (length - 4) / 12) throw new InvalidOperationException("Invalid privilege count");
+            for (int index = 0; index < count; index++)
+            {
+                int size = 128; var name = new StringBuilder(size);
+                Require(LookupPrivilegeNameW(null, IntPtr.Add(data, 4 + index * 12), name, ref size), "Resolve child privilege");
+                if (name.ToString() != "SeChangeNotifyPrivilege") throw new InvalidOperationException("Child retains extra privilege");
+            }
+        }
+        finally { if (data != IntPtr.Zero) Marshal.FreeHGlobal(data); if (Valid(token)) CloseHandle(token); }
+    }
+    static void TerminateAndConfirmJob(IntPtr job)
+    {
+        Require(TerminateJobObject(job, 125), "Terminate owned E2E descendants");
+        var deadline = Stopwatch.StartNew();
+        for (;;)
+        {
+            Accounting info;
+            Require(QueryInformationJobObject(job, 1, out info, (uint)Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero), "Inspect E2E job cleanup");
+            if (info.ActiveProcesses == 0) return;
+            if (deadline.ElapsedMilliseconds > 10000) throw new InvalidOperationException("Owned E2E descendants remain");
+            System.Threading.Thread.Sleep(20);
+        }
+    }
+    static int Launch(string mode, string node, string directory)
+    {
+        stage = "token_setup";
+        IntPtr token = IntPtr.Zero, restricted = IntPtr.Zero, admin = IntPtr.Zero, power = IntPtr.Zero;
+        IntPtr job = IntPtr.Zero, attributes = IntPtr.Zero, handles = IntPtr.Zero, environment = IntPtr.Zero;
+        IntPtr input = IntPtr.Zero, output = IntPtr.Zero, error = IntPtr.Zero;
+        bool attributesInitialized = false, assigned = false;
+        ProcessInfo child = new ProcessInfo();
+        try
+        {
+            Require(OpenProcessToken(GetCurrentProcess(), 0x000B, out token), "Open caller token");
+            Require(ConvertStringSidToSidW("S-1-5-32-544", out admin), "Allocate Administrators SID");
+            Require(ConvertStringSidToSidW("S-1-5-32-547", out power), "Allocate Power Users SID");
+            var disabled = new[] { new SidAttributes { Sid = admin }, new SidAttributes { Sid = power } };
+            Require(CreateRestrictedToken(token, 0x1, 2, disabled, 0, IntPtr.Zero, 0, IntPtr.Zero, out restricted), "Restrict caller token");
+            using (var original = new WindowsIdentity(token))
+            using (var reduced = new WindowsIdentity(restricted))
+                if (original.User != reduced.User) throw new InvalidOperationException("Restricted token changed user");
+            job = CreateJobObjectW(IntPtr.Zero, null); Require(Valid(job), "Create E2E job");
+            var limits = new ExtendedLimits(); limits.Basic.Flags = 0x2000; // KILL_ON_JOB_CLOSE, no breakaway.
+            Require(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(typeof(ExtendedLimits))), "Set E2E job cleanup");
+
+            stage = "handle_setup";
+            var security = new SecurityAttributes { Size = Marshal.SizeOf(typeof(SecurityAttributes)), Inherit = 1 };
+            input = CreateFileW("NUL", 0x80000000, 3, ref security, 3, 0, IntPtr.Zero); Require(Valid(input), "Open empty stdin");
+            Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(-11), GetCurrentProcess(), out output, 0, true, 2), "Duplicate stdout");
+            Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(-12), GetCurrentProcess(), out error, 0, true, 2), "Duplicate stderr");
+            IntPtr bytes = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref bytes);
+            if (bytes == IntPtr.Zero) throw new InvalidOperationException("Missing process attribute size");
+            attributes = Marshal.AllocHGlobal(bytes);
+            Require(InitializeProcThreadAttributeList(attributes, 1, 0, ref bytes), "Initialize process attributes");
+            attributesInitialized = true;
+            handles = Marshal.AllocHGlobal(IntPtr.Size * 3);
+            Marshal.Copy(new[] { input, output, error }, 0, handles, 3);
+            Require(UpdateProcThreadAttribute(attributes, 0, new IntPtr(0x20002), handles, new IntPtr(IntPtr.Size * 3), IntPtr.Zero, IntPtr.Zero), "Limit inherited handles");
+            var startup = new StartupInfoEx(); startup.Startup.Size = Marshal.SizeOf(typeof(StartupInfoEx));
+            startup.Startup.Flags = 0x100; startup.Startup.Input = input; startup.Startup.Output = output; startup.Startup.Error = error;
+            startup.Attributes = attributes;
+            stage = "child_creation";
+            string self = Process.GetCurrentProcess().MainModule.FileName;
+            var command = new StringBuilder(Command(self, "--child", mode, node, directory));
+            environment = EnvironmentBlock();
+            Require(CreateProcessAsUserW(restricted, self, command, IntPtr.Zero, IntPtr.Zero, true,
+                0x08080404, environment, directory, ref startup, out child), "Create restricted E2E child");
+            Require(AssignProcessToJobObject(job, child.Process), "Assign suspended child to cleanup job"); assigned = true;
+            Require(ResumeThread(child.Thread) != 0xFFFFFFFF, "Resume E2E child");
+            uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : 18u * 60u * 1000u);
+            if (wait == 258)
+            {
+                Require(TerminateJobObject(job, 124), "Terminate timed-out E2E job");
+                Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm timed-out child exit");
+                Console.Error.WriteLine("restricted_e2e_timeout"); return 124;
+            }
+            Require(wait == 0, "Wait for E2E child");
+            uint code; Require(GetExitCodeProcess(child.Process, out code), "Read E2E exit code");
+            if (mode == "probe-descendant")
+            {
+                Accounting info;
+                Require(QueryInformationJobObject(job, 1, out info, (uint)Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero), "Inspect descendant fixture");
+                if (info.TotalProcesses < 2 || info.ActiveProcesses < 1) throw new InvalidOperationException("Descendant fixture was not live");
+            }
+            return unchecked((int)code);
+        }
+        finally
+        {
+            try
+            {
+                if (Valid(child.Process))
+                {
+                    if (!assigned) Require(TerminateProcess(child.Process, 125), "Terminate unassigned suspended child");
+                    else if (Valid(job)) TerminateAndConfirmJob(job);
+                    Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm E2E child exit");
+                    if (assigned) Console.WriteLine("{\"ownedJobEmpty\":true}");
+                }
+            }
+            finally
+            {
+                if (Valid(child.Thread)) CloseHandle(child.Thread);
+                if (Valid(child.Process)) CloseHandle(child.Process);
+                if (Valid(job)) CloseHandle(job);
+                if (attributesInitialized) DeleteProcThreadAttributeList(attributes);
+                if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
+                if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
+                if (environment != IntPtr.Zero) Marshal.FreeHGlobal(environment);
+                foreach (IntPtr handle in new[] { input, output, error, restricted, token }) if (Valid(handle)) CloseHandle(handle);
+                if (admin != IntPtr.Zero) LocalFree(admin);
+                if (power != IntPtr.Zero) LocalFree(power);
+            }
+        }
+    }
+    public static int Main(string[] args)
+    {
+        try
+        {
+            Console.OutputEncoding = new UTF8Encoding(false);
+            if (args.Length == 1 && args[0] == "--probe-leaf")
+            { CheckPrivileges(); System.Threading.Thread.Sleep(60000); return 1; }
+            if (args.Length == 4 && args[0] == "--child" && Mode(args[1])) return Child(args[1], args[2], args[3]);
+            if (args.Length != 3 || !Mode(args[0]) || !Path.IsPathRooted(args[1])
+                || !File.Exists(args[1]) || !Path.IsPathRooted(args[2]) || !Directory.Exists(args[2]))
+            {
+                Console.Error.WriteLine("restricted_e2e_arguments:count=" + args.Length
+                    + ",node=" + (args.Length > 1 && File.Exists(args[1]))
+                    + ",directory=" + (args.Length > 2 && Directory.Exists(args[2])));
+                throw new ArgumentException("Invalid fixed E2E launch mode");
+            }
+            return Launch(args[0], args[1], args[2]);
+        }
+        catch (Win32Exception exception) { Console.Error.WriteLine("restricted_e2e_native_error:" + exception.NativeErrorCode); return 125; }
+        catch { Console.Error.WriteLine("restricted_e2e_invalid_context:" + stage); return 125; }
+    }
+}

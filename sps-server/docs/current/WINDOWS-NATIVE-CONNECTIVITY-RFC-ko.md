@@ -88,13 +88,30 @@ TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은
 
 D7은 서버/Member 인증서 90일, 별도 issuer 365일 및 만료 전 기존 키·검증된 현재 신원을
 사용하는 갱신 정책의 승인이다. 갱신 threshold/issuer 회전 세부는 미정이고, 갱신 자체는
-미구현이다. 기존 Core Settings source E2E는 로컬 Electron 43.7.7에서 다시 통과했으나 잠긴 43.8.3 검증이 아니다.
-실제 Electron smoke는 새 pending filestore로 확장됐으나 로컬 43.7.7은 crypto 전 version mismatch로 거부된다.
-Source `d3ddbaa` run `40180490974`의 Windows job `121130316230`은 이전 Host/capsule Native smoke와
-Core Settings step을 통과했다. 새 filestore에 이 증거를 적용하지 않으며 최종 runtime JSON은 job 종료 뒤 확인한다.
-Owner runtime 준비는 성공했고 No-AI는 실행 중이다. 잠긴 기본 바이너리 외 override 결과는 수용하지 않는다.
-정확한 수·명령·runtime 증거는 위 pending 저장 검증과 [계획 체크포인트](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)를 따른다.
-Zod High `1243066` 보류·기존 Low 2건과 기존 복구/Source/Node 권한은 그대로다. 실제 고객 키/listener는 사용하지 않았다.
+미구현이다. Core Settings source E2E 7개 모드는 로컬 Electron 43.7.7에서 통과했으나 잠긴 43.8.3의
+로컬 DPAPI 검증은 아니다. exact Source HEAD `425000cb1c44bf583d9d655632057440c06f90f7`의
+기존 `Verify SPS` run `40181306002`와 `40181309808`은 각각 18개 job 중 16개 성공, 2개 실패했다.
+두 run 모두 9개 Linux test shard와 full Linux typecheck/build가 통과했다. Windows job의 Native step 10,
+Core Settings source E2E step 11, Owner Host runtime 준비 step 14도 통과했다.
+
+두 Windows Native secure-storage step도 실제 동일 사용자 프로필의 Electron `safeStorage`/DPAPI로
+통과했다. 현재 HEAD의 smoke는 Host identity와 새 Member pending-key filestore를 생성하고 별도
+Electron 프로세스에서 재독해했다. safe result는 Electron **43.8.3**, Node **24.22.0**,
+`realWindowsSafeStorage=true`, `sameKeyAfterRestart=true`, `memberPendingKeyProtected=true`,
+`sameMemberKeyAfterRestart=true`다. 따라서 이전 `d3ddbaa` run `40180490974` / Windows job
+`121130316230`의 Host/capsule smoke 결과를 승계한 것이 아니라, 새 filestore를 exact HEAD에서 직접
+검증한 증거다.
+
+그럼에도 CI는 **green이 아니다**. 두 run의 production dependency gate는 승인 예외 없는 Zod High
+`1243066`으로 실패했다. No-AI step도 elevated Windows 계정에서 embedded PostgreSQL이 시작을
+거부해 Owner Host가 뜨지 않았고, 이후 Workspace BrowserWindow 대기가 시간 초과됐다. 따라서 No-AI
+결과는 실행 중/성공이 아니라 실패이며 acceptance는 통과하지 않았다. CI 전용 restricted-token
+wrapper는 소스로 구현됐고 로컬 Windows probe 7/7 및 Desktop 714 total / 713 pass / 0 fail / 1 skip이다.
+이전 `425000cb` CI에 포함된 구현이 아니므로 새 exact-HEAD CI 검증 전까지 in-progress/pending이며
+green으로 표시하지 않는다. [CI runner 검증](../reviews/NATIVE-WINDOWS-CI-RUNNER-VERIFICATION-2026-10-25.md)을 따른다.
+
+정확한 run/job·실패 단계·safe JSON은 [Native CI 관측 기록](NATIVE-CI-OBSERVATION-2026-10-25.md)과
+위 pending 저장 검증을 따른다. 실제 고객 키/listener는 사용하지 않았다.
 
 신원 확인 전에는 사용자 access token·초대 secret·Workspace 자료를 보내지 않는다.
 신뢰하지 않은 discovery 응답이나 redirect를 따라 credential을 전달하지 않는다.

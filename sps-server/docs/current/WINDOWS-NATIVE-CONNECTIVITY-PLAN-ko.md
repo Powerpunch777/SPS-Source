@@ -51,13 +51,30 @@ Store 권한 guard는 마지막 async binding 확인 전후 모두 검사한다.
 transactional filesystem rollback은 보장하지 않는다. Promotion 뒤 activation이 실패하면 복원 데이터는
 유지되고 오류도 이를 명시한다.
 
-현재 Desktop 전체 **707 tests: 706 pass, 0 fail, 1 skip**, pending store **15/15**, 집중 명령 **36/36**이다.
+저장소 Source `425000cb` 기준 Desktop 전체 **707 tests: 706 pass, 0 fail, 1 skip**, pending store **15/15**, 집중 명령 **36/36**이다.
 정확한 명령은 위 pending 저장 검증을 따른다. skip은 로컬 8.3 alias 미가용이며 root helper의 ancestor guard는 유지된다.
-기존 Core Settings source E2E 7개 모드는 로컬 **43.7.7**에서 재통과했다. 실제 smoke는 이제 새 filestore를
-사용하지만 로컬은 잠긴 **43.8.3**과 달라 crypto 전에 거부된다. Source `d3ddbaaa5270d4288a9a177a093e55d185d1c5d5`
-run `40180490974` / Windows job `121130316230`의 이전 Host/capsule Native smoke와 Core Settings step은 성공했다.
-이는 새 filestore의 CI 증거가 아니다. Owner runtime 준비도 성공했고 No-AI는 실행 중이며 최종 safe runtime JSON은
-job 종료 뒤 확인한다. CI는 lock-default 바이너리만 수용하며 새 adapter의 43.8.3 qualification은 남아 있다.
+기존 Core Settings source E2E 7개 모드는 로컬 **43.7.7**에서 재통과했지만, 로컬 smoke는 잠긴
+**43.8.3**과 달라 crypto 전에 거부된다. 대신 exact Source HEAD
+`425000cb1c44bf583d9d655632057440c06f90f7`의 `Verify SPS` run `40181306002`와
+`40181309808`에서 각 18개 job 중 16개 성공, 2개 실패했다. 두 run 모두 9개 Linux test shard와
+`SPS Core full Linux typecheck and build`가 통과했고, Windows job의 Native secure-storage step 10,
+Core Settings source E2E step 11, Owner Host runtime 준비 step 14도 통과했다.
+
+정확한 HEAD의 Windows smoke는 동일 Windows 사용자 프로필에서 실제 Electron `safeStorage`/DPAPI를
+사용했다. Host identity와 새 Member pending-key file store 모두 `create` 및 별도 Electron 프로세스
+재독해가 성공했고, 결과는 Electron **43.8.3**, Node **24.22.0**, `realWindowsSafeStorage=true`,
+`sameKeyAfterRestart=true`, `memberPendingKeyProtected=true`, `sameMemberKeyAfterRestart=true`다.
+이는 이전 Source `d3ddbaaa5270d4288a9a177a093e55d185d1c5d5` run `40180490974` /
+Windows job `121130316230`의 capsule-only smoke와 구별되는 새 filestore의 직접 CI 증거다.
+
+전체 CI는 **green이 아니다**. 두 run 모두 production dependency policy step에서 승인 예외 없는
+Zod High `1243066`으로 차단됐고, No-AI E2E step 15는 Owner Host의 embedded PostgreSQL이 elevated
+Windows 계정에서 시작을 거부해 실패한 뒤 인증된 Workspace BrowserWindow 대기로 시간 초과됐다.
+No-AI acceptance 성공으로 기록하지 않는다. CI 전용 restricted-token wrapper는 상위 작업에서
+소스로 구현됐고 로컬 Windows probe **7/7**, Desktop **714 total / 713 pass / 0 fail / 1 skip**이다.
+아직 새 exact-HEAD CI에서 검증되지 않았다. 해당 경로의 재검증 전까지 in-progress/pending으로
+유지한다. [Native CI 관측 기록](NATIVE-CI-OBSERVATION-2026-10-25.md)과
+[CI runner 검증](../reviews/NATIVE-WINDOWS-CI-RUNNER-VERIFICATION-2026-10-25.md)을 참조한다.
 production/full audit는 Zod High `1243066`과 기존 Low 2건을 보고했고 High 보류는 유지된다(예외 없음).
 그 외 새 경고는 없고 생성 보안 문서 검사는 통과했다. [설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)과 위 pending 저장 검증을 따른다.
 
