@@ -5,6 +5,13 @@ Parent Source is `425000cb1c44bf583d9d655632057440c06f90f7`.
 Core remains `c30687dcf734cb61805978e1f6f60529fa9259d2`; public SDK remains
 `d4d69208480fc618b2055378b85d183aea422d50`. Desktop stays unreleased 0.4.137.
 
+Historical checkpoint: this initial repair was published as Source `1cddbcf7`.
+Its elevated Windows CI subsequently failed five wrapper unit probes with
+`0xC0000142` or a child-creation phase error, so it did not qualify the No-AI or
+packaged E2Es. The owned-private-desktop follow-up and new Core issuance work are
+recorded in [the next verification](NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md).
+The counts below are this original local revision, not the later wrapper.
+
 ## Existing exact-HEAD evidence
 
 [Observed CI runs](../current/NATIVE-CI-OBSERVATION-2026-10-25.md) qualify the

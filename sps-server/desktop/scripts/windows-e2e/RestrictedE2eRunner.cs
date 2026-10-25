@@ -38,6 +38,7 @@ public static class RestrictedE2eRunner
     }
 
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int kind);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
@@ -61,6 +62,17 @@ public static class RestrictedE2eRunner
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr pointer);
     [DllImport("advapi32.dll", SetLastError = true)] static extern bool CreateRestrictedToken(IntPtr existing, uint flags, uint disableCount, [In] SidAttributes[] disable, uint deleteCount, IntPtr delete, uint restrictCount, IntPtr restrict, out IntPtr token);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessAsUserW(IntPtr token, string application, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string directory, ref StartupInfoEx startup, out ProcessInfo info);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string descriptor, uint revision, out IntPtr result, IntPtr size);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateWindowStationW(string name, uint flags, uint access, ref SecurityAttributes attributes);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool GetUserObjectInformationW(IntPtr handle, int index, IntPtr value, uint length, out uint needed);
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetProcessWindowStation();
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetThreadDesktop(uint threadId);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool SetProcessWindowStation(IntPtr station);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool SetThreadDesktop(IntPtr desktop);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateDesktopW(string name, IntPtr device, IntPtr mode, uint flags, uint access, ref SecurityAttributes attributes);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool CloseWindowStation(IntPtr station);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool CloseDesktop(IntPtr desktop);
 
     static void Require(bool ok, string operation)
     {
@@ -90,7 +102,7 @@ public static class RestrictedE2eRunner
     }
     static bool Mode(string value)
     {
-        return value == "probe" || value == "probe-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
+        return value == "probe" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
             || value == "runtime-discovery" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle";
     }
@@ -145,6 +157,7 @@ public static class RestrictedE2eRunner
         Console.WriteLine("{\"restrictedE2eChild\":true,\"administratorEnabled\":false,\"powerUsersEnabled\":false,\"privilegesReduced\":true,\"sameUserToken\":true}");
         if (mode == "probe") return 0;
         if (mode == "probe-exit") return 7;
+        if (mode == "probe-native-exit") return unchecked((int)0xC0000142);
         if (mode == "probe-timeout") { System.Threading.Thread.Sleep(60000); return 1; }
         if (mode == "probe-descendant")
         {
@@ -205,14 +218,122 @@ public static class RestrictedE2eRunner
             System.Threading.Thread.Sleep(20);
         }
     }
+    static string WindowStationName(IntPtr station)
+    {
+        uint required;
+        GetUserObjectInformationW(station, 2, IntPtr.Zero, 0, out required);
+        if (required < 2 || required > 32768) throw new InvalidOperationException("Invalid E2E window station name size");
+        IntPtr buffer = Marshal.AllocHGlobal((int)required);
+        try
+        {
+            Require(GetUserObjectInformationW(station, 2, buffer, required, out required), "Read E2E window station name");
+            string name = Marshal.PtrToStringUni(buffer);
+            if (String.IsNullOrEmpty(name) || name.IndexOf('\\') >= 0) throw new InvalidOperationException("Invalid E2E window station name");
+            return name;
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+    static void CreatePrivateDesktop(out IntPtr station, out IntPtr desktop, out string desktopPath, out bool privateWindowStation)
+    {
+        station = IntPtr.Zero; desktop = IntPtr.Zero; desktopPath = null; privateWindowStation = false;
+        stage = "window_station_setup";
+        IntPtr stationDescriptor = IntPtr.Zero, desktopDescriptor = IntPtr.Zero;
+        IntPtr originalStation = GetProcessWindowStation();
+        IntPtr originalDesktop = GetThreadDesktop(GetCurrentThreadId());
+        if (!Valid(originalStation) || !Valid(originalDesktop)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Read original window station and desktop");
+        bool stationChanged = false, desktopCreated = false;
+        try
+        {
+            string userSid = WindowsIdentity.GetCurrent().User.Value;
+            string stationSddl = "D:P(A;;0x000F037F;;;" + userSid + ")(A;;0x000F037F;;;SY)";
+            Require(ConvertStringSecurityDescriptorToSecurityDescriptorW(stationSddl, 1, out stationDescriptor, IntPtr.Zero), "Build E2E window station security descriptor");
+            var stationSecurity = new SecurityAttributes { Size = Marshal.SizeOf(typeof(SecurityAttributes)), Descriptor = stationDescriptor, Inherit = 0 };
+
+            // Named stations are private where permitted; non-admin callers keep their station and still get an isolated desktop.
+            string requestedStationName = "SpsE2e_" + Guid.NewGuid().ToString("N");
+            station = CreateWindowStationW(requestedStationName, 1, 0x000F037F, ref stationSecurity);
+            string stationName;
+            if (Valid(station))
+            {
+                privateWindowStation = true;
+                stationName = WindowStationName(station);
+                Require(SetProcessWindowStation(station), "Select owned E2E window station"); stationChanged = true;
+            }
+            else
+            {
+                int nativeError = Marshal.GetLastWin32Error();
+                if (nativeError != 5) throw new Win32Exception(nativeError, "Create owned E2E window station");
+                stationName = WindowStationName(originalStation);
+            }
+
+            stage = "desktop_setup";
+            string desktopName = "SpsE2e_" + Guid.NewGuid().ToString("N");
+            string desktopSddl = "D:P(A;;0x000F01FF;;;" + userSid + ")(A;;0x000F01FF;;;SY)";
+            Require(ConvertStringSecurityDescriptorToSecurityDescriptorW(desktopSddl, 1, out desktopDescriptor, IntPtr.Zero), "Build E2E desktop security descriptor");
+            var desktopSecurity = new SecurityAttributes { Size = Marshal.SizeOf(typeof(SecurityAttributes)), Descriptor = desktopDescriptor, Inherit = 0 };
+            desktop = CreateDesktopW(desktopName, IntPtr.Zero, IntPtr.Zero, 0, 0x000F01FF, ref desktopSecurity);
+            Require(Valid(desktop), "Create owned E2E desktop"); desktopCreated = true;
+            desktopPath = stationName + "\\" + desktopName;
+        }
+        finally
+        {
+            try
+            {
+                if (stationChanged)
+                {
+                    stage = "restore_window_station";
+                    Require(SetProcessWindowStation(originalStation), "Restore caller window station");
+                }
+                if (desktopCreated)
+                {
+                    stage = "restore_thread_desktop";
+                    Require(SetThreadDesktop(originalDesktop), "Restore caller thread desktop");
+                }
+            }
+            finally
+            {
+                if (stationDescriptor != IntPtr.Zero) LocalFree(stationDescriptor);
+                if (desktopDescriptor != IntPtr.Zero) LocalFree(desktopDescriptor);
+            }
+        }
+    }
+    static bool CloseOwnedWindowObjects(IntPtr desktop, IntPtr station)
+    {
+        bool closedAll = true;
+        string desktopState = "not_owned", stationState = "not_owned";
+        if (Valid(desktop))
+        {
+            if (CloseDesktop(desktop)) desktopState = "closed";
+            else
+            {
+                int error = Marshal.GetLastWin32Error();
+                desktopState = "failed"; closedAll = false;
+                Console.Error.WriteLine("restricted_e2e_cleanup_error:phase=owned_object_cleanup,resource=desktop,code=" + error + ",hex=0x" + unchecked((uint)error).ToString("X8"));
+            }
+        }
+        if (Valid(station))
+        {
+            if (CloseWindowStation(station)) stationState = "closed";
+            else
+            {
+                int error = Marshal.GetLastWin32Error();
+                stationState = "failed"; closedAll = false;
+                Console.Error.WriteLine("restricted_e2e_cleanup_error:phase=owned_object_cleanup,resource=window_station,code=" + error + ",hex=0x" + unchecked((uint)error).ToString("X8"));
+            }
+        }
+        Console.WriteLine("{\"ownedDesktopClose\":\"" + desktopState + "\",\"ownedWindowStationClose\":\"" + stationState + "\"}");
+        return closedAll;
+    }
     static int Launch(string mode, string node, string directory)
     {
         stage = "token_setup";
         IntPtr token = IntPtr.Zero, restricted = IntPtr.Zero, admin = IntPtr.Zero, power = IntPtr.Zero;
         IntPtr job = IntPtr.Zero, attributes = IntPtr.Zero, handles = IntPtr.Zero, environment = IntPtr.Zero;
+        IntPtr windowStation = IntPtr.Zero, desktop = IntPtr.Zero;
         IntPtr input = IntPtr.Zero, output = IntPtr.Zero, error = IntPtr.Zero;
         bool attributesInitialized = false, assigned = false;
         ProcessInfo child = new ProcessInfo();
+        int resultCode = 125;
         try
         {
             Require(OpenProcessToken(GetCurrentProcess(), 0x000B, out token), "Open caller token");
@@ -244,6 +365,11 @@ public static class RestrictedE2eRunner
             var startup = new StartupInfoEx(); startup.Startup.Size = Marshal.SizeOf(typeof(StartupInfoEx));
             startup.Startup.Flags = 0x100; startup.Startup.Input = input; startup.Startup.Output = output; startup.Startup.Error = error;
             startup.Attributes = attributes;
+            string desktopPath;
+            bool privateWindowStation;
+            CreatePrivateDesktop(out windowStation, out desktop, out desktopPath, out privateWindowStation);
+            startup.Startup.Desktop = desktopPath;
+            Console.WriteLine("{\"restrictedE2eDesktop\":true,\"privateWindowStation\":" + (privateWindowStation ? "true" : "false") + "}");
             stage = "child_creation";
             string self = Process.GetCurrentProcess().MainModule.FileName;
             var command = new StringBuilder(Command(self, "--child", mode, node, directory));
@@ -252,22 +378,28 @@ public static class RestrictedE2eRunner
                 0x08080404, environment, directory, ref startup, out child), "Create restricted E2E child");
             Require(AssignProcessToJobObject(job, child.Process), "Assign suspended child to cleanup job"); assigned = true;
             Require(ResumeThread(child.Thread) != 0xFFFFFFFF, "Resume E2E child");
+            stage = "child_wait";
             uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : 18u * 60u * 1000u);
             if (wait == 258)
             {
                 Require(TerminateJobObject(job, 124), "Terminate timed-out E2E job");
                 Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm timed-out child exit");
-                Console.Error.WriteLine("restricted_e2e_timeout"); return 124;
+                Console.Error.WriteLine("restricted_e2e_timeout:phase=child_wait"); resultCode = 124;
             }
-            Require(wait == 0, "Wait for E2E child");
-            uint code; Require(GetExitCodeProcess(child.Process, out code), "Read E2E exit code");
-            if (mode == "probe-descendant")
+            else
             {
-                Accounting info;
-                Require(QueryInformationJobObject(job, 1, out info, (uint)Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero), "Inspect descendant fixture");
-                if (info.TotalProcesses < 2 || info.ActiveProcesses < 1) throw new InvalidOperationException("Descendant fixture was not live");
+                Require(wait == 0, "Wait for E2E child");
+                stage = "child_exit";
+                uint code; Require(GetExitCodeProcess(child.Process, out code), "Read E2E exit code");
+                if (code != 0) Console.Error.WriteLine("restricted_e2e_child_exit:phase=child_exit,mode=" + mode + ",code=" + code + ",hex=0x" + code.ToString("X8"));
+                if (mode == "probe-descendant")
+                {
+                    Accounting info;
+                    Require(QueryInformationJobObject(job, 1, out info, (uint)Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero), "Inspect descendant fixture");
+                    if (info.TotalProcesses < 2 || info.ActiveProcesses < 1) throw new InvalidOperationException("Descendant fixture was not live");
+                }
+                resultCode = unchecked((int)code);
             }
-            return unchecked((int)code);
         }
         finally
         {
@@ -283,9 +415,11 @@ public static class RestrictedE2eRunner
             }
             finally
             {
+                stage = "child_cleanup";
                 if (Valid(child.Thread)) CloseHandle(child.Thread);
                 if (Valid(child.Process)) CloseHandle(child.Process);
                 if (Valid(job)) CloseHandle(job);
+                if (!CloseOwnedWindowObjects(desktop, windowStation)) resultCode = 125;
                 if (attributesInitialized) DeleteProcThreadAttributeList(attributes);
                 if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
                 if (handles != IntPtr.Zero) Marshal.FreeHGlobal(handles);
@@ -295,6 +429,7 @@ public static class RestrictedE2eRunner
                 if (power != IntPtr.Zero) LocalFree(power);
             }
         }
+        return resultCode;
     }
     public static int Main(string[] args)
     {
@@ -314,7 +449,7 @@ public static class RestrictedE2eRunner
             }
             return Launch(args[0], args[1], args[2]);
         }
-        catch (Win32Exception exception) { Console.Error.WriteLine("restricted_e2e_native_error:" + exception.NativeErrorCode); return 125; }
-        catch { Console.Error.WriteLine("restricted_e2e_invalid_context:" + stage); return 125; }
+        catch (Win32Exception exception) { Console.Error.WriteLine("restricted_e2e_native_error:phase=" + stage + ",code=" + exception.NativeErrorCode + ",hex=0x" + unchecked((uint)exception.NativeErrorCode).ToString("X8")); return 125; }
+        catch (Exception exception) { Console.Error.WriteLine("restricted_e2e_invalid_context:phase=" + stage + ",type=" + exception.GetType().Name); return 125; }
     }
 }

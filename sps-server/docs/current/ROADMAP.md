@@ -27,10 +27,15 @@
    D7은 server/Member 90일·issuer 365일과 기존 키 갱신 정책 승인이지, 실제
    갱신 구현은 아니다. 미출시 v2 DPAPI store의 Vault-incarnation 결속·복구·process-local
    interlock 한계는 [계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)에 기록한다.
-   기존 설정 source E2E는 로컬 43.7.7에서 다시 통과했다. Source `d3ddbaa` run `40180490974`의 Windows
-   Native/Settings step도 성공했지만 이전 Host/capsule 범위이며 새 filestore의 43.8.3 증거는 아니다.
-   Owner runtime 준비는 성공했고 No-AI는 실행 중이다. 현재 smoke는 새 adapter를 쓰지만 로컬은 version mismatch로
-   crypto 전에 거부된다. 최종 safe runtime 증거는 같은 job 종료 뒤 확인한다.
+   Source `425000cb` CI는 실제 Host/새 Member filestore의 Windows safeStorage 프로세스 간 재독해를
+   Electron 43.8.3 / Node 24.22.0에서 통과했다. Settings와 9개 Linux shard/typecheck/build도 통과했지만
+   No-AI의 elevated PostgreSQL 거부와 Zod gate로 전체 실패다. Source `1cddbcf7`의 첫 CI 실행기 보완도
+   Windows 초기화 오류로 unit 5개 실패해 뒤 E2E가 건너뛰어졌다. 새 시험 전용 desktop 보완은 로컬
+   8/8 및 Desktop 715 total / 714 pass / 0 fail / 1 skip이나 elevated CI는 검증 전이다.
+   Core `0955e8f63`은 초대별 공개 발급 기록과 실제 mTLS 소켓 완료를 조정하는 비활성 내부 서비스를
+   추가했다. 발급은 초대를 소비하지 않고 완료 때만 pending 등록·소비·감사를 원자적으로 처리한다.
+   집중 40/40 및 Core 전체 typecheck/build 통과이며 Main signer IPC/실제 session caller/등록 UI/ingress는 없다.
+   [등록 조정·CI 후속 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
    기존 복구·Source·Node 권한과 Zod High `1243066` 보류·Low 2건 등 출시 Gate는 유지한다.
    UI token gate·Tailscale-free Source·Host 승인/복구 UI도 미완료다.
    정확한 명령·수·runtime·CI revision은 아래 검증 기록에 모으며,

@@ -42,6 +42,12 @@
 - 내부 pairing 저장 계층은 가입 전 verified 계정의 pending 등록과 일회용 소비를 같은
   트랜잭션으로 처리한다. HTTP/인증/TLS 호출자는 미연결이다. D6 승인으로 Desktop 기본값은
   코드를 받은 verified 사용자와 1시간/일회 소모다. 기기 승인·Workspace 권한은 별도다.
+- Core `0955e8f63`의 비활성 내부 enrollment 조정은 공개 발급 기록을 초대별 하나로 예약하고,
+  신뢰된 signer callback 뒤 초대·전체 결속 tuple을 재검사해 공개한다. 실제 authorized/non-resumed
+  TLS 1.3 소켓의 정확한 발급 leaf만 원자적 소비·pending 등록에 쓴다. 서명 timeout/동시성은
+  명시적인 인스턴스 한도이며 무응답 signer는 종료까지 slot을 유지한다. 재시작 중단 기록은
+  자동 재서명하지 않는다. 실제 session caller/Main IPC/ingress/UI는 없고 DB verified flag는 로그인 증거가 아니다.
+  집중 40/40 및 Core typecheck/build는 소스 증거이며 실제 앱/LAN/두 PC 수용이 아니다.
 
 정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과
 [Member 인증서 검증](../reviews/NATIVE-MEMBER-CERTIFICATE-VERIFICATION-2026-10-25.md),
@@ -106,9 +112,12 @@ Electron 프로세스에서 재독해했다. safe result는 Electron **43.8.3**,
 `1243066`으로 실패했다. No-AI step도 elevated Windows 계정에서 embedded PostgreSQL이 시작을
 거부해 Owner Host가 뜨지 않았고, 이후 Workspace BrowserWindow 대기가 시간 초과됐다. 따라서 No-AI
 결과는 실행 중/성공이 아니라 실패이며 acceptance는 통과하지 않았다. CI 전용 restricted-token
-wrapper는 소스로 구현됐고 로컬 Windows probe 7/7 및 Desktop 714 total / 713 pass / 0 fail / 1 skip이다.
-이전 `425000cb` CI에 포함된 구현이 아니므로 새 exact-HEAD CI 검증 전까지 in-progress/pending이며
-green으로 표시하지 않는다. [CI runner 검증](../reviews/NATIVE-WINDOWS-CI-RUNNER-VERIFICATION-2026-10-25.md)을 따른다.
+wrapper의 후속 Source `1cddbcf7` CI `40183986226` / `40183990969`도 실패했다. Windows job
+`121140772485`는 unit probe 5개의 `0xC0000142` 등 초기화 실패 때문에 Native/Settings/No-AI를
+건너뛰었다. 이후 시험 전용 window station/desktop과 명시 ACL·checked cleanup을 보완했다.
+로컬 probe 8/8, Desktop 715 total / 714 pass / 0 fail / 1 skip이지만 elevated path 해결은 미검증이다.
+과거 DPAPI 증거를 새 수정의 qualification으로 바꾸지 않는다.
+[등록/CI 후속 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
 
 정확한 run/job·실패 단계·safe JSON은 [Native CI 관측 기록](NATIVE-CI-OBSERVATION-2026-10-25.md)과
 위 pending 저장 검증을 따른다. 실제 고객 키/listener는 사용하지 않았다.
@@ -190,10 +199,11 @@ TTL·키 회전·rate limit·retention 세부 정책은 계약 PR의 명시적 �
 
 ## 5. HTTP, UI, 실시간 관측
 
-### 최초 등록의 다음 검수안: 발급과 등록의 두 단계
+### 최초 등록 계약: 발급과 등록의 두 단계
 
-아래는 아직 구현·활성화되지 않은 연결 순서다. CSR의 과거 서명 검증을 새 mTLS 연결의
-키 소유로 간주하지 않기 위해 두 경계를 분리한다. 별도 자체 PoP 서명은 만들지 않는다.
+아래 순서 중 Core 발급 기록·조정과 실제 TLS socket 기반 완료 검사는 비활성 소스로 구현됐다.
+실제 앱의 최초 연결은 아직 연결·활성화되지 않았다. CSR의 과거 서명 검증을 새 mTLS 연결의
+키 소유로 간주하지 않기 위해 두 경계를 분리하며 별도 자체 PoP 서명은 만들지 않는다.
 
 1. Member는 전체 초대의 Host 인증서·지문과 실제 서버 인증 TLS를 먼저 대조한다.
    그 뒤에만 현재 SPS 사용자 인증, 초대 secret 및 공개 CSR을 전송한다. Host는 현재
@@ -205,7 +215,10 @@ TTL·키 회전·rate limit·retention 세부 정책은 계약 PR의 명시적 �
 새 연결의 키 증명은 표준 [TLS CertificateVerify](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4.3)를
 사용한다. 최초 등록은 재개 세션·early data를 수용하지 않는 경로로 검증한다. 발급 전
 크기·시도·동시성·서명 예산과 만료를 제한하고 동일 요청은 동일 기록/인증서를 재사용해야 한다.
-서명 예산 수치·발급 기록 저장/정리·실패 복구·프로세스 간 키 전달의 실제 계약은 후속 검수다.
+Core 저장은 migration 0167의 초대별 공개 기록이며 예산/수명은 명시 생성자 입력이다. 동일 committed
+재요청은 같은 인증서를 반환하고, 실패/중단 signing은 자동 재서명하지 않는다. 실제 프로세스 간
+Main signer 채널·사용자 세션 결속·retention 정리·GUI 실패 복구는 후속이다. private key/전체 CSR/초대 secret은
+발급 테이블에 저장하지 않는다. [정확한 검증과 제한](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
 
 pending 등록용 검사는 승인된 기기의 일반 API guard와 분리한다. 이 제한 경로가 임의 Core
 API/파일/WS 프록시가 되어서는 안 된다. 발급·로그인·mTLS 성공만으로 Host 승인이나 Workspace
@@ -270,6 +283,7 @@ Member 연결/철회 API로 바꾸지 않는다. 새 연결만으로 `runs.dispa
 기존 session/Node 자격과 분리했다. migration 0166은 Host/서버 SPKI에 scoped된
 내부 일회용 pairing과 redacted 이벤트를 추가한다. Host 신원의 생성/암호화 보관은 좁은 Core Settings
 준비 경로에 연결됐지만, Member 발급 primitive의 provisioning·실제 최초 pairing·장기 세션 저장은 미구현이다.
+Migration 0167은 초대별 공개 발급 기록을 추가하고 restore는 이를 pairing보다 먼저 삭제한다.
 현재 pin은 생성 시 고정된 값이므로
 키 교체 시 이전 서비스/리스너를 반드시 폐기해야 한다. 새 pin 인스턴스의 거부 시험은
 모든 프로세스의 이전 키를 자동 철회했다는 증거가 아니다.

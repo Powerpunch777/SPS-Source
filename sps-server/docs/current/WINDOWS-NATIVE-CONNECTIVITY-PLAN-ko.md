@@ -16,6 +16,22 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+Core `0955e8f63`에 초대별 공개 발급 기록과 두 단계 등록의 내부 조정 계층을 추가했다.
+발급은 초대를 소비하지 않고, 실제 authorized/non-resumed TLS 1.3 소켓에 제시된 정확한
+발급 인증서만 초대 소비·pending 기기·감사와 함께 트랜잭션으로 등록한다. 잘못된 secret 예산은
+기존 pairing 계층을 재사용한다. 동일 발급 재요청·재시작은 같은 인증서를 반환하고, 중복 서명·
+발급 중 결속 변경·철회·만료·철회 키 부활은 거부한다. migration `0167_absurd_loki`는 새 공개
+발급 자료만 추가하고 restore는 이를 pairing 전에 삭제한다. Core 집중 **40/40** 및 전체
+typecheck/build는 통과했다. Main 서명 IPC·실제 세션 인증 caller·등록 UI·TLS ingress는 아직 없으므로
+이것은 앱 최초 연결 수용이 아니다. [등록 조정 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
+
+Source `1cddbcf7`의 CI `40183986226` / `40183990969`는 실패했다. Windows job
+`121140772485`에서 실행기 probe 5개가 `0xC0000142` 등으로 실패해 Native/Settings/No-AI가
+실행되지 않았다. 새 CI-only helper는 시험 전용 window station/desktop과 사용자/SYSTEM ACL을
+사용하고 기존 OS ACL은 변경하지 않는다. 로컬 **8/8**, Desktop **715 total / 714 pass / 0 fail /
+1 skip**이나, elevated runner의 원인 해결은 새 exact-HEAD CI로 확인 전이다. 앞선 `425000cb`
+DPAPI 성공은 해당 과거 revision에만 적용한다. Zod 보류와 기존 출시 게이트도 유지한다.
+
 신뢰된 Host 전용 Core Settings에서 명시적으로 확인한 뒤 Host 인증서 준비를 실행하는
 좁은 경로가 연결됐다. 이는 Member 기기 인증서 발급이나 등록 UI가 아니다. Native LAN은
 계속 OFF이며 Native LAN listener나 방화벽 변경은 없다. 활성화된 Member 발급·enrollment·세션 등록·갱신도 없다.
@@ -70,9 +86,8 @@ Windows job `121130316230`의 capsule-only smoke와 구별되는 새 filestore�
 전체 CI는 **green이 아니다**. 두 run 모두 production dependency policy step에서 승인 예외 없는
 Zod High `1243066`으로 차단됐고, No-AI E2E step 15는 Owner Host의 embedded PostgreSQL이 elevated
 Windows 계정에서 시작을 거부해 실패한 뒤 인증된 Workspace BrowserWindow 대기로 시간 초과됐다.
-No-AI acceptance 성공으로 기록하지 않는다. CI 전용 restricted-token wrapper는 상위 작업에서
-소스로 구현됐고 로컬 Windows probe **7/7**, Desktop **714 total / 713 pass / 0 fail / 1 skip**이다.
-아직 새 exact-HEAD CI에서 검증되지 않았다. 해당 경로의 재검증 전까지 in-progress/pending으로
+No-AI acceptance 성공으로 기록하지 않는다. 그 후 첫 restricted-token wrapper의 `1cddbcf7` CI는
+위와 같이 실패했고 새 private-desktop 보완의 검증을 기다린다. 해당 경로의 재검증 전까지 in-progress/pending으로
 유지한다. [Native CI 관측 기록](NATIVE-CI-OBSERVATION-2026-10-25.md)과
 [CI runner 검증](../reviews/NATIVE-WINDOWS-CI-RUNNER-VERIFICATION-2026-10-25.md)을 참조한다.
 production/full audit는 Zod High `1243066`과 기존 Low 2건을 보고했고 High 보류는 유지된다(예외 없음).

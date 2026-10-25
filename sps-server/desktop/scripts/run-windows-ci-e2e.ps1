@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('probe', 'probe-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'runtime-discovery', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle')]
+  [ValidateSet('probe', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'runtime-discovery', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle')]
   [string] $Mode
 )
 
@@ -25,6 +25,11 @@ function Assert-PlainDirectoryChain([string] $Directory) {
   }
 }
 
+function Write-ExitDiagnostic([string] $Kind, [string] $Phase, [int] $Code) {
+  $unsignedCode = [uint64]($Code -band 0xffffffffL)
+  [Console]::Error.WriteLine(('{0}:phase={1},code={2},hex=0x{3:X8}' -f $Kind, $Phase, $Code, $unsignedCode))
+}
+
 $desktop = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
 $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
 Assert-PlainDirectoryChain $temp
@@ -34,18 +39,33 @@ New-Item -ItemType Directory -Path $build | Out-Null
 $owned = Get-Item -LiteralPath $build -Force
 $createdTicks = $owned.CreationTimeUtc.Ticks
 $exitCode = 125
+$phase = 'helper_setup'
 $previousConsoleEncoding = [Console]::OutputEncoding
 try {
   [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+  $phase = 'temp_validation'
   Assert-PlainDirectoryChain $build
   $source = Join-Path $PSScriptRoot 'windows-e2e\RestrictedE2eRunner.cs'
   $exe = Join-Path $build 'RestrictedE2eRunner.exe'
+  $phase = 'node_resolution'
   $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
   $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $phase = 'compile'
   & $compiler /nologo /optimize+ /platform:x64 "/out:$exe" $source
-  if ($LASTEXITCODE -ne 0) { throw 'Windows E2E helper compilation failed.' }
+  $compileExitCode = $LASTEXITCODE
+  if ($compileExitCode -ne 0) {
+    Write-ExitDiagnostic 'restricted_e2e_compile_exit' $phase $compileExitCode
+    throw 'Windows E2E helper compilation failed.'
+  }
+  $phase = 'helper_execute'
   & $exe $Mode $node $desktop
   $exitCode = $LASTEXITCODE
+  $phase = 'helper_exit'
+  if ($exitCode -ne 0) { Write-ExitDiagnostic 'restricted_e2e_helper_exit' $phase $exitCode }
+}
+catch {
+  [Console]::Error.WriteLine(('restricted_e2e_wrapper_error:phase={0},type={1}' -f $phase, $_.Exception.GetType().Name))
+  throw
 }
 finally {
   [Console]::OutputEncoding = $previousConsoleEncoding
