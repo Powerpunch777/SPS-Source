@@ -23,10 +23,7 @@ None.
 
 ## Current Moderate Reviews
 
-- `desktop:sprintf-js` advisory `1241202` (moderate)
-  - Reviewed: `2026-10-10`; expires: `2026-11-09`
-  - Audit scopes: `full`
-  - Reason: GHSA-hp3w-g68c-fv3c has no upstream patch. The build-only electron-builder -> @electron/get -> global-agent -> roarr path uses constant format strings; proxy URLs, headers and errors are structured context, not format strings. Desktop src/renderer does not import these modules and the production audit excludes this dependency. Do not downgrade electron-builder via audit --force. Replace the upstream chain or renew the path review before expiry; this full-graph review cannot authorize a production finding.
+None.
 
 ## CI Contract
 

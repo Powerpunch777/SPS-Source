@@ -20,6 +20,10 @@
    실제 두 PC는 미완료다. [Member 기기 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
    이어서 [일회용 pairing 저장 계층](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)의
    원자적 소비·재생/경합 거부와 가입 전 pending 등록을 구현했다. 실제 초기 연결은 후속이다.
+   D7의 인증서 90일/CA 365일 기본값을 승인받고, 별도 서버/CA 키의 생성·암호화 보관과
+   실제 Windows safeStorage의 프로세스 간 재독해를 격리 시험했다.
+   [Host 키 보관 검증](../reviews/NATIVE-HOST-IDENTITY-VERIFICATION-2026-10-25.md)은
+   UI·기기 발급·갱신·LAN/물리 두 PC 완료 증거가 아니다.
 2. Native 초기 연결·승인·철회·복구를 0-Agent/0-Plugin에서도 제공한다. 기존 사용자
    인증·Workspace/Plugin·Node 실행 권한은 분리하고, HTTP/WS 양쪽에 적용한다.
 3. API·Owner 복구·Host Source/SMB의 별도 의존성을 이전/검증한다. 실제 Windows 두 PC와

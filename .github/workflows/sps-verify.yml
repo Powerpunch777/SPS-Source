@@ -349,6 +349,11 @@ jobs:
         working-directory: sps-server/desktop
         run: npm run test:e2e:bootstrap
 
+      - name: Verify isolated Native identity secure storage across Electron processes
+        timeout-minutes: 3
+        working-directory: sps-server/desktop
+        run: npm run test:e2e:native-identity-storage
+
       - name: Run independent Native Core Settings source E2E
         timeout-minutes: 5
         working-directory: sps-server/desktop

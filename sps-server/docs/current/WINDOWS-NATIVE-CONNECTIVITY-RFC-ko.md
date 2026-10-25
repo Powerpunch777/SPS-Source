@@ -53,9 +53,16 @@ TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은
 서버 지문을 담아 신뢰한 별도 채널로 전달하고 앱에서 확인하는 방식으로 승인됐다.
 고객 관리 CA는 후속이다. D2는 PC별 별도 Member mTLS 인증서와 Host 승인 방식으로
 승인됐다. D3는 LAN 기본 꺼짐·명시 opt-in·선택 사설망/전용 TLS 포트이며 실제
-방화벽/LAN 시험은 별도 동의가 필요하다. 발급/회전·listener 배치·구체적 포트는
-세부 계약 검수 대상이다. 자체 challenge
-서명 알고리즘, 인증서 오류 무시, 앱 전역 CA/TLS 검증 해제는 대안이 아니다.
+방화벽/LAN 시험은 별도 동의가 필요하다. **D7 승인(2026-10-25):** 서버와 Member 기기
+인증서의 기본 유효기간은 각각 90일, 별도 issuer CA는 365일이다. 승인 상태인 기기는
+기존 키와 검증된 현재 신원으로 만료 전에 갱신하며, 키 변경/분실 시 명시적 재신뢰와
+재승인이 필요하다. 철회된 기기는 갱신하지 않으며 주기적 재로그인이나 초대코드 재입력을
+강제하지 않는다. 자체 challenge 서명 알고리즘, 인증서 오류 무시, 앱 전역 CA/TLS 검증
+해제는 대안이 아니다.
+
+D7은 기본값과 갱신 원칙의 승인이다. 갱신 threshold와 issuer 회전 세부는 미정이다.
+현재 유효기간 계산 helper와 비활성 Host PKI/암호화 보관 primitive를 격리 시험했으며,
+기기 발급·실제 갱신·mTLS ingress와 제품 UI 연결은 미구현이다. 실제 고객 키/listener는 사용하지 않았다.
 
 신원 확인 전에는 사용자 access token·초대 secret·Workspace 자료를 보내지 않는다.
 신뢰하지 않은 discovery 응답이나 redirect를 따라 credential을 전달하지 않는다.
@@ -98,7 +105,8 @@ TLS probe는 HTTP나 자격정보를 전송하지 않는다. 결과 `tls_peer_ve
 저장 계층은 secret 소비와 계정/pending 기기 결속을 구현했지만, 실제 세션·키 소유와
 TLS 상대를 확인하는 endpoint를 아직 제공하지 않는다.
 SPKI pin은 이 첫 계약에서 서버 인증서 공개키의 DER SubjectPublicKeyInfo 해시다.
-별도 안정 Host identity/키 수명주기·회전·복원 규칙은 아직 미구현이다.
+별도 안정 Host identity/키 수명주기·회전·복원 규칙은 아직 미구현이다. D7의 서버 인증서
+유효기간은 결정됐지만 서버 인증서 갱신과 pin 갱신/배포는 구현되지 않았고 세부 회전 계약도 남아 있다.
 전송 채널에서 코드 전체를 바꾼 공격자는 지문도 바꿀 수 있으므로, 코드 자체는
 독립된 신뢰점이나 Host 서명이 아니다. 기존 신뢰 Host의 pin 변경은 별도 재확인이다.
 
@@ -123,7 +131,8 @@ SPKI pin은 이 첫 계약에서 서버 인증서 공개키의 DER SubjectPublic
 
 기존 membership 초대의 수락/Host 승인 흐름을 재사용할 수 있지만, 현재 초대가
 이 기기 결속·원자적 challenge 프로토콜을 이미 제공한다고 간주하지 않는다.
-TTL·키 수명·rate limit·retention·device certificate 정책은 계약 PR의 명시적 결정이다.
+TTL·키 회전·rate limit·retention 세부 정책은 계약 PR의 명시적 결정이다. D7에서 인증서
+유효기간은 승인됐지만 갱신 threshold·issuer 회전 및 실제 갱신은 아직 구현되지 않았다.
 
 ## 5. HTTP, UI, 실시간 관측
 
@@ -143,8 +152,10 @@ Workspace 인가를 거쳐야 한다. 세션 cookie가 있거나 LAN 소켓이�
 - 초대의 `origin`·`hostId`·지문을 검증한 실제 연결 상대와 함께 대조한다. 하나라도
   다르면 Identity token이나 pairing secret을 보내지 않는다. Host ID 응답을 TLS와
   무관한 신원 증명으로 쓰지 않는다.
-- 초대 만료, TLS 인증서 유효기간, 저장 pin의 수명/회전은 별도다. 인증서 갱신과
-  Host 키 변경의 처리를 명시하고, 변경 pin을 TOFU/일반 CA로 무음 대체하지 않는다.
+- 초대 만료, D7의 인증서 유효기간, 저장 pin의 수명/회전은 별개다. 승인된 기기만 기존
+  키와 검증된 현재 신원으로 만료 전에 갱신할 수 있어야 하며, 실제 갱신 threshold와
+  issuer/pin 회전은 후속 구현이다. Host 키 변경을 명시적으로 처리하고 변경 pin을
+  TOFU/일반 CA로 무음 대체하지 않는다.
 - Node HTTP/TLS client의 검증 설정이 Chromium renderer·WebSocket에 자동 적용된다고
   가정하지 않는다. Electron session별 정책·인증서 cache와 스트림 정리를 별도 검증한다.
   기본 session 전역 검증 해제나 범용 certificate-error 수락은 금지한다.
@@ -181,13 +192,14 @@ Member 연결/철회 API로 바꾸지 않는다. 새 연결만으로 `runs.dispa
 필요한 논리 자료는 Host identity version, 승인 기기/사용자 binding, challenge 소비,
 세션 generation, 철회, redacted 감사다. 기기/이벤트는 additive migration 0165로
 기존 session/Node 자격과 분리했다. migration 0166은 Host/서버 SPKI에 scoped된
-내부 일회용 pairing과 redacted 이벤트를 추가한다. Host 신원의 영속화·실제 최초
-pairing 프로토콜·장기 세션 저장은 미구현이다. 현재 pin은 생성 시 고정된 값이므로
+내부 일회용 pairing과 redacted 이벤트를 추가한다. Host 신원의 생성/암호화 보관은 별도
+비활성 primitive로 시험했지만, 제품 생명주기·실제 최초 pairing·장기 세션 저장은 미구현이다. 현재 pin은 생성 시 고정된 값이므로
 키 교체 시 이전 서비스/리스너를 반드시 폐기해야 한다. 새 pin 인스턴스의 거부 시험은
 모든 프로세스의 이전 키를 자동 철회했다는 증거가 아니다.
 
-Windows safeStorage는 기존 키 보관 패턴의 재사용 후보이지 TPM/non-exportable
-보장의 증거가 아니다. Member 키와 Node 키는 별도 용도·파일/slot·회전·폐기 규칙을
+Windows safeStorage를 기존 패턴에 맞춰 재사용하며, 별도 Electron 프로세스 재독해까지
+격리 시험했다. TPM/non-exportable 또는 같은 사용자 악성 프로세스 격리를 보장하지 않는다.
+Member 키와 Node 키는 별도 용도·파일/slot·회전·폐기 규칙을
 갖는다. Host 이전/Owner Vault 복원은 기존 remote credential을 부활시키지 않고
 명시적 재승인을 요구한다. restore sanitizer에 새 자격 자료를 포함해야 한다.
 

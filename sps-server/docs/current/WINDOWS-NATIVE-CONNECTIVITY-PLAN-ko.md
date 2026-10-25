@@ -116,8 +116,15 @@ D6 승인(2026-10-25): 초대코드를 받은 사람이 Google/SPS 로그인 후
 일회 소모한다. Host 기기 승인과 Workspace/Plugin/Node/Source 권한은 자동으로 생기지 않는다.
 잘못된 secret이나 잘못된 대상 요청이 정상 등록의 성공으로 취급되는 정책은 아니다.
 
-D4~D5와 실제 키 수명·발급/회전·최대 TTL·rate limit·보관 기간·listener 배치의 세부
-계약은 아직 검수 대상이다. 권고를 승인된 운영 정책으로 간주하지 않는다.
+**D7 승인(2026-10-25):** 서버 및 Member 기기 인증서의 기본 유효기간은 각각 **90일**,
+별도 issuer CA 인증서의 기본 유효기간은 **365일**이다. 여전히 승인된 기기는 만료 전에
+기존 키와 검증된 현재 신원을 사용해 갱신한다. 키가 변경·분실되면 명시적 재신뢰/재승인이
+필요하고, 철회된 기기는 갱신하지 않는다. 주기적 재로그인이나 코드를 다시 붙여넣도록 강제하지 않는다.
+
+D7은 운영 기본값과 갱신 원칙의 승인이다. 현재 구현은 명시적 시각을 받는 계산 helper와
+비활성 Host 인증서 생성/암호화 보관 primitive이며, 실제 갱신 threshold·issuer 회전·기기
+발급·mTLS ingress는 미완료다. 격리 시험 키만 사용했고 실제 고객 키/listener는 만들지 않았다.
+D4~D5와 키 회전·최대 TTL·rate limit·보관 기간·listener 배치의 세부 계약은 여전히 검수 대상이다.
 
 | ID | 필요한 결정 | 권고 / 비교안 | 결정 전 가능한 일 |
 | --- | --- | --- | --- |
@@ -125,6 +132,7 @@ D4~D5와 실제 키 수명·발급/회전·최대 TTL·rate limit·보관 기간
 | D2 승인 | PC별 별도 Member mTLS 인증서 + Host 승인 | 사용자/Node/CLI/Source 권한 분리, 재설치/키 분실 시 재승인 | 발급·보관·철회·회전 세부 계약, 기존 키와 용도 분리 |
 | D3 승인 | LAN 기본 off, Host 명시 opt-in, 선택 사설망 + 전용 TLS 포트 | local_trusted bind 확대/자동 방화벽 변경 금지; 배치 세부는 검수 | loopback TLS 시험, 외부 listener/방화벽/두 PC는 별도 동의 |
 | D6 승인 | 코드 받은 verified 사용자·1시간·첫 등록 요청 시 소모 | 기기 승인·Workspace/실행 권한 별도 | 비활성 Desktop 요청 기본값; 실제 발급/전송은 후속 |
+| D7 승인 | 서버/Member 인증서 90일, 별도 issuer CA 365일; 승인 기기 기존 키·현재 신원으로 만료 전 갱신 | 키 변경/분실은 명시적 재신뢰·재승인, 철회 기기는 갱신 금지, 주기적 재로그인/코드 재입력 강제 없음 | validity 계산·비활성 Host PKI/보관 시험; 갱신 threshold·issuer 회전·기기 발급·mTLS ingress 미완료 |
 | D4 | Tailscale 없는 Host Source 접근 | 제한된 파일 broker vs OS 공유; 경로/링크/충돌/철회 검증과 권한 명시 | 현재 SMB 보존, read/write/rename/delete 요구 정리 |
 | D5 | WAN / 자동 검색 / 운영 모델 | LAN 수용 뒤 기업 TLS endpoint·relay·NAT 대안 비교 | 이번 구현 범위에서 제외 |
 
@@ -190,7 +198,8 @@ TLS 확인 시험을 추가했다. Stage 2a는 additive migration 0165와 Core �
 초대 대상/기본 TTL은 D6으로 확정했다. Desktop의 비활성 요청 기본값은 any-verified-user와
 1시간이며, 범용 Core 저장 계층은 여전히 명시적인 정책 입력을 요구한다.
 
-다음은 Host 신원의 영속화·발급/키 보관·pairing 전송 결속과 기본 off Native ingress,
+비활성 Host PKI/암호화 보관의 격리 시험은 [키 보관 검증](../reviews/NATIVE-HOST-IDENTITY-VERIFICATION-2026-10-25.md)에 기록한다.
+다음은 이 기반의 Native 설정/복원 생명주기 연결·기기 발급·pairing 전송 결속과 기본 off Native ingress,
 0-Agent/0-Plugin 설정·복구 UI다. 전체 HTTP/WS/서브리소스 인가·철회와 실제 두 PC는
 후속 수용 Gate다. OS 키/인증서 저장소·방화벽·Tailscale·설치본·고객 데이터를 변경하는
 명령은 실행하지 않는다. 검수/동의 전 실제 LAN·WAN·Linux·고객 환경으로 확대하지 않는다.

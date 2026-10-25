@@ -54,6 +54,20 @@ The packaged `0.4.135` Owner Host runtime retains the ACPX dependency-closure ch
 
 ## Dependency verification (rechecked 2026-10-18)
 
+### Current 2026-10-25 source check
+
+Both production and full-graph policy checks currently stop on Zod High 1243066;
+the user-held major migration has not been approved or waived. Desktop's patched
+lockfile reports no advisories after Electron 43.8.3, Undici 7.30.1/6.29.1 and
+fast-uri 3.1.9 updates. Core Storybook and matching addons are 10.6.2; the two
+Storybook Critical/High findings disappeared. The stale sprintf-js review was
+removed and there are no current policy exceptions or Moderate reviews.
+Two Core Low findings remain visible. This is not a clean release policy result.
+An existing running development Electron 43.7.7 process was left untouched;
+lockfile changes do not update an active application or qualify patched binaries.
+See the scoped [Native Host identity verification](../reviews/NATIVE-HOST-IDENTITY-VERIFICATION-2026-10-25.md)
+for source tests, actual safeStorage smoke version and remaining integration gaps.
+
 **Historical result, not the current gate:** the 2026-10-25 CI production audit
 rejects Zod 3 High advisory 1243066. Its migration is still on hold and no exception
 was added. The October 18 result below cannot authorize the current candidate.

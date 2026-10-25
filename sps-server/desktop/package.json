@@ -23,6 +23,7 @@
     "pretest": "npm run sync:desktop-node && npm run sync:plugin-sdk",
     "test": "node --test test/*.test.mjs",
     "test:e2e:bootstrap": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-isolated-desktop-ui.mjs",
+    "test:e2e:native-identity-storage": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-native-identity-storage.mjs",
     "test:e2e:core-settings": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-core-settings-desktop.mjs && node scripts/smoke-core-settings-desktop.mjs --corrupt-recovery && node scripts/smoke-core-settings-desktop.mjs --corrupt-desktop-state && node scripts/smoke-core-settings-desktop.mjs --unwritable-desktop-state && node scripts/smoke-core-settings-desktop.mjs --malformed-routing-state && node scripts/smoke-core-settings-desktop.mjs --unverified-legacy-adoption && node scripts/smoke-core-settings-desktop.mjs --deferred-owner",
     "test:security:appcontainer-canary": "node scripts/security-poc/run-appcontainer-canary.mjs",
     "test:e2e:workspace-surfaces": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs",
@@ -53,14 +54,16 @@
     "package:candidate:win": "npm run release:clean-evidence && npm run release:verify-evidence-privacy && npm run prepare:owner-host-runtime && electron-builder --win nsis --publish never && node scripts/write-update-metadata.mjs && npm run stage:agent-runtime-packs && npm run archive:agent-runtime-packs && npm run verify:packaged-owner-host-runtime && npm run smoke:packaged-marketplace-mcp-runtime && node scripts/create-release-manifest.mjs && npm run release:verify-evidence-privacy"
   },
   "dependencies": {
+    "@peculiar/x509": "2.2.0",
     "@sonparkserver/plugin-sdk": "file:../../external/sps-plugin-sdk",
     "@sps/desktop-node": "file:../desktop-node",
     "electron-updater": "6.8.9",
+    "reflect-metadata": "0.2.2",
     "tar": "7.5.22"
   },
   "devDependencies": {
     "js-yaml": "4.3.2",
-    "electron": "^43.7.7",
+    "electron": "^43.8.3",
     "electron-builder": "^26.15.3"
   },
   "overrides": {
