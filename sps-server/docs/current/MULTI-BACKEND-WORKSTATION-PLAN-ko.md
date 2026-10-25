@@ -1,6 +1,6 @@
 # SPS 범용 워크스테이션 / 다중 실행 백엔드 계획
 
-기준일: 2026-10-25 KST. 상태: Stage 0/1 및 Stage 2a/2b 소스 수용 통과.
+기준일: 2026-10-25 KST. 상태: Stage 0/1 및 Stage 2a/2b/2c 소스 수용 통과.
 이 문서는 사용자의 다중 백엔드 전달 문서와 후속 **Core 비공개 / SDK 공개 유지**
 결정을 제품 문서에 정렬한다. 전달 문서의 예시 API를 실제 export로 간주하지 않는다.
 현행 근거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
@@ -11,6 +11,8 @@ Stage 2a의 최종 tuple·82/157/530 및 실제 앱 범위는
 [Runtime 관측 수용 기록](../reviews/RUNTIME-DISCOVERY-ACCEPTANCE-2026-10-25.md)을 따른다.
 Stage 2b의 Host API 등록 확인과 실제 권한 거부는
 [Host 지원 수용 기록](../reviews/HOST-SUPPORT-ACCEPTANCE-2026-10-25.md)을 따른다.
+Stage 2c의 안전한 Agent 조회·Node freshness 보정은
+[Agent 조회 수용 기록](../reviews/AGENT-EXECUTION-DESCRIPTOR-ACCEPTANCE-2026-10-25.md)을 따른다.
 모델 요청·키 브로커·OCE 등 후속 백엔드는 아직 구현 완료가 아니다.
 
 ## 1. 제품 결정과 비변경 범위
@@ -167,6 +169,9 @@ adapter routing을 Host 로컬 실행이라고 단정하거나 Gateway/OCE의 �
 거부하는 회귀 시험을 추가한다. 별도 임시 Workspace의 실행하지 않는 Agent를
 Desktop에서 조회·일시중지·Node binding/철회하며 No-AI A/B Workspace는 Agent 0개로
 유지한다. 실제 Provider 호출이나 사용자 데이터/설치본 변경은 하지 않는다.
+최종 Desktop 532/532, SDK 166/166, Core 관련 9파일 85/85와 30개 package typecheck,
+source Electron의 실제 최소 정보/권한·scope·Node binding/철회 및 기존 No-AI 전체
+연속 수용을 통과했다. 정확한 tuple과 실패/수정 이력은 위 수용 기록을 따른다.
 
 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되

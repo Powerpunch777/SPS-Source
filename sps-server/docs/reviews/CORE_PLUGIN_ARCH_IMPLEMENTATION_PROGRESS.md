@@ -302,6 +302,24 @@ Source `2ae95596b4985744340dfe69bb333cc041595250`, Core `282df938...`, SDK
 실제 Agent/backend 연결과 모델 broker, OS/renderer 격리, 전체 Core/Linux·서명·
 물리 두 PC·Identity 운영 및 보안/설치본 보류는 그대로 남는다.
 
+## 다중 백엔드 Stage 2c / 안전한 Agent 실행 정보
+
+기존 Agent list/get은 유지하고 agents.read의 별도 describeExecution을 추가했다.
+설정 상태·레지스트리 등록·기존 Node binding/관측만 반환하며 config/cwd/환경/키는
+조회해 반환하지 않는다. readiness는 unknown이고 실제 dispatch는 기존 검사를 따른다.
+Agent Node 경로의 미래 heartbeat 허용도 기존 엄격한 helper로 정렬했다.
+
+최종 Source `367999d156b7d5aebfa924133f4cbd15934c6a18`, Core `33f59c073...`, SDK
+`3feb5c42...`에서 Desktop 532/532, SDK 166/166, Core 관련 9파일 85/85,
+30개 package typecheck·서버 build·compatibility를 통과했다. 실제 source Desktop의
+별도 시험 Workspace에서 실행하지 않는 Agent 조회·scope/capability 거부·Node
+binding/일시중지/철회와 기존 No-AI 전체 수용 및 정리 exit 0을 확인했다.
+[상세 수용 기록](AGENT-EXECUTION-DESCRIPTOR-ACCEPTANCE-2026-10-25.md)을 따른다.
+
+deprecated 생성 fixture와 외부 어댑터명 호환성 오판을 고친 뒤 최종 검증을 다시
+수행했다. 실제 CLI/원격 PC/Provider/Gateway/OCE, 전체 Core/Linux, 설치본·운영
+Identity·서명·두 PC·보호 실행은 여전히 별도이며 보안/설치본 보류도 유지한다.
+
 ## 다음 게이트
 
 독립 복구 경로의 장애 조합 검증을 보강하고 OS/renderer 실행 계약을 구체화한다.

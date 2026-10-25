@@ -17,6 +17,8 @@
    Desktop에서 검증했다. [관측 수용 기록](../reviews/RUNTIME-DISCOVERY-ACCEPTANCE-2026-10-25.md)을 따른다.
    Host 초기화 API 등록 snapshot과 공개 reader(Stage 2b)도 실제 권한 거부까지
    검증했다. [Host 지원 수용 기록](../reviews/HOST-SUPPORT-ACCEPTANCE-2026-10-25.md)을 따른다.
+   안전한 Agent 실행 설정 조회(Stage 2c)는 기존 list/get을 보존하며 config/키 없이
+   별도 Node binding 관측을 제공한다. [Agent 수용 기록](../reviews/AGENT-EXECUTION-DESCRIPTOR-ACCEPTANCE-2026-10-25.md)을 따른다.
    모델 요청·CLI·Agent 세션과 OCE 관리의 서로 다른 능력/권한/실행 소유권은 계속 정렬한다.
 3. Direct API와 CLI 사례는 mock/승인된 시험 범위에서 구현. 실키·고객 데이터·유료
    API 및 실제 게임 빌드 환경은 별도 확인.
