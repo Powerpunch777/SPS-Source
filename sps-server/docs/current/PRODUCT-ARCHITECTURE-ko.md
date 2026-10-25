@@ -1,6 +1,6 @@
 # SPS Product Architecture
 
-Last updated: 2026-10-25
+Last updated: 2026-10-26
 
 ## Purpose
 
@@ -126,6 +126,11 @@ now atomically consumes an invitation and registers a pending first-time device,
 without granting membership or execution. It is not wired to a real enrollment
 endpoint. Approved Desktop defaults are any Google/SPS-verified recipient,
 one-hour lifetime and consumption on the first successful registration request.
+An inactive [enrollment HTTP boundary](../reviews/NATIVE-ENROLLMENT-HTTP-BOUNDARY-2026-10-26.md)
+now composes existing session/pairing services with strict request limits and a
+deadline/disposal transaction guard. Real loopback TLS/mTLS and temporary DB
+tests do not mount it in product startup or qualify app enrollment, LAN, general
+Core proxying, complete HTTP/WS authorization or physical Member access.
 
 ## Product Boundary
 

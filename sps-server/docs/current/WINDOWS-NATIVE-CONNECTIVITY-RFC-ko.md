@@ -6,6 +6,11 @@
 소스 기반으로 구현됐고, 신뢰된 Host 전용 Core Settings의 명시 확인 인증서 준비 경로만 연결됐다.
 실제 Native LAN ingress는 연결되지 않았고 LAN은 사용할 수 없다.
 
+[후속 등록 HTTP 경계](../reviews/NATIVE-ENROLLMENT-HTTP-BOUNDARY-2026-10-26.md)는
+엄격한 TLS/쿠키 세션·크기·시간·동시성 입력을 기존 등록 service와 조합한다. 전용
+비활성 handler이며 실제 listener/session exchange·앱 등록·일반 Core proxy는 아니다.
+개인키나 계정 선택을 요청 body/Plugin에 넘기지 않고 SDK 계약도 변경하지 않는다.
+
 최신 [기기 관리](../reviews/NATIVE-HOST-MANAGEMENT-VERIFICATION-2026-10-25.md)와
 [준비된 Host 앱 수용](../reviews/NATIVE-PREPARED-HOST-ACCEPTANCE-2026-10-26.md)은
 로컬 status/list/events/approve/revoke의 소스 연결 및 실제 Main/Core의 empty-list

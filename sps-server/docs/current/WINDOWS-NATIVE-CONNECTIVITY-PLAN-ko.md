@@ -16,6 +16,12 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+후속 [등록 HTTP 경계](../reviews/NATIVE-ENROLLMENT-HTTP-BOUNDARY-2026-10-26.md)는
+기존 세션·pairing·발급 계층을 재사용하는 비활성 전용 핸들러다. 두 내부 경로만 받으며
+본문/읽기/실행 시간·동시성 한도와 timeout/dispose 뒤의 DB/응답 guard를 검증했다.
+실제 loopback TLS/mTLS·임시 DB 시험이지 앱 startup mount, 최초 세션 교환, LAN listener,
+전체 HTTP/WS 인가나 실제 두 PC 지원이 아니다. 기존 API/SDK/지원 전송은 바꾸지 않았다.
+
 준비된 Host의 실제 Main/Core 연결은 [후속 소스 앱 수용](../reviews/NATIVE-PREPARED-HOST-ACCEPTANCE-2026-10-26.md)에서
 검증했다. 별도 격리 Electron으로 시험용 DPAPI identity를 먼저 준비하고, 실제 앱을
 두 번 실행해 Owner 세션/Host 핀 결속·available 빈 기기 목록·Plugin startup 423 차단·

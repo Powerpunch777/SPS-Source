@@ -23,6 +23,10 @@
 조회하는 경로를 통과했다. Plugin startup 차단/0-Agent/일반 renderer 403과 재시작을
 검사했지만 보안 확인창·실제 기기 enrollment/승인·LAN/물리 두 PC 수용은 아니다.
 
+[등록 HTTP 경계](../reviews/NATIVE-ENROLLMENT-HTTP-BOUNDARY-2026-10-26.md)는 기존
+세션·초대·발급 서비스를 한도/기한/late-effect guard와 조합해 loopback TLS/mTLS 및
+임시 DB에서 검증했다. 제품 mount·앱 세션 교환·LAN listener·HTTP/WS 전체 인가는 미완료다.
+
 1. Windows Desktop/Host/Member/Node를 우선 안정화하고, 외부 Tailscale 없이 동작하는
    내장 **LAN** 경로를 개발한다. Stage 0 감사는 완료했고, 전체 초대코드와 서버 지문
    확인(D1), PC별 mTLS 인증서(D2), LAN 기본 off/명시 opt-in(D3)이 승인됐다. Core 기기
