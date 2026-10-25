@@ -54,7 +54,11 @@ The packaged `0.4.135` Owner Host runtime retains the ACPX dependency-closure ch
 
 ## Dependency verification (rechecked 2026-10-18)
 
-Both production and full-graph dependency policy gates pass with zero Critical
+**Historical result, not the current gate:** the 2026-10-25 CI production audit
+rejects Zod 3 High advisory 1243066. Its migration is still on hold and no exception
+was added. The October 18 result below cannot authorize the current candidate.
+
+At that checkpoint, both production and full-graph dependency policy gates passed with zero Critical
 or High advisories. This is not a claim of zero vulnerabilities. Production has
 two Low advisories (`@tootallnate/once` in sqlite3/node-gyp install tooling and
 `katex` through Mermaid). The full graph additionally has one reviewed Moderate
@@ -72,7 +76,7 @@ workflows now enforce both scopes and documentation consistency. Stale or expire
 policy entries fail closed. These are time-stamped audit results, not permanent
 claims about future registry advisories.
 
-## Local validation
+## Historical local validation
 
 - Desktop: 369/369 tests; Desktop Node: 39/39 tests.
 - Core transport/catalog/auth configuration: 41/41; asset upload: 8/8.
@@ -137,6 +141,15 @@ The following are explicit release blockers, not completed code-test claims:
 - The exact candidate HEAD has not completed all nine Linux Core regression
   shards. Targeted Windows/Core checks and typecheck/build results do not
   substitute for the full Linux shard evidence.
+- Windows No-AI source Desktop E2E has not passed on the current CI runner.
+  The previous Source run `40169666581` reached a real runner but embedded
+  PostgreSQL refused its administrative token; this is not a billing/no-steps
+  failure or successful Host startup. Do not skip the E2E or disable PostgreSQL's
+  safety check. Qualify an unprivileged CI process and rerun the same final tuple.
+- Core's optional GitHub Dependency Review reports that Dependency graph/review
+  is unsupported in the current repository configuration. Resolve the service
+  prerequisite or adopt an explicitly reviewed equivalent; a failed check is not
+  a completed dependency review. Source production/full-graph audit gates remain required.
 - The pinned Core is still on Draft PR #26, not independently approved/merged
   into Core `main`; verify exact reachability for the tuple before release.
 - The production dependency gate currently rejects Zod 3 High advisory 1243066.

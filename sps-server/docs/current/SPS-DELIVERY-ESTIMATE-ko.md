@@ -4,7 +4,8 @@
 현재 Source는 Windows `0.4.137` 개발 후보이며 새로운 서명 설치본이 아니다.
 [Windows 내장 연결 계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 D1은 승인됐고,
 D2 기기별 mTLS와 D3 LAN 기본 off 정책도 승인됐다. loopback TLS 확인 소스 시험은
-통과했으나 실제 LAN·기기 승인·Tailscale 없는 Source 이전은 아직 구현/수용 전이다.
+통과했고 Core 기기 registry/승인·철회와 선택적 mTLS/WS 소스 기반을 추가했다.
+실제 LAN·인증서 발급/앱 최초 pairing·Tailscale 없는 Source 이전은 구현/수용 전이다.
 
 ## 1. 무엇을 완성으로 볼 것인가
 

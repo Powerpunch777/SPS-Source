@@ -10,7 +10,9 @@ OS certificate store, installed app or production Identity change was made.
 
 - Source before this increment: `dd04424e7137d0cef561442e01d133e362cd32ae`.
 - Core before this increment: `0ba417ad9b0e26ae1cf598edca524b82059d04de`.
-- Core implementation: `f653375c113c46c6c09e2e3a20fd45c73598cfca`, also pinned in
+- Native Core implementation: `f653375c113c46c6c09e2e3a20fd45c73598cfca`.
+- Final Core pin includes the private-MCP CI fix:
+  `f2260640cf5a33e1e7ab97193efa70b6c6d3753a`, also recorded in
   [CURRENT-CANDIDATE](../current/CURRENT-CANDIDATE.md) and the Source submodule.
   The enclosing Source commit identifies this record.
 - Public SDK remains `d4d69208480fc618b2055378b85d183aea422d50`; no new Connection API.
@@ -119,3 +121,38 @@ No whole-Core test-suite/Linux-shard result, dependency-audit pass, Electron E2E
 physical two-PC result or signed-package proof is claimed by this record. Existing
 Zod/installer holds, full latest CI, Identity rollout, Core main/independent review,
 Windows signing and identical-byte two-PC release requirements remain unchanged.
+
+## Fresh remote CI observations
+
+CI now reaches real runners; the earlier billing/no-step explanation is not the
+current result. Previous Source run `40169666581` at `dd04424e` completed all nine
+Linux shards, but failed Windows source No-AI E2E because embedded PostgreSQL
+rejected the runner's administrative token. Its production audit also correctly
+rejected Zod 3 High 1243066. Neither result covers the new Core device code.
+
+Source run `40171387003` at `f391c3c2` completed all nine Linux shards and the full
+Linux typecheck/build against Core `f653375c1`; the whole workflow was still running
+when observed, and its production audit had failed. Its sibling `40171389690`
+was queued. Preserve these handles rather than restarting duplicates. This is
+the Native implementation checkpoint, not final Core `f2260640c` qualification.
+Core run `40171286729` reported an unpublished internal MCP package in
+release enrollment; review run `40171284756` reported unavailable Dependency Review.
+These are actual failures with steps, not a new claim of all-green CI. Subsequent
+candidate changes require fresh exact-HEAD verification; the latest PR checkpoint
+records the current tuple and handles.
+
+The internal `@sps/mcp-server` package is now private and absent from public npm
+release enrollment. Its server/CLI dependents are also off that publication train
+so no public package points at a private workspace dependency. Build/bin/dist
+mappings remain intact. The release gate itself was not relaxed and no package
+was published. Release-map/bootstrap contracts passed **23/23**, MCP typecheck/build
+passed, and the bootstrap selector excludes this private package. This is consistent
+with the approved private-Core/public-SDK boundary, not a Dependency Review or
+security-audit waiver.
+
+After the private-MCP follow-up at Core `f2260640c`, the same 96 focused tests,
+30-package typecheck, full Core build and Desktop 572 tests were rerun successfully.
+The full base-ref bootstrap network command was attempted on Windows but its
+upstream `spawnSync npm` launcher failed with `ENOENT`; do not confuse the 23
+unit contracts/private-package selector with a successful Windows network check.
+The exact-Core Ubuntu policy run `40171821294` is the remote follow-up handle.
