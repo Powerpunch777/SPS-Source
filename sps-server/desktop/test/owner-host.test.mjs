@@ -26,13 +26,26 @@ function fakeChild(onKill = () => {}) {
   const child = new EventEmitter();
   child.exitCode = null;
   child.connected = true;
-  child.send = (_message, callback) => { callback?.(null); return true; };
+  child.send = (message, callback) => {
+    callback?.(null);
+    if (message?.kind === "sps.owner-host.shutdown") onKill(child);
+    return true;
+  };
   child.disconnect = () => {
     if (!child.connected) return;
     child.connected = false;
     child.emit("disconnect");
   };
   child.kill = () => onKill(child);
+  const shutdownPipe = new EventEmitter();
+  shutdownPipe.destroyed = false;
+  shutdownPipe.writableEnded = false;
+  shutdownPipe.end = message => {
+    assert.equal(message, "sps.owner-host.shutdown/v1\n");
+    shutdownPipe.writableEnded = true;
+    onKill(child);
+  };
+  child.stdio = [null, null, null, null, shutdownPipe];
   return child;
 }
 
@@ -238,13 +251,119 @@ test("only a directly owned Core process gets the private signer IPC and stop re
     spawn: (_command, _args, value) => { options = value; return child; },
     terminateTree: async () => { assert.equal(disposed, 1); child.exitCode = 0; child.emit("exit", 0); },
   });
-  await manager.start(); assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe", "ipc"]);
+  await manager.start(); assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe", "ipc", "pipe"]);
+  assert.equal(options.env.SPS_DESKTOP_OWNED_SHUTDOWN_PIPE, "1");
   assert.equal(child.listenerCount("message"), 1); await manager.stop({ force: true });
   assert.equal(child.listenerCount("message"), 0); assert.equal(child.connected, false); assert.equal(disposed, 1);
   let attached = false;
   const existing = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", fetchImpl: async () => response({ status: "ok" }),
     createNativeSigner: () => { attached = true; }, spawn: () => { throw new Error("Must not spawn"); } });
   assert.equal((await existing.start()).state, "running-existing"); assert.equal(attached, false);
+});
+
+test("Windows normal stop revokes signing before requesting Core drain and does not send an abrupt signal", { skip: process.platform !== "win32" }, async () => {
+  let healthy = false, disposed = 0, kills = 0, sent = 0;
+  const child = fakeChild();
+  child.kill = () => { kills++; };
+  child.stdio[4].end = message => {
+    assert.equal(message, "sps.owner-host.shutdown/v1\n");
+    assert.equal(disposed, 1);
+    assert.equal(child.connected, false);
+    sent++; healthy = false; child.exitCode = 0; child.emit("exit", 0);
+  };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["core-fixture.mjs"] }),
+    spawn: () => { healthy = true; return child; }, delay: async () => {},
+    createNativeSigner: () => ({ inspect: async () => ({}), sign: async () => ({}), dispose: () => { disposed++; } }),
+  });
+  await manager.start();
+  assert.equal((await manager.stop()).state, "stopped");
+  assert.equal(sent, 1); assert.equal(kills, 0); assert.equal(child.connected, false);
+});
+
+test("an ordinary Core without Native signing also owns a Windows shutdown-only pipe", { skip: process.platform !== "win32" }, async () => {
+  let healthy = false, options;
+  const messages = [];
+  const child = fakeChild();
+  child.stdio[4].end = message => { messages.push(message); healthy = false; child.exitCode = 0; child.emit("exit", 0); };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["core-fixture.mjs"] }),
+    spawn: (_command, _args, value) => { options = value; healthy = true; return child; }, delay: async () => {},
+  });
+  await manager.start(); await manager.stop();
+  assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe", "ipc", "pipe"]);
+  assert.deepEqual(messages, ["sps.owner-host.shutdown/v1\n"]);
+  assert.equal(child.listenerCount("message"), 0);
+});
+
+test("concurrent Windows normal stops share the drain after Native IPC disconnect", { skip: process.platform !== "win32" }, async () => {
+  let healthy = false, disposed = 0, kills = 0, sent = 0;
+  const child = fakeChild();
+  child.kill = () => { kills++; };
+  child.stdio[4].end = message => {
+    assert.equal(message, "sps.owner-host.shutdown/v1\n");
+    sent++;
+  };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["core-fixture.mjs"] }),
+    spawn: () => { healthy = true; return child; }, delay: async () => {},
+    createNativeSigner: () => ({ inspect: async () => ({}), sign: async () => ({}), dispose: () => { disposed++; } }),
+  });
+  await manager.start();
+  const first = manager.stop();
+  const second = manager.stop();
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(child.connected, false);
+    assert.equal(sent, 1); assert.equal(disposed, 1); assert.equal(kills, 0);
+  } finally {
+    healthy = false; child.exitCode = 0; child.emit("exit", 0);
+    await Promise.all([first, second]);
+  }
+  assert.equal((await manager.inspect()).state, "stopped");
+});
+
+test("normal Windows stop retains its private pipe after an earlier signer invalidation", { skip: process.platform !== "win32" }, async () => {
+  let healthy = false, sent = 0, killed = 0;
+  const child = fakeChild();
+  child.kill = () => { killed++; };
+  child.stdio[4].end = message => {
+    assert.equal(message, "sps.owner-host.shutdown/v1\n");
+    assert.equal(child.connected, false);
+    assert.equal(child.listenerCount("message"), 0);
+    sent++; healthy = false; child.exitCode = 0; child.emit("exit", 0);
+  };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["core-fixture.mjs"] }),
+    spawn: () => { healthy = true; return child; }, delay: async () => {},
+    createNativeSigner: () => ({ inspect: async () => ({}), sign: async () => ({}), dispose() {} }),
+  });
+  await manager.start(); manager.invalidateNativeSigner();
+  assert.equal(healthy, true); assert.equal(killed, 0);
+  await manager.stop();
+  assert.equal(sent, 1); assert.equal(killed, 0);
+});
+
+test("an explicit force stop can still escalate an in-flight Windows graceful drain", { skip: process.platform !== "win32" }, async () => {
+  let healthy = false, terminated = 0;
+  const child = fakeChild();
+  child.pid = 12345;
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["core-fixture.mjs"] }),
+    spawn: () => { healthy = true; return child; }, delay: async () => {},
+    createNativeSigner: () => ({ inspect: async () => ({}), sign: async () => ({}), dispose() {} }),
+    terminateTree: async pid => { assert.equal(pid, child.pid); terminated++; healthy = false; child.exitCode = 0; child.emit("exit", 0); },
+  });
+  await manager.start();
+  const graceful = manager.stop();
+  await manager.stop({ force: true });
+  await graceful;
+  assert.equal(terminated, 1);
 });
 
 test("recovers an owned Host that becomes healthy after a bounded startup wait", async () => {

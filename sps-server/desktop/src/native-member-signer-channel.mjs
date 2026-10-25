@@ -37,8 +37,8 @@ export function attachSpsNativeMemberSignerChannel(child, signer, { isCurrent, t
     child.removeListener("error", dispose);
     for (const entry of pending.values()) { clearTimeout(entry.timer); entry.cancelled = true; entry.controller.abort(); }
     try { signer.dispose(); } catch { /* No alternate signing route or raw error. */ }
-    // This IPC descriptor exists only for the Native signer. Closing it makes
-    // Core's lifecycle fence observable without killing the ordinary Host.
+    // Closing parent IPC fences Native authority without killing the Host.
+    // Owned-process shutdown retains its separate, stop-only pipe.
     try { if (child.connected) child.disconnect(); } catch { /* Already unavailable. */ }
   }
   function send(id, result, failed = false) {

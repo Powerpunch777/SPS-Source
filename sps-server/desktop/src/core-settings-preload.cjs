@@ -26,7 +26,7 @@ const coreSettingsApi = Object.freeze({
   },
   restartHost: () => ipcRenderer.invoke("desktop:core-settings-restart-host"),
   openWorkspace: async () => {
-    await ipcRenderer.invoke("desktop:core-settings-open-workspace");
+    return await ipcRenderer.invoke("desktop:core-settings-open-workspace");
   },
   checkUpdates: () => ipcRenderer.invoke("desktop:core-settings-check-updates"),
   exportHost: async () => {

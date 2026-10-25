@@ -18,6 +18,7 @@ import { buildLiveBuilderPrompt, collectAuthoringSnapshot, verifyLiveBuilderChan
 import { buildLiveBuilderTeamPrompt, buildLiveBuilderRepairPrompt, verifyLiveBuilderTeamReport } from "./live-builder-team-authoring.mjs";
 import { captureLiveBuilderFailureArtifact } from "./live-builder-failure-artifact.mjs";
 import { collectPreviewE2eHostDiagnostics } from "./preview-e2e-host-diagnostics.mjs";
+import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -1244,13 +1245,17 @@ try {
   throw acceptanceFailure;
 } finally {
   step("cleaning isolated E2E processes and data");
+  const desktopStopped = await shutdownPreviewE2eDesktop({
+    child,
+    requestBrowserClose: workspace || setup || registry ? () => (workspace ?? setup ?? registry).command("Browser.close") : undefined,
+    forceStop: stopTree,
+  });
+  step(`Desktop exit confirmed=${desktopStopped.exitConfirmed}, graceful=${desktopStopped.graceful}`);
   await cleanupTimeout(
     Promise.all([setup, workspace, registry, preview].filter(Boolean).map((cdp) => cdp.close().catch(() => undefined))),
     "CDP sessions",
   ).catch((error) => console.warn(errorText(error)));
   step("CDP sessions closed");
-  await cleanupTimeout(stopTree(child), "Desktop process tree").catch((error) => console.warn(errorText(error)));
-  step("Desktop process tree stopped");
   const postgresStopped = await cleanupTimeout(stopTemporaryPostgres(temporaryRoot), "temporary PostgreSQL processes")
     .then(() => true)
     .catch((error) => { console.warn(errorText(error)); return false; });
@@ -1260,7 +1265,7 @@ try {
   const dataRemoved = await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
     .then(() => true)
     .catch((error) => { console.warn(`Could not remove Preview Desktop E2E temp data: ${errorText(error)}`); return false; });
-  if (!postgresStopped || !dataRemoved) throw new Error("Preview E2E cleanup is incomplete; the test cannot be accepted.", { cause: acceptanceFailure });
+  if (!desktopStopped.exitConfirmed || !postgresStopped || !dataRemoved) throw new Error("Preview E2E cleanup is incomplete; the test cannot be accepted.", { cause: acceptanceFailure });
   step("cleanup complete");
 }
 

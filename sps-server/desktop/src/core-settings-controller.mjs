@@ -191,7 +191,7 @@ export function createCoreSettingsController({
       }
       return status();
     }, { writes: true });
-    bind("open-workspace", async () => { await openWorkspace(); });
+    bind("open-workspace", async () => { await openWorkspace(); return status(); });
     bind("check-updates", async () => { await checkUpdates(); return status(); });
     bind("export-host", async () => { await exportHost(); }, { writes: true });
     bind("inspect-transfer", async () => { await inspectTransfer(); });

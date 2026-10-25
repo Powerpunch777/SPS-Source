@@ -133,6 +133,13 @@ timeout, security assertion or cleanup acceptance was relaxed.
 
 ## Remaining Acceptance
 
+Follow-up: [prepared-Host source acceptance](NATIVE-PREPARED-HOST-ACCEPTANCE-2026-10-26.md)
+now proves actual Main/Core binding and available empty devices after protected
+fixture preparation, with plugin startup globally blocked, zero Agents, ordinary
+renderer denial and another process restart. It does not automate the Native
+security confirmation or enroll/approve a device. The following original gaps
+remain except for that precisely scoped prepared-Host read path.
+
 Prepared-Host actual Main-to-Core management and native confirmation/approval/
 revoke UI acceptance, initial invite/session exchange/Member enrollment, complete
 HTTP/WS ingress, renewal, Tailscale-free Source, and recovery/restore trust resets

@@ -6,6 +6,12 @@
 소스 기반으로 구현됐고, 신뢰된 Host 전용 Core Settings의 명시 확인 인증서 준비 경로만 연결됐다.
 실제 Native LAN ingress는 연결되지 않았고 LAN은 사용할 수 없다.
 
+최신 [기기 관리](../reviews/NATIVE-HOST-MANAGEMENT-VERIFICATION-2026-10-25.md)와
+[준비된 Host 앱 수용](../reviews/NATIVE-PREPARED-HOST-ACCEPTANCE-2026-10-26.md)은
+로컬 status/list/events/approve/revoke의 소스 연결 및 실제 Main/Core의 empty-list
+조회·세션/Host 핀 결속·Plugin startup 차단·일반 renderer 거부를 구분해 기록한다.
+보안 확인창을 통한 identity 준비나 실제 등록 기기의 승인/철회·LAN 전송 검증은 아니다.
+
 ## 현재 소스 기반
 
 - Host 고정 기기 registry와 공개 인증서/상태 DTO, pending 등록, 로컬 Host의 승인·철회,

@@ -249,7 +249,7 @@ public static class RestrictedE2eRunner
     static bool Mode(string value)
     {
         return value == "probe" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
-            || value == "runtime-discovery" || value == "workspace-surfaces"
+            || value == "runtime-discovery" || value == "native-management" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle";
     }
     static IntPtr EnvironmentBlock()
@@ -328,6 +328,7 @@ public static class RestrictedE2eRunner
             if (code != 0) return code;
         }
         if (mode == "runtime-discovery") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--runtime-discovery");
+        if (mode == "native-management") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--native-management");
         if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs");
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs");
         return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs");

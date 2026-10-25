@@ -16,6 +16,16 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+준비된 Host의 실제 Main/Core 연결은 [후속 소스 앱 수용](../reviews/NATIVE-PREPARED-HOST-ACCEPTANCE-2026-10-26.md)에서
+검증했다. 별도 격리 Electron으로 시험용 DPAPI identity를 먼저 준비하고, 실제 앱을
+두 번 실행해 Owner 세션/Host 핀 결속·available 빈 기기 목록·Plugin startup 423 차단·
+0-Agent·일반 Workspace 관리 API 403을 확인했다. Native 보안 확인창을 자동 승인한
+시험이 아니며 실제 Member enrollment·approve/revoke·LAN·두 PC/서명본은 여전히 후속이다.
+Core 전체 CI가 잡은 status OpenAPI 누락은 `28757d809`의 fresh PR CI 15/15에서 해소됐다.
+그 뒤 Windows 종료 보완과 prepared-Host 앱 검증은 별도 후속 변경이므로 같은 결과를
+새 HEAD의 CI 증거로 재사용하지 않는다. 종료 전용 inherited pipe는 Native 서명 IPC
+폐기 후에도 남지만 종료 외 권한은 없고 LAN listener도 열지 않는다.
+
 후속 local Host management는 준비된 Host identity와 직접 소유 Main IPC의 공개
 Host/server 핀을 확인한 Core 자식에만 status/list/events/approve/revoke를 연결한다.
 실제 Owner 세션·actor·두 Desktop proof가 일치해야 하며 DB 조회/변경 전후 세션과

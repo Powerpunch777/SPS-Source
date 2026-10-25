@@ -18,6 +18,11 @@
 준비된 Host의 실제 승인 전체 앱 흐름과 두 PC/서명본 검증은 남아 있다.
 [기기 관리 검증](../reviews/NATIVE-HOST-MANAGEMENT-VERIFICATION-2026-10-25.md)을 따른다.
 
+후속 [준비된 Host 소스 앱 수용](../reviews/NATIVE-PREPARED-HOST-ACCEPTANCE-2026-10-26.md)은
+시험용 보호 identity를 실제 Main이 재독해한 뒤 기기 관리의 available 빈 목록을
+조회하는 경로를 통과했다. Plugin startup 차단/0-Agent/일반 renderer 403과 재시작을
+검사했지만 보안 확인창·실제 기기 enrollment/승인·LAN/물리 두 PC 수용은 아니다.
+
 1. Windows Desktop/Host/Member/Node를 우선 안정화하고, 외부 Tailscale 없이 동작하는
    내장 **LAN** 경로를 개발한다. Stage 0 감사는 완료했고, 전체 초대코드와 서버 지문
    확인(D1), PC별 mTLS 인증서(D2), LAN 기본 off/명시 opt-in(D3)이 승인됐다. Core 기기

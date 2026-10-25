@@ -100,6 +100,18 @@ test("restart cancellation is non-destructive and only affirmative confirmation 
   assert.equal(approved.calls.includes("restart"), true);
 });
 
+test("opening a Workspace returns current Host status instead of leaving the recovery card stale", async () => {
+  let started = false;
+  const ctx = setup({
+    openWorkspace: async () => { started = true; },
+    getStatus: async () => ({ host: { state: started ? "running" : "stopped", startupDeferred: !started }, recovery: {} }),
+  });
+  await ctx.controller.show();
+  const result = await ctx.invoke("open-workspace");
+  assert.equal(result.host.state, "running");
+  assert.equal(result.host.startupDeferred, false);
+});
+
 test("async authority denial is awaited and action errors never expose details", async () => {
   const denied = setup({ authorizeMutation: async () => { throw new Error("denied"); } });
   await denied.controller.show();

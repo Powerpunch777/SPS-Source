@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { mkdtemp, rm, access, readFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { runNoAiChecklistAcceptance } from "./no-ai-checklist-acceptance.mjs";
+import { saveCoreRecoverySettings } from "../src/core-recovery-store.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,7 @@ const keepE2eData = process.env.SPS_DESKTOP_E2E_KEEP_DATA === "1";
 const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
 const runtimeDiscovery = process.argv.includes("--runtime-discovery");
 const noAiChecklist = runtimeDiscovery || process.argv.includes("--no-ai-checklist");
+const nativeManagement = process.argv.includes("--native-management");
 
 if (process.platform !== "win32") {
   throw new Error("Workspace Surfaces Desktop E2E currently targets the Windows release.");
@@ -33,6 +35,7 @@ if (!packagedBinary && !sourceElectron) {
 }
 await access(packagedBinary || sourceElectron);
 if (noAiChecklist && !sourceElectron) throw new Error("The No-AI reference fixture is source-only acceptance, not packaged release evidence.");
+if (nativeManagement && (!sourceElectron || packagedBinary || noAiChecklist)) throw new Error("Prepared Native management is a separate source-only acceptance mode.");
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -390,6 +393,7 @@ let child = null;
 let setupCdp = null;
 let workspaceCdp = null;
 let appOutput = "";
+let nativeManagementStage = "bootstrap";
 
 try {
   const { origin: identityUrl, issued } = await mockIdentity.start();
@@ -589,7 +593,81 @@ try {
     console.log("D2 neutral entry E2E: zero Agents/default activations, independent root, legacy Plugin Manager link, and 620/1000px fit.");
   }
 
-  if (noAiChecklist) {
+  if (nativeManagement) {
+    // Seed only this stopped temporary Host, not a production IPC or an automated
+    // approval of the real security confirmation. Main must read it independently.
+    await closeDesktopForRestart();
+    nativeManagementStage = "fixture_prepare";
+    let prepared;
+    try {
+      const environment = { ...process.env };
+      delete environment.ELECTRON_RUN_AS_NODE;
+      delete environment.NODE_OPTIONS;
+      const result = await execFileAsync(sourceElectron, [
+        path.join(scriptDirectory, "prepare-native-host-e2e-fixture.mjs"),
+        "--isolated-prepared-native-host-fixture", userDataDirectory,
+      ], { env: environment, timeout: 40_000, maxBuffer: 8192, windowsHide: true });
+      const reports = result.stdout.split(/\r?\n/).filter(line => line.startsWith("{"));
+      assert.equal(reports.length, 1);
+      prepared = JSON.parse(reports[0]);
+      assert.deepEqual(Object.keys(prepared).sort(), ["kind", "hostId", "serverSpkiSha256", "lanEnabled", "electronVersion", "nodeVersion"].sort());
+      assert.equal(prepared.kind, "sps.native.prepared-host-fixture");
+      assert.match(prepared.hostId, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/);
+      assert.match(prepared.serverSpkiSha256, /^[0-9a-f]{64}$/);
+      assert.equal(prepared.lanEnabled, false);
+      assert.match(prepared.electronVersion, /^\d+\.\d+\.\d+$/);
+      assert.match(prepared.nodeVersion, /^\d+\.\d+\.\d+$/);
+    } catch {
+      throw new Error("The isolated prepared Native Host fixture failed.");
+    }
+    const recovery = await saveCoreRecoverySettings({ userDataPath: userDataDirectory, disabled: true });
+    assert.equal(recovery.pluginsDisabled, true);
+    for (const phase of ["prepared", "separate-process-reload"]) {
+      nativeManagementStage = "settings_launch";
+      launchDesktop(["--sps-core-settings"]);
+      nativeManagementStage = "settings_target";
+      setupCdp = await openCdp(await waitForTarget(debugPort, child,
+        target => target.title === "SPS Core Settings", "prepared Native Host settings"));
+      nativeManagementStage = "settings_identity_view";
+      await waitForPage(setupCdp, page => page.body.includes("Identity prepared"), "protected Native identity status");
+      nativeManagementStage = "settings_status";
+      const before = await setupCdp.evaluate("window.spsCoreSettings.getStatus()", true);
+      assert.equal(before.canManageHost, true);
+      assert.equal(before.nativeConnectivity.state, "identity_prepared");
+      assert.equal(before.nativeConnectivity.serverSpkiSha256, prepared.serverSpkiSha256);
+      assert.equal(before.nativeConnectivity.lanEnabled, false);
+      assert.equal(before.recovery.pluginsDisabled, true);
+      assert.equal(await setupCdp.evaluate("typeof window.spsDesktopWorkspace"), "undefined");
+      nativeManagementStage = "host_start";
+      await click(setupCdp, '[data-action="open-workspace"]', "Start the actual prepared Host from independent Settings");
+      workspaceCdp = await openCdp(await waitForTarget(debugPort, child,
+        target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""), "prepared Host Workspace", hostReadyTimeoutMs));
+      await waitForPage(workspaceCdp, page => page.workspaceEntry === "empty", "prepared empty Workspace");
+      assert.deepEqual(await api(workspaceCdp, `/api/companies/${company.id}/agents`), []);
+      nativeManagementStage = "authority_checks";
+      const runtimeGate = await workspaceCdp.evaluate(`(async () => {
+        const response = await fetch('/api/plugins/ui-contributions', { credentials: 'include' });
+        return { status: response.status, code: (await response.json()).code };
+      })()`, true);
+      assert.deepEqual(runtimeGate, { status: 423, code: "plugin_recovery_active" });
+      const rendererManagement = await workspaceCdp.evaluate("fetch('/api/sps/member-devices/status', { credentials: 'include' }).then(response => response.status)", true);
+      assert.equal(rendererManagement, 403, "A normal Workspace renderer must not acquire the Main-only Host management proof.");
+      nativeManagementStage = "device_read";
+      await click(setupCdp, "#refresh-native-devices", "Read real Main-to-Core Native device state with plugin startup disabled");
+      await waitForPage(setupCdp, page => page.body.includes("No Native devices are registered.")
+        && !page.body.includes("Startup deferred (recovery)"), "available empty Native device list and refreshed Host status");
+      const running = await setupCdp.evaluate("window.spsCoreSettings.getStatus()", true);
+      assert.equal(running.host.startupDeferred, false);
+      assert.match(running.host.state, /^running/);
+      const devices = await setupCdp.evaluate("window.spsCoreSettings.listNativeDevices()", true);
+      assert.deepEqual(devices, { state: "available", lanEnabled: false, devices: [] });
+      if (screenshotPath) await captureScreenshot(setupCdp, path.join(path.dirname(screenshotPath), `native-management-${phase}.png`));
+      console.log(`[native-management] ${phase}: real Main/Core session and Host binding, zero Agents, plugin startup blocked, renderer management denied, LAN OFF.`);
+      nativeManagementStage = "shutdown";
+      await closeDesktopForRestart();
+    }
+    console.log(`Prepared Native Host management source E2E passed (Electron ${prepared.electronVersion}, Node ${prepared.nodeVersion}); no actual security confirmation, enrollment, device approval or two-PC claim.`);
+  } else if (noAiChecklist) {
     await runNoAiChecklistAcceptance({
       cdp: workspaceCdp, company, api, click, captureScreenshot, screenshotPath, temporaryRoot: userDataDirectory, runtimeDiscovery,
       restart: async () => {
@@ -1080,6 +1158,21 @@ try {
   console.log(`SPS Desktop Workspace Surfaces E2E passed (${packagedBinary ? "packaged" : "source"}).`);
   }
 } catch (error) {
+  if (nativeManagement) {
+    const safeSnapshot = setupCdp ? await setupCdp.evaluate(`(async () => {
+      const api = window.spsCoreSettings;
+      const status = typeof api?.getStatus === 'function' ? await api.getStatus() : null;
+      const native = status?.nativeConnectivity;
+      const knownStates = ['identity_prepared', 'identity_not_current', 'recovery_required', 'unavailable', 'not_prepared', 'host_required'];
+      return { settingsApi: Boolean(api), canManageHost: status?.canManageHost === true,
+        identityPreparedText: Boolean(document.body?.innerText?.includes('Identity prepared')),
+        nativeState: knownStates.includes(native?.state) ? native.state : 'other',
+        hasPin: /^[0-9a-f]{64}$/.test(native?.serverSpkiSha256 ?? ''),
+        pluginsDisabled: status?.recovery?.pluginsDisabled === true };
+    })()`, true).catch(() => null) : null;
+    const failureSha256 = createHash("sha256").update(errorText(error)).digest("hex");
+    throw new Error(`Prepared Native Host source E2E failed (stage=${nativeManagementStage}, failureSha256=${failureSha256}, snapshot=${JSON.stringify(safeSnapshot)}).`);
+  }
   const diagnostics = [];
   for (const [label, cdp] of [["setup", setupCdp], ["workspace", workspaceCdp]]) {
     if (!cdp) continue;
@@ -1101,6 +1194,7 @@ try {
   await mockIdentity.close().catch(() => undefined);
   if (!keepE2eData) {
     await removeTemporaryDirectory(userDataDirectory).catch((error) => {
+      if (nativeManagement) throw new Error("Prepared Native Host E2E temporary data cleanup could not be confirmed.");
       console.warn(`Could not remove isolated SPS Desktop E2E data: ${errorText(error)}`);
     });
   }

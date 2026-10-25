@@ -28,6 +28,7 @@
     "test:security:appcontainer-canary": "node scripts/security-poc/run-appcontainer-canary.mjs",
     "test:e2e:workspace-surfaces": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs",
     "test:e2e:no-ai-checklist": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --no-ai-checklist",
+    "test:e2e:native-management": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --native-management",
     "test:e2e:runtime-discovery": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --runtime-discovery",
     "test:e2e:plugin-preview": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-plugin-preview-desktop.mjs",
     "test:e2e:plugin-preview:live": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-plugin-preview-desktop.mjs --live-authoring",

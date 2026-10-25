@@ -389,14 +389,18 @@ export function createSpsOwnerHostManager({
       if (generation !== lifecycleGeneration) return inspect();
       const child = spawn(runtime.command, runtime.args, {
         cwd: runtime.cwd,
-        stdio: createNativeSigner ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
+        // The stop-only pipe survives Native signer IPC revocation. Neither
+        // descriptor grants Native signing unless its own channel is attached.
+        stdio: ["ignore", "pipe", "pipe", "ipc", "pipe"],
         windowsHide: true,
         env: {
           ...baseEnvironment,
           ...runtime.environment,
           PAPERCLIP_TELEMETRY_DISABLED: "1",
+          SPS_DESKTOP_OWNED_SHUTDOWN_PIPE: "1",
         },
       });
+      child.stdio?.[4]?.on?.("error", () => {});
       ownedChild = child;
       let childChannel = null;
       if (createNativeSigner) {
@@ -486,7 +490,12 @@ export function createSpsOwnerHostManager({
       if (force) {
         await terminateTree(child.pid);
       } else {
-        child.kill("SIGINT");
+        const shutdownPipe = child.stdio?.[4];
+        if (process.platform === "win32" && shutdownPipe && !shutdownPipe.destroyed && !shutdownPipe.writableEnded) {
+          try { shutdownPipe.end("sps.owner-host.shutdown/v1\n"); } catch {}
+        } else if (process.platform === "win32" && child.connected === true && typeof child.send === "function") {
+          try { child.send({ v: 1, kind: "sps.owner-host.shutdown" }, () => {}); } catch {}
+        } else child.kill("SIGINT");
         await waitForChildExit(child, 12_000);
         if (child.exitCode == null) await terminateTree(child.pid);
       }
@@ -497,6 +506,9 @@ export function createSpsOwnerHostManager({
   }
 
   function stop(options) {
+    if (!options?.force && stopsInFlight.size) {
+      return Promise.all([...stopsInFlight]).then(() => inspect());
+    }
     lifecycleGeneration += 1;
     const operation = stopOwned(options);
     stopsInFlight.add(operation);

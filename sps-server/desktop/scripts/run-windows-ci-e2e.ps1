@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('probe', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'runtime-discovery', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle')]
+  [ValidateSet('probe', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'runtime-discovery', 'native-management', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle')]
   [string] $Mode
 )
 

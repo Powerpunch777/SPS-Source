@@ -94,7 +94,7 @@ test("Desktop execution modes are unavailable outside Windows CI", { skip: proce
 
 test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
-  for (const mode of ["runtime-discovery", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle"]) {
+  for (const mode of ["runtime-discovery", "native-management", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle"]) {
     assert.match(workflow, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
   }
   const source = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
@@ -119,6 +119,11 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   assert.ok(jobClose >= 0 && desktopClose > jobClose && tokenClose > desktopClose);
   assert.doesNotMatch(source, /SANDBOX_INERT|CREATE_BREAKAWAY_FROM_JOB|LogonUser|SetUserObjectSecurity|SetSecurityInfo|net user|New-LocalUser/);
   const wrapper = await readFile(script, "utf8");
+  assert.match(wrapper, /ValidateSet\([^)]*'native-management'/);
+  assert.match(source, /value == "native-management"/);
+  assert.match(source, /if \(mode == "native-management"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", "--native-management"\);/);
+  assert.match(source, /start\.UseShellExecute = false;/);
+  assert.doesNotMatch(source, /(?:powershell|cmd\.exe)/i);
   assert.match(wrapper, /Write-ExitDiagnostic 'restricted_e2e_helper_exit'/);
   assert.match(wrapper, /\$phase = 'helper_exit'/);
 });

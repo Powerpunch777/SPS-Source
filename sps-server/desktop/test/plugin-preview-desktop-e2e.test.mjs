@@ -73,5 +73,8 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
     assert.doesNotMatch(failureCatch, /output\.trim|title: document\.title|url: location\.href|text: document\.body/);
   }
   assert.match(harness, /stopTree/);
+  assert.match(harness, /shutdownPreviewE2eDesktop/);
+  assert.ok(harness.indexOf('const desktopStopped = await shutdownPreviewE2eDesktop') < harness.indexOf('Promise.all([setup, workspace, registry, preview]'));
+  assert.match(harness, /!desktopStopped\.exitConfirmed \|\| !postgresStopped \|\| !dataRemoved/);
   assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
 });

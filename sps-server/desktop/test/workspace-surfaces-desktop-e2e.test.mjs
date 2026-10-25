@@ -70,3 +70,30 @@ test("keeps D2 request monitor snippets valid JavaScript", async () => {
     assert.doesNotThrow(() => new Script(snippet), `${name} must parse before CDP evaluates it`);
   }
 });
+
+test("prepared Native management exercises the real Main/Core route without a confirmation bypass", async () => {
+  const script = await readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8");
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.match(manifest.scripts["test:e2e:native-management"], /--native-management$/);
+  for (const required of ["prepare-native-host-e2e-fixture.mjs", "await closeDesktopForRestart()",
+    'disabled: true', '"separate-process-reload"', 'before.nativeConnectivity.serverSpkiSha256, prepared.serverSpkiSha256',
+    'devices, { state: "available", lanEnabled: false, devices: [] }', 'status: 423, code: "plugin_recovery_active"',
+    'rendererManagement, 403', 'no actual security confirmation, enrollment, device approval or two-PC claim']) {
+    assert.ok(script.includes(required), `Missing Native prepared source assertion: ${required}`);
+  }
+  assert.doesNotMatch(script, /ipcMain|setNativeIdentity|skipNativeConfirmation|confirmNativeDeviceAction\s*=/);
+  const canonical = script.replace(/\r\n/g, "\n");
+  for (const checkout of [canonical, canonical.replace(/\n/g, "\r\n")]) {
+    const normalized = checkout.replace(/\r\n/g, "\n");
+    const start = normalized.indexOf('if (nativeManagement) {\n    const safeSnapshot');
+    const end = normalized.indexOf('  const diagnostics = [];', start);
+    assert.ok(start >= 0 && end > start);
+    const sanitizedFailure = normalized.slice(start, end);
+    assert.match(sanitizedFailure, /stage=\$\{nativeManagementStage\}, failureSha256=\$\{failureSha256\}/);
+    assert.match(sanitizedFailure, /knownStates\.includes\(native\?\.state\) \? native\.state : 'other'/);
+    assert.match(sanitizedFailure, /canManageHost: status\?\.canManageHost === true/);
+    assert.doesNotMatch(sanitizedFailure, /JSON\.stringify\((?:status|native|error|document|appOutput)\)/);
+    assert.doesNotMatch(sanitizedFailure, /appOutput|describePage|console\.log|errorText\(error\)\}\n/);
+  }
+  assert.match(script, /if \(nativeManagement\) throw new Error\("Prepared Native Host E2E temporary data cleanup could not be confirmed/);
+});

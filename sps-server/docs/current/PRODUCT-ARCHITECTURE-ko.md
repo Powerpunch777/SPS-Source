@@ -116,8 +116,10 @@ Workspace, Plugin, Agent, Node or Source access. Confirmation is bound to the
 captured account/Host/generation and exact device metadata, and stale UI results
 are cleared. The Native network listener and Member enrollment remain inactive.
 The [local management record](../reviews/NATIVE-HOST-MANAGEMENT-VERIFICATION-2026-10-25.md)
-separates source/DB/UI tests from missing prepared-Host end-to-end, two-PC and
-signed-release acceptance. Existing [device foundation evidence](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)
+and [prepared-Host source acceptance](../reviews/NATIVE-PREPARED-HOST-ACCEPTANCE-2026-10-26.md)
+separate the actual Main/Core empty-list read/restart with zero Agents and plugin
+startup disabled from missing security-confirmation, enrolled-device approval,
+two-PC and signed-release acceptance. Existing [device foundation evidence](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)
 does not qualify initial pairing, complete ingress coverage or renewal.
 An internal [one-use pairing store](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)
 now atomically consumes an invitation and registers a pending first-time device,
