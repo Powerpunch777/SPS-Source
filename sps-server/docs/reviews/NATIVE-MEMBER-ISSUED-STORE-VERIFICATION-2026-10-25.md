@@ -173,3 +173,14 @@ integration and before the final failure-output tightening above. Happy-path
 UI/Preview and owned cleanup passed again. The final failure-only tightening is
 covered by the focused helper/contract tests and final full suite, not a claimed
 new packaged or deliberate server-failure E2E success.
+
+### First Changed-Head Windows CI
+
+Source `08a764d7036683b7a11e7ae34372e3bd76ffff82` push run `40196842138`,
+Windows job `121179404856`, failed in Desktop units: **767 total / 765 pass /
+1 fail / 1 skip**. The new failure-catch source assertion used literal LF
+delimiters, so a CRLF checkout produced an empty inspected block. Native
+safeStorage, Settings, No-AI and packaged E2Es were skipped, not passed. The
+follow-up normalizes line endings, explicitly locates the block, and checks the
+same privacy assertions against both LF and CRLF inputs. Product code and the
+original packaged registration failure are not fixed by this test correction.

@@ -60,10 +60,16 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /page\.text\.includes\("Internal server error"\)/);
   assert.match(harness, /assert\.ok\(registration\.url\.includes\("\/dashboard"\) && registration\.text\.includes\(name\)/);
   assert.match(harness, /collectPreviewE2eHostDiagnostics\(\{ fixtureRoot: temporaryRoot \}\)/);
-  const failureCatch = harness.slice(harness.indexOf("} catch (error) {\n  const notes = [];"), harness.indexOf('} finally {\n  step("cleaning isolated'));
-  assert.match(failureCatch, /failureSha256/);
-  assert.match(failureCatch, /serverErrorVisible/);
-  assert.doesNotMatch(failureCatch, /output\.trim|title: document\.title|url: location\.href|text: document\.body/);
+  const normalized = harness.replace(/\r\n/g, "\n");
+  for (const input of [normalized, normalized.replace(/\n/g, "\r\n")]) {
+    const canonical = input.replace(/\r\n/g, "\n");
+    const start = canonical.indexOf("} catch (error) {\n  const notes = [];"), end = canonical.indexOf('} finally {\n  step("cleaning isolated');
+    assert.ok(start >= 0 && end > start, "The failure block must be found for both LF and CRLF checkouts.");
+    const failureCatch = canonical.slice(start, end);
+    assert.match(failureCatch, /failureSha256/);
+    assert.match(failureCatch, /serverErrorVisible/);
+    assert.doesNotMatch(failureCatch, /output\.trim|title: document\.title|url: location\.href|text: document\.body/);
+  }
   assert.match(harness, /stopTree/);
   assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
 });
