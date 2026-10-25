@@ -70,6 +70,56 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
   assert.equal(result.stderr, "");
 });
 
+test("Windows CI E2E accepts pending Preview cleanup only after natural owned-Job emptiness", { skip: process.platform !== "win32" }, async () => {
+  const result = await run("probe-preview-pending");
+  const output = assertCleanup(result.stdout);
+  assert.deepEqual(output.find(record => record.ownedJobCleanup), { ownedJobEmpty: true, ownedJobCleanup: "natural" });
+  assert.equal(result.stderr, "");
+});
+
+test("Windows CI E2E rejects pending Preview after force-cleaning a live owned descendant", { skip: process.platform !== "win32" }, async () => {
+  await assert.rejects(run("probe-preview-pending-descendant"), failure => {
+    assert.equal(failure.code, 125);
+    const output = assertCleanup(failure.stdout);
+    assert.deepEqual(output.find(record => record.ownedJobCleanup), {
+      ownedJobEmpty: true, ownedJobCleanup: "forced", accepted: false,
+    });
+    assert.equal(output.some(record => record.ownedDescendantCreated === true), true);
+    return true;
+  });
+});
+
+test("Windows CI E2E preserves a failed Preview child exit after force-cleaning its descendant", { skip: process.platform !== "win32" }, async () => {
+  await assert.rejects(run("probe-preview-failure-descendant"), failure => {
+    assert.equal(failure.code, 7);
+    const output = assertCleanup(failure.stdout);
+    assert.deepEqual(output.find(record => record.ownedJobCleanup), {
+      ownedJobEmpty: true, ownedJobCleanup: "forced", accepted: false,
+    });
+    assert.match(failure.stderr, /restricted_e2e_child_exit:phase=child_exit,mode=probe-preview-failure-descendant,code=7,hex=0x00000007/);
+    return true;
+  });
+});
+
+test("Windows CI E2E rejects a zero-exit Preview child without the pending protocol", { skip: process.platform !== "win32" }, async () => {
+  await assert.rejects(run("probe-preview-zeroexit"), failure => {
+    assert.equal(failure.code, 125);
+    const output = assertCleanup(failure.stdout);
+    assert.deepEqual(output.find(record => record.ownedJobCleanup), { ownedJobEmpty: true, ownedJobCleanup: "natural" });
+    assert.match(failure.stderr, /restricted_e2e_pending_exit_required:mode=probe-preview-zeroexit/);
+    return true;
+  });
+});
+
+test("Windows CI E2E does not normalize a spoofed pending exit from an unrelated probe", { skip: process.platform !== "win32" }, async () => {
+  await assert.rejects(run("probe-exit-76"), failure => {
+    assert.equal(failure.code, 76);
+    assertCleanup(failure.stdout);
+    assert.match(failure.stderr, /restricted_e2e_child_exit:phase=child_exit,mode=probe-exit-76,code=76,hex=0x0000004C/);
+    return true;
+  });
+});
+
 test("Windows CI E2E forwards Node output and exact quoted, trailing-slash and Unicode arguments", { skip: process.platform !== "win32" }, async () => {
   const result = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Mode", "probe-node"], {
     env: { ...process.env, NODE_OPTIONS: "--no-warnings", ELECTRON_RUN_AS_NODE: "1", GITHUB_TOKEN: "fixture-ci-token", SPS_CI_E2E_SECRET_SENTINEL: "fixture-secret" },
@@ -98,6 +148,25 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
     assert.match(workflow, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
   }
   const source = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
+  const wrapper = await readFile(new URL("../scripts/run-windows-ci-e2e.ps1", import.meta.url), "utf8");
+  const cleanupContract = await readFile(new URL("../scripts/preview-e2e-cleanup-contract.mjs", import.meta.url), "utf8");
+  const cleanupArgument = cleanupContract.match(/OWNED_JOB_CLEANUP_ARGUMENT = "([^"]+)";/)?.[1];
+  const pendingExitCode = Number(cleanupContract.match(/OWNED_JOB_CLEANUP_PENDING_EXIT_CODE = (\d+);/)?.[1]);
+  assert.ok(cleanupArgument);
+  assert.ok(Number.isInteger(pendingExitCode));
+  assert.ok(source.includes(`const string OwnedJobCleanupArgument = "${cleanupArgument}";`));
+  assert.ok(source.includes(`const uint OwnedJobCleanupPendingExitCode = ${pendingExitCode};`));
+  for (const mode of ["probe-preview-pending", "probe-preview-pending-descendant", "probe-preview-failure-descendant", "probe-preview-zeroexit", "probe-exit-76"]) {
+    assert.match(wrapper, new RegExp(`'${mode}'`));
+    assert.match(source, new RegExp(`value == "${mode}"`));
+  }
+  assert.match(source, /if \(mode == "plugin-preview"\) return RunNode\(node, directory, "smoke-plugin-preview-desktop\.mjs", OwnedJobCleanupArgument\);/);
+  assert.match(source, /WaitForNaturalJobEmpty\(job, PreviewJobWaitMilliseconds\(mode\)\)/);
+  assert.ok(source.includes('Console.WriteLine("{\\"ownedJobEmpty\\":true,\\"ownedJobCleanup\\":\\"natural\\"}");'));
+  assert.ok(source.includes('Console.WriteLine("{\\"ownedJobEmpty\\":true,\\"ownedJobCleanup\\":\\"forced\\",\\"accepted\\":false}");'));
+  assert.match(source, /childExitCode == OwnedJobCleanupPendingExitCode\) resultCode = 0/);
+  assert.match(source, /restricted_e2e_pending_exit_required/);
+  assert.doesNotMatch(wrapper + source, /SPS_DESKTOP_E2E_OWNED_JOB/i);
   assert.match(source, /CreateRestrictedToken\(token, 0x1/);
   assert.match(source, /CreateWindowStationW\(requestedStationName, 1,/);
   assert.match(source, /nativeError != 5/);
@@ -118,7 +187,6 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   const tokenClose = source.indexOf("foreach (IntPtr handle in new[] { input, output, error, restricted, token })", desktopClose);
   assert.ok(jobClose >= 0 && desktopClose > jobClose && tokenClose > desktopClose);
   assert.doesNotMatch(source, /SANDBOX_INERT|CREATE_BREAKAWAY_FROM_JOB|LogonUser|SetUserObjectSecurity|SetSecurityInfo|net user|New-LocalUser/);
-  const wrapper = await readFile(script, "utf8");
   assert.match(wrapper, /ValidateSet\([^)]*'native-management'/);
   assert.match(source, /value == "native-management"/);
   assert.match(source, /if \(mode == "native-management"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", "--native-management"\);/);

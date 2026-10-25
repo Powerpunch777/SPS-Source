@@ -75,6 +75,11 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /stopTree/);
   assert.match(harness, /shutdownPreviewE2eDesktop/);
   assert.ok(harness.indexOf('const desktopStopped = await shutdownPreviewE2eDesktop') < harness.indexOf('Promise.all([setup, workspace, registry, preview]'));
-  assert.match(harness, /!desktopStopped\.exitConfirmed \|\| !postgresStopped \|\| !dataRemoved/);
+  assert.match(harness, /desktopExitConfirmed: desktopStopped\.exitConfirmed, desktopGraceful: desktopStopped\.graceful/);
+  assert.match(harness, /postgresCleanupConfirmed: postgresStopped, temporaryDataRemoved: dataRemoved/);
+  assert.match(harness, /const postgresStopped = ownedJobCleanupPending \? null/);
+  assert.match(harness, /process\.exit\(cleanupDisposition\.exitCode\)/);
+  assert.match(harness, /standalone script is not qualified/);
+  assert.ok(harness.lastIndexOf("SPS Plugin Preview Desktop E2E passed") > harness.indexOf('step("cleaning isolated E2E processes and data")'));
   assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
 });

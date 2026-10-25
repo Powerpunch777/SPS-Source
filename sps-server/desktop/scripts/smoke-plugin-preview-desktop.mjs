@@ -19,10 +19,13 @@ import { buildLiveBuilderTeamPrompt, buildLiveBuilderRepairPrompt, verifyLiveBui
 import { captureLiveBuilderFailureArtifact } from "./live-builder-failure-artifact.mjs";
 import { collectPreviewE2eHostDiagnostics } from "./preview-e2e-host-diagnostics.mjs";
 import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
+import { OWNED_JOB_CLEANUP_ARGUMENT, previewE2eCleanupDisposition } from "./preview-e2e-cleanup-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
+const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
+let cleanupDisposition;
 const liveTeam = process.argv.includes("--live-team");
 const liveAuthoring = liveTeam || process.argv.includes("--live-authoring");
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
@@ -1216,7 +1219,7 @@ try {
     }, null, 2)}\n`, { flag: "wx" });
     step(`retained verified development package in ${path.basename(retained)}`);
   }
-  console.log(`SPS Plugin Preview Desktop E2E passed (${packagedBinary ? "packaged" : "source"}${liveAuthoring ? ", live CLI authoring" : ""}).`);
+  step("functional assertions passed; cleanup qualification is still pending");
 } catch (error) {
   const notes = [];
   notes.push(`Owner Host error summary: ${JSON.stringify(await collectPreviewE2eHostDiagnostics({ fixtureRoot: temporaryRoot }))}`);
@@ -1256,21 +1259,31 @@ try {
     "CDP sessions",
   ).catch((error) => console.warn(errorText(error)));
   step("CDP sessions closed");
-  const postgresStopped = await cleanupTimeout(stopTemporaryPostgres(temporaryRoot), "temporary PostgreSQL processes")
-    .then(() => true)
-    .catch((error) => { console.warn(errorText(error)); return false; });
-  step(postgresStopped ? "temporary PostgreSQL processes stopped" : "temporary PostgreSQL process cleanup could not be confirmed");
+  const postgresStopped = ownedJobCleanupPending ? null
+    : await cleanupTimeout(stopTemporaryPostgres(temporaryRoot), "temporary PostgreSQL processes")
+      .then(() => true)
+      .catch((error) => { console.warn(errorText(error)); return false; });
+  step(ownedJobCleanupPending ? "owned-Job natural-exit qualification is delegated and still pending"
+    : postgresStopped ? "temporary PostgreSQL processes stopped" : "temporary PostgreSQL process cleanup could not be confirmed");
   await cleanupTimeout(identity.close(), "mock Identity server").catch((error) => console.warn(errorText(error)));
   step("mock Identity server closed");
   const dataRemoved = await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
     .then(() => true)
     .catch((error) => { console.warn(`Could not remove Preview Desktop E2E temp data: ${errorText(error)}`); return false; });
-  if (!desktopStopped.exitConfirmed || !postgresStopped || !dataRemoved) throw new Error("Preview E2E cleanup is incomplete; the test cannot be accepted.", { cause: acceptanceFailure });
-  step("cleanup complete");
+  try {
+    cleanupDisposition = previewE2eCleanupDisposition({ delegated: ownedJobCleanupPending,
+      desktopExitConfirmed: desktopStopped.exitConfirmed, desktopGraceful: desktopStopped.graceful,
+      postgresCleanupConfirmed: postgresStopped, temporaryDataRemoved: dataRemoved });
+  } catch {
+    throw new Error("Preview E2E cleanup is incomplete; the test cannot be accepted.", { cause: acceptanceFailure });
+  }
+  step(ownedJobCleanupPending ? "temporary data removed; owned-Job acceptance remains pending" : "cleanup complete");
 }
 
 // The test has no work left after the successful try path and cleanup above.
 // Flush a non-empty final record so every earlier step reaches the parent
 // process, then terminate any platform fetch handles that Node may retain.
+if (ownedJobCleanupPending) step("standalone script is not qualified; the owning launcher must confirm natural Job emptiness");
+else console.log(`SPS Plugin Preview Desktop E2E passed (${packagedBinary ? "packaged" : "source"}${liveAuthoring ? ", live CLI authoring" : ""}).`);
 await new Promise((resolve) => process.stdout.write("[preview-e2e] evidence flushed\n", resolve));
-process.exit(0);
+process.exit(cleanupDisposition.exitCode);

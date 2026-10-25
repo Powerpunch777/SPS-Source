@@ -161,6 +161,12 @@ same-user wrapper. It does not add privileges, shell execution, secrets, account
 creation or firewall rules. A future exact-head green step is required before
 calling this locked-runtime CI-qualified.
 
+On Source `d062d1c`, hosted PR run `40215021041` Windows job `121234177049`
+passed the prepared-Host source and packaged Workspace steps. Packaged Preview
+then failed its WMI cleanup query despite functional assertions and graceful
+Main exit passing. The [owned-Job cleanup follow-up](WINDOWS-PREVIEW-JOB-CLEANUP-2026-10-26.md)
+does not turn this partial/failed job into accepted packaged evidence.
+
 One local final-code attempt failed at the earlier broad `settings_launch` stage
 with digest `3f5482b908f6615fd28b52af09e7715f0ba566c87cb5077eb9c0e5172fce0ce7`.
 The next run, with finer redacted diagnostics and no product change, passed both

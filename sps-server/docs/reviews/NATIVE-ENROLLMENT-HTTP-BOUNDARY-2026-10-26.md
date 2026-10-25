@@ -112,6 +112,10 @@ new increment; fresh exact-head Core/Source CI is required. Source `d062d1c`
 PR run `40215021041` prepared-Host source app step passed while Windows packaged
 acceptance was still running. No partial job is re-labelled a full Windows pass.
 The actual compatibility-job audit still fails Zod High1243066 (no exception).
+That older Windows job subsequently failed its global WMI PostgreSQL cleanup
+query after functional Preview and graceful Main exit passed. The separate
+[owned-Job cleanup follow-up](WINDOWS-PREVIEW-JOB-CLEANUP-2026-10-26.md) preserves
+that failure and requires fresh hosted acceptance; it is not an enrollment bug.
 
 ## Remaining Acceptance
 
