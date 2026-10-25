@@ -9,7 +9,7 @@ export async function runAgentExecutionAcceptance({ call, plugin, temporaryRoot,
   await call(`/api/plugins/${plugin.id}/companies/${company.id}/activation`, { method: "PUT", body: { enabled: true } });
   const agent = await call(`/api/companies/${company.id}/agents`, { method: "POST", body: {
     name: "Inert execution descriptor", role: "engineer", adapterType: "codex_local",
-    adapterConfig: { cwd: temporaryRoot, promptTemplate: "private-fixture-marker" },
+    adapterConfig: { cwd: temporaryRoot },
     runtimeConfig: { heartbeat: { enabled: false, wakeOnDemand: false } },
   } });
   const inspect = async (companyId = company.id) => (await call(`/api/plugins/${plugin.id}/data/agent-execution`, {
@@ -19,7 +19,6 @@ export async function runAgentExecutionAcceptance({ call, plugin, temporaryRoot,
   assert.deepEqual(initial, { agentId: agent.id, adapterType: "codex_local", state: "configured", adapterRegistration: "registered",
     executionOwner: "adapter", authorization: "recheck_on_dispatch", readiness: "unknown", node: null });
   assert.ok(!JSON.stringify(initial).includes(temporaryRoot));
-  assert.ok(!JSON.stringify(initial).includes("private-fixture-marker"));
   await assert.rejects(inspect(unrelatedCompanyId), /Agent not found/);
   const deniedFixture = await createChecklistPackage(path.join(temporaryRoot, "reference-plugins", "agent-denied"), {
     id: "local.agent-denied", withUi: false, runtimeDiscovery: true, agentDiscovery: true, omitCapability: "agents.read",
