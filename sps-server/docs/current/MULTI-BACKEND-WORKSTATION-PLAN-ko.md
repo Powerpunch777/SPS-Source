@@ -173,8 +173,6 @@ Desktop에서 조회·일시중지·Node binding/철회하며 No-AI A/B Workspac
 source Electron의 실제 최소 정보/권한·scope·Node binding/철회 및 기존 No-AI 전체
 연속 수용을 통과했다. 정확한 tuple과 실패/수정 이력은 위 수용 기록을 따른다.
 
-순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
-
 ### Stage 3a: Host 내부 모델 전송과 Secret 결속 기반
 
 Direct API 전체를 한 번에 공개하지 않고, 우선 기존 Secret 저장소와 binding을
@@ -207,6 +205,11 @@ invocation/활성화·capability 재검사, 새 model lane의 기록/idempotency
 마지막 검증과 외부 전송 자체가 원자적인 것도 아니다. 실제 키/유료 호출, 설치본
 교체나 production 보호 인증 없이 가짜 키·격리 DB·로컬 HTTP mock으로 먼저 검증한다.
 
+최종 13파일 192/192, Desktop 532/532, SDK 166/166과 타입/서버 빌드 및 기존
+source Desktop 연속 수용/정리 exit 0을 통과했다. 범위·정확한 tuple과 재현 명령은
+[Stage 3a 검증 기록](../reviews/MODEL-TRANSPORT-FOUNDATION-ACCEPTANCE-2026-10-25.md)을 따른다.
+
+이 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되
 정의하지 않은 보안/종료 보장을 선행 조건처럼 가정하지 않는다. 기존 전체 A~L의
 안전성·수명주기 항목을 삭제하거나 조사만으로 완료 표시하지 않는다.

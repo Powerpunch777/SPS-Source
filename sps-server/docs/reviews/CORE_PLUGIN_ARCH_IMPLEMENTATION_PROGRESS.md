@@ -320,6 +320,25 @@ deprecated 생성 fixture와 외부 어댑터명 호환성 오판을 고친 뒤 
 수행했다. 실제 CLI/원격 PC/Provider/Gateway/OCE, 전체 Core/Linux, 설치본·운영
 Identity·서명·두 PC·보호 실행은 여전히 별도이며 보안/설치본 보류도 유지한다.
 
+## 다중 백엔드 Stage 3a / Host 내부 모델 전송 기반
+
+기존 암호화 Secret/Plugin instance binding을 재사용하는 내부 결속과 bounded
+Responses 호환 텍스트 전송을 추가했다. 키/모델 endpoint를 Plugin에 반환하는
+새 API는 없고 secrets.resolve는 계속 차단한다. timeout/cancel 무시 작업의 슬롯
+유지, 총 버퍼 한도, 단일 SQL selector/material snapshot, 재결속/rotation/철회
+재검사와 고정 오류/최소 응답을 검증했다. usage 누락은 unknown이다.
+
+Source fe5aec86dfea75ab2dc8176dbf4489cc229986e9, Core c022f52d07fdfd3b40111ce1a6be80f97e7fe563,
+SDK 3feb5c42(변경 없음)에서 Core 관련 13파일 192/192, Desktop 532/532, SDK
+166/166, 30개 package typecheck/서버 build/compatibility 및 기존 source Electron
+전체 연속 수용/정리 exit 0을 통과했다. 새 전송은 실제 격리 DB/가짜 키/로컬 HTTP
+mock 시험이며 앱의 공개 모델 UI/SDK 검증이 아니다.
+[상세 기록](MODEL-TRANSPORT-FOUNDATION-ACCEPTANCE-2026-10-25.md)을 따른다.
+
+Stage 3b의 durable connection/grant·인증된 invocation/capability·model 실행 lane/
+기록/중복 방지/복구·결과 철회와 공개 broker/SDK/UI는 아직 남는다. 실제 Provider,
+설치본/전체 Core/Linux/최신 감사/운영 Identity/서명/두 PC/보호 실행도 별도다.
+
 ## 다음 게이트
 
 독립 복구 경로의 장애 조합 검증을 보강하고 OS/renderer 실행 계약을 구체화한다.
