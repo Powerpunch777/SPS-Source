@@ -82,6 +82,9 @@ test("prepared Native management exercises the real Main/Core route without a co
     assert.ok(script.includes(required), `Missing Native prepared source assertion: ${required}`);
   }
   assert.doesNotMatch(script, /ipcMain|setNativeIdentity|skipNativeConfirmation|confirmNativeDeviceAction\s*=/);
+  assert.match(script, /let debugPort = await findAvailablePort\(\)/);
+  assert.match(script, /const previousDebugPort = debugPort/);
+  assert.match(script, /assert\.notEqual\(debugPort, previousDebugPort/);
   const canonical = script.replace(/\r\n/g, "\n");
   for (const checkout of [canonical, canonical.replace(/\n/g, "\r\n")]) {
     const normalized = checkout.replace(/\r\n/g, "\n");

@@ -386,7 +386,7 @@ async function captureScreenshot(cdp, outputPath) {
 }
 
 const mockIdentity = createMockIdentityServer();
-const debugPort = await findAvailablePort();
+let debugPort = await findAvailablePort();
 const userDataDirectory = await mkdtemp(path.join(os.tmpdir(), "sps-workspace-surfaces-e2e-"));
 if (keepE2eData) console.log(`Preserving SPS Workspace E2E data at: ${userDataDirectory}`);
 let child = null;
@@ -446,6 +446,13 @@ try {
     await setupCdp?.close().catch(() => undefined);
     workspaceCdp = null;
     setupCdp = null;
+    // Main exit can precede Chromium's final debug-listener release. Never
+    // discover a new process through the preceding process's endpoint.
+    const previousDebugPort = debugPort;
+    for (let attempt = 0; attempt < 8 && debugPort === previousDebugPort; attempt++) {
+      debugPort = await findAvailablePort();
+    }
+    assert.notEqual(debugPort, previousDebugPort, "A restarted Desktop needs a fresh debugging endpoint");
   }
 
   const setupTarget = await waitForTarget(

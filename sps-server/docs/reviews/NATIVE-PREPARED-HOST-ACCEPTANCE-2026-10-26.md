@@ -114,8 +114,11 @@ and current Source/Windows qualification remain distinct gates.
 
 On the final owned-stop Core revision, the command above passes **9 files / 74
 tests**, including nine owned-stop tests and two real Node child-process cases.
-Full workspace typecheck and build pass. Exact-head hosted CI is newly required;
-the prior 15/15 run is not evidence for this changed Core revision.
+Full workspace typecheck and build pass. Exact Core PR workflow
+`40213936061` completed **15/15 jobs successful** on `7233ff885`, including
+all test partitions, typecheck/build, browser E2E and the aggregate. Core main
+inclusion and independent review remain unqualified. This does not substitute
+for Source's Windows job or a final signed installer.
 
 From `sps-server/desktop`:
 
@@ -161,9 +164,17 @@ calling this locked-runtime CI-qualified.
 One local final-code attempt failed at the earlier broad `settings_launch` stage
 with digest `3f5482b908f6615fd28b52af09e7715f0ba566c87cb5077eb9c0e5172fce0ce7`.
 The next run, with finer redacted diagnostics and no product change, passed both
-phases. This remains an unresolved intermittent acceptance failure, not a proven
-fixed product bug. It is retained as a qualification gap; no retry-until-green
-or test exclusion was added to CI. Fresh hosted diagnostics are required.
+phases. Exact digest comparison identifies the failed operation as
+`Timed out waiting for prepared Native Host settings. CDP targets: `, not an
+identity/Owner assertion. The harness now allocates a different loopback CDP
+port after each confirmed Desktop exit, avoiding reuse of the preceding
+Chromium process's endpoint. This removes that dependency; an old-listener
+collision is a plausible cause, not an observed socket-ownership fact. No
+retry-until-green, assertion removal or timeout extension was added to CI.
+The port-isolated local acceptance then passes both phases with final process/
+data cleanup (same Electron 43.7.7 / Node 24.21.0). Fresh hosted diagnostics and
+locked-runtime acceptance remain required; this is not broad flake elimination
+or proof that every prior timeout was a port collision.
 
 ## Preserved Boundaries and Remaining Work
 
