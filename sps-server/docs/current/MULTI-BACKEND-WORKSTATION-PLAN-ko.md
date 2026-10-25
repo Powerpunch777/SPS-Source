@@ -171,6 +171,9 @@ Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병
 
 - 문서 정렬 후 Core pin은 `8c2a4989b32bf6661223df5e0330c68741590d08`이다.
   이 Core 변경은 README/계약 문서뿐이며 실행 코드·SDK는 조사 baseline과 같다.
+- Source `027294f`에서 Desktop `npm test`: **512/512**, 실패/skip 0.
+  문서·Core gitlink·support matrix를 함께 커밋한 뒤 실행했다. 이후 후속 변경은
+  이 결과 기록뿐이다. 변경 문서 12개 로컬 링크 108개와 `git diff --check`도 통과했다.
 - 이전 D2의 source Electron/512 Desktop 시험은 그 고정 tuple의 이력이다.
   이번에 전체 Core/빌드/실제 Electron/의존성 감사/서명본 시험을 새로 실행한 것으로
   표시하지 않는다. 첫 No-AI reference의 전체 Desktop 시험도 아직 하지 않았다.

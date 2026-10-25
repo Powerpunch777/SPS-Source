@@ -240,6 +240,10 @@ OpenClaw adapter의 mock 시험과 최신 실제 Gateway 호환성도 별도다.
 정확한 재현 명령은 위 계획/감사에 기록한다. 전체 Core 회귀·실제 Electron·최신
 의존성 감사·설치본·두 PC 증거를 새로 확보한 것으로 표시하지 않는다.
 
+문서/고정값 반영 Source `027294f`에서 Desktop 전체 `npm test` 512/512,
+실패/skip 0을 재확인했다. 변경 문서 12개 로컬 링크 108개와 diff 공백 검사도
+통과했다. 다음 기록 커밋은 이 결과만 추가한다.
+
 다음 최소 구현은 기존 ui/platform/state/events/jobs로 만드는 임시 No-AI 체크리스트
 reference와 격리 Desktop 수용 시험이다. 이번 문서 변경으로 그 Plugin이 구현됐거나
 실제 사용자 환경에 설치된 것은 아니다. API/SDK/DB/의존성/실제 키 변경은 없다.
