@@ -52,8 +52,12 @@ The descriptor contains only Agent ID/adapter identifier, configured/disabled/
 unknown state, registered/unavailable adapter status, routing owner, cached Node
 observation, `authorization: "recheck_on_dispatch"`, and `readiness: "unknown"`.
 Registration is not login, health or execution approval. An `adapter` owner is
-delegated routing, not a claim of local Host execution. Existing Node bindings
-are authoritative; a foreign/missing bound Node is unknown without its ID.
+delegated routing, not a claim of local Host execution.
+Registration uses the existing registry, including namespaced/custom types.
+Unregistered or oversized/control/path/URL-like identifiers display as unknown;
+this masking does not turn a registered adapter into an unavailable one.
+Existing Node bindings are authoritative; a foreign/missing bound Node is
+unknown without its ID.
 Revoking a Node may remove the binding, so later reads describe the resulting
 adapter route without starting any work or providing an automatic fallback.
 
