@@ -84,9 +84,10 @@ async function assertNoFixtureLinks(directory) {
 }
 
 async function fixture(t) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "sps-native-identity-store-"));
-  const originalStat = await lstat(root);
-  const canonicalRoot = await realpath(root);
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "sps-native-identity-store-"));
+  const originalStat = await lstat(temporaryRoot);
+  const canonicalRoot = await realpath(temporaryRoot);
+  const root = canonicalRoot;
   const userDataDirectory = path.join(root, "application-data");
   const vaultDirectory = path.join(root, "owner-vault");
   await mkdir(userDataDirectory);
@@ -159,6 +160,16 @@ async function removeEmptyOwnedVault(paths) {
   assert.equal(await realpath(paths.vaultDirectory), path.resolve(paths.vaultDirectory));
   await rmdir(paths.vaultDirectory);
 }
+
+test("fixture paths are canonical children of the owned temporary root", async t => {
+  const paths = await fixture(t);
+  for (const directory of Object.values(paths)) {
+    assert.equal(await realpath(directory), directory);
+  }
+  assert.equal(path.dirname(paths.userDataDirectory), paths.root);
+  assert.equal(path.dirname(paths.vaultDirectory), paths.root);
+  assert.equal(path.dirname(paths.root), await realpath(os.tmpdir()));
+});
 
 test("requires Windows and available safeStorage without importing Electron", () => {
   assert.throws(() => createSpsNativeHostIdentityStore({ platform: "linux" }), {
@@ -400,9 +411,11 @@ test("rejects unavailable or non-positive BigInt Vault incarnation metadata", as
   const originalLstat = nodeFs.lstat;
 
   for (const [field, replacement] of [["dev", 0n], ["ino", 0n], ["birthtimeNs", 0n], ["birthtimeNs", undefined]]) {
+    let vaultStatCalls = 0;
     t.mock.method(nodeFs, "lstat", async function (target, options) {
       const stat = await Reflect.apply(originalLstat, nodeFs, [target, options]);
-      if (options?.bigint !== true || path.resolve(target) !== path.resolve(paths.vaultDirectory)) return stat;
+      if (options?.bigint !== true || await realpath(target) !== paths.vaultDirectory) return stat;
+      vaultStatCalls++;
       return {
         dev: field === "dev" ? replacement : stat.dev,
         ino: field === "ino" ? replacement : stat.ino,
@@ -413,7 +426,10 @@ test("rejects unavailable or non-positive BigInt Vault incarnation metadata", as
     });
     try {
       await assert.rejects(store.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+      assert.ok(vaultStatCalls > 0);
+      const readStatCalls = vaultStatCalls;
       await assert.rejects(store.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+      assert.ok(vaultStatCalls > readStatCalls);
     } finally {
       t.mock.restoreAll();
     }
@@ -601,7 +617,7 @@ test("authority revoked during the final asynchronous Vault check cannot publish
   let revoked = false;
   nodeFs.lstat = async (...args) => {
     const result = await originalLstat(...args);
-    if (guardCalls > 0 && args[0] === paths.vaultDirectory && args[1]?.bigint === true) {
+    if (guardCalls > 0 && args[1]?.bigint === true && await realpath(args[0]) === paths.vaultDirectory) {
       await new Promise(resolve => setImmediate(() => { revoked = true; resolve(); }));
     }
     return result;
