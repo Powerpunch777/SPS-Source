@@ -113,6 +113,11 @@ Neither the product startup nor a Native LAN listener enables these paths.
 Certificate issuance/storage, initial pairing, complete HTTP/subresource coverage,
 Native setup/recovery UI and physical two-PC qualification remain pending. See the
 [source verification record](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md).
+An internal [one-use pairing store](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)
+now atomically consumes an invitation and registers a pending first-time device,
+without granting membership or execution. It is not wired to a real enrollment
+endpoint. Approved Desktop defaults are any Google/SPS-verified recipient,
+one-hour lifetime and consumption on the first successful registration request.
 
 ## Product Boundary
 

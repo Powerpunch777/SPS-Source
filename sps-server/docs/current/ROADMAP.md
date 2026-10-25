@@ -18,6 +18,8 @@
    TLS 소스 시험 뒤 Core 기기 registry/승인·철회·현재 Workspace 인가와 선택적
    mTLS/WS 경계의 소스 기반을 추가했다. 앱 최초 pairing·발급·LAN listener와
    실제 두 PC는 미완료다. [Member 기기 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
+   이어서 [일회용 pairing 저장 계층](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)의
+   원자적 소비·재생/경합 거부와 가입 전 pending 등록을 구현했다. 실제 초기 연결은 후속이다.
 2. Native 초기 연결·승인·철회·복구를 0-Agent/0-Plugin에서도 제공한다. 기존 사용자
    인증·Workspace/Plugin·Node 실행 권한은 분리하고, HTTP/WS 양쪽에 적용한다.
 3. API·Owner 복구·Host Source/SMB의 별도 의존성을 이전/검증한다. 실제 Windows 두 PC와

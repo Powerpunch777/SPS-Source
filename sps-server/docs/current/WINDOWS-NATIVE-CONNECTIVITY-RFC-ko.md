@@ -16,6 +16,9 @@
 - 선택적 WS guard는 upgrade와 이벤트 전달 전 로그인 세션·기기 권한을 재검사한다.
   기존 local/Agent 경로에는 적용하지 않는다. 제품 Native ingress는 아직 없다.
 - 인증서 발급/키 보관·최초 pairing·HTTP/파일/기타 WS 전체 경계·Native UI·물리 두 PC는 후속이다.
+- 내부 pairing 저장 계층은 가입 전 verified 계정의 pending 등록과 일회용 소비를 같은
+  트랜잭션으로 처리한다. HTTP/인증/TLS 호출자는 미연결이다. D6 승인으로 Desktop 기본값은
+  코드를 받은 verified 사용자와 1시간/일회 소모다. 기기 승인·Workspace 권한은 별도다.
 
 정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
 
@@ -91,7 +94,9 @@ TLS probe는 HTTP나 자격정보를 전송하지 않는다. 결과 `tls_peer_ve
 
 문법적으로 정상인 envelope는 **신뢰되지 않은 입력**이다. TLS verifier는 현재 시각의
 발행/만료와 인증서 유효기간을 검사하지만 최대 TTL/시계 오차·원자적 일회성 소비·
-사용자/기기 결속은 향후 Host 프로토콜의 책임이다. codec이 대신하지 않는다.
+사용자/기기 결속은 Host 프로토콜의 책임이다. codec이 대신하지 않는다. 후속 내부
+저장 계층은 secret 소비와 계정/pending 기기 결속을 구현했지만, 실제 세션·키 소유와
+TLS 상대를 확인하는 endpoint를 아직 제공하지 않는다.
 SPKI pin은 이 첫 계약에서 서버 인증서 공개키의 DER SubjectPublicKeyInfo 해시다.
 별도 안정 Host identity/키 수명주기·회전·복원 규칙은 아직 미구현이다.
 전송 채널에서 코드 전체를 바꾼 공격자는 지문도 바꿀 수 있으므로, 코드 자체는
@@ -175,7 +180,11 @@ Member 연결/철회 API로 바꾸지 않는다. 새 연결만으로 `runs.dispa
 
 필요한 논리 자료는 Host identity version, 승인 기기/사용자 binding, challenge 소비,
 세션 generation, 철회, redacted 감사다. 기기/이벤트는 additive migration 0165로
-기존 session/Node 자격과 분리했다. Host 신원·pairing 소비·장기 세션 저장은 미구현이다.
+기존 session/Node 자격과 분리했다. migration 0166은 Host/서버 SPKI에 scoped된
+내부 일회용 pairing과 redacted 이벤트를 추가한다. Host 신원의 영속화·실제 최초
+pairing 프로토콜·장기 세션 저장은 미구현이다. 현재 pin은 생성 시 고정된 값이므로
+키 교체 시 이전 서비스/리스너를 반드시 폐기해야 한다. 새 pin 인스턴스의 거부 시험은
+모든 프로세스의 이전 키를 자동 철회했다는 증거가 아니다.
 
 Windows safeStorage는 기존 키 보관 패턴의 재사용 후보이지 TPM/non-exportable
 보장의 증거가 아니다. Member 키와 Node 키는 별도 용도·파일/slot·회전·폐기 규칙을

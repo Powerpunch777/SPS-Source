@@ -10,6 +10,9 @@
 mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS listener·
 최초 pairing·기기 인증서 발급에는 연결하지 않았으므로 내장 LAN 지원 완료가 아니다.
 정확한 범위와 명령은 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
+그다음 내부 pairing 저장 계층은 원자적 일회용 소비·시도 제한·Host/서버 지문 결속과
+가입 전 사용자의 pending 기기 생성까지 추가했다. 아직 실제 최초 연결 프로토콜은 아니다.
+[pairing 저장 계층 검증](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)을 따른다.
 
 ## 1. 변경된 우선순위
 
@@ -108,7 +111,12 @@ Host에서 왔다는 전달 채널의 신뢰가 필요하며, 코드 파싱 성�
 선택한 사설 네트워크와 전용 TLS 포트에 허용한다. 실제 방화벽 변경·외부 listener
 활성화·두 PC 시험은 별도로 확인받는다. 현 단계는 loopback 합성 시험뿐이다.
 
-D4~D5와 실제 키 수명·발급/회전·TTL·rate limit·보관 기간·listener 배치의 세부
+D6 승인(2026-10-25): 초대코드를 받은 사람이 Google/SPS 로그인 후 등록을 요청할 수
+있으며 특정 이메일로 제한하지 않는다. 기본 유효기간은 **1시간**, 첫 성공한 등록 요청으로
+일회 소모한다. Host 기기 승인과 Workspace/Plugin/Node/Source 권한은 자동으로 생기지 않는다.
+잘못된 secret이나 잘못된 대상 요청이 정상 등록의 성공으로 취급되는 정책은 아니다.
+
+D4~D5와 실제 키 수명·발급/회전·최대 TTL·rate limit·보관 기간·listener 배치의 세부
 계약은 아직 검수 대상이다. 권고를 승인된 운영 정책으로 간주하지 않는다.
 
 | ID | 필요한 결정 | 권고 / 비교안 | 결정 전 가능한 일 |
@@ -116,6 +124,7 @@ D4~D5와 실제 키 수명·발급/회전·TTL·rate limit·보관 기간·liste
 | D1 승인 | 전체 초대코드 + Host 서버 지문 확인 우선 | 고객 관리 CA 후속; 미확인 TOFU 자동 수락 금지 | 비활성 초대 envelope 계약·거부 테스트, 실제 TLS/키 정책은 별도 |
 | D2 승인 | PC별 별도 Member mTLS 인증서 + Host 승인 | 사용자/Node/CLI/Source 권한 분리, 재설치/키 분실 시 재승인 | 발급·보관·철회·회전 세부 계약, 기존 키와 용도 분리 |
 | D3 승인 | LAN 기본 off, Host 명시 opt-in, 선택 사설망 + 전용 TLS 포트 | local_trusted bind 확대/자동 방화벽 변경 금지; 배치 세부는 검수 | loopback TLS 시험, 외부 listener/방화벽/두 PC는 별도 동의 |
+| D6 승인 | 코드 받은 verified 사용자·1시간·첫 등록 요청 시 소모 | 기기 승인·Workspace/실행 권한 별도 | 비활성 Desktop 요청 기본값; 실제 발급/전송은 후속 |
 | D4 | Tailscale 없는 Host Source 접근 | 제한된 파일 broker vs OS 공유; 경로/링크/충돌/철회 검증과 권한 명시 | 현재 SMB 보존, read/write/rename/delete 요구 정리 |
 | D5 | WAN / 자동 검색 / 운영 모델 | LAN 수용 뒤 기업 TLS endpoint·relay·NAT 대안 비교 | 이번 구현 범위에서 제외 |
 
@@ -128,7 +137,7 @@ D4~D5와 실제 키 수명·발급/회전·TTL·rate limit·보관 기간·liste
 | --- | --- | --- |
 | 0 완료 | 11영역 코드 감사·현재 시퀀스·RFC·결정 목록·문서 정렬 | `f5171ef83473fc538a7b5db6576c3c99ab05cebe` 문서 checkpoint. 런타임/DB/키/지원표 불변 |
 | 1 계약 중 | D1~D3 승인, 초대/서버 인증서·TLS source 시험, Member 세션·철회·Native 복구의 세부 계약 | HTTP/WS/서브리소스의 단일 인가, 기기 registry와 키/세션 정책 검수. 아직 외부 노출 없음 |
-| 2a Core 진행 | 기기 registry/승인·철회·현재 인가·TLS peer helper/WS 재검사 소스 구현, Native ingress와 일회용 pairing 후속 | 격리 DB/TLS fixture와 거부 테스트만 확보. pairing/HTTP 전체 경로/실제 LAN 완료로 표시하지 않음 |
+| 2a Core 진행 | 기기 registry/승인·철회·현재 인가·TLS peer/WS 검사와 내부 일회용 pairing 저장 계층 구현 | 최초 연결 인증/TLS adapter·Native ingress·HTTP 전체 경로/실제 LAN은 미완료 |
 | 2b Desktop | Native 설정과 Member 클라이언트, 0-Agent/0-Plugin 복구 | 임시 source Electron, 브라우저·Plugin bridge 승격 차단, 재시작/중단·철회 수용. 실제 LAN은 별도 동의 |
 | 2c 실제 LAN | 승인된 시험 데이터로 Windows 두 PC | Tailscale 없는 A/B 연결, 잘못된 서버/사용자/기기·Workspace 거부, 실제 포트/버전/tuple 증거. 미통과시 opt-in 해제 |
 | 3 SDK | 승인 Connection read/status부터, scoped observe | 실제 handler → SDK 선언/worker → packed consumer → Desktop 수용, missing invocation/capability·A/B 거부. 관리 mutation은 비공개 |
@@ -176,7 +185,12 @@ TLS 확인 시험을 추가했다. Stage 2a는 additive migration 0165와 Core �
 `nativeConnectivityHostId`가 있을 때만 mount되고 제품 startup에는 아직 전달하지 않는다.
 신규 WS guard도 전용 Native ingress용 opt-in이며 기존 local/Agent/TS listener에 붙이지 않는다.
 
-다음은 Host 신원의 영속화·발급/키 보관·일회용 pairing과 기본 off Native ingress,
+내부 pairing 저장 계층은 migration 0166으로 소비/이벤트와 pending 생성을 함께 검증했다.
+신뢰된 호출자가 실제 세션·기기 키 소유·현재 Host 지문을 검증하는 전송 프로토콜은 후속이다.
+초대 대상/기본 TTL은 D6으로 확정했다. Desktop의 비활성 요청 기본값은 any-verified-user와
+1시간이며, 범용 Core 저장 계층은 여전히 명시적인 정책 입력을 요구한다.
+
+다음은 Host 신원의 영속화·발급/키 보관·pairing 전송 결속과 기본 off Native ingress,
 0-Agent/0-Plugin 설정·복구 UI다. 전체 HTTP/WS/서브리소스 인가·철회와 실제 두 PC는
 후속 수용 Gate다. OS 키/인증서 저장소·방화벽·Tailscale·설치본·고객 데이터를 변경하는
 명령은 실행하지 않는다. 검수/동의 전 실제 LAN·WAN·Linux·고객 환경으로 확대하지 않는다.
