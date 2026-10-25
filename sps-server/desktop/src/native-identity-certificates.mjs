@@ -6,11 +6,13 @@ import {
   KeyUsageFlags, KeyUsagesExtension, SubjectAlternativeNameExtension,
   SubjectKeyIdentifierExtension, X509Certificate as ParsedCertificate, X509CertificateGenerator,
 } from "@peculiar/x509";
+import {
+  nativeCertificateRecord as record, nativeCertificateUuid as uuid, nativeCertificateDate as date,
+  decodeNativeCertificatePem as pem, encodeNativeCertificatePem as encodePem, nativeCertificatePublicDer as publicDer,
+} from "./native-certificate-primitives.mjs";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SIGNING_ALGORITHM = Object.freeze({ name: "ECDSA", hash: "SHA-256" });
 const KEY_ALGORITHM = Object.freeze({ name: "ECDSA", namedCurve: "P-256" });
-const MAX_PEM_LENGTH = 8192;
 const MESSAGES = Object.freeze({
   native_identity_invalid: "The SPS native Host identity is invalid. Existing credentials were not replaced.",
   native_identity_invalid_options: "The SPS native identity creation options are invalid.",
@@ -20,27 +22,6 @@ const MESSAGES = Object.freeze({
 
 function failure(code) {
   return Object.assign(new Error(MESSAGES[code]), { code });
-}
-
-function record(value, keys) {
-  if (!value || typeof value !== "object" || Array.isArray(value)
-    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error("record");
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  if (Reflect.ownKeys(descriptors).length !== keys.length
-    || keys.some(key => !descriptors[key]?.enumerable || !Object.hasOwn(descriptors[key], "value"))
-    || Reflect.ownKeys(descriptors).some(key => typeof key !== "string" || !keys.includes(key))) throw new Error("record");
-  return Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
-}
-
-function uuid(value) {
-  if (typeof value !== "string" || value.length !== 36 || !UUID.test(value)) throw new Error("uuid");
-  return value;
-}
-
-function date(value) {
-  if (!Number.isSafeInteger(value) || value <= 0 || value % 1000 !== 0
-    || !Number.isFinite(new Date(value).getTime()) || new Date(value).getUTCFullYear() > 9999) throw new Error("date");
-  return new Date(value);
 }
 
 function hostname(value) {
@@ -65,25 +46,6 @@ function names(values) {
   const snapshot = keys.map(key => hostname(descriptors[key].value));
   if (new Set(snapshot).size !== snapshot.length) throw new Error("names");
   return snapshot;
-}
-
-function pem(value, label) {
-  if (typeof value !== "string" || value.length > MAX_PEM_LENGTH) throw new Error("pem");
-  const match = new RegExp(`^-----BEGIN ${label}-----\n([A-Za-z0-9+/=\n]+)-----END ${label}-----\n$`).exec(value);
-  if (!match) throw new Error("pem");
-  const encoded = match[1].replaceAll("\n", "");
-  const bytes = Buffer.from(encoded, "base64");
-  if (!bytes.length || bytes.toString("base64") !== encoded || encodePem(bytes, label) !== value) throw new Error("pem");
-  return bytes;
-}
-
-function encodePem(bytes, label) {
-  const lines = Buffer.from(bytes).toString("base64").match(/.{1,64}/g);
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
-}
-
-function publicDer(key) {
-  return key.export({ type: "spki", format: "der" });
 }
 
 function checkPair(input, hostId, issuer) {

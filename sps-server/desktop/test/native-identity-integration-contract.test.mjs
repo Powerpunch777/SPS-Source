@@ -48,11 +48,15 @@ test("declares and retains the certificate library and reflection license notice
   const manifest = JSON.parse(await read("../package.json"));
   assert.equal(manifest.dependencies["@peculiar/x509"], "2.2.0");
   assert.equal(manifest.dependencies["reflect-metadata"], "0.2.2");
+  assert.equal(manifest.dependencies.asn1js, "3.0.10");
   assert.ok(manifest.build.files.includes("assets/**/*"));
   const notice = await read("../assets/NATIVE-PKI-NOTICE.txt");
   assert.match(notice, /Copyright \(c\) Peculiar Ventures/);
   assert.match(notice, /reflect-metadata 0\.2\.2/);
+  assert.match(notice, /asn1js 3\.0\.10/);
+  assert.match(notice, /Copyright \(c\) 2014, GMO GlobalSign/);
   assert.match(await read("../node_modules/@peculiar/x509/LICENSE"), /MIT License/);
   assert.match(await read("../node_modules/reflect-metadata/LICENSE"), /Apache License/);
   assert.match(await read("../node_modules/reflect-metadata/CopyrightNotice.txt"), /Microsoft Corporation/);
+  assert.match(await read("../node_modules/asn1js/LICENSE"), /Redistribution and use in source and binary forms/);
 });

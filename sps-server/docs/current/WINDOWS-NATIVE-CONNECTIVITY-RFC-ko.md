@@ -18,18 +18,26 @@
   기존 local/Agent 경로에는 적용하지 않는다. 제품 Native ingress는 아직 없다.
 - Core Settings는 신뢰된 Host 전용의 명시 확인을 거쳐 Host 인증서 준비를 호출한다. Member
   발급이나 세션 등록은 하지 않는다. LAN은 OFF이며 listener/방화벽 변경도 없다.
+- 비활성 Member 발급 primitive는 표준 PKCS#10 P-256/SHA-256 서명 요청을 사용하며, 개인키는 Member
+  로컬 메모리에 두고 공개 요청에서 제외한다. Host의 별도 issuer가 명시적 90일 이하·issuer 유효기간
+  안의 non-CA `clientAuth`/`digitalSignature` leaf를 발급한다. Main/IPC/HTTP/SDK 호출자·키 파일 저장·
+  provisioning·갱신·새 GUI 흐름은 없다. 표준 TLS 1.3 loopback에서 새 인증서/올바른 키는 통과하고
+  인증서 없음·다른 issuer·같은 issuer의 잘못된 EKU·다른 개인키는 거부했다(application bytes 0).
+  CSR 서명 검증은 live TLS 키 소유 증명과 별개다. 자체 서명 프로토콜이나 Google 로그인·기기 승인·
+  Workspace/Node/Source grant·새 enrollment를 구현한 것이 아니다.
 - 미출시 v2 Host identity store는 DPAPI context를 Vault incarnation `dev`/`ino`/`birthtimeNs`에
   결속한다. 이는 로컬 lifecycle 결속이지 attestation이 아니다. 유효한 새 Vault에 slot이 없으면
   `not_prepared`이며 준비를 허용한다. 기존 slot과 함께 Vault incarnation이 없거나 재생성/손상된
   경우 명시적 복구가 필요하고 자동 교체하지 않는다. restore 시 상태 미상은 fail closed다.
 - Host 시작/restore interlock은 captured account를 쓰는 process-local guard이며 OS lock 보장은 없다.
-- Member 인증서 발급·session enrollment·갱신·최초 pairing 전송·HTTP/파일/기타 WS 전체 경계·
+- Member 인증서 발급 활성화·session enrollment·갱신·최초 pairing 전송·HTTP/파일/기타 WS 전체 경계·
   전체 Member UI·물리 두 PC는 후속이다.
 - 내부 pairing 저장 계층은 가입 전 verified 계정의 pending 등록과 일회용 소비를 같은
   트랜잭션으로 처리한다. HTTP/인증/TLS 호출자는 미연결이다. D6 승인으로 Desktop 기본값은
   코드를 받은 verified 사용자와 1시간/일회 소모다. 기기 승인·Workspace 권한은 별도다.
 
-정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
+정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과
+[Member 인증서 검증](../reviews/NATIVE-MEMBER-CERTIFICATE-VERIFICATION-2026-10-25.md)을 따른다.
 
 ## 1. 목표와 비목표
 
@@ -72,16 +80,17 @@ TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은
 D7은 서버/Member 인증서 90일, 별도 issuer 365일 및 만료 전 기존 키·검증된 현재 신원을
 사용하는 갱신 정책의 승인이다. 갱신 threshold/issuer 회전 세부는 미정이고, 갱신 자체는
 미구현이다. Core Settings source Electron의 7개 모드는 기존 로컬 Electron 43.7.7에서
-재실행해 모두 통과했다. 단위/계약 검사의 정확한 수와 명령은 아래 lifecycle 검증 기록에 모은다.
+재실행해 모두 통과했다. 단위/계약 및 Member loopback TLS 명령·수·상세 증거는 위 Member 검증 기록에 모은다.
 기존 43.7.7 결과는 잠긴 43.8.3 검증이나 DPAPI v2 양성 수용이 아니다. 새 Native smoke 첫 실행이
 도입된 `await electronPhase()` deadlock을 잡아 부모가 기존 `void` entry를 복구하고 regression
 assertion을 추가했다. 재시도는 `runtime_validation / electron_version_mismatch`로 fail closed하며
 actual 43.7.7, expected 43.8.3을 보고했다. 이는 진단 경로 검증이지 43.8.3 DPAPI 성공이 아니다.
 CI는 잠긴 기본 Electron 바이너리를 사용하며 override 실행은 수용 증거가 아니다. Source
-`9c3c145abc536fa9add5d6e6f5f87fc7d2b6d404` run `40175609939`는 9개 Linux shard와 Core 전체
-typecheck/build 통과, Windows Native identity smoke와 Zod High `1243066` 실패(예외 없음), Windows
-No-AI skipped로 전체 실패했다. Core run `40175522247`은 같은 Core revision의 15 jobs 성공이다.
-smoke 진단 수정 후 새 CI는 pending이다. [설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)을 따른다.
+`928a5e5b680242d9a9ef61cd5ddabbd46c465417`의 두 Windows job은 8.3 alias fixture/mock 문제로 unit
+5건이 실패해 Native smoke·Core Settings·No-AI가 skipped였다. canonical fixture 수정은 제품 guard를
+완화하지 않으며 새 HEAD CI는 pending이다. production/full audit는 Zod High `1243066`과 기존 Low 2건을
+보고했고 예외 없이 High 보류를 유지한다. 그 외 새 경고는 없고 생성 보안 문서 검사는 통과했다.
+[설정/복원 lifecycle 검증](../reviews/NATIVE-SETTINGS-RESTORE-VERIFICATION-2026-10-25.md)과 위 Member 검증을 따른다.
 실제 고객 키/listener는 사용하지 않았다.
 
 신원 확인 전에는 사용자 access token·초대 secret·Workspace 자료를 보내지 않는다.
@@ -186,9 +195,9 @@ Workspace 인가를 거쳐야 한다. 세션 cookie가 있거나 LAN 소켓이�
   기본 session 전역 검증 해제나 범용 certificate-error 수락은 금지한다.
 - `checkServerIdentity`의 hostname 검사만으로 X.509 체인·유효기간·pin 정책을 모두
   대체하지 않는다. 임시 self-signed fixture 통과도 실제 Host 신뢰 배포 수용이 아니다.
-- 승인 D2는 Member mTLS다. 자체 PoP를 병행 구현하지 않는다. 실제 client 인증서
-  발급·보관, 앱 최초 연결과 전체 HTTP/WS/서브리소스 검사는 후속이다. 현재 승인·사용자
-  결속의 소스 registry와 transport helper 시험은 전체 제품 경로 수용을 대신하지 않는다.
+- 승인 D2는 Member mTLS다. 표준 CSR 서명과 live TLS 키 소유 증명을 구분하며 자체 PoP를 병행 구현하지 않는다.
+  비활성 client 인증서 발급 primitive 이후의 발급 활성화·키 보관·앱 최초 연결과 전체 HTTP/WS/서브리소스
+  검사는 후속이다. 현재 승인·사용자 결속의 소스 registry와 transport helper 시험은 전체 제품 경로 수용을 대신하지 않는다.
 
 ## 6. 공개 SDK의 최소 표면 제안
 
@@ -217,15 +226,16 @@ Member 연결/철회 API로 바꾸지 않는다. 새 연결만으로 `runs.dispa
 필요한 논리 자료는 Host identity version, 승인 기기/사용자 binding, challenge 소비,
 세션 generation, 철회, redacted 감사다. 기기/이벤트는 additive migration 0165로
 기존 session/Node 자격과 분리했다. migration 0166은 Host/서버 SPKI에 scoped된
-내부 일회용 pairing과 redacted 이벤트를 추가한다. Host 신원의 생성/암호화 보관은 별도
-비활성 primitive로 시험했지만, 제품 생명주기·실제 최초 pairing·장기 세션 저장은 미구현이다. 현재 pin은 생성 시 고정된 값이므로
+내부 일회용 pairing과 redacted 이벤트를 추가한다. Host 신원의 생성/암호화 보관은 좁은 Core Settings
+준비 경로에 연결됐지만, Member 발급 primitive의 provisioning·실제 최초 pairing·장기 세션 저장은 미구현이다.
+현재 pin은 생성 시 고정된 값이므로
 키 교체 시 이전 서비스/리스너를 반드시 폐기해야 한다. 새 pin 인스턴스의 거부 시험은
 모든 프로세스의 이전 키를 자동 철회했다는 증거가 아니다.
 
-Windows safeStorage를 기존 패턴에 맞춰 재사용하며, 별도 Electron 프로세스 재독해까지
-격리 시험했다. TPM/non-exportable 또는 같은 사용자 악성 프로세스 격리를 보장하지 않는다.
-Member 키와 Node 키는 별도 용도·파일/slot·회전·폐기 규칙을
-갖는다. Host 이전/Owner Vault 복원은 기존 remote credential을 부활시키지 않고
+Windows safeStorage를 기존 패턴에 맞춰 재사용한다. 이전 runtime의 프로세스 간 재독해 시험은
+잠긴 43.8.3의 DPAPI v2 양성 수용이 아니다. TPM/non-exportable 또는 같은 사용자 악성 프로세스 격리를 보장하지 않는다.
+Member 키와 Node 키는 별도 용도이며 Member 키의 파일/slot 저장·회전·폐기 규칙 연결은 후속이다.
+Host 이전/Owner Vault 복원은 기존 remote credential을 부활시키지 않고
 명시적 재승인을 요구한다. restore sanitizer에 새 자격 자료를 포함해야 한다.
 
 오류는 transport unavailable, Host identity changed, sign-in required,
