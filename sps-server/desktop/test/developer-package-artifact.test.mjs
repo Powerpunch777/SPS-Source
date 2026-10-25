@@ -31,6 +31,8 @@ async function withFixture(run, content) {
   try {
     await run(current);
   } finally {
+    assert.equal(path.dirname(path.resolve(current.root)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(current.root).startsWith("sps-developer-artifact-"));
     await rm(current.root, { recursive: true, force: true });
   }
 }
@@ -52,7 +54,7 @@ test("resolves a nonempty archive only after streaming and verifying its SHA-256
   await withFixture(async ({ vaultRoot, build, archivePath, sha256, content }) => {
     const result = await resolveDeveloperPackageArtifact({ vaultRoot, build });
     assert.deepEqual(result, {
-      archivePath,
+      archivePath: await fs.realpath(archivePath),
       fileName: `${sha256}.spsplugin`,
       sha256,
       sizeBytes: content.length,

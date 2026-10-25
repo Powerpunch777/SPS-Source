@@ -1,7 +1,7 @@
 # 모델 요청 broker 검증
 
-기준일: 2026-10-25 KST. Stage 3b의 mock-first 소스 구현이다. 최종 source Desktop
-연속 수용은 아직 재실행 대기다. Desktop 0.4.137 미출시 소스이며 설치본 교체,
+기준일: 2026-10-25 KST. Stage 3b의 mock-first 소스 구현이다. 중간 source Desktop
+연속 수용을 통과했고 CI 보완 후 최종 pin 재실행을 앞두고 있다. Desktop 0.4.137 미출시 소스이며 설치본 교체,
 실키·유료 호출·실제 제공자 인증 또는 Stable 완료를 뜻하지 않는다.
 
 ## 구현과 경계
@@ -40,15 +40,15 @@
 
 | 항목 | 결과 |
 | --- | --- |
-| Core | fe6fc7ad7f5f61384e06990ced1765d69f79f0bd |
+| Core | 0ba417ad9b0e26ae1cf598edca524b82059d04de |
 | 공개 SDK | d4d69208480fc618b2055378b85d183aea422d50; 0.11.0 미출시 추가분 |
 | 최종 Runtime 시험 Source | source Electron 재실행 성공 후 고정 |
-| Core 표적 단일 회차 | 19파일 379/379, 실패/skip 0. 전체 Core 회귀는 아님 |
+| Core 표적 단일 회차 | 21파일 387/387, 실패/skip 0. 전체 Core 회귀는 아님 |
 | SDK 전체 | 174/174, 실패/skip 0 |
-| Desktop 전체 | 최초 SDK pin에서 534/534. 최종 pin/새 bundle 회귀 포함 재실행 대기 |
+| Desktop 전체 | SDK 수정/새 bundle 및 경로 회귀 포함 535/535. 최종 Core pin 재실행 대기 |
 | Core 타입/빌드 | 30개 package typecheck, 서버 build, compatibility boundary 통과 |
 | UI 토큰 게이트 | 실패: 기존 다른 화면 79 color + 36 arbitrary-value + 1 font-size. 이번 변경 파일 위반은 목록에 없음. 전체 통과로 취급하지 않음 |
-| source Electron | 첫 실행은 SDK platform 선언 누락으로 실패. 수정 후 전체 재실행 대기 |
+| source Electron | 첫 실행은 SDK 선언 누락으로 실패. 수정 후 f6cd4577 + fe6fc7ad + d4d69208에서 전체 통과/정리 exit 0. 최신 OpenAPI/경로 보완 pin 재실행 대기 |
 | GitHub 보안 게이트 | Source 684a596f의 실제 runner에서 production Zod 3 High 1243066 미승인으로 실패. 보류된 major 전환을 무음 수행/예외 처리하지 않음 |
 
 ### 발견 후 수정한 것
@@ -64,13 +64,17 @@
    거부하는 SDK 누락을 발견했다. 허용 목록/타입과 결합 회귀를 수정했다. 최초 실패를
    성공으로 덮지 않고 최종 pin에서 다시 실행한다.
 5. 기존 복구 모드와 empty-Host restore 규칙에 새 실행 경로/테이블을 연결했다.
+6. 실제 CI는 더 이상 runner 진입 전 막히지 않았다. OpenAPI의 새 모델/기록 9개
+   operation 등록 누락, Linux path delimiter에 Windows fixture를 넣은 오류,
+   Windows runner의 8.3 임시 경로와 실제 경로 표기 차이를 고쳤다. coverage 예외나
+   약한 경로 검사를 추가하지 않았다. 아래 최종 시험은 해당 보완까지 포함한다.
 
 ## 재현
 
 Core에서 다음 단일 표적 명령을 사용했다. 서로 겹치는 집중 회차를 합산하지 않는다.
 
 ```powershell
-pnpm exec vitest run server/src/__tests__/sps-model-response.test.ts server/src/__tests__/sps-model-transport.test.ts server/src/__tests__/sps-model-bound-transport.test.ts server/src/__tests__/sps-model-connections.test.ts server/src/__tests__/sps-model-connection-routes.test.ts server/src/__tests__/sps-model-broker.test.ts server/src/__tests__/sps-plugin-availability.test.ts packages/plugins/sdk/tests/model-host-client.test.ts packages/plugins/sdk/tests/host-client-factory.test.ts packages/plugins/sdk/tests/worker-rpc-host.test.ts server/src/__tests__/sps-host-support.test.ts server/src/__tests__/sps-execution-observation.test.ts server/src/__tests__/sps-execution-summary.test.ts server/src/__tests__/sps-executions-routes.test.ts server/src/__tests__/plugin-secrets-handler.test.ts server/src/__tests__/plugin-job-workspace-scheduler.test.ts packages/db/src/post-restore-sanitizer.test.ts ui/src/components/SpsPluginExecutions.test.tsx ui/src/api/sps-executions.test.ts
+pnpm exec vitest run server/src/__tests__/sps-model-response.test.ts server/src/__tests__/sps-model-transport.test.ts server/src/__tests__/sps-model-bound-transport.test.ts server/src/__tests__/sps-model-connections.test.ts server/src/__tests__/sps-model-connection-routes.test.ts server/src/__tests__/sps-model-broker.test.ts server/src/__tests__/sps-plugin-availability.test.ts packages/plugins/sdk/tests/model-host-client.test.ts packages/plugins/sdk/tests/host-client-factory.test.ts packages/plugins/sdk/tests/worker-rpc-host.test.ts server/src/__tests__/sps-host-support.test.ts server/src/__tests__/sps-execution-observation.test.ts server/src/__tests__/sps-execution-summary.test.ts server/src/__tests__/sps-executions-routes.test.ts server/src/__tests__/plugin-secrets-handler.test.ts server/src/__tests__/plugin-job-workspace-scheduler.test.ts packages/db/src/post-restore-sanitizer.test.ts ui/src/components/SpsPluginExecutions.test.tsx ui/src/api/sps-executions.test.ts server/src/__tests__/openapi-routes.test.ts server/src/__tests__/plugin-recovery-startup-contract.test.ts
 pnpm -r typecheck
 pnpm --filter @paperclipai/server build
 pnpm check:sps-compat-boundary

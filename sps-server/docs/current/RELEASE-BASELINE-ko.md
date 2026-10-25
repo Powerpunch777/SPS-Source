@@ -1,20 +1,29 @@
 # SPS Release Baseline
 
-Last reviewed: 2026-10-18
+Last reviewed: 2026-10-25
 
-The current candidate is `0.4.136` and remains `development-candidate`. It is not a Stable release.
+The current **source** candidate is `0.4.137` and remains `development-candidate`.
+It is not a new installer or Stable release. The generated
+[current candidate](CURRENT-CANDIDATE.md) and support matrix are authoritative
+for its Core/SDK tuple; do not use a historical tuple from this document.
 
 ## Candidate tuple
 
-- Desktop: `0.4.136`
-- Core: `a88513b9afd6d56b9bb7362aaaebe6d9da9cb085`
-- Plugin SDK: `4e23934dd0164132b9ba6d637d7687e97ad27f86` (`0.11.0`)
+- Desktop: unreleased source `0.4.137`
+- Core and public SDK: exact revisions in [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md)
 - Platform: Windows 10/11 x64
 - Remote transport: Tailscale `1.52.0` or later
 - Identity protocol: v2 compatibility bridge
 - Rollback floor: `bridge-v2`
 
-The current Core includes the first light UI pass (bundled Korean/Latin font,
+The source adds optional AI/backend discovery, Native recovery and the mock-first
+model broker. Exact commands, partial failures and tested Source/Core/SDK revisions
+are recorded in [the multi-backend plan](MULTI-BACKEND-WORKSTATION-PLAN-ko.md)
+and its dated acceptance records. Source tests do not qualify installed bytes.
+
+### Historical 0.4.136 UI Checkpoint (2026-10-18)
+
+That Core included the first light UI pass (bundled Korean/Latin font,
 shared frame and plugin settings). Source Electron visual checks passed at three
 viewport sizes; see `SPS-LIGHT-UI-PLAN-ko.md`. The prior installer and its four
 packaged E2Es predate this UI commit and do not validate these new bytes. A new
@@ -128,11 +137,14 @@ The following are explicit release blockers, not completed code-test claims:
 - The exact candidate HEAD has not completed all nine Linux Core regression
   shards. Targeted Windows/Core checks and typecheck/build results do not
   substitute for the full Linux shard evidence.
-- Core `a88513b9afd6d56b9bb7362aaaebe6d9da9cb085` is still on Draft PR #26
-  and is not reachable from the Core `main` branch.
+- The pinned Core is still on Draft PR #26, not independently approved/merged
+  into Core `main`; verify exact reachability for the tuple before release.
+- The production dependency gate currently rejects Zod 3 High advisory 1243066.
+  Its major migration remains on hold; there is no approved exception.
+- No signed `0.4.137` installer or identical-byte two-PC evidence has been created.
 
 Until these conditions have fresh evidence for the same candidate tuple,
-`0.4.136` remains a development candidate and must not be described as
+`0.4.137` remains a source development candidate and must not be described as
 Stable.
 
 ## Stable gates
@@ -150,7 +162,7 @@ Stable publication requires all of the following for the same Source commit:
 9. The annotated release tag already belongs to `main`, is verified by GitHub, and the pinned Core and Plugin SDK revisions are reachable from their own `main` branches.
 10. Publication uses an `sps-production` Environment with protected `main`, a required non-author reviewer, and protected release, Identity, Cloudflare, and physical-device evidence secrets.
 
-Evidence and installer bytes from `0.4.135` or earlier cannot be reused for
-`0.4.136`: its Electron and Core dependency graphs have changed. Rebuild and
+Evidence and installer bytes from an earlier candidate cannot be reused for
+`0.4.137`: its Core/SDK and Desktop source have changed. Rebuild and
 retest from the exact Source revision. Code signing will change the installer
 hash again, requiring new manifest, challenge, Serve and physical evidence.
