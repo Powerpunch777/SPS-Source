@@ -153,6 +153,21 @@ DB migration/새 endpoint/무음 fallback 없이 기존 transport를 확장한�
 실제 Desktop/공개 SDK snapshot 조회 및 capability 거부를 확인했다. 정확한 tuple과
 연속 수용/정리 범위는 위 기록을 따르며 전체 backend 지원이 완료됐다는 뜻은 아니다.
 
+### Stage 2c: 안전한 Agent 실행 설정 조회
+
+기존 Agent list/get은 호환 shape를 유지한다. 별도 `agents.describeExecution` 읽기를
+기존 `agents.read`·Workspace invocation·현재 등록 어댑터/Node binding에 연결한다.
+설정 상태·어댑터 등록과 Node 관측만 제공하고 config/cwd/환경/키/prompt/역할을
+읽어 반환하지 않는다. readiness는 unknown, 실제 권한은 dispatch 때 다시 검사한다.
+adapter routing을 Host 로컬 실행이라고 단정하거나 Gateway/OCE의 실제 연결로
+표시하지 않는다. API 지원 snapshot에도 정확한 method를 추가한다.
+
+구현 전 조사에서 Agent Node 실행 경로가 미래 heartbeat를 최근으로 취급하는
+중복 판정을 발견했다. 기존 Stage 2a의 엄격한 helper를 재사용하고 명령 생성 전
+거부하는 회귀 시험을 추가한다. 별도 임시 Workspace의 실행하지 않는 Agent를
+Desktop에서 조회·일시중지·Node binding/철회하며 No-AI A/B Workspace는 Agent 0개로
+유지한다. 실제 Provider 호출이나 사용자 데이터/설치본 변경은 하지 않는다.
+
 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되
 정의하지 않은 보안/종료 보장을 선행 조건처럼 가정하지 않는다. 기존 전체 A~L의

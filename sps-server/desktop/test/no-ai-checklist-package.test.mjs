@@ -41,6 +41,14 @@ test("Host support negative fixture can initialize without receiving Runtime per
   assert.deepEqual(manifest.sps.primitives, []);
 });
 
+test("Agent descriptor inspection is an explicit read-only opt-in and can deny agents.read", () => {
+  const granted = checklistManifest({ withUi: false, runtimeDiscovery: true, agentDiscovery: true });
+  const denied = checklistManifest({ withUi: false, runtimeDiscovery: true, agentDiscovery: true, omitCapability: "agents.read" });
+  assert.ok(granted.capabilities.includes("agents.read"));
+  assert.ok(!denied.capabilities.includes("agents.read"));
+  assert.ok(!granted.capabilities.some(value => /agent.sessions|agents.invoke/.test(value)));
+});
+
 test("public authoring bundler creates a self-contained temporary reference package", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "sps-no-ai-package-test-"));
   try {

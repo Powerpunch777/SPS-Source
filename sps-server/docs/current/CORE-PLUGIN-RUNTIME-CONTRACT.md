@@ -40,6 +40,29 @@ contains no secrets, paths, endpoint or tenant identifiers and is regenerated
 on Worker restart. Direct model API/OCE/secret APIs are not advertised; actual
 backend-specific negotiation remains a later contract.
 
+### Safe Agent Execution Descriptor
+
+`platform.agents.describeExecution(agentId, companyId)` uses the registered
+`agents.describeExecution` RPC and existing `agents.read` capability. The public
+Worker requires the authenticated invocation Workspace to match; Core still
+enforces its capability and tenant checks. Old Hosts do not advertise this API;
+consumers must not substitute legacy `agents.list` as an equivalent safe result.
+
+The descriptor contains only Agent ID/adapter identifier, configured/disabled/
+unknown state, registered/unavailable adapter status, routing owner, cached Node
+observation, `authorization: "recheck_on_dispatch"`, and `readiness: "unknown"`.
+Registration is not login, health or execution approval. An `adapter` owner is
+delegated routing, not a claim of local Host execution. Existing Node bindings
+are authoritative; a foreign/missing bound Node is unknown without its ID.
+Revoking a Node may remove the binding, so later reads describe the resulting
+adapter route without starting any work or providing an automatic fallback.
+
+No adapter config, cwd, environment, keys, prompt, workflow role or raw status
+error is returned. The compatibility Agent list/get behavior stays unchanged;
+this is not a blanket claim that legacy read APIs have the same safe projection.
+Inspection never creates a session, grant, run or provider probe. Actual backend
+capability negotiation and per-run environment/Source readiness remain separate.
+
 | API | Capability | Safe result |
 | --- | --- | --- |
 | `workspaceSources.list(companyId)` | `sps.workspaceSources.read` | Source id, display name, status, route availability. Never a Host path or credential. |

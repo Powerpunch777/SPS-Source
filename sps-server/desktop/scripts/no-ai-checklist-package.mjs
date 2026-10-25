@@ -11,7 +11,7 @@ export const CHECKLIST_PACKAGE_CAPABILITIES = Object.freeze([
   "plugin.state.read", "plugin.state.write", "events.emit", "events.subscribe", "jobs.schedule",
 ]);
 
-export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, omitCapability, runtimeDiscovery = false } = {}) {
+export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, omitCapability, runtimeDiscovery = false, agentDiscovery = false } = {}) {
   const ui = withUi ? defineSpsUiContributions({ entrypoint: "./dist/ui", contributions: [
     { surface: "page", id: "checklist", label: "Checklist", routePath: id === CHECKLIST_PLUGIN_KEY ? "no-ai-checklist" : id.replaceAll(".", "-"), exportName: "ChecklistPage" },
   ] }) : {};
@@ -19,7 +19,7 @@ export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, om
     id, apiVersion: 1, version: "0.1.0", displayName: "No-AI checklist reference",
     description: "Temporary No-AI Workspace acceptance fixture.", author: "SPS", categories: ["automation"],
     ...ui,
-    capabilities: [...CHECKLIST_PACKAGE_CAPABILITIES, ...(ui.capabilities ?? []), ...(runtimeDiscovery ? ["sps.runtimes.read"] : [])].filter(value => value !== omitCapability),
+    capabilities: [...CHECKLIST_PACKAGE_CAPABILITIES, ...(ui.capabilities ?? []), ...(runtimeDiscovery ? ["sps.runtimes.read"] : []), ...(agentDiscovery ? ["agents.read"] : [])].filter(value => value !== omitCapability),
     entrypoints: { worker: "./dist/worker.js", ...(ui.entrypoints ?? {}) },
     companyActivation: { defaultEnabled: false },
     sps: { contractVersion: "2.0", primitives: runtimeDiscovery && omitCapability !== "sps.runtimes.read" ? ["runtimes.list"] : [] },
@@ -45,7 +45,7 @@ export async function createChecklistPackage(directory, options = {}) {
     ...(options.runtimeDiscovery ? [
       "let runtime, hostSupport;",
       "const original = plugin.handlers.platform;",
-      "const platform = defineSpsPlatformContract({ ...original, data: [...original.data, { key: 'runtime-connections', handler: params => runtime.runtimes.list(params.companyId) }, { key: 'host-api-support', handler: () => hostSupport }] });",
+      `const platform = defineSpsPlatformContract({ ...original, capabilities: [...original.capabilities, ...${JSON.stringify(options.agentDiscovery && options.omitCapability !== "agents.read" ? ["agents.read"] : [])}], data: [...original.data, { key: 'runtime-connections', handler: params => runtime.runtimes.list(params.companyId) }, { key: 'host-api-support', handler: () => hostSupport }${options.agentDiscovery ? ", { key: 'agent-execution', handler: (params, context) => context.agents.describeExecution(params.agentId, params.companyId) }" : ""}] });`,
       "runSpsWorker(defineSpsPlugin({ ...plugin.handlers, initialize(context) { runtime = createSpsRuntimeClient(context.spsTransport); hostSupport = readSpsHostSupport(context.params); }, platform }));",
     ] : options.probeScope ? [
       "const original = plugin.handlers.platform;",

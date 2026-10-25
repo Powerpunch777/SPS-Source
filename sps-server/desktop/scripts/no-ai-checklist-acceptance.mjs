@@ -146,6 +146,6 @@ export async function runNoAiChecklistAcceptance({ cdp, company, api, click, res
   await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/plugins/${deniedRead.id}`)})`);
   await eventually(() => workspace.evaluate(`document.querySelector('[data-testid="no-ai-checklist"] [role="alert"]')?.textContent`), text => /could not be loaded/.test(text ?? ""), "capability-denied Plugin UI error state");
   await openRecovery();
-  console.log("No-AI checklist Desktop E2E passed: real UI/actions/state/events/Workspace Job, A/B isolation, capability denial, UI-less Worker, Host restart, independent Native recovery. No Agent/provider/Gateway configured or Agent run created; this is not an OS sandbox or network-egress certification.");
+  console.log("No-AI checklist Desktop E2E passed: real UI/actions/state/events/Workspace Job, A/B isolation, capability denial, UI-less Worker, Host restart, independent Native recovery. Reference Workspaces A/B stayed Agent-free; no provider/Gateway configured or Agent run created; this is not an OS sandbox or network-egress certification.");
   return { pluginKey: plugin.pluginKey, scenarios: 13 };
 }
