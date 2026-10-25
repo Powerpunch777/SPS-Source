@@ -1,6 +1,6 @@
 # RFC: Windows LAN trusted connectivity v0
 
-작성일: 2026-10-25. 상태: **설계 초안 / 구현 승인 아님**.
+작성일: 2026-10-25. 상태: **D1 승인 / 나머지 설계 초안 / 네트워크 활성화 승인 아님**.
 [계획과 결정 목록](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 Stage 0 산출물이다.
 여기 쓰인 자원·operation 이름은 개념이며 현재 export·endpoint·DB 테이블이 아니다.
 
@@ -31,8 +31,10 @@ LAN 도청/중간자·거짓 서버·초대 탈취·재생·미승인/철회 기
 
 ## 3. TLS와 trusted ingress
 
-TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. Host 지문 배포/CA, Member
-mTLS 또는 표준 PoP, ingress 배치와 포트는 D1~D3 결정 뒤 확정한다. 자체 challenge
+TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은 전체 초대코드에 Host
+서버 지문을 담아 신뢰한 별도 채널로 전달하고 앱에서 확인하는 방식으로 승인됐다.
+고객 관리 CA는 후속이다. Member mTLS 또는 표준 PoP, ingress 배치와 포트는
+D2~D3 결정 뒤 확정한다. 자체 challenge
 서명 알고리즘, 인증서 오류 무시, 앱 전역 CA/TLS 검증 해제는 대안이 아니다.
 
 신원 확인 전에는 사용자 access token·초대 secret·Workspace 자료를 보내지 않는다.
@@ -49,7 +51,20 @@ Core의 기존 `local_trusted` 모드는 loopback 전용이다. bind를 LAN으�
 `desktopLocalAccessGuard`의 remote peer 통과를 새 기기 인증으로 쓰지 않는다.
 소유자 bootstrap의 두 per-launch proof는 main process의 좁은 로컬 경로에만 둔다.
 
-## 4. 페어링/세션 상태기계 제안
+## 4. 승인된 D1과 페어링/세션 상태기계 제안
+
+첫 계약 구현은 네트워크 부작용이 없는 **초대 envelope codec**에 한정한다.
+이 코드는 `main`/preload/기존 join URI/공개 SDK에 연결하지 않고, 새 제품 지원으로
+광고하지 않는다. HTTPS origin과 Host 식별/지문·pairing 식별/secret·발행/만료 시각을
+정확한 schema와 bounded canonical UTF-8/base64url로 다룬다. 원문 secret은 로그나
+오류에 포함하지 않는다. Node/Workspace grant나 Member 승인 정보를 초대가 부여하지 않는다.
+
+문법적으로 정상인 envelope는 **신뢰되지 않은 입력**이다. TTL/현재 시각/일회성
+소비·사용자/기기 결속은 향후 Host 프로토콜에서 검사하며 codec이 대신하지 않는다.
+서버 지문의 TLS 인증서/SPKI·Host 신원 수명주기 연결은 실제 TLS 계약 검수 대상이고,
+데이터 필드가 있다는 이유로 그 인증·회전·서명 보장을 구현했다고 간주하지 않는다.
+전송 채널에서 코드 전체를 바꾼 공격자는 지문도 바꿀 수 있으므로, 코드 자체는
+독립된 신뢰점이나 Host 서명이 아니다. 기존 신뢰 Host의 pin 변경은 별도 재확인이다.
 
 개념 상태는 `unpaired -> requested -> pending_approval -> approved -> active`다.
 `expired`, `revoked`, `identity_changed`, `unavailable`은 별도 원인이다. 연결 소켓의
@@ -86,6 +101,21 @@ Workspace 인가를 거쳐야 한다. 세션 cookie가 있거나 LAN 소켓이�
 원격 Workspace renderer에는 Desktop 관리 preload를 제공하지 않는다. Native
 최초 연결·승인·복구 창은 고정 파일/sender/mainFrame 검증과 좁은 IPC만 갖는다.
 비신뢰 Plugin이 Native 창의 승인 버튼이나 origin을 가장할 수 없어야 한다.
+
+### 구현 전 남은 TLS 결속 검수
+
+- 초대의 `origin`·`hostId`·지문을 검증한 실제 연결 상대와 함께 대조한다. 하나라도
+  다르면 Identity token이나 pairing secret을 보내지 않는다. Host ID 응답을 TLS와
+  무관한 신원 증명으로 쓰지 않는다.
+- 초대 만료, TLS 인증서 유효기간, 저장 pin의 수명/회전은 별도다. 인증서 갱신과
+  Host 키 변경의 처리를 명시하고, 변경 pin을 TOFU/일반 CA로 무음 대체하지 않는다.
+- Node HTTP/TLS client의 검증 설정이 Chromium renderer·WebSocket에 자동 적용된다고
+  가정하지 않는다. Electron session별 정책·인증서 cache와 스트림 정리를 별도 검증한다.
+  기본 session 전역 검증 해제나 범용 certificate-error 수락은 금지한다.
+- `checkServerIdentity`의 hostname 검사만으로 X.509 체인·유효기간·pin 정책을 모두
+  대체하지 않는다. 임시 self-signed fixture 통과도 실제 Host 신뢰 배포 수용이 아니다.
+- Member mTLS와 표준 PoP의 선택은 D2 검수다. PoP 이름만 붙인 자체 서명 프로토콜을
+  만들지 않고, HTTP/WS/서브리소스 전체에 일관되게 적용 가능한지 확인한다.
 
 ## 6. 공개 SDK의 최소 표면 제안
 
@@ -130,7 +160,7 @@ TLS exception/endpoint/key/사용자 자료를 Plugin 오류에 흘리지 않는
 
 ## 8. RFC 승인 전 통과 조건
 
-- D1~D3 선택과 키 교체/만료/복원·Host 검증 UX가 사용자 결정에 정렬됨.
+- 승인 D1과 미확정 D2~D3, 키 교체/만료/복원·Host 검증 UX가 사용자 결정에 정렬됨.
 - 라이브러리·TLS/client 인증의 Windows/Electron 지원·라이선스·업데이트 책임 확인.
 - 거짓 서버·같은 초대의 다른 Host/기기·병렬 소비·재생·철회·A/B 테스트 명세.
 - HTTP/WS/서브리소스/Native sender와 Plugin invocation의 동일한 거부 조건.
@@ -143,5 +173,9 @@ TLS exception/endpoint/key/사용자 자료를 Plugin 오류에 흘리지 않는
   인증서 신뢰 배포나 SPS 인가 정책까지 해결하지 않는다. 구현 시 최신 개정/errata를 확인한다.
 - [Node TLS 공식 API](https://nodejs.org/api/tls.html): 검증된 라이브러리 후보 검토
   자료. 문서 최신 버전이 SPS 번들의 runtime 지원을 증명하지 않는다.
+- [Electron session 인증서 검증](https://www.electronjs.org/docs/latest/api/session#sessetcertificateverifyprocproc):
+  session별 인증서 검증과 cache 동작 검토 자료. 새 검증 hook을 설치했다는 뜻이 아니다.
+- [표준 OAuth DPoP](https://www.rfc-editor.org/rfc/rfc9449.html): D2의 PoP 비교 자료다.
+  SPS가 채택/구현했다거나 모든 WebSocket·renderer 요구를 해결한다는 뜻이 아니다.
 - [Tailscale Serve 공식 문서](https://tailscale.com/docs/features/tailscale-serve):
   현행 호환 경로만 설명한다. 새 내장 LAN의 사용자/기기 인증 근거로 사용하지 않는다.

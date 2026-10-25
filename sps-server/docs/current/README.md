@@ -8,6 +8,7 @@
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
 | New Windows-first native LAN priority, unimplemented scope, decisions and migration gates | [WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md) |
 | Draft trusted transport/pairing and minimal SDK contract, not current exports | [WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md](WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md) |
+| Windows LAN, private beta and signed first-release scope/estimate assumptions | [SPS-DELIVERY-ESTIMATE-ko.md](SPS-DELIVERY-ESTIMATE-ko.md) |
 | AI-optional workstation direction, backend reuse, OCE boundary and first implementation scope | [MULTI-BACKEND-WORKSTATION-PLAN-ko.md](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) |
 | Exact Desktop, Core, SDK, and bundled-extension candidate | [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md) |
 | Production dependency audit gate and expiring exceptions | [DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md) |

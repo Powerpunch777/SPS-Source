@@ -149,9 +149,12 @@ documents resolve; code pins and the Tailscale support tuple are unchanged.
 The link/pin check is a local audit helper, not a new product/CI contract.
 An additional bounded Luna xhigh read-only review found no material mismatch
 between the plan/RFC and the handoff. It is internal review, not independent
-GitHub approval or physical verification. D1 remains undecided: the user asked
-for the difference between fingerprint-bearing invitations and customer-managed
-certificates before selecting either approach.
+GitHub approval or physical verification. At that Stage 0 checkpoint D1 was
+undecided: the user first asked for the difference between fingerprint-bearing
+invitations and customer-managed certificates. In the next user turn on
+2026-10-25, **D1 was approved: full invitation with Host fingerprint first,
+customer-managed certificates later**. The current plan/RFC reflects that
+decision; this does not approve D2-D4 or qualify any native network transport.
 
 No real Tailscale invocation, paid provider, customer identity key, Native LAN
 listener, or installed application was used for a new smoke test. The tests use
@@ -163,10 +166,54 @@ UI token and Zod High failures are not waived. Exact-current full CI, Identity
 production, signing, two-PC signed-byte evidence and independent approval remain
 separate gates in the [release baseline](../current/RELEASE-BASELINE-ko.md).
 
+## Stage 1: D1 contract checkpoint
+
+Following the user's D1 approval and request to continue, the next change adds
+only an inactive private Desktop invitation codec. The Source base is
+`f5171ef83473fc538a7b5db6576c3c99ab05cebe`; Core and SDK remain the exact pinned
+revisions above and are clean. The Source commit/PR identifies the final files.
+
+- `sps-server/desktop/src/native-connection-invite.mjs` adds a separate draft
+  `SPSLAN1-` fixed schema and bounded canonical JSON/base64url encoding. It reads
+  Host/origin/SPKI-hash, pairing reference/secret and issued/expiry timestamps.
+  This is an untrusted data envelope, not cryptographic authentication.
+- Unknown/accessor/inherited fields, wrong primitive values, HTTP/credentials/
+  lossy origin normalization, duplicate/escaped JSON keys, invalid UTF-8,
+  UTF-16/BOM/NUL/replacement bytes and noncanonical base64 are rejected.
+- Coordinator review added pre-decode secret length bounds, byte-exact BOM
+  rejection and a non-vacuous unused-base64-bit regression. Final tests also
+  cover IPv4/IPv6 origin syntax and no reinterpretation of legacy invitations.
+- No new import/call was added to main/preload/join URI/UI/public SDK. No
+  actual TLS verification, pairing consumption, current-time/TTL policy,
+  user/device binding or approval is implemented by this codec. Existing
+  Tailscale support is unchanged; D2-D4 remain unresolved.
+- The [delivery estimate](../current/SPS-DELIVERY-ESTIMATE-ko.md) separates the
+  Windows private beta, signed first release and long-term unscoped features.
+  It is a planning range with dependencies, not a completion guarantee.
+
+Validation on the final source files:
+
+```powershell
+# Working directory: sps-server/desktop
+node --test test/native-connection-invite.test.mjs test/invite.test.mjs
+npm test
+node scripts/current-candidate-doc.mjs --check
+```
+
+Results: **26/26** targeted (20 native + 6 legacy), then **555/555** full Desktop,
+zero failures/skips. Earlier native-only 16/16 and 18/18 runs preceded the review
+additions and are not the final count. Candidate/diff checks pass. No new full
+Core/SDK suite, live dependency audit, Electron/LAN/two-PC/installer or operational
+Identity verification is claimed for this pure-contract change.
+An independent bounded Luna xhigh static review of the final codec/tests found
+no actionable issue; the coordinator ran the commands above. This internal
+review is not release approval or proof of deferred TLS/pairing behavior.
+
 ## Next boundary
 
-Stage 0 is documentation only. Resolve D1-D3 and review the narrow protocol before
-introducing TLS listener/device credentials or broadening any network exposure.
+Stage 0 was documentation only; Stage 1 now has an inactive source-tested D1
+data contract. Resolve TLS identity binding, D2-D3 and review the protocol before
+introducing a TLS listener/device credentials or broadening network exposure.
 Do not remove TS requirements until API, Owner recovery and Host Source access
 are independently qualified. Follow the [plan](../current/WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)
 for small PRs, denial tests, Source migration, and rollback.

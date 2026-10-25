@@ -16,15 +16,18 @@ gap.
 The 2026-10-25 workstation direction keeps Builder as an optional authoring
 consumer of existing public SDK platform sessions and Desktop Preview, not the
 Core workflow or the only authoring route. Follow the
-[multi-backend plan](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) for current priorities:
-No-AI reference first, then minimally adapted execution paths; OCE management
+[Windows native LAN plan](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md) for the latest
+priority: stabilize Windows Host/Member/Node and qualify built-in LAN without
+external Tailscale. The [multi-backend plan](MULTI-BACKEND-WORKSTATION-PLAN-ko.md)
+preserves completed No-AI and mock-first model foundations; OCE management
 stays separate from Agent conversation. Existing Lead/Worker behavior is retained,
 not automatically replaced by OpenClaw orchestration. The dated evidence below
 remains historical and does not qualify new backends.
 
-Keep follow-up bounded to the existing Plugin and Desktop surfaces. Embedded
-Tailscale work, usage budgets/admission, advanced execution recovery and Stable
-release work are deferred.
+Keep Builder follow-up bounded to the existing Plugin and Desktop surfaces.
+Native connectivity is trusted Core/Host/Member work, not a Builder-specific
+network implementation or a reason to require an AI Agent. The new LAN target
+does not qualify Source sharing, CLI execution, full recovery, or a Stable release.
 
 ## Stage 1: Existing Source Baseline
 

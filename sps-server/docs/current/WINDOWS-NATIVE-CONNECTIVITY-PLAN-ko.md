@@ -1,8 +1,12 @@
 # SPS Windows 내장 연결 계획
 
-기준일: 2026-10-25 KST. 상태: **Stage 0 감사/설계, 내장 LAN 미구현**.
+기준일: 2026-10-25 KST. 상태: **Stage 0 감사 완료, Stage 1 계약 작업 중; 내장 LAN 미구현**.
 사용자가 전달한 Windows-First Native Connectivity 인계서와 목표 교체 요청을
 반영한다. 이 문서는 네트워크 변경, 설치본 교체, 운영 배포 승인이 아니다.
+
+승인 D1의 비활성 초대 codec은 소스 시험을 통과했다(신규 20건, 전체 Desktop
+555/555). 앱 join 흐름·TLS·실제 pairing에는 연결하지 않았으므로 내장 LAN 지원
+완료를 뜻하지 않는다. 정확한 범위는 아래 감사/검증 기록을 따른다.
 
 ## 1. 변경된 우선순위
 
@@ -16,6 +20,10 @@ Core 비공개·공개 SDK, AI 선택형 워크스테이션, 선택적 Primary/E
 완료한 No-AI/Runtime 관측/모델 broker 기반은 폐기하지 않는다. CLI/Gateway/OCE의
 다음 확장보다 이번 연결 기반을 먼저 검토한다. Marketplace/결제/Relay 운영은
 LAN의 선행 조건이 아니다.
+
+Windows 비공개 베타와 서명 1차 출시의 잠정 범위·기간·의존성은
+[납품 일정 추정](SPS-DELIVERY-ESTIMATE-ko.md)에 분리한다. 전체 장기 비전에 대한
+확정 완료일을 뜻하지 않는다.
 
 ## 2. 기준과 상태
 
@@ -81,28 +89,33 @@ Source 후속안은 승인된 파일 operation broker와 제한된 OS 공유를 
 파일 작업은 사용자가 선택한 기존 경로에 남긴다. Tailscale의 전체 제거 판정에는
 Source와 Owner 복구 이전도 포함한다.
 
-## 5. 미확정 결정
+## 5. 승인된 결정과 남은 선택
 
-아래는 권고/선택지이며 승인된 제품 정책이 아니다. 결정 전에는 해당 효과가 있는
+**D1 승인(2026-10-25):** 첫 LAN 경로는 신뢰한 별도 채널로 전달하는 **전체 초대코드와
+Host 서버 지문 확인**부터 진행한다. 고객 관리 CA는 후속이다. 초대코드가 진짜
+Host에서 왔다는 전달 채널의 신뢰가 필요하며, 코드 파싱 성공은 TLS/사용자/기기
+인증이나 Workspace 접근 승인이 아니다. 서버 지문 변경을 자동 수락하지 않는다.
+
+나머지는 권고/선택지이며 승인된 제품 정책이 아니다. 결정 전에는 해당 효과가 있는
 실행 코드를 켜지 않는다. 구체적인 TTL·rate limit·보관 기간도 RFC 수용 전에 확정한다.
 
 | ID | 필요한 결정 | 권고 / 비교안 | 결정 전 가능한 일 |
 | --- | --- | --- | --- |
-| D1 | Host 신원을 Member에게 안전하게 전달하는 방법 | 신뢰한 별도 채널의 전체 초대에 Host 지문 포함 vs 고객 관리 CA; 미확인 TOFU 자동 수락 금지 | identity DTO·거부 시나리오·UI 초안 |
+| D1 승인 | 전체 초대코드 + Host 서버 지문 확인 우선 | 고객 관리 CA 후속; 미확인 TOFU 자동 수락 금지 | 비활성 초대 envelope 계약·거부 테스트, 실제 TLS/키 정책은 별도 |
 | D2 | Member 기기 자격과 키 보호/교체 | 별도 Member 키 + mTLS 기기 인증서 vs 표준 PoP 방식; Node 키와 권한은 분리 | 기존 키 보관/복원 감사, 라이브러리/Windows 제약 검토 |
 | D3 | LAN listener 소유자·포트·허용 인터페이스·방화벽 동의 | 별도 신뢰 ingress vs Core TLS listener 비교; 기존 local_trusted bind 확대 금지 | mock 계약/노출 위협 모델; 실제 listener/방화벽 변경 없음 |
 | D4 | Tailscale 없는 Host Source 접근 | 제한된 파일 broker vs OS 공유; 경로/링크/충돌/철회 검증과 권한 명시 | 현재 SMB 보존, read/write/rename/delete 요구 정리 |
 | D5 | WAN / 자동 검색 / 운영 모델 | LAN 수용 뒤 기업 TLS endpoint·relay·NAT 대안 비교 | 이번 구현 범위에서 제외 |
 
-사용자가 승인한 Windows-first/Tailscale 없는 목표를 D1~D4의 임의 보안·운영 선택
+사용자가 승인한 Windows-first/Tailscale 없는 목표와 D1을 D2~D4의 임의 보안·운영 선택
 승인으로 확대하지 않는다. Agent/Plugin 0개 Native 복구는 선택 항목이 아니다.
 
 ## 6. 작은 변경 단위
 
 | 순서 | 범위 | 진입/완료 Gate와 롤백 |
 | --- | --- | --- |
-| 0 지금 | 11영역 코드 감사·현재 시퀀스·RFC·결정 목록·문서 정렬 | 런타임/DB/키/지원표 불변. 이번 문서만 revert 가능 |
-| 1 계약 | D1~D3 결정, trusted ingress/Member 자격·세션·Native 복구 계약 | HTTP/WS/서브리소스의 단일 인가 모델, 정확한 DTO·실패·제한, 공격 테스트 설계 검수. 아직 외부 노출 없음 |
+| 0 완료 | 11영역 코드 감사·현재 시퀀스·RFC·결정 목록·문서 정렬 | `f5171ef83473fc538a7b5db6576c3c99ab05cebe` 문서 checkpoint. 런타임/DB/키/지원표 불변 |
+| 1 계약 중 | 승인 D1의 비활성 초대 계약/시험, D2~D3 결정 뒤 trusted ingress/Member 자격·세션·Native 복구 | HTTP/WS/서브리소스의 단일 인가 모델, 정확한 DTO·실패·제한, 공격 테스트 설계 검수. 아직 외부 노출 없음 |
 | 2a Core | opt-in TLS/auth 경계·짧은 일회용 pairing·기기 승인/철회 | mock/격리 TLS fixture, 미승인·위조·재생·동시 소비·A/B·복원 거부. 기존 Tailscale/로컬 권한 회귀 |
 | 2b Desktop | Native 설정과 Member 클라이언트, 0-Agent/0-Plugin 복구 | 임시 source Electron, 브라우저·Plugin bridge 승격 차단, 재시작/중단·철회 수용. 실제 LAN은 별도 동의 |
 | 2c 실제 LAN | 승인된 시험 데이터로 Windows 두 PC | Tailscale 없는 A/B 연결, 잘못된 서버/사용자/기기·Workspace 거부, 실제 포트/버전/tuple 증거. 미통과시 opt-in 해제 |
@@ -145,6 +158,8 @@ Zod major/설치본 교체 보류, 전체 최신 CI, Identity 운영 rollout, �
 유지한다. 새 연결이 이 Gate를 면제하지 않는다. Stage 3b의 기존 UI token gate
 실패와 미승인 Zod High 기록도 해소된 것으로 표시하지 않는다.
 
-이번 단계에는 실행 코드·DB migration·OS 키/인증서·방화벽·Tailscale·설치본·고객
-데이터를 변경하지 않는다. 다음은 D1~D3의 최소 선택과 계약 검수이며, WAN·Linux나
+Stage 0에서는 실행 코드를 바꾸지 않았다. Stage 1은 승인 D1의 독립적인 데이터
+계약/거부 테스트부터 진행하며, Native UI/기존 join 흐름에는 아직 연결하지 않는다.
+DB migration·OS 키/인증서·방화벽·Tailscale·설치본·고객 데이터는 변경하지 않는다.
+D2~D3의 최소 선택과 계약 검수 전에는 실제 연결을 켜지 않으며, WAN·Linux나
 실제 고객 환경으로 범위를 확장하지 않는다.
