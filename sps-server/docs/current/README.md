@@ -6,6 +6,8 @@
 | --- | --- |
 | Light UI direction, typography, shared surfaces, and Builder layout | [SPS-LIGHT-UI-PLAN-ko.md](SPS-LIGHT-UI-PLAN-ko.md) |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
+| New Windows-first native LAN priority, unimplemented scope, decisions and migration gates | [WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md) |
+| Draft trusted transport/pairing and minimal SDK contract, not current exports | [WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md](WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md) |
 | AI-optional workstation direction, backend reuse, OCE boundary and first implementation scope | [MULTI-BACKEND-WORKSTATION-PLAN-ko.md](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) |
 | Exact Desktop, Core, SDK, and bundled-extension candidate | [CURRENT-CANDIDATE.md](CURRENT-CANDIDATE.md) |
 | Production dependency audit gate and expiring exceptions | [DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md) |
@@ -42,6 +44,10 @@
   breaking existing Vaults or plugins.
 
 ## Engineering evidence
+
+- [2026-10-25 Windows native connectivity audit](../reviews/WINDOWS-NATIVE-CONNECTIVITY-AUDIT-2026-10-25.md):
+  current Host/Member/Node sequences, eleven dependency areas, Source/SMB and
+  HTTP/WS/SDK trust gaps. Source inspection, not native LAN or two-PC acceptance.
 
 - [2026-10-25 No-AI Workspace acceptance](../reviews/NO-AI-WORKSPACE-ACCEPTANCE-2026-10-25.md):
   real source Desktop UI/state/events/Jobs, Workspace and capability denials,

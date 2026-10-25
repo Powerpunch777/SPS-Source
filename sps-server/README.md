@@ -10,6 +10,11 @@ Read [docs/current/README.md](docs/current/README.md) before changing product be
 The current product decision record is
 [docs/current/PRODUCT-ARCHITECTURE-ko.md](docs/current/PRODUCT-ARCHITECTURE-ko.md).
 
+The new priority is Windows-first native LAN connectivity; see the
+[plan](docs/current/WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md) and its Stage 0 audit.
+It is not implemented or supported yet. The current remote product path still
+requires Tailscale, including separate Host Source sharing dependencies.
+
 Core owns:
 
 - Desktop and Host lifecycle

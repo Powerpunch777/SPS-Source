@@ -18,6 +18,18 @@ Stage 2c의 안전한 Agent 조회·Node freshness 보정은
 인증을 포함한 전체 다중 백엔드 목표가 완료된 것은 아니다.
 Stage 3b의 최종 통합/실제 앱 상태는 [모델 broker 검증 기록](../reviews/MODEL-BROKER-ACCEPTANCE-2026-10-25.md)을 따른다.
 
+## 우선순위 변경: Windows 내장 연결
+
+사용자의 후속 결정에 따라 [Windows 내장 LAN 계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)이
+다음 구현의 우선순위다. 현재 Stage 3b까지의 기반/증거는 보존하되, 아래 CLI/Gateway/
+OCE 확장을 무조건 먼저 수행하지 않는다. Windows Host/Member/Node 안정화와 내장
+LAN을 먼저 검토하고 Linux 제품 구현은 뒤로 둔다. Linux CI는 계속 유지한다.
+
+현재 지원 경로는 여전히 Tailscale이다. 별도 설치·계정·Serve 없이 동작하는 새
+경로는 아직 미구현이며, API·Owner 복구·SMB Source 공유를 각각 이전/검증해야 한다.
+기존 Tailscale/초대/키/Source 데이터는 검증 전 삭제·무음 변환하지 않는다.
+새 원격 연결이 모델/CLI/Agent/Source 권한을 자동 부여하지 않는다.
+
 ## 1. 제품 결정과 비변경 범위
 
 - SPS는 고객별 프로그램을 Plugin으로 구성하는 워크스테이션 기반이다. AI는 선택이다.
@@ -30,7 +42,8 @@ Stage 3b의 최종 통합/실제 앱 상태는 [모델 broker 검증 기록](../
   자유는 목표로 유지하며, 전체 표현 계약이 이미 구현됐다는 뜻은 아니다.
 - Core 비공개, Plugin SDK 공개를 유지한다. 저장소 공개·라이선스 변경·외부 코드 복사는
   하지 않는다. OCE를 추가해도 SPS Plugin과 OpenClaw Plugin은 서로 다른 패키지다.
-- 현재 Windows Desktop / Host·Member / Tailscale / 로그인 계약은 유지한다.
+- 현재 Windows Desktop / Host·Member / Tailscale / 로그인 동작은 이전 기간에 유지한다.
+  최종 목표에서 외부 Tailscale 의존성을 제거하되 새 LAN 검증 전에 지원표를 바꾸지 않는다.
   **No AI는 새 오프라인 제품 모드나 로그인 제거를 뜻하지 않는다.**
 - 기존 데이터·Vault·실제 키·Plugin ID·활성화·기본 번들을 무음 변환하지 않는다.
   Marketplace 검색/설치 기존 기능은 유지하되 커뮤니티·결제는 초기 납품의 선행 조건이 아니다.

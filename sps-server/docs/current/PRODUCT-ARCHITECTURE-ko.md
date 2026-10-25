@@ -16,8 +16,15 @@ reusable customer-specific plugin delivery. Public self-service Marketplace and
 payments are not prerequisites. SPS Core stays private and the Plugin SDK public;
 no repository visibility or license is changed by this plan.
 
-The [multi-backend plan](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) defines the new
-execution priorities and first bounded implementation. Its
+The [Windows native connectivity plan](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)
+now takes priority: Windows Desktop/Host/Member/Node first, then built-in LAN
+without an external Tailscale installation, account or Serve dependency. This is
+an unimplemented target, not a change to current supported transports. Linux
+Headless Host, macOS and WAN/relay implementation are deferred; Linux CI remains
+a regression gate, not product support.
+
+The [multi-backend plan](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) preserves the
+execution boundaries and existing bounded implementations. Its
 [reuse audit](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md) distinguishes
 existing source contracts from new targets and actual verification.
 
@@ -26,7 +33,7 @@ Members may join through Tailscale and use approved Agent runtimes on their
 own computers. Browser access is not a supported product path; the Desktop
 application is the client.
 
-The initial remote transport contract requires Tailscale `1.52.0` or later.
+The currently supported remote transport requires Tailscale `1.52.0` or later.
 SPS checks the installed version before creating or repairing a Serve route.
 Tagged devices do not receive Tailscale user identity headers, so they are not
 supported as human Member clients in this first release.
@@ -81,6 +88,24 @@ cryptographic process attestation. Tailscale transport and Serve identity
 protect the remote path; they do not provide that stronger local-process
 isolation.
 
+### Native Windows LAN target (not implemented)
+
+Trusted Core/Host/Member services, not ordinary plugins, will own TLS, server
+identity, authenticated users, approved devices, sessions, revocation and current
+Workspace authorization. Native system UI must support initial pairing/device
+approval and recovery with zero Agents and zero Plugins. The public SDK starts
+with a small approved-Connection read/status/observe facade; no raw credentials,
+TLS private keys, arbitrary sockets or final authorization move into plugins.
+
+Member pairing must not grant Node execution or Host Source access. Existing
+SPS Identity/Workspace/Node checks are reuse candidates, but TS headers, Host
+strings and LAN reachability are not authentication for the new path. Current
+SMB Source sharing and a private-team Owner recovery flow also depend on TS;
+they require independent migration before claiming a Tailscale-free product.
+The [RFC](WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md) leaves trust enrollment, device
+credentials, listener/firewall policy and Source transport decisions explicit.
+Existing connections, data, keys, support matrix and release holds remain intact.
+
 ## Product Boundary
 
 ### Optional execution and external management
@@ -111,8 +136,9 @@ credentials, files, access grants or installations are migrated by this design.
 
 - Desktop sign-in, local Host lifecycle, Owner Vault, backup, export, update,
   diagnostics, and Windows packaging.
-- Technical Host/Member/Node connection, Tailscale private access, Node
-  discovery, and runtime availability.
+- Technical Host/Member/Node connection, current Tailscale private access, Node
+  discovery and runtime availability; planned native LAN security remains in
+  trusted Core/Host/Member services, not ordinary plugins.
 - Host-selected Workspace Sources and encrypted, Node-specific source routes.
 - Neutral Run, Artifact, Event, Job, Log, storage, secret-handle, and
   connector primitives.

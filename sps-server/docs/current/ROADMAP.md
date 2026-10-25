@@ -5,10 +5,26 @@
 ## 현재 우선순위
 
 제품은 **AI 선택형 범용 워크스테이션**이며 Core 비공개·SDK 공개를 유지한다.
-현재 제품 계약은 [아키텍처](PRODUCT-ARCHITECTURE-ko.md), 다중 실행 경로의 구현
-순서·수용 기준은 [다중 백엔드 계획](MULTI-BACKEND-WORKSTATION-PLAN-ko.md)이다.
+현재 제품 계약은 [아키텍처](PRODUCT-ARCHITECTURE-ko.md), 다음 우선순위는
+[Windows 내장 연결 계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)이다.
+다중 실행 경로의 기반·수용 기준은 [다중 백엔드 계획](MULTI-BACKEND-WORKSTATION-PLAN-ko.md)에 보존한다.
 구현 상태와 테스트 증거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
 [Core/Plugin 진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)으로 분리한다.
+
+1. Windows Desktop/Host/Member/Node를 우선 안정화하고, 외부 Tailscale 없이 동작하는
+   내장 **LAN** 경로를 개발한다. 지금은 Stage 0 감사/설계이며 아직 미구현이다.
+   Host 신원·Member 기기 자격·listener/방화벽 결정 뒤 작은 구현으로 진행한다.
+2. Native 초기 연결·승인·철회·복구를 0-Agent/0-Plugin에서도 제공한다. 기존 사용자
+   인증·Workspace/Plugin·Node 실행 권한은 분리하고, HTTP/WS 양쪽에 적용한다.
+3. API·Owner 복구·Host Source/SMB의 별도 의존성을 이전/검증한다. 실제 Windows 두 PC와
+   동일 서명본 수용 전에는 기존 Tailscale/설정/지원표를 삭제하거나 무음 전환하지 않는다.
+4. 승인 Connection의 최소 SDK 조회/상태·관측을 공개한다. Plugin에 원시 키/관리자
+   소켓 API를 주지 않는다. WAN/Relay 및 Linux 제품 구현은 후속 결정으로 둔다.
+
+아래는 이미 확보한 소스 기반이며 새 연결 완료 증거가 아니다. 이 기반을 보존하면서
+CLI/Gateway/OCE의 후속 확장보다 위 Windows 연결 작업을 먼저 진행한다.
+
+## 기존 소스 기반과 후속 실행 경로
 
 1. No-AI reference의 소스 수용을 완료했다. 실제 UI/state/events/Workspace Job,
    A/B 거부·Host 재시작·Native 복구는 [수용 기록](../reviews/NO-AI-WORKSPACE-ACCEPTANCE-2026-10-25.md)을 따른다.
