@@ -1,6 +1,6 @@
 # SPS 범용 워크스테이션 / 다중 실행 백엔드 계획
 
-기준일: 2026-10-25 KST. 상태: Stage 0/1 완료, Stage 2a Node 연결 관측 소스 수용 통과.
+기준일: 2026-10-25 KST. 상태: Stage 0/1 및 Stage 2a/2b 소스 수용 통과.
 이 문서는 사용자의 다중 백엔드 전달 문서와 후속 **Core 비공개 / SDK 공개 유지**
 결정을 제품 문서에 정렬한다. 전달 문서의 예시 API를 실제 export로 간주하지 않는다.
 현행 근거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
@@ -9,6 +9,8 @@ Stage 1의 실제 변경·버그 재현·최종 시험 범위는
 [No-AI 수용 기록](../reviews/NO-AI-WORKSPACE-ACCEPTANCE-2026-10-25.md)으로 구분한다.
 Stage 2a의 최종 tuple·82/157/530 및 실제 앱 범위는
 [Runtime 관측 수용 기록](../reviews/RUNTIME-DISCOVERY-ACCEPTANCE-2026-10-25.md)을 따른다.
+Stage 2b의 Host API 등록 확인과 실제 권한 거부는
+[Host 지원 수용 기록](../reviews/HOST-SUPPORT-ACCEPTANCE-2026-10-25.md)을 따른다.
 모델 요청·키 브로커·OCE 등 후속 백엔드는 아직 구현 완료가 아니다.
 
 ## 1. 제품 결정과 비변경 범위
@@ -147,6 +149,9 @@ readiness 판정이 아니다. 목록에 있는 Runtime API도 capability가 없
 거부되어야 한다. 초기화/Worker 재시작 시 새 snapshot을 만들고 매 호출의 기존
 검사는 유지한다. 모델 API/OCE broker는 이 단계를 통해 구현된 것으로 표시하지 않는다.
 DB migration/새 endpoint/무음 fallback 없이 기존 transport를 확장한다.
+이 소스의 Desktop 531/531, SDK 163/163, Core 표적 49+88과 30개 package 타입 검사,
+실제 Desktop/공개 SDK snapshot 조회 및 capability 거부를 확인했다. 정확한 tuple과
+연속 수용/정리 범위는 위 기록을 따르며 전체 backend 지원이 완료됐다는 뜻은 아니다.
 
 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되

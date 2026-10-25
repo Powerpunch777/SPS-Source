@@ -285,6 +285,23 @@ No-AI 전체 시나리오/정리 exit 0도 확인했다. 상세 명령과 한계
 없다. 이 결과로 기존 보안 보류·운영 Identity·전체 Core/Linux·서명/두 PC 게이트를
 완료 처리하지 않는다. Agent/모델/OCE 연결과 broker는 후속 단계다.
 
+## 다중 백엔드 Stage 2b / Host API 등록 확인
+
+Worker 초기화에 실제 등록된 공개 Runtime/Agent handler 이름만 전달하는 optional
+snapshot을 추가했다. Worker callback 목록과 구분하며 권한/로그인/backend readiness를
+의미하지 않는다. 공개 SDK reader는 구 Host/미지원 계약을 unknown으로 유지하고
+malformed v1·중복·접근자·크기 초과를 거부한다. 새 DB/API/의존성/UI는 없다.
+
+Source `2ae95596b4985744340dfe69bb333cc041595250`, Core `282df938...`, SDK
+`555ad757...`에서 Desktop 531/531, SDK 163/163, Core 선택 6파일 49/49와 추가
+복구/설치/권한 3파일 88/88, 전체 30개 package typecheck·서버 build·compatibility를
+통과했다. 실제 source Desktop에서 권한 없는 Worker도 등록 이름은 읽지만 호출은
+거부되는 점, 기존 Node/No-AI 전체 연속 수용과 정리 exit 0을 확인했다.
+[상세 명령과 한계](HOST-SUPPORT-ACCEPTANCE-2026-10-25.md)를 따른다.
+
+실제 Agent/backend 연결과 모델 broker, OS/renderer 격리, 전체 Core/Linux·서명·
+물리 두 PC·Identity 운영 및 보안/설치본 보류는 그대로 남는다.
+
 ## 다음 게이트
 
 독립 복구 경로의 장애 조합 검증을 보강하고 OS/renderer 실행 계약을 구체화한다.
