@@ -1,7 +1,7 @@
 # 모델 요청 broker 검증
 
-기준일: 2026-10-25 KST. Stage 3b의 mock-first 소스 구현이다. 중간 source Desktop
-연속 수용을 통과했고 CI 보완 후 최종 pin 재실행을 앞두고 있다. Desktop 0.4.137 미출시 소스이며 설치본 교체,
+기준일: 2026-10-25 KST. Stage 3b의 mock-first 소스 구현과 최종 source Desktop
+연속 수용을 통과했다. Desktop 0.4.137 미출시 소스이며 설치본 교체,
 실키·유료 호출·실제 제공자 인증 또는 Stable 완료를 뜻하지 않는다.
 
 ## 구현과 경계
@@ -42,14 +42,30 @@
 | --- | --- |
 | Core | 0ba417ad9b0e26ae1cf598edca524b82059d04de |
 | 공개 SDK | d4d69208480fc618b2055378b85d183aea422d50; 0.11.0 미출시 추가분 |
-| 최종 Runtime 시험 Source | source Electron 재실행 성공 후 고정 |
+| 최종 Runtime 시험 Source | be2c08b310d51ca92965919eb1363b98d536e99d. 후속 변경은 이 기록/계획 문서뿐 |
 | Core 표적 단일 회차 | 21파일 387/387, 실패/skip 0. 전체 Core 회귀는 아님 |
 | SDK 전체 | 174/174, 실패/skip 0 |
-| Desktop 전체 | SDK 수정/새 bundle 및 경로 회귀 포함 535/535. 최종 Core pin 재실행 대기 |
+| Desktop 전체 | 최종 Source/pin에서 535/535, 실패/skip 0. 생성 Worker와 native path 회귀 포함 |
 | Core 타입/빌드 | 30개 package typecheck, 서버 build, compatibility boundary 통과 |
 | UI 토큰 게이트 | 실패: 기존 다른 화면 79 color + 36 arbitrary-value + 1 font-size. 이번 변경 파일 위반은 목록에 없음. 전체 통과로 취급하지 않음 |
-| source Electron | 첫 실행은 SDK 선언 누락으로 실패. 수정 후 f6cd4577 + fe6fc7ad + d4d69208에서 전체 통과/정리 exit 0. 최신 OpenAPI/경로 보완 pin 재실행 대기 |
+| source Electron | 최종 be2c08b3 + 0ba417ad + d4d69208에서 전체 연속 수용·임시 환경 정리 exit 0. 앞선 SDK 누락 실패와 수정 후 중간 성공은 이력으로 구분 |
 | GitHub 보안 게이트 | Source 684a596f의 실제 runner에서 production Zod 3 High 1243066 미승인으로 실패. 보류된 major 전환을 무음 수행/예외 처리하지 않음 |
+
+실제 앱은 공개 SDK로 만든 Worker를 사용했다. 별도 Workspace D(Agent 0개)에 가짜
+키와 local_encrypted Secret, 승인된 loopback 모델 연결을 만들고 승인 전 HTTP 0회,
+승인 후 실제 HTTP 1회, 같은 requestKey의 중복 전송 0회, 보고 토큰 8/4와 가격 unknown,
+다른 Workspace 조회/위조 거부, 철회·재승인 후 옛 결과 withheld, hanging 요청의 실제
+로컬 취소·외부 효과 unknown을 확인했다. No-AI A/B는 Agent 0개/backend 미설정을
+유지했다. 기존 UI/action/state/event/Workspace Job, scope/capability 거부, UI-less
+Worker, 실제 Host 재시작/데이터 보존과 독립 Native 복구도 같은 연속 실행에서 통과했다.
+620/1000px 및 Native 캡처를 검토했다. 모델 설정 폼이나 실제 Member PC 시험은 아니다.
+
+GitHub [40165893102](https://github.com/Powerpunch777/SPS-Source/actions/runs/40165893102)는
+옛 Source 684a596f/Core fe6fc7ad에서 실제 실행됐다. 전체 Linux 타입/빌드 및 7개 shard가
+통과했으나 2개 shard(API coverage/경로 fixture), Windows 경로 fixture와 보안 게이트가
+실패했다. 새 Core의 해당 회귀는 위 387개에서 통과했다. 최종 시험 Source be2c08b3의
+[40166665981](https://github.com/Powerpunch777/SPS-Source/actions/runs/40166665981)는 기록 시점
+실행 중이었다. 따라서 이 기록은 최종 9개 Linux shard나 전체 원격 CI 통과를 주장하지 않는다.
 
 ### 발견 후 수정한 것
 
@@ -91,6 +107,10 @@ npm run test:e2e:runtime-discovery
 ```
 
 ## 未完了と次
+
+현재 추가분을 소비할 때는 위 SDK Git revision을 고정한다. 기존 v0.11.0 배포 tag가
+새 API를 포함한다는 뜻이 아니며, 공개 배포 전 새 SDK version/tag와 생성 프로젝트의
+의존성이 같은 기능을 포함하는지 별도 확인해야 한다.
 
 Host 설정 UI, 실제 제공자/실키, CLI 실행 reference, Gateway 고정판/OCE, Builder의
 선택 UI, OS/renderer 보호, 전체 Core/Linux CI, 의존성 보류, Identity 운영, 서명·동일

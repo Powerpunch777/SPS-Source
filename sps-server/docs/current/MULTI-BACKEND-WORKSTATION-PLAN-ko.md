@@ -1,7 +1,7 @@
 # SPS 범용 워크스테이션 / 다중 실행 백엔드 계획
 
 기준일: 2026-10-25 KST. 상태: Stage 0/1 및 Stage 2a/2b/2c 소스 수용 통과,
-Stage 3b 모델 broker 구현·통합 검증 진행.
+Stage 3b 모델 broker의 mock-first 소스 통합·실제 Desktop 수용 통과.
 이 문서는 사용자의 다중 백엔드 전달 문서와 후속 **Core 비공개 / SDK 공개 유지**
 결정을 제품 문서에 정렬한다. 전달 문서의 예시 API를 실제 export로 간주하지 않는다.
 현행 근거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),

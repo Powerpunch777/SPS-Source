@@ -2,8 +2,9 @@
 
 기준일: 2026-10-25 KST. 사용자 승인 후 진행 중인 소스 변경이다.
 설치된 앱 교체, Stable 게시, 기존 사용자 데이터 이전을 뜻하지 않는다.
-Desktop 버전 표기는 미출시 `0.4.137` 소스 단계이며, Core pin은
-`02b3da6f42d5c53159a3eb2e14b6575326f8a946`다. 이 변경으로 설치본/manifest를
+Desktop 버전 표기는 미출시 `0.4.137` 소스 단계다. 아래 초기 이전의 Core pin은
+`02b3da6f42d5c53159a3eb2e14b6575326f8a946`이며 최신 pin은
+[현재 후보](../current/CURRENT-CANDIDATE.md)를 따른다. 이 소스 변경으로 설치본/manifest를
 새로 만들지 않았으며 이전 패키지나 E2E를 이 새 Source의 증거로 재사용하지 않는다.
 
 ## 결정
@@ -338,6 +339,29 @@ mock 시험이며 앱의 공개 모델 UI/SDK 검증이 아니다.
 Stage 3b의 durable connection/grant·인증된 invocation/capability·model 실행 lane/
 기록/중복 방지/복구·결과 철회와 공개 broker/SDK/UI는 아직 남는다. 실제 Provider,
 설치본/전체 Core/Linux/최신 감사/운영 Identity/서명/두 PC/보호 실행도 별도다.
+
+## 다중 백엔드 Stage 3b / 영속 모델 broker
+
+Host 연결/Plugin grant와 공개 models.list/submit/get/cancel을 기존 내부 전송에 연결했다.
+인증된 Workspace invocation·현재 활성화/dependency/capability, 정확한 binding/Secret
+및 실제 사용 버전을 재검사한다. 중복 requestKey는 HTTP를 다시 보내지 않고, 원문
+입력은 영속화/재시작 replay하지 않는다. 철회/재승인 뒤 옛 결과를 withhold하며 보고
+토큰과 비용 unknown을 구분한다. 취소·lease 손실·미완료 cleanup, 복구 모드와 restore도
+기존 규칙에 연결했다. Host 설정 API는 있지만 연결 설정 폼은 아직 없다.
+
+시험 Source be2c08b310d51ca92965919eb1363b98d536e99d, Core 0ba417ad9b0e26ae1cf598edca524b82059d04de,
+SDK d4d69208480fc618b2055378b85d183aea422d50에서 Desktop 535/535, SDK 174/174,
+Core 관련 21파일 387/387과 30개 package typecheck/서버 build/compatibility를 통과했다.
+실제 source Desktop→공개 Worker→Core→가짜 암호화 키→실제 loopback HTTP, 권한 차단,
+중복 방지, A/B 분리, token evidence, 철회/재승인 withholding과 로컬 취소를 확인했다.
+기존 No-AI/Node/Agent 조회/재시작/Native 복구도 같은 실행에서 통과·정리 exit 0이다.
+[정확한 범위와 재현 명령](MODEL-BROKER-ACCEPTANCE-2026-10-25.md)을 따른다.
+
+실제 앱에서 찾은 SDK platform 선언 누락을 고쳤고, 실제 CI의 API coverage 및 native
+경로 fixture 문제도 고쳤다. 기존 다른 화면의 UI token gate 116건은 실패로 남는다.
+GitHub CI는 실제 runner에서 실행되지만 production Zod 3 High 1243066 때문에 차단됐다.
+최종 전체 Linux/Windows CI는 별도로 확인해야 한다. 실제 제공자/실키/CLI/물리 PC,
+운영 Identity·보호 실행·서명/설치본·Stable과 의존성/설치본 보류는 완료 처리하지 않는다.
 
 ## 다음 게이트
 
