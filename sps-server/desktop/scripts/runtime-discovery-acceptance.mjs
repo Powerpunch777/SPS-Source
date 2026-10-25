@@ -3,6 +3,7 @@ import path from "node:path";
 import { createNodeIdentity, createSignedHeartbeat } from "@sps/desktop-node";
 import { createChecklistPackage } from "./no-ai-checklist-package.mjs";
 import { runAgentExecutionAcceptance } from "./agent-execution-acceptance.mjs";
+import { runModelRequestAcceptance } from "./model-request-acceptance.mjs";
 
 /** Simulated Node protocol, real Desktop/Core/SDK bridge; no CLI process starts. */
 export async function runRuntimeDiscoveryAcceptance({ cdp, company, secondCompany, api, temporaryRoot }) {
@@ -27,7 +28,8 @@ export async function runRuntimeDiscoveryAcceptance({ cdp, company, secondCompan
   assert.ok(support.operations.includes("sps.runtimes.list"));
   assert.ok(support.operations.includes("agents.sessions.create"));
   assert.ok(support.operations.includes("agents.describeExecution"));
-  assert.ok(!support.operations.some(operation => /secret|model|oce|install/.test(operation)));
+  assert.ok(support.operations.includes("sps.models.submit"), "Model registration is not a connection/grant or readiness claim");
+  assert.ok(!support.operations.some(operation => /secret|oce|install/.test(operation)));
   assert.deepEqual(Object.keys(support).sort(), ["contractVersion", "operations", "state"]);
   const deniedFixture = await createChecklistPackage(path.join(temporaryRoot, "reference-plugins", "runtime-denied"), {
     id: "local.runtime-denied", withUi: false, runtimeDiscovery: true, omitCapability: "sps.runtimes.read",
@@ -44,7 +46,7 @@ export async function runRuntimeDiscoveryAcceptance({ cdp, company, secondCompan
   await assert.rejects(call(`/api/plugins/${deniedPlugin.id}/data/runtime-connections`, {
     method: "POST", body: { companyId: company.id },
   }), /capability|permission|not allowed|denied/i);
-  console.log("[host-support] public SDK read registered Runtime/Agent APIs; no model/Secret/OCE claim, and missing runtime capability still denied");
+  console.log("[host-support] public SDK read registered Runtime/Agent/model methods, not readiness/permission; Secret/OCE absent and missing runtime capability still denied");
   assert.deepEqual(await read(), []);
   const identity = createNodeIdentity();
   const node = await call(`/api/companies/${company.id}/sps-nodes`, {
@@ -76,4 +78,5 @@ export async function runRuntimeDiscoveryAcceptance({ cdp, company, secondCompan
   assert.equal(revoked.connection.state, "inactive");
   console.log("[runtime-discovery] public SDK/Core bridge: signed simulated heartbeat, recent observation != CLI login/grant, A/B scope and revoke projection passed; no CLI command dispatched");
   await runAgentExecutionAcceptance({ call, plugin, temporaryRoot, unrelatedCompanyId: secondCompany.id });
+  await runModelRequestAcceptance({ call, temporaryRoot, unrelatedCompanyId: secondCompany.id });
 }

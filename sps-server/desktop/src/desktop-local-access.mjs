@@ -35,9 +35,12 @@ export function isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin, method 
   if (!isSpsDesktopWorkspaceRequest({ url, workspaceOrigin })) return false;
   try {
     const pathname = new URL(url).pathname;
-    if (method === "GET" && /^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/sps-executions(?:\/summary|\/(?:node|agent_session)\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})?$/i.test(pathname)) {
+    if (method === "GET" && /^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/sps-executions(?:\/summary|\/(?:node|agent_session|model_request)\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})?$/i.test(pathname)) {
       return true;
     }
+    const modelConnection = pathname.match(/^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/sps-model-connections(?:\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(\/grants)?)?$/i);
+    if (modelConnection) return modelConnection[1] && !modelConnection[2] ? method === "PATCH" : method === "GET" || method === "POST";
+    if (method === "POST" && /^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/sps-model-grants\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/revoke$/i.test(pathname)) return true;
     return [
       /^\/api\/companies$/,
       /^\/api\/companies\/[^/]+$/,

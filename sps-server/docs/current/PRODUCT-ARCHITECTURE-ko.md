@@ -94,8 +94,11 @@ SPS local plugins. No adapter is selected or installed automatically.
 The existing Node run/grant/usage contracts and public SDK `platform` Agent
 sessions are reuse candidates. The current OpenClaw Gateway adapter must be
 qualified against pinned client/Gateway versions; its presence and mock tests
-do not qualify OCE or a real deployment. Generic model inference and the OCE
-connector remain planned. Exact backend identity, run ownership, capability
+do not qualify OCE or a real deployment. A bounded model-request broker now has
+a mock-first source implementation, with Host connection/grant management,
+durable idempotent runs, revocable result delivery and a separate technical
+history lane. Its configuration UI and real-provider qualification remain open;
+the OCE connector remains planned. Exact backend identity, run ownership, capability
 support and cancellation evidence must remain visible.
 
 Host Sources do not automatically become paths in a remote Gateway or Harness.

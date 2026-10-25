@@ -5,11 +5,11 @@
     "desktopVersion": "0.4.137",
     "core": {
       "repository": "Powerpunch777/SPS-Core",
-      "revision": "c022f52d07fdfd3b40111ce1a6be80f97e7fe563"
+      "revision": "fe6fc7ad7f5f61384e06990ced1765d69f79f0bd"
     },
     "pluginSdk": {
       "repository": "Powerpunch777/sps-plugin-sdk",
-      "revision": "3feb5c4289718857e068f482ad22a49f925c4ae1",
+      "revision": "a97ee28d979075682161071c6ed124084b31ce62",
       "package": "@sonparkserver/plugin-sdk",
       "version": "0.11.0"
     },

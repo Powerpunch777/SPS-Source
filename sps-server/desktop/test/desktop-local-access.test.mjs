@@ -89,7 +89,7 @@ test("grants read-only execution history proof only to exact local Host routes",
   const root = "/api/companies/11111111-1111-4111-8111-111111111111/sps-executions";
   const id = "22222222-2222-4222-8222-222222222222";
   const check = (url, method = "GET") => isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url, method });
-  for (const suffix of ["", `/node/${id}`, `/agent_session/${id}`]) {
+  for (const suffix of ["", `/node/${id}`, `/agent_session/${id}`, `/model_request/${id}`]) {
     const url = `${workspaceOrigin}${root}${suffix}?pluginId=fixture`;
     assert.equal(check(url), true);
     for (const method of ["POST", "PUT", "DELETE", "PATCH", undefined]) assert.equal(check(url, method ?? ""), false);
@@ -98,5 +98,25 @@ test("grants read-only execution history proof only to exact local Host routes",
   }
   for (const suffix of ["/", "/unknown", `/other/${id}`, "/node/not-uuid", `/node/${id}/cancel`, `/node/${id}/events`]) {
     assert.equal(check(`${workspaceOrigin}${root}${suffix}`), false);
+  }
+});
+
+test("model management Host proof requires exact local routes, UUIDs and methods", () => {
+  const workspaceOrigin = "http://127.0.0.1:31310";
+  const root = "/api/companies/11111111-1111-4111-8111-111111111111";
+  const id = "22222222-2222-4222-8222-222222222222";
+  const allowed = [
+    [`${root}/sps-model-connections`, ["GET", "POST"]],
+    [`${root}/sps-model-connections/${id}`, ["PATCH"]],
+    [`${root}/sps-model-connections/${id}/grants`, ["GET", "POST"]],
+    [`${root}/sps-model-grants/${id}/revoke`, ["POST"]],
+  ];
+  for (const [pathname, methods] of allowed) {
+    for (const method of [undefined, "GET", "POST", "PATCH", "PUT", "DELETE"]) {
+      assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `${workspaceOrigin}${pathname}`, method }), methods.includes(method));
+      assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `https://member.example.test${pathname}`, method }), false);
+    }
+    for (const suffix of ["/", "/other"]) assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `${workspaceOrigin}${pathname}${suffix}`, method: methods[0] }), false);
+    assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `${workspaceOrigin}${pathname.replace(id, "not-uuid")}`, method: methods[0] }), !pathname.includes(id));
   }
 });

@@ -1,6 +1,7 @@
 # SPS 범용 워크스테이션 / 다중 실행 백엔드 계획
 
-기준일: 2026-10-25 KST. 상태: Stage 0/1 및 Stage 2a/2b/2c 소스 수용 통과.
+기준일: 2026-10-25 KST. 상태: Stage 0/1 및 Stage 2a/2b/2c 소스 수용 통과,
+Stage 3b 모델 broker 구현·통합 검증 진행.
 이 문서는 사용자의 다중 백엔드 전달 문서와 후속 **Core 비공개 / SDK 공개 유지**
 결정을 제품 문서에 정렬한다. 전달 문서의 예시 API를 실제 export로 간주하지 않는다.
 현행 근거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
@@ -13,7 +14,8 @@ Stage 2b의 Host API 등록 확인과 실제 권한 거부는
 [Host 지원 수용 기록](../reviews/HOST-SUPPORT-ACCEPTANCE-2026-10-25.md)을 따른다.
 Stage 2c의 안전한 Agent 조회·Node freshness 보정은
 [Agent 조회 수용 기록](../reviews/AGENT-EXECUTION-DESCRIPTOR-ACCEPTANCE-2026-10-25.md)을 따른다.
-모델 요청·키 브로커·OCE 등 후속 백엔드는 아직 구현 완료가 아니다.
+모델 요청의 mock-first 구현 범위는 아래 Stage 3b로 구분한다. OCE와 실제 제공자
+인증을 포함한 전체 다중 백엔드 목표가 완료된 것은 아니다.
 
 ## 1. 제품 결정과 비변경 범위
 
@@ -41,11 +43,11 @@ Stage 2c의 안전한 Agent 조회·Node freshness 보정은
 | AI 없는 UI·데이터·자동화 | 공개 SDK `ui`, `platform`의 data/actions/state/events/jobs, portable Worker | Stage 1 임시 reference의 source Desktop 수용 통과. 실제 고객 앱/설치본 증거와는 별도 |
 | 승인된 CLI 실행 | `runtime.runtimes`, execution grants, `runs.dispatch/get/list/listEvents/cancel`, Node lease | Stage 2a optional 연결 관측 추가. 등록된 Runner 범위이며 임의 executable/cwd를 받는 일반 CLI API가 아님 |
 | Agent 대화/취소 | 공개 SDK **`platform`**의 `agents.sessions.create/list/sendMessage/getRun/cancel` | 내부 SDK와 공개 facade의 옵션/close 차이, 실제 backend별 능력·종료 증거 확인 |
-| 기술 관측 | `executions.list/get/summarize`, provenance-aware usage, Artifacts | 기존 lane은 node/agent_session. 모델 요청·OCE 배포를 임의로 기존 lane에 위장하지 않음 |
+| 기술 관측 | `executions.list/get/summarize`, provenance-aware usage, Artifacts | Stage 3b는 model_request lane을 추가. OCE 배포를 기존 lane에 위장하지 않음 |
 | 일반 OpenClaw | 기존 `openclaw_gateway` 어댑터와 mock WS 시험 | 최신 pairing/challenge, 재연결·승인·취소·세션·Secret 범위를 재검증 |
-| Direct model API | provider 설정/권한/기록 primitive만 검토 | 조사 범위에서 범용 generate API 미확인. 기존 HTTP 도구 + 원문 키로 대체하지 않음 |
+| Direct model API | Stage 3a 내부 전송 + Stage 3b 영속 연결/grant/Run과 공개 models API | Responses-compatible 텍스트 subset의 mock-first 구현. 설정 UI·실제 제공자 인증은 미완료 |
 | OCE 관리 | 현재 직접 재사용 가능한 전용 Connector 미확인 | 읽기 전용 자원 조회부터 별도 connector; 일반 Gateway 세션과 다른 권한/수명주기 |
-| 키 사용 | Node credential-local 계약, 저장/권한 primitive | `secrets.resolve` 타입은 string이나 현행 handler는 scope 미완성으로 거부. handle-only broker는 미구현 |
+| 키 사용 | Node credential-local, 암호화 Secret + model connection 전용 grant/binding | models API는 Host 내부에서 키 사용, 원문 resolve RPC는 계속 거부. OCE 관리 broker는 미구현 |
 
 앞선 빠른 조사에서 공개 세션 API를 놓친 부분을 정정한다. `runtime`에 없다는 것은
 전체 공개 SDK에 없다는 뜻이 아니다. canonical SDK는 `external/sps-plugin-sdk`다.
@@ -196,8 +198,8 @@ Direct API 전체를 한 번에 공개하지 않고, 우선 기존 Secret 저장
   unknown이며 가격을 추정하지 않는다. 정확한 키 echo는 거부하나, 승인된 악성
   제공자가 키를 변형·유출하는 위협이나 JS 메모리 소거를 해결한 것은 아니다.
 
-이는 **공개 handle broker 완료가 아니다**. connection UUID는 현재 예약 목적
-식별자일 뿐 durable endpoint/model 연결 레코드나 grant가 아니다. binding도 실행
+Stage 3a 당시에는 **공개 handle broker 완료가 아니었다**. connection UUID는 예약 목적
+식별자였고 durable endpoint/model 연결 레코드나 grant가 없었다. binding만으로는 실행
 권한이 아니다. 후속 Stage 3b에서 Host 소유의 영속 연결/Plugin grant, 인증된
 invocation/활성화·capability 재검사, 새 model lane의 기록/idempotency/재시작 및
 결과 전달 시 철회를 묶은 뒤 공개 SDK/UI를 연결한다. 현재 limit는 인스턴스별이므로
@@ -208,6 +210,31 @@ invocation/활성화·capability 재검사, 새 model lane의 기록/idempotency
 최종 13파일 192/192, Desktop 532/532, SDK 166/166과 타입/서버 빌드 및 기존
 source Desktop 연속 수용/정리 exit 0을 통과했다. 범위·정확한 tuple과 재현 명령은
 [Stage 3a 검증 기록](../reviews/MODEL-TRANSPORT-FOUNDATION-ACCEPTANCE-2026-10-25.md)을 따른다.
+
+### Stage 3b: 영속 모델 연결·공개 broker
+
+- Host-only API가 Workspace별 연결과 Plugin grant를 관리한다. 연결의 endpoint,
+  model, Secret 참조, limit는 불변이며 변경할 때 새 연결을 만든다. 비활성화는
+  grant를 철회한다. 재승인은 revision을 올려 과거 결과 권한을 되살리지 않는다.
+- 공개 SDK `runtime.models.list/submit/get/cancel`은 개별 capability와 인증된
+  invocation Workspace를 요구한다. 현재 package/활성화/dependency/grant/binding/
+  Secret 및 실제 사용 버전을 전송·결과 전달·실행 중 다시 확인한다. Plugin은
+  endpoint/model/키/tools를 override할 수 없고 raw 키 RPC도 켜지 않는다.
+- additive DB migration으로 connection/grant/run을 추가한다. 기존 Agent/Node/Task
+  레코드를 전환하지 않는다. Workspace·Plugin requestKey/input hash를 HTTP 전에
+  기록하며 같은 입력의 중복 요청은 기존 Run을 반환한다. 원문 입력은 메모리에만
+  있고 재시작 후 자동 재전송하지 않는다. 결과는 bounded text/refusal만 저장한다.
+  Secret 암호화와 달리 결과 데이터 전체가 암호화됐다고 주장하지 않는다.
+- 실행·lease·취소와 실제 로컬 전송 정리를 구분한다. upstream 처리·과금 종료는
+  unknown이며 자동 HTTP 재시도나 backend fallback은 없다. 보고 토큰은 철회 후에도
+  기록하되 미측정 값·가격은 unknown이다. 공통 `model_request` 기록에는 원문 입력/
+  결과 없이 기술 정보만 제공하며 모델 이름은 provider report가 아닌 Host 설정이다.
+- 실제 source Desktop의 별도 Agent 0개 Workspace에서 가짜 암호화 키와 loopback
+  HTTP mock만 쓴다. No-AI A/B의 backend 미설정 계약은 보존한다. 신규 Host 설정
+  폼·실제 API/실키·설치본·물리 두 PC·OCE·보호 실행 인증은 이 단계에 포함하지 않는다.
+- 롤백은 연결 비활성화/grant 철회로 신규 호출을 막는다. additive 테이블을 수동
+  삭제하거나 기존 사용자 데이터를 down migration하지 않는다. 구 Host의 새 API
+  미지원은 명시적 unsupported이며 SDK 버전만으로 실행 가능성을 추정하지 않는다.
 
 이 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되

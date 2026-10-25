@@ -49,6 +49,21 @@ test("Agent descriptor inspection is an explicit read-only opt-in and can deny a
   assert.ok(!granted.capabilities.some(value => /agent.sessions|agents.invoke/.test(value)));
 });
 
+test("model fixture is an explicit opt-in, separate from the No-AI reference", async () => {
+  const base = checklistManifest({ withUi: false });
+  assert.ok(!base.capabilities.some(value => value.startsWith("sps.models.")));
+  const granted = checklistManifest({ withUi: false, modelRequests: true });
+  for (const capability of ["sps.models.read", "sps.models.submit", "sps.models.cancel", "sps.executions.read"]) {
+    assert.ok(granted.capabilities.includes(capability));
+  }
+  assert.ok(!granted.capabilities.some(value => /secrets|agents.invoke|agent.sessions|executionGrants/.test(value)));
+  const acceptance = await readFile(new URL("../scripts/model-request-acceptance.mjs", import.meta.url), "utf8");
+  for (const proof of ["127.0.0.1", "model-connections", "model-submit", "model-run", "model-cancel", "model-history", "withheld", "configured"]) {
+    assert.ok(acceptance.includes(proof), `Missing model acceptance boundary: ${proof}`);
+  }
+  assert.doesNotMatch(acceptance, /execFile|spawn\(/);
+});
+
 test("public authoring bundler creates a self-contained temporary reference package", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "sps-no-ai-package-test-"));
   try {

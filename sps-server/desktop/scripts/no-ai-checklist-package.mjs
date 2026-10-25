@@ -11,7 +11,7 @@ export const CHECKLIST_PACKAGE_CAPABILITIES = Object.freeze([
   "plugin.state.read", "plugin.state.write", "events.emit", "events.subscribe", "jobs.schedule",
 ]);
 
-export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, omitCapability, runtimeDiscovery = false, agentDiscovery = false } = {}) {
+export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, omitCapability, runtimeDiscovery = false, agentDiscovery = false, modelRequests = false } = {}) {
   const ui = withUi ? defineSpsUiContributions({ entrypoint: "./dist/ui", contributions: [
     { surface: "page", id: "checklist", label: "Checklist", routePath: id === CHECKLIST_PLUGIN_KEY ? "no-ai-checklist" : id.replaceAll(".", "-"), exportName: "ChecklistPage" },
   ] }) : {};
@@ -19,7 +19,8 @@ export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, om
     id, apiVersion: 1, version: "0.1.0", displayName: "No-AI checklist reference",
     description: "Temporary No-AI Workspace acceptance fixture.", author: "SPS", categories: ["automation"],
     ...ui,
-    capabilities: [...CHECKLIST_PACKAGE_CAPABILITIES, ...(ui.capabilities ?? []), ...(runtimeDiscovery ? ["sps.runtimes.read"] : []), ...(agentDiscovery ? ["agents.read"] : [])].filter(value => value !== omitCapability),
+    capabilities: [...CHECKLIST_PACKAGE_CAPABILITIES, ...(ui.capabilities ?? []), ...(runtimeDiscovery ? ["sps.runtimes.read"] : []), ...(agentDiscovery ? ["agents.read"] : []),
+      ...(modelRequests ? ["sps.models.read", "sps.models.submit", "sps.models.cancel", "sps.executions.read"] : [])].filter(value => value !== omitCapability),
     entrypoints: { worker: "./dist/worker.js", ...(ui.entrypoints ?? {}) },
     companyActivation: { defaultEnabled: false },
     sps: { contractVersion: "2.0", primitives: runtimeDiscovery && omitCapability !== "sps.runtimes.read" ? ["runtimes.list"] : [] },
@@ -39,10 +40,21 @@ export async function createChecklistPackage(directory, options = {}) {
   await writeFile(path.join(directory, "src", "worker.mjs"), [
     'import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";',
     'import { defineSpsPlatformContract } from "@sonparkserver/plugin-sdk/platform";',
-    ...(options.runtimeDiscovery ? ['import { createSpsRuntimeClient, readSpsHostSupport } from "@sonparkserver/plugin-sdk/runtime";'] : []),
+    ...(options.runtimeDiscovery || options.modelRequests ? ['import { createSpsRuntimeClient, readSpsHostSupport } from "@sonparkserver/plugin-sdk/runtime";'] : []),
     'import { createChecklistPlugin } from "./checklist.mjs";',
     "const plugin = createChecklistPlugin();",
-    ...(options.runtimeDiscovery ? [
+    ...(options.modelRequests ? [
+      "let runtime;",
+      "const original = plugin.handlers.platform;",
+      `const modelCaps = ${JSON.stringify(["sps.models.read", "sps.models.submit", "sps.models.cancel", "sps.executions.read"].filter(value => value !== options.omitCapability))};`,
+      "const platform = defineSpsPlatformContract({ ...original, capabilities: [...original.capabilities, ...modelCaps],",
+      "  data: [...original.data, { key: 'model-connections', handler: params => runtime.models.list(params.targetCompanyId ?? params.companyId) },",
+      "    { key: 'model-run', handler: params => runtime.models.get(params.targetCompanyId ?? params.companyId, params.runId) },",
+      "    { key: 'model-history', handler: params => runtime.executions.list(params.companyId, { lane: 'model_request' }) }],",
+      "  actions: [...original.actions, { key: 'model-submit', handler: params => runtime.models.submit({ companyId: params.targetCompanyId ?? params.companyId, connectionId: params.connectionId, requestKey: params.requestKey, input: params.input }) },",
+      "    { key: 'model-cancel', handler: params => runtime.models.cancel(params.companyId, params.runId) }] });",
+      "runSpsWorker(defineSpsPlugin({ ...plugin.handlers, initialize(context) { runtime = createSpsRuntimeClient(context.spsTransport); }, platform }));",
+    ] : options.runtimeDiscovery ? [
       "let runtime, hostSupport;",
       "const original = plugin.handlers.platform;",
       `const platform = defineSpsPlatformContract({ ...original, capabilities: [...original.capabilities, ...${JSON.stringify(options.agentDiscovery && options.omitCapability !== "agents.read" ? ["agents.read"] : [])}], data: [...original.data, { key: 'runtime-connections', handler: params => runtime.runtimes.list(params.companyId) }, { key: 'host-api-support', handler: () => hostSupport }${options.agentDiscovery ? ", { key: 'agent-execution', handler: (params, context) => context.agents.describeExecution(params.agentId, params.companyId) }" : ""}] });`,

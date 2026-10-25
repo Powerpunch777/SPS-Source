@@ -20,11 +20,12 @@
    안전한 Agent 실행 설정 조회(Stage 2c)는 기존 list/get을 보존하며 config/키 없이
    별도 Node binding 관측을 제공한다. [Agent 수용 기록](../reviews/AGENT-EXECUTION-DESCRIPTOR-ACCEPTANCE-2026-10-25.md)을 따른다.
    모델 요청·CLI·Agent 세션과 OCE 관리의 서로 다른 능력/권한/실행 소유권은 계속 정렬한다.
-3. Direct API Stage 3a의 Host 내부 bounded text transport와 기존 암호화 Secret
-   binding 재사용 기반을 구현했다. 아직 공개 broker/SDK/UI나 durable model run은
-   없으며 [Stage 3a 검증](../reviews/MODEL-TRANSPORT-FOUNDATION-ACCEPTANCE-2026-10-25.md)의 범위를 따른다.
-   Stage 3b에서 권한·연결·기록을 결속한다. CLI 사례도 승인된 시험 범위에서
-   구현한다. 실키·고객 데이터·유료 API 및 실제 게임 빌드 환경은 별도 확인.
+3. Direct API Stage 3a의 내부 전송/Secret 기반에 Stage 3b의 Host 연결·grant,
+   공개 `models.list/submit/get/cancel`, 중복 방지 Run과 별도 실행 기록을 결속했다.
+   설정 UI·실제 제공자 인증은 아직 없고 mock-first source 범위다.
+   [Stage 3a 검증](../reviews/MODEL-TRANSPORT-FOUNDATION-ACCEPTANCE-2026-10-25.md)은
+   당시 내부 기반의 증거로만 유지한다. CLI 사례도 승인된 시험 범위에서 구현한다.
+   실키·고객 데이터·유료 API 및 실제 게임 빌드 환경은 별도 확인.
 4. 기존 Gateway adapter의 고정 버전 호환을 검증하고 OCE는 별도 read-only Connector부터.
 5. 기존 Builder/Preview를 소비자로 연결하고 게임 개발 워크스테이션의 실제 사용을 실증.
 
