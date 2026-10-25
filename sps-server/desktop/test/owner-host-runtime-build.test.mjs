@@ -17,7 +17,10 @@ test("builds and bundles the static Core Workspace UI with the Owner Host runtim
   assert.match(buildScript, /\[tscCli, "-p", sharedTsconfig\]/);
   assert.match(buildScript, /"--dir", catalogPackageRoot, "run", "build"/);
   assert.match(buildScript, /catalogPackageRoot, "dist", "src", "canonical-bytes\.js"/);
-  assert.ok(buildScript.indexOf('"--dir", catalogPackageRoot, "run", "build"') < buildScript.indexOf('[tscCli, "-p", serverTsconfig]'));
+  assert.ok(buildScript.indexOf('"--dir", catalogPackageRoot, "run", "build"') < buildScript.indexOf('"--dir", serverPackageRoot, "run", "build"'));
+  assert.match(buildScript, /"--dir", serverPackageRoot, "run", "build"/);
+  assert.doesNotMatch(buildScript, /\[tscCli, "-p", serverTsconfig\]/);
+  assert.match(buildScript, /deployed Agent instructions do not match their source assets/);
   assert.match(buildScript, /adapterUtilsTsconfig/);
   assert.match(buildScript, /marketplaceMcpTsconfig/);
   assert.match(buildScript, /packages", "mcp-server", "tsconfig\.json/);
@@ -95,6 +98,8 @@ test("repairs and verifies the deployed ACPX dependency closure", async () => {
   assert.match(buildScript, /acpxRuntimeCompatibility/);
   assert.match(verifierScript, /node_modules\/acpx\/node_modules\/@agentclientprotocol\/sdk\/package\.json/);
   assert.match(verifierScript, /await import\('acpx\/runtime'\)/);
+  assert.match(verifierScript, /loadDefaultAgentInstructionsBundle\(role\)/);
+  assert.match(verifierScript, /node_modules\/\@paperclipai\/server\/dist\/onboarding-assets\/default\/AGENTS\.md/);
   assert.match(verifierScript, /ACPX dependency closure contract/);
 });
 

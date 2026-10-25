@@ -26,6 +26,12 @@ const requiredFiles = [
   "sps-plugin-discovery/dist/manifest.js",
   "sps-room-chat/dist/manifest.js",
   "node_modules/@paperclipai/server/package.json",
+  "node_modules/@paperclipai/server/dist/services/default-agent-instructions.js",
+  "node_modules/@paperclipai/server/dist/onboarding-assets/default/AGENTS.md",
+  "node_modules/@paperclipai/server/dist/onboarding-assets/ceo/AGENTS.md",
+  "node_modules/@paperclipai/server/dist/onboarding-assets/ceo/HEARTBEAT.md",
+  "node_modules/@paperclipai/server/dist/onboarding-assets/ceo/SOUL.md",
+  "node_modules/@paperclipai/server/dist/onboarding-assets/ceo/TOOLS.md",
   "node_modules/@paperclipai/skills-catalog/dist/src/canonical-bytes.js",
   "node_modules/@sps/mcp-server/package.json",
   "node_modules/@sps/mcp-server/dist/marketplace-assistant-stdio.js",
@@ -81,7 +87,16 @@ await new Promise((resolve, reject) => {
   const child = spawn(path.join(runtimeRoot, "bin", "node.exe"), [
     "--input-type=module",
     "--eval",
-    "await import('acpx/runtime')",
+    [
+      "import assert from 'node:assert/strict';",
+      "await import('acpx/runtime');",
+      "const { loadDefaultAgentInstructionsBundle } = await import('./node_modules/@paperclipai/server/dist/services/default-agent-instructions.js');",
+      "for (const [role, expected] of [['default', ['AGENTS.md']], ['ceo', ['AGENTS.md', 'HEARTBEAT.md', 'SOUL.md', 'TOOLS.md']]]) {",
+      "  const bundle = await loadDefaultAgentInstructionsBundle(role);",
+      "  assert.deepEqual(Object.keys(bundle), expected);",
+      "  assert.ok(Object.values(bundle).every(text => typeof text === 'string' && text.trim().length > 0));",
+      "}",
+    ].join("\n"),
   ], {
     cwd: runtimeRoot,
     stdio: ["ignore", "ignore", "pipe"],
@@ -93,7 +108,7 @@ await new Promise((resolve, reject) => {
   child.once("error", reject);
   child.once("exit", (code) => {
     if (code === 0) resolve();
-    else reject(new Error(`The packaged SPS Owner Host ACPX runtime cannot load (${code}): ${stderr.trim()}`));
+    else reject(new Error(`The packaged SPS Owner Host ACPX or Agent instructions runtime cannot load (${code}): ${stderr.trim()}`));
   });
 });
 

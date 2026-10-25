@@ -37,7 +37,8 @@
   만료를 재검증하며 초대 완료 기한을 인증서 만료로 취급하지 않는다. 저장 후 guard 실패에도
   파일이 남을 수 있고 자동 삭제/덮어쓰기/rollback은 하지 않는다. 재독해한 원래 키의 실제
   loopback TLS 1.3 handshake는 소스 증거이며 새 Host issuer는 이전 인증서를 거부한다.
-  새 companion의 실제 Windows DPAPI·앱 enrollment·LAN·두 PC·갱신은 미검증이다.
+  Source `48a35262` Windows CI의 실제 43.8.3/24.22.0 DPAPI 별도 프로세스 재독해는 통과했다.
+  앱 enrollment·LAN·두 PC·갱신은 미검증이며 Source 전체 CI는 packaged Preview/Zod로 실패했다.
   [발급 자격 저장 검증](../reviews/NATIVE-MEMBER-ISSUED-STORE-VERIFICATION-2026-10-25.md)을 따른다.
 - 미출시 v2 Host identity store는 DPAPI context를 Vault incarnation `dev`/`ino`/`birthtimeNs`에
   결속한다. 이는 로컬 lifecycle 결속이지 attestation이 아니다. 유효한 새 Vault에 slot이 없으면

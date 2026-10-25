@@ -47,7 +47,8 @@ IncomingMessage·POST/JSON을 요구하고 browser origin·Authorization·본문
 지났다는 이유만으로 아직 유효한 인증서를 폐기하지 않는다. 저장 후 guard 실패는 오류를
 반환해도 파일이 남을 수 있으며 filesystem rollback·자동 복구·기기 승인은 아니다.
 실제 loopback TLS 1.3 재독해 시험을 포함한 집중 37/37, Desktop 761 total/760 pass/1 skip은
-소스 증거다. unit AES는 DPAPI가 아니며 새 companion의 Windows DPAPI CI는 아직 미실행이다.
+소스 증거다. unit AES는 DPAPI가 아니다. 후속 Source `48a35262` Windows CI에서 companion의 실제
+43.8.3/24.22.0 safeStorage 별도 프로세스 재독해는 통과했다. 두 PC나 앱 enrollment 증거는 아니다.
 Main/IPC·앱 enrollment caller·LAN listener·갱신은 연결하지 않았다.
 [발급 자격 저장 검증](../reviews/NATIVE-MEMBER-ISSUED-STORE-VERIFICATION-2026-10-25.md)을 따른다.
 
@@ -57,6 +58,13 @@ surface까지 통과했지만 packaged Plugin Preview는 실제 Assistant 등록
 roster 대기에 실패했다. 이전 embedded PostgreSQL chmod 오류와 구별하며 Preview 성공으로
 기록하지 않는다. 보안 정책은 보류된 Zod High로 계속 차단된다. Core `ed45c51c` PR CI
 `40190064373`는 15/15 job 통과했다. 이 CI는 후속 issued companion의 증거가 아니다.
+
+Source `48a35262` push CI `40197294957`도 16/18 성공이다. 새 companion DPAPI·Settings·No-AI·
+packaged Workspace surface는 통과했지만 packaged Preview의 Assistant 등록 500은 남았다.
+별도 조사에서 Desktop 패키징이 정식 서버 build의 자산 복사를 건너뛰는 누락을 확인하고
+기존 build 재사용·배포 자산 비교·실제 패키지 지침 로더 검사로 보완한다. 이 결함이 해당
+CI 500의 유일한 원인인지와 새 잠긴-runtime packaged CI는 아직 미입증이다.
+[패키지 자산 검증](../reviews/PACKAGED-AGENT-ASSETS-VERIFICATION-2026-10-25.md)을 따른다.
 
 Source `1e6152a8`의 CI `40185474383` / `40185477664`는 각각 18개 job 중 16개 성공·2개 실패다.
 9개 Linux shard와 full Linux typecheck/build는 통과했지만 Windows unit은 **715 total / 709 pass /

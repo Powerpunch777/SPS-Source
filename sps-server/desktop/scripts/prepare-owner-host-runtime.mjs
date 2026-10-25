@@ -321,6 +321,7 @@ async function buildOwnerHostCoreArtifacts() {
   const marketplaceMcpTsconfig = path.join(coreRoot, "packages", "mcp-server", "tsconfig.json");
   const codexAdapterTsconfig = path.join(coreRoot, "packages", "adapters", "codex-local", "tsconfig.json");
   const claudeAdapterTsconfig = path.join(coreRoot, "packages", "adapters", "claude-local", "tsconfig.json");
+  const serverPackageRoot = path.join(coreRoot, "server");
   const serverTsconfig = path.join(coreRoot, "server", "tsconfig.json");
   const prepareServerUiDist = path.join(coreRoot, "scripts", "prepare-server-ui-dist.mjs");
   const tscCli = path.join(coreRoot, "node_modules", "typescript", "bin", "tsc");
@@ -360,7 +361,18 @@ async function buildOwnerHostCoreArtifacts() {
   await run(process.execPath, [tscCli, "-p", marketplaceMcpTsconfig], coreRoot);
   await run(process.execPath, [tscCli, "-p", codexAdapterTsconfig], coreRoot);
   await run(process.execPath, [tscCli, "-p", claudeAdapterTsconfig], coreRoot);
-  await run(process.execPath, [tscCli, "-p", serverTsconfig], coreRoot);
+  // The server build also copies onboarding instructions and built-in assets.
+  // A bare tsc can pass while a clean deployed Agent creation fails with ENOENT.
+  await run(
+    pnpm.command,
+    [...pnpm.prefixArgs, "--dir", serverPackageRoot, "run", "build"],
+    coreRoot,
+    { shell: pnpm.shell, environment: pnpm.environment },
+  );
+  for (const relative of ["default/AGENTS.md", "ceo/AGENTS.md", "ceo/HEARTBEAT.md", "ceo/SOUL.md", "ceo/TOOLS.md"]) {
+    await requireFile(path.join(serverPackageRoot, "dist", "onboarding-assets", relative),
+      "SPS Owner Host Agent instructions are missing after the server build.");
+  }
   await run(process.execPath, [prepareServerUiDist], coreRoot);
 }
 
@@ -694,6 +706,14 @@ await run(
 );
 
 await normalizeWorkspacePackageExports(runtimeRoot);
+for (const relative of ["default/AGENTS.md", "ceo/AGENTS.md", "ceo/HEARTBEAT.md", "ceo/SOUL.md", "ceo/TOOLS.md"]) {
+  const deployed = path.join(runtimeRoot, "node_modules", "@paperclipai", "server", "dist", "onboarding-assets", relative);
+  await requireFile(deployed, "SPS Owner Host Agent instructions are missing after deployment.");
+  const source = path.join(coreRoot, "server", "src", "onboarding-assets", relative);
+  if (!(await readFile(source)).equals(await readFile(deployed))) {
+    throw new Error("SPS Owner Host deployed Agent instructions do not match their source assets.");
+  }
+}
 const acpxRuntimeCompatibility = await repairOwnerHostAcpxRuntimeClosure(runtimeRoot);
 const windowsPostgresUnicodePathCompatibility = await installWindowsPostgresUnicodePathCompatibility(runtimeRoot);
 const serverUiDist = path.join(coreRoot, "server", "ui-dist");

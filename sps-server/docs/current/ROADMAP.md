@@ -23,8 +23,9 @@
    저장하고 pins는 암호문 안에만 둔다. 덮어쓰기·삭제·자동복구는 없고 caller는 격리 smoke뿐이다.
    발급 응답은 기존 키를 보존한 별도 create-only issued companion에 암호화 저장하고 재독해 시
    pins·원래 키/CSR·chain/profile·현재 인증서 만료를 검사한다. 새 Host issuer는 이전 인증서를
-   실제 loopback TLS 1.3에서 거부했다. unit AES는 DPAPI 증거가 아니며 새 companion의 Windows CI와
-   Main/IPC·GUI·enrollment caller 연결은 아직 없다. 저장 후 guard 실패는 파일 rollback을 보장하지 않는다.
+   실제 loopback TLS 1.3에서 거부했다. unit AES는 DPAPI 증거가 아니며, Source `48a35262` Windows CI에서
+   실제 43.8.3/24.22.0 DPAPI 재독해는 별도로 통과했다. Main/IPC·GUI·enrollment caller 연결은
+   아직 없다. 저장 후 guard 실패는 파일 rollback을 보장하지 않는다.
    [발급 자격 저장 검증](../reviews/NATIVE-MEMBER-ISSUED-STORE-VERIFICATION-2026-10-25.md)을 따른다.
    이는 제품 enrollment·사용자 인증·기기 승인·Workspace/Node/Source grant가 아니다.
    LAN은 OFF: Native LAN listener·방화벽 변경·Member 발급 활성화·enrollment·세션 등록·갱신은 없다.
@@ -53,6 +54,9 @@
    Windows Native DPAPI·Settings·No-AI·packaged Workspace surface는 통과했지만 packaged Preview는
    실제 Assistant 등록의 서버 오류로 실패했고 Zod gate도 차단됐다. Core `ed45c51c` PR CI
    `40190064373`는 15/15 성공이다. 이 CI를 후속 issued companion 검증으로 재사용하지 않는다.
+   후속 Source `48a35262` push CI `40197294957`도 16/18 성공이며 companion DPAPI·Settings·No-AI·
+   packaged Workspace는 통과했지만 Assistant 등록 500/보류 Zod는 남았다. Desktop의 서버 자산 복사
+   누락을 별도 재현하고 패키징 gate를 보완한다. [자산 검증](../reviews/PACKAGED-AGENT-ASSETS-VERIFICATION-2026-10-25.md)을 따른다.
    [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)과
    [CI 채널 관측](../reviews/NATIVE-CI-CHANNEL-CHECKPOINT-2026-10-25.md)을 따른다.
    [등록 조정·CI 후속 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
