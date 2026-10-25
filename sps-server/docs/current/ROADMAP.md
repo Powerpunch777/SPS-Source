@@ -39,7 +39,12 @@
    후속으로 직접 소유한 Main→Core 자식의 공개 서명 IPC 및 명시적 Core factory를 추가했다.
    Main은 현재 Host 세션/저장 identity/account generation을 재확인하고 개인키를 전달하지 않는다.
    중복 Host start는 하나로 합치며 start 중 stop은 늦은 spawn을 차단한다. 채널 disconnect/dispose는
-   새 호출과 마지막 DB write를 차단한다. 실제 session caller/등록 UI/ingress·자격 저장·갱신은 아직 없다.
+   새 호출과 마지막 DB write를 차단한다. 제품 session caller/등록 UI/ingress·자격 저장·갱신은 아직 없다.
+   비활성 session adapter는 실제 SPS Identity 쿠키와 exact session/user/expiry를 발급·등록 트랜잭션에
+   결속하며 wrong-secret 예산 전·마지막 write 뒤 재검사한다. 다른 user guard 조합은 거부하고,
+   local logout은 shared row lock으로 순서를 정한다. 제품 session exchange/route mount는 아직 없고
+   실제 HTTPS·fixture RSA session·mTLS 소스 시험을 물리 PC나 Google 운영 증거로 사용하지 않는다.
+   [세션 결속 검증](../reviews/NATIVE-SESSION-ENROLLMENT-VERIFICATION-2026-10-25.md)을 따른다.
    [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)과
    [CI 채널 관측](../reviews/NATIVE-CI-CHANNEL-CHECKPOINT-2026-10-25.md)을 따른다.
    [등록 조정·CI 후속 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.

@@ -30,8 +30,16 @@ typecheck/build는 통과했다. 실제 세션 인증 caller·등록 UI·TLS ing
 채널로 전달하지 않으며 renderer/preload/Plugin SDK API는 추가하지 않는다. Main은 현재 Host 세션과
 identity store를 서명 전후 확인하고 계정/서버 변경·restore generation 변화 뒤 이전 채널을 거부한다.
 취소·시간 초과는 실제 작업 종료 증거가 아니며, 실제 작업이 settle할 때까지 Main 동시성 slot을 유지한다.
-Core factory는 자동 시작하지 않는다. Native 세션 인증·발급 자격 저장·등록 UI·LAN listener는 여전히 후속이다.
+Core factory는 자동 시작하지 않는다. 제품 Native 세션 인증 경로·발급 자격 저장·등록 UI·LAN listener는 여전히 후속이다.
 정확한 한도·실행 명령·증거 범위는 [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)에 모은다.
+
+후속 비활성 session adapter는 실제 SPS Identity 세션 쿠키에서 사용자를 도출하고, DB 트랜잭션에서
+같은 session ID/digest/user/expiry와 verified 상태를 재검사한다. 초대 오입력 예산 전과 마지막
+발급/등록 write 뒤에 검사하며, 다른 사용자의 authorizer 조합도 거부한다. 실제 fresh TLS 1.3
+IncomingMessage·POST/JSON을 요구하고 browser origin·Authorization·본문 userId 대체를 거부한다.
+새 제품 route/listener나 Google 흐름은 만들지 않았다. 로컬 Core logout과 DB 처리의 순서 보장이지
+중앙 Google 로그아웃의 즉시 전파·COMMIT 순간까지의 시간 정지 보장은 아니다.
+[세션 결속 검증](../reviews/NATIVE-SESSION-ENROLLMENT-VERIFICATION-2026-10-25.md)에 최종 증거를 기록한다.
 
 Source `1e6152a8`의 CI `40185474383` / `40185477664`는 각각 18개 job 중 16개 성공·2개 실패다.
 9개 Linux shard와 full Linux typecheck/build는 통과했지만 Windows unit은 **715 total / 709 pass /
@@ -43,6 +51,15 @@ default DACL에 동일 사용자 SID를 추가하고 기존 ACE 보존·Admin de
 별도 review workflow는 Dependency Graph 미활성으로 실패했다. 앞선 `425000cb` DPAPI 성공은
 그 과거 revision에만 적용한다. [CI 채널 관측](../reviews/NATIVE-CI-CHANNEL-CHECKPOINT-2026-10-25.md)과
 Zod 보류·기존 출시 게이트를 유지한다.
+
+후속 Source `4a378c60`의 push CI `40188043818` 및 PR CI `40188048547`도 최종 16/18 성공·2개 실패다.
+9개 Linux shard/full typecheck/build는 통과했고 Windows 실행기·Desktop 739 total/738 pass/1 skip·
+실제 Native safeStorage(43.8.3/24.22.0)·Settings 7개 모드·runtime 준비는 통과했다.
+그러나 No-AI는 개발 checkout의 embedded PostgreSQL 실행 파일에 불필요한 `chmod`를 시도하다
+EPERM으로 Host가 종료돼 실패했고 뒤 packaged 시험은 실행되지 않았다. restricted token의 이전
+DLL 초기화 실패와 구별한다. Windows의 POSIX 실행 비트 보정만 제거하는 dependency patch를
+검증하며 pnpm cache/checkout/user profile의 ACL을 넓히지 않는다. Core `ac6875bf` PR CI
+`40188015914`는 15/15 통과했지만 새 세션 결속/의존성 patch revision의 증거로 재사용하지 않는다.
 
 신뢰된 Host 전용 Core Settings에서 명시적으로 확인한 뒤 Host 인증서 준비를 실행하는
 좁은 경로가 연결됐다. 이는 Member 기기 인증서 발급이나 등록 UI가 아니다. Native LAN은

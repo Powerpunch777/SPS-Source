@@ -109,6 +109,30 @@ product failure or counted pass; the root project-aware command above passed.
 
 ## Remaining acceptance
 
+### Subsequent exact-revision CI observation
+
+Source `4a378c60275fd481806c64e43c7e7a01e8b4ec48`, push run `40188043818`,
+finished failure with 16/18 jobs successful. All nine Linux test shards and full
+Linux typecheck/build passed. Windows job `121152926211` passed Desktop unit
+739 total / 738 pass / 1 skip, Native secure-storage and all seven Settings
+source Electron modes. The storage step reported Electron 43.8.3 / Node
+24.22.0, real Windows safeStorage, same Host key and same Member pending key
+after separate-process reload, no customer data/OS trust/listener changes.
+
+The new restricted-token DACL checks passed on that elevated runner, including
+`privateWindowStation`, `administratorDenied` and `userDefaultDacl`. The former
+DLL-init failure was not reproduced in those probes. Nevertheless No-AI E2E
+failed: Owner Host exited 1 on `EPERM`/`chmod` of the checkout's embedded
+PostgreSQL `native/bin/postgres.exe`, then authenticated Workspace window wait
+timed out. Job cleanup reported empty and owned desktop/station closed.
+No-AI acceptance and the skipped later packaged suites did not pass. The
+independent security policy job remained blocked by held Zod High.
+
+Core `ac6875bf20096a69b10b4ebf84fa6d700ffd47e6` PR run `40188015914`
+passed 15/15 jobs. Its separate review run `40188013945` failed at unsupported
+Dependency Review/Graph configuration. These observations qualify only those
+exact source revisions, not the later session adapter or Windows mode patch.
+
 Fresh `npm run audit:release` is **blocked**, with held Zod High `1243066`
 (no exception) plus two Low findings (`1119438`, `1241206`). No dependency
 migration, suppression or user-held approval was changed.

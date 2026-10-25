@@ -150,6 +150,12 @@ test("packages the managed Windows PostgreSQL Unicode-path compatibility patch",
   assert.match(buildScript, /Unsupported @embedded-postgres\/windows-x64 version/);
   assert.match(buildScript, /windowsPostgresUnicodePathCompatibility/);
   assert.match(verifierScript, /missing Windows PostgreSQL Unicode-path compatibility/);
+  const postgresPatch = await readFile(path.join(coreRoot, "patches", "embedded-postgres@18.1.0-beta.16.patch"), "utf8");
+  assert.match(postgresPatch, /if \(platform\(\) === 'win32'\) return;/);
+  assert.match(postgresPatch, /\+\s+yield ensureBinIsExecutable\(postgres\);/);
+  assert.match(postgresPatch, /\+\s+yield ensureBinIsExecutable\(initdb\);/);
+  assert.match(verifierScript, /missing Windows-safe PostgreSQL executable-mode handling/);
+  assert.match(verifierScript, /embeddedPostgresModule\.includes\("if \(platform\(\) === 'win32'\) return;"\)/);
   assert.ok(
     serverEntry.indexOf("await prepareEmbeddedPostgresNativeRuntime()")
       < serverEntry.indexOf("const mod = await import(moduleName)"),

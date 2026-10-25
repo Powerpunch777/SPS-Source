@@ -54,6 +54,12 @@
   마지막 트랜잭션 write도 lifecycle guard로 거부한다. factory는 자동 활성화하지 않는다.
   이 채널은 Native 로그인/기기 승인/Workspace/Node/Source 권한이나 OS 격리를 대신하지 않는다.
   [서명 채널 검증](../reviews/NATIVE-SIGNER-CHANNEL-VERIFICATION-2026-10-25.md)을 따른다.
+- 비활성 session adapter는 실제 SPS Identity 쿠키의 사용자와 exact session ID/digest/user/expiry를
+  발급/등록 트랜잭션에 결속한다. shared lock으로 로컬 logout과 순서를 정하고 verified/no-membership
+  최초 사용자를 수용하되 다른 사용자 authorizer·본문 userId·Agent/API token 대체는 거부한다.
+  실제 fresh TLS 1.3 POST/JSON과 단일 Cookie만 쓰고 browser origin/Authorization은 거부한다.
+  제품 mount나 세션 교환 ingress는 없으며 중앙 Google 로그아웃 전파나 Main 호출자 자체의 증명은 아니다.
+  [세션 결속 검증](../reviews/NATIVE-SESSION-ENROLLMENT-VERIFICATION-2026-10-25.md)을 따른다.
 
 정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과
 [Member 인증서 검증](../reviews/NATIVE-MEMBER-CERTIFICATE-VERIFICATION-2026-10-25.md),
@@ -223,7 +229,8 @@ TTL·키 회전·rate limit·retention 세부 정책은 계약 PR의 명시적 �
 크기·시도·동시성·서명 예산과 만료를 제한하고 동일 요청은 동일 기록/인증서를 재사용해야 한다.
 Core 저장은 migration 0167의 초대별 공개 기록이며 예산/수명은 명시 생성자 입력이다. 동일 committed
 재요청은 같은 인증서를 반환하고, 실패/중단 signing은 자동 재서명하지 않는다. 실제 프로세스 간
-사용자 세션 결속·retention 정리·GUI 실패 복구는 후속이다. Main signer 채널은 내부에만 추가했으며 private key/전체 CSR/초대 secret은
+사용자 세션 결속 adapter는 비활성 소스로 추가했지만 제품 활성화·retention 정리·GUI 실패 복구는 후속이다.
+Main signer 채널은 내부에만 추가했으며 private key/전체 CSR/초대 secret은
 발급 테이블에 저장하지 않는다. [정확한 검증과 제한](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
 
 pending 등록용 검사는 승인된 기기의 일반 API guard와 분리한다. 이 제한 경로가 임의 Core

@@ -31,6 +31,7 @@ const requiredFiles = [
   "node_modules/@sps/mcp-server/dist/marketplace-assistant-stdio.js",
   "node_modules/acpx/node_modules/@agentclientprotocol/sdk/package.json",
   "node_modules/@embedded-postgres/windows-x64/dist/index.js",
+  "node_modules/embedded-postgres/dist/index.js",
 ];
 
 const missing = [];
@@ -48,10 +49,11 @@ if (missing.length > 0) {
   );
 }
 
-const [runtimeManifest, releaseBaseline, windowsPostgresModule] = await Promise.all([
+const [runtimeManifest, releaseBaseline, windowsPostgresModule, embeddedPostgresModule] = await Promise.all([
   readFile(path.join(runtimeRoot, "sps-owner-host-runtime.json"), "utf8").then(JSON.parse),
   readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8").then(JSON.parse),
   readFile(path.join(runtimeRoot, "node_modules", "@embedded-postgres", "windows-x64", "dist", "index.js"), "utf8"),
+  readFile(path.join(runtimeRoot, "node_modules", "embedded-postgres", "dist", "index.js"), "utf8"),
 ]);
 
 if (
@@ -100,6 +102,12 @@ if (
   || !windowsPostgresModule.includes("SPS_EMBEDDED_POSTGRES_BINARY_DIR")
 ) {
   throw new Error("The packaged SPS Owner Host runtime is missing Windows PostgreSQL Unicode-path compatibility.");
+}
+
+if (!embeddedPostgresModule.includes("if (platform() === 'win32') return;")
+  || embeddedPostgresModule.split("yield ensureBinIsExecutable(postgres);").length !== 3
+  || !embeddedPostgresModule.includes("yield ensureBinIsExecutable(initdb);")) {
+  throw new Error("The packaged SPS Owner Host runtime is missing Windows-safe PostgreSQL executable-mode handling.");
 }
 
 console.log(`Packaged SPS Owner Host runtime verification passed: ${runtimeRoot}`);
