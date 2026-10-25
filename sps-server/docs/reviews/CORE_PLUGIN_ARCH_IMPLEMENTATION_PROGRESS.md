@@ -267,6 +267,24 @@ Workspace Job invocation이 `job.companyId`를 무시하던 문제는 실패 재
 No-AI source Electron을 통과했다. 원격 CI 성공, 실제 모델/Gateway/OCE·Member PC,
 서명 설치본·전체 Core 회귀·최신 의존성 감사나 보호 모드 자격 증거는 아니다.
 
+## 다중 백엔드 Stage 2a / Node Runtime 연결 관측
+
+기존 `sps.runtimes.list`에 optional 연결 관측 DTO를 추가했다. 실행 주체와 grant
+필요 여부, 승인/철회·heartbeat 상태·관측 시각을 반환하되 실제 CLI 로그인/실행
+가능/권한과 구분한다. Luna 검토에서 찾은 기존 online의 의미 변화를 되돌려
+heartbeat-only 호환성을 보존했고, 미래 시각과 교차 Workspace 행은 거부한다.
+
+고정 Source `8d2b3bfc63a0414d1294bedb91ee844c0e1249f7`, Core `fa16dcc2...`, SDK
+`da20ec44...`에서 Desktop 530/530, SDK 157/157, Core 표적 6파일 82/82,
+서버 typecheck/build 및 compatibility boundary를 통과했다. 실제 source Electron의
+공개 SDK Worker→Core 조회, 모의 Node 서명 heartbeat/승인/철회, A/B 분리와 기존
+No-AI 전체 시나리오/정리 exit 0도 확인했다. 상세 명령과 한계는
+[수용 기록](RUNTIME-DISCOVERY-ACCEPTANCE-2026-10-25.md)을 따른다.
+
+새 DB/API/의존성/UI 변경, 실제 CLI·물리 PC·모델/Gateway/OCE 호출이나 설치본은
+없다. 이 결과로 기존 보안 보류·운영 Identity·전체 Core/Linux·서명/두 PC 게이트를
+완료 처리하지 않는다. Agent/모델/OCE 연결과 broker는 후속 단계다.
+
 ## 다음 게이트
 
 독립 복구 경로의 장애 조합 검증을 보강하고 OS/renderer 실행 계약을 구체화한다.

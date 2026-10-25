@@ -1,12 +1,14 @@
 # SPS 범용 워크스테이션 / 다중 실행 백엔드 계획
 
-기준일: 2026-10-25 KST. 상태: Stage 0/1 완료, Stage 2a Node 연결 관측 소스 구현.
+기준일: 2026-10-25 KST. 상태: Stage 0/1 완료, Stage 2a Node 연결 관측 소스 수용 통과.
 이 문서는 사용자의 다중 백엔드 전달 문서와 후속 **Core 비공개 / SDK 공개 유지**
 결정을 제품 문서에 정렬한다. 전달 문서의 예시 API를 실제 export로 간주하지 않는다.
 현행 근거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
 기존 UI/복구 이전은 [진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)을 따른다.
 Stage 1의 실제 변경·버그 재현·최종 시험 범위는
 [No-AI 수용 기록](../reviews/NO-AI-WORKSPACE-ACCEPTANCE-2026-10-25.md)으로 구분한다.
+Stage 2a의 최종 tuple·82/157/530 및 실제 앱 범위는
+[Runtime 관측 수용 기록](../reviews/RUNTIME-DISCOVERY-ACCEPTANCE-2026-10-25.md)을 따른다.
 모델 요청·키 브로커·OCE 등 후속 백엔드는 아직 구현 완료가 아니다.
 
 ## 1. 제품 결정과 비변경 범위
@@ -129,6 +131,8 @@ heartbeat-only 의미는 보존하며 철회 직후에도 true일 수 있다. �
 grant/run을 생성하지 않는 점과 Node/Runner 양쪽 tenant 검사를 포함한다.
 이 단계에는 UI 변경, DB migration, 새 Secret 읽기, 실제 키 또는 의존성 전환이 없다.
 Agent/모델/OCE 연결과 취소·복구 지원은 아직 별도 후속 범위다.
+실제 source Electron의 모의 Node 조회와 기존 No-AI 전체 수용을 통과했다. 실제
+CLI/원격 PC/설치본 수용은 아니며 위 상세 기록으로 증거 범위를 고정한다.
 
 순서는 OCE를 마지막에 붙일 때까지 모든 UI 작업을 중지한다는 뜻이 아니다.
 Primary/Extension·선택적 Plugin chrome은 기존 이전 계획 E/F-UI와 병행하되
