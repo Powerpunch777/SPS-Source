@@ -88,7 +88,7 @@ cryptographic process attestation. Tailscale transport and Serve identity
 protect the remote path; they do not provide that stronger local-process
 isolation.
 
-### Native Windows LAN target (not implemented)
+### Native Windows LAN target (not supported yet)
 
 Trusted Core/Host/Member services, not ordinary plugins, will own TLS, server
 identity, authenticated users, approved devices, sessions, revocation and current
@@ -105,6 +105,14 @@ they require independent migration before claiming a Tailscale-free product.
 The [RFC](WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md) leaves trust enrollment, device
 credentials, listener/firewall policy and Source transport decisions explicit.
 Existing connections, data, keys, support matrix and release holds remain intact.
+
+An inactive Core foundation now provides Host-scoped Member device requests,
+approval/revocation, current Workspace/user authority and non-authorizing audit
+history, plus a real-socket mTLS helper and optional event-WebSocket checks.
+Neither the product startup nor a Native LAN listener enables these paths.
+Certificate issuance/storage, initial pairing, complete HTTP/subresource coverage,
+Native setup/recovery UI and physical two-PC qualification remain pending. See the
+[source verification record](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md).
 
 ## Product Boundary
 

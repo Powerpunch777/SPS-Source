@@ -2,7 +2,22 @@
 
 작성일: 2026-10-25. 상태: **D1~D3 제품 정책 승인 / 세부 프로토콜 작업 중 / LAN 활성화 승인 아님**.
 [계획과 결정 목록](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 Stage 0 산출물이다.
-여기 쓰인 자원·operation 이름은 개념이며 현재 export·endpoint·DB 테이블이 아니다.
+개념 이름 전체가 현재 export·endpoint를 뜻하지 않는다. 일부 Core 기기 관리 계약은
+아래 소스 기반으로 구현됐지만 제품 startup과 실제 Native LAN에는 아직 연결하지 않는다.
+
+## 현재 소스 기반
+
+- Host 고정 기기 registry와 공개 인증서/상태 DTO, pending 등록, 로컬 Host의 승인·철회,
+  redacted 감사 이벤트를 추가했다. Host ID는 신뢰된 생성자 설정이며 요청 값이 아니다.
+- 현재 active Workspace·사용자 membership·기기 승인·인증서 만료를 함께 조회한다.
+  기기 승인만으로 Workspace 가입·Plugin·Node·Agent·Source 권한은 생기지 않는다.
+- 인증서 등록은 private key 보유 증명이 아니다. 별도 helper는 실제 TLS 1.3 socket의
+  authorized clientAuth peer를 검증하고 매번 현재 인가를 조회한다. 시험은 loopback만 사용한다.
+- 선택적 WS guard는 upgrade와 이벤트 전달 전 로그인 세션·기기 권한을 재검사한다.
+  기존 local/Agent 경로에는 적용하지 않는다. 제품 Native ingress는 아직 없다.
+- 인증서 발급/키 보관·최초 pairing·HTTP/파일/기타 WS 전체 경계·Native UI·물리 두 PC는 후속이다.
+
+정확한 시험과 한계는 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
 
 ## 1. 목표와 비목표
 
@@ -131,7 +146,8 @@ Workspace 인가를 거쳐야 한다. 세션 cookie가 있거나 LAN 소켓이�
 - `checkServerIdentity`의 hostname 검사만으로 X.509 체인·유효기간·pin 정책을 모두
   대체하지 않는다. 임시 self-signed fixture 통과도 실제 Host 신뢰 배포 수용이 아니다.
 - 승인 D2는 Member mTLS다. 자체 PoP를 병행 구현하지 않는다. 실제 client 인증서
-  발급·보관/현재 승인·사용자 결속·HTTP/WS/서브리소스 검사는 아직 후속이다.
+  발급·보관, 앱 최초 연결과 전체 HTTP/WS/서브리소스 검사는 후속이다. 현재 승인·사용자
+  결속의 소스 registry와 transport helper 시험은 전체 제품 경로 수용을 대신하지 않는다.
 
 ## 6. 공개 SDK의 최소 표면 제안
 
@@ -158,8 +174,8 @@ Member 연결/철회 API로 바꾸지 않는다. 새 연결만으로 `runs.dispa
 ## 7. 저장·복원·오류·감사
 
 필요한 논리 자료는 Host identity version, 승인 기기/사용자 binding, challenge 소비,
-세션 generation, 철회, redacted 감사다. 구체적인 DB schema/migration은 단계 1에서
-기존 access/session 저장 구조와 중복을 조사한 뒤 additive로 결정한다.
+세션 generation, 철회, redacted 감사다. 기기/이벤트는 additive migration 0165로
+기존 session/Node 자격과 분리했다. Host 신원·pairing 소비·장기 세션 저장은 미구현이다.
 
 Windows safeStorage는 기존 키 보관 패턴의 재사용 후보이지 TPM/non-exportable
 보장의 증거가 아니다. Member 키와 Node 키는 별도 용도·파일/slot·회전·폐기 규칙을

@@ -1,13 +1,15 @@
 # SPS Windows 내장 연결 계획
 
-기준일: 2026-10-25 KST. 상태: **Stage 0 감사 완료, Stage 1 계약 작업 중; 내장 LAN 미구현**.
+기준일: 2026-10-25 KST. 상태: **Stage 0 완료, Stage 1/2a 소스 기반 구현 중; 내장 LAN 미지원**.
 사용자가 전달한 Windows-First Native Connectivity 인계서와 목표 교체 요청을
 반영한다. 이 문서는 네트워크 변경, 설치본 교체, 운영 배포 승인이 아니다.
 
 승인 D1의 비활성 초대 codec과 연결별 공개 인증서/TLS 확인은 소스 시험을 통과했다
 (codec 25건, TLS 12건, 전체 Desktop 572/572). TLS는 임시 loopback 시험 서버만
-사용했다. 앱 join/Core listener·mTLS 기기 승인·실제 LAN pairing에는 연결하지
-않았으므로 내장 LAN 지원 완료를 뜻하지 않는다. 정확한 범위는 아래 기록을 따른다.
+사용했다. 별도 Core 기기 registry·승인/철회·현재 Workspace 인가, 실제 loopback
+mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS listener·
+최초 pairing·기기 인증서 발급에는 연결하지 않았으므로 내장 LAN 지원 완료가 아니다.
+정확한 범위와 명령은 [Member 기기 소스 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)을 따른다.
 
 ## 1. 변경된 우선순위
 
@@ -126,7 +128,7 @@ D4~D5와 실제 키 수명·발급/회전·TTL·rate limit·보관 기간·liste
 | --- | --- | --- |
 | 0 완료 | 11영역 코드 감사·현재 시퀀스·RFC·결정 목록·문서 정렬 | `f5171ef83473fc538a7b5db6576c3c99ab05cebe` 문서 checkpoint. 런타임/DB/키/지원표 불변 |
 | 1 계약 중 | D1~D3 승인, 초대/서버 인증서·TLS source 시험, Member 세션·철회·Native 복구의 세부 계약 | HTTP/WS/서브리소스의 단일 인가, 기기 registry와 키/세션 정책 검수. 아직 외부 노출 없음 |
-| 2a Core | opt-in TLS/auth 경계·짧은 일회용 pairing·기기 승인/철회 | mock/격리 TLS fixture, 미승인·위조·재생·동시 소비·A/B·복원 거부. 기존 Tailscale/로컬 권한 회귀 |
+| 2a Core 진행 | 기기 registry/승인·철회·현재 인가·TLS peer helper/WS 재검사 소스 구현, Native ingress와 일회용 pairing 후속 | 격리 DB/TLS fixture와 거부 테스트만 확보. pairing/HTTP 전체 경로/실제 LAN 완료로 표시하지 않음 |
 | 2b Desktop | Native 설정과 Member 클라이언트, 0-Agent/0-Plugin 복구 | 임시 source Electron, 브라우저·Plugin bridge 승격 차단, 재시작/중단·철회 수용. 실제 LAN은 별도 동의 |
 | 2c 실제 LAN | 승인된 시험 데이터로 Windows 두 PC | Tailscale 없는 A/B 연결, 잘못된 서버/사용자/기기·Workspace 거부, 실제 포트/버전/tuple 증거. 미통과시 opt-in 해제 |
 | 3 SDK | 승인 Connection read/status부터, scoped observe | 실제 handler → SDK 선언/worker → packed consumer → Desktop 수용, missing invocation/capability·A/B 거부. 관리 mutation은 비공개 |
@@ -168,9 +170,13 @@ Zod major/설치본 교체 보류, 전체 최신 CI, Identity 운영 rollout, �
 유지한다. 새 연결이 이 Gate를 면제하지 않는다. Stage 3b의 기존 UI token gate
 실패와 미승인 Zod High 기록도 해소된 것으로 표시하지 않는다.
 
-Stage 0에서는 실행 코드를 바꾸지 않았다. Stage 1은 독립 데이터 계약과 서버
-인증서/TLS 확인 시험을 추가했으며 Native UI/기존 join에는 아직 연결하지 않는다.
-DB migration·실제 OS 키/인증서·방화벽·Tailscale·설치본·고객 데이터는 변경하지 않는다.
-시험 키는 임시 폴더에서 생성/삭제하고 TLS 서버는 loopback에만 바인딩했다.
-다음은 별도 Member 기기 registry·현재 인가·세션 철회와 HTTP/WS의 결속이며,
-검수/동의 전 실제 LAN·WAN·Linux·고객 환경으로 범위를 확장하지 않는다.
+Stage 0에서는 실행 코드를 바꾸지 않았다. Stage 1은 독립 초대 계약과 서버 인증서/
+TLS 확인 시험을 추가했다. Stage 2a는 additive migration 0165와 Core 기기 관리 계약을
+추가하며, 실제 사용자 DB가 아니라 임시 DB에서 검증한다. Native 관리 router는 신뢰된
+`nativeConnectivityHostId`가 있을 때만 mount되고 제품 startup에는 아직 전달하지 않는다.
+신규 WS guard도 전용 Native ingress용 opt-in이며 기존 local/Agent/TS listener에 붙이지 않는다.
+
+다음은 Host 신원의 영속화·발급/키 보관·일회용 pairing과 기본 off Native ingress,
+0-Agent/0-Plugin 설정·복구 UI다. 전체 HTTP/WS/서브리소스 인가·철회와 실제 두 PC는
+후속 수용 Gate다. OS 키/인증서 저장소·방화벽·Tailscale·설치본·고객 데이터를 변경하는
+명령은 실행하지 않는다. 검수/동의 전 실제 LAN·WAN·Linux·고객 환경으로 확대하지 않는다.

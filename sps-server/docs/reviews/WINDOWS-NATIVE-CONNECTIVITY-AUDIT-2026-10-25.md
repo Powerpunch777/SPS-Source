@@ -282,7 +282,7 @@ coordinator implemented/reviewed the verifier and probe, added denial cases and
 ran integration/full Desktop tests. A separate static TLS review found no
 actionable issue. This is internal review, not independent release approval.
 
-## Next implementation boundary
+## Stage 1 next boundary (historical)
 
 Add the separate Member device registry and current user/device authority,
 then an explicitly disabled Core TLS ingress with shared HTTP/WS denial and
@@ -293,3 +293,17 @@ and lifecycle cleanup before any actual LAN listener/firewall activation.
 Do not remove TS requirements until API, Owner recovery and Host Source access
 are independently qualified. Follow the [plan](../current/WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)
 for small PRs, denial tests, Source migration, and rollback.
+
+## Stage 2a source follow-up
+
+Core `f653375c113c46c6c09e2e3a20fd45c73598cfca` adds the separate device registry,
+current user/Workspace authority, safe Host approval/revocation history, restore
+scrubbing, actual-socket mTLS helper and an optional event-WebSocket guard.
+The [Member device source verification](NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)
+records 96/96 targeted tests, full typecheck/build, activation limits and known
+gaps. Product startup does not enable these paths. This does not replace the
+above Stage 1 evidence with an actual Native LAN or two-PC claim.
+
+The next boundary is persistent Host identity, issuance/key storage, one-time
+pairing, dedicated default-off ingress and zero-Plugin Native setup/recovery UI.
+Existing Tailscale/SMB/Owner recovery paths and release holds remain unchanged.
