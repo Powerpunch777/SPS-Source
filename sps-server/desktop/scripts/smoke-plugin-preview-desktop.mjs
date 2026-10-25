@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { once } from "node:events";
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
-import { access, copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import os from "node:os";
@@ -730,7 +730,10 @@ try {
   });
   const fixtureFolderInput = { context: developerContext.context, agentId: folderAgent.id };
   assert.equal((await checkFolder(fixtureFolderInput)).status, "not-configured");
-  for (const [cwd, expected] of [[path.dirname(pluginDirectory), "configured-different"], [pluginDirectory, "configured-match"]]) {
+  // The registry canonicalizes its source path. Windows TEMP may use an 8.3
+  // alias, so use that same spelling for this deliberately lexical comparison.
+  const canonicalPluginDirectory = await realpath(pluginDirectory);
+  for (const [cwd, expected] of [[path.dirname(canonicalPluginDirectory), "configured-different"], [canonicalPluginDirectory, "configured-match"]]) {
     await workspaceApi(workspace, `/api/agents/${folderAgent.id}`, {
       method: "PATCH", body: { adapterConfig: { cwd, dangerouslyBypassApprovalsAndSandbox: false } },
     });

@@ -1,6 +1,6 @@
 # Packaged Agent Assets Verification
 
-Date: 2026-10-25 KST. Status: **source/package-build defect fixed; final packaged CI pending**.
+Date: 2026-10-25 KST. Status: **asset fix passes hosted Agent registration; full packaged Preview still fails later**.
 
 Parent Source checkpoint: `48a35262cba726c46bb630b6eff4b52528c5da57`.
 Core remains `ed45c51c3070fa9688a5cdbbe45a78b74dc48dbc`, SDK remains
@@ -100,6 +100,16 @@ behavior result, **not** an immutable candidate, signed installer, locked 43.8.3
 test or reduced-token hosted runner acceptance. No update asset was published.
 
 ## Unchanged Gates
+
+Follow-up Source `99c3b77a2813bbcd959152182b56f65deab08e44`, push run
+`40200786146`, completed with 16/18 jobs successful. Windows packaged Preview
+now successfully registers both independent Agents and opens Registry/Builder.
+It fails later on `configured-different` versus `configured-match` and also
+fails PostgreSQL cleanup; Host lifecycle/Node steps are skipped. The confirmed
+asset omission is fixed, but this is not a full packaged acceptance pass.
+The [local management increment](NATIVE-HOST-MANAGEMENT-VERIFICATION-2026-10-25.md)
+records the exact failure digest and canonical fixture-path follow-up. Its new
+Source/Core revision needs fresh CI; this previous result cannot qualify it.
 
 Current-head Windows packaged CI, held Zod High `1243066` (no exception), main and
 independent review, production Identity rollout, code signing and identical final

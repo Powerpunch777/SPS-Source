@@ -612,6 +612,11 @@ try {
         assert.equal(recovery.workspaceBridge, "undefined");
         assert.equal(recovery.scripts, 1);
         assert.ok(recovery.status.recovery);
+        const devicesBeforePreparation = await setupCdp.evaluate("window.spsCoreSettings.listNativeDevices()", true);
+        assert.deepEqual(devicesBeforePreparation, { state: "identity_required", lanEnabled: false, devices: [] },
+          "A signed-in Owner without prepared Native keys must not invent device state or enable LAN.");
+        await click(setupCdp, "#refresh-native-devices", "Refresh Native device management without Agent or Plugin dependencies");
+        await waitForPage(setupCdp, page => !page.body.includes("Loading native devices..."), "Native device management unavailable state");
         if (screenshotPath) await captureScreenshot(setupCdp, path.join(path.dirname(screenshotPath), "no-ai-native-recovery.png"));
       },
     });

@@ -97,6 +97,18 @@
           <p class="help-text" id="native-address-help">Enter a private IPv4 or ULA address, for example 192.168.1.10.</p>
           <button id="prepare-native-identity" class="button secondary" type="button" disabled>Prepare host identity</button>
         </div>
+
+        <div class="section-heading compact-heading">
+          <div>
+            <h3>Native devices</h3>
+            <p class="muted">Review and manage devices for this local Host. LAN access remains off.</p>
+          </div>
+          <button id="refresh-native-devices" class="button secondary" type="button" disabled>Refresh devices</button>
+        </div>
+        <p id="native-devices-status" class="muted" role="status" aria-live="polite" aria-busy="true">Loading native devices...</p>
+        <p id="native-devices-empty" class="muted" hidden>No Native devices are registered.</p>
+        <p id="native-devices-error" class="inline-warning" role="status" hidden>Native device management is unavailable. Diagnostic details are hidden.</p>
+        <div id="native-devices-list" class="action-list" aria-live="polite"></div>
       </section>
 
       <section class="section" aria-labelledby="recovery-heading">

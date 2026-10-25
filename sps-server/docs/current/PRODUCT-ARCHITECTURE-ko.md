@@ -106,13 +106,19 @@ The [RFC](WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md) leaves trust enrollment, device
 credentials, listener/firewall policy and Source transport decisions explicit.
 Existing connections, data, keys, support matrix and release holds remain intact.
 
-An inactive Core foundation now provides Host-scoped Member device requests,
-approval/revocation, current Workspace/user authority and non-authorizing audit
-history, plus a real-socket mTLS helper and optional event-WebSocket checks.
-Neither the product startup nor a Native LAN listener enables these paths.
-Certificate issuance/storage, initial pairing, complete HTTP/subresource coverage,
-Native setup/recovery UI and physical two-PC qualification remain pending. See the
-[source verification record](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md).
+A Core foundation provides Host-scoped Member device records, approval/revocation,
+current Workspace/user authority and non-authorizing audit history, plus a
+real-socket mTLS helper and optional event-WebSocket checks. Local Core Settings
+now connects bounded device listing and explicit approve/revoke after protected
+Host identity preparation and a Host restart. It requires the exact current
+Owner session, local Desktop proofs and Main-owned Host binding; it grants no
+Workspace, Plugin, Agent, Node or Source access. Confirmation is bound to the
+captured account/Host/generation and exact device metadata, and stale UI results
+are cleared. The Native network listener and Member enrollment remain inactive.
+The [local management record](../reviews/NATIVE-HOST-MANAGEMENT-VERIFICATION-2026-10-25.md)
+separates source/DB/UI tests from missing prepared-Host end-to-end, two-PC and
+signed-release acceptance. Existing [device foundation evidence](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)
+does not qualify initial pairing, complete ingress coverage or renewal.
 An internal [one-use pairing store](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)
 now atomically consumes an invitation and registers a pending first-time device,
 without granting membership or execution. It is not wired to a real enrollment

@@ -11,6 +11,8 @@ import { coreRecoveryEnvironment, loadCoreRecoverySettings, saveCoreRecoverySett
 import { createCoreSettingsController } from "./core-settings-controller.mjs";
 import { createSpsNativeHostIdentityStore } from "./native-identity-store.mjs";
 import { assertSpsNativeHostCredentialsAbsentForRestore, createSpsNativeIdentityController } from "./native-identity-controller.mjs";
+import { inspectSpsNativeHostIdentity, requireCurrentSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
+import { createNativeDeviceManagementController, nativeHostCoreOwnerUserId } from "./native-device-management-controller.mjs";
 import { createSpsNativeMemberMainSigner } from "./native-member-main-signer.mjs";
 import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
 import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
@@ -256,6 +258,7 @@ const activeDeveloperProjectOperations = new Set();
 let officialExtensionsWindow = null;
 let coreSettingsController = null;
 let nativeIdentityController = null;
+let nativeDeviceManagementController = null;
 const nativeIdentityStores = new Map();
 const ownerVaultOperations = createSpsOwnerVaultOperationGate({
   onInvalidation: () => ownerHostManager?.invalidateNativeSigner(),
@@ -1312,6 +1315,32 @@ function ensureNativeIdentityController() {
   return nativeIdentityController;
 }
 
+function ensureNativeDeviceManagementController() {
+  if (!nativeDeviceManagementController) nativeDeviceManagementController = createNativeDeviceManagementController({
+    getAuthority: () => {
+      const current = isQuitting ? null : nativeIdentityAuthority();
+      return current ? { ...current, generation: ownerVaultOperations.connectionGeneration() } : null;
+    },
+    authenticateHost: async () => {
+      if (!nativeIdentityAuthority() || !await ensureDesktopIdentityAccessToken() || !nativeIdentityAuthority()) throw new Error("The signed-in local Host session is required.");
+    },
+    getIdentity: async context => {
+      try {
+        const identity = requireCurrentSpsNativeHostIdentity(await nativeIdentityStore({
+          userDataDirectory: context.userDataDirectory, vaultDirectory: context.vaultDirectory,
+        }).read(), Date.now());
+        return { hostId: identity.hostId, serverSpkiSha256: inspectSpsNativeHostIdentity(identity).serverSpkiSha256 };
+      } catch { throw Object.assign(new Error("Native Host identity is unavailable."), { code: "native_identity_unavailable" }); }
+    },
+    getHostBinding: () => ownerHostApi("/sps/member-devices/status", { ownerBootstrap: true, sessionOnly: true }),
+    listDevices: () => ownerHostApi("/sps/member-devices", { ownerBootstrap: true, sessionOnly: true }),
+    mutateDevice: (action, id) => ownerHostApi(`/sps/member-devices/${encodeURIComponent(id)}/${action}`, {
+      method: "POST", body: {}, ownerBootstrap: true, sessionOnly: true,
+    }),
+  });
+  return nativeDeviceManagementController;
+}
+
 async function materializeCurrentSpsOwnerHostRuntime() {
   if (ownerHostRuntimePromise) return ownerHostRuntimePromise;
   ownerHostRuntimePromise = (async () => {
@@ -1531,6 +1560,13 @@ async function ensureOwnerHostManager() {
         ...(pluginDiscoveryEnabled ? [discoveryPluginPath] : []),
         ...(roomWorkplaneBundled ? [roomPluginPath] : []),
       ];
+      const nativeAuthority = nativeIdentityAuthority();
+      const nativeGeneration = ownerVaultOperations.connectionGeneration();
+      const nativeIdentityStatus = await ensureNativeIdentityController().inspect();
+      const currentNativeAuthority = nativeIdentityAuthority();
+      const nativeManagementPrepared = nativeIdentityStatus.state === "identity_prepared" && nativeAuthority
+        && currentNativeAuthority && nativeGeneration === ownerVaultOperations.connectionGeneration()
+        && ["ownerSubject", "userDataDirectory", "vaultDirectory"].every(key => nativeAuthority[key] === currentNativeAuthority[key]);
       return resolveSpsOwnerHostRuntime({
         // Development must execute the checked-out Core directly. The local
         // packaged runtime is intentionally a release artifact and otherwise
@@ -1542,6 +1578,11 @@ async function ensureOwnerHostManager() {
         configPath: ownerHost.layout.configPath,
         environment: {
           ...coreRecoveryEnvironment(recovery),
+          SPS_NATIVE_HOST_MANAGEMENT: nativeManagementPrepared ? "1" : "0",
+          // SPS Identity's current private Core user mapping. This is trusted
+          // per-child configuration, never a renderer/request-selected user.
+          SPS_NATIVE_HOST_OWNER_USER_ID: nativeManagementPrepared
+            ? nativeHostCoreOwnerUserId(nativeAuthority.ownerSubject) : "",
           ...spsAgentRuntimePackEnvironment({
             root: ownerAgentRuntimePacksRoot(),
             nodeCommand: materializedRuntime
@@ -1766,7 +1807,7 @@ async function bootstrapOwnerHost() {
   }
 }
 
-async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = false } = {}) {
+async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = false, sessionOnly = false } = {}) {
   await requireReadyOwnerHost();
   if (ownerBootstrap && (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost())) {
     throw new Error("Only this SPS Owner Host can perform this local Host action.");
@@ -1779,7 +1820,7 @@ async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = f
   // A signed-in SPS Identity account is required for every Host request,
   // including a loopback-only Host. The board token remains an optional
   // compatibility credential for established connections.
-  if (accessToken) headers.authorization = `Bearer ${accessToken}`;
+  if (accessToken && !sessionOnly) headers.authorization = `Bearer ${accessToken}`;
   // This method can run while a newly created Host is still becoming the
   // active profile. The launch proof authenticates the local Desktop
   // transport, not the selected profile, so every request to the process this
@@ -1813,7 +1854,7 @@ async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = f
     // The status and a safe generic error below are enough for Desktop setup.
   }
   if (!response.ok) {
-    throw new Error(data?.error || `SPS Owner Host request failed with ${response.status}.`);
+    throw Object.assign(new Error(data?.error || `SPS Owner Host request failed with ${response.status}.`), { status: response.status });
   }
   return data;
 }
@@ -4002,6 +4043,19 @@ function ensureCoreSettingsController() {
       return choice.response === 1;
     },
     prepareNativeIdentity: (input, options) => ensureNativeIdentityController().prepare(input, options),
+    listNativeDevices: () => ensureNativeDeviceManagementController().list(),
+    approveNativeDevice: (input, options) => ensureNativeDeviceManagementController().change("approve", input, options),
+    revokeNativeDevice: (input, options) => ensureNativeDeviceManagementController().change("revoke", input, options),
+    confirmNativeDeviceAction: async (parentWindow, { action, deviceId, device }) => {
+      if (!device || device.id !== deviceId || !["approve", "revoke"].includes(action)) throw new Error("The current Native device is unavailable.");
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: action === "approve" ? "Approve this Native device?" : "Revoke this Native device?",
+        message: action === "approve" ? "Approve this computer's device certificate?" : "Permanently revoke this device certificate?",
+        detail: `${device.displayName}\nCertificate SHA-256: ${device.certificateSha256}\n\nThis does not grant Workspace membership, Plugin, CLI, Agent, Node or Source access. LAN remains off.`,
+        buttons: ["Cancel", action === "approve" ? "Approve device" : "Revoke device"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
   });
   return coreSettingsController;
 }

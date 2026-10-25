@@ -3,6 +3,69 @@ import { createSpsSetupWindowPreferences } from "./window-security.mjs";
 import { requireSpsNativeIdentityPreparationInput } from "./native-identity-controller.mjs";
 
 export const SPS_CORE_SETTINGS_SHORTCUT = "CommandOrControl+Alt+S";
+const NATIVE_DEVICE_STATES = new Set(["available", "host_required", "identity_required", "host_restart_required", "unavailable"]);
+const NATIVE_DEVICE_STATUSES = new Set(["pending", "approved", "revoked"]);
+const NATIVE_DEVICE_ID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+const NATIVE_DEVICE_FINGERPRINT = /^[0-9a-f]{64}$/;
+const MAX_NATIVE_DEVICES = 200;
+const UNAVAILABLE_NATIVE_DEVICES = Object.freeze({ state: "unavailable", lanEnabled: false, devices: Object.freeze([]) });
+
+function exactDataRecord(value, keys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== keys.length || ownKeys.some(key => typeof key !== "string" || !keys.includes(key))) return null;
+  const result = {};
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) return null;
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function validateNativeDeviceInput(input) {
+  const record = exactDataRecord(input, ["deviceId"]);
+  if (!record || typeof record.deviceId !== "string" || !NATIVE_DEVICE_ID.test(record.deviceId)) {
+    throw new TypeError("Native device actions require one canonical device UUID.");
+  }
+  return Object.freeze({ deviceId: record.deviceId });
+}
+
+function sanitizeNativeDevicesSnapshot(value) {
+  try {
+    const snapshot = exactDataRecord(value, ["state", "lanEnabled", "devices"]);
+    if (!snapshot || !NATIVE_DEVICE_STATES.has(snapshot.state) || snapshot.lanEnabled !== false
+      || !Array.isArray(snapshot.devices) || snapshot.devices.length > MAX_NATIVE_DEVICES
+      || snapshot.state !== "available" && snapshot.devices.length !== 0) return null;
+    const ids = new Set();
+    const devices = [];
+    for (const candidate of snapshot.devices) {
+      const device = exactDataRecord(candidate, ["id", "displayName", "status", "certificateSha256", "certificateNotAfter", "revision"]);
+      if (!device || typeof device.id !== "string" || !NATIVE_DEVICE_ID.test(device.id) || ids.has(device.id)
+        || typeof device.displayName !== "string" || device.displayName.length > 120
+        || !device.displayName.trim() || /[\u0000-\u001f\u007f]/.test(device.displayName)
+        || !NATIVE_DEVICE_STATUSES.has(device.status)
+        || typeof device.certificateSha256 !== "string" || !NATIVE_DEVICE_FINGERPRINT.test(device.certificateSha256)
+        || typeof device.certificateNotAfter !== "string" || device.certificateNotAfter.length !== 24
+        || !Number.isSafeInteger(device.revision) || device.revision <= 0 || device.revision > 2_147_483_647) return null;
+      const expiry = new Date(device.certificateNotAfter);
+      if (!Number.isFinite(expiry.getTime()) || expiry.toISOString() !== device.certificateNotAfter) return null;
+      ids.add(device.id);
+      devices.push(Object.freeze({
+        id: device.id,
+        displayName: device.displayName,
+        status: device.status,
+        certificateSha256: device.certificateSha256,
+        certificateNotAfter: device.certificateNotAfter,
+        revision: device.revision,
+      }));
+    }
+    return Object.freeze({ state: snapshot.state, lanEnabled: false, devices: Object.freeze(devices) });
+  } catch {
+    return null;
+  }
+}
 
 function validateRecoveryInput(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)
@@ -28,6 +91,10 @@ export function createCoreSettingsController({
   inspectTransfer,
   confirmNativeIdentity,
   prepareNativeIdentity,
+  listNativeDevices,
+  approveNativeDevice,
+  revokeNativeDevice,
+  confirmNativeDeviceAction,
 }) {
   let window = null;
   let registered = false;
@@ -41,6 +108,15 @@ export function createCoreSettingsController({
       || event.senderFrame.url !== trustedUrl || window.webContents.getURL() !== trustedUrl) {
       throw new Error("Core Settings requests require its own trusted Native window.");
     }
+  }
+
+  async function awaitAndAssertSender(event, action) {
+    let value;
+    let failure;
+    try { value = await action(); } catch (error) { failure = error; }
+    assertSender(event);
+    if (failure) throw failure;
+    return value;
   }
 
   async function status() {
@@ -88,11 +164,11 @@ export function createCoreSettingsController({
   }
 
   function registerIpc(ipcMain) {
-    const bind = (name, action, { writes = false, input = false } = {}) => {
+    const bind = (name, action, { writes = false, input = false, authorizeBeforeAction = writes } = {}) => {
       ipcMain.handle(`desktop:core-settings-${name}`, async (event, ...args) => {
         assertSender(event);
         if ((!input && args.length !== 0) || (input && args.length !== 1)) throw new Error("Unexpected Core Settings arguments.");
-        if (writes) await authorizeMutation();
+        if (authorizeBeforeAction) await authorizeMutation();
         const run = () => action(args[0], event);
         try { return await (writes ? mutate(run) : run()); }
         catch (error) {
@@ -132,6 +208,50 @@ export function createCoreSettingsController({
       }
       return status();
     }, { writes: true, input: true });
+    const bindNativeDeviceAction = (name, action, callback) => bind(name, async (input, event) => {
+      const validated = validateNativeDeviceInput(input);
+      if (typeof callback !== "function" || typeof confirmNativeDeviceAction !== "function") {
+        throw new Error("Native device management is unavailable.");
+      }
+      if (typeof authorizeMutation !== "function") throw new Error("Native device management is unavailable.");
+      await awaitAndAssertSender(event, () => authorizeMutation());
+      let value;
+      try {
+        value = await awaitAndAssertSender(event,
+          () => callback(validated, {
+            assertRequester: () => assertSender(event),
+            confirm: async device => {
+              const target = sanitizeNativeDevicesSnapshot({ state: "available", lanEnabled: false, devices: [device] })?.devices[0];
+              if (!target || target.id !== validated.deviceId) throw new Error("Native device action could not be confirmed.");
+              await awaitAndAssertSender(event, () => authorizeMutation());
+              const confirmed = await awaitAndAssertSender(event,
+                () => confirmNativeDeviceAction(window, { action, deviceId: validated.deviceId, device: target }));
+              await awaitAndAssertSender(event, () => authorizeMutation());
+              return confirmed === true;
+            },
+          }));
+      } catch {
+        throw new Error("Native device action could not complete.");
+      }
+      const snapshot = sanitizeNativeDevicesSnapshot(value);
+      if (!snapshot) throw new Error("Native device action returned an invalid status.");
+      return snapshot;
+    }, { writes: true, input: true, authorizeBeforeAction: false });
+
+    bind("list-native-devices", async (_input, event) => listNativeDevicesFor(event));
+    bindNativeDeviceAction("approve-native-device", "approve", approveNativeDevice);
+    bindNativeDeviceAction("revoke-native-device", "revoke", revokeNativeDevice);
+  }
+
+  async function listNativeDevicesFor(event) {
+    assertSender(event);
+    if (typeof authorizeMutation !== "function") throw new Error("Native device management is unavailable.");
+    await awaitAndAssertSender(event, () => authorizeMutation());
+    if (typeof listNativeDevices !== "function") return UNAVAILABLE_NATIVE_DEVICES;
+    let value;
+    try { value = await awaitAndAssertSender(event, () => listNativeDevices()); }
+    catch { throw new Error("Native device list is unavailable."); }
+    return sanitizeNativeDevicesSnapshot(value) ?? UNAVAILABLE_NATIVE_DEVICES;
   }
 
   function registerShortcut() {

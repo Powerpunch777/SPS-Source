@@ -51,6 +51,18 @@ test("returns unavailable for absent or inactive Agents", () => {
   }
 });
 
+test("Windows 8.3 aliases remain lexically different until the caller supplies the canonical path", () => {
+  const canonical = "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\plugin";
+  const alias = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\plugin";
+  const fixture = input({ platform: "win32", project: { id: PROJECT_ID, sourcePath: canonical } });
+  assert.deepEqual(assessDeveloperAgentFolder({ ...fixture,
+    agent: { ...fixture.agent, adapterConfig: { cwd: alias } },
+  }), expected("configured-different"));
+  assert.deepEqual(assessDeveloperAgentFolder({ ...fixture,
+    agent: { ...fixture.agent, adapterConfig: { cwd: canonical } },
+  }), expected("configured-match"));
+});
+
 test("throws for malformed or foreign Agent identity instead of reporting unavailable", () => {
   assert.throws(() => assessDeveloperAgentFolder(input({
     agent: { ...input().agent, companyId: "not-a-uuid" },

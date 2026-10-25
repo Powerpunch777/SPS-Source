@@ -1,4 +1,20 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const nativeDeviceIdPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+
+function nativeDeviceInput(input) {
+  try {
+    if (!input || typeof input !== "object" || Array.isArray(input)
+      || (Object.getPrototypeOf(input) !== null && Object.getPrototypeOf(Object.getPrototypeOf(input)) !== null)) throw new TypeError();
+    const keys = Reflect.ownKeys(input);
+    const descriptor = Object.getOwnPropertyDescriptor(input, "deviceId");
+    if (keys.length !== 1 || keys[0] !== "deviceId" || !descriptor?.enumerable
+      || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "string"
+      || !nativeDeviceIdPattern.test(descriptor.value)) throw new TypeError();
+    return { deviceId: descriptor.value };
+  } catch {
+    throw new TypeError("deviceId must be one canonical UUID");
+  }
+}
 
 const coreSettingsApi = Object.freeze({
   getStatus: () => ipcRenderer.invoke("desktop:core-settings-get-status"),
@@ -24,6 +40,19 @@ const coreSettingsApi = Object.freeze({
       return Promise.reject(new TypeError("A private certificate address is required."));
     }
     return ipcRenderer.invoke("desktop:core-settings-prepare-native-identity", { serverAddress: input.serverAddress });
+  },
+  listNativeDevices: () => ipcRenderer.invoke("desktop:core-settings-list-native-devices"),
+  approveNativeDevice: input => {
+    let validated;
+    try { validated = nativeDeviceInput(input); }
+    catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-approve-native-device", validated);
+  },
+  revokeNativeDevice: input => {
+    let validated;
+    try { validated = nativeDeviceInput(input); }
+    catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-revoke-native-device", validated);
   },
 });
 

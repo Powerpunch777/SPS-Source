@@ -11,6 +11,13 @@
 구현 상태와 테스트 증거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
 [Core/Plugin 진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)으로 분리한다.
 
+최신 local 관리 increment: 준비된 Host의 직접 소유 Core 자식에 Owner 세션 결속
+기기 status/list/events/approve/revoke를 연결하고, 독립 Core Settings에 목록과
+명시적 승인/철회를 추가했다. 확인창 도중 계정/Host/기기 변경 거부와 이전 목록 제거,
+조회/변경 트랜잭션 세션 재검사를 포함한다. LAN OFF·등록/초대/갱신 미연결이며
+준비된 Host의 실제 승인 전체 앱 흐름과 두 PC/서명본 검증은 남아 있다.
+[기기 관리 검증](../reviews/NATIVE-HOST-MANAGEMENT-VERIFICATION-2026-10-25.md)을 따른다.
+
 1. Windows Desktop/Host/Member/Node를 우선 안정화하고, 외부 Tailscale 없이 동작하는
    내장 **LAN** 경로를 개발한다. Stage 0 감사는 완료했고, 전체 초대코드와 서버 지문
    확인(D1), PC별 mTLS 인증서(D2), LAN 기본 off/명시 opt-in(D3)이 승인됐다. Core 기기
@@ -61,7 +68,7 @@
    [CI 채널 관측](../reviews/NATIVE-CI-CHANNEL-CHECKPOINT-2026-10-25.md)을 따른다.
    [등록 조정·CI 후속 검증](../reviews/NATIVE-ENROLLMENT-ORCHESTRATION-VERIFICATION-2026-10-25.md)을 따른다.
    기존 복구·Source·Node 권한과 Zod High `1243066` 보류·Low 2건 등 출시 Gate는 유지한다.
-   UI token gate·Tailscale-free Source·Host 승인/복구 UI도 미완료다.
+   UI token gate·Tailscale-free Source·Host 승인/복구의 전체 앱/물리 수용도 미완료다.
    정확한 명령·수·runtime·CI revision은 아래 검증 기록에 모으며,
    개발 UI 결과를 서명 설치본 또는 두 PC 증거로 사용하지 않는다.
    [Member 기기 검증](../reviews/NATIVE-MEMBER-DEVICE-SOURCE-VERIFICATION-2026-10-25.md)과

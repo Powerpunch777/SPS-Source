@@ -16,6 +16,15 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+후속 local Host management는 준비된 Host identity와 직접 소유 Main IPC의 공개
+Host/server 핀을 확인한 Core 자식에만 status/list/events/approve/revoke를 연결한다.
+실제 Owner 세션·actor·두 Desktop proof가 일치해야 하며 DB 조회/변경 전후 세션과
+채널을 재검사한다. Core Settings는 좁은 공개 DTO만 표시하며 확인창 전후의 계정/
+Host/generation·인증서/기기 revision 변화와 늦게 도착한 이전 UI 결과를 거부한다.
+준비 후 Host 재시작은 명시적이며 LAN은 계속 OFF다. 이는 initial enrollment 또는
+연결된 Native stream 철회 수용이 아니다. 이번 소스/DB/설정 UI 검증과 남은
+준비된 Host 전체 앱/두 PC/서명본 검증은 [로컬 기기 관리 검증](../reviews/NATIVE-HOST-MANAGEMENT-VERIFICATION-2026-10-25.md)에 분리한다.
+
 Core `0955e8f63`에 초대별 공개 발급 기록과 두 단계 등록의 내부 조정 계층을 추가했다.
 발급은 초대를 소비하지 않고, 실제 authorized/non-resumed TLS 1.3 소켓에 제시된 정확한
 발급 인증서만 초대 소비·pending 기기·감사와 함께 트랜잭션으로 등록한다. 잘못된 secret 예산은
