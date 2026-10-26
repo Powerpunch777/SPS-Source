@@ -1,7 +1,8 @@
 import { pathToFileURL } from "node:url";
 import { createSpsSetupWindowPreferences } from "./window-security.mjs";
 import { requireSpsNativeIdentityPreparationInput } from "./native-identity-controller.mjs";
-import { requireSpsNativeMemberEnrollmentInput, requireSpsNativeMemberRecoveryInput } from "./native-member-controller.mjs";
+import { requireSpsNativeMemberEnrollmentInput, requireSpsNativeMemberRecoveryInput,
+  requireSpsNativeMemberWorkspaceBootstrapInput } from "./native-member-controller.mjs";
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { requireSpsNativeHostListenInput } from "./native-host-controller.mjs";
 import { requireNativeInvitationRevokeInput } from "./native-invitation-management-controller.mjs";
@@ -176,6 +177,7 @@ export function createCoreSettingsController({
   confirmNativeInvitationRevoke,
   listNativeRegistrations,
   listNativeMemberWorkspaces,
+  openNativeMemberWorkspace,
   enrollNativeMember,
   recoverNativeMember,
   repairNativeMemberStorage,
@@ -352,6 +354,15 @@ export function createCoreSettingsController({
         assertRequester: () => assertSender(event),
       }));
       return memberWorkspaces(result);
+    }, { writes: true, input: true, authorizeBeforeAction: false });
+    bind("open-native-member-workspace", async (input, event) => {
+      const validated = requireSpsNativeMemberWorkspaceBootstrapInput(input);
+      if (typeof openNativeMemberWorkspace !== "function") throw new Error("Native Workspace opening is unavailable.");
+      const result = await awaitAndAssertSender(event, () => openNativeMemberWorkspace(validated, {
+        assertRequester: () => assertSender(event),
+      }));
+      if (exactDataRecord(result, ["opened"])?.opened !== true) throw new Error("Native Workspace opening is unavailable.");
+      return Object.freeze({ opened: true });
     }, { writes: true, input: true, authorizeBeforeAction: false });
     bind("start-native-host-listener", async (input, event) => {
       const validated = requireSpsNativeHostListenInput(input);

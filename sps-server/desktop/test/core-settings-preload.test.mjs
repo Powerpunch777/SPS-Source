@@ -62,3 +62,18 @@ test("Native Member preload sends bounded data only and never invokes input gett
   assert.equal(calls[2][0], "desktop:core-settings-list-native-member-workspaces");
   assert.deepEqual({ ...calls[2][1] }, { hostId: "11111111-1111-4111-8111-111111111111" });
 });
+
+test("Native Workspace open preload passes only canonical Host and Workspace IDs", async () => {
+  const { api, calls } = await loadPreload();
+  const hostId = "11111111-1111-4111-8111-111111111111", workspaceId = "22222222-2222-4222-8222-222222222222";
+  let getter = false;
+  const hostile = Object.defineProperty({ hostId }, "workspaceId", { enumerable: true, get() { getter = true; return workspaceId; } });
+  await assert.rejects(api.openNativeMemberWorkspace(hostile));
+  await assert.rejects(api.openNativeMemberWorkspace({ hostId, workspaceId, cookie: "secret" }));
+  await assert.rejects(api.openNativeMemberWorkspace({ hostId, workspaceId: "../other" }));
+  assert.equal(getter, false);
+  assert.equal(calls.length, 0);
+  await api.openNativeMemberWorkspace({ hostId, workspaceId });
+  assert.equal(calls[0][0], "desktop:core-settings-open-native-member-workspace");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0][1])), { hostId, workspaceId });
+});

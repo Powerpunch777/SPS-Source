@@ -16,6 +16,8 @@ import { createNativeDeviceManagementController, nativeHostCoreOwnerUserId } fro
 import { createNativeInvitationManagementController } from "./native-invitation-management-controller.mjs";
 import { createSpsNativeMemberMainSigner } from "./native-member-main-signer.mjs";
 import { createSpsNativeMemberController } from "./native-member-controller.mjs";
+import { createSpsNativeWorkspaceWindowController } from "./native-workspace-window.mjs";
+import { createSpsNativeWorkspaceAssets } from "./native-workspace-assets.mjs";
 import { createSpsNativeHostController } from "./native-host-controller.mjs";
 import { createSpsNativeHostIngress } from "./native-host-ingress.mjs";
 import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader,
@@ -268,6 +270,7 @@ let nativeIdentityController = null;
 let nativeDeviceManagementController = null;
 let nativeInvitationManagementController = null;
 let nativeMemberController = null;
+let nativeWorkspaceWindowController = null;
 let nativeHostController = null;
 const nativeIdentityStores = new Map();
 const ownerVaultOperations = createSpsOwnerVaultOperationGate({
@@ -276,6 +279,7 @@ const ownerVaultOperations = createSpsOwnerVaultOperationGate({
     ownerHostManager?.invalidateNativeSigner();
     nativeMemberController?.dispose();
     nativeMemberController = null;
+    void nativeWorkspaceWindowController?.invalidate().catch(() => {});
   },
 });
 let ownerHostRecoveryPluginsDisabled = null;
@@ -1349,6 +1353,24 @@ function nativeMemberAuthority() {
   const identityIssuer = account.identityUrl || configuredDesktopIdentityUrl();
   return { identityIssuer, subject: account.subject, userDataDirectory: app.getPath("userData"),
     vaultDirectory: ownerVaultRoot(), generation: ownerVaultOperations.connectionGeneration() };
+}
+
+function ensureNativeWorkspaceWindowController() {
+  if (!nativeWorkspaceWindowController) {
+    nativeWorkspaceWindowController = createSpsNativeWorkspaceWindowController({
+      BrowserWindow,
+      getAuthority: nativeMemberAuthority,
+      getAssetRoot: async () => app.isPackaged
+        ? path.join(await materializeCurrentSpsOwnerHostRuntime(), "ui-dist")
+        : path.resolve(__dirname, "..", "..", "..", "external", "sps-core", "ui", "dist"),
+      createAssets: createSpsNativeWorkspaceAssets,
+      preloadFile: path.join(__dirname, "native-workspace-preload.cjs"),
+      getBootstrap: (input, options) => ensureNativeMemberController().getWorkspaceBootstrap(input, options),
+      readSurface: (input, options) => ensureNativeMemberController().readWorkspaceSurface(input, options),
+    });
+    nativeWorkspaceWindowController.registerIpc(ipcMain);
+  }
+  return nativeWorkspaceWindowController;
 }
 
 function ensureNativeHostController() {
@@ -4198,6 +4220,7 @@ function ensureCoreSettingsController() {
       return choice.response === 1;
     },
     listNativeRegistrations: () => ensureNativeMemberController().list(),
+    openNativeMemberWorkspace: (input, options) => ensureNativeWorkspaceWindowController().open(input, options),
     listNativeMemberWorkspaces: (input, options) => ensureNativeMemberController().listWorkspaces(input, options),
     enrollNativeMember: (input, options) => ensureNativeMemberController().enroll(input, options),
     recoverNativeMember: (input, options) => ensureNativeMemberController().recover(input, options),
@@ -5573,13 +5596,15 @@ async function stopDesktopRuntimeGracefully() {
   // normal Desktop exit into database crash recovery on the next start. Each
   // manager already escalates after its bounded graceful wait when necessary.
   traceDesktopShutdown("stop_managers_start");
-  await Promise.allSettled([
+  const managerStops = await Promise.allSettled([
+    nativeWorkspaceWindowController?.dispose(),
     defaultMemoryManager?.stop({ force: false }),
     ownerHostManager?.stop({ force: false }),
     pluginPreviewRuntime?.manager?.stop({ force: false }),
   ]);
   traceDesktopShutdown("stop_managers_done");
   pluginPreviewRuntime = null;
+  if (managerStops[0].status === "rejected") throw new Error("Native Workspace cleanup did not finish.");
 }
 
 app.on("before-quit", (event) => {

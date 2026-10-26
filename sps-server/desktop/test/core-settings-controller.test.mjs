@@ -117,6 +117,22 @@ test("Native Member Workspace discovery is explicit, guarded, and returns only e
   assert.equal(queried, 1);
 });
 
+test("Native Workspace opening uses exact selectors and current requesting frame without Host ownership", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const workspaceId = "22222222-2222-4222-8222-222222222222";
+  let opened = 0;
+  const ctx = setup({ authorizeMutation: () => { throw new Error("not an owner"); },
+    openNativeMemberWorkspace: async (input, options) => {
+      assert.deepEqual(input, { hostId, workspaceId }); options.assertRequester(); opened++;
+      return { opened: true };
+    } });
+  await ctx.controller.show();
+  assert.deepEqual(await ctx.invoke("open-native-member-workspace", [{ hostId, workspaceId }]), { opened: true });
+  await assert.rejects(ctx.invoke("open-native-member-workspace", [{ hostId, workspaceId, origin: "https://other.invalid" }]));
+  await assert.rejects(ctx.invoke("open-native-member-workspace", [{ hostId, workspaceId }], { ...ctx.event(), senderFrame: {} }));
+  assert.equal(opened, 1);
+});
+
 test("Native Member Workspace IPC rejects malformed and private response fields", async () => {
   const hostId = "11111111-1111-4111-8111-111111111111";
   const id = "22222222-2222-4222-8222-222222222222";

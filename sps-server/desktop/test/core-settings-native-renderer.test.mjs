@@ -236,8 +236,29 @@ test("saved Host Workspace discovery requires Show Workspaces and renders exact 
   show.dispatch("click");
   await settle();
   assert.deepEqual(calls, [{ hostId }]);
-  assert.deepEqual(row.children[2].children.map(child => child.textContent), names.map((name, index) => `${name} · ${workspaceIds[index]}`));
+  assert.deepEqual(row.children[2].children.filter(child => child.id === "p").map(child => child.textContent),
+    names.map((name, index) => `${name} · ${workspaceIds[index]}`));
   assert.ok(row.children[2].children.every(child => child.innerHTML === undefined));
+});
+
+test("opening a discovered Workspace requires a separate explicit click and only sends IDs", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111", workspaceId = "22222222-2222-4222-8222-222222222222";
+  const calls = [];
+  const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }],
+    listNativeMemberWorkspaces: async () => [{ id: workspaceId, name: "Team" }],
+    openNativeMemberWorkspace: async input => { calls.push({ ...input }); return { opened: true }; },
+  } });
+  await settle();
+  element(ctx, "refresh-native-registrations").dispatch("click"); await settle();
+  const row = element(ctx, "native-registrations-list").children[0];
+  row.children[1].children[2].dispatch("click"); await settle();
+  assert.deepEqual(calls, []);
+  const button = row.children[2].children[1];
+  assert.equal(button.textContent, "Open Workspace");
+  button.dispatch("click"); await settle();
+  assert.deepEqual(calls, [{ hostId, workspaceId }]);
+  assert.equal(element(ctx, "native-member-result").textContent, "Workspace opened in its own window.");
 });
 
 test("Workspace discovery shows generic empty/error states and ignores late results after refresh", async () => {
@@ -296,7 +317,7 @@ test("a status refresh clears previously displayed member Workspace names and ID
   const row = element(ctx, "native-registrations-list").children[0];
   row.children[1].children[2].dispatch("click"); await settle();
   assert.equal(workspaceCalls, 1);
-  assert.equal(row.children[2].children.length, 1);
+  assert.equal(row.children[2].children.length, 2);
   assert.equal(row.children[2].children[0].textContent, `Private Team Name · ${workspaceId}`);
   element(ctx, "retry-status").dispatch("click"); await settle();
   assert.equal(element(ctx, "native-registrations-list").children.length, 0);

@@ -26,6 +26,7 @@ let nativeInvitationsRequest = 0;
 let nativeRegistrationRequest = 0;
 let nativeRegistrationButtons = [];
 let nativeWorkspaceResults = [];
+let nativeWorkspaceButtons = [];
 let nativeInvitationButtons = [];
 
 const nativeDeviceStates = new Map([
@@ -200,6 +201,7 @@ function syncControls() {
   byId("native-member-invitation").disabled = memberBusy;
   byId("native-member-name").disabled = memberBusy;
   for (const button of nativeRegistrationButtons) button.disabled = memberBusy;
+  for (const button of nativeWorkspaceButtons) button.disabled = memberBusy;
   const busy = statusLoading || nativeDevicesLoading || nativeInvitationsLoading || pending.size > 0 || quitPending;
   const listenerReady = currentStatus?.canManageHost === true && nativeConnectivity?.state === "identity_prepared";
   const listenerActive = nativeListenerStatus(currentStatus?.nativeListener)?.state === "listening";
@@ -775,6 +777,7 @@ async function loadNativeRegistrations() {
 }
 
 function clearNativeWorkspaceResults() {
+  nativeWorkspaceButtons = [];
   for (const result of nativeWorkspaceResults) {
     result.textContent = "";
     result.setAttribute("aria-busy", "false");
@@ -813,6 +816,13 @@ async function showNativeMemberWorkspaces(hostId, resultRegion) {
       workspace.className = "help-text";
       workspace.textContent = `${value.name} · ${value.id}`;
       resultRegion.append(workspace);
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "button secondary";
+      open.textContent = "Open Workspace";
+      open.addEventListener("click", () => void openNativeMemberWorkspace(hostId, value.id));
+      nativeWorkspaceButtons.push(open);
+      resultRegion.append(open);
     }
   } catch {
     if (request === nativeRegistrationRequest) resultRegion.textContent = "Saved Workspaces are unavailable. Check the connection and retry.";
@@ -821,6 +831,22 @@ async function showNativeMemberWorkspaces(hostId, resultRegion) {
     pending.delete(pendingKey);
     syncControls();
   }
+}
+
+async function openNativeMemberWorkspace(hostId, workspaceId) {
+  if (pending.size || statusLoading || quitPending || currentStatus?.canManageNativeMember !== true) return;
+  const request = nativeRegistrationRequest;
+  const key = "native-member-workspace-open";
+  pending.add(key);
+  syncControls();
+  try {
+    const result = exactDataRecord(await window.spsCoreSettings.openNativeMemberWorkspace({ hostId, workspaceId }), ["opened"]);
+    if (request !== nativeRegistrationRequest) return;
+    if (result?.opened !== true) throw new Error("Workspace opening failed");
+    byId("native-member-result").textContent = "Workspace opened in its own window.";
+  } catch {
+    if (request === nativeRegistrationRequest) byId("native-member-result").textContent = "Workspace could not be opened. Check the Host connection and retry.";
+  } finally { pending.delete(key); syncControls(); }
 }
 
 async function checkNativeRegistration(hostId) {

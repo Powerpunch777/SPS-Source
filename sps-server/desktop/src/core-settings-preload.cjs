@@ -95,6 +95,14 @@ const coreSettingsApi = Object.freeze({
   stopNativeHostListener: () => ipcRenderer.invoke("desktop:core-settings-stop-native-host-listener"),
   copyNativeHostInvitation: () => ipcRenderer.invoke("desktop:core-settings-copy-native-host-invitation"),
   listNativeRegistrations: () => ipcRenderer.invoke("desktop:core-settings-list-native-registrations"),
+  openNativeMemberWorkspace: input => {
+    let value;
+    try {
+      value = nativeMemberInput(input, ["hostId", "workspaceId"]);
+      if (!nativeDeviceIdPattern.test(value.hostId) || !nativeDeviceIdPattern.test(value.workspaceId)) throw new TypeError("A saved Host and Workspace are required.");
+    } catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-open-native-member-workspace", value);
+  },
   listNativeMemberWorkspaces: input => {
     let value;
     try { value = nativeMemberInput(input, ["hostId"]); if (!nativeDeviceIdPattern.test(value.hostId)) throw new TypeError("A Native Host ID is required."); }
