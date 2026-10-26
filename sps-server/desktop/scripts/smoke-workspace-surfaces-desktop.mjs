@@ -134,6 +134,7 @@ function createMockIdentityServer() {
   const codes = new Map();
   const refreshTokens = new Set();
   const issued = [];
+  const capturedAuthorizationUrls = [];
   let origin = null;
 
   function accessToken() {
@@ -182,13 +183,21 @@ function createMockIdentityServer() {
     if (request.method === "GET" && url.pathname === "/v1/desktop/authorize") {
       const redirectUri = url.searchParams.get("redirect_uri");
       const state = url.searchParams.get("state");
-      if (!redirectUri || !state) {
+      const challenge = url.searchParams.get("code_challenge");
+      const deviceId = url.searchParams.get("device_id");
+      let callback;
+      try { callback = new URL(redirectUri); } catch { callback = null; }
+      if (!callback || callback.protocol !== "http:" || callback.hostname !== "127.0.0.1"
+        || callback.pathname !== "/oauth2/callback" || !callback.port || callback.username || callback.password
+        || !/^[A-Za-z0-9_-]{43}$/.test(state || "") || !/^[A-Za-z0-9_-]{43}$/.test(challenge || "")
+        || url.searchParams.get("code_challenge_method") !== "S256"
+        || !/^[A-Za-z0-9_-]{16,128}$/.test(deviceId || "")) {
         response.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
         response.end("Missing SPS Desktop redirect state.");
         return;
       }
       const code = `code-${randomBytes(18).toString("base64url")}`;
-      codes.set(code, true);
+      codes.set(code, { challenge, deviceId });
       const redirect = new URL(redirectUri);
       redirect.searchParams.set("code", code);
       redirect.searchParams.set("state", state);
@@ -202,12 +211,31 @@ function createMockIdentityServer() {
       for await (const chunk of request) chunks.push(chunk);
       try { body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch { body = {}; }
     }
+    if (request.method === "POST" && url.pathname === "/__e2e/capture-authorization") {
+      const authorizationUrl = body?.authorizationUrl;
+      let authorization;
+      try { authorization = new URL(authorizationUrl); } catch { authorization = null; }
+      if (request.socket.remoteAddress !== "127.0.0.1" || !authorization || authorization.origin !== origin
+        || authorization.pathname !== "/v1/desktop/authorize" || authorization.username || authorization.password
+        || authorization.hash || !authorization.searchParams.has("state")) {
+        response.writeHead(400, { "content-type": "application/json", "cache-control": "no-store" });
+        response.end(JSON.stringify({ error: "invalid E2E authorization capture" }));
+        return;
+      }
+      capturedAuthorizationUrls.push(authorization.href);
+      response.writeHead(204, { "cache-control": "no-store" }).end();
+      return;
+    }
     if (request.method === "POST" && url.pathname === "/v1/desktop/token") {
-      if (!codes.delete(String(body.code || ""))) {
+      const code = codes.get(String(body.code || ""));
+      const challenge = typeof body.code_verifier === "string"
+        ? createHash("sha256").update(body.code_verifier).digest("base64url") : null;
+      if (!code || challenge !== code.challenge || body.device_id !== code.deviceId) {
         response.writeHead(400, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: "invalid desktop authorization code" }));
         return;
       }
+      codes.delete(String(body.code));
       response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
       response.end(JSON.stringify(tokenResponse()));
       return;
@@ -232,6 +260,7 @@ function createMockIdentityServer() {
   });
 
   return {
+    capturedAuthorizationUrls,
     async start() {
       await new Promise((resolve, reject) => {
         server.once("error", reject);
@@ -271,6 +300,24 @@ async function waitForTarget(port, child, predicate, description, timeoutMs = 12
     await delay(300);
   }
   throw new Error(`Timed out waiting for ${description}. CDP targets: ${lastTargets.map((target) => `${target.title || "untitled"} ${target.url || ""}`).join(" | ")}`);
+}
+
+async function followCapturedIdentityAuthorization(mockIdentity, expectedOrigin) {
+  const expiresAt = Date.now() + 30_000;
+  while (!mockIdentity.capturedAuthorizationUrls.length && Date.now() < expiresAt) await delay(50);
+  assert.equal(mockIdentity.capturedAuthorizationUrls.length, 1,
+    "Source E2E must capture one SPS Identity authorization URL without launching a system browser.");
+  const authorizationUrl = mockIdentity.capturedAuthorizationUrls.shift();
+  const authorization = new URL(authorizationUrl);
+  assert.equal(authorization.origin, expectedOrigin);
+  assert.equal(authorization.pathname, "/v1/desktop/authorize");
+  assert.equal(authorization.searchParams.get("code_challenge_method"), "S256");
+  assert.match(authorization.searchParams.get("state") || "", /^[A-Za-z0-9_-]{43}$/);
+  assert.match(authorization.searchParams.get("code_challenge") || "", /^[A-Za-z0-9_-]{43}$/);
+  const response = await fetch(authorization, { redirect: "follow", signal: AbortSignal.timeout(30_000) });
+  assert.equal(response.status, 200, "Mock Identity must complete the actual state/PKCE callback.");
+  const callbackPage = await response.text();
+  assert.match(callbackPage, /sign-in|sign in|completed/i);
 }
 
 async function openCdp(target) {
@@ -504,6 +551,8 @@ try {
   setupCdp = await openCdp(setupTarget);
   await waitForPage(setupCdp, (page) => page.body.includes("SPS"), "the SPS setup content");
   await click(setupCdp, "#start-sps-account", "SPS sign-in");
+  await followCapturedIdentityAuthorization(mockIdentity, identityUrl);
+  console.log("[no-ai] mock Identity authorization followed the real loopback state/PKCE callback without starting a system browser");
   await waitForPage(setupCdp, () => issued.length > 0, "the mock Identity authorization callback", 30_000);
   await waitForPage(setupCdp, (page) => page.body.includes("Create") || page.body.includes("Server"), "the post-sign-in Host choice", 45_000);
   if (screenshotPath && sourceElectron) {

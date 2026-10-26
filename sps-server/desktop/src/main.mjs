@@ -213,6 +213,7 @@ import {
   startSpsDesktopIdentitySignIn,
 } from "./sps-identity-account.mjs";
 import { spsOwnerHostRuntimeEnvironment } from "./owner-host-identity.mjs";
+import { createSpsIdentityExternalOpener } from "./sps-identity-external-opener.mjs";
 import { resolveSpsServerAccess } from "./server-access-model.mjs";
 import {
   disabledSpsExtensionStatus,
@@ -4550,7 +4551,9 @@ function initializeDesktopAccountController() {
     configuredIdentityUrl: configuredDesktopIdentityUrl,
     startIdentitySignIn: startSpsDesktopIdentitySignIn,
     revokeIdentity: revokeSpsDesktopIdentity,
-    openExternal: openSpsExternalUrl,
+    openExternal: createSpsIdentityExternalOpener({ openExternal: openSpsExternalUrl,
+      identityUrl: configuredDesktopIdentityUrl(), sourceE2e: process.env.SPS_DESKTOP_E2E === "1",
+      allowLoopbackIdentity: process.env.SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY === "1" }),
     ensureDesktopDeviceId,
     desktopAccessHeader: SPS_DESKTOP_ACCESS_HEADER,
     requireOwnerHostOrigin: requireSpsOwnerHostOrigin,
