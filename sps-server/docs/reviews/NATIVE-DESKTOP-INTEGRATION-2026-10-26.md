@@ -64,8 +64,11 @@ This changes development setup, not the Core runtime's Native authorization.
   diagnostics were added without weakening natural-exit acceptance.
 - The new controller/Core temporary PostgreSQL and fresh TLS interop command
   exists, but no passing result has been recorded at this checkpoint. Its first
-  attempt rejected a fixture certificate that expired during slow execution;
-  the controller fixture now uses a bounded 30-minute validity for rerun.
+  attempt committed registration but failed lookup with a sanitized error.
+  Review subsequently found an issued-store DTO mismatch: the transport needs
+  the nested public issuance, not the store's credential-bearing result. The
+  controller and unit fixture were corrected; a passing real interop rerun is
+  still required. The fixture uses a bounded 30-minute certificate validity.
 
 Reproduction commands from `sps-server/desktop`:
 

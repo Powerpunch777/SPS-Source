@@ -34,7 +34,7 @@ function fixture(overrides = {}) {
     async createTarget(value, options) { await step("create-target"); options.beforeCommit(); assert.equal(target, null); target = value; },
     async read() { await step("read-key"); return key; },
     async readTarget() { await step("read-target"); return target; },
-    async readIssued() { await step("read-issued"); return issued; },
+    async readIssued() { await step("read-issued"); return issued ? { issuance: issued, credential: { privateKeyPem: key.privateKeyPem } } : null; },
     async createIssued(value, options) { await step("create-issued"); options.beforeCommit(); assert.equal(issued, null); issued = value; },
   };
   const configuration = {

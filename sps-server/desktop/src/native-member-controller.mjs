@@ -179,8 +179,9 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
         const store = getStore({ ...expected, context: target.context });
         const key = await store.read();
         check();
-        const issuance = await store.readIssued();
+        const stored = await store.readIssued();
         check();
+        const issuance = stored?.issuance;
         if (!key || !issuance) throw failure("recovery_required");
         const client = use(createRecovery({ target, context: target.context, timeoutMs, assertCurrent: check }));
         await exchange(client, check);
