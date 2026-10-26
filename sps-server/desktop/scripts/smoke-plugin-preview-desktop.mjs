@@ -18,6 +18,7 @@ import { buildLiveBuilderPrompt, collectAuthoringSnapshot, verifyLiveBuilderChan
 import { buildLiveBuilderTeamPrompt, buildLiveBuilderRepairPrompt, verifyLiveBuilderTeamReport } from "./live-builder-team-authoring.mjs";
 import { captureLiveBuilderFailureArtifact } from "./live-builder-failure-artifact.mjs";
 import { collectPreviewE2eHostDiagnostics } from "./preview-e2e-host-diagnostics.mjs";
+import { annotatePreviewE2eApiFailure, annotatePreviewE2eCdpFailure, snapshotPreviewE2eFailure } from "./preview-e2e-failure-diagnostics.mjs";
 import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, previewE2eCleanupDisposition } from "./preview-e2e-cleanup-contract.mjs";
 
@@ -50,7 +51,11 @@ if (liveAuthoring) {
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const base64Url = (value) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
 const errorText = (error) => error instanceof Error ? error.message : String(error);
-const step = (message) => console.log(`[preview-e2e] ${message}`);
+let failurePhase = "bootstrap";
+const step = (message, phase) => {
+  if (phase !== undefined) failurePhase = phase;
+  console.log(`[preview-e2e] ${message}`);
+};
 const cleanupTimeout = (promise, label, milliseconds = 15_000) => Promise.race([
   promise,
   delay(milliseconds).then(() => { throw new Error(`${label} cleanup timed out after ${milliseconds}ms.`); }),
@@ -203,7 +208,7 @@ async function cdpFor(target) {
     command,
     rendererErrors() { return [...rendererErrors]; },
     expectConfirmation(message) { expectedConfirmation = message; },
-    async evaluate(expression, awaitPromise = false, timeoutMs = 20_000) { const result = await command("Runtime.evaluate", { expression, awaitPromise, returnByValue: true }, timeoutMs); if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || "Page evaluation failed."); return result.result?.value; },
+    async evaluate(expression, awaitPromise = false, timeoutMs = 20_000) { const result = await command("Runtime.evaluate", { expression, awaitPromise, returnByValue: true }, timeoutMs); if (result.exceptionDetails) throw annotatePreviewE2eCdpFailure(new Error(result.exceptionDetails.text || "Page evaluation failed."), result.exceptionDetails); return result.result?.value; },
     close: async () => {
       if (socket.readyState === WebSocket.CLOSED) return;
       const closed = once(socket, "close").catch(() => undefined);
@@ -216,7 +221,7 @@ async function cdpFor(target) {
 async function waitPage(cdp, predicate, label, timeout = 60_000) {
   const end = Date.now() + timeout; let page;
   while (Date.now() < end) {
-    try { page = await cdp.evaluate("({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 5000) || '' })"); if (predicate(page)) return page; } catch {}
+    try { page = await cdp.evaluate("({ url: location.href, title: document.title, text: document.body?.innerText?.slice(0, 5000) || '', builderPanelToggleReady: (() => { const button = [...document.querySelectorAll('.bc-header .bc-button')].find(button => button.textContent.trim() === '작업 패널'); return !!button && button.disabled === false && button.getAttribute('aria-disabled') !== 'true' && button.getClientRects().length > 0; })(), builderEvidenceReady: document.querySelector('.bc-evidence')?.tagName === 'DETAILS' })"); if (predicate(page)) return page; } catch {}
     await delay(250);
   }
   throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(page)}`);
@@ -361,7 +366,10 @@ async function workspaceApi(cdp, pathName, options = {}) {
     return { status: response.status, body };
   })()`, true);
   if (result.status < 200 || result.status >= 300) {
-    throw new Error(`API ${options.method || "GET"} ${pathName} failed (${result.status}): ${JSON.stringify(result.body)}`);
+    throw annotatePreviewE2eApiFailure(
+      new Error(`API ${options.method || "GET"} ${pathName} failed (${result.status}): ${JSON.stringify(result.body)}`),
+      { method: options.method || "GET", pathName, status: result.status },
+    );
   }
   return result.body;
 }
@@ -474,10 +482,10 @@ let acceptanceFailure = null;
 
 try {
   if (liveAuthoring) await makePlugin(pluginDirectory, { withUi: false });
-  step("starting mock SPS Identity");
+  step("starting mock SPS Identity", "identity_start");
   const identityState = await identity.start();
   const binary = packagedBinary || sourceElectron;
-  step(`launching ${packagedBinary ? "packaged" : "source"} Desktop`);
+  step(`launching ${packagedBinary ? "packaged" : "source"} Desktop`, "desktop_launch");
   child = spawn(binary, [`--user-data-dir=${userData}`, `--remote-debugging-port=${debugPort}`, "--remote-allow-origins=*", ...(packagedBinary ? [] : ["."])], {
     cwd: packagedBinary ? path.dirname(binary) : desktopRoot,
     env: { ...process.env, SPS_IDENTITY_URL: identityState.origin, SPS_DESKTOP_E2E: "1", SPS_DESKTOP_E2E_USER_DATA_DIR: userData, SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1", SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1" },
@@ -488,12 +496,13 @@ try {
 
   setup = await cdpFor(await waitTarget(debugPort, child, (entry) => entry.title === "SPS Desktop", "SPS sign-in window"));
   await waitPage(setup, (page) => page.text.includes("SPS"), "SPS sign-in UI");
-  step("signing in and creating Owner Host");
+  step("signing in and creating Owner Host", "owner_creation");
   await setup.evaluate("document.querySelector('#start-sps-account')?.click()");
   await waitPage(setup, () => identityState.signIns > 0, "mock Identity callback", 35_000);
   await waitPage(setup, (page) => page.text.includes("Create") || page.text.includes("Server"), "Owner Host choice");
   await setup.evaluate("document.querySelector('#create-owner-server')?.click()");
 
+  failurePhase = "owner_workspace";
   workspaceTarget = await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", hostReadyTimeoutMs);
   workspace = await cdpFor(workspaceTarget);
   await waitPage(workspace, (page) => page.text.includes("Workspace") || page.text.includes("Dashboard"), "Workspace UI", 90_000);
@@ -547,7 +556,7 @@ try {
   assert.ok(run?.id, `Plugin Builder E2E Agent did not create a run: ${JSON.stringify(run)}`);
   const runContext = { agentId: agent.id, runId: run.id, companyId: company.id, projectId: project.id };
 
-  step("registering two independent Assistants through the real Core form");
+  step("registering two independent Assistants through the real Core form", "agent_registration");
   const originalAgentConfig = (await workspaceApi(workspace, `/api/agents/${agent.id}`)).adapterConfig;
   const authoringAgents = [];
   for (const [name, cwd] of [["Folder Author A", pluginDirectory], ["Folder Author B", path.dirname(pluginDirectory)]]) {
@@ -581,6 +590,7 @@ try {
   assert.equal(await workspace.evaluate("[...document.querySelectorAll('a')].some(link => link.textContent.trim() === 'Add Agent')"), true);
   step("Core registered separate per-Agent folders without changing the original Agent or running a CLI");
 
+  step("checking registered Builder tools", "builder_tools");
   const toolDeadline = Date.now() + 30_000;
   let builderTools = [];
   while (Date.now() < toolDeadline) {
@@ -602,6 +612,7 @@ try {
     ],
     `Plugin Builder tools did not register. Plugins: ${JSON.stringify(builderPluginState)}`,
   );
+  step("creating Builder authoring project", "builder_project");
   const projectRecord = await executeBuilderTool(workspace, runContext, "create-sps-plugin-project", {
     goal: "Create and verify an external SPS plugin through the public SDK.",
     displayName: "SPS Preview Desktop E2E",
@@ -612,14 +623,15 @@ try {
   assert.match(authoringSessionId ?? "", /^spsas_/);
   const productionBefore = lifecycleSnapshot(await workspaceApi(workspace, "/api/plugins"));
 
+  step("opening Builder authoring surface", "builder_surface");
   await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/builder`)})`);
   await waitPage(
     workspace,
-    (page) => page.url.includes("/builder") && page.text.includes("Plugin Builder"),
+    (page) => page.url.includes("/builder") && page.text.includes("Plugin Builder") && page.builderPanelToggleReady === true,
     "Plugin Builder authoring surface",
   );
   await workspace.evaluate(`[...document.querySelectorAll('.bc-header .bc-button')].find(button => button.textContent === '작업 패널').click()`);
-  await waitPage(workspace, page => page.text.includes("Authoring projects"), "Builder authoring panel");
+  await waitPage(workspace, page => page.text.includes("Authoring projects") && page.builderEvidenceReady === true, "Builder authoring panel");
   await workspace.evaluate(`document.querySelector('.bc-evidence').open = true`);
   await waitPage(workspace, page => page.text.includes("SPS Preview Desktop E2E"), "Builder authoring project evidence");
   {
@@ -634,7 +646,7 @@ try {
     await workspace.evaluate(`[...document.querySelectorAll('.bc-person label')].find(label => label.textContent.includes('Builder Live Worker')).querySelector('input').click()`);
     assert.equal(await workspace.evaluate(`[...document.querySelectorAll('.bc-person label')].find(label => label.textContent.includes('Builder Live Worker')).querySelector('input').checked`), true);
   }
-  step("opening Developer Registry from Workspace");
+  step("opening Developer Registry from Workspace", "developer_registry");
   const opened = await workspace.evaluate("window.spsDesktopWorkspace?.openPluginRegistries ? window.spsDesktopWorkspace.openPluginRegistries() : Promise.reject(new Error('Workspace Registry bridge unavailable'))", true);
   assert.equal(opened?.opened, true, "Workspace did not open the real Registry window.");
   registry = await cdpFor(await waitTarget(
@@ -645,7 +657,7 @@ try {
   ));
   await waitPage(registry, (page) => page.text.includes("Local Development Registry"), "Developer Registry UI");
   assert.equal(await registryCall(registry, "window.spsRegistry.getDeveloperContext()"), null);
-  step("opening a project handoff from a new Builder conversation without sending an AI message");
+  step("opening a project handoff from a new Builder conversation without sending an AI message", "project_handoff");
   await waitPage(workspace, page => page.text.includes("프로젝트 연결"), "Builder project context action");
   await workspace.evaluate(`(() => {
     const textarea = document.querySelector('.bc-composer textarea');
@@ -684,7 +696,7 @@ try {
     await writeFile(path.join(screenshotDirectory, "plugin-registry.png"), Buffer.from(screenshot.data, "base64"));
   }
 
-  step("creating and connecting external SDK plugin");
+  step("creating and connecting external SDK plugin", "sdk_project");
   if (!liveAuthoring) await makePlugin(pluginDirectory);
   const connected = await registryCall(registry, `window.spsRegistry.connectDeveloperProject(${JSON.stringify({ sourcePath: pluginDirectory, sourceLabel: "external-plugin", displayName: "Preview Desktop E2E" })})`);
   assert.match(connected.id, /^dev-/);
@@ -706,7 +718,7 @@ try {
   await workspace.evaluate("document.querySelector('.bc-project-refresh').click()");
   await waitPage(workspace, page => page.text.includes("Preview Desktop E2E"), "linked project in Builder");
   await waitPage(workspace, page => page.text.includes("Lead 폴더 설정 확인"), "scoped Lead folder check action");
-  step("checking Lead folder configuration without changing Agent settings or sending a message");
+  step("checking Lead folder configuration without changing Agent settings or sending a message", "lead_folder");
   const folderInput = { context: developerContext.context, agentId: conversation.leadId };
   const checkFolder = value => workspace.evaluate(`window.spsDesktopWorkspace.checkDeveloperAgentFolder(${JSON.stringify(value)})`, true);
   const leadBeforeCheck = await workspaceApi(workspace, `/api/agents/${conversation.leadId}`);
@@ -772,7 +784,7 @@ try {
   await waitPage(registry, page => page.text.includes("Linked: Preview Desktop E2E"), "explicit reference relink");
   step("verified context isolation, stale-window denial, explicit unlink and unchanged source files");
   if (!liveAuthoring) {
-    step("checking failed Preview feedback without starting an AI run");
+    step("checking failed Preview feedback without starting an AI run", "preview_feedback");
     const manifestPath = path.join(pluginDirectory, "dist", "manifest.js");
     const staticPath = path.join(pluginDirectory, "sps-plugin.json");
     const originalManifest = await readFile(manifestPath);
@@ -832,7 +844,7 @@ try {
     step("failed Preview feedback reached the existing draft without changing attachments or sending a message");
   }
   if (liveAuthoring) {
-    step("sending real Builder authoring request to the dedicated workspace-write CLI Agent");
+    step("sending real Builder authoring request to the dedicated workspace-write CLI Agent", "live_authoring");
     const beforeFiles = await collectAuthoringSnapshot(pluginDirectory);
     const prompt = liveTeam ? buildLiveBuilderTeamPrompt({ workerId: liveWorker.id }) : buildLiveBuilderPrompt();
     await workspace.evaluate(`(() => {
@@ -994,6 +1006,7 @@ try {
     authoredFiles = afterRepair;
     step("validation feedback was explicitly sent; a new real Worker run repaired only manifest and hash metadata");
   }
+  failurePhase = "authoring_gates";
   await executeBuilderTool(workspace, runContext, "run-sps-authoring-step", {
     authoringSessionId,
     objective: liveAuthoring ? "Live CLI authored the external plugin through Builder." : "Create the public SDK project and connect it to Desktop Developer Mode.",
@@ -1021,6 +1034,7 @@ try {
     summary: "Desktop reproduced build, validation, and test gates.",
     evidence: gates.reports.map((report) => ({ kind: "test", ref: `developer-gates/${connected.id}/${report.command}`, label: `${report.command} gate` })),
   });
+  failurePhase = "preview_apply";
   await executeBuilderTool(workspace, runContext, "open-sps-plugin-preview", {
     authoringSessionId,
     summary: "Open the verified candidate in isolated Plugin Preview.",
@@ -1034,7 +1048,7 @@ try {
   assert.equal(linkedContext.validationFeedback.kind, "preview");
   assert.equal(linkedContext.validationFeedback.status, "passed");
 
-  step("verifying isolated Preview and production Workspace coexist");
+  step("verifying isolated Preview and production Workspace coexist", "isolation_checks");
   const mainTarget = await waitTarget(debugPort, child, (entry) => entry.id === workspaceTarget.id, "main Workspace still open");
   const previewTarget = await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || "") && entry.id !== mainTarget.id, "isolated Preview CDP target");
   preview = await cdpFor(previewTarget);
@@ -1081,7 +1095,7 @@ try {
   const reloadedFixture = await waitFixture(preview, { role: "member", viewport: "mobile", uiState: "error" }, "Preview fixture reload");
   assert.deepEqual({ role: reloadedFixture?.role, viewport: reloadedFixture?.viewport, uiState: reloadedFixture?.uiState }, { role: "member", viewport: "mobile", uiState: "error" });
 
-  step("packing the verified external plugin without changing production lifecycle");
+  step("packing the verified external plugin without changing production lifecycle", "packaging");
   await mkdir(path.dirname(packageArchivePath), { recursive: true });
   await execFileAsync(process.execPath, [sdkCliPath, "pack", pluginDirectory, "--out", packageArchivePath, "--overwrite"], {
     cwd: desktopRoot,
@@ -1109,7 +1123,7 @@ try {
 
   // Page.crash produces Electron's renderer-only render-process-gone event.
   // It is intentionally scoped to Preview; no test IPC or production bypass is used.
-  step("crashing only the Preview renderer");
+  step("crashing only the Preview renderer", "diagnostics");
   let crashed = false;
   try { await preview.command("Page.crash"); crashed = true; } catch { crashed = true; }
   assert.equal(crashed, true);
@@ -1150,7 +1164,7 @@ try {
   assert.equal((await workspace.evaluate(getContextExpression, true)).missingProject, false);
   step("verified redacted diagnostics and live production Workspace");
   if (liveTeam) {
-    step("Host explicitly stages and confirms installation of the exact Preview-verified archive");
+    step("Host explicitly stages and confirms installation of the exact Preview-verified archive", "production_install");
     // Project-scoped review intentionally hides installation controls. Reopen
     // the normal Host registry instead of invoking its hidden form.
     const hostRegistry = await workspace.evaluate("window.spsDesktopWorkspace.openPluginRegistries()", true);
@@ -1222,6 +1236,7 @@ try {
   step("functional assertions passed; cleanup qualification is still pending");
 } catch (error) {
   const notes = [];
+  notes.push(`Failure stage summary: ${JSON.stringify(snapshotPreviewE2eFailure(error, failurePhase))}`);
   notes.push(`Owner Host error summary: ${JSON.stringify(await collectPreviewE2eHostDiagnostics({ fixtureRoot: temporaryRoot }))}`);
   if (liveAuthoring) {
     try {
@@ -1247,7 +1262,7 @@ try {
   acceptanceFailure = new Error(`SPS Plugin Preview E2E failed (feedbackSnapshot=${safeFeedbackFailure}, failureSha256=${failureSha256}).\n${notes.join("\n")}`);
   throw acceptanceFailure;
 } finally {
-  step("cleaning isolated E2E processes and data");
+  step("cleaning isolated E2E processes and data", "cleanup");
   const desktopStopped = await shutdownPreviewE2eDesktop({
     child,
     requestBrowserClose: workspace || setup || registry ? () => (workspace ?? setup ?? registry).command("Browser.close") : undefined,

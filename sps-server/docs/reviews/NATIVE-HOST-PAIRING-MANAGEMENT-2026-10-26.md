@@ -92,7 +92,10 @@ Tailscale transport and SDK pins remain unchanged.
 The other Source `41462df` workflow `40220887751` also failed its packaged Preview
 step after Assistant registration; the original error remains hashed and its
 root cause is not established. Separate packaged-failure diagnosis remains
-required. Current exact-head Core and Source
-CI, Zod High1243066 (held major migration), UI-token findings, Core main/review,
+required. Follow-up Core workflow `40245581524` has now completed **15/15** on
+exact `7d4698267`; this does not qualify Source packaged Windows or main/review.
+The [bounded diagnostic follow-up](PREVIEW-FAILURE-DIAGNOSTICS-2026-10-26.md)
+records the opaque CDP failure and a separately proven readiness hazard without
+claiming a hosted root-cause fix. Exact Source CI, Zod High1243066 (held major migration), UI-token findings, Core main/review,
 Identity production, signing and identical final signed-installer two-PC evidence
 remain separate gates. No new installer was generated or published.

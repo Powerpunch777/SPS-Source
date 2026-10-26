@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const desktopRoot = path.resolve(import.meta.dirname, "..");
 const harnessPath = path.join(desktopRoot, "scripts", "smoke-plugin-preview-desktop.mjs");
@@ -62,6 +63,13 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /page\.text\.includes\("Internal server error"\)/);
   assert.match(harness, /assert\.ok\(registration\.url\.includes\("\/dashboard"\) && registration\.text\.includes\(name\)/);
   assert.match(harness, /collectPreviewE2eHostDiagnostics\(\{ fixtureRoot: temporaryRoot \}\)/);
+  assert.match(harness, /snapshotPreviewE2eFailure\(error, failurePhase\)/);
+  assert.match(harness, /throw annotatePreviewE2eApiFailure\(/);
+  for (const phase of ["owner_workspace", "builder_tools", "builder_project", "builder_surface", "developer_registry"]) {
+    assert.ok(harness.includes(`"${phase}"`), `Missing finite Preview failure phase ${phase}`);
+  }
+  assert.ok(harness.indexOf('step("creating Builder authoring project", "builder_project")')
+    < harness.indexOf('const projectRecord = await executeBuilderTool'), "Capture phase before the operation, not after it");
   const normalized = harness.replace(/\r\n/g, "\n");
   for (const input of [normalized, normalized.replace(/\n/g, "\r\n")]) {
     const canonical = input.replace(/\r\n/g, "\n");
@@ -82,4 +90,24 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /standalone script is not qualified/);
   assert.ok(harness.lastIndexOf("SPS Plugin Preview Desktop E2E passed") > harness.indexOf('step("cleaning isolated E2E processes and data")'));
   assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
+});
+
+test("Builder navigation text alone cannot qualify a control before the actual UI mounts", async () => {
+  const harness = await readFile(harnessPath, "utf8");
+  const encoded = harness.match(/page = await cdp\.evaluate\(("(?:[^"\\]|\\.)*")\); if \(predicate/);
+  assert.ok(encoded, "Use the actual bounded page snapshot expression");
+  const expression = JSON.parse(encoded[1]);
+  const snapshot = button => runInNewContext(expression, { location: { href: "/builder" }, document: {
+    title: "Plugin Builder", body: { innerText: "Plugin Builder" },
+    querySelectorAll() { return button ? [button] : []; }, querySelector() { return null; },
+  } });
+  const button = { textContent: "작업 패널", disabled: false, getAttribute() { return null; }, getClientRects() { return [1]; } };
+  assert.equal(snapshot(null).builderPanelToggleReady, false);
+  assert.equal(snapshot(button).builderPanelToggleReady, true);
+  assert.equal(snapshot({ ...button, disabled: true }).builderPanelToggleReady, false);
+  assert.equal(snapshot({ ...button, getAttribute() { return "true"; } }).builderPanelToggleReady, false);
+  assert.equal(snapshot({ ...button, getClientRects() { return []; } }).builderPanelToggleReady, false);
+  assert.match(harness, /page\.text\.includes\("Plugin Builder"\) && page\.builderPanelToggleReady === true/);
+  assert.match(harness, /page\.text\.includes\("Authoring projects"\) && page\.builderEvidenceReady === true/);
+  assert.match(harness, /async function waitPage\(cdp, predicate, label, timeout = 60_000\)/);
 });
