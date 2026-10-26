@@ -210,6 +210,10 @@ jobs:
         timeout-minutes: 5
         run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-parent-ingress
 
+      - name: Verify Native Workspace proof signer against the real Core verifier
+        timeout-minutes: 3
+        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-proof.mjs --isolated-native-workspace-proof
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest
