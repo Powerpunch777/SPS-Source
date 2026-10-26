@@ -60,8 +60,10 @@ pnpm exec vitest run server/src/__tests__/sps-validation-compatibility.test.ts s
 ```
 
 Latest result: 2 files passed, 13 tests passed. The installed-package verifier
-also completed with exit code 0 after registration. Full Core typecheck passed;
-the full build and updated hosted test matrix require separate evidence.
+also completed with exit code 0 after registration. Full local Core typecheck
+and build passed. Hosted Source run 40307373086 also passed the Linux build,
+all nine Core test shards and three actual Native integration gates at Core
+1d5ddcf7. Final Source/Windows CI and the separate security gate remain required.
 
 Desktop runtime preparation now also verifies the deployed Core server's exact
 Zod dependency immediately after `pnpm deploy`; packaged runtime verification
@@ -79,6 +81,12 @@ Core manifest-name rejection test passed separately. These fixture tests copy
 the actually installed patched Core dependency and require the frozen Core
 dependencies to be installed first. Full deployed/package execution is still
 required; these are not signed artifact or installation results.
+
+The optimized helper fixture copies the unchanged published manifest and root
+ESM/CommonJS entries plus the complete v3 subtree, including locales/helpers.
+It omits unrelated v4/source trees: 55 files/~460 KB instead of 596 files/~3.6 MB.
+All eight helper cases passed again, in 11.56 seconds on the local machine.
+No production package or verifier coverage was removed by this fixture change.
 
 ## Existing security gate
 

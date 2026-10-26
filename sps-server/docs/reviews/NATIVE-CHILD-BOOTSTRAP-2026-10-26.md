@@ -17,7 +17,12 @@ actual service readiness, signing checks and natural process-exit requirements
 are unchanged. No product configuration or startup protocol changes.
 
 The focused interoperability contract tests passed 3/3, both scripts passed
-syntax checks and the diff check passed. Full local integration must still be
-rerun after the active Core build completes; the handshake hypothesis is not
-yet established as the cause of the previous timeout. This is source/loopback
-test infrastructure and does not qualify DPAPI, Native LAN or deployment.
+syntax checks and the diff check passed. After the full Core typecheck/build
+completed, the actual Main/Core integration rerun exited 0: fresh Main TLS,
+direct-child IPC, real Identity/DB/enrollment and Main signing, lost-response
+recovery from persisted Member state, wrong-account denial and natural child,
+outer-process and database cleanup. No forced termination counted as success.
+The previous timeout's specific cause is still not established: the handshake
+and resource load both changed before this rerun. This is source/loopback test
+infrastructure using an AES storage substitute; it does not qualify actual
+DPAPI, Desktop enrollment UI, physical Native LAN or deployment.

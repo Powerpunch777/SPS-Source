@@ -24,7 +24,14 @@ async function withRuntimeFixture(run) {
   const serverRoot = path.join(runtimeRoot, "node_modules", "@paperclipai", "server");
   await mkdir(path.join(serverRoot, "node_modules"), { recursive: true });
   await writeFile(path.join(serverRoot, "package.json"), '{"name":"@paperclipai/server","version":"1.0.0"}\n');
-  await cp(installedZodRoot, path.join(serverRoot, "node_modules", "zod"), { recursive: true, dereference: true });
+  const fixtureZodRoot = path.join(serverRoot, "node_modules", "zod");
+  await mkdir(fixtureZodRoot, { recursive: true });
+  await Promise.all([
+    cp(path.join(installedZodRoot, "package.json"), path.join(fixtureZodRoot, "package.json")),
+    cp(path.join(installedZodRoot, "index.js"), path.join(fixtureZodRoot, "index.js")),
+    cp(path.join(installedZodRoot, "index.cjs"), path.join(fixtureZodRoot, "index.cjs")),
+    cp(path.join(installedZodRoot, "v3"), path.join(fixtureZodRoot, "v3"), { recursive: true, dereference: true }),
+  ]);
   try {
     return await run(runtimeRoot, path.join(serverRoot, "node_modules", "zod", "package.json"));
   } finally {
