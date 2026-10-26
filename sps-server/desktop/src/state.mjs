@@ -193,6 +193,57 @@ export async function loadState(userDataPath, { strictVersion = false } = {}) {
 
 const pendingStateSaves = new Map();
 
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.birthtimeNs === right.birthtimeNs;
+}
+
+function assertOwnedRegularFile(stat, label) {
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n) {
+    throw new Error(`Refusing to write SPS Desktop state through a linked or non-file ${label}.`);
+  }
+}
+
+async function inspectStateDirectory(requestedDirectory, expected = null) {
+  const requested = await fs.lstat(requestedDirectory, { bigint: true });
+  if (!requested.isDirectory() || requested.isSymbolicLink()) {
+    throw new Error("Refusing to write SPS Desktop state through a linked or non-directory user data folder.");
+  }
+  const canonical = await fs.realpath(requestedDirectory);
+  const canonicalStat = await fs.lstat(canonical, { bigint: true });
+  if (!canonicalStat.isDirectory() || canonicalStat.isSymbolicLink()
+    || !sameFileIdentity(requested, canonicalStat)) {
+    throw new Error("SPS Desktop user data folder changed while state was being saved.");
+  }
+  if (expected && (canonical !== expected.canonical || !sameFileIdentity(canonicalStat, expected.identity))) {
+    throw new Error("SPS Desktop user data folder changed while state was being saved.");
+  }
+  return { canonical, identity: canonicalStat };
+}
+
+async function inspectStateSlot(file, label, { allowMissing = false } = {}) {
+  let stat;
+  try {
+    stat = await fs.lstat(file, { bigint: true });
+  } catch (error) {
+    if (allowMissing && error?.code === "ENOENT") return null;
+    throw error;
+  }
+  assertOwnedRegularFile(stat, label);
+  return stat;
+}
+
+async function validateExistingStateBeforeReplace(userDataPath, destination) {
+  const existing = await inspectStateSlot(destination, "state file", { allowMissing: true });
+  if (existing) await loadState(userDataPath, { strictVersion: true });
+}
+
+async function assertOwnedTemporaryFile(file, identity) {
+  const current = await inspectStateSlot(file, "temporary file");
+  if (!sameFileIdentity(current, identity)) {
+    throw new Error("SPS Desktop state temporary file changed while state was being saved.");
+  }
+}
+
 // Account refresh, Node bookkeeping and explicit settings actions may save at
 // the same time. Serialize each local destination so they cannot overwrite the
 // same temporary file or rename another save's bytes. This is process-local;
@@ -211,12 +262,54 @@ export async function saveState(userDataPath, value, { beforeCommit = () => {} }
   }
   const pending = (pendingStateSaves.get(queueKey) ?? Promise.resolve()).then(async () => {
     guard();
-    await fs.mkdir(userDataPath, { recursive: true });
+    const requestedDirectory = path.dirname(destination);
+    await fs.mkdir(requestedDirectory, { recursive: true });
     guard();
+    const directory = await inspectStateDirectory(requestedDirectory);
     const temporary = destination + ".tmp";
-    await fs.writeFile(temporary, bytes, "utf8");
-    guard();
-    await fs.rename(temporary, destination);
+    let handle;
+    let temporaryIdentity = null;
+    try {
+      // A fixed sibling is retained for compatibility with recovery checks,
+      // but it must be absent before this save claims it. wx prevents following
+      // an attacker-planted symlink and refuses stale or non-owned temp slots.
+      await inspectStateSlot(temporary, "temporary slot", { allowMissing: true }).then(existing => {
+        if (existing) throw new Error("Refusing to replace an existing SPS Desktop state temporary file.");
+      });
+      await validateExistingStateBeforeReplace(userDataPath, destination);
+      await inspectStateDirectory(requestedDirectory, directory);
+      handle = await fs.open(temporary, "wx", 0o600);
+      temporaryIdentity = await handle.stat({ bigint: true });
+      assertOwnedRegularFile(temporaryIdentity, "temporary file");
+      await assertOwnedTemporaryFile(temporary, temporaryIdentity);
+      await inspectStateDirectory(requestedDirectory, directory);
+      await handle.writeFile(bytes, "utf8");
+      await handle.sync();
+      guard();
+      await assertOwnedTemporaryFile(temporary, temporaryIdentity);
+      await inspectStateDirectory(requestedDirectory, directory);
+      await validateExistingStateBeforeReplace(userDataPath, destination);
+      await handle.close();
+      handle = null;
+      guard();
+      await assertOwnedTemporaryFile(temporary, temporaryIdentity);
+      await inspectStateDirectory(requestedDirectory, directory);
+      await validateExistingStateBeforeReplace(userDataPath, destination);
+      guard();
+      await fs.rename(temporary, destination);
+      temporaryIdentity = null;
+    } finally {
+      if (handle) await handle.close().catch(() => {});
+      if (temporaryIdentity) {
+        try {
+          await inspectStateDirectory(requestedDirectory, directory);
+          await assertOwnedTemporaryFile(temporary, temporaryIdentity);
+          await fs.unlink(temporary);
+        } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        }
+      }
+    }
   });
   const settled = pending.catch(() => {});
   pendingStateSaves.set(queueKey, settled);

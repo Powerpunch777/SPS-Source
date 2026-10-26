@@ -7,6 +7,7 @@ import path from "node:path";
 import test, { before } from "node:test";
 import { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeMemberKeyRequest } from "../src/native-member-certificates.mjs";
+import { sameNativeMemberFileIdentity } from "../src/native-member-file-identity.mjs";
 import {
   createSpsNativeMemberHostTargetReader,
   createSpsNativeMemberPendingKeyStore,
@@ -150,6 +151,15 @@ async function withFixture(run) {
   const fixture = await makeFixture();
   try { await run(fixture); } finally { await fixture.cleanup(); }
 }
+
+test("compares Windows 64-bit file identities without Number precision loss", () => {
+  const inode = 9_007_199_254_740_992n;
+  const first = { dev: 1n, ino: inode, mode: 0o100600n, size: 128n, birthtimeNs: 10n };
+  const adjacent = { ...first, ino: inode + 1n };
+  assert.equal(Number(first.ino), Number(adjacent.ino));
+  assert.equal(sameNativeMemberFileIdentity(first, { ...first }), true);
+  assert.equal(sameNativeMemberFileIdentity(first, adjacent), false);
+});
 
 function storeError(name) {
   return error => {

@@ -52,6 +52,124 @@ test("a stale Native commit guard preserves existing state and does not poison l
   assert.equal((await loadState(root, { strictVersion: true })).nodeId, "new-node");
 });
 
+test("rechecks Native authority immediately before replacing validated state", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const original = { ...emptyState(), encryptedDesktopAccount: "current-account" };
+  const file = path.join(root, "sps-desktop-state.json");
+  await saveState(root, original);
+  const bytes = await fs.readFile(file, "utf8");
+  let checks = 0;
+  await assert.rejects(saveState(root, { ...original, encryptedDesktopAccount: "stale-account" }, {
+    beforeCommit() {
+      checks++;
+      if (checks === 4) throw new Error("account changed after state validation");
+    },
+  }), /account changed after state validation/);
+  assert.equal(checks, 4);
+  assert.equal(await fs.readFile(file, "utf8"), bytes);
+  await assert.rejects(fs.access(`${file}.tmp`), { code: "ENOENT" });
+});
+
+test("state writes reject hard-linked destinations without changing shared bytes", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const file = path.join(root, "sps-desktop-state.json");
+  const anchor = path.join(root, "preserved-state-bytes");
+  const original = "corrupt-critical-state-must-remain-verbatim";
+  await fs.writeFile(anchor, original);
+  await fs.link(anchor, file);
+
+  await assert.rejects(saveState(root, emptyState()), /linked or non-file state file/);
+  assert.equal(await fs.readFile(anchor, "utf8"), original);
+  assert.equal(await fs.readFile(file, "utf8"), original);
+  assert.equal((await fs.lstat(file)).nlink, 2);
+});
+
+test("state writes preserve corrupt or unsupported existing critical state", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const file = path.join(root, "sps-desktop-state.json");
+  for (const original of ["not-json-critical-state", JSON.stringify({ version: 999, ownerHostOwnerSubject: "future-owner" })]) {
+    await fs.writeFile(file, original);
+    await assert.rejects(saveState(root, emptyState()));
+    assert.equal(await fs.readFile(file, "utf8"), original);
+  }
+});
+
+test("state writes reject hard-linked temporary slots without changing their target", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const temporary = path.join(root, "sps-desktop-state.json.tmp");
+  const anchor = path.join(root, "preserved-temporary-bytes");
+  const original = "non-owned-temporary-target";
+  await fs.writeFile(anchor, original);
+  await fs.link(anchor, temporary);
+
+  await assert.rejects(saveState(root, emptyState()), /linked or non-file temporary slot/);
+  assert.equal(await fs.readFile(anchor, "utf8"), original);
+  assert.equal(await fs.readFile(temporary, "utf8"), original);
+  assert.equal((await fs.lstat(temporary)).nlink, 2);
+  await assert.rejects(fs.access(path.join(root, "sps-desktop-state.json")), { code: "ENOENT" });
+});
+
+test("state writes reject a file-symlink temporary slot when the host supports it", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const temporary = path.join(root, "sps-desktop-state.json.tmp");
+  const target = path.join(root, "preserved-symlink-target");
+  const original = "non-owned-symlink-target";
+  await fs.writeFile(target, original);
+  try {
+    await fs.symlink(target, temporary, "file");
+  } catch (error) {
+    if (["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) {
+      t.skip(`File symlink creation is unavailable on this host (${error.code}).`);
+      return;
+    }
+    throw error;
+  }
+
+  await assert.rejects(saveState(root, emptyState()), /linked or non-file temporary slot/);
+  assert.equal(await fs.readFile(target, "utf8"), original);
+  assert.equal(await fs.readlink(temporary), target);
+  await assert.rejects(fs.access(path.join(root, "sps-desktop-state.json")), { code: "ENOENT" });
+});
+
+test("state writes reject a file-symlink destination when the host supports it", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const destination = path.join(root, "sps-desktop-state.json");
+  const target = path.join(root, "preserved-destination-target");
+  const original = "non-owned-destination-target";
+  await fs.writeFile(target, original);
+  try {
+    await fs.symlink(target, destination, "file");
+  } catch (error) {
+    if (["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) {
+      t.skip(`File symlink creation is unavailable on this host (${error.code}).`);
+      return;
+    }
+    throw error;
+  }
+
+  await assert.rejects(saveState(root, emptyState()), /linked or non-file state file/);
+  assert.equal(await fs.readFile(target, "utf8"), original);
+  assert.equal(await fs.readlink(destination), target);
+});
+
+test("state writes reject a linked user data directory", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const target = path.join(root, "real-user-data");
+  const linked = path.join(root, "linked-user-data");
+  await fs.mkdir(target);
+  try {
+    await fs.symlink(target, linked, process.platform === "win32" ? "junction" : "dir");
+  } catch (error) {
+    if (["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) {
+      t.skip(`Directory link creation is unavailable on this host (${error.code}).`);
+      return;
+    }
+    throw error;
+  }
+  await assert.rejects(saveState(linked, emptyState()), /linked or non-directory user data folder/);
+  await assert.rejects(fs.access(path.join(target, "sps-desktop-state.json")), { code: "ENOENT" });
+});
+
 test("migrates v11 public Member key metadata without changing accounts, Node keys or routing", async () => {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-member-index-"));
   const root = await fs.realpath(created);

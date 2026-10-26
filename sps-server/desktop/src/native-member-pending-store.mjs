@@ -6,6 +6,7 @@ import { createSpsNativeMemberPendingCapsule, validateSpsNativeMemberPendingCont
 import { createSpsNativeMemberIssuedCapsule } from "./native-member-issued-capsule.mjs";
 import { createSpsNativeMemberTargetCapsule, validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
 import { normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
+import { sameNativeMemberFileIdentity } from "./native-member-file-identity.mjs";
 
 const MAX_BYTES = 96 * 1024;
 const errors = Object.freeze({
@@ -98,19 +99,14 @@ async function boundedRead(file, expected) {
   } finally { await handle.close(); }
 }
 
-function sameLinkedFile(a, b) {
-  return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode
-    && a.size === b.size && a.birthtimeNs === b.birthtimeNs;
-}
-
-async function boundedReadLinked(file, expected) {
+async function boundedReadExact(file, expected, expectedLinkCount = 2n) {
   const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const start = await handle.stat({ bigint: true });
     const pathStart = await fs.lstat(file, { bigint: true });
-    if (!start.isFile() || start.nlink !== 2n || start.size > BigInt(MAX_BYTES)
-      || !sameLinkedFile(start, expected) || !pathStart.isFile() || pathStart.isSymbolicLink()
-      || pathStart.nlink !== 2n || !sameLinkedFile(start, pathStart)) throw fail("CORRUPT");
+    if (!start.isFile() || start.nlink !== expectedLinkCount || start.size > BigInt(MAX_BYTES)
+      || !sameNativeMemberFileIdentity(start, expected) || !pathStart.isFile() || pathStart.isSymbolicLink()
+      || pathStart.nlink !== expectedLinkCount || !sameNativeMemberFileIdentity(start, pathStart)) throw fail("CORRUPT");
     const bytes = Buffer.alloc(MAX_BYTES + 1);
     let length = 0;
     while (length < bytes.length) {
@@ -120,9 +116,9 @@ async function boundedReadLinked(file, expected) {
     }
     const end = await handle.stat({ bigint: true });
     const pathEnd = await fs.lstat(file, { bigint: true });
-    if (length > MAX_BYTES || end.nlink !== 2n || !sameLinkedFile(start, end)
-      || !pathEnd.isFile() || pathEnd.isSymbolicLink() || pathEnd.nlink !== 2n
-      || !sameLinkedFile(end, pathEnd)) throw fail("CORRUPT");
+    if (length > MAX_BYTES || end.nlink !== expectedLinkCount || !sameNativeMemberFileIdentity(start, end)
+      || !pathEnd.isFile() || pathEnd.isSymbolicLink() || pathEnd.nlink !== expectedLinkCount
+      || !sameNativeMemberFileIdentity(end, pathEnd)) throw fail("CORRUPT");
     try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length)); }
     catch { throw fail("CORRUPT"); }
   } finally { await handle.close(); }
@@ -139,7 +135,7 @@ async function findTemporaryAlias(folder, final) {
     let stat;
     try { stat = await fs.lstat(file, { bigint: true }); }
     catch (error) { if (error?.code === "ENOENT") continue; throw error; }
-    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 2n && sameLinkedFile(final, stat)) {
+    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 2n && sameNativeMemberFileIdentity(final, stat)) {
       matches.push({ file, stat });
     }
   }
@@ -292,11 +288,11 @@ function createStore(options, targetReader, mode = "full") {
       linkedIdentity = bigintStat;
       linkedAlias = alias.file;
       await recheck(target);
-      raw = await boundedReadLinked(target.file, bigintStat);
+      raw = await boundedReadExact(target.file, bigintStat);
       const finalAgain = await fs.lstat(target.file, { bigint: true });
       const aliasAgain = await fs.lstat(alias.file, { bigint: true });
-      if (finalAgain.nlink !== 2n || aliasAgain.nlink !== 2n || !sameLinkedFile(bigintStat, finalAgain)
-        || !sameLinkedFile(bigintStat, aliasAgain)) throw fail("CORRUPT");
+      if (finalAgain.nlink !== 2n || aliasAgain.nlink !== 2n || !sameNativeMemberFileIdentity(bigintStat, finalAgain)
+        || !sameNativeMemberFileIdentity(bigintStat, aliasAgain)) throw fail("CORRUPT");
     }
     let retainedContext;
     try {
@@ -310,9 +306,9 @@ function createStore(options, targetReader, mode = "full") {
     if (linkedIdentity) {
       const currentFinal = await fs.lstat(target.file, { bigint: true });
       const currentAlias = await fs.lstat(linkedAlias, { bigint: true });
-      if (!sameLinkedFile(linkedIdentity, currentFinal) || !sameLinkedFile(linkedIdentity, currentAlias)
+      if (!sameNativeMemberFileIdentity(linkedIdentity, currentFinal) || !sameNativeMemberFileIdentity(linkedIdentity, currentAlias)
         || currentFinal.nlink !== 2n || currentAlias.nlink !== 2n
-        || await boundedReadLinked(target.file, currentFinal) !== raw) throw fail("CORRUPT");
+        || await boundedReadExact(target.file, currentFinal) !== raw) throw fail("CORRUPT");
     } else {
       const current = await slotStat(target.file);
       if (!current || !sameFile(stat, current) || current.nlink !== 1
@@ -341,7 +337,7 @@ function createStore(options, targetReader, mode = "full") {
     // The link count proves there is exactly one other directory entry for this inode.
     const alias = await findTemporaryAlias(target.folder, final);
     await recheck(target);
-    let raw = await boundedReadLinked(target.file, final);
+    let raw = await boundedReadExact(target.file, final);
 
     let pending;
     if (kind !== "pending") {
@@ -365,9 +361,9 @@ function createStore(options, targetReader, mode = "full") {
     const currentFinal = await fs.lstat(target.file, { bigint: true });
     const currentAlias = await fs.lstat(alias.file, { bigint: true });
     if (!currentFinal.isFile() || currentFinal.isSymbolicLink() || currentFinal.nlink !== 2n
-      || !sameLinkedFile(final, currentFinal) || !currentAlias.isFile() || currentAlias.isSymbolicLink()
-      || currentAlias.nlink !== 2n || !sameLinkedFile(final, currentAlias)
-      || await boundedReadLinked(target.file, currentFinal) !== raw) throw fail("CORRUPT");
+      || !sameNativeMemberFileIdentity(final, currentFinal) || !currentAlias.isFile() || currentAlias.isSymbolicLink()
+      || currentAlias.nlink !== 2n || !sameNativeMemberFileIdentity(final, currentAlias)
+      || await boundedReadExact(target.file, currentFinal) !== raw) throw fail("CORRUPT");
     if (pending) await recheckPending(pending);
     authorize();
     await fs.unlink(alias.file);
@@ -376,8 +372,8 @@ function createStore(options, targetReader, mode = "full") {
     const complete = await fs.lstat(target.file, { bigint: true });
     const completeStat = await slotStat(target.file);
     if (!complete.isFile() || complete.isSymbolicLink() || complete.nlink !== 1n
-      || !sameLinkedFile(final, complete) || !completeStat || completeStat.nlink !== 1
-      || !sameFile(complete, completeStat) || await boundedRead(target.file, completeStat) !== raw) throw fail("CORRUPT");
+      || !sameNativeMemberFileIdentity(final, complete) || !completeStat || completeStat.nlink !== 1
+      || await boundedReadExact(target.file, complete, 1n) !== raw) throw fail("CORRUPT");
     await syncDirectory(target.folder);
     await recheck(target);
     return true;

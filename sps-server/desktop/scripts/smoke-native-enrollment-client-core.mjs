@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { constants, createCipheriv, createDecipheriv, createHash, generateKeyPairSync, randomBytes, randomUUID, sign, X509Certificate } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createServer } from "node:https";
 import os from "node:os";
@@ -42,6 +42,9 @@ const previousFetch = globalThis.fetch;
 const clients = [], sockets = new Set();
 let server, exchange, enrollment, metadataHandler;
 let localFixtureRoot = null;
+let localFixtureIdentity = null;
+let localFixtureCanonical = null;
+let localFixtureParent = null;
 let succeeded = false;
 try {
   const hostId = randomUUID(), deviceKeyId = randomUUID();
@@ -130,6 +133,12 @@ try {
   };
   if (mode === "--isolated-native-member-controller") {
     const tempRoot = localFixtureRoot = await mkdtemp(path.join(os.tmpdir(), "sps-native-member-main-core-"));
+    localFixtureIdentity = await lstat(tempRoot, { bigint: true });
+    localFixtureCanonical = await realpath(tempRoot);
+    localFixtureParent = await realpath(os.tmpdir());
+    assert.equal(localFixtureIdentity.isDirectory() && !localFixtureIdentity.isSymbolicLink(), true);
+    assert.equal(path.dirname(localFixtureCanonical), localFixtureParent);
+    assert.ok(path.basename(localFixtureCanonical).startsWith("sps-native-member-main-core-"));
     const userDataDirectory = path.join(tempRoot, "user-data");
     const vaultDirectory = path.join(tempRoot, "owner-vault");
     await Promise.all([mkdir(userDataDirectory), mkdir(vaultDirectory)]);
@@ -323,6 +332,14 @@ try {
   await db.$client.end();
   await database.cleanup();
   if (localFixtureRoot) {
+    const current = await lstat(localFixtureRoot, { bigint: true });
+    assert.equal(current.isDirectory() && !current.isSymbolicLink(), true);
+    assert.equal(current.dev, localFixtureIdentity?.dev);
+    assert.equal(current.ino, localFixtureIdentity?.ino);
+    assert.equal(current.birthtimeNs, localFixtureIdentity?.birthtimeNs);
+    assert.equal(await realpath(localFixtureRoot), localFixtureCanonical);
+    assert.equal(path.dirname(localFixtureCanonical), localFixtureParent);
+    assert.ok(path.basename(localFixtureCanonical).startsWith("sps-native-member-main-core-"));
     await rm(localFixtureRoot, { recursive: true, force: true });
     assert.equal(existsSync(localFixtureRoot), false, "The exact isolated Member fixture directory must be removed.");
   }

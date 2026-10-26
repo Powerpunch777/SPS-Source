@@ -16,6 +16,16 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+후속 [Desktop Main 등록·복구 통합](../reviews/NATIVE-DESKTOP-INTEGRATION-2026-10-26.md)은
+Core Settings의 명시적 초대 등록·기존 등록 조회·중단 저장 복구를 현재 계정과 연결 generation에
+결속했다. 토큰·기기 개인키·발급 DTO는 Main에만 남고, UI에는 제한된 공개 상태만 반환한다.
+초대 등록은 Host 주소/핀 확인을 요구하며, 저장 복구는 별도의 로컬 확인 후 검증된 임시 alias만
+정리한다. 계정 갱신의 늦은 결과와 동시 상태 저장 경합도 차단한다. Windows 개발 checkout의
+권한 없는 symlink 오류를 junction으로 보완한 Core `1e107a67`을 현재 지원 행렬에 고정했다.
+아래의 이전 체크포인트 검증을 새 통합의 전체 수용 증거로 재사용하지 않는다.
+제품 Native TLS ingress는 여전히 미연결이며 LAN OFF, 실제 DPAPI 앱 등록·두 PC·서명본·전체
+CI/보안/종료 검증은 진행 중이다. Marketplace 정책과 Plugin Builder 구조는 변경하지 않았다.
+
 사용자 D8 승인 후 [등록 복구 조회/기기 ID 보관](../reviews/NATIVE-ENROLLMENT-RECOVERY-2026-10-26.md)을
 추가했다. Core `8c76edabd`는 현재 사용자 세션과 실제 발급 기기 TLS 키로 이미 소비한 초대의
 기존 기기 연결만 읽는다. 초대가 만료돼도 유효한 인증서로 조회할 수 있지만, 복원으로 신뢰가

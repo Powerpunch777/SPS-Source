@@ -87,6 +87,49 @@ npx --offline pnpm@11.9.0 build
 npx --offline pnpm@11.9.0 --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-member-controller
 ```
 
+## Follow-up evidence and fixes
+
+The production Main controller/client/store composition subsequently passed the
+real temporary Core PostgreSQL and fresh loopback TLS integration command. It
+reconstructs the controller and reloads the persisted index after dropping only
+the committed completion response, reads the same pending device twice, verifies
+unchanged device/audit rows, and rejects a different current account before any
+network request. Its owned fixture was removed. Encryption is still an AES-GCM
+safeStorage substitute; this does not qualify actual DPAPI, Desktop enrollment
+UI, product Native listener, or physical LAN.
+
+Source `dbbfec1` hosted run `40279549952` passed Core full Linux typecheck/build,
+all nine Core Linux regression shards, bundled plugins, SDK/Registry, Room and
+Identity jobs. It failed the unchanged Zod security gate and Windows Desktop
+unit job (999 pass / 2 fail / 2 existing skips). One failure was the stale
+success-log source contract, now updated for both isolated modes; the other
+exposed a real post-unlink inode comparison mixing exact BigInt and rounded
+Number identities on NTFS. Recovery now retains exact BigInt identities and
+bounded single-/two-link reads. The deterministic precision regression uses two
+different inode values above 2^53 that would collapse to the same Number. The
+pending/issued/target suites passed 48/48 after this fix; hosted rerun is required.
+
+Local full Desktop regression completed 1003 tests with 983 pass, 9 fail,
+1 cancelled and 10 skipped at its recorded, partially superseded source state.
+Besides the corrected source contract, failures were child/TLS/Electron or
+Windows-helper deadlines under machine load. They remain failed, not accepted
+as environmental skips. After state/contract corrections, a separate focused
+run completed 80 tests: 78 pass, 0 fail, 2 explicit file-symlink privilege skips.
+
+State persistence additionally rejects linked/nonregular destination/temp slots,
+validates existing critical state before replacement, exclusively claims its
+temporary file, verifies directory and file identity including birth time, and
+rechecks current authority immediately before rename. Cleanup removes only its
+owned temp through the same verified directory. Corrupt and future-version state
+bytes are preserved. Tests cover linked slots, directory junctions and stale
+guards; no cross-process file lock or atomic power-loss recovery is claimed.
+
+The Core dependency-review job initially failed because the repository's
+dependency graph was disabled, not because of a dependency change in PR27.
+Repository vulnerability alerts/dependency graph were enabled through GitHub's
+documented administration endpoint and the failed review rerun was requested.
+This does not change the SPS security policy or waive Zod.
+
 ## Remaining product and release work
 
 Core's Native identity, session exchange and enrollment handlers remain

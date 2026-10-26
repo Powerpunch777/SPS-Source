@@ -202,6 +202,10 @@ jobs:
         timeout-minutes: 5
         run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-enrollment-client
 
+      - name: Verify Main enrollment and restart recovery against the real isolated Core
+        timeout-minutes: 5
+        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-member-controller
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest
