@@ -4225,6 +4225,17 @@ function ensureCoreSettingsController() {
     listNativeMemberWorkspaces: (input, options) => ensureNativeMemberController().listWorkspaces(input, options),
     enrollNativeMember: (input, options) => ensureNativeMemberController().enroll(input, options),
     recoverNativeMember: (input, options) => ensureNativeMemberController().recover(input, options),
+    inspectNativeMemberCertificate: (input, options) => ensureNativeMemberController().inspectCertificate(input, options),
+    renewNativeMemberCertificate: (input, options) => ensureNativeMemberController().renew(input, options),
+    confirmNativeMemberRenewal: async (parentWindow, { hostId, certificateNotAfter }) => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "question", title: "Renew this Native device certificate?",
+        message: "Renew the approved device using its existing protected key?",
+        detail: `Host ID: ${hostId}\nCurrent certificate expires: ${certificateNotAfter}\n\nSPS will contact this saved Host with the current sign-in and device certificate. Existing keys and trust pins are kept. This does not create a new registration, change approval, or grant Workspace access.`,
+        buttons: ["Cancel", "Renew certificate"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
     repairNativeMemberStorage: (input, options) => ensureNativeMemberController().repair(input, options),
     confirmNativeMemberRepair: async (parentWindow, { hostId }) => {
       const choice = await dialog.showMessageBox(parentWindow, {

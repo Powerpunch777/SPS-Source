@@ -8,24 +8,30 @@ import { pathToFileURL } from "node:url";
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 
 const withWindow = process.argv[3] === "--with-native-window";
+const withRenewal = process.argv[3] === "--with-native-renewal";
+const withNativeWindow = withWindow || withRenewal;
 if (![3, 4].includes(process.argv.length) || process.argv[2] !== "--isolated-native-workspace-channel"
-  || process.argv.length === 4 && (!withWindow || process.platform !== "win32")) {
+  || process.argv.length === 4 && (!withNativeWindow || process.platform !== "win32")) {
   throw new Error("Use the explicit isolated Native Workspace channel command.");
 }
 const { createSpsNativeHostIdentity } = await import("../src/native-identity-certificates.mjs");
 const { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate } = await import("../src/native-member-certificates.mjs");
 const { createSpsNativeHostIngress } = await import("../src/native-host-ingress.mjs");
 const { attachSpsNativeWorkspaceParentChannel } = await import("../src/native-workspace-parent-channel.mjs");
+const { createSpsNativeMemberMainSigner } = await import("../src/native-member-main-signer.mjs");
+const { attachSpsNativeMemberSignerChannel } = await import("../src/native-member-signer-channel.mjs");
+const { createSpsNativeParentIngressClient } = await import("../src/native-parent-ingress-client.mjs");
 const { parseSpsNativeEnrollmentResponse } = await import("../src/native-enrollment-response.mjs");
 const core = path.resolve(import.meta.dirname, "../../../external/sps-core");
 const load = relative => import(pathToFileURL(path.join(core, relative)).href);
 const { createDb, getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase,
-  authUsers, authSessions, companies, companyMemberships, agents, plugins, spsNodes,
-  spsPluginInboxItems, spsPluginInboxUserStates } = await load("packages/db/src/index.ts");
+  authUsers, authSessions, companies, companyMemberships, agents, plugins, spsNodes, spsMemberDevices,
+  spsPluginInboxItems, spsPluginInboxUserStates, spsMemberDeviceRenewalCertificates,
+  spsNativePairings, spsNativePairingEvents, spsNativeEnrollments } = await load("packages/db/src/index.ts");
 const { spsMemberDeviceService } = await load("server/src/services/sps-member-devices.ts");
 assert.equal((await getEmbeddedPostgresTestSupport()).supported, true);
 const database = await startEmbeddedPostgresTestDatabase("sps-native-workspace-channel-");
-let db, child, parent, ingress, failure;
+let db, child, parent, ingress, signerChannel, parentIngress, failure, childShutdownStage = "not-started";
 
 async function runWindow(configuration) {
   const fixture = await createWorkspaceE2eFixture();
@@ -59,6 +65,8 @@ async function runWindow(configuration) {
     assert.equal(code, 0, `Joined Native Workspace window failed at ${result.stage ?? "unknown"}.`);
     assert.deepEqual(result, { ok: true, views: ["workspace", "dashboard", "inbox"],
       actualElectron: true, fixtureBackend: false, actualDpapi: true, wrongPeerDenied: true,
+      ...(withRenewal ? { renewalReplay: true, renewalPublished: true, originalIssuedBytesPreserved: true,
+        renewedEnrollmentReconciled: true } : {}),
       ownerBridge: false, serviceWorkers: 0 });
   } finally {
     if (electron && !mainClosed && electron.exitCode === null && electron.signalCode === null) {
@@ -75,11 +83,14 @@ try {
   const now = Math.floor(Date.now() / 1000) * 1000;
   const hostId = randomUUID(), companyId = randomUUID(), userId = randomUUID();
   const host = await createSpsNativeHostIdentity({ hostId, hostnames: ["127.0.0.1"],
-    notBefore: now - 1000, notAfter: now + 3_600_000, issuerNotAfter: now + 7_200_000 });
+    notBefore: now - (withRenewal ? 80 : 0) * 86_400_000,
+    notAfter: now + (withRenewal ? 10 : 1 / 24) * 86_400_000,
+    issuerNotAfter: now + (withRenewal ? 285 : 2 / 24) * 86_400_000 });
   const key = await createSpsNativeMemberKeyRequest({ hostId, deviceKeyId: randomUUID() });
   const issued = await issueSpsNativeMemberCertificate({ hostIdentity: host,
     request: { v: 1, kind: "sps.native.member-enrollment-request", hostId, deviceKeyId: key.deviceKeyId, requestPem: key.requestPem },
-    now, notBefore: now - 1000, notAfter: now + 3_600_000 });
+    now, notBefore: now - (withRenewal ? 70 : 0) * 86_400_000,
+    notAfter: now + (withRenewal ? 20 : 1 / 24) * 86_400_000 });
   const pin = pem => createHash("sha256").update(new X509Certificate(pem).publicKey.export({ type: "spki", format: "der" })).digest("hex");
   const binding = { hostId, serverSpkiSha256: pin(host.server.certificatePem), issuerSpkiSha256: pin(host.memberIssuer.certificatePem) };
   const secret = randomBytes(48).toString("base64url"), cookie = `sps_identity_session=${secret}`;
@@ -97,18 +108,62 @@ try {
   const device = await devices.request({ companyId, userId, displayName: "Native Member", certificate:
     new X509Certificate(issued.certificatePem).raw.toString("base64url") });
   await devices.approve(device.id, "fixture-host");
+  const baseDevice = (await db.select().from(spsMemberDevices)).find(row => row.id === device.id);
+  const enrollmentId = randomUUID();
+  const historicalExpiry = new Date(now - 60_000);
+  if (withRenewal) {
+    const pairingId = randomUUID();
+    const createdAt = new Date(now - 5 * 60_000), issuedAt = new Date(now - 3 * 60_000);
+    const consumedAt = new Date(now - 2 * 60_000);
+    const pairing = { id: pairingId, hostId, serverSpkiSha256: binding.serverSpkiSha256,
+      issuedByUserId: "fixture-host", secretSha256: createHash("sha256").update(randomBytes(32)).digest("hex"),
+      targetEmailSha256: null, status: "consumed", failedAttempts: 0, maxAttempts: 5,
+      createdAt, expiresAt: historicalExpiry, consumedAt, consumedByUserId: userId,
+      consumedDeviceId: device.id, consumedDeviceSnapshotId: device.id, revokedAt: null, revokedByUserId: null };
+    await db.insert(spsNativePairings).values(pairing);
+    await db.insert(spsNativePairingEvents).values([
+      { hostId, pairingId, pairingSnapshotId: pairingId, actorUserId: "fixture-host", action: "created",
+        deviceSnapshotId: null, createdAt },
+      { hostId, pairingId, pairingSnapshotId: pairingId, actorUserId: userId, action: "consumed",
+        deviceSnapshotId: device.id, createdAt: consumedAt },
+    ]);
+    await db.insert(spsNativeEnrollments).values({
+      id: enrollmentId, pairingId, hostId, serverSpkiSha256: binding.serverSpkiSha256,
+      issuerSpkiSha256: binding.issuerSpkiSha256, userId, deviceKeyId: key.deviceKeyId,
+      requestSha256: createHash("sha256").update(key.requestPem).digest("hex"), status: "issued",
+      certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
+      certificateSha256: device.certificateSha256, createdAt: issuedAt, expiresAt: historicalExpiry, issuedAt,
+      failedAt: null,
+    });
+  }
 
   child = fork(new URL("./fixtures/native-workspace-channel-child.mjs", import.meta.url),
     ["--isolated-native-workspace-channel-child"], { stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true });
-  child.stdout.resume(); child.stderr.resume();
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", chunk => {
+    for (const match of String(chunk).matchAll(/native_child_stop:(started|ingress|enrollment|workspace|database|disconnected)/g)) {
+      childShutdownStage = match[1];
+    }
+  });
+  child.stderr.resume();
   parent = attachSpsNativeWorkspaceParentChannel(child, { isCurrent: () => child.connected && child.exitCode === null,
     inspectBinding: async () => ({ ...binding, issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") }) });
+  if (withRenewal) {
+    const current = () => child.connected && child.exitCode === null;
+    const signer = createSpsNativeMemberMainSigner({
+      getAuthority: () => ({ ownerSubject: "fixture-host", userDataDirectory: "isolated-memory-profile",
+        vaultDirectory: "isolated-memory-vault", generation: 1n }),
+      authenticateHost: async () => {}, getStore: () => ({ read: async () => host }),
+    });
+    signerChannel = attachSpsNativeMemberSignerChannel(child, signer, { isCurrent: current });
+    parentIngress = createSpsNativeParentIngressClient(child, { isCurrent: current });
+  }
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error("Isolated Native Workspace child readiness timed out.")), 45_000);
     const onFailure = () => finish(new Error("Isolated Native Workspace child failed."));
     const onMessage = message => {
       if (message?.kind === "sps.test.native-workspace.configure-ready") child.send({ kind: "sps.test.native-workspace.configure", binding,
-        connectionString: database.connectionString }, error => { if (error) onFailure(); });
+        connectionString: database.connectionString, identityIssuer: "https://workspace.example.test", renewal: withRenewal }, error => { if (error) onFailure(); });
       else if (message?.kind === "sps.test.native-workspace.ready") finish();
       else if (message?.kind === "sps.test.native-workspace.failure") onFailure();
     };
@@ -121,12 +176,16 @@ try {
   assert.equal(parent.inspect().ready, true);
   assert.equal(Object.hasOwn(parent.inspect(), "port"), false);
   ingress = createSpsNativeHostIngress({ getIdentity: () => host, assertCurrent() { assert.equal(child.connected, true); },
-    dispatch(operation, input) {
+    async dispatch(operation, input, options) {
       // Only the Identity-provider exchange is substituted. The returned token
       // is a real existing Core DB session and grants no device or membership.
-      assert.equal(withWindow, true); assert.equal(operation, "session.exchange");
-      assert.equal(input.credential.accessToken, "fixture.header.signature");
-      return { token: secret, expiresInSeconds: 604800 };
+      if (operation === "session.exchange") {
+        assert.equal(withNativeWindow, true);
+        assert.equal(input.credential.accessToken, "fixture.header.signature");
+        return { token: secret, expiresInSeconds: 604800 };
+      }
+      assert.equal(withRenewal, true);
+      return await parentIngress.dispatch(operation, input, options);
     },
     dispatchWorkspace: (input, options) => parent.read(input, options) });
   const { port } = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
@@ -169,7 +228,7 @@ try {
   assert.equal((await read(`${root}/workspace-shell`, { cookie: `sps_identity_session=${"x".repeat(64)}` })).status, 403);
   assert.equal((await read(`/api/companies/${randomUUID()}/workspace-shell`)).status, 403);
   assert.equal((await read("/api/companies")).status, 404);
-  if (withWindow) {
+  if (withNativeWindow) {
     const itemId = randomUUID();
     await db.insert(spsPluginInboxItems).values({ id: itemId, companyId,
       sourcePluginKey: "native-window-fixture", externalId: itemId, targetUserId: userId,
@@ -180,14 +239,14 @@ try {
       notBefore: now - 1000, notAfter: now + 3_600_000, issuerNotAfter: now + 7_200_000 });
     const untrustedContext = { ...context, serverSpkiSha256: pin(unrelated.server.certificatePem),
       issuerSpkiSha256: pin(unrelated.memberIssuer.certificatePem) };
-    await runWindow({ workspaceId: companyId, context, keyRequest: key,
+    await runWindow({ workspaceId: companyId, renewal: withRenewal, deviceId: device.id, context, keyRequest: key,
       untrustedContext, untrustedTarget: { v: 1, kind: "sps.native.member-host-target", context: untrustedContext,
         origin: `https://127.0.0.1:${port}`, serverCertificatePem: unrelated.server.certificatePem },
       target: { v: 1, kind: "sps.native.member-host-target", context,
         origin: `https://127.0.0.1:${port}`, serverCertificatePem: host.server.certificatePem },
-      issuance: { enrollmentId: randomUUID(), certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
+      issuance: { enrollmentId, certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
         issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url"),
-        expiresAt: new Date(now + 3_600_000).toISOString() } });
+        expiresAt: (withRenewal ? historicalExpiry : new Date(now + (1 / 24) * 86_400_000)).toISOString() } });
     const states = await db.select().from(spsPluginInboxUserStates);
     assert.equal(states.length, 1);
     assert.equal(states[0].companyId, companyId);
@@ -198,11 +257,31 @@ try {
   }
   // This database contains only this fixture's membership. Discovery must never
   // recreate access when an approved device loses its Workspace membership.
+  let renewalRows = [];
+  if (withRenewal) {
+    renewalRows = await db.select().from(spsMemberDeviceRenewalCertificates);
+    assert.equal(renewalRows.length, 1);
+    assert.equal(renewalRows[0].deviceId, device.id);
+    assert.equal(renewalRows[0].predecessorCertificateSha256, device.certificateSha256);
+    await devices.authorize({ companyId, userId, certificateSha256: device.certificateSha256 });
+    const baseAfter = (await db.select().from(spsMemberDevices)).find(row => row.id === device.id);
+    assert.equal(baseAfter.certificateSha256, device.certificateSha256);
+    assert.equal(baseAfter.spkiSha256, device.spkiSha256);
+    assert.equal(baseAfter.certificate, baseDevice.certificate);
+    await devices.authorize({ companyId, userId, certificateSha256: renewalRows[0].certificateSha256 });
+  }
   await db.update(companyMemberships).set({ status: "suspended" });
   assert.deepEqual(await read(discovery), { status: 200, body: [] });
   assert.equal((await read(`${root}/workspace-bootstrap`)).status, 403);
   assert.equal((await read(`${root}/workspace-shell`)).status, 403);
+  // Isolate parent revocation from the membership denial already checked above.
+  if (withRenewal) await db.update(companyMemberships).set({ status: "active" });
   await devices.revoke(device.id, "fixture-host");
+  if (withRenewal) {
+    for (const certificateSha256 of [device.certificateSha256, renewalRows[0].certificateSha256]) {
+      await assert.rejects(devices.authorize({ companyId, userId, certificateSha256 }), { code: "not_authorized" });
+    }
+  }
   assert.equal((await read(discovery)).status, 403);
   assert.equal((await read(`${root}/workspace-shell`)).status, 403);
   for (const table of [agents, plugins, spsNodes]) assert.deepEqual(await db.select().from(table), []);
@@ -210,6 +289,7 @@ try {
 finally {
   const errors = [];
   try { await ingress?.dispose(); } catch (error) { errors.push(error); }
+  try { parentIngress?.dispose(); } catch (error) { errors.push(error); }
   parent?.dispose();
   if (child) {
     try {
@@ -217,8 +297,8 @@ finally {
         if (child.exitCode !== null || child.signalCode !== null) {
           child.exitCode === 0 ? resolve() : reject(new Error("Isolated Workspace child exited unsuccessfully.")); return;
         }
-        const timer = setTimeout(() => reject(new Error("Isolated Workspace child did not exit naturally.")), 20_000);
-        child.once("close", code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error("Isolated Workspace child exited unsuccessfully.")); });
+        const timer = setTimeout(() => reject(new Error(`Isolated Workspace child did not exit naturally (shutdown reached ${childShutdownStage}).`)), 20_000);
+        child.once("close", code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`Isolated Workspace child exited unsuccessfully (shutdown reached ${childShutdownStage}).`)); });
         if (child.connected) child.send({ kind: "sps.test.native-workspace.stop" });
       });
     } catch (error) {
@@ -234,10 +314,13 @@ finally {
       }
     }
   }
+  try { signerChannel?.dispose(); } catch (error) { errors.push(error); }
   try { await db?.$client.end(); } catch (error) { errors.push(error); }
   try { await database.cleanup(); } catch (error) { errors.push(error); }
   if (errors.length) throw new AggregateError([...(failure ? [failure] : []), ...errors], "Native Workspace integration cleanup failed.");
 }
-console.log(withWindow
+console.log(withRenewal
+  ? "Native Member renewal integration passed: actual Main signer and Core parent ingress, TLS old-certificate replay, one immutable Core renewal row, Windows DPAPI append-only publication, renewed-certificate Workspace reads and revoked-parent denial. Identity-provider exchange is substituted; no issuer/server-leaf rotation or expired recovery qualification."
+  : withWindow
   ? "Joined Native Workspace integration passed: actual Electron/bundled SPA/preload, Windows DPAPI retained credentials, fresh mTLS, owned Core child/private HTTP, real DB session/device/membership, persisted Inbox read/archive/restore and natural Main/Core/database cleanup. Identity-provider token exchange is substituted; not installed startup, WebSockets, Plugin UI or physical LAN qualification."
   : "Native Workspace channel integration passed: actual fresh mTLS, owned child IPC bootstrap, private HTTP, real Core Identity/device/membership and surface services; unauthorized and revoked devices denied, no Agents/Plugins/Nodes, natural process/database cleanup. Source/loopback only; not DPAPI, full SPA, WebSockets, physical LAN or installed startup qualification.");

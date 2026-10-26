@@ -15,7 +15,7 @@ import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsul
 
 const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/sps-native/v1/session/exchange",
   issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete",
-  reconcile: "/sps-native/v1/enrollment/reconcile", workspaces: "/sps-native/v1/workspaces",
+  reconcile: "/sps-native/v1/enrollment/reconcile", renewal: "/sps-native/v1/enrollment/renew", workspaces: "/sps-native/v1/workspaces",
   workspaceBootstrap: "/api/companies" });
 const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox"]);
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
@@ -94,6 +94,12 @@ export function createSpsNativeEnrollmentRecoveryClient(input) {
   return createClient(input, "recover");
 }
 
+// Manual pre-expiry same-key renewal over the existing pinned Host target and
+// currently valid Member credential. It cannot enroll, recover, or replace keys.
+export function createSpsNativeMemberRenewalClient(input) {
+  return createClient(input, "renewal");
+}
+
 // Main-private access using an existing protected target and issued key. It
 // creates no registration and returns only authorized Workspace ID/name DTOs.
 export function createSpsNativeMemberWorkspaceClient(input) {
@@ -101,7 +107,8 @@ export function createSpsNativeMemberWorkspaceClient(input) {
 }
 
 function createClient(input, mode) {
-  const bootstrap = mode === "bootstrap", workspace = mode === "workspace", recovery = mode === "recover" || workspace;
+  const bootstrap = mode === "bootstrap", workspace = mode === "workspace", renewal = mode === "renewal",
+    recovery = mode === "recover" || workspace || renewal;
   let options, context, invitation, target, retainedTarget;
   try {
     options = record(input, [recovery ? "target" : "invitationCode", ...(bootstrap ? [] : ["context"]), "timeoutMs", "assertCurrent"]);
@@ -362,6 +369,35 @@ function createClient(input, mode) {
         const { credential } = await checkedIssuance(value.issuance, key, operation.guard);
         return post("workspaceSurface", Buffer.alloc(0), cookie, credential,
           { ...operation, workspaceId: value.workspaceId, surface: value.surface, archived: value.archived });
+      });
+    },
+    dispose,
+  });
+  if (renewal) return Object.freeze({
+    exchange,
+    renew(input, signalInput = {}) {
+      return run("renewal", signalInput, async operation => {
+        const value = record(input, ["keyRequest", "issuance"]);
+        const { key, publicRequest } = await checkedKey(value.keyRequest, operation.guard);
+        const { issuance, credential } = await checkedIssuance(value.issuance, key, operation.guard);
+        const response = await post("renewal", Buffer.from(JSON.stringify({ deviceKeyId: context.deviceKeyId,
+          requestPem: publicRequest.requestPem })), cookie, credential, operation);
+        operation.guard();
+        const oldLeaf = new X509Certificate(credential.certificatePem);
+        const oldHash = createHash("sha256").update(oldLeaf.raw).digest("hex");
+        if (response.predecessorCertificateSha256 !== oldHash
+          || response.issuerCertificate !== issuance.issuerCertificate) throw failure("invalid_response");
+        const issuerCertificatePem = derPem(response.issuerCertificate);
+        const nextCredential = await validateSpsNativeMemberCredential({ keyRequest: key,
+          certificate: { v: 1, kind: "sps.native.member-certificate", hostId: context.hostId,
+            deviceKeyId: context.deviceKeyId, certificatePem: derPem(response.certificate), issuerCertificatePem },
+          issuerCertificatePem, issuerSpkiSha256: context.issuerSpkiSha256, now: Date.now() });
+        operation.guard();
+        const nextLeaf = new X509Certificate(nextCredential.certificatePem);
+        if (Date.parse(nextLeaf.validTo) <= Date.parse(oldLeaf.validTo)
+          || new Date(Date.parse(nextLeaf.validFrom)).toISOString() !== response.certificateNotBefore
+          || new Date(Date.parse(nextLeaf.validTo)).toISOString() !== response.certificateNotAfter) throw failure("invalid_response");
+        return response;
       });
     },
     dispose,

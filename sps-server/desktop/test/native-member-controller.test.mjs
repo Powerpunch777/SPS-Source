@@ -3,6 +3,8 @@ import { createHash, X509Certificate } from "node:crypto";
 import test, { before } from "node:test";
 import { createSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
+import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate,
+  publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
 import { createSpsNativeMemberController } from "../src/native-member-controller.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
@@ -26,6 +28,7 @@ function fixture(overrides = {}) {
   let current = { identityIssuer: ISSUER, subject: "alice", generation: 0n,
     userDataDirectory: "C:\\fixture\\user-data", vaultDirectory: "C:\\fixture\\vault" };
   let index = { v: 1, entries: [] }, key = null, issued = null, target = null, outcome = "pending";
+  let credential = null, nextCredential = null, inspection = null;
   const calls = [];
   const hooks = {};
   async function step(name) { calls.push(name); if (hooks[name]) await hooks[name](); }
@@ -34,8 +37,14 @@ function fixture(overrides = {}) {
     async createTarget(value, options) { await step("create-target"); options.beforeCommit(); assert.equal(target, null); target = value; },
     async read() { await step("read-key"); return key; },
     async readTarget() { await step("read-target"); return target; },
-    async readIssued() { await step("read-issued"); return issued ? { issuance: issued, credential: { privateKeyPem: key.privateKeyPem } } : null; },
+    async readIssued() { await step("read-issued"); return issued ? { issuance: issued, credential: credential ?? { privateKeyPem: key.privateKeyPem } } : null; },
+    async inspectIssued() { await step("inspect-issued"); return inspection ?? (issued ? {
+      state: "current", certificateNotBefore: new Date(Date.now() - 60_000).toISOString(),
+      certificateNotAfter: new Date(Date.now() + 60_000).toISOString(),
+    } : null); },
     async createIssued(value, options) { await step("create-issued"); options.beforeCommit(); assert.equal(issued, null); issued = value; },
+    async publishRenewal(value, options) { await step("publish-renewal"); options.beforeCommit(); credential = nextCredential;
+      issued = { ...issued, certificate: value.certificate, issuerCertificate: value.issuerCertificate }; },
   };
   const configuration = {
     getAuthority: () => current,
@@ -79,6 +88,8 @@ function fixture(overrides = {}) {
   return { controller: make(), make, calls, hooks, store,
     setCurrent: value => { current = value; }, change: () => { current = { ...current, generation: current.generation + 1n }; },
     setOutcome: value => { outcome = value; }, removeKey: () => { key = null; }, setIndex: value => { index = value; },
+    setCredentials: (current, next = null) => { credential = current; nextCredential = next; },
+    setInspection: value => { inspection = value; },
     snapshot: () => ({ index, key, issued, target }),
   };
 }
@@ -361,4 +372,75 @@ test("local repair cannot continue after account change in its confirmation or c
   f.hooks["repair-local-publications"] = () => f.change();
   await assert.rejects(f.controller.repair({ hostId: HOST }, { confirm: async () => true }), { code: "native_member_changed" });
   assert.deepEqual(f.calls, ["repair-local-publications"]);
+});
+
+test("renewal is manual, pre-expiry only and cancellation sends no request", async () => {
+  const f = fixture({ inspectCredential: async () => ({ notBefore: Date.now() - 30 * 86_400_000,
+    notAfter: Date.now() + 12 * 60 * 60_000 }),
+  createRenewal: () => ({ async exchange() { f.calls.push("renew-exchange"); },
+    async renew() { f.calls.push("renew"); }, dispose() { f.calls.push("dispose-renewal"); } }) });
+  await enroll(f);
+  f.calls.length = 0;
+  f.setCredentials({ certificatePem: "saved-leaf", issuerCertificatePem: host.memberIssuer.certificatePem });
+  f.setInspection({ state: "current", certificateNotBefore: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+    certificateNotAfter: new Date(Date.now() + 12 * 60 * 60_000).toISOString() });
+  let confirmation;
+  assert.deepEqual(await f.controller.renew({ hostId: HOST }, { confirm: async value => { confirmation = value; return false; } }),
+    { cancelled: true });
+  assert.deepEqual(Object.keys(confirmation), ["hostId", "certificateNotAfter"]);
+  assert.equal(confirmation.hostId, HOST);
+  assert.deepEqual(f.calls, ["read-protected-target", "inspect-issued", "read-key", "read-issued"]);
+});
+
+test("certificate inspection exposes metadata only and renewal detects expiry before strict read", async () => {
+  const f = fixture(); await enroll(f); f.calls.length = 0;
+  const before = Date.now();
+  f.setInspection({ state: "current", certificateNotBefore: new Date(before - 60 * 86_400_000).toISOString(),
+    certificateNotAfter: new Date(before + 12 * 60 * 60_000).toISOString() });
+  const current = await f.controller.inspectCertificate({ hostId: HOST });
+  assert.deepEqual(Object.keys(current), ["hostId", "state", "certificateNotBefore", "certificateNotAfter", "renewalAvailableAt"]);
+  assert.equal(current.state, "current");
+  assert.ok(Date.parse(current.renewalAvailableAt) < Date.parse(current.certificateNotAfter));
+  assert.equal(Object.hasOwn(current, "certificate"), false);
+  f.calls.length = 0;
+  f.setInspection({ state: "expired", certificateNotBefore: new Date(before - 31 * 86_400_000).toISOString(),
+    certificateNotAfter: new Date(before - 1000).toISOString() });
+  await assert.rejects(f.controller.renew({ hostId: HOST }, { confirm: async () => true }),
+    { code: "native_member_recovery_required" });
+  assert.equal(f.calls.includes("read-issued"), false);
+  assert.deepEqual(f.calls.slice(0, 2), ["read-protected-target", "inspect-issued"]);
+});
+
+test("renewal publishes one validated same-key certificate and returns only the observation DTO", async () => {
+  const renewalId = "66666666-6666-4666-8666-666666666666";
+  let keyRequest, renewedLeaf, response;
+  const now = Date.now();
+  const f = fixture({ createKey: async value => { keyRequest = await createSpsNativeMemberKeyRequest(value); return keyRequest; },
+    inspectCredential: async ({ certificate }) => certificate.certificatePem === "saved-leaf"
+      ? { notBefore: now - 30 * 86_400_000, notAfter: now + 12 * 60 * 60_000 }
+      : { notBefore: Date.parse(renewedLeaf.validFrom), notAfter: Date.parse(renewedLeaf.validTo) },
+    createRenewal: () => ({ async exchange() { f.calls.push("renew-exchange"); },
+      async renew(input) { assert.equal(input.keyRequest, keyRequest); f.calls.push("renew"); return response; },
+      dispose() { f.calls.push("dispose-renewal"); } }) });
+  await enroll(f);
+  const next = await issueSpsNativeMemberCertificate({ hostIdentity: host,
+    request: await publicSpsNativeMemberEnrollmentRequest(keyRequest), notBefore: Math.floor(now / 1000) * 1000 - 1000,
+    notAfter: Math.floor(now / 1000) * 1000 + 20 * 60 * 60_000, now: Math.floor(now / 1000) * 1000 });
+  renewedLeaf = new X509Certificate(next.certificatePem);
+  const issuerLeaf = new X509Certificate(host.memberIssuer.certificatePem);
+  response = { renewalId, deviceId: DEVICE, predecessorCertificateSha256: "a".repeat(64),
+    certificate: renewedLeaf.raw.toString("base64url"), issuerCertificate: issuerLeaf.raw.toString("base64url"),
+    certificateNotBefore: new Date(Date.parse(renewedLeaf.validFrom)).toISOString(),
+    certificateNotAfter: new Date(Date.parse(renewedLeaf.validTo)).toISOString() };
+  const nextCredential = { certificatePem: next.certificatePem, issuerCertificatePem: host.memberIssuer.certificatePem };
+  f.calls.length = 0;
+  f.setCredentials({ certificatePem: "saved-leaf", issuerCertificatePem: host.memberIssuer.certificatePem }, nextCredential);
+  f.setInspection({ state: "current", certificateNotBefore: new Date(now - 30 * 86_400_000).toISOString(),
+    certificateNotAfter: new Date(now + 12 * 60 * 60_000).toISOString() });
+  const result = await f.controller.renew({ hostId: HOST }, { confirm: async () => true });
+  assert.deepEqual(result, { hostId: HOST, deviceId: DEVICE, status: "approved",
+    certificateNotAfter: response.certificateNotAfter });
+  assert.deepEqual(Object.keys(result), ["hostId", "deviceId", "status", "certificateNotAfter"]);
+  assert.ok(f.calls.includes("publish-renewal"));
+  assert.ok(f.calls.includes("dispose-renewal"));
 });

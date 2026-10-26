@@ -24,6 +24,44 @@ const STORE_MESSAGES = Object.freeze({
   CORRUPT: "Native Member pending storage is invalid or does not match the expected context.",
   ALREADY_EXISTS: "A Native Member pending key already exists for this account and device.",
 });
+
+test("same-key renewal appends a capsule, preserves invitation expiry, and survives a cold store recreation", async () => {
+  await withFixture(async fixture => {
+    const store = fixture.store();
+    const original = await makeIssuance();
+    await saveIssued(fixture, store, original);
+    const issuedCertificate = await issueSpsNativeMemberCertificate({
+      hostIdentity: host,
+      request: await publicSpsNativeMemberEnrollmentRequest(keyRequest),
+      notBefore: NOW - 60_000,
+      notAfter: NOW + 2 * 60 * 60_000,
+      now: NOW,
+    });
+    const leaf = new X509Certificate(issuedCertificate.certificatePem);
+    const response = {
+      renewalId: randomUUID(), deviceId: DEVICE,
+      predecessorCertificateSha256: createHash("sha256").update(new X509Certificate(Buffer.from(original.certificate, "base64url")).raw).digest("hex"),
+      certificate: leaf.raw.toString("base64url"),
+      issuerCertificate: new X509Certificate(issuedCertificate.issuerCertificatePem).raw.toString("base64url"),
+      certificateNotBefore: new Date(leaf.validFrom).toISOString(),
+      certificateNotAfter: new Date(leaf.validTo).toISOString(),
+    };
+    let hostileGetterCalled = false;
+    const hostileResponse = { ...response };
+    Object.defineProperty(hostileResponse, "deviceId", { enumerable: true, get() { hostileGetterCalled = true; throw new Error("getter must not run"); } });
+    assert.throws(() => store.publishRenewal(hostileResponse), storeError("CORRUPT"));
+    assert.equal(hostileGetterCalled, false);
+    const before = await readFile(await issuedPath(fixture));
+    const renewed = await store.publishRenewal(response, { beforeCommit() {} });
+    const expected = { ...original, certificate: response.certificate, issuerCertificate: response.issuerCertificate };
+    assertFrozenResult(renewed, expected);
+    assert.deepEqual(await readFile(await issuedPath(fixture)), before);
+    const renewalDirectory = path.join(storeDirectory(fixture), `${path.basename(await issuedPath(fixture)).slice(0, 64)}.renewals`);
+    assert.deepEqual((await readdir(renewalDirectory)).filter(name => /^[0-9a-f]{64}\.json$/.test(name)), [`${response.predecessorCertificateSha256}.json`]);
+    assert.equal((await store.inspectIssued()).state, "current");
+    assertFrozenResult(await fixture.store().readIssued(), expected);
+  });
+});
 let host, otherHost, keyRequest, context;
 
 function makeSafeStorage() {

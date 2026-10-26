@@ -339,6 +339,36 @@ test("complete and reconcile require an authorized presented leaf and dispatch i
   assert.equal(calls[1].body.enrollmentId, ENROLLMENT_ID);
 });
 
+test("renewal requires a fresh mTLS peer, session cookie and exact same-key CSR body", async t => {
+  const calls = [];
+  const result = { renewalId: ENROLLMENT_ID, deviceId: "55555555-5555-4555-8555-555555555555",
+    predecessorCertificateSha256: "a".repeat(64),
+    certificate: new X509Certificate(memberCertificate.certificatePem).raw.toString("base64url"),
+    issuerCertificate: new X509Certificate(identity.memberIssuer.certificatePem).raw.toString("base64url"),
+    certificateNotBefore: new Date(Date.parse(new X509Certificate(memberCertificate.certificatePem).validFrom)).toISOString(),
+    certificateNotAfter: new Date(Date.parse(new X509Certificate(memberCertificate.certificatePem).validTo)).toISOString() };
+  const { ingress } = createIngress(async (operation, input) => { calls.push({ operation, ...input }); return result; });
+  t.after(() => ingress.dispose());
+  const bound = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  const body = JSON.stringify({ deviceKeyId: DEVICE_KEY_ID, requestPem: memberKey.requestPem });
+  const renewed = await post(bound.port, { route: "/sps-native/v1/enrollment/renew", body, session: true,
+    certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem });
+  assert.equal(renewed.statusCode, 200);
+  assert.deepEqual(JSON.parse(renewed.body), result);
+  assert.equal(calls[0].operation, "enrollment.renew");
+  assert.deepEqual(calls[0].body, { deviceKeyId: DEVICE_KEY_ID, requestPem: memberKey.requestPem });
+  assert.equal(calls[0].transport.peerCertificateDer,
+    new X509Certificate(memberCertificate.certificatePem).raw.toString("base64url"));
+  assert.equal(calls[0].credential.sessionCookie, `sps_identity_session=${"a".repeat(64)}`);
+
+  const before = calls.length;
+  const extraField = await post(bound.port, { route: "/sps-native/v1/enrollment/renew",
+    body: JSON.stringify({ deviceKeyId: DEVICE_KEY_ID, requestPem: memberKey.requestPem, deviceId: DEVICE_KEY_ID }),
+    session: true, certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem });
+  assert.equal(extraField.statusCode, 400);
+  assert.equal(calls.length, before);
+});
+
 test("complete rejects a missing client certificate and identity rejects any presented one", async t => {
   let dispatched = 0;
   const { ingress } = createIngress(async () => { dispatched++; return {}; });

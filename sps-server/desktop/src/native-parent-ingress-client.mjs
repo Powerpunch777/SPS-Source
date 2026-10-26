@@ -4,7 +4,7 @@ import { nativeCertificateRecord as record, nativeCertificateUuid as uuid } from
 const REQUEST = "sps.native.parent-ingress.request";
 const RESPONSE = "sps.native.parent-ingress.response";
 const CANCEL = "sps.native.parent-ingress.cancel";
-const OPERATIONS = new Set(["identity", "session.exchange", "enrollment.issue", "enrollment.complete", "enrollment.reconcile"]);
+const OPERATIONS = new Set(["identity", "session.exchange", "enrollment.issue", "enrollment.complete", "enrollment.reconcile", "enrollment.renew"]);
 const unavailable = () => Object.assign(new Error("The owned Native Host channel is unavailable."), { code: "native_ingress_unavailable" });
 const pin = value => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 function certificate(value) {
@@ -16,7 +16,7 @@ function certificate(value) {
 
 function request(operation, input) {
   const value = record(input, operation === "identity" ? ["transport", "body"] : ["transport", "body", "credential"]);
-  const needsPeer = ["enrollment.complete", "enrollment.reconcile"].includes(operation);
+  const needsPeer = ["enrollment.complete", "enrollment.reconcile", "enrollment.renew"].includes(operation);
   const transport = record(value.transport, ["tlsVersion", "sessionReused", "remoteAddress", ...(needsPeer ? ["peerCertificateDer"] : [])]);
   if (transport.tlsVersion !== "TLSv1.3" || transport.sessionReused !== false
     || !(transport.remoteAddress === null || typeof transport.remoteAddress === "string" && transport.remoteAddress.length <= 45)) throw unavailable();
@@ -24,7 +24,8 @@ function request(operation, input) {
   if (["identity", "session.exchange"].includes(operation)) { if (value.body !== null) throw unavailable(); }
   else {
     const keys = operation === "enrollment.issue" ? ["pairingId", "pairingSecret", "deviceKeyId", "requestPem"]
-      : operation === "enrollment.complete" ? ["pairingId", "pairingSecret", "enrollmentId", "displayName"] : ["enrollmentId"];
+      : operation === "enrollment.complete" ? ["pairingId", "pairingSecret", "enrollmentId", "displayName"]
+        : operation === "enrollment.renew" ? ["deviceKeyId", "requestPem"] : ["enrollmentId"];
     value.body = record(value.body, keys);
     for (const key of keys) {
       const entry = value.body[key];
@@ -47,7 +48,9 @@ function request(operation, input) {
 function result(operation, input) {
   const keys = operation === "identity" ? ["hostId", "serverSpkiSha256", "issuerSpkiSha256", "issuerCertificate"]
     : operation === "session.exchange" ? ["token", "expiresInSeconds"]
-      : operation === "enrollment.issue" ? ["enrollmentId", "certificate", "issuerCertificate", "expiresAt"] : ["deviceId", "status"];
+    : operation === "enrollment.issue" ? ["enrollmentId", "certificate", "issuerCertificate", "expiresAt"]
+      : operation === "enrollment.renew" ? ["renewalId", "deviceId", "predecessorCertificateSha256", "certificate", "issuerCertificate", "certificateNotBefore", "certificateNotAfter"]
+        : ["deviceId", "status"];
   const value = record(input, keys);
   if (operation === "identity") {
     uuid(value.hostId); certificate(value.issuerCertificate);
@@ -59,6 +62,15 @@ function result(operation, input) {
     uuid(value.enrollmentId); certificate(value.certificate); certificate(value.issuerCertificate);
     if (typeof value.expiresAt !== "string" || value.expiresAt.length !== 24
       || new Date(value.expiresAt).toISOString() !== value.expiresAt) throw unavailable();
+  } else if (operation === "enrollment.renew") {
+    uuid(value.renewalId); uuid(value.deviceId); certificate(value.certificate); certificate(value.issuerCertificate);
+    if (!pin(value.predecessorCertificateSha256)
+      || typeof value.certificateNotBefore !== "string" || value.certificateNotBefore.length !== 24
+      || typeof value.certificateNotAfter !== "string" || value.certificateNotAfter.length !== 24
+      || !Number.isFinite(Date.parse(value.certificateNotBefore)) || !Number.isFinite(Date.parse(value.certificateNotAfter))
+      || new Date(value.certificateNotBefore).toISOString() !== value.certificateNotBefore
+      || new Date(value.certificateNotAfter).toISOString() !== value.certificateNotAfter
+      || Date.parse(value.certificateNotBefore) >= Date.parse(value.certificateNotAfter)) throw unavailable();
   } else {
     uuid(value.deviceId);
     if (!(operation === "enrollment.complete" ? ["pending"] : ["pending", "approved", "revoked"]).includes(value.status)) throw unavailable();

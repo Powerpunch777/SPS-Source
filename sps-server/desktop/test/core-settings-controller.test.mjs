@@ -48,6 +48,33 @@ function setup(overrides = {}) {
   return { controller, windows, calls, invoke, event };
 }
 
+test("Member certificate renewal keeps confirmation and projection bound to the Settings frame", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const deviceId = "22222222-2222-4222-8222-222222222222";
+  const certificateNotAfter = new Date(Date.now() + 86_400_000).toISOString();
+  let accepted = false, renewals = 0;
+  const ctx = setup({ authorizeMutation() { throw new Error("Member is not the local Host"); },
+    confirmNativeMemberRenewal: async () => accepted,
+    renewNativeMemberCertificate: async (selected, options) => {
+      assert.deepEqual(selected, { hostId });
+      options.assertRequester();
+      if (!await options.confirm({ hostId, certificateNotAfter })) return { cancelled: true };
+      options.assertRequester(); renewals++;
+      return { hostId, deviceId, status: "approved", certificateNotAfter };
+    },
+  });
+  await ctx.controller.show();
+  await assert.rejects(ctx.invoke("renew-native-member-certificate", [{ hostId, certificate: "forged" }]));
+  assert.deepEqual(await ctx.invoke("renew-native-member-certificate", [{ hostId }]), { cancelled: true });
+  accepted = true;
+  assert.deepEqual(await ctx.invoke("renew-native-member-certificate", [{ hostId }]), { hostId, deviceId, status: "approved", certificateNotAfter });
+  assert.equal(renewals, 1);
+  const stale = ctx.event();
+  ctx.windows[0].webContents.mainFrame = { url: "about:blank" };
+  await assert.rejects(ctx.invoke("renew-native-member-certificate", [{ hostId }], stale));
+  assert.equal(renewals, 1);
+});
+
 test("Host registration listener requires local ownership and live settings confirmation", async () => {
   let started = 0, stopped = 0;
   const ctx = setup({

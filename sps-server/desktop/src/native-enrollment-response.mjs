@@ -12,13 +12,15 @@ const MAX_WORKSPACE_JSON_NODES = 10_000;
 const MAX_DER_BYTES = 4096;
 const MAX_BASE64URL_LENGTH = Math.ceil(MAX_DER_BYTES * 4 / 3);
 const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200, reconcile: 200, identity: 200,
-  workspaces: 200, workspaceBootstrap: 200 });
+  renewal: 200, workspaces: 200, workspaceBootstrap: 200 });
 const RESPONSE_KEYS = Object.freeze({
   exchange: ["expiresInSeconds"],
   issue: ["enrollmentId", "certificate", "issuerCertificate", "expiresAt"],
   complete: ["deviceId", "status"],
   reconcile: ["deviceId", "status"],
   identity: ["hostId", "serverSpkiSha256", "issuerSpkiSha256", "issuerCertificate"],
+  renewal: ["renewalId", "deviceId", "predecessorCertificateSha256", "certificate", "issuerCertificate",
+    "certificateNotBefore", "certificateNotAfter"],
 });
 const SENSITIVE_HEADERS = new Set([
   "cache-control", "content-encoding", "content-length", "content-type",
@@ -147,6 +149,23 @@ function validateIdentity(value) {
   });
 }
 
+function validateRenewal(value) {
+  uuid(value.renewalId);
+  uuid(value.deviceId);
+  if (typeof value.predecessorCertificateSha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.predecessorCertificateSha256)) reject();
+  const certificate = decodeCanonicalBase64Url(value.certificate);
+  const issuerCertificate = decodeCanonicalBase64Url(value.issuerCertificate);
+  for (const field of ["certificateNotBefore", "certificateNotAfter"]) {
+    if (typeof value[field] !== "string" || value[field].length !== 24) reject();
+    const date = new Date(value[field]);
+    if (!Number.isFinite(date.getTime()) || date.toISOString() !== value[field]) reject();
+  }
+  if (Date.parse(value.certificateNotBefore) >= Date.parse(value.certificateNotAfter)) reject();
+  return Object.freeze({ renewalId: value.renewalId, deviceId: value.deviceId,
+    predecessorCertificateSha256: value.predecessorCertificateSha256, certificate, issuerCertificate,
+    certificateNotBefore: value.certificateNotBefore, certificateNotAfter: value.certificateNotAfter });
+}
+
 function validateBody(operation, value, cookie) {
   if (operation === "exchange") {
     if (value.expiresInSeconds !== 604800) reject();
@@ -154,6 +173,7 @@ function validateBody(operation, value, cookie) {
   }
   if (operation === "issue") return validateIssue(value);
   if (operation === "identity") return validateIdentity(value);
+  if (operation === "renewal") return validateRenewal(value);
   if (operation === "complete" || operation === "reconcile") {
     uuid(value.deviceId);
     if (operation === "complete" ? value.status !== "pending"

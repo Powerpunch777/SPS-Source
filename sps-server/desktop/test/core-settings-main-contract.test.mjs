@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 
-const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
+const [main, preload, settingsController] = await Promise.all([
+  readFile(new URL("../src/main.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../src/core-settings-preload.cjs", import.meta.url), "utf8"),
+  readFile(new URL("../src/core-settings-controller.mjs", import.meta.url), "utf8"),
+]);
 
 function section(start, end, from = 0) {
   const startAt = main.indexOf(start, from);
@@ -27,6 +31,19 @@ test("Core Settings is reachable from launch, second instance, menus, tray, and 
   const trayMenu = section("function refreshTrayMenu() {", "function createTray() {");
   assert.match(trayMenu, /label: "Core settings\.\.\.", click: \(\) => \{ void showCoreSettings\(\); \}/);
   assert.match(main, /ensureCoreSettingsController\(\)\.registerShortcut\(\);/);
+});
+
+test("Native Member certificate inspection and renewal use a Host-only bridge and explicit cancel-first confirmation", () => {
+  assert.match(preload, /inspectNativeMemberCertificate: input => \{[\s\S]*?nativeMemberInput\(input, \["hostId"\]\)[\s\S]*?desktop:core-settings-inspect-native-member-certificate/);
+  assert.match(preload, /renewNativeMemberCertificate: input => \{[\s\S]*?nativeMemberInput\(input, \["hostId"\]\)[\s\S]*?desktop:core-settings-renew-native-member-certificate/);
+  assert.match(main, /inspectNativeMemberCertificate: \(input, options\) => ensureNativeMemberController\(\)\.inspectCertificate\(input, options\)/);
+  assert.match(main, /renewNativeMemberCertificate: \(input, options\) => ensureNativeMemberController\(\)\.renew\(input, options\)/);
+  assert.match(settingsController, /bind\("inspect-native-member-certificate"[\s\S]*?awaitAndAssertSender/);
+  assert.match(settingsController, /bind\("renew-native-member-certificate"[\s\S]*?confirm: target => awaitAndAssertSender/);
+  const confirmation = section("confirmNativeMemberRenewal: async", "repairNativeMemberStorage:");
+  assert.match(confirmation, /buttons: \["Cancel", "Renew certificate"\], defaultId: 0, cancelId: 0/);
+  assert.match(confirmation, /Existing keys and trust pins are kept/);
+  assert.match(confirmation, /does not create a new registration, change approval, or grant Workspace access/);
 });
 
 test("recovery launch and unreadable connection settings never enter automatic Host or Node startup", () => {

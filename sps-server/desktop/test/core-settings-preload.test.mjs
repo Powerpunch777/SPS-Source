@@ -22,6 +22,24 @@ async function loadPreload() {
   return { api, calls };
 }
 
+test("certificate metadata and renewal preload accept only a saved Host selector", async () => {
+  const { api, calls } = await loadPreload();
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  let touched = false;
+  const hostile = Object.defineProperty({}, "hostId", { enumerable: true, get() { touched = true; throw new Error("private"); } });
+  for (const action of [api.inspectNativeMemberCertificate, api.renewNativeMemberCertificate]) {
+    await assert.rejects(action(hostile));
+    await assert.rejects(action({ hostId, certificate: "caller-selected" }));
+    await assert.rejects(action({ hostId: "../other" }));
+    await action({ hostId });
+  }
+  assert.equal(touched, false);
+  assert.deepEqual(calls.map(row => [row[0], JSON.parse(JSON.stringify(row[1]))]), [
+    ["desktop:core-settings-inspect-native-member-certificate", { hostId }],
+    ["desktop:core-settings-renew-native-member-certificate", { hostId }],
+  ]);
+});
+
 test("Core Settings quit preload accepts no arguments and invokes only its fixed channel", async () => {
   const { api, calls } = await loadPreload();
   let getterRan = false;

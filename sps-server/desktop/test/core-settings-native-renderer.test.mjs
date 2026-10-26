@@ -214,6 +214,63 @@ test("saved Member registration queries are explicit and never use an invitation
   assert.match(element(ctx, "native-member-result").textContent, /Revoked/);
 });
 
+test("certificate details are explicit, validate metadata, and distinguish current from expired state", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const notBefore = new Date(Date.now() - 86_400_000).toISOString();
+  const notAfter = new Date(Date.now() + 86_400_000).toISOString();
+  const renewalAvailableAt = new Date(Date.now() + 12 * 60 * 60_000).toISOString();
+  const calls = [];
+  const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }],
+    inspectNativeMemberCertificate: async input => { calls.push({ ...input }); return { hostId, state: "current", certificateNotBefore: notBefore,
+      certificateNotAfter: notAfter, renewalAvailableAt }; },
+  } });
+  await settle();
+  assert.deepEqual(calls, []);
+  element(ctx, "refresh-native-registrations").dispatch("click"); await settle();
+  const row = element(ctx, "native-registrations-list").children[0];
+  const details = row.children[1].children[2];
+  assert.equal(details.textContent, "Certificate details");
+  details.dispatch("click"); await settle();
+  assert.deepEqual(calls, [{ hostId }]);
+  assert.match(element(ctx, "native-member-result").textContent, new RegExp(notAfter));
+  assert.match(element(ctx, "native-member-result").textContent, new RegExp(renewalAvailableAt));
+
+  const expired = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }],
+    inspectNativeMemberCertificate: async () => ({ hostId, state: "expired", certificateNotBefore: notBefore,
+      certificateNotAfter: new Date(Date.now() - 60_000).toISOString(), renewalAvailableAt: null }),
+  } });
+  await settle();
+  element(expired, "refresh-native-registrations").dispatch("click"); await settle();
+  const expiredRow = element(expired, "native-registrations-list").children[0];
+  expiredRow.children[1].children[2].dispatch("click"); await settle();
+  assert.match(element(expired, "native-member-result").textContent, /cannot be renewed using expired credentials/);
+  assert.match(element(expired, "native-member-result").textContent, /Existing keys were kept/);
+});
+
+test("certificate renewal runs only after an explicit click and renders approved expiry without credential data", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111", deviceId = "22222222-2222-4222-8222-222222222222";
+  const certificateNotAfter = new Date(Date.now() + 90 * 86_400_000).toISOString();
+  const calls = [];
+  const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }],
+    renewNativeMemberCertificate: async input => { calls.push({ ...input }); return { hostId, deviceId, status: "approved", certificateNotAfter }; },
+  } });
+  await settle();
+  assert.deepEqual(calls, []);
+  element(ctx, "refresh-native-registrations").dispatch("click"); await settle();
+  const row = element(ctx, "native-registrations-list").children[0];
+  const renew = row.children[1].children[3];
+  assert.equal(renew.textContent, "Renew certificate");
+  assert.deepEqual(calls, []);
+  renew.dispatch("click"); await settle();
+  assert.deepEqual(calls, [{ hostId }]);
+  assert.match(element(ctx, "native-member-result").textContent, new RegExp(certificateNotAfter));
+  assert.match(element(ctx, "native-member-result").textContent, /original device key and trust were kept/);
+  assert.doesNotMatch(element(ctx, "native-member-result").textContent, /certificatePem|privateKey|CSR|secret/);
+});
+
 test("saved Host Workspace discovery requires Show Workspaces and renders exact text safely", async () => {
   const calls = [];
   const hostId = "11111111-1111-4111-8111-111111111111";
@@ -229,7 +286,7 @@ test("saved Host Workspace discovery requires Show Workspaces and renders exact 
   element(ctx, "refresh-native-registrations").dispatch("click");
   await settle();
   const row = element(ctx, "native-registrations-list").children[0];
-  const show = row.children[1].children[2];
+  const show = row.children[1].children[4];
   assert.equal(show.textContent, "Show Workspaces");
   assert.equal(row.children[2].children.length, 0);
   assert.deepEqual(calls, []);
@@ -252,7 +309,7 @@ test("opening a discovered Workspace requires a separate explicit click and only
   await settle();
   element(ctx, "refresh-native-registrations").dispatch("click"); await settle();
   const row = element(ctx, "native-registrations-list").children[0];
-  row.children[1].children[2].dispatch("click"); await settle();
+  row.children[1].children[4].dispatch("click"); await settle();
   assert.deepEqual(calls, []);
   const button = row.children[2].children[1];
   assert.equal(button.textContent, "Open Workspace");
@@ -269,7 +326,7 @@ test("Workspace discovery shows generic empty/error states and ignores late resu
   await settle();
   element(empty, "refresh-native-registrations").dispatch("click"); await settle();
   const emptyRow = element(empty, "native-registrations-list").children[0];
-  emptyRow.children[1].children[2].dispatch("click"); await settle();
+  emptyRow.children[1].children[4].dispatch("click"); await settle();
   assert.equal(emptyRow.children[2].textContent, "No available Workspaces for this Host.");
 
   const failed = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
@@ -278,7 +335,7 @@ test("Workspace discovery shows generic empty/error states and ignores late resu
   await settle();
   element(failed, "refresh-native-registrations").dispatch("click"); await settle();
   const failedRow = element(failed, "native-registrations-list").children[0];
-  failedRow.children[1].children[2].dispatch("click"); await settle();
+  failedRow.children[1].children[4].dispatch("click"); await settle();
   assert.equal(failedRow.children[2].textContent, "Saved Workspaces are unavailable. Check the connection and retry.");
   assert.doesNotMatch(failedRow.children[2].textContent, /cookie|private/);
 
@@ -290,7 +347,7 @@ test("Workspace discovery shows generic empty/error states and ignores late resu
   await settle();
   element(late, "refresh-native-registrations").dispatch("click"); await settle();
   const oldRow = element(late, "native-registrations-list").children[0];
-  oldRow.children[1].children[2].dispatch("click");
+  oldRow.children[1].children[4].dispatch("click");
   await settle();
   element(late, "refresh-native-registrations").disabled = false;
   element(late, "refresh-native-registrations").dispatch("click");
@@ -315,7 +372,7 @@ test("a status refresh clears previously displayed member Workspace names and ID
   element(ctx, "refresh-native-registrations").dispatch("click"); await settle();
   assert.equal(element(ctx, "native-registrations-list").children.length, 1);
   const row = element(ctx, "native-registrations-list").children[0];
-  row.children[1].children[2].dispatch("click"); await settle();
+  row.children[1].children[4].dispatch("click"); await settle();
   assert.equal(workspaceCalls, 1);
   assert.equal(row.children[2].children.length, 2);
   assert.equal(row.children[2].children[0].textContent, `Private Team Name · ${workspaceId}`);

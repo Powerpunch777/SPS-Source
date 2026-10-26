@@ -1,11 +1,14 @@
+import { X509Certificate } from "node:crypto";
 import { allocateSpsNativeMemberKeyIndex, normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
 import { nativeCertificateRecord as record, nativeCertificateUuid as uuid } from "./native-certificate-primitives.mjs";
 import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
-  createSpsNativeEnrollmentRecoveryClient, createSpsNativeMemberWorkspaceClient } from "./native-enrollment-client.mjs";
+  createSpsNativeEnrollmentRecoveryClient, createSpsNativeMemberWorkspaceClient,
+  createSpsNativeMemberRenewalClient } from "./native-enrollment-client.mjs";
 import { createSpsNativeMemberKeyRequest } from "./native-member-certificates.mjs";
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { verifySpsNativeInvitationCertificate } from "./native-connection-tls.mjs";
 import { validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
+import { inspectSpsNativeMemberCredential } from "./native-member-credential.mjs";
 import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface,
   validateSpsNativeInboxStateInput, validateSpsNativeInboxState } from "./native-enrollment-response.mjs";
 
@@ -15,6 +18,7 @@ const MESSAGES = Object.freeze({
   busy: "Another Native Member operation is in progress.",
   unavailable: "The Native operation could not complete. Existing credentials were preserved.",
   recovery_required: "Existing Native credentials need recovery and were not replaced.",
+  renewal_not_due: "This Native Member certificate is outside its renewal window.",
   invalid: "The Native Member request is invalid.",
   disposed: "The Native Member controller is closed.",
 });
@@ -31,6 +35,22 @@ function authority(input) {
   if (!(typeof value.generation === "bigint" ? value.generation >= 0n : Number.isSafeInteger(value.generation) && value.generation >= 0)
     || ["userDataDirectory", "vaultDirectory"].some(key => typeof value[key] !== "string" || !value[key])) throw new Error();
   return Object.freeze(value);
+}
+
+function issuedMetadata(input) {
+  const value = record(input, ["state", "certificateNotBefore", "certificateNotAfter"]);
+  if (!["current", "expired"].includes(value.state)) throw failure("unavailable");
+  for (const field of ["certificateNotBefore", "certificateNotAfter"]) {
+    if (typeof value[field] !== "string" || value[field].length !== 24) throw failure("unavailable");
+    const parsed = new Date(value[field]);
+    if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value[field]) throw failure("unavailable");
+  }
+  const notBefore = Date.parse(value.certificateNotBefore), notAfter = Date.parse(value.certificateNotAfter);
+  if (notBefore >= notAfter || (value.state === "expired") !== (notAfter <= Date.now())) throw failure("unavailable");
+  const windowMs = Math.min(30 * 86_400_000, Math.floor((notAfter - notBefore) / 3));
+  return Object.freeze({ state: value.state, certificateNotBefore: value.certificateNotBefore,
+    certificateNotAfter: value.certificateNotAfter,
+    renewalAvailableAt: value.state === "expired" ? null : new Date(notAfter - windowMs).toISOString() });
 }
 
 export function requireSpsNativeMemberEnrollmentInput(input) {
@@ -83,7 +103,8 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
   getPublicationRecovery, authenticate, maxEntries = 128, timeoutMs = 15000,
   createKey = createSpsNativeMemberKeyRequest, createBootstrap = createSpsNativeEnrollmentBootstrap,
   createEnrollment = createSpsNativeEnrollmentClient, createRecovery = createSpsNativeEnrollmentRecoveryClient,
-  createWorkspace = createSpsNativeMemberWorkspaceClient }) {
+  createWorkspace = createSpsNativeMemberWorkspaceClient, createRenewal = createSpsNativeMemberRenewalClient,
+  inspectCredential = inspectSpsNativeMemberCredential }) {
   let busy = false, disposed = false;
   const clients = new Set();
   function capture() {
@@ -223,6 +244,99 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
         return observation(scope.hostId, result);
       });
     },
+    inspectCertificate(input, options = {}) {
+      const value = requireSpsNativeMemberRecoveryInput(input);
+      return run(options, async (expected, check) => {
+        const scope = indexFor(expected).entries.find(entry => entry.identityIssuer === expected.identityIssuer
+          && entry.subject === expected.subject && entry.hostId === value.hostId);
+        if (!scope) return null;
+        const target = await getTargetReader({ ...expected, scope }).read();
+        check();
+        if (!target) return null;
+        const store = getStore({ ...expected, context: target.context });
+        const key = await store.read();
+        check();
+        if (!key) return null;
+        if (typeof store.inspectIssued !== "function") throw failure("unavailable");
+        const metadata = await store.inspectIssued();
+        check();
+        if (metadata === null) return null;
+        const inspected = issuedMetadata(metadata);
+        return Object.freeze({ hostId: scope.hostId, ...inspected });
+      });
+    },
+    renew(input, options = {}) {
+      const value = requireSpsNativeMemberRecoveryInput(input);
+      return run(options, async (expected, check, use) => {
+        const scope = indexFor(expected).entries.find(entry => entry.identityIssuer === expected.identityIssuer
+          && entry.subject === expected.subject && entry.hostId === value.hostId);
+        if (!scope) throw failure("recovery_required");
+        const target = await getTargetReader({ ...expected, scope }).read();
+        check();
+        if (!target) throw failure("recovery_required");
+        const store = getStore({ ...expected, context: target.context });
+        if (typeof store.inspectIssued !== "function") throw failure("unavailable");
+        const metadata = await store.inspectIssued();
+        check();
+        if (metadata === null) throw failure("recovery_required");
+        const certificateMetadata = issuedMetadata(metadata);
+        if (certificateMetadata.state === "expired") throw failure("recovery_required");
+        const key = await store.read();
+        check();
+        const stored = await store.readIssued();
+        check();
+        if (!key || !stored?.issuance || !stored?.credential || typeof store.publishRenewal !== "function") throw failure("recovery_required");
+        let current;
+        try {
+          current = await inspectCredential({ keyRequest: key,
+            certificate: { v: 1, kind: "sps.native.member-certificate", hostId: target.context.hostId,
+              deviceKeyId: target.context.deviceKeyId, certificatePem: stored.credential.certificatePem,
+              issuerCertificatePem: stored.credential.issuerCertificatePem },
+            issuerCertificatePem: stored.credential.issuerCertificatePem,
+            issuerSpkiSha256: target.context.issuerSpkiSha256, now: Date.now() });
+        } catch (error) {
+          try { if (Date.parse(new X509Certificate(stored.credential.certificatePem).validTo) <= Date.now()) throw failure("recovery_required"); }
+          catch (expiryError) { if (expiryError?.code === "native_member_recovery_required") throw expiryError; }
+          throw error;
+        }
+        check();
+        const renewalWindowMs = Math.min(30 * 86_400_000, Math.floor((current.notAfter - current.notBefore) / 3));
+        if (current.notAfter <= Date.now()) throw failure("recovery_required");
+        if (current.notAfter - Date.now() > renewalWindowMs) throw failure("renewal_not_due");
+        if (typeof options.confirm !== "function") throw failure("invalid");
+        const confirmed = await options.confirm(Object.freeze({ hostId: value.hostId,
+          certificateNotAfter: new Date(current.notAfter).toISOString() }));
+        check();
+        if (confirmed !== true) return Object.freeze({ cancelled: true });
+        const clientFactory = createRenewal;
+        if (typeof clientFactory !== "function") throw failure("unavailable");
+        const client = use(clientFactory({ target, context: target.context, timeoutMs, assertCurrent: check }));
+        await exchange(client, check, options.signal);
+        const renewal = await client.renew({ keyRequest: key, issuance: stored.issuance },
+          options.signal ? { signal: options.signal } : undefined);
+        check();
+        const result = record(renewal, ["renewalId", "deviceId", "predecessorCertificateSha256", "certificate",
+          "issuerCertificate", "certificateNotBefore", "certificateNotAfter"]);
+        uuid(result.renewalId); uuid(result.deviceId);
+        await store.publishRenewal(Object.freeze(result), { beforeCommit: check });
+        check();
+        const committed = await store.readIssued();
+        check();
+        if (!committed?.credential) throw failure("unavailable");
+        const published = await inspectCredential({ keyRequest: key,
+          certificate: { v: 1, kind: "sps.native.member-certificate", hostId: target.context.hostId,
+            deviceKeyId: target.context.deviceKeyId, certificatePem: committed.credential.certificatePem,
+            issuerCertificatePem: committed.credential.issuerCertificatePem },
+          issuerCertificatePem: committed.credential.issuerCertificatePem,
+          issuerSpkiSha256: target.context.issuerSpkiSha256, now: Date.now() });
+        check();
+        if (new Date(published.notAfter).toISOString() !== result.certificateNotAfter
+          || !new X509Certificate(committed.credential.certificatePem).raw.equals(Buffer.from(result.certificate, "base64url"))
+          || !new X509Certificate(committed.credential.issuerCertificatePem).raw.equals(Buffer.from(result.issuerCertificate, "base64url"))) throw failure("unavailable");
+        return Object.freeze({ hostId: scope.hostId, deviceId: result.deviceId, status: "approved",
+          certificateNotAfter: result.certificateNotAfter });
+      });
+    },
     listWorkspaces(input, options = {}) {
       const value = requireSpsNativeMemberRecoveryInput(input);
       return run(options, async (expected, check, use) => {
@@ -342,9 +456,9 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
         const result = await getPublicationRecovery({ ...expected, scope }).recoverInterruptedPublications({ beforeCommit: check });
         check();
         const valueRecord = record(result, ["recovered"]);
-        if (!Array.isArray(valueRecord.recovered) || valueRecord.recovered.length > 3
+        if (!Array.isArray(valueRecord.recovered) || valueRecord.recovered.length > 4
           || new Set(valueRecord.recovered).size !== valueRecord.recovered.length
-          || valueRecord.recovered.some(kind => !["pending", "issued", "target"].includes(kind))) throw failure("unavailable");
+          || valueRecord.recovered.some(kind => !["pending", "issued", "target", "renewal"].includes(kind))) throw failure("unavailable");
         return Object.freeze({ hostId: scope.hostId, recovered: Object.freeze([...valueRecord.recovered]) });
       });
     },

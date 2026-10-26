@@ -104,6 +104,28 @@ test("per-request guards are synchronous and are rechecked at delivery", async t
   valid = false; f.reply(f.sent[0], identity()); await denied;
 });
 
+test("renewal IPC requires the mTLS peer and exact CSR input, and validates the closed result DTO", async t => {
+  const f = fixture(t);
+  const transportWithPeer = { ...transport(), peerCertificateDer: "AQID" };
+  const response = { renewalId: "33333333-3333-4333-8333-333333333333", deviceId: "44444444-4444-4444-8444-444444444444",
+    predecessorCertificateSha256: "c".repeat(64), certificate: "AQID", issuerCertificate: "BAUG",
+    certificateNotBefore: "2026-10-27T00:00:00.000Z", certificateNotAfter: "2027-01-25T00:00:00.000Z" };
+  const pending = f.client.dispatch("enrollment.renew", { transport: transportWithPeer,
+    body: { deviceKeyId: "55555555-5555-4555-8555-555555555555", requestPem: "csr" },
+    credential: { sessionCookie: `sps_identity_session=${"x".repeat(64)}` } });
+  const sent = f.sent[0];
+  assert.equal(sent.operation, "enrollment.renew");
+  assert.equal(sent.request.transport.peerCertificateDer, "AQID");
+  assert.deepEqual(sent.request.body, { deviceKeyId: "55555555-5555-4555-8555-555555555555", requestPem: "csr" });
+  f.reply(sent, response);
+  assert.deepEqual(await pending, response);
+
+  await assert.rejects(f.client.dispatch("enrollment.renew", { transport: transport(),
+    body: { deviceKeyId: "55555555-5555-4555-8555-555555555555", requestPem: "csr" },
+    credential: { sessionCookie: `sps_identity_session=${"x".repeat(64)}` } }));
+  assert.equal(f.sent.length, 1);
+});
+
 test("bounded channel lifetime cannot be reset by cancellation or unsolicited replies", async t => {
   const f = fixture(t, { maxRequests: 1 });
   const pending = f.client.dispatch("identity", identityRequest());

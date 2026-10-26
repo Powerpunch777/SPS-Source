@@ -10,6 +10,7 @@ const ROUTES = Object.freeze({
   "/sps-native/v1/enrollment/issue": { operation: "enrollment.issue", peer: false, credential: "sessionCookie", body: "issue" },
   "/sps-native/v1/enrollment/complete": { operation: "enrollment.complete", peer: true, credential: "sessionCookie", body: "complete" },
   "/sps-native/v1/enrollment/reconcile": { operation: "enrollment.reconcile", peer: true, credential: "sessionCookie", body: "reconcile" },
+  "/sps-native/v1/enrollment/renew": { operation: "enrollment.renew", peer: true, credential: "sessionCookie", body: "renew" },
 });
 const WORKSPACE_DISCOVERY_TARGET = "/sps-native/v1/workspaces";
 const WORKSPACE_INBOX_PATCH_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/workspace-inbox\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/;
@@ -68,7 +69,7 @@ function parseBody(bytes, kind) {
   }
   const keys = kind === "issue" ? ["pairingId", "pairingSecret", "deviceKeyId", "requestPem"]
     : kind === "complete" ? ["pairingId", "pairingSecret", "enrollmentId", "displayName"]
-      : ["enrollmentId"];
+      : kind === "renew" ? ["deviceKeyId", "requestPem"] : ["enrollmentId"];
   exactObject(parsed, keys);
   if (JSON.stringify(parsed) !== text) throw fail();
   const isUuid = value => typeof value === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value);
@@ -81,6 +82,8 @@ function parseBody(bytes, kind) {
     if (!isUuid(parsed.pairingId) || !isSecret(parsed.pairingSecret) || !isUuid(parsed.enrollmentId)
       || typeof parsed.displayName !== "string" || !parsed.displayName.trim() || parsed.displayName.length > 120
       || /[\u0000-\u001f\u007f]/.test(parsed.displayName)) throw fail();
+  } else if (kind === "renew") {
+    if (!isUuid(parsed.deviceKeyId) || typeof parsed.requestPem !== "string" || parsed.requestPem.length < 1 || parsed.requestPem.length > 3000) throw fail();
   } else if (!isUuid(parsed.enrollmentId)) throw fail();
   return parsed;
 }
@@ -154,7 +157,8 @@ function validateResult(operation, value, expectedIdentity) {
   const keys = operation === "identity" ? ["hostId", "serverSpkiSha256", "issuerSpkiSha256", "issuerCertificate"]
     : operation === "session.exchange" ? ["token", "expiresInSeconds"]
       : operation === "enrollment.issue" ? ["enrollmentId", "certificate", "issuerCertificate", "expiresAt"]
-        : ["deviceId", "status"];
+        : operation === "enrollment.renew" ? ["renewalId", "deviceId", "predecessorCertificateSha256", "certificate", "issuerCertificate",
+          "certificateNotBefore", "certificateNotAfter"] : ["deviceId", "status"];
   const result = exactObject(value, keys, 502);
   const uuid = input => typeof input === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(input);
   const cert = input => typeof input === "string" && input.length > 0 && input.length <= 5462 && /^[A-Za-z0-9_-]+$/.test(input)
@@ -174,6 +178,16 @@ function validateResult(operation, value, expectedIdentity) {
       || typeof result.expiresAt !== "string" || result.expiresAt.length !== 24
       || !Number.isFinite(Date.parse(result.expiresAt)) || new Date(result.expiresAt).toISOString() !== result.expiresAt) throw fail(502);
     if (result.issuerCertificate !== expectedIdentity.issuerCertificateDer) throw fail(502);
+  } else if (operation === "enrollment.renew") {
+    if (!uuid(result.renewalId) || !uuid(result.deviceId) || !/^[0-9a-f]{64}$/.test(result.predecessorCertificateSha256)
+      || !cert(result.certificate) || !cert(result.issuerCertificate)
+      || typeof result.certificateNotBefore !== "string" || result.certificateNotBefore.length !== 24
+      || typeof result.certificateNotAfter !== "string" || result.certificateNotAfter.length !== 24
+      || !Number.isFinite(Date.parse(result.certificateNotBefore)) || !Number.isFinite(Date.parse(result.certificateNotAfter))
+      || new Date(result.certificateNotBefore).toISOString() !== result.certificateNotBefore
+      || new Date(result.certificateNotAfter).toISOString() !== result.certificateNotAfter
+      || Date.parse(result.certificateNotBefore) >= Date.parse(result.certificateNotAfter)
+      || result.issuerCertificate !== expectedIdentity.issuerCertificateDer) throw fail(502);
   } else if (!uuid(result.deviceId) || (operation === "enrollment.complete"
     ? result.status !== "pending" : !["pending", "approved", "revoked"].includes(result.status))) throw fail(502);
   return result;

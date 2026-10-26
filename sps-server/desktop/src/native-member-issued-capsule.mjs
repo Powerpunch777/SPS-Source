@@ -80,7 +80,15 @@ function pem(bytes) {
   return encodePem(bytes, "CERTIFICATE");
 }
 
-async function validateCredential(context, keyRequest, issuance) {
+function historicalValidationTime(certificatePem, issuerCertificatePem) {
+  const leaf = new X509Certificate(certificatePem), issuer = new X509Certificate(issuerCertificatePem);
+  const start = Math.max(Date.parse(leaf.validFrom), Date.parse(issuer.validFrom));
+  const end = Math.min(Date.parse(leaf.validTo), Date.parse(issuer.validTo));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) throw new Error("dates");
+  return Math.min(Math.max(Date.now(), start), end - 1);
+}
+
+async function validateCredential(context, keyRequest, issuance, historical = false) {
   const issuerCertificatePem = pem(decodeDer(issuance.issuerCertificate));
   const certificate = Object.freeze({
     v: 1,
@@ -90,14 +98,15 @@ async function validateCredential(context, keyRequest, issuance) {
     certificatePem: pem(decodeDer(issuance.certificate)),
     issuerCertificatePem,
   });
+  const validationAt = historical ? historicalValidationTime(certificate.certificatePem, issuerCertificatePem) : Date.now();
   const credential = await validateSpsNativeMemberCredential({
     keyRequest,
     certificate,
     issuerCertificatePem,
     issuerSpkiSha256: context.issuerSpkiSha256,
-    now: Date.now(),
+    now: validationAt,
   });
-  const checkedAt = Date.now();
+  const checkedAt = historical ? validationAt : Date.now();
   const leaf = new X509Certificate(credential.certificatePem);
   const issuer = new X509Certificate(credential.issuerCertificatePem);
   const leafNotBefore = Date.parse(leaf.validFrom), leafNotAfter = Date.parse(leaf.validTo);
@@ -173,6 +182,21 @@ export function createSpsNativeMemberIssuedCapsule(options) {
         const parsed = canonicalInner(plaintext);
         if (JSON.stringify(parsed.context) !== JSON.stringify(expectedContext)) throw new Error("context");
         const credential = await validateCredential(parsed.context, keyRequest, parsed.issuance);
+        const canonical = JSON.stringify({ v: 1, kind: INNER_KIND, ...parsed });
+        if (canonical !== plaintext) throw new Error("canonical");
+        return Object.freeze({ issuance: parsed.issuance, credential });
+      } catch { throw failure("invalid"); }
+    },
+    // Historical credentials are only used to validate an append-only renewal
+    // chain. Operational callers must use open(), which requires current dates.
+    async openHistorical(serialized, expectedInput, keyRequest) {
+      try {
+        const expectedContext = validateSpsNativeMemberPendingContext(expectedInput);
+        const encrypted = decodeCiphertext(canonicalOuter(serialized));
+        const plaintext = decrypt.call(config.safeStorage, encrypted);
+        const parsed = canonicalInner(plaintext);
+        if (JSON.stringify(parsed.context) !== JSON.stringify(expectedContext)) throw new Error("context");
+        const credential = await validateCredential(parsed.context, keyRequest, parsed.issuance, true);
         const canonical = JSON.stringify({ v: 1, kind: INNER_KIND, ...parsed });
         if (canonical !== plaintext) throw new Error("canonical");
         return Object.freeze({ issuance: parsed.issuance, credential });

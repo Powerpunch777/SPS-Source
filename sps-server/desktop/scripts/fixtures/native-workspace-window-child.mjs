@@ -2,12 +2,13 @@
 // temporary Windows DPAPI credentials and the caller's real Core/TLS fixture.
 import assert from "node:assert/strict";
 import { app, BrowserWindow, ipcMain, safeStorage } from "electron";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { createHash, X509Certificate } from "node:crypto";
 import path from "node:path";
 import { createSpsNativeWorkspaceAssets } from "../../src/native-workspace-assets.mjs";
 import { createSpsNativeWorkspaceWindowController } from "../../src/native-workspace-window.mjs";
 import { createSpsNativeMemberController } from "../../src/native-member-controller.mjs";
-import { createSpsNativeMemberWorkspaceClient } from "../../src/native-enrollment-client.mjs";
+import { createSpsNativeMemberWorkspaceClient, createSpsNativeMemberRenewalClient } from "../../src/native-enrollment-client.mjs";
 import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader } from "../../src/native-member-pending-store.mjs";
 
 app.disableHardwareAcceleration();
@@ -65,7 +66,7 @@ try {
     assert.equal(configuration?.kind, "sps.test.native-workspace-window.configure");
     mark("protected_store");
     workspaceId = configuration.workspaceId;
-    const { context, target, keyRequest, issuance } = configuration;
+    const { context, target, keyRequest, issuance, renewal = false, deviceId } = configuration;
     assert.equal(process.platform, "win32");
     assert.equal(safeStorage.isEncryptionAvailable(), true);
     const wrongPeer = createSpsNativeMemberWorkspaceClient({ target: configuration.untrustedTarget,
@@ -82,6 +83,20 @@ try {
     await saved.create(keyRequest, commit);
     await saved.createTarget(target, commit);
     await saved.createIssued(issuance, commit);
+    const originalIssuedPath = path.join(profile, "native-connectivity", "member-pending",
+      `${createHash("sha256").update(JSON.stringify({ identityIssuer: context.identityIssuer, subject: context.subject,
+        hostId: context.hostId, deviceKeyId: context.deviceKeyId })).digest("hex")}.issued.json`);
+    const originalIssuedBytes = await readFile(originalIssuedPath);
+    const originalIssued = await saved.readIssued();
+    if (renewal) {
+      const raw = createSpsNativeMemberRenewalClient({ target, context, timeoutMs: 15_000, assertCurrent() {} });
+      try {
+        await raw.exchange("fixture.header.signature");
+        const first = await raw.renew({ keyRequest, issuance });
+        const replay = await raw.renew({ keyRequest, issuance });
+        assert.deepEqual(replay, first);
+      } finally { raw.dispose(); }
+    }
     mark("protected_store_ready");
     member = createSpsNativeMemberController({
       getAuthority: authority,
@@ -95,7 +110,9 @@ try {
       getStore: () => {
         const store = createSpsNativeMemberPendingKeyStore(storeOptions);
         return { async read() { mark("protected_key_read"); return store.read(); },
-          async readIssued() { mark("protected_issuance_read"); return store.readIssued(); } };
+          async readIssued() { mark("protected_issuance_read"); return store.readIssued(); },
+          async inspectIssued() { return store.inspectIssued(); },
+          async publishRenewal(response, options) { return store.publishRenewal(response, options); } };
       },
       createWorkspace: options => {
         const client = createSpsNativeMemberWorkspaceClient(options);
@@ -114,6 +131,28 @@ try {
       },
       authenticate: async () => "fixture.header.signature", timeoutMs: 15_000,
     });
+    if (renewal) {
+      const result = await member.renew({ hostId: context.hostId }, { confirm: async () => true });
+      assert.deepEqual(result, { hostId: context.hostId, deviceId, status: "approved",
+        certificateNotAfter: result.certificateNotAfter });
+      assert.equal(new Date(result.certificateNotAfter).toISOString(), result.certificateNotAfter);
+      assert.ok(Date.parse(result.certificateNotAfter) > Date.now());
+      const renewedIssued = await saved.readIssued();
+      assert.equal(renewedIssued.issuance.enrollmentId, originalIssued.issuance.enrollmentId);
+      assert.equal(renewedIssued.issuance.expiresAt, originalIssued.issuance.expiresAt);
+      assert.equal(renewedIssued.issuance.issuerCertificate, originalIssued.issuance.issuerCertificate);
+      assert.notEqual(renewedIssued.issuance.certificate, originalIssued.issuance.certificate);
+      assert.deepEqual(await saved.read(), keyRequest);
+      assert.notEqual(renewedIssued.credential.certificatePem, originalIssued.credential.certificatePem);
+      assert.equal(renewedIssued.credential.issuerCertificatePem, originalIssued.credential.issuerCertificatePem);
+      assert.deepEqual(await readFile(originalIssuedPath), originalIssuedBytes);
+      const latestLeaf = new X509Certificate(renewedIssued.credential.certificatePem);
+      const latestHash = createHash("sha256").update(latestLeaf.raw).digest("hex");
+      assert.match(latestHash, /^[0-9a-f]{64}$/);
+      assert.equal(new Date(Date.parse(latestLeaf.validTo)).toISOString(), result.certificateNotAfter);
+      const reconciled = await member.recover({ hostId: context.hostId });
+      assert.deepEqual(reconciled, { hostId: context.hostId, deviceId, status: "approved" });
+    }
   }
   mark("window_open");
   controller = createSpsNativeWorkspaceWindowController({ BrowserWindow: hiddenWindow,
@@ -181,6 +220,8 @@ try {
   await writeFile(path.join(fixture, "result.json"), JSON.stringify({ ok: true, views: ["workspace", "dashboard", "inbox"],
     actualElectron: true, fixtureBackend: !realTransport, actualDpapi: realTransport,
     ...(realTransport ? { wrongPeerDenied: true } : {}),
+    ...(realTransport && configuration?.renewal ? { renewalReplay: true, renewalPublished: true,
+      originalIssuedBytesPreserved: true, renewedEnrollmentReconciled: true } : {}),
     ownerBridge: false, serviceWorkers: 0 }));
 } catch {
   failed = true;

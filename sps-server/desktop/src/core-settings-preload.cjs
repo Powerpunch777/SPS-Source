@@ -123,6 +123,18 @@ const coreSettingsApi = Object.freeze({
     catch (error) { return Promise.reject(error); }
     return ipcRenderer.invoke("desktop:core-settings-recover-native-member", value);
   },
+  inspectNativeMemberCertificate: input => {
+    let value;
+    try { value = nativeMemberInput(input, ["hostId"]); if (!nativeDeviceIdPattern.test(value.hostId)) throw new TypeError("A Native Host ID is required."); }
+    catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-inspect-native-member-certificate", value);
+  },
+  renewNativeMemberCertificate: input => {
+    let value;
+    try { value = nativeMemberInput(input, ["hostId"]); if (!nativeDeviceIdPattern.test(value.hostId)) throw new TypeError("A Native Host ID is required."); }
+    catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-renew-native-member-certificate", value);
+  },
   repairNativeMemberStorage: input => {
     let value;
     try { value = nativeMemberInput(input, ["hostId"]); if (!nativeDeviceIdPattern.test(value.hostId)) throw new TypeError("A Native Host ID is required."); }

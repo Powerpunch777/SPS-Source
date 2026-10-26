@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { createPrivateKey, createPublicKey, randomBytes, webcrypto, X509Certificate } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, randomBytes, webcrypto, X509Certificate } from "node:crypto";
 import {
   AuthorityKeyIdentifierExtension, BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
   KeyUsageFlags, KeyUsagesExtension, Name, Pkcs10CertificateRequest, Pkcs10CertificateRequestGenerator,
@@ -71,6 +71,17 @@ export async function createSpsNativeMemberKeyRequest(options) {
         requestPem: encodePem(request.rawData, "CERTIFICATE REQUEST"), privateKeyPem: encodePem(privateBytes, "PRIVATE KEY") });
     } finally { privateBytes.fill(0); }
   } catch { throw failure("native_member_key_generation_failed"); }
+}
+
+// Public, bounded PKCS#10 inspection for the Main signing boundary. No key is
+// generated or returned; renewal uses the already protected original request.
+export async function inspectSpsNativeMemberEnrollmentRequest(input) {
+  try {
+    const parsed = await parseRequest(input);
+    return Object.freeze({ hostId: parsed.value.hostId, deviceKeyId: parsed.value.deviceKeyId,
+      spkiSha256: createHash("sha256").update(publicDer(parsed.publicKey)).digest("hex"),
+      requestSha256: createHash("sha256").update(parsed.value.requestPem).digest("hex") });
+  } catch { throw failure("native_member_request_invalid"); }
 }
 
 export async function publicSpsNativeMemberEnrollmentRequest(input) {

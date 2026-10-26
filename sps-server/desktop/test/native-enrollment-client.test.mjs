@@ -7,7 +7,8 @@ import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate,
   publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
-  createSpsNativeEnrollmentRecoveryClient, createSpsNativeMemberWorkspaceClient } from "../src/native-enrollment-client.mjs";
+  createSpsNativeEnrollmentRecoveryClient, createSpsNativeMemberWorkspaceClient,
+  createSpsNativeMemberRenewalClient } from "../src/native-enrollment-client.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "22222222-2222-4222-8222-222222222222";
@@ -49,7 +50,7 @@ before(async () => {
   keyRequest = await createSpsNativeMemberKeyRequest({ hostId: HOST, deviceKeyId: DEVICE });
   certificate = await issueSpsNativeMemberCertificate({ hostIdentity: host,
     request: await publicSpsNativeMemberEnrollmentRequest(keyRequest), notBefore: now - 1000,
-    notAfter: now + 120_000, now });
+    notAfter: now + 3_600_000, now });
 });
 
 async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}) {
@@ -148,11 +149,48 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
     t.after(() => result.dispose());
     return result;
   }
+  function renewalClient(overrides = {}) {
+    const result = createSpsNativeMemberRenewalClient({ target, context, timeoutMs: 3000,
+      assertCurrent() {}, ...overrides });
+    t.after(() => result.dispose());
+    return result;
+  }
   return { requests, received, issuance, context, code, client, bootstrap, recovery, target,
-    workspaceClient,
+    workspaceClient, renewalClient,
     replaceIdentity(identity) { server.setSecureContext({ key: identity.server.privateKeyPem,
       cert: identity.server.certificatePem, ca: host.memberIssuer.certificatePem }); } };
 }
+
+test("manual renewal uses only saved same-key CSR, current mTLS and the strict certificate validity DTO", async t => {
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const next = await issueSpsNativeMemberCertificate({ hostIdentity: host,
+    request: await publicSpsNativeMemberEnrollmentRequest(keyRequest), notBefore: now - 1000,
+    notAfter: now + 7_200_000, now });
+  const oldLeaf = new X509Certificate(certificate.certificatePem);
+  const newLeaf = new X509Certificate(next.certificatePem);
+  const renewal = { renewalId: "66666666-6666-4666-8666-666666666666", deviceId: "77777777-7777-4777-8777-777777777777",
+    predecessorCertificateSha256: createHash("sha256").update(oldLeaf.raw).digest("hex"),
+    certificate: newLeaf.raw.toString("base64url"),
+    issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url"),
+    certificateNotBefore: new Date(Date.parse(newLeaf.validFrom)).toISOString(),
+    certificateNotAfter: new Date(Date.parse(newLeaf.validTo)).toISOString() };
+  const f = await fixture(t, { respond({ item, send, value }) {
+    send(item.path.endsWith("/renew") ? renewal : value);
+  } });
+  const client = f.renewalClient();
+  await client.exchange(TOKEN);
+  assert.deepEqual(await client.renew({ keyRequest, issuance: f.issuance }), renewal);
+  const request = f.requests.at(-1);
+  assert.equal(request.path, "/sps-native/v1/enrollment/renew");
+  assert.equal(request.cookie, COOKIE);
+  assert.equal(request.authorization, undefined);
+  assert.deepEqual(Object.keys(JSON.parse(request.body)), ["deviceKeyId", "requestPem"]);
+  assert.equal(JSON.parse(request.body).deviceKeyId, DEVICE);
+  assert.equal(JSON.parse(request.body).requestPem, keyRequest.requestPem);
+  assert.equal(request.peer.toString("base64url"), oldLeaf.raw.toString("base64url"));
+  assert.equal(request.authorized, true);
+  assert.equal(Object.keys(renewal).length, 7);
+});
 
 function safe(error) {
   assert.match(error.code, /^native_enrollment_client_/);

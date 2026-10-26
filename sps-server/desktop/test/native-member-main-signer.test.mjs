@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { randomUUID, X509Certificate } from "node:crypto";
 import { before, test } from "node:test";
 import { createSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
-import { createSpsNativeMemberKeyRequest, publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
+import { createSpsNativeMemberKeyRequest, publicSpsNativeMemberEnrollmentRequest,
+  inspectSpsNativeMemberEnrollmentRequest, issueSpsNativeMemberCertificate } from "../src/native-member-certificates.mjs";
 import { validateSpsNativeMemberCredential } from "../src/native-member-credential.mjs";
 import { createSpsNativeMemberMainSigner } from "../src/native-member-main-signer.mjs";
 
@@ -24,6 +25,21 @@ function setup(overrides = {}) {
 const input = details => ({ hostId: details.hostId, serverSpkiSha256: details.serverSpkiSha256,
   issuerSpkiSha256: details.issuerSpkiSha256, deviceKeyId: request.deviceKeyId, requestPem: request.requestPem,
   notBefore: at, notAfter: at + 60_000 });
+
+test("renewal signing checks the registered public key before using the CA", async () => {
+  let calls = 0;
+  const value = setup({ issueCertificate: async options => { calls++; return issueSpsNativeMemberCertificate(options); } });
+  const details = await value.signer.inspect();
+  const original = await inspectSpsNativeMemberEnrollmentRequest(request);
+  const otherKey = await createSpsNativeMemberKeyRequest({ hostId: identity.hostId, deviceKeyId: keyRequest.deviceKeyId });
+  const differentRequest = await publicSpsNativeMemberEnrollmentRequest(otherKey);
+  await assert.rejects(value.signer.sign({ ...input(details), requestPem: differentRequest.requestPem,
+    expectedSpkiSha256: original.spkiSha256 }), { code: "native_signer_unavailable" });
+  assert.equal(calls, 0);
+  const result = await value.signer.sign({ ...input(details), expectedSpkiSha256: original.spkiSha256 });
+  assert.equal(calls, 1);
+  assert.equal(result.requestSha256, original.requestSha256);
+});
 
 test("Main signs only after inspection and returns only the public request-bound certificate", async () => {
   const value = setup();

@@ -1,6 +1,6 @@
 # SPS 구현 로드맵
 
-최종 갱신: 2026-10-25
+최종 갱신: 2026-10-27
 
 ## 현재 우선순위
 
@@ -10,6 +10,15 @@
 다중 실행 경로의 기반·수용 기준은 [다중 백엔드 계획](MULTI-BACKEND-WORKSTATION-PLAN-ko.md)에 보존한다.
 구현 상태와 테스트 증거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
 [Core/Plugin 진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)으로 분리한다.
+
+2026-10-27 현재 Core·Desktop은 Native 등록/복구, 승인된 Workspace 탐색과 격리 창,
+개인 Inbox 상태 변경, 선택적 모델 연결 설정 및 Member의 만료 전 같은 키 갱신을
+연결했다. [Workspace/Inbox 검증](../reviews/NATIVE-INBOX-STATE-2026-10-27.md),
+[모델 설정 검증](../reviews/MODEL-HOST-SETTINGS-2026-10-27.md),
+[Member 갱신 검증](../reviews/NATIVE-MEMBER-RENEWAL-2026-10-27.md)이 각 범위와 한계를 기록한다.
+Native 기본값은 OFF다. Host 서버 인증서 갱신·issuer 회전, 격리된 Plugin 실행 UI,
+Native Source/Node, 실제 AI 실행, 설치/업데이트/복원과 물리 두 PC 및 보안 게이트는 남아 있다.
+아래는 단계별 이전 구현·검증 이력이며, 전체 플랫폼 완성이나 현재 배포 승인을 의미하지 않는다.
 
 최신 local 관리 increment: 준비된 Host의 직접 소유 Core 자식에 Owner 세션 결속
 기기 status/list/events/approve/revoke를 연결하고, 독립 Core Settings에 목록과

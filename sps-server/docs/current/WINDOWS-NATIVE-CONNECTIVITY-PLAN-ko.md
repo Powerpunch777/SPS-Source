@@ -1,6 +1,6 @@
 # SPS Windows 내장 연결 계획
 
-기준일: 2026-10-26 KST. 상태: **Stage 0 완료, Core 2a 진행 중, Desktop 2b 일부 연결; 내장 LAN 미지원**.
+기준일: 2026-10-27 KST. 상태: **Core·Desktop 등록/Workspace/Member 갱신 연결; Native 기본 OFF, 설치본·물리 LAN 검증 미완료**.
 사용자가 전달한 Windows-First Native Connectivity 인계서와 목표 교체 요청을
 반영한다. 이 문서는 네트워크 변경, 설치본 교체, 운영 배포 승인이 아니다.
 
@@ -15,6 +15,15 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 [pairing 저장 계층 검증](../reviews/NATIVE-PAIRING-STORE-VERIFICATION-2026-10-25.md)을 따른다.
 
 ## 현재 체크포인트
+
+2026-10-27 후속 구현은 승인된 Member의 **만료 전 같은 키 인증서 갱신**을 연결한다.
+Core Settings에서 인증서 상세를 조회하고 명시적으로 갱신하면, 현재 로그인 세션과 실제
+mTLS 인증서로 동일한 승인 기기를 확인한다. 기본 90일 인증서의 마지막 30일에만 가능하며
+짧은 인증서는 수명의 1/3로 제한한다. 새 인증서는 별도 이력으로 추가하고 기존 키·초대 등록
+기록·암호화 파일은 보존한다. 응답 유실 시 기존 인증서와 CSR로 같은 결과를 복구할 수 있다.
+원래 초대 TTL이 지났어도 갱신된 인증서로 기존 등록을 조회한다. 철회는 모든 인증서를 막는다.
+Host 서버 인증서 갱신, issuer 회전, 만료 후 재신뢰, 설치본 및 두 PC 검증은 별도 미완료다.
+정확한 범위와 검증은 [Member 인증서 갱신 검토](../reviews/NATIVE-MEMBER-RENEWAL-2026-10-27.md)를 따른다.
 
 후속 [Desktop Main 등록·복구 통합](../reviews/NATIVE-DESKTOP-INTEGRATION-2026-10-26.md)은
 Core Settings의 명시적 초대 등록·기존 등록 조회·중단 저장 복구를 현재 계정과 연결 generation에
@@ -366,9 +375,10 @@ D6 승인(2026-10-25): 초대코드를 받은 사람이 Google/SPS 로그인 후
 기존 키와 검증된 현재 신원을 사용해 갱신한다. 키가 변경·분실되면 명시적 재신뢰/재승인이
 필요하고, 철회된 기기는 갱신하지 않는다. 주기적 재로그인이나 코드를 다시 붙여넣도록 강제하지 않는다.
 
-D7은 운영 기본값과 갱신 원칙의 승인이다. 현재 구현은 명시적 시각을 받는 계산 helper와
-Host 인증서 생성/암호화 보관 및 비활성 Member CSR/발급·recipient 검증·pending capsule primitive다. 실제 갱신 threshold·issuer 회전·
-Member 발급 활성화/enrollment·mTLS ingress는 미완료다. 격리 시험 키만 사용했고 실제 고객 키/listener는 만들지 않았다.
+D7은 운영 기본값과 갱신 원칙의 승인이다. 후속 구현은 현재 세션·기존 키·승인 기기로
+만료 전 Member 인증서를 명시적으로 갱신하며, 마지막 30일(짧은 수명은 1/3)로 제한한다.
+Host 서버 인증서 갱신·issuer 회전·만료 후 신뢰 복구는 미완료다. 격리 시험 키만 사용했고
+실제 고객 키나 운영 listener를 변경하지 않았다.
 D4~D5와 키 회전·최대 TTL·rate limit·보관 기간·listener 배치의 세부 계약은 여전히 검수 대상이다.
 
 **D8 승인(2026-10-26):** 계정별로 검증한 Host 주소와 지문을 보관해 등록 완료 응답이
@@ -384,7 +394,7 @@ D4~D5와 키 회전·최대 TTL·rate limit·보관 기간·listener 배치의 �
 | D2 승인 | PC별 별도 Member mTLS 인증서 + Host 승인 | 사용자/Node/CLI/Source 권한 분리, 재설치/키 분실 시 재승인 | 발급·보관·철회·회전 세부 계약, 기존 키와 용도 분리 |
 | D3 승인 | LAN 기본 off, Host 명시 opt-in, 선택 사설망 + 전용 TLS 포트 | local_trusted bind 확대/자동 방화벽 변경 금지; 배치 세부는 검수 | loopback TLS 시험, 외부 listener/방화벽/두 PC는 별도 동의 |
 | D6 승인 | 코드 받은 verified 사용자·1시간·첫 등록 요청 시 소모·오입력 5회 소진·Host 활성 10개 | 기기 승인·Workspace/실행 권한 별도 | 비활성 Desktop 기본값과 실제 Core 한도 시험; 앱 초대 UI·전송은 후속 |
-| D7 승인 | 서버/Member 인증서 90일, 별도 issuer CA 365일; 승인 기기 기존 키·현재 신원으로 만료 전 갱신 | 키 변경/분실은 명시적 재신뢰·재승인, 철회 기기는 갱신 금지, 주기적 재로그인/코드 재입력 강제 없음 | Host PKI/보관·비활성 Member CSR/발급 및 loopback TLS 시험; 갱신·issuer 회전·발급 활성화/enrollment·mTLS ingress 미완료 |
+| D7 승인 | 서버/Member 인증서 90일, 별도 issuer CA 365일; 승인 기기 기존 키·현재 신원으로 만료 전 갱신 | 키 변경/분실은 명시적 재신뢰·재승인, 철회 기기는 갱신 금지, 주기적 재로그인/코드 재입력 강제 없음 | Member 갱신·보호 저장·기존 등록 조회 연결; Host 서버 인증서 갱신·issuer 회전·만료 후 재신뢰·설치본/두 PC 검증 미완료 |
 | D4 | Tailscale 없는 Host Source 접근 | 제한된 파일 broker vs OS 공유; 경로/링크/충돌/철회 검증과 권한 명시 | 현재 SMB 보존, read/write/rename/delete 요구 정리 |
 | D5 | WAN / 자동 검색 / 운영 모델 | LAN 수용 뒤 기업 TLS endpoint·relay·NAT 대안 비교 | 이번 구현 범위에서 제외 |
 

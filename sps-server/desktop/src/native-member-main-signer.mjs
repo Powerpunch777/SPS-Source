@@ -1,6 +1,6 @@
 import { createHash, X509Certificate } from "node:crypto";
 import { inspectSpsNativeHostIdentity, requireCurrentSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
-import { issueSpsNativeMemberCertificate } from "./native-member-certificates.mjs";
+import { inspectSpsNativeMemberEnrollmentRequest, issueSpsNativeMemberCertificate } from "./native-member-certificates.mjs";
 import { nativeCertificateRecord as record, nativeCertificateUuid as uuid, nativeCertificateDate as date } from "./native-certificate-primitives.mjs";
 
 const unavailable = () => Object.assign(new Error("The Native Host signing channel is unavailable."), { code: "native_signer_unavailable" });
@@ -54,7 +54,8 @@ export function createSpsNativeMemberMainSigner({ getAuthority, authenticateHost
     async sign(input, { signal } = {}) {
       try {
         if (!binding || signal !== undefined && !(signal instanceof AbortSignal)) throw unavailable();
-        const value = record(input, SIGN_FIELDS);
+        const hasExpectedSpki = input && Object.hasOwn(input, "expectedSpkiSha256");
+        const value = record(input, [...SIGN_FIELDS, ...(hasExpectedSpki ? ["expectedSpkiSha256"] : [])]);
         uuid(value.hostId); uuid(value.deviceKeyId); date(value.notBefore); date(value.notAfter);
         if (value.hostId !== binding.publicIdentity.hostId || value.serverSpkiSha256 !== binding.publicIdentity.serverSpkiSha256
           || value.issuerSpkiSha256 !== binding.publicIdentity.issuerSpkiSha256
@@ -62,6 +63,13 @@ export function createSpsNativeMemberMainSigner({ getAuthority, authenticateHost
           || value.notAfter - value.notBefore > 90 * 86_400_000) throw unavailable();
         const expected = binding.authority;
         const { identity } = await readCurrent(expected, signal);
+        if (hasExpectedSpki) {
+          if (typeof value.expectedSpkiSha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.expectedSpkiSha256)) throw unavailable();
+          const request = await inspectSpsNativeMemberEnrollmentRequest({ v: 1, kind: "sps.native.member-enrollment-request",
+            hostId: value.hostId, deviceKeyId: value.deviceKeyId, requestPem: value.requestPem });
+          check(expected, signal);
+          if (request.spkiSha256 !== value.expectedSpkiSha256) throw unavailable();
+        }
         const issued = await issueCertificate({ hostIdentity: identity,
           request: { v: 1, kind: "sps.native.member-enrollment-request", hostId: value.hostId, deviceKeyId: value.deviceKeyId, requestPem: value.requestPem },
           notBefore: value.notBefore, notAfter: value.notAfter, now: now() });

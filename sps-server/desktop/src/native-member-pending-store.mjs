@@ -4,11 +4,13 @@ import { createHash, randomUUID, X509Certificate } from "node:crypto";
 import { nativeCertificateRecord as record } from "./native-certificate-primitives.mjs";
 import { createSpsNativeMemberPendingCapsule, validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
 import { createSpsNativeMemberIssuedCapsule } from "./native-member-issued-capsule.mjs";
+import { createSpsNativeMemberRenewalCapsule, validateSpsNativeMemberRenewalResponse } from "./native-member-renewal-capsule.mjs";
 import { createSpsNativeMemberTargetCapsule, validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
 import { normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
 import { sameNativeMemberFileIdentity } from "./native-member-file-identity.mjs";
 
 const MAX_BYTES = 96 * 1024;
+const RENEWAL_FIELDS = ["renewalId", "deviceId", "predecessorCertificateSha256", "certificate", "issuerCertificate", "certificateNotBefore", "certificateNotAfter"];
 const errors = Object.freeze({
   OPTIONS: "Native Member pending storage options are invalid.",
   FAILED: "Native Member pending storage is unavailable.",
@@ -126,9 +128,19 @@ async function boundedReadExact(file, expected, expectedLinkCount = 2n) {
 
 const TEMPORARY_ALIAS = /^\.pending-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 
-async function findTemporaryAlias(folder, final) {
+async function findTemporaryAlias(folder, final, maxEntries = null) {
   if (final.nlink !== 2n) throw fail("CORRUPT");
-  const names = (await fs.readdir(folder)).filter(name => TEMPORARY_ALIAS.test(name));
+  let allNames;
+  if (maxEntries === null) allNames = await fs.readdir(folder);
+  else {
+    allNames = [];
+    const handle = await fs.opendir(folder);
+    for await (const entry of handle) {
+      allNames.push(entry.name);
+      if (allNames.length > maxEntries) throw fail("CORRUPT");
+    }
+  }
+  const names = allNames.filter(name => TEMPORARY_ALIAS.test(name));
   const matches = [];
   for (const name of names) {
     const file = path.join(folder, name);
@@ -177,6 +189,7 @@ function createStore(options, targetReader, mode = "full") {
   } catch { throw fail("OPTIONS"); }
   const capsule = createSpsNativeMemberPendingCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
   const issuedCapsule = createSpsNativeMemberIssuedCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
+  const renewalCapsule = createSpsNativeMemberRenewalCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
   const targetCapsule = createSpsNativeMemberTargetCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
   const scope = Object.freeze({ identityIssuer: context.identityIssuer, subject: context.subject,
     hostId: context.hostId, deviceKeyId: context.deviceKeyId });
@@ -192,15 +205,22 @@ function createStore(options, targetReader, mode = "full") {
     const native = path.join(root, "native-connectivity");
     if (isWithin(vault, native) || isWithin(native, vault)) throw fail("OPTIONS");
     const nativeRoot = await childDirectory(root, "native-connectivity", create);
-    const folder = nativeRoot && await childDirectory(nativeRoot, "member-pending", create);
-    const suffix = kind === "issued" ? ".issued" : kind === "target" ? ".target" : "";
-    return folder ? { root, folder, kind, file: path.join(folder, `${slot}${suffix}.json`),
-      rootIdentity: await directoryIdentity(root), folderIdentity: await directoryIdentity(folder) } : null;
+    const parentFolder = nativeRoot && await childDirectory(nativeRoot, "member-pending", create);
+    const renewal = typeof kind === "string" && /^renewal:[0-9a-f]{64}$/.test(kind);
+    const renewalDirectory = renewal || kind === "renewals";
+    if (!renewalDirectory && !["pending", "issued", "target"].includes(kind)) throw fail("OPTIONS");
+    const folder = parentFolder && (renewalDirectory ? await childDirectory(parentFolder, `${slot}.renewals`, create) : parentFolder);
+    const suffix = kind === "issued" ? ".issued" : kind === "target" ? ".target" : kind === "renewals" ? ".directory" : "";
+    const filename = renewal ? `${kind.slice(8)}.json` : `${slot}${suffix}.json`;
+    return folder ? { root, folder, parentFolder, kind, file: path.join(folder, filename),
+      rootIdentity: await directoryIdentity(root), parentFolderIdentity: await directoryIdentity(parentFolder),
+      folderIdentity: await directoryIdentity(folder) } : null;
   }
   async function recheck(expected) {
     const current = await paths(false, expected.kind);
-    if (!current || current.root !== expected.root || current.folder !== expected.folder || current.file !== expected.file
+    if (!current || current.root !== expected.root || current.folder !== expected.folder || current.parentFolder !== expected.parentFolder || current.file !== expected.file
       || !sameDirectory(current.rootIdentity, expected.rootIdentity)
+      || !sameDirectory(current.parentFolderIdentity, expected.parentFolderIdentity)
       || !sameDirectory(current.folderIdentity, expected.folderIdentity)) throw fail("FAILED");
   }
   async function cleanupTemporary(temporary, owned, expected) {
@@ -258,6 +278,81 @@ function createStore(options, targetReader, mode = "full") {
       if (Date.parse(certificate.validFrom) > now || Date.parse(certificate.validTo) <= now) throw fail("CORRUPT");
     }
     return value;
+  }
+  const certificateHash = pem => createHash("sha256").update(new X509Certificate(pem).raw).digest("hex");
+  const sameRenewalResponse = (a, b) => RENEWAL_FIELDS.every(field => a?.[field] === b?.[field]);
+  const publicKeyBytes = value => (value instanceof X509Certificate ? value : new X509Certificate(value)).publicKey.export({ type: "spki", format: "der" });
+  async function boundedDirectoryNames(folder, maxEntries = 256) {
+    const names = [], directoryHandle = await fs.opendir(folder);
+    for await (const entry of directoryHandle) {
+      names.push(entry.name);
+      if (names.length > maxEntries) throw fail("CORRUPT");
+    }
+    return names;
+  }
+  async function readRenewal(target, pending) {
+    const stat = target && await slotStat(target.file);
+    if (!target || !stat || !pending) return null;
+    const raw = await boundedRead(target.file, stat);
+    const value = await renewalCapsule.openHistorical(raw, context, pending.key);
+    await recheck(target); await recheckPending(pending);
+    if (!sameFile(stat, await slotStat(target.file)) || await boundedRead(target.file, stat) !== raw) throw fail("CORRUPT");
+    return Object.freeze({ stat, raw, value });
+  }
+  async function readIssuedChain({ allowExpired = false } = {}) {
+    const target = await paths(false, "issued");
+    if (!target) return null;
+    const stat = await slotStat(target.file);
+    if (!stat) { await recheck(target); return null; }
+    const pending = await readPending();
+    if (!pending) throw fail("CORRUPT");
+    const baseRaw = await boundedRead(target.file, stat);
+    const base = await issuedCapsule.openHistorical(baseRaw, context, pending.key);
+    await recheck(target); await recheckPending(pending);
+    if (!sameFile(stat, await slotStat(target.file))) throw fail("CORRUPT");
+    const renewalDirectory = await paths(false, "renewals");
+    const names = renewalDirectory ? await boundedDirectoryNames(renewalDirectory.folder, 257) : [];
+    const entries = names.filter(name => /^[0-9a-f]{64}\.json$/.test(name));
+    if (entries.length > 256 || names.some(name => !/^[0-9a-f]{64}\.json$/.test(name) && !TEMPORARY_ALIAS.test(name))) throw fail("CORRUPT");
+    let issuance = base.issuance, credential = base.credential, latestHistorical = base, deviceId = null, latestRaw = null;
+    const visited = new Set(), linked = new Set();
+    let generations = 0;
+    while (true) {
+      const predecessor = certificateHash(credential.certificatePem);
+      if (visited.has(predecessor)) throw fail("CORRUPT");
+      visited.add(predecessor);
+      const name = `${predecessor}.json`;
+      if (!entries.includes(name)) break;
+      if (++generations > 256) throw fail("CORRUPT");
+      const file = path.join(renewalDirectory.folder, name), childStat = await slotStat(file);
+      if (!childStat) throw fail("CORRUPT");
+      const childRaw = await boundedRead(file, childStat);
+      const child = await renewalCapsule.openHistorical(childRaw, context, pending.key);
+      const leaf = new X509Certificate(child.credential.certificatePem);
+      const oldLeaf = new X509Certificate(credential.certificatePem);
+      if (child.response.predecessorCertificateSha256 !== predecessor
+        || (deviceId !== null && child.response.deviceId !== deviceId)
+        || child.credential.issuerCertificatePem !== base.credential.issuerCertificatePem
+        || !publicKeyBytes(leaf).equals(publicKeyBytes(base.credential.certificatePem))
+        || certificateHash(child.credential.certificatePem) === predecessor
+        || Date.parse(leaf.validTo) <= Date.parse(oldLeaf.validTo)) throw fail("CORRUPT");
+      deviceId ??= child.response.deviceId;
+      await recheck(renewalDirectory);
+      if (!sameFile(childStat, await slotStat(file)) || await boundedRead(file, childStat) !== childRaw) throw fail("CORRUPT");
+      linked.add(name); latestRaw = childRaw;
+      latestHistorical = child;
+      issuance = Object.freeze({ ...issuance, certificate: child.issuance.certificate, issuerCertificate: child.issuance.issuerCertificate });
+      credential = child.credential;
+    }
+    if (linked.size !== entries.length) throw fail("CORRUPT");
+    const latest = allowExpired ? latestHistorical : latestRaw
+      ? await renewalCapsule.open(latestRaw, context, pending.key)
+      : await issuedCapsule.open(baseRaw, context, pending.key);
+    const result = Object.freeze({ issuance, credential: latest.credential });
+    if (!allowExpired) requireCurrentIssued(result);
+    await recheckPending(pending); await recheck(target);
+    if (renewalDirectory) await recheck(renewalDirectory);
+    return Object.freeze({ ...result, deviceId });
   }
   async function readTargetMetadata() {
     const target = await paths(false, "target");
@@ -324,7 +419,7 @@ function createStore(options, targetReader, mode = "full") {
     await recheck(expected.target);
   }
   async function recoverPublication(kind, authorize) {
-    if (!['pending', 'issued', 'target'].includes(kind)) throw fail("OPTIONS");
+    if (!['pending', 'issued', 'target'].includes(kind) && !(typeof kind === "string" && /^renewal:[0-9a-f]{64}$/.test(kind))) throw fail("OPTIONS");
     const target = await paths(false, kind);
     if (!target) return false;
     let final;
@@ -335,7 +430,7 @@ function createStore(options, targetReader, mode = "full") {
     if (final.nlink !== 2n) throw fail("CORRUPT");
 
     // The link count proves there is exactly one other directory entry for this inode.
-    const alias = await findTemporaryAlias(target.folder, final);
+    const alias = await findTemporaryAlias(target.folder, final, kind.startsWith("renewal:") ? 257 : null);
     await recheck(target);
     let raw = await boundedReadExact(target.file, final);
 
@@ -349,9 +444,13 @@ function createStore(options, targetReader, mode = "full") {
       else if (kind === "issued") {
         requireCurrentIssued(await issuedCapsule.open(raw, context, pending.key));
         await recheckPending(pending);
-      } else {
+      } else if (kind === "target") {
         const opened = await targetCapsule.open(raw, scope);
         validateSpsNativeMemberHostTarget(opened, context);
+        await recheckPending(pending);
+      } else {
+        const opened = await renewalCapsule.openHistorical(raw, context, pending.key);
+        if (opened.response.predecessorCertificateSha256 !== kind.slice(8)) throw fail("CORRUPT");
         await recheckPending(pending);
       }
     } catch { throw fail("CORRUPT"); }
@@ -391,6 +490,10 @@ function createStore(options, targetReader, mode = "full") {
       finally { await handle.close(); }
       authorize();
       await recheck(target);
+      if (kind.startsWith("renewal:")) {
+        const current = await readIssuedChain();
+        if (!current || certificateHash(current.credential.certificatePem) !== kind.slice(8)) throw fail("CORRUPT");
+      }
       const stat = await fs.lstat(temporary);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !sameFile(stat, owned)) throw fail("FAILED");
       if (await slotStat(target.file, false)) throw fail("ALREADY_EXISTS");
@@ -450,6 +553,22 @@ function createStore(options, targetReader, mode = "full") {
           for (const kind of ["pending", "issued", "target"]) {
             if (await fullStore.recoverInterruptedPublication(kind, { beforeCommit: authorize })) recovered.push(kind);
           }
+          const renewalPath = await paths(false, "renewals");
+          let recoveredRenewal = false;
+          if (renewalPath) {
+            const names = await boundedDirectoryNames(renewalPath.folder, 257);
+            const renewalNames = names.filter(name => /^[0-9a-f]{64}\.json$/.test(name));
+            if (renewalNames.length > 256 || names.some(name => !/^[0-9a-f]{64}\.json$/.test(name) && !TEMPORARY_ALIAS.test(name))) throw fail("CORRUPT");
+            for (const name of renewalNames) {
+              const hash = name.slice(0, 64), file = path.join(renewalPath.folder, name);
+              const stat = await slotStat(file, false);
+              if (stat?.nlink === 2 && await fullStore.recoverInterruptedPublication(`renewal:${hash}`, { beforeCommit: authorize })) {
+                recoveredRenewal = true;
+              }
+            }
+            await recheck(renewalPath);
+          }
+          if (recoveredRenewal) recovered.push("renewal");
           return Object.freeze({ recovered: Object.freeze(recovered) });
         } catch (error) { throw fail(internalFailures.get(error) ?? "FAILED"); }
       });
@@ -493,17 +612,24 @@ function createStore(options, targetReader, mode = "full") {
     readIssued() {
       return serialize(async () => {
         try {
-          const target = await paths(false, "issued");
-          if (!target) return null;
-          const stat = await slotStat(target.file);
-          if (!stat) { await recheck(target); return null; }
-          const pending = await readPending();
-          if (!pending) throw fail("CORRUPT");
-          const result = await issuedCapsule.open(await boundedRead(target.file, stat), context, pending.key);
-          await recheck(target);
-          await recheckPending(pending);
-          if (!sameFile(stat, await slotStat(target.file))) throw fail("CORRUPT");
-          return requireCurrentIssued(result);
+          const value = await readIssuedChain();
+          return value && Object.freeze({ issuance: value.issuance, credential: value.credential });
+        }
+        catch { throw fail("CORRUPT"); }
+      });
+    },
+    inspectIssued() {
+      return serialize(async () => {
+        try {
+          const value = await readIssuedChain({ allowExpired: true });
+          if (!value) return null;
+          const leaf = new X509Certificate(value.credential.certificatePem);
+          const issuer = new X509Certificate(value.credential.issuerCertificatePem);
+          const now = Date.now();
+          const current = Date.parse(leaf.validFrom) <= now && Date.parse(leaf.validTo) > now
+            && Date.parse(issuer.validFrom) <= now && Date.parse(issuer.validTo) > now;
+          return Object.freeze({ state: current ? "current" : "expired",
+            certificateNotBefore: new Date(leaf.validFrom).toISOString(), certificateNotAfter: new Date(leaf.validTo).toISOString() });
         } catch { throw fail("CORRUPT"); }
       });
     },
@@ -516,6 +642,80 @@ function createStore(options, targetReader, mode = "full") {
         const validated = await issuedCapsule.open(encrypted, context, pending.key);
         return { encrypted, validated, pending };
       }, authorize));
+    },
+    publishRenewal(response, input = {}) {
+      let checkedResponse;
+      try { checkedResponse = validateSpsNativeMemberRenewalResponse(response); }
+      catch { throw fail("CORRUPT"); }
+      const authorize = commitGuard(input);
+      return serialize(async () => {
+        try {
+          const current = await readIssuedChain();
+          if (!current) throw fail("CORRUPT");
+          const predecessor = certificateHash(current.credential.certificatePem);
+          if (current.deviceId !== null && checkedResponse.deviceId !== current.deviceId) throw fail("CORRUPT");
+          if (checkedResponse.predecessorCertificateSha256 !== predecessor) {
+            const existingKind = `renewal:${checkedResponse.predecessorCertificateSha256}`;
+            if (existingKind) {
+              const existingPath = await paths(false, existingKind), existingStat = existingPath && await slotStat(existingPath.file);
+              const pending = await readPending();
+              if (existingStat && pending) {
+                const saved = await readRenewal(existingPath, pending);
+                if (saved && sameRenewalResponse(saved.value.response, checkedResponse)) {
+                  authorize();
+                  await recheck(existingPath); await recheckPending(pending);
+                  if (!sameFile(saved.stat, await slotStat(existingPath.file)) || await boundedRead(existingPath.file, saved.stat) !== saved.raw) throw fail("CORRUPT");
+                  const value = await readIssuedChain();
+                  return Object.freeze({ issuance: value.issuance, credential: value.credential });
+                }
+              }
+            }
+            throw fail("CORRUPT");
+          }
+          const kind = `renewal:${predecessor}`;
+          const target = await paths(false, kind);
+          const existing = target && await slotStat(target.file);
+          if (existing) {
+            const pending = await readPending();
+            if (!pending) throw fail("CORRUPT");
+            const saved = await readRenewal(target, pending);
+            if (!saved || !sameRenewalResponse(saved.value.response, checkedResponse)) throw fail("ALREADY_EXISTS");
+            authorize();
+            await recheck(target);
+            await recheckPending(pending);
+            if (!sameFile(saved.stat, await slotStat(target.file)) || await boundedRead(target.file, saved.stat) !== saved.raw) throw fail("CORRUPT");
+            const value = await readIssuedChain();
+            return Object.freeze({ issuance: value.issuance, credential: value.credential });
+          }
+          try {
+            await createOnly(kind, async () => {
+              const pending = await readPending();
+              if (!pending) throw fail("CORRUPT");
+              const latest = await readIssuedChain();
+              if (!latest || certificateHash(latest.credential.certificatePem) !== predecessor) throw fail("CORRUPT");
+              const encrypted = await renewalCapsule.seal({ context, keyRequest: pending.key, baseIssuance: latest.issuance, response: checkedResponse });
+              const validated = await renewalCapsule.open(encrypted, context, pending.key);
+              if (Date.parse(new X509Certificate(validated.credential.certificatePem).validTo)
+                <= Date.parse(new X509Certificate(latest.credential.certificatePem).validTo)
+                || validated.credential.issuerCertificatePem !== latest.credential.issuerCertificatePem) throw fail("CORRUPT");
+              return { encrypted, validated, pending };
+            }, authorize);
+          } catch (error) {
+            if (internalFailures.get(error) !== "ALREADY_EXISTS") throw error;
+            const committedPath = await paths(false, kind);
+            const pending = await readPending();
+            const saved = await readRenewal(committedPath, pending);
+            if (!saved || !sameRenewalResponse(saved.value.response, checkedResponse)) throw error;
+            authorize(); await recheck(committedPath); await recheckPending(pending);
+            if (!sameFile(saved.stat, await slotStat(committedPath.file)) || await boundedRead(committedPath.file, saved.stat) !== saved.raw) throw fail("CORRUPT");
+          }
+          const value = await readIssuedChain();
+          return Object.freeze({ issuance: value.issuance, credential: value.credential });
+        } catch (error) {
+          if (internalFailures.has(error)) throw fail(internalFailures.get(error));
+          throw fail("CORRUPT");
+        }
+      });
     },
     readTarget() {
       return serialize(async () => {

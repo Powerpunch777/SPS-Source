@@ -386,10 +386,10 @@ function renderNativeDevices(value) {
     state.textContent = `${nativeDeviceStatuses.get(device.status)} · Revision ${device.revision}`;
     const fingerprint = document.createElement("p");
     fingerprint.className = "help-text";
-    fingerprint.textContent = `Certificate SHA-256: ${device.certificateSha256}`;
+    fingerprint.textContent = `Initial certificate SHA-256: ${device.certificateSha256}`;
     const expiry = document.createElement("p");
     expiry.className = "help-text";
-    expiry.textContent = `Certificate expires: ${device.certificateNotAfter}`;
+    expiry.textContent = `Initial certificate expires: ${device.certificateNotAfter}`;
     details.append(title, state, fingerprint, expiry);
     row.append(details);
 
@@ -748,6 +748,18 @@ async function loadNativeRegistrations() {
       repair.textContent = "Recover saved credentials";
       repair.addEventListener("click", () => void repairNativeRegistration(hostId));
       nativeRegistrationButtons.push(repair);
+      const certificate = document.createElement("button");
+      certificate.className = "button secondary";
+      certificate.type = "button";
+      certificate.textContent = "Certificate details";
+      certificate.addEventListener("click", () => void inspectNativeMemberCertificate(hostId));
+      nativeRegistrationButtons.push(certificate);
+      const renew = document.createElement("button");
+      renew.className = "button secondary";
+      renew.type = "button";
+      renew.textContent = "Renew certificate";
+      renew.addEventListener("click", () => void renewNativeMemberCertificate(hostId));
+      nativeRegistrationButtons.push(renew);
       const showWorkspaces = document.createElement("button");
       showWorkspaces.className = "button secondary";
       showWorkspaces.type = "button";
@@ -756,7 +768,7 @@ async function loadNativeRegistrations() {
       nativeRegistrationButtons.push(showWorkspaces);
       const actions = document.createElement("div");
       actions.className = "native-registration-actions";
-      actions.append(button, repair, showWorkspaces);
+      actions.append(button, repair, certificate, renew, showWorkspaces);
       const workspaceResults = document.createElement("div");
       workspaceResults.className = "native-workspace-results";
       workspaceResults.setAttribute("role", "status");
@@ -858,6 +870,55 @@ async function checkNativeRegistration(hostId) {
   finally { pending.delete("native-member"); syncControls(); }
 }
 
+async function inspectNativeMemberCertificate(hostId) {
+  if (pending.size || statusLoading || quitPending || currentStatus?.canManageNativeMember !== true) return;
+  const request = ++nativeRegistrationRequest;
+  const key = `native-member-certificate:${request}`;
+  pending.add(key);
+  syncControls();
+  try {
+    const value = exactDataRecord(await window.spsCoreSettings.inspectNativeMemberCertificate({ hostId }),
+      ["hostId", "state", "certificateNotBefore", "certificateNotAfter", "renewalAvailableAt"]);
+    if (request !== nativeRegistrationRequest) return;
+    if (!value || value.hostId !== hostId || !["current", "expired"].includes(value.state)
+      || ["certificateNotBefore", "certificateNotAfter"].some(field => typeof value[field] !== "string"
+        || value[field].length !== 24 || !Number.isFinite(Date.parse(value[field]))
+        || new Date(value[field]).toISOString() !== value[field])
+      || (value.state === "expired" ? value.renewalAvailableAt !== null : typeof value.renewalAvailableAt !== "string"
+        || value.renewalAvailableAt.length !== 24 || !Number.isFinite(Date.parse(value.renewalAvailableAt))
+        || new Date(value.renewalAvailableAt).toISOString() !== value.renewalAvailableAt)) throw new Error("Invalid certificate information");
+    byId("native-member-result").textContent = value.state === "expired"
+      ? `Host ${hostId}: device certificate expired ${value.certificateNotAfter}. It cannot be renewed using expired credentials. Existing keys were kept.`
+      : `Host ${hostId}: device certificate expires ${value.certificateNotAfter}. Renewal window opens ${value.renewalAvailableAt}. The Host checks device approval when renewing.`;
+  } catch {
+    if (request === nativeRegistrationRequest) byId("native-member-result").textContent = "Certificate information could not be loaded. Existing credentials were kept.";
+  } finally { pending.delete(key); syncControls(); }
+}
+
+async function renewNativeMemberCertificate(hostId) {
+  if (pending.size || statusLoading || quitPending || currentStatus?.canManageNativeMember !== true) return;
+  const request = ++nativeRegistrationRequest;
+  const key = `native-member-renewal:${request}`;
+  pending.add(key);
+  syncControls();
+  try {
+    const response = await window.spsCoreSettings.renewNativeMemberCertificate({ hostId });
+    if (request !== nativeRegistrationRequest) return;
+    if (exactDataRecord(response, ["cancelled"])?.cancelled === true) {
+      byId("native-member-result").textContent = "Certificate renewal cancelled.";
+      return;
+    }
+    const value = exactDataRecord(response, ["hostId", "deviceId", "status", "certificateNotAfter"]);
+    if (!value || value.hostId !== hostId || typeof value.deviceId !== "string" || !nativeDeviceIdPattern.test(value.deviceId)
+      || value.status !== "approved" || typeof value.certificateNotAfter !== "string" || value.certificateNotAfter.length !== 24
+      || !Number.isFinite(Date.parse(value.certificateNotAfter)) || new Date(value.certificateNotAfter).toISOString() !== value.certificateNotAfter
+      || Date.parse(value.certificateNotAfter) <= Date.now()) throw new Error("Invalid renewal result");
+    byId("native-member-result").textContent = `Host ${hostId}: device certificate renewed until ${value.certificateNotAfter}. The original device key and trust were kept.`;
+  } catch {
+    if (request === nativeRegistrationRequest) byId("native-member-result").textContent = "Certificate renewal could not complete. Check certificate details and the Host connection. Existing credentials were kept; registration was not repeated.";
+  } finally { pending.delete(key); syncControls(); }
+}
+
 async function repairNativeRegistration(hostId) {
   if (pending.size || statusLoading || quitPending || currentStatus?.canManageNativeMember !== true) return;
   pending.add("native-member");
@@ -866,8 +927,8 @@ async function repairNativeRegistration(hostId) {
     const value = await window.spsCoreSettings.repairNativeMemberStorage({ hostId });
     if (value?.cancelled === true) { byId("native-member-result").textContent = "Local recovery cancelled."; return; }
     const result = exactDataRecord(value, ["hostId", "recovered"]);
-    if (!result || result.hostId !== hostId || !Array.isArray(result.recovered) || result.recovered.length > 3
-      || result.recovered.some(kind => !["pending", "issued", "target"].includes(kind))) throw new Error("Invalid recovery response");
+    if (!result || result.hostId !== hostId || !Array.isArray(result.recovered) || result.recovered.length > 4
+      || result.recovered.some(kind => !["pending", "issued", "target", "renewal"].includes(kind))) throw new Error("Invalid recovery response");
     byId("native-member-result").textContent = result.recovered.length
       ? "Local recovery completed using the original credentials. Check registration to contact the Host."
       : "No interrupted credential write was found. Existing credentials were kept.";

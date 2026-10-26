@@ -1,6 +1,6 @@
 # RFC: Windows LAN trusted connectivity v0
 
-작성일: 2026-10-25. 상태: **D1~D3·D7 정책 승인 / 좁은 Host 인증서 준비 연결 / Native LAN OFF**.
+작성일: 2026-10-25, 상태 갱신: 2026-10-27. **D1~D3·D7 정책 승인 / 등록·Workspace·Member 갱신 소스 연결 / Native 기본 OFF, 제품 검증 진행 중**.
 [계획과 결정 목록](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 Stage 0 산출물이다.
 개념 이름 전체가 현재 export·endpoint를 뜻하지 않는다. 일부 Core 기기 관리 계약은
 소스 기반으로 구현됐고, 신뢰된 Host 전용 Core Settings의 명시 확인 인증서 준비 경로만 연결됐다.
@@ -124,8 +124,10 @@ TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은
 해제는 대안이 아니다.
 
 D7은 서버/Member 인증서 90일, 별도 issuer 365일 및 만료 전 기존 키·검증된 현재 신원을
-사용하는 갱신 정책의 승인이다. 갱신 threshold/issuer 회전 세부는 미정이고, 갱신 자체는
-미구현이다. Core Settings source E2E 7개 모드는 로컬 Electron 43.7.7에서 통과했으나 잠긴 43.8.3의
+사용하는 갱신 정책의 승인이다. 2026-10-27 후속 구현은 Member의 명시적 같은 키 갱신을
+마지막 30일(짧은 수명은 1/3)에 연결했다. Host 서버 인증서 갱신과 issuer 회전, 만료 후 재신뢰는
+미완료다. [갱신 검토](../reviews/NATIVE-MEMBER-RENEWAL-2026-10-27.md)가 현재 범위를 기록한다.
+아래는 이전 검증 이력이다. Core Settings source E2E 7개 모드는 로컬 Electron 43.7.7에서 통과했으나 잠긴 43.8.3의
 로컬 DPAPI 검증은 아니다. exact Source HEAD `425000cb1c44bf583d9d655632057440c06f90f7`의
 기존 `Verify SPS` run `40181306002`와 `40181309808`은 각각 18개 job 중 16개 성공, 2개 실패했다.
 두 run 모두 9개 Linux test shard와 full Linux typecheck/build가 통과했다. Windows job의 Native step 10,

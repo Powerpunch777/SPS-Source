@@ -180,9 +180,12 @@ export function createCoreSettingsController({
   openNativeMemberWorkspace,
   enrollNativeMember,
   recoverNativeMember,
+  inspectNativeMemberCertificate,
+  renewNativeMemberCertificate,
   repairNativeMemberStorage,
   confirmNativeMember,
   confirmNativeMemberRepair,
+  confirmNativeMemberRenewal,
   startNativeHostListener,
   stopNativeHostListener,
   confirmNativeHostListener,
@@ -404,6 +407,40 @@ export function createCoreSettingsController({
       const result = await awaitAndAssertSender(event, () => recoverNativeMember(validated, { assertRequester: () => assertSender(event) }));
       return memberObservation(result, validated.hostId);
     }, { writes: true, input: true, authorizeBeforeAction: false });
+    bind("inspect-native-member-certificate", async (input, event) => {
+      const selected = requireSpsNativeMemberRecoveryInput(input);
+      if (typeof inspectNativeMemberCertificate !== "function") throw new Error("Native certificate information is unavailable.");
+      const result = await awaitAndAssertSender(event, () => inspectNativeMemberCertificate(selected,
+        { assertRequester: () => assertSender(event) }));
+      const value = exactDataRecord(result, ["hostId", "state", "certificateNotBefore", "certificateNotAfter", "renewalAvailableAt"]);
+      if (!value || value.hostId !== selected.hostId || !["current", "expired"].includes(value.state)
+        || ["certificateNotBefore", "certificateNotAfter"].some(key => typeof value[key] !== "string"
+          || value[key].length !== 24 || !Number.isFinite(Date.parse(value[key])) || new Date(value[key]).toISOString() !== value[key])
+        || Date.parse(value.certificateNotAfter) <= Date.parse(value.certificateNotBefore)
+        || (value.state === "expired" ? value.renewalAvailableAt !== null
+          : typeof value.renewalAvailableAt !== "string" || value.renewalAvailableAt.length !== 24
+            || !Number.isFinite(Date.parse(value.renewalAvailableAt))
+            || new Date(value.renewalAvailableAt).toISOString() !== value.renewalAvailableAt
+            || Date.parse(value.renewalAvailableAt) < Date.parse(value.certificateNotBefore)
+            || Date.parse(value.renewalAvailableAt) >= Date.parse(value.certificateNotAfter))) throw new Error("Native certificate information is unavailable.");
+      return Object.freeze(value);
+    }, { input: true, authorizeBeforeAction: false });
+    bind("renew-native-member-certificate", async (input, event) => {
+      const selected = requireSpsNativeMemberRecoveryInput(input);
+      if (typeof renewNativeMemberCertificate !== "function" || typeof confirmNativeMemberRenewal !== "function") throw new Error("Native certificate renewal is unavailable.");
+      const result = await awaitAndAssertSender(event, () => renewNativeMemberCertificate(selected, {
+        assertRequester: () => assertSender(event),
+        confirm: target => awaitAndAssertSender(event, () => confirmNativeMemberRenewal(window, target)),
+      }));
+      if (exactDataRecord(result, ["cancelled"])?.cancelled === true) return Object.freeze({ cancelled: true });
+      const value = exactDataRecord(result, ["hostId", "deviceId", "status", "certificateNotAfter"]);
+      if (!value || value.hostId !== selected.hostId || typeof value.deviceId !== "string" || !NATIVE_DEVICE_ID.test(value.deviceId) || value.status !== "approved"
+        || typeof value.certificateNotAfter !== "string" || value.certificateNotAfter.length !== 24
+        || !Number.isFinite(Date.parse(value.certificateNotAfter))
+        || new Date(value.certificateNotAfter).toISOString() !== value.certificateNotAfter
+        || Date.parse(value.certificateNotAfter) <= Date.now()) throw new Error("Native certificate renewal is unavailable.");
+      return Object.freeze(value);
+    }, { writes: true, input: true, authorizeBeforeAction: false });
     bind("repair-native-member-storage", async (input, event) => {
       const validated = requireSpsNativeMemberRecoveryInput(input);
       if (typeof repairNativeMemberStorage !== "function" || typeof confirmNativeMemberRepair !== "function") throw new Error("Native Member recovery is unavailable.");
@@ -413,9 +450,9 @@ export function createCoreSettingsController({
       }));
       if (exactDataRecord(result, ["cancelled"])?.cancelled === true) return Object.freeze({ cancelled: true });
       const value = exactDataRecord(result, ["hostId", "recovered"]);
-      if (!value || value.hostId !== validated.hostId || !Array.isArray(value.recovered) || value.recovered.length > 3
+      if (!value || value.hostId !== validated.hostId || !Array.isArray(value.recovered) || value.recovered.length > 4
         || new Set(value.recovered).size !== value.recovered.length
-        || value.recovered.some(kind => !["pending", "issued", "target"].includes(kind))) throw new Error("Native Member local recovery is unavailable.");
+        || value.recovered.some(kind => !["pending", "issued", "target", "renewal"].includes(kind))) throw new Error("Native Member local recovery is unavailable.");
       return Object.freeze({ hostId: value.hostId, recovered: Object.freeze([...value.recovered]) });
     }, { writes: true, input: true, authorizeBeforeAction: false });
     bindNativeDeviceAction("approve-native-device", "approve", approveNativeDevice);

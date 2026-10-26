@@ -75,6 +75,21 @@ test("Workspace discovery accepts only bounded public ID/name rows and never coo
   expectInvalid("workspaces", envelope);
 });
 
+test("renewal response accepts only the exact public certificate DTO and canonical dates", () => {
+  const value = { renewalId: ENROLLMENT_ID, deviceId: DEVICE_ID, predecessorCertificateSha256: "c".repeat(64),
+    certificate: "AQID", issuerCertificate: "BAUG", certificateNotBefore: "2026-10-27T00:00:00.000Z",
+    certificateNotAfter: "2027-01-25T00:00:00.000Z" };
+  assert.deepEqual(parseSpsNativeEnrollmentResponse("renewal", response("renewal", value)), value);
+  for (const bad of [
+    { ...value, expiresAt: value.certificateNotAfter },
+    { ...value, predecessorCertificateSha256: "C".repeat(64) },
+    { ...value, certificateNotAfter: "2027-01-25T00:00:00Z" },
+    { ...value, certificateNotAfter: value.certificateNotBefore },
+    { ...value, certificate: "AQID=" },
+  ]) expectInvalid("renewal", response("renewal", bad));
+  expectInvalid("renewal", response("renewal", value, { statusCode: 201 }));
+});
+
 test("Workspace bootstrap accepts only the exact bounded, least-privilege DTO", () => {
   const bootstrap = {
     v: 1,
