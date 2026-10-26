@@ -44,7 +44,7 @@ try {
   }
   assert.deepEqual(result, {
     ok: true, views: ["workspace", "dashboard", "inbox"], actualElectron: true,
-    fixtureBackend: true, ownerBridge: false, serviceWorkers: 0,
+    fixtureBackend: true, actualDpapi: false, ownerBridge: false, serviceWorkers: 0,
   });
   console.log("Native Workspace actual Electron/bundled SPA/launch-cookie/preload/IPC smoke passed with fixture backend and natural Main closure. Not LAN, real Identity, DPAPI or installed-product qualification.");
 } finally {

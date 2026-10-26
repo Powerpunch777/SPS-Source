@@ -151,6 +151,26 @@ test("simultaneous surfaces queue and identical reads coalesce instead of failin
   assert.deepEqual(reads, ["shell", "dashboard"]);
 });
 
+test("Inbox writes use retained Workspace scope and fresh capability without coalescing mutations", async () => {
+  const calls = [];
+  const f = fixture({ getBootstrap: async () => ({ ...bootstrap,
+    capabilities: [...bootstrap.capabilities, "workspace.inbox.state.write"] }),
+  updateInboxState: async (input, options) => {
+    options.assertRequester(); calls.push(input); return { readAt: "2026-10-27T00:00:00.000Z", archivedAt: null };
+  } });
+  await f.controller.open(scope);
+  const input = { itemId: hostId, read: true };
+  await f.invoke("inbox-state", [input]);
+  assert.deepEqual(calls, [{ ...scope, state: input }]);
+  await assert.rejects(f.invoke("inbox-state", [{ ...input, workspaceId: hostId }]));
+  assert.equal(calls.length, 1);
+  await f.controller.dispose();
+  const viewer = fixture({ updateInboxState: async () => { throw new Error("Should never be reached"); } });
+  await viewer.controller.open(scope);
+  await assert.rejects(viewer.invoke("inbox-state", [input]));
+  await viewer.controller.dispose();
+});
+
 test("account invalidation withholds late data and closes all retained windows", async () => {
   let release;
   const f = fixture({ readSurface: () => new Promise(resolve => { release = resolve; }) });
@@ -191,6 +211,8 @@ test("Native preload accepts no selectors, secrets, getters or extra arguments",
   await assert.rejects(api.readSurface({ surface: "shell", hostId }));
   await assert.rejects(api.readSurface({ surface: "shell" }, undefined));
   await assert.rejects(api.getBootstrap(undefined));
+  await assert.rejects(api.updateInboxState({ itemId: hostId, read: true, hostId }));
+  await assert.rejects(api.updateInboxState({ itemId: hostId }));
   assert.equal(getter, false);
   assert.equal(calls.length, 0);
   await api.getBootstrap();
@@ -198,4 +220,6 @@ test("Native preload accepts no selectors, secrets, getters or extra arguments",
   assert.equal(calls[0][0], "desktop:native-workspace-bootstrap");
   assert.equal(calls[1][0], "desktop:native-workspace-read");
   assert.deepEqual(JSON.parse(JSON.stringify(calls[1][1])), { surface: "inbox", archived: true });
+  await api.updateInboxState({ itemId: hostId, read: false });
+  assert.equal(calls[2][0], "desktop:native-workspace-inbox-state");
 });

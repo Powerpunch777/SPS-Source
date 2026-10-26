@@ -8,7 +8,8 @@ import { nativeCertificateRecord as record, nativeCertificateUuid as uuid, encod
 import { validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
 import { publicSpsNativeMemberEnrollmentRequest } from "./native-member-certificates.mjs";
 import { validateSpsNativeMemberCredential } from "./native-member-credential.mjs";
-import { parseSpsNativeEnrollmentResponse, parseSpsNativeWorkspaceSurfaceResponse } from "./native-enrollment-response.mjs";
+import { parseSpsNativeEnrollmentResponse, parseSpsNativeWorkspaceSurfaceResponse,
+  parseSpsNativeInboxStateResponse, validateSpsNativeInboxStateInput } from "./native-enrollment-response.mjs";
 import { validateSpsNativeMemberIssuerCertificate } from "./native-identity-certificates.mjs";
 import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
 
@@ -169,12 +170,13 @@ function createClient(input, mode) {
     finally { busy = false; }
   }
 
-  function post(operation, bytes, auth, credential, { guard, signal, deadline, workspaceId, surface, archived }) {
+  function post(operation, bytes, auth, credential, { guard, signal, deadline, workspaceId, surface, archived, itemId }) {
     guard();
     if (!Buffer.isBuffer(bytes) || bytes.length > 8192) throw failure("invalid_options");
     const path = operation === "workspaceBootstrap"
       ? `${PATHS.workspaceBootstrap}/${workspaceId}/workspace-bootstrap`
-      : operation === "workspaceSurface" ? workspaceSurfacePath(workspaceId, surface, archived) : PATHS[operation];
+      : operation === "workspaceSurface" ? workspaceSurfacePath(workspaceId, surface, archived)
+        : operation === "inboxState" ? `/api/companies/${workspaceId}/workspace-inbox/${itemId}` : PATHS[operation];
     return new Promise((resolve, reject) => {
       let request, socket, timer, outcome, finished = false;
       const onAbort = () => stop(failure("cancelled"));
@@ -201,8 +203,11 @@ function createClient(input, mode) {
       if (signal?.aborted || disposed) { stop(failure(disposed ? "disposed" : "cancelled")); return; }
       try {
         request = httpsRequest({ hostname, port: Number(address.port || 443), path,
-          method: operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? "GET" : "POST", agent: false, maxHeaderSize: 16_384,
-          ca: target.certificatePem, rejectUnauthorized: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
+          method: operation === "inboxState" ? "PATCH" : operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? "GET" : "POST", agent: false, maxHeaderSize: 16_384,
+          // Electron's TLS runtime needs explicit leaf trust. The only trust
+          // anchor is this validated pinned leaf; exact peer checks still apply.
+          ca: target.certificatePem, allowPartialTrustChain: true,
+          rejectUnauthorized: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
           ...(isIP(hostname) ? {} : { servername: hostname }),
           ...(credential ? { cert: credential.certificatePem, key: credential.privateKeyPem } : {}),
           checkServerIdentity(_name, peer) {
@@ -213,7 +218,8 @@ function createClient(input, mode) {
               return undefined;
             } catch { return failure("unavailable"); }
           },
-          headers: { ...(operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? {} : { "Content-Type": "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
+          headers: { ...(operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? {}
+            : { "Content-Type": operation === "inboxState" ? "application/json" : "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
             Connection: "close", ...(operation === "identity" ? {}
               : operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
         }, response => {
@@ -231,7 +237,7 @@ function createClient(input, mode) {
               guard();
               if (!response.complete) throw new Error();
               const envelope = { statusCode: response.statusCode, rawHeaders: response.rawHeaders, body: Buffer.concat(chunks, size) };
-              const value = operation === "workspaceSurface"
+              const value = operation === "inboxState" ? parseSpsNativeInboxStateResponse(envelope) : operation === "workspaceSurface"
                 ? parseSpsNativeWorkspaceSurfaceResponse(surface, workspaceId, envelope)
                 : parseSpsNativeEnrollmentResponse(operation, envelope);
               stop(null, value);
@@ -313,6 +319,19 @@ function createClient(input, mode) {
   }
   if (workspace) return Object.freeze({
     exchange,
+    updateInboxState(input, signalInput = {}) {
+      return run("inboxState", signalInput, async operation => {
+        const value = record(input, ["workspaceId", "state", "keyRequest", "issuance"]);
+        const workspaceId = uuid(value.workspaceId);
+        const state = validateSpsNativeInboxStateInput(value.state);
+        const { key } = await checkedKey(value.keyRequest, operation.guard);
+        const { credential } = await checkedIssuance(value.issuance, key, operation.guard);
+        const body = {};
+        for (const field of ["read", "archived"]) if (Object.hasOwn(state, field)) body[field] = state[field];
+        return post("inboxState", Buffer.from(JSON.stringify(body)), cookie, credential,
+          { ...operation, workspaceId, itemId: state.itemId });
+      });
+    },
     listAvailableWorkspaces(input, signalInput = {}) {
       return run("workspaces", signalInput, async operation => {
         const value = record(input, ["keyRequest", "issuance"]);

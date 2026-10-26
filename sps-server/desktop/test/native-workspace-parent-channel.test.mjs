@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash, createHmac } from "node:crypto";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import { attachSpsNativeWorkspaceParentChannel } from "../src/native-workspace-parent-channel.mjs";
@@ -71,6 +72,57 @@ test("read signs only the four TLS-approved GET routes and forwards over fixed l
   assert.equal(observed.options.headers.connection, "close");
   assert.match(observed.options.headers["x-sps-native-workspace-proof"], /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
   assert.equal(observed.options.redirect, "manual");
+});
+
+test("read accepts only a bounded Inbox PATCH request and signs its exact body and target", async t => {
+  let observed;
+  const target = `/api/companies/${WORKSPACE}/workspace-inbox/${ID}`;
+  const body = Buffer.from('{"read":true,"archived":false}');
+  const f = fixture({ fetchImpl: async (url, options) => {
+    observed = { url, options };
+    return response({ ok: true });
+  } });
+  t.after(() => f.channel.dispose());
+  const bootstrap = await f.bootstrap(); f.ready(); await tick();
+  assert.deepEqual(await f.channel.read({ ...input(), target, method: "PATCH", body }), { ok: true });
+  assert.equal(observed.url, `http://127.0.0.1:43210${target}`);
+  assert.equal(observed.options.method, "PATCH");
+  assert.deepEqual(Buffer.from(observed.options.body), body);
+  assert.equal(observed.options.headers["content-type"], "application/json");
+  assert.equal(observed.options.headers["content-length"], String(body.length));
+  const [payload] = observed.options.headers["x-sps-native-workspace-proof"].split(".");
+  const fields = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  assert.equal(fields[1], HOST);
+  assert.equal(fields[2], WORKSPACE);
+  assert.equal(fields[3], "PATCH");
+  assert.equal(fields[4], target);
+  assert.equal(fields[7], createHash("sha256").update(body).digest("hex"));
+  assert.equal(fields[8], input().cookie);
+  assert.equal(fields[9], "application/json");
+  const canonical = Buffer.from(JSON.stringify(fields));
+  const signature = observed.options.headers["x-sps-native-workspace-proof"].split(".")[1];
+  const expectedSignature = createHmac("sha256", Buffer.from(bootstrap.key, "base64url"))
+    .update(canonical).digest("base64url");
+  assert.equal(signature, expectedSignature);
+});
+
+test("Inbox PATCH rejects malformed state, body and route before network access", async t => {
+  let fetches = 0;
+  const target = `/api/companies/${WORKSPACE}/workspace-inbox/${ID}`;
+  const f = fixture({ fetchImpl: async () => { fetches++; return response({}); } });
+  t.after(() => f.channel.dispose());
+  await f.bootstrap(); f.ready(); await tick();
+  for (const invalid of [
+    { ...input(), target, method: "PUT", body: Buffer.from('{"read":true}') },
+    { ...input(), target, method: "PATCH", body: Buffer.from("{}") },
+    { ...input(), target, method: "PATCH", body: Buffer.from('{"read":1}') },
+    { ...input(), target, method: "PATCH", body: Buffer.from('{"read":true,"other":false}') },
+    { ...input(), target: `${target}?x=1`, method: "PATCH", body: Buffer.from('{"read":true}') },
+    { ...input(), target: `/api/companies/${HOST}/workspace-inbox/${ID}`, method: "PATCH", body: Buffer.from('{"read":true}') },
+    { ...input(), target, method: "PATCH", body: Buffer.alloc(129, 0x20) },
+    { ...input(), target, method: "PATCH", body: Buffer.from('{"read":true}', "utf8"), extra: true },
+  ]) await assert.rejects(f.channel.read(invalid));
+  assert.equal(fetches, 0);
 });
 
 test("provider list surfaces preserve their JSON array result", async t => {

@@ -1,6 +1,22 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("spsNativeWorkspace", Object.freeze({
+  updateInboxState: (...args) => {
+    try {
+      if (args.length !== 1 || !args[0] || typeof args[0] !== "object" || Array.isArray(args[0])) throw new TypeError();
+      const fields = Object.getOwnPropertyDescriptors(args[0]);
+      const keys = Reflect.ownKeys(fields);
+      if (!keys.includes("itemId") || keys.length < 2 || keys.some(key => !["itemId", "read", "archived"].includes(key))
+        || keys.some(key => !fields[key].enumerable || !Object.hasOwn(fields[key], "value"))
+        || typeof fields.itemId.value !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(fields.itemId.value)) throw new TypeError();
+      const result = { itemId: fields.itemId.value };
+      for (const key of ["read", "archived"]) if (Object.hasOwn(fields, key)) {
+        if (typeof fields[key].value !== "boolean") throw new TypeError();
+        result[key] = fields[key].value;
+      }
+      return ipcRenderer.invoke("desktop:native-workspace-inbox-state", result);
+    } catch { return Promise.reject(new TypeError("Invalid Inbox state request.")); }
+  },
   getBootstrap: (...args) => args.length
     ? Promise.reject(new TypeError("Workspace bootstrap accepts no arguments."))
     : ipcRenderer.invoke("desktop:native-workspace-bootstrap"),

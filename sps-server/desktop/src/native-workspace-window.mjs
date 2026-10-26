@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface } from "./native-enrollment-response.mjs";
+import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface,
+  validateSpsNativeInboxStateInput, validateSpsNativeInboxState } from "./native-enrollment-response.mjs";
 import { requireSpsNativeMemberWorkspaceBootstrapInput } from "./native-member-controller.mjs";
 
 const ACCOUNT_KEYS = ["identityIssuer", "subject", "userDataDirectory", "vaultDirectory", "generation"];
-const CHANNELS = ["desktop:native-workspace-bootstrap", "desktop:native-workspace-read"];
+const CHANNELS = ["desktop:native-workspace-bootstrap", "desktop:native-workspace-read", "desktop:native-workspace-inbox-state"];
 const unavailable = () => new Error("The Native Workspace is unavailable. Check the connection and retry.");
 
 function record(value, keys, required = keys) {
@@ -67,7 +68,7 @@ function awaitTurn(turn, signal) {
 /** Main-only window ownership. Every IPC selects its Host/Workspace from the
  * retained launch scope, never a renderer argument. */
 export function createSpsNativeWorkspaceWindowController({ BrowserWindow, getAuthority, getAssetRoot,
-  createAssets, preloadFile, getBootstrap, readSurface, maxWindows = 4 }) {
+  createAssets, preloadFile, getBootstrap, readSurface, updateInboxState, maxWindows = 4 }) {
   if (typeof BrowserWindow !== "function" || [getAuthority, getAssetRoot, createAssets, getBootstrap, readSurface]
     .some(value => typeof value !== "function") || typeof preloadFile !== "string"
     || !Number.isSafeInteger(maxWindows) || maxWindows < 1 || maxWindows > 4) throw new TypeError("Invalid Native Workspace window configuration.");
@@ -190,6 +191,22 @@ export function createSpsNativeWorkspaceWindowController({ BrowserWindow, getAut
             void pending.then(() => launch.surfacePending.delete(key), () => launch.surfacePending.delete(key));
           }
           const result = await pending;
+          assertSender(launch, event);
+          return result;
+        } catch { throw unavailable(); }
+      });
+      ipcMain.handle(CHANNELS[2], async (event, ...args) => {
+        try {
+          const launch = fromEvent(event);
+          if (args.length !== 1 || typeof updateInboxState !== "function") throw unavailable();
+          const state = validateSpsNativeInboxStateInput(args[0]);
+          const options = { assertRequester: () => assertSender(launch, event), signal: launch.abort.signal };
+          const result = await operate(launch, async () => {
+            const current = validateSpsNativeWorkspaceBootstrap(await getBootstrap(launch.scope, options));
+            assertSender(launch, event);
+            if (current.workspace.id !== launch.scope.workspaceId || !current.capabilities.includes("workspace.inbox.state.write")) throw unavailable();
+            return validateSpsNativeInboxState(await updateInboxState({ ...launch.scope, state }, options));
+          });
           assertSender(launch, event);
           return result;
         } catch { throw unavailable(); }

@@ -6,7 +6,8 @@ import { createSpsNativeMemberKeyRequest } from "./native-member-certificates.mj
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { verifySpsNativeInvitationCertificate } from "./native-connection-tls.mjs";
 import { validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
-import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface } from "./native-enrollment-response.mjs";
+import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface,
+  validateSpsNativeInboxStateInput, validateSpsNativeInboxState } from "./native-enrollment-response.mjs";
 
 const MESSAGES = Object.freeze({
   account_required: "Sign in to the current SPS account before connecting a Native device.",
@@ -301,6 +302,29 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
           keyRequest: key, issuance: stored.issuance };
         const raw = await client.readWorkspaceSurface(request, options?.signal ? { signal: options.signal } : undefined);
         const result = validateSpsNativeWorkspaceSurface(value.surface, value.workspaceId, raw);
+        check();
+        return result;
+      });
+    },
+    updateInboxState(input, options = {}) {
+      const value = record(input, ["hostId", "workspaceId", "state"]);
+      const selected = requireSpsNativeMemberWorkspaceBootstrapInput({ hostId: value.hostId, workspaceId: value.workspaceId });
+      const state = validateSpsNativeInboxStateInput(value.state);
+      return run(options, async (expected, check, use) => {
+        const scope = indexFor(expected).entries.find(entry => entry.identityIssuer === expected.identityIssuer
+          && entry.subject === expected.subject && entry.hostId === selected.hostId);
+        if (!scope) throw failure("recovery_required");
+        const target = await getTargetReader({ ...expected, scope }).read(); check();
+        if (!target) throw failure("recovery_required");
+        const store = getStore({ ...expected, context: target.context });
+        const key = await store.read(); check();
+        if (!key) throw failure("recovery_required");
+        const stored = await store.readIssued(); check();
+        if (!stored?.issuance) throw failure("recovery_required");
+        const client = use(createWorkspace({ target, context: target.context, timeoutMs, assertCurrent: check }));
+        await exchange(client, check, options?.signal);
+        const result = validateSpsNativeInboxState(await client.updateInboxState({ workspaceId: selected.workspaceId,
+          state, keyRequest: key, issuance: stored.issuance }, options?.signal ? { signal: options.signal } : undefined));
         check();
         return result;
       });

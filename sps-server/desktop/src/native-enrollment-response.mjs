@@ -180,20 +180,63 @@ function parseWorkspaceChoices(body) {
 const WORKSPACE_BOOTSTRAP_CAPABILITIES = Object.freeze([
   "workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read",
 ]);
+const INBOX_STATE_CAPABILITY = "workspace.inbox.state.write";
 
 function exactCapabilities(input) {
   if (!Array.isArray(input) || Object.getPrototypeOf(input) !== Array.prototype) reject();
   const descriptors = Object.getOwnPropertyDescriptors(input);
   const length = descriptors.length;
   if (!length || !Object.hasOwn(length, "value") || length.enumerable
-    || length.value !== WORKSPACE_BOOTSTRAP_CAPABILITIES.length
+    || ![WORKSPACE_BOOTSTRAP_CAPABILITIES.length, WORKSPACE_BOOTSTRAP_CAPABILITIES.length + 1].includes(length.value)
     || Reflect.ownKeys(descriptors).length !== length.value + 1) reject();
   for (let index = 0; index < WORKSPACE_BOOTSTRAP_CAPABILITIES.length; index++) {
     const descriptor = descriptors[String(index)];
     if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")
       || descriptor.value !== WORKSPACE_BOOTSTRAP_CAPABILITIES[index]) reject();
   }
-  return Object.freeze([...WORKSPACE_BOOTSTRAP_CAPABILITIES]);
+  const output = [...WORKSPACE_BOOTSTRAP_CAPABILITIES];
+  if (length.value === output.length + 1) {
+    const extra = descriptors[String(output.length)];
+    if (!extra?.enumerable || !Object.hasOwn(extra, "value") || extra.value !== INBOX_STATE_CAPABILITY) reject();
+    output.push(INBOX_STATE_CAPABILITY);
+  }
+  return Object.freeze(output);
+}
+
+export function validateSpsNativeInboxStateInput(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) reject();
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  const keys = Reflect.ownKeys(descriptors);
+  if (!keys.includes("itemId") || keys.length < 2 || keys.some(key => !["itemId", "read", "archived"].includes(key))) reject();
+  for (const key of keys) if (!descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value")) reject();
+  uuid(descriptors.itemId.value);
+  const result = { itemId: descriptors.itemId.value };
+  for (const key of ["read", "archived"]) if (Object.hasOwn(descriptors, key)) {
+    if (typeof descriptors[key].value !== "boolean") reject();
+    result[key] = descriptors[key].value;
+  }
+  return Object.freeze(result);
+}
+
+export function validateSpsNativeInboxState(input) {
+  const value = record(input, ["readAt", "archivedAt"]);
+  for (const field of ["readAt", "archivedAt"]) {
+    if (value[field] === null) continue;
+    if (typeof value[field] !== "string" || value[field].length !== 24) reject();
+    const time = new Date(value[field]);
+    if (!Number.isFinite(time.getTime()) || time.toISOString() !== value[field]) reject();
+  }
+  return Object.freeze({ readAt: value.readAt, archivedAt: value.archivedAt });
+}
+
+export function parseSpsNativeInboxStateResponse(input) {
+  try {
+    const envelope = record(input, ["statusCode", "rawHeaders", "body"]);
+    if (envelope.statusCode !== 200 || !Buffer.isBuffer(envelope.body) || envelope.body.length > 256) reject();
+    validateHeaders(readRawHeaders(envelope.rawHeaders), "inboxState", envelope.body.length);
+    return validateSpsNativeInboxState(parseCanonicalBody(envelope.body, ["readAt", "archivedAt"]));
+  } catch { throw invalidResponseError(); }
 }
 
 export function validateSpsNativeWorkspaceBootstrap(input) {

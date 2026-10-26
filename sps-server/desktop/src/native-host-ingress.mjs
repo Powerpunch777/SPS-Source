@@ -12,6 +12,7 @@ const ROUTES = Object.freeze({
   "/sps-native/v1/enrollment/reconcile": { operation: "enrollment.reconcile", peer: true, credential: "sessionCookie", body: "reconcile" },
 });
 const WORKSPACE_DISCOVERY_TARGET = "/sps-native/v1/workspaces";
+const WORKSPACE_INBOX_PATCH_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/workspace-inbox\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/;
 const MAX_BODY_BYTES = 8192;
 const MAX_RESPONSE_BYTES = 16_384;
 const MAX_HEADERS_BYTES = 16_384;
@@ -43,7 +44,7 @@ function exactObject(value, keys, statusCode = 400) {
 }
 
 function parseBody(bytes, kind) {
-  if (!Buffer.isBuffer(bytes) || bytes.length > MAX_BODY_BYTES) throw fail(413);
+  if (!Buffer.isBuffer(bytes) || bytes.length > (kind === "inboxState" ? 128 : MAX_BODY_BYTES)) throw fail(413);
   if (kind === null) {
     if (bytes.length !== 0) throw fail();
     return null;
@@ -54,6 +55,17 @@ function parseBody(bytes, kind) {
   if (text.includes("\uFEFF") || text.includes("\0") || text.includes("\uFFFD")) throw fail();
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw fail(); }
+  if (kind === "inboxState") {
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)
+      || Object.getPrototypeOf(parsed) !== Object.prototype) throw fail();
+    const descriptors = Object.getOwnPropertyDescriptors(parsed);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.length < 1 || keys.some(key => typeof key !== "string" || !["read", "archived"].includes(key)
+      || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value")
+      || typeof descriptors[key].value !== "boolean")) throw fail();
+    if (JSON.stringify(parsed) !== text) throw fail();
+    return parsed;
+  }
   const keys = kind === "issue" ? ["pairingId", "pairingSecret", "deviceKeyId", "requestPem"]
     : kind === "complete" ? ["pairingId", "pairingSecret", "enrollmentId", "displayName"]
       : ["enrollmentId"];
@@ -73,7 +85,7 @@ function parseBody(bytes, kind) {
   return parsed;
 }
 
-function readHeaders(request, workspace = false) {
+function readHeaders(request, workspace = false, workspacePatch = false) {
   const raw = request.rawHeaders;
   if (!Array.isArray(raw) || raw.length % 2 || raw.length / 2 > 32) throw fail();
   let total = 0;
@@ -90,14 +102,17 @@ function readHeaders(request, workspace = false) {
   const headers = request.headers;
   if (headers["transfer-encoding"] !== undefined || headers["content-encoding"] !== undefined
     || headers.expect !== undefined || headers.upgrade !== undefined) throw fail();
-  if (workspace ? headers["content-type"] !== undefined : headers["content-type"] !== "application/json; charset=utf-8") throw fail();
+  if (workspacePatch ? headers["content-type"] !== "application/json"
+    : workspace ? headers["content-type"] !== undefined
+      : headers["content-type"] !== "application/json; charset=utf-8") throw fail();
   if (headers["connection"]?.toLowerCase() !== "close") throw fail();
   const rawLength = headers["content-length"];
   if (typeof rawLength !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(rawLength)) throw fail();
   const length = Number(rawLength);
   if (!Number.isSafeInteger(length)) throw fail();
   if (length > MAX_BODY_BYTES) throw fail(413);
-  if (workspace && length !== 0) throw fail();
+  if (workspace && !workspacePatch && length !== 0) throw fail();
+  if (workspacePatch && (length < 1 || length > 128)) throw fail(length > 128 ? 413 : 400);
   return { length, headers };
 }
 
@@ -243,12 +258,15 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       if (disposed || !server) throw fail(503);
       const workspacePath = request.method === "GET" && typeof dispatchWorkspace === "function"
         && /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-bootstrap|workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/.exec(request.url);
+      const workspaceInboxPatch = request.method === "PATCH" && typeof dispatchWorkspace === "function"
+        && WORKSPACE_INBOX_PATCH_TARGET.exec(request.url);
       const workspaceDiscovery = request.method === "GET" && typeof dispatchWorkspace === "function"
         && request.url === WORKSPACE_DISCOVERY_TARGET;
-      const workspaceRequest = Boolean(workspacePath || workspaceDiscovery);
+      const workspaceRequest = Boolean(workspacePath || workspaceDiscovery || workspaceInboxPatch);
+      const workspacePatch = Boolean(workspaceInboxPatch);
       const route = workspaceRequest ? { peer: true, credential: "sessionCookie", body: null } : ROUTES[request.url];
       if (!workspaceRequest && (request.method !== "POST" || !route || request.url.includes("?") || request.url.includes("#"))) throw fail(404);
-      const { length, headers } = readHeaders(request, workspaceRequest);
+      const { length, headers } = readHeaders(request, workspaceRequest, workspacePatch);
       const credential = exactCredential(route, headers);
       const peer = socket.getPeerCertificate?.(true);
       const peerPresent = Boolean(peer?.raw?.length);
@@ -281,7 +299,8 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       // own the response lifetime instead of aborting dispatch on socket idle.
       socket.setTimeout(0);
       if (finished || response.destroyed || disposed) return;
-      const body = parseBody(Buffer.concat(pieces, received), route.body);
+      const body = workspacePatch ? parseBody(Buffer.concat(pieces, received), "inboxState")
+        : parseBody(Buffer.concat(pieces, received), route.body);
       const expected = assertIdentityCurrent(identitySnapshot);
       const transport = Object.freeze({ tlsVersion: "TLSv1.3", sessionReused: false,
         remoteAddress: typeof socket.remoteAddress === "string" && socket.remoteAddress.length <= 128 ? socket.remoteAddress : null,
@@ -301,8 +320,11 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       try {
         const dispatchOptions = { signal: controller.signal, assertCurrent: () => { assertIdentityCurrent(expected); } };
         const result = workspaceRequest
-          ? await dispatchWorkspace(Object.freeze({ workspaceId: workspaceDiscovery ? null : workspacePath[1], target: request.url,
-            cookie: credential.sessionCookie, peerCertificateDer: Buffer.from(peer.raw) }), dispatchOptions)
+          ? await dispatchWorkspace(Object.freeze(workspacePatch
+            ? { workspaceId: workspaceInboxPatch[1], target: request.url, cookie: credential.sessionCookie,
+              peerCertificateDer: Buffer.from(peer.raw), method: "PATCH", body: Buffer.from(pieces.length ? Buffer.concat(pieces, received) : []) }
+            : { workspaceId: workspaceDiscovery ? null : workspacePath[1], target: request.url,
+              cookie: credential.sessionCookie, peerCertificateDer: Buffer.from(peer.raw) }), dispatchOptions)
           : await dispatch(route.operation, Object.freeze({ body, transport, ...(credential ? { credential } : {}) }), dispatchOptions);
         if (disposed || controller.signal.aborted || finished || response.destroyed) return;
         assertIdentityCurrent(expected);

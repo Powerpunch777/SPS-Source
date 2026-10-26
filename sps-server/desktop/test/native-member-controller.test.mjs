@@ -84,6 +84,21 @@ function fixture(overrides = {}) {
 }
 const enroll = (f, options = {}) => f.controller.enroll({ invitationCode, displayName: "Alice computer" }, { confirm: async () => true, ...options });
 
+test("Inbox state keeps saved credentials, scopes IDs and rejects stale account results", async () => {
+  let observed;
+  const state = { readAt: null, archivedAt: "2026-10-27T00:00:00.000Z" };
+  const f = fixture({ createWorkspace: () => ({ async exchange() {},
+    async updateInboxState(input) { observed = input; await f.hooks.update?.(); return state; }, dispose() {} }) });
+  await enroll(f);
+  const before = f.snapshot();
+  const input = { hostId: HOST, workspaceId: DEVICE, state: { itemId: HOST, archived: true } };
+  assert.deepEqual(await f.controller.updateInboxState(input), state);
+  assert.deepEqual(observed, { workspaceId: DEVICE, state: input.state, keyRequest: before.key, issuance: before.issued });
+  assert.deepEqual(f.snapshot(), before);
+  f.hooks.update = () => f.change();
+  await assert.rejects(f.controller.updateInboxState(input), { code: "native_member_changed" });
+});
+
 test("Workspace discovery uses only saved account-bound credentials and returns public choices", async () => {
   const f = fixture();
   await enroll(f);

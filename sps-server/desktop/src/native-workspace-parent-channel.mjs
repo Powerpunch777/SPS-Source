@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { TextDecoder } from "node:util";
 import { createSpsNativeWorkspaceRequestSigner } from "./native-workspace-proof.mjs";
 import { nativeCertificateRecord as record, nativeCertificateUuid as uuid } from "./native-certificate-primitives.mjs";
 
@@ -11,6 +12,7 @@ const unavailable = () => Object.assign(new Error("The owned Native Workspace ch
 const pin = value => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 const WORKSPACE_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-bootstrap|workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/;
 const DISCOVERY_TARGET = "/sps-native/v1/workspaces";
+const INBOX_PATCH_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/workspace-inbox\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/;
 
 function identity(value) {
   const keys = ["hostId", "serverSpkiSha256", "issuerSpkiSha256",
@@ -48,6 +50,25 @@ async function boundedJson(response) {
     if (!parsed || typeof parsed !== "object") throw new Error();
     return parsed;
   } catch { throw unavailable(); }
+}
+
+function inboxStateBody(value) {
+  if (!Buffer.isBuffer(value) || value.length < 1 || value.length > 128) throw unavailable();
+  let text;
+  let parsed;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(value);
+    if (text.includes("\uFEFF") || text.includes("\0") || text.includes("\uFFFD")) throw new Error();
+    parsed = JSON.parse(text);
+  } catch { throw unavailable(); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.getPrototypeOf(parsed) !== Object.prototype) throw unavailable();
+  const descriptors = Object.getOwnPropertyDescriptors(parsed);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length < 1 || keys.some(key => typeof key !== "string" || !["read", "archived"].includes(key)
+    || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value")
+    || typeof descriptors[key].value !== "boolean")) throw unavailable();
+  if (JSON.stringify(parsed) !== text) throw unavailable();
+  return Buffer.from(value);
 }
 
 // Parent-child IPC only. A single bootstrap creates a per-child key and a
@@ -204,15 +225,23 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
         assertAvailable();
         if (!proofSigner || port === null || !binding || signal !== undefined && !(signal instanceof AbortSignal)
           || typeof assertCurrent !== "function" || signal?.aborted || activeReads >= 4) throw unavailable();
-        const request = record(input, ["workspaceId", "target", "cookie", "peerCertificateDer"]);
+        if (!input || typeof input !== "object" || Array.isArray(input)) throw unavailable();
+        const patchRequest = Object.hasOwn(input, "method") || Object.hasOwn(input, "body");
+        const request = record(input, patchRequest
+          ? ["workspaceId", "target", "cookie", "peerCertificateDer", "method", "body"]
+          : ["workspaceId", "target", "cookie", "peerCertificateDer"]);
         const discovery = request.workspaceId === null && request.target === DISCOVERY_TARGET;
         if (!discovery) uuid(request.workspaceId);
         if (typeof request.target !== "string" || typeof request.cookie !== "string"
           || !Buffer.isBuffer(request.peerCertificateDer)) throw unavailable();
         const snapshot = Object.freeze({ workspaceId: request.workspaceId, target: request.target,
-          cookie: request.cookie, peerCertificateDer: Buffer.from(request.peerCertificateDer) });
+          cookie: request.cookie, peerCertificateDer: Buffer.from(request.peerCertificateDer),
+          ...(patchRequest ? { method: request.method, body: inboxStateBody(request.body) } : {}) });
+        if (patchRequest && (snapshot.method !== "PATCH" || discovery)) throw unavailable();
+        const patchRoute = patchRequest ? INBOX_PATCH_TARGET.exec(snapshot.target) : null;
         const route = discovery ? null : WORKSPACE_TARGET.exec(snapshot.target);
-        if (!discovery && (!route || route[1] !== snapshot.workspaceId)) throw unavailable();
+        if (patchRequest ? (!patchRoute || patchRoute[1] !== snapshot.workspaceId)
+          : (!discovery && (!route || route[1] !== snapshot.workspaceId))) throw unavailable();
         activeReads += 1;
         counted = true;
         controller = new AbortController();
@@ -234,14 +263,16 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
         check();
         if (current.hostId !== binding.hostId || current.serverSpkiSha256 !== binding.serverSpkiSha256
           || current.issuerSpkiSha256 !== binding.issuerSpkiSha256) throw unavailable();
-        const body = Buffer.alloc(0);
-        const proof = proofSigner.signWorkspaceRequest({ workspaceId: snapshot.workspaceId, method: "GET",
-          target: snapshot.target, body, cookie: snapshot.cookie, contentType: "", peerCertificateDer: snapshot.peerCertificateDer });
+        const body = patchRequest ? snapshot.body : Buffer.alloc(0);
+        const method = patchRequest ? "PATCH" : "GET";
+        const requestContentType = patchRequest ? "application/json" : "";
+        const proof = proofSigner.signWorkspaceRequest({ workspaceId: snapshot.workspaceId, method,
+          target: snapshot.target, body, cookie: snapshot.cookie, contentType: requestContentType, peerCertificateDer: snapshot.peerCertificateDer });
         const headers = { cookie: snapshot.cookie, "x-sps-native-workspace-proof": proof,
-          "content-length": "0", connection: "close" };
+          "content-length": String(body.length), connection: "close", ...(patchRequest ? { "content-type": requestContentType } : {}) };
         check();
         const response = await fetchImpl(new URL(snapshot.target, `http://127.0.0.1:${port}`).href, {
-          method: "GET", headers, body: undefined, redirect: "manual", cache: "no-store", signal: controller.signal,
+          method, headers, body: patchRequest ? body : undefined, redirect: "manual", cache: "no-store", signal: controller.signal,
         });
         check();
         const contentType = response.headers?.get?.("content-type") ?? "";

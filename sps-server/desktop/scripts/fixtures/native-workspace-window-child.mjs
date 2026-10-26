@@ -1,15 +1,20 @@
-// Actual Electron/SPA/IPC composition with public fixture data, not LAN or DPAPI qualification.
+// Actual Electron/SPA/IPC composition; the explicit transport mode also uses
+// temporary Windows DPAPI credentials and the caller's real Core/TLS fixture.
 import assert from "node:assert/strict";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage } from "electron";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createSpsNativeWorkspaceAssets } from "../../src/native-workspace-assets.mjs";
 import { createSpsNativeWorkspaceWindowController } from "../../src/native-workspace-window.mjs";
+import { createSpsNativeMemberController } from "../../src/native-member-controller.mjs";
+import { createSpsNativeMemberWorkspaceClient } from "../../src/native-enrollment-client.mjs";
+import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader } from "../../src/native-member-pending-store.mjs";
 
 app.disableHardwareAcceleration();
 async function run() {
 process.stdout.write("native_window_stage:module_ready\n");
-assert.equal(process.argv[2], "--isolated-native-workspace-window");
+const realTransport = process.argv[2] === "--isolated-native-workspace-transport-window";
+assert.ok(realTransport || process.argv[2] === "--isolated-native-workspace-window");
 assert.equal(process.argv.length, 4);
 process.stdout.write("native_window_stage:arguments_valid\n");
 const fixture = await realpath(process.argv[3]);
@@ -20,12 +25,15 @@ process.stdout.write("native_window_stage:profile_ready\n");
 app.setPath("userData", profile);
 app.on("window-all-closed", () => {});
 const windows = [], reads = [];
-const workspaceId = "22222222-2222-4222-8222-222222222222";
+let workspaceId = "22222222-2222-4222-8222-222222222222";
 const shell = { mode: "neutral", providerPluginId: null, providerPluginKey: null, shell: null, fallbackReason: null };
 const publicBootstrap = { v: 1, kind: "sps.native.workspace.bootstrap",
   workspace: { id: workspaceId, name: "Native Window Fixture", issuePrefix: "NATIVE" }, member: { userId: "member" },
   capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] };
-let generation = 0n, controller, failed = false, stage = "startup";
+let generation = 0n, controller, member, configuration, failed = false, stage = "startup";
+const authority = () => ({ identityIssuer: configuration?.context.identityIssuer ?? "https://identity.example.test",
+  subject: configuration?.context.subject ?? "member", userDataDirectory: profile,
+  vaultDirectory: path.join(fixture, configuration ? "member-vault" : "unused-vault"), generation });
 const mark = value => { stage = value; process.stdout.write(`native_window_stage:${value}\n`); };
 function hiddenWindow(options) {
   const window = new BrowserWindow({ ...options, show: false,
@@ -47,10 +55,69 @@ async function until(window, expression) {
 try {
   mark("awaiting_app");
   await app.whenReady();
+  if (realTransport) {
+    assert.equal(process.connected, true);
+    configuration = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Configuration timed out")), 15_000);
+      process.once("message", message => { clearTimeout(timer); resolve(message); });
+      process.send({ kind: "sps.test.native-workspace-window.configure-ready" });
+    });
+    assert.equal(configuration?.kind, "sps.test.native-workspace-window.configure");
+    mark("protected_store");
+    workspaceId = configuration.workspaceId;
+    const { context, target, keyRequest, issuance } = configuration;
+    assert.equal(process.platform, "win32");
+    assert.equal(safeStorage.isEncryptionAvailable(), true);
+    const wrongPeer = createSpsNativeMemberWorkspaceClient({ target: configuration.untrustedTarget,
+      context: configuration.untrustedContext, timeoutMs: 15_000, assertCurrent() {} });
+    try {
+      await assert.rejects(wrongPeer.exchange("fixture.header.signature"),
+        { code: "native_enrollment_client_unavailable" });
+    } finally { wrongPeer.dispose(); }
+    const vaultDirectory = path.join(fixture, "member-vault");
+    await mkdir(vaultDirectory, { recursive: true });
+    const storeOptions = { userDataDirectory: profile, vaultDirectory, context, safeStorage };
+    const saved = createSpsNativeMemberPendingKeyStore(storeOptions);
+    const commit = { beforeCommit() {} };
+    await saved.create(keyRequest, commit);
+    await saved.createTarget(target, commit);
+    await saved.createIssued(issuance, commit);
+    mark("protected_store_ready");
+    member = createSpsNativeMemberController({
+      getAuthority: authority,
+      getIndex: () => ({ v: 1, entries: [{ identityIssuer: context.identityIssuer, subject: context.subject,
+        hostId: context.hostId, deviceKeyId: context.deviceKeyId }] }),
+      saveIndex() { throw new Error("The existing credential fixture cannot reenroll"); },
+      getTargetReader: ({ scope }) => ({ async read() {
+        mark("protected_target_read");
+        return createSpsNativeMemberHostTargetReader({ userDataDirectory: profile, vaultDirectory, scope, safeStorage }).read();
+      } }),
+      getStore: () => {
+        const store = createSpsNativeMemberPendingKeyStore(storeOptions);
+        return { async read() { mark("protected_key_read"); return store.read(); },
+          async readIssued() { mark("protected_issuance_read"); return store.readIssued(); } };
+      },
+      createWorkspace: options => {
+        const client = createSpsNativeMemberWorkspaceClient(options);
+        const wrapped = { ...client };
+        for (const method of ["exchange", "getWorkspaceBootstrap", "readWorkspaceSurface", "updateInboxState"]) {
+          wrapped[method] = async (...args) => {
+            mark(`client_${method.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)}`);
+            try { return await client[method](...args); }
+            catch (error) {
+              if (/^native_enrollment_[a-z_]+$/.test(error?.code)) mark(error.code);
+              throw error;
+            }
+          };
+        }
+        return wrapped;
+      },
+      authenticate: async () => "fixture.header.signature", timeoutMs: 15_000,
+    });
+  }
   mark("window_open");
   controller = createSpsNativeWorkspaceWindowController({ BrowserWindow: hiddenWindow,
-    getAuthority: () => ({ identityIssuer: "https://identity.example.test", subject: "member",
-      userDataDirectory: profile, vaultDirectory: path.join(fixture, "unused-vault"), generation }),
+    getAuthority: authority,
     getAssetRoot: async () => path.resolve(import.meta.dirname, "../../../../external/sps-core/ui/dist"),
     createAssets: async options => {
       mark("asset_start");
@@ -59,21 +126,30 @@ try {
       return assets;
     },
     preloadFile: path.resolve(import.meta.dirname, "../../src/native-workspace-preload.cjs"),
-    getBootstrap: async (_scope, { assertRequester }) => { assertRequester(); return publicBootstrap; },
-    readSurface: async ({ surface, workspaceId: selected }, { assertRequester }) => {
-      assertRequester(); assert.equal(selected, workspaceId); reads.push(surface);
+    getBootstrap: async (scope, options) => {
+      options.assertRequester();
+      return member ? member.getWorkspaceBootstrap(scope, options) : publicBootstrap;
+    },
+    readSurface: async (input, options) => {
+      options.assertRequester(); assert.equal(input.workspaceId, workspaceId); reads.push(input.surface);
+      if (member) return member.readWorkspaceSurface(input, options);
+      const { surface } = input;
       if (surface === "shell") return shell;
       if (surface === "dashboard") return { widgets: [] };
       if (surface === "inbox") return { items: [] };
       throw new Error("Unexpected fixture surface");
     },
+    updateInboxState: async (input, options) => {
+      if (!member) throw new Error("State writes require the real transport fixture");
+      return member.updateInboxState(input, options);
+    },
   });
   controller.registerIpc(ipcMain);
-  await controller.open({ hostId: "11111111-1111-4111-8111-111111111111", workspaceId });
+  await controller.open({ hostId: configuration?.context.hostId ?? "11111111-1111-4111-8111-111111111111", workspaceId });
   const window = windows[0];
   mark("workspace_render");
   await until(window, "document.querySelector('[data-sps-workspace-entry=empty]') !== null");
-  assert.equal(await window.webContents.executeJavaScript("document.body.innerText.includes('Native Window Fixture')"), true);
+  assert.equal(await window.webContents.executeJavaScript(`document.body.innerText.includes(${JSON.stringify(realTransport ? "Native Channel Fixture" : "Native Window Fixture")})`), true);
   assert.equal(await window.webContents.executeJavaScript("typeof window.spsDesktopWorkspace"), "undefined");
   assert.equal(await window.webContents.executeJavaScript("typeof window.spsCoreSettings"), "undefined");
   assert.equal(await window.webContents.executeJavaScript("typeof window.spsNativeWorkspace.getBootstrap"), "function");
@@ -85,7 +161,17 @@ try {
   await until(window, "document.body.innerText.includes('No dashboard content is available.')");
   mark("inbox_render");
   await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Inbox').click()");
-  await until(window, "document.body.innerText.includes('No inbox items.')");
+  if (realTransport) {
+    await until(window, "document.body.innerText.includes('Native persisted Inbox item')");
+    await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Mark read').click()");
+    await until(window, "[...document.querySelectorAll('button')].some(button => button.textContent === 'Mark unread')");
+    await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Archive').click()");
+    await until(window, "document.body.innerText.includes('No inbox items.')");
+    await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Show archived').click()");
+    await until(window, "[...document.querySelectorAll('button')].some(button => button.textContent === 'Restore')");
+    await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Restore').click()");
+    await until(window, "[...document.querySelectorAll('button')].some(button => button.textContent === 'Archive')");
+  } else await until(window, "document.body.innerText.includes('No inbox items.')");
   assert.deepEqual([...new Set(reads)], ["shell", "dashboard", "inbox"]);
   mark("shutdown");
   generation++;
@@ -93,15 +179,19 @@ try {
   assert.equal(window.isDestroyed(), true);
   await controller.dispose();
   await writeFile(path.join(fixture, "result.json"), JSON.stringify({ ok: true, views: ["workspace", "dashboard", "inbox"],
-    actualElectron: true, fixtureBackend: true, ownerBridge: false, serviceWorkers: 0 }));
+    actualElectron: true, fixtureBackend: !realTransport, actualDpapi: realTransport,
+    ...(realTransport ? { wrongPeerDenied: true } : {}),
+    ownerBridge: false, serviceWorkers: 0 }));
 } catch {
   failed = true;
   await writeFile(path.join(fixture, "result.json"), JSON.stringify({ ok: false, stage })).catch(() => {});
   console.error("Native Workspace isolated renderer verification failed.");
 } finally {
   try { await controller?.dispose(); } catch { failed = true; }
+  member?.dispose();
   for (const window of windows) if (!window.isDestroyed()) window.destroy();
   process.exitCode = failed ? 1 : 0;
+  if (process.connected) process.disconnect();
   app.quit();
 }
 }

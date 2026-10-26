@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseSpsNativeEnrollmentResponse, parseSpsNativeWorkspaceSurfaceResponse,
-  validateSpsNativeWorkspaceSurface } from "../src/native-enrollment-response.mjs";
+  validateSpsNativeWorkspaceSurface, validateSpsNativeInboxStateInput,
+  parseSpsNativeInboxStateResponse } from "../src/native-enrollment-response.mjs";
 
 const DEVICE_ID = "deadbeef-cafe-4bad-8dad-0123456789ab";
 const ENROLLMENT_ID = "abcdefab-cdef-4abc-8def-abcdefabcdef";
@@ -11,6 +12,21 @@ const ISSUER_PIN = "b".repeat(64);
 const SESSION_TOKEN = "A".repeat(64);
 const COOKIE = `sps_identity_session=${SESSION_TOKEN}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax`;
 const JSON_HEADERS = ["Content-Type", "application/json; charset=utf-8", "Cache-Control", "no-store"];
+
+test("Inbox personal state accepts only explicit boolean updates and closed timestamp replies", () => {
+  assert.deepEqual(validateSpsNativeInboxStateInput({ itemId: DEVICE_ID, read: false, archived: true }),
+    { itemId: DEVICE_ID, read: false, archived: true });
+  for (const input of [{ itemId: DEVICE_ID }, { itemId: DEVICE_ID, read: 1 },
+    { itemId: DEVICE_ID, archived: true, companyId: DEVICE_ID }, { itemId: "../other", read: true }]) {
+    assert.throws(() => validateSpsNativeInboxStateInput(input));
+  }
+  const value = { readAt: "2026-10-27T00:00:00.000Z", archivedAt: null };
+  assert.deepEqual(parseSpsNativeInboxStateResponse(response("inboxState", value)), value);
+  for (const bad of [{ ...value, token: "private" }, { readAt: "today", archivedAt: null },
+    { readAt: null }, { readAt: 1, archivedAt: null }]) {
+    assert.throws(() => parseSpsNativeInboxStateResponse(response("inboxState", bad)));
+  }
+});
 
 function response(operation, value, options = {}) {
   const body = options.body ?? Buffer.from(JSON.stringify(value), "utf8");
@@ -73,6 +89,8 @@ test("Workspace bootstrap accepts only the exact bounded, least-privilege DTO", 
   assert.equal(Object.isFrozen(actual.workspace), true);
   assert.equal(Object.isFrozen(actual.member), true);
   assert.equal(Object.isFrozen(actual.capabilities), true);
+  const writable = { ...bootstrap, capabilities: [...bootstrap.capabilities, "workspace.inbox.state.write"] };
+  assert.deepEqual(parseSpsNativeEnrollmentResponse("workspaceBootstrap", response("workspaceBootstrap", writable)), writable);
   const invalid = [
     { ...bootstrap, extra: "private" },
     { ...bootstrap, v: 2 },

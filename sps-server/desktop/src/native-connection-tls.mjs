@@ -142,6 +142,9 @@ export async function probeSpsNativeServerTls(code, options = {}) {
         port,
         ...(isIP(hostname) ? {} : { servername: hostname }),
         ca: target.certificatePem,
+        // Trust only the validated invitation leaf on Electron as well as Node.
+        // Hostname and exact peer DER checks below remain mandatory.
+        allowPartialTrustChain: true,
         rejectUnauthorized: true,
         minVersion: "TLSv1.3",
         maxVersion: "TLSv1.3",

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID, X509Certificate } from "node:crypto";
-import { fork } from "node:child_process";
+import { fork, spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 
-if (process.argv.length !== 3 || process.argv[2] !== "--isolated-native-workspace-channel") {
+const withWindow = process.argv[3] === "--with-native-window";
+if (![3, 4].includes(process.argv.length) || process.argv[2] !== "--isolated-native-workspace-channel"
+  || process.argv.length === 4 && (!withWindow || process.platform !== "win32")) {
   throw new Error("Use the explicit isolated Native Workspace channel command.");
 }
 const { createSpsNativeHostIdentity } = await import("../src/native-identity-certificates.mjs");
@@ -16,11 +20,56 @@ const { parseSpsNativeEnrollmentResponse } = await import("../src/native-enrollm
 const core = path.resolve(import.meta.dirname, "../../../external/sps-core");
 const load = relative => import(pathToFileURL(path.join(core, relative)).href);
 const { createDb, getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase,
-  authUsers, authSessions, companies, companyMemberships, agents, plugins, spsNodes } = await load("packages/db/src/index.ts");
+  authUsers, authSessions, companies, companyMemberships, agents, plugins, spsNodes,
+  spsPluginInboxItems, spsPluginInboxUserStates } = await load("packages/db/src/index.ts");
 const { spsMemberDeviceService } = await load("server/src/services/sps-member-devices.ts");
 assert.equal((await getEmbeddedPostgresTestSupport()).supported, true);
 const database = await startEmbeddedPostgresTestDatabase("sps-native-workspace-channel-");
 let db, child, parent, ingress, failure;
+
+async function runWindow(configuration) {
+  const fixture = await createWorkspaceE2eFixture();
+  let electron, mainClosed = false;
+  try {
+    const environment = { ...process.env }; delete environment.ELECTRON_RUN_AS_NODE;
+    electron = spawn(path.resolve(import.meta.dirname, "../node_modules/electron/dist/electron.exe"),
+      [path.resolve(import.meta.dirname, "fixtures/native-workspace-window-child.mjs"),
+        "--isolated-native-workspace-transport-window", fixture.directory], {
+        windowsHide: true, stdio: ["ignore", "pipe", "pipe", "ipc"], env: environment,
+      });
+    electron.stdout.setEncoding("utf8");
+    let output = "";
+    electron.stdout.on("data", chunk => {
+      output = `${output}${chunk}`.slice(-2048);
+      const lines = output.split("\n"); output = lines.pop();
+      for (const line of lines) if (/^native_window_stage:[a-z_]+$/.test(line.trim())) process.stdout.write(`${line.trim()}\n`);
+    });
+    electron.stderr.resume();
+    electron.on("message", message => {
+      if (message?.kind === "sps.test.native-workspace-window.configure-ready" && electron.connected) {
+        electron.send({ kind: "sps.test.native-workspace-window.configure", ...configuration });
+      }
+    });
+    const code = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Joined Native Workspace window timed out.")), 180_000);
+      electron.once("error", error => { clearTimeout(timer); reject(error); });
+      electron.once("close", code => { clearTimeout(timer); mainClosed = true; resolve(code); });
+    });
+    const result = JSON.parse(await readFile(path.join(fixture.directory, "result.json"), "utf8"));
+    assert.equal(code, 0, `Joined Native Workspace window failed at ${result.stage ?? "unknown"}.`);
+    assert.deepEqual(result, { ok: true, views: ["workspace", "dashboard", "inbox"],
+      actualElectron: true, fixtureBackend: false, actualDpapi: true, wrongPeerDenied: true,
+      ownerBridge: false, serviceWorkers: 0 });
+  } finally {
+    if (electron && !mainClosed && electron.exitCode === null && electron.signalCode === null) {
+      const closed = new Promise(resolve => electron.once("close", () => { mainClosed = true; resolve(); }));
+      electron.kill(); let timer;
+      try { await Promise.race([closed, new Promise(resolve => { timer = setTimeout(resolve, 10_000); })]); }
+      finally { clearTimeout(timer); }
+    }
+    if (!electron || mainClosed) await fixture.remove();
+  }
+}
 try {
   db = createDb(database.connectionString);
   const now = Math.floor(Date.now() / 1000) * 1000;
@@ -72,7 +121,13 @@ try {
   assert.equal(parent.inspect().ready, true);
   assert.equal(Object.hasOwn(parent.inspect(), "port"), false);
   ingress = createSpsNativeHostIngress({ getIdentity: () => host, assertCurrent() { assert.equal(child.connected, true); },
-    dispatch() { assert.fail("This fixture does not exercise enrollment"); },
+    dispatch(operation, input) {
+      // Only the Identity-provider exchange is substituted. The returned token
+      // is a real existing Core DB session and grants no device or membership.
+      assert.equal(withWindow, true); assert.equal(operation, "session.exchange");
+      assert.equal(input.credential.accessToken, "fixture.header.signature");
+      return { token: secret, expiresInSeconds: 604800 };
+    },
     dispatchWorkspace: (input, options) => parent.read(input, options) });
   const { port } = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
   const read = (target, options = {}) => new Promise((resolve, reject) => {
@@ -99,7 +154,7 @@ try {
   const root = `/api/companies/${companyId}`;
   assert.deepEqual(await read(`${root}/workspace-bootstrap`), { status: 200, body: {
     v: 1, kind: "sps.native.workspace.bootstrap", workspace: { id: companyId, name: "Native Channel Fixture", issuePrefix },
-    member: { userId }, capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"],
+    member: { userId }, capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read", "workspace.inbox.state.write"],
   } });
   const discovery = "/sps-native/v1/workspaces";
   assert.deepEqual(await read(discovery), { status: 200, body: [{ id: companyId, name: "Native Channel Fixture" }] });
@@ -114,6 +169,33 @@ try {
   assert.equal((await read(`${root}/workspace-shell`, { cookie: `sps_identity_session=${"x".repeat(64)}` })).status, 403);
   assert.equal((await read(`/api/companies/${randomUUID()}/workspace-shell`)).status, 403);
   assert.equal((await read("/api/companies")).status, 404);
+  if (withWindow) {
+    const itemId = randomUUID();
+    await db.insert(spsPluginInboxItems).values({ id: itemId, companyId,
+      sourcePluginKey: "native-window-fixture", externalId: itemId, targetUserId: userId,
+      category: "notification", title: "Native persisted Inbox item", summary: "Actual Core DB state", severity: "info" });
+    const context = { identityIssuer: "https://workspace.example.test", subject: "fixture-member", hostId,
+      deviceKeyId: key.deviceKeyId, serverSpkiSha256: binding.serverSpkiSha256, issuerSpkiSha256: binding.issuerSpkiSha256 };
+    const unrelated = await createSpsNativeHostIdentity({ hostId, hostnames: ["127.0.0.1"],
+      notBefore: now - 1000, notAfter: now + 3_600_000, issuerNotAfter: now + 7_200_000 });
+    const untrustedContext = { ...context, serverSpkiSha256: pin(unrelated.server.certificatePem),
+      issuerSpkiSha256: pin(unrelated.memberIssuer.certificatePem) };
+    await runWindow({ workspaceId: companyId, context, keyRequest: key,
+      untrustedContext, untrustedTarget: { v: 1, kind: "sps.native.member-host-target", context: untrustedContext,
+        origin: `https://127.0.0.1:${port}`, serverCertificatePem: unrelated.server.certificatePem },
+      target: { v: 1, kind: "sps.native.member-host-target", context,
+        origin: `https://127.0.0.1:${port}`, serverCertificatePem: host.server.certificatePem },
+      issuance: { enrollmentId: randomUUID(), certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
+        issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url"),
+        expiresAt: new Date(now + 3_600_000).toISOString() } });
+    const states = await db.select().from(spsPluginInboxUserStates);
+    assert.equal(states.length, 1);
+    assert.equal(states[0].companyId, companyId);
+    assert.equal(states[0].userId, userId);
+    assert.equal(states[0].itemId, itemId);
+    assert.ok(states[0].readAt instanceof Date);
+    assert.equal(states[0].archivedAt, null);
+  }
   // This database contains only this fixture's membership. Discovery must never
   // recreate access when an approved device loses its Workspace membership.
   await db.update(companyMemberships).set({ status: "suspended" });
@@ -156,4 +238,6 @@ finally {
   try { await database.cleanup(); } catch (error) { errors.push(error); }
   if (errors.length) throw new AggregateError([...(failure ? [failure] : []), ...errors], "Native Workspace integration cleanup failed.");
 }
-console.log("Native Workspace channel integration passed: actual fresh mTLS, owned child IPC bootstrap, private HTTP, real Core Identity/device/membership and surface services; unauthorized and revoked devices denied, no Agents/Plugins/Nodes, natural process/database cleanup. Source/loopback only; not DPAPI, full SPA, WebSockets, physical LAN or installed startup qualification.");
+console.log(withWindow
+  ? "Joined Native Workspace integration passed: actual Electron/bundled SPA/preload, Windows DPAPI retained credentials, fresh mTLS, owned Core child/private HTTP, real DB session/device/membership, persisted Inbox read/archive/restore and natural Main/Core/database cleanup. Identity-provider token exchange is substituted; not installed startup, WebSockets, Plugin UI or physical LAN qualification."
+  : "Native Workspace channel integration passed: actual fresh mTLS, owned child IPC bootstrap, private HTTP, real Core Identity/device/membership and surface services; unauthorized and revoked devices denied, no Agents/Plugins/Nodes, natural process/database cleanup. Source/loopback only; not DPAPI, full SPA, WebSockets, physical LAN or installed startup qualification.");

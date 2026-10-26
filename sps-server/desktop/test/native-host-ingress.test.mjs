@@ -35,11 +35,12 @@ before(async () => {
   });
 });
 
-function post(port, { route, body = "", headers = {}, certificate, key, session = false, workspace = false } = {}) {
+function post(port, { route, body = "", headers = {}, certificate, key, session = false, workspace = false, method } = {}) {
   return new Promise((resolve, reject) => {
-    const request = httpsRequest({ hostname: "127.0.0.1", port, path: route, method: workspace ? "GET" : "POST", agent: false,
+    const request = httpsRequest({ hostname: "127.0.0.1", port, path: route, method: method ?? (workspace ? "GET" : "POST"), agent: false,
       ca: identity.server.certificatePem, cert: certificate, key, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
-      headers: { ...(!workspace ? { "Content-Type": "application/json; charset=utf-8" } : {}), "Content-Length": String(Buffer.byteLength(body)),
+      headers: { ...(method === "PATCH" ? { "Content-Type": "application/json" }
+        : !workspace ? { "Content-Type": "application/json; charset=utf-8" } : {}), "Content-Length": String(Buffer.byteLength(body)),
         Connection: "close", ...(session ? { Cookie: `sps_identity_session=${"a".repeat(64)}` } : {}), ...headers } }, response => {
       const chunks = [];
       response.on("data", chunk => chunks.push(chunk));
@@ -107,6 +108,46 @@ test("only exact Native paths and closed canonical requests dispatch over fresh 
   assert.equal(calls[2].body.requestPem, memberKey.requestPem);
   assert.equal(calls[2].credential.sessionCookie, `sps_identity_session=${"a".repeat(64)}`);
   assert.equal("peerCertificateDer" in calls[2].transport, false);
+});
+
+test("workspace inbox state PATCH requires fresh mTLS, exact route, cookie and canonical bounded JSON", async t => {
+  const calls = [];
+  const ingress = createSpsNativeHostIngress({ getIdentity: () => identity, assertCurrent() {},
+    dispatch() { assert.fail("Inbox state PATCH must not use enrollment dispatch"); },
+    async dispatchWorkspace(input, options) { options.assertCurrent(); calls.push(input); return { ok: true }; },
+  });
+  t.after(() => ingress.dispose());
+  const { port } = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  const workspaceId = "44444444-4444-4444-8444-444444444444";
+  const itemId = "55555555-5555-4555-8555-555555555555";
+  const route = `/api/companies/${workspaceId}/workspace-inbox/${itemId}`;
+  const body = JSON.stringify({ read: true, archived: false });
+  const valid = { route, body, method: "PATCH", workspace: true,
+    certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem, session: true };
+  const success = await post(port, valid);
+  assert.equal(success.statusCode, 200);
+  assert.deepEqual(calls, [{ workspaceId, target: route, cookie: `sps_identity_session=${"a".repeat(64)}`,
+    peerCertificateDer: new X509Certificate(memberCertificate.certificatePem).raw, method: "PATCH", body: Buffer.from(body) }]);
+  for (const denied of [
+    { ...valid, certificate: undefined, key: undefined },
+    { ...valid, session: false },
+    { ...valid, method: "PUT" },
+    { ...valid, route: `/api/companies/${workspaceId}/workspace-inbox/${itemId}?x=1` },
+    { ...valid, route: `/api/companies/${workspaceId}/workspace-inbox` },
+    { ...valid, route: `/api/companies/${workspaceId}/workspace-shell/${itemId}` },
+    { ...valid, body: "{}" },
+    { ...valid, body: "null" },
+    { ...valid, body: "[]" },
+    { ...valid, body: "true" },
+    { ...valid, body: "{\"read\":true, \"archived\":false}" },
+    { ...valid, body: "{\"read\":1}" },
+    { ...valid, body: "{\"read\":true,\"extra\":false}" },
+    { ...valid, body: `{"read":true} ` + " ".repeat(118) },
+    { ...valid, body: "{\"read\":true}", headers: { Origin: "https://evil.invalid" } },
+    { ...valid, body: "{\"read\":true}", headers: { "X-SPS-Desktop-Owner-Bootstrap": "owner" } },
+    { ...valid, body: "{\"read\":true}", headers: { "X-SPS-Native-Workspace-Proof": "forged" } },
+  ]) assert.notEqual((await post(port, denied)).statusCode, 200);
+  assert.equal(calls.length, 1);
 });
 
 test("explicit Workspace surface forwarding requires actual fresh mTLS and a session without Owner proof", async t => {

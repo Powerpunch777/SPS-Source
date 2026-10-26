@@ -1367,6 +1367,7 @@ function ensureNativeWorkspaceWindowController() {
       preloadFile: path.join(__dirname, "native-workspace-preload.cjs"),
       getBootstrap: (input, options) => ensureNativeMemberController().getWorkspaceBootstrap(input, options),
       readSurface: (input, options) => ensureNativeMemberController().readWorkspaceSurface(input, options),
+      updateInboxState: (input, options) => ensureNativeMemberController().updateInboxState(input, options),
     });
     nativeWorkspaceWindowController.registerIpc(ipcMain);
   }

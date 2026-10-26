@@ -14,6 +14,30 @@ const DEVICE = "22222222-2222-4222-8222-222222222222";
 const PAIRING = "33333333-3333-4333-8333-333333333333";
 const ENROLLMENT = "44444444-4444-4444-8444-444444444444";
 const TOKEN = "fixture.header.signature", COOKIE = `sps_identity_session=${"x".repeat(64)}`;
+
+test("Inbox state uses the exact PATCH body with saved mTLS credentials", async t => {
+  const value = { readAt: "2026-10-27T00:00:00.000Z", archivedAt: null };
+  const f = await fixture(t, { respond({ item, send, value: fallback }) {
+    send(item.method === "PATCH" ? value : fallback);
+  } });
+  const client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  assert.deepEqual(await client.updateInboxState({ workspaceId: DEVICE,
+    state: { itemId: PAIRING, read: true }, keyRequest, issuance: f.issuance }), value);
+  const request = f.requests.at(-1);
+  assert.equal(request.path, `/api/companies/${DEVICE}/workspace-inbox/${PAIRING}`);
+  assert.equal(request.method, "PATCH");
+  assert.equal(request.contentType, "application/json");
+  assert.equal(request.body, '{"read":true}');
+  assert.equal(request.cookie, COOKIE);
+  assert.equal(request.authorization, undefined);
+  assert.equal(request.authorized, true);
+  assert.equal(request.resumed, false);
+  const before = f.requests.length;
+  await assert.rejects(client.updateInboxState({ workspaceId: DEVICE,
+    state: { itemId: PAIRING, read: true, url: "/other" }, keyRequest, issuance: f.issuance }));
+  assert.equal(f.requests.length, before);
+});
 const spki = pem => createHash("sha256").update(new X509Certificate(pem).publicKey.export({ type: "spki", format: "der" })).digest("hex");
 let host, other, keyRequest, certificate;
 before(async () => {
