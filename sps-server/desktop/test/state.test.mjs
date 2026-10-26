@@ -4,6 +4,57 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { consumeLegacyDesktopConnectionMigration, emptyState, hasPendingLegacyDesktopOwnerAdoption, loadState, saveState } from "../src/state.mjs";
+import { allocateSpsNativeMemberKeyIndex } from "../src/native-member-key-index.mjs";
+
+test("migrates v11 public Member key metadata without changing accounts, Node keys or routing", async () => {
+  const created = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-member-index-"));
+  const root = await fs.realpath(created);
+  const identity = await fs.lstat(root, { bigint: true });
+  const file = path.join(root, "sps-desktop-state.json");
+  try {
+    const legacy = { version: 11, desktopDeviceId: "existing-desktop-id", nodeId: "existing-node",
+      identity: { encryptedPrivateKey: "existing-encrypted-node-key" }, encryptedDesktopAccount: "existing-encrypted-account",
+      profile: { hubUrl: "https://host.example.test", connectionKind: "remote", authMode: "sps-identity" } };
+    await fs.writeFile(file, JSON.stringify(legacy));
+    const state = await loadState(root, { strictVersion: true });
+    assert.equal(state.version, 12);
+    assert.deepEqual(state.nativeMemberKeyIndex, { v: 1, entries: [] });
+    for (const field of ["desktopDeviceId", "nodeId", "identity", "encryptedDesktopAccount", "profile"]) {
+      assert.deepEqual(state[field], legacy[field]);
+    }
+    const scope = { identityIssuer: "https://identity.example.test", subject: "member-one",
+      hostId: "11111111-1111-4111-8111-111111111111" };
+    const allocated = allocateSpsNativeMemberKeyIndex(state.nativeMemberKeyIndex, scope, { maxEntries: 4,
+      createDeviceKeyId: () => "22222222-2222-4222-8222-222222222222" });
+    state.nativeMemberKeyIndex = allocated.index;
+    await saveState(root, state);
+    const loaded = await loadState(root, { strictVersion: true });
+    const existing = allocateSpsNativeMemberKeyIndex(loaded.nativeMemberKeyIndex, scope, { maxEntries: 4,
+      createDeviceKeyId: () => { throw new Error("Must not allocate on restart"); } });
+    assert.equal(existing.created, false);
+    assert.equal(existing.deviceKeyId, allocated.deviceKeyId);
+    assert.equal(Object.isFrozen(loaded.nativeMemberKeyIndex.entries[0]), true);
+    assert.equal(loaded.identity.encryptedPrivateKey, legacy.identity.encryptedPrivateKey);
+
+    for (const invalid of [null, {}, { v: 1, entries: [] , secret: "must-not-accept" },
+      { v: 1, entries: [allocated.index.entries[0], allocated.index.entries[0]] }]) {
+      const raw = JSON.stringify({ ...state, nativeMemberKeyIndex: invalid });
+      await fs.writeFile(file, raw);
+      await assert.rejects(loadState(root, { strictVersion: true }));
+      await assert.rejects(loadState(root));
+      assert.equal(await fs.readFile(file, "utf8"), raw);
+    }
+  } finally {
+    assert.equal(await fs.realpath(root), root);
+    assert.equal(path.basename(root).startsWith("sps-state-member-index-"), true);
+    const current = await fs.lstat(root, { bigint: true });
+    assert.equal(current.isDirectory() && !current.isSymbolicLink(), true);
+    assert.equal(current.dev, identity.dev);
+    assert.equal(current.ino, identity.ino);
+    assert.equal(current.birthtimeNs, identity.birthtimeNs);
+    await fs.rm(root, { recursive: true });
+  }
+});
 
 test("strict startup rejects parseable damage to ownership and account routing", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-"));
@@ -100,7 +151,7 @@ test("adds private team access fields without discarding a v1 Desktop profile", 
       nodeId: "node-1",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 11);
+    assert.equal(state.version, 12);
     assert.equal(state.profile.hubUrl, "https://app.example.test");
     assert.equal(state.nodeId, "node-1");
     assert.equal(state.teamAccess, null);
@@ -200,7 +251,7 @@ test("retires legacy per-machine Google OAuth credentials during migration", asy
       encryptedDesktopGoogleClientSecret: "legacy-secret",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 11);
+    assert.equal(state.version, 12);
     assert.equal(state.desktopGoogleClientId, undefined);
     assert.equal(state.encryptedDesktopGoogleClientSecret, undefined);
   } finally {

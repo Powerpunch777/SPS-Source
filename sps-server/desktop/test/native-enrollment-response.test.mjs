@@ -319,5 +319,57 @@ test("validates issue fields and exposes no extra response data", () => {
 
 test("completion remains pending and rejects approved or malformed device identifiers", () => {
   expectInvalid("complete", response("complete", { deviceId: DEVICE_ID, status: "approved" }));
+  expectInvalid("complete", response("complete", { deviceId: DEVICE_ID, status: "revoked" }));
   expectInvalid("complete", response("complete", { deviceId: DEVICE_ID.toUpperCase(), status: "pending" }));
+});
+
+test("reconciliation accepts only its three canonical states as a frozen DTO", () => {
+  for (const status of ["pending", "approved", "revoked"]) {
+    const result = parseSpsNativeEnrollmentResponse("reconcile", response("reconcile", { deviceId: DEVICE_ID, status }));
+    assert.deepEqual(result, { deviceId: DEVICE_ID, status });
+    assert.deepEqual(Object.keys(result), ["deviceId", "status"]);
+    assert.equal(Object.isFrozen(result), true);
+  }
+});
+
+test("reconciliation preserves strict status, field, header, size, and encoding checks", () => {
+  const value = { deviceId: DEVICE_ID, status: "approved" };
+  const base = response("reconcile", value);
+
+  expectInvalid("reconcile", { ...base, statusCode: 201 });
+  for (const status of ["unknown", "Pending", "APPROVED", "revoked "]) {
+    expectInvalid("reconcile", response("reconcile", { ...value, status }));
+  }
+  expectInvalid("reconcile", response("reconcile", { ...value, extra: true }));
+
+  const duplicateKeyBody = Buffer.from(`{"deviceId":"${DEVICE_ID}","status":"pending","status":"approved"}`);
+  expectInvalid("reconcile", {
+    ...base,
+    body: duplicateKeyBody,
+    rawHeaders: ["Content-Length", String(duplicateKeyBody.length), ...JSON_HEADERS],
+  });
+
+  for (const rawHeaders of [
+    ["Content-Length", String(base.body.length), "Content-Type", "application/json; charset=utf-8"],
+    [...base.rawHeaders, "cAcHe-CoNtRoL", "no-store"],
+    [...base.rawHeaders, "Set-Cookie", COOKIE],
+    [...base.rawHeaders, "Content-Encoding", "gzip"],
+  ]) {
+    expectInvalid("reconcile", { ...base, rawHeaders });
+  }
+
+  const oversizedBody = Buffer.alloc(16_385, 0x20);
+  expectInvalid("reconcile", {
+    ...base,
+    body: oversizedBody,
+    rawHeaders: ["Content-Length", String(oversizedBody.length), ...JSON_HEADERS],
+  });
+
+  for (const body of [Buffer.from([0xC3, 0x28]), Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), base.body])]) {
+    expectInvalid("reconcile", {
+      ...base,
+      body,
+      rawHeaders: ["Content-Length", String(body.length), ...JSON_HEADERS],
+    });
+  }
 });

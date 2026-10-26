@@ -113,6 +113,17 @@ export function validateSpsNativeMemberIssuerCertificate(certificatePem, hostId,
   } catch { throw failure("native_identity_invalid"); }
 }
 
+// Public material only. The certificate must be the current SPS Native Host server profile.
+export function validateSpsNativeServerCertificate(certificatePem, hostId, now) {
+  try {
+    uuid(hostId);
+    if (!Number.isSafeInteger(now) || now <= 0) throw new Error("clock");
+    const details = checkCertificate(certificatePem, hostId, false);
+    if (now < details.before || now >= details.after) throw new Error("validity");
+    return details.certificate;
+  } catch { throw failure("native_identity_invalid"); }
+}
+
 function parseIdentity(input) {
   const value = record(input, ["v", "kind", "hostId", "server", "memberIssuer"]);
   if (value.v !== 1 || value.kind !== "sps.native.host-identity") throw new Error("identity");

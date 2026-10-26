@@ -4,6 +4,8 @@ import { createHash, randomUUID, X509Certificate } from "node:crypto";
 import { nativeCertificateRecord as record } from "./native-certificate-primitives.mjs";
 import { createSpsNativeMemberPendingCapsule, validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
 import { createSpsNativeMemberIssuedCapsule } from "./native-member-issued-capsule.mjs";
+import { createSpsNativeMemberTargetCapsule, validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
+import { normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
 
 const MAX_BYTES = 96 * 1024;
 const errors = Object.freeze({
@@ -99,21 +101,35 @@ async function boundedRead(file, expected) {
 // Main-private create-only pending-key storage. This does not authenticate a user,
 // trust a new pin, approve a device, rotate credentials or grant Node/Source access.
 export function createSpsNativeMemberPendingKeyStore(options) {
+  return createStore(options, false);
+}
+
+// A cold restart has only the account-scoped key index. Pins come from the
+// protected retained record, never from a new peer or an expired invitation.
+export function createSpsNativeMemberHostTargetReader(options) {
+  return createStore(options, true);
+}
+
+function createStore(options, targetReader) {
   let config, context;
   try {
     const descriptors = Object.getOwnPropertyDescriptors(options ?? {});
     const hasPlatform = Object.hasOwn(descriptors, "platform");
-    config = record(options, ["userDataDirectory", "vaultDirectory", "context", "safeStorage", ...(hasPlatform ? ["platform"] : [])]);
+    config = record(options, ["userDataDirectory", "vaultDirectory", targetReader ? "scope" : "context", "safeStorage", ...(hasPlatform ? ["platform"] : [])]);
     for (const field of ["userDataDirectory", "vaultDirectory"]) {
       if (typeof config[field] !== "string" || !path.isAbsolute(config[field])) throw fail("OPTIONS");
       config[field] = path.resolve(config[field]);
     }
-    context = validateSpsNativeMemberPendingContext(config.context);
+    context = targetReader
+      ? normalizeSpsNativeMemberKeyIndex({ v: 1, entries: [config.scope] }).entries[0]
+      : validateSpsNativeMemberPendingContext(config.context);
   } catch { throw fail("OPTIONS"); }
   const capsule = createSpsNativeMemberPendingCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
   const issuedCapsule = createSpsNativeMemberIssuedCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
-  const slot = createHash("sha256").update(JSON.stringify({ identityIssuer: context.identityIssuer, subject: context.subject,
-    hostId: context.hostId, deviceKeyId: context.deviceKeyId })).digest("hex");
+  const targetCapsule = createSpsNativeMemberTargetCapsule({ safeStorage: config.safeStorage, platform: config.platform ?? process.platform });
+  const scope = Object.freeze({ identityIssuer: context.identityIssuer, subject: context.subject,
+    hostId: context.hostId, deviceKeyId: context.deviceKeyId });
+  const slot = createHash("sha256").update(JSON.stringify(scope)).digest("hex");
   let queue = Promise.resolve();
   function serialize(action) {
     const result = queue.then(action, action);
@@ -126,7 +142,8 @@ export function createSpsNativeMemberPendingKeyStore(options) {
     if (isWithin(vault, native) || isWithin(native, vault)) throw fail("OPTIONS");
     const nativeRoot = await childDirectory(root, "native-connectivity", create);
     const folder = nativeRoot && await childDirectory(nativeRoot, "member-pending", create);
-    return folder ? { root, folder, kind, file: path.join(folder, kind === "issued" ? `${slot}.issued.json` : `${slot}.json`),
+    const suffix = kind === "issued" ? ".issued" : kind === "target" ? ".target" : "";
+    return folder ? { root, folder, kind, file: path.join(folder, `${slot}${suffix}.json`),
       rootIdentity: await directoryIdentity(root), folderIdentity: await directoryIdentity(folder) } : null;
   }
   async function recheck(expected) {
@@ -191,6 +208,24 @@ export function createSpsNativeMemberPendingKeyStore(options) {
     }
     return value;
   }
+  async function readTargetMetadata() {
+    const target = await paths(false, "target");
+    if (!target) return null;
+    const stat = await slotStat(target.file);
+    if (!stat) { await recheck(target); return null; }
+    const bytes = await boundedRead(target.file, stat);
+    const result = await targetCapsule.open(bytes, scope);
+    await recheck(target);
+    if (!sameFile(stat, await slotStat(target.file))) throw fail("CORRUPT");
+    return { value: validateSpsNativeMemberHostTarget(result, result.context), target, stat, bytes };
+  }
+  async function recheckTarget(expected) {
+    await recheck(expected.target);
+    const stat = await slotStat(expected.target.file);
+    if (!stat || !sameFile(stat, expected.stat)
+      || await boundedRead(expected.target.file, stat) !== expected.bytes) throw fail("CORRUPT");
+    await recheck(expected.target);
+  }
   async function createOnly(kind, prepare, authorize) {
     let temporary, owned, target;
     try {
@@ -208,6 +243,7 @@ export function createSpsNativeMemberPendingKeyStore(options) {
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !sameFile(stat, owned)) throw fail("FAILED");
       if (await slotStat(target.file, false)) throw fail("ALREADY_EXISTS");
       if (pending) await recheckPending(pending);
+      if (kind === "target") validateSpsNativeMemberHostTarget(validated, context);
       authorize();
       try { await fs.link(temporary, target.file); } catch (error) {
         if (error?.code === "EEXIST") throw fail("ALREADY_EXISTS");
@@ -224,11 +260,20 @@ export function createSpsNativeMemberPendingKeyStore(options) {
       if (pending) await recheckPending(pending);
       if (!sameFile(linked, await slotStat(target.file))) throw fail("FAILED");
       if (kind === "issued") requireCurrentIssued(validated);
+      if (kind === "target") validateSpsNativeMemberHostTarget(validated, context);
       authorize();
       return validated;
     } catch (error) { throw fail(internalFailures.get(error) ?? "FAILED"); }
     finally { if (temporary && target) await cleanupTemporary(temporary, owned, target); }
   }
+  if (targetReader) return Object.freeze({
+    read() {
+      return serialize(async () => {
+        try { return (await readTargetMetadata())?.value ?? null; }
+        catch { throw fail("CORRUPT"); }
+      });
+    },
+  });
   return Object.freeze({
     inspectPresence() {
       return serialize(async () => {
@@ -276,6 +321,29 @@ export function createSpsNativeMemberPendingKeyStore(options) {
         if (!pending) throw fail("CORRUPT");
         const encrypted = await issuedCapsule.seal({ context, keyRequest: pending.key, issuance });
         const validated = await issuedCapsule.open(encrypted, context, pending.key);
+        return { encrypted, validated, pending };
+      }, authorize));
+    },
+    readTarget() {
+      return serialize(async () => {
+        try {
+          const result = await readTargetMetadata();
+          if (!result) return null;
+          const pending = await readPending();
+          if (!pending) throw fail("CORRUPT");
+          await recheckPending(pending);
+          await recheckTarget(result);
+          return validateSpsNativeMemberHostTarget(result.value, context);
+        } catch { throw fail("CORRUPT"); }
+      });
+    },
+    createTarget(target, input = {}) {
+      const authorize = commitGuard(input);
+      return serialize(() => createOnly("target", async () => {
+        const pending = await readPending();
+        if (!pending) throw fail("CORRUPT");
+        const encrypted = await targetCapsule.seal({ context, target });
+        const validated = await targetCapsule.open(encrypted, scope);
         return { encrypted, validated, pending };
       }, authorize));
     },

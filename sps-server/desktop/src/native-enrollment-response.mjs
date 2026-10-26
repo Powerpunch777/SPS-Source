@@ -9,11 +9,12 @@ const MAX_HEADER_PAIRS = 64;
 const MAX_HEADER_BYTES = 16_384;
 const MAX_DER_BYTES = 4096;
 const MAX_BASE64URL_LENGTH = Math.ceil(MAX_DER_BYTES * 4 / 3);
-const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200, identity: 200 });
+const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200, reconcile: 200, identity: 200 });
 const RESPONSE_KEYS = Object.freeze({
   exchange: ["expiresInSeconds"],
   issue: ["enrollmentId", "certificate", "issuerCertificate", "expiresAt"],
   complete: ["deviceId", "status"],
+  reconcile: ["deviceId", "status"],
   identity: ["hostId", "serverSpkiSha256", "issuerSpkiSha256", "issuerCertificate"],
 });
 const SENSITIVE_HEADERS = new Set([
@@ -148,9 +149,13 @@ function validateBody(operation, value, cookie) {
   }
   if (operation === "issue") return validateIssue(value);
   if (operation === "identity") return validateIdentity(value);
-  uuid(value.deviceId);
-  if (value.status !== "pending") reject();
-  return Object.freeze({ deviceId: value.deviceId, status: "pending" });
+  if (operation === "complete" || operation === "reconcile") {
+    uuid(value.deviceId);
+    if (operation === "complete" ? value.status !== "pending"
+      : !["pending", "approved", "revoked"].includes(value.status)) reject();
+    return Object.freeze({ deviceId: value.deviceId, status: value.status });
+  }
+  reject();
 }
 
 export function parseSpsNativeEnrollmentResponse(operation, input) {

@@ -14,16 +14,17 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const holdMs = Number(process.env.SPS_CORE_SETTINGS_E2E_HOLD_MS ?? "0");
 if (!Number.isInteger(holdMs) || holdMs < 0 || holdMs > 120_000) throw new Error("Invalid Core Settings E2E observation duration.");
 const modes = process.argv.slice(2);
-const allowedModes = new Set(["--corrupt-recovery", "--corrupt-desktop-state", "--unwritable-desktop-state", "--malformed-routing-state", "--unverified-legacy-adoption", "--deferred-owner"]);
+const allowedModes = new Set(["--corrupt-recovery", "--corrupt-desktop-state", "--unwritable-desktop-state", "--malformed-routing-state", "--malformed-native-member-index", "--unverified-legacy-adoption", "--deferred-owner"]);
 if (modes.length > 1 || (modes.length === 1 && !allowedModes.has(modes[0]))) throw new Error("Use one known Core Settings fixture at a time.");
 const scenario = modes[0]?.slice(2) ?? "fresh";
 const corruptRecovery = scenario === "corrupt-recovery";
 const corruptDesktopState = scenario === "corrupt-desktop-state";
 const unwritableDesktopState = scenario === "unwritable-desktop-state";
 const malformedRoutingState = scenario === "malformed-routing-state";
+const malformedNativeMemberIndex = scenario === "malformed-native-member-index";
 const unverifiedLegacyAdoption = scenario === "unverified-legacy-adoption";
 const deferredOwner = scenario === "deferred-owner";
-const stateUnavailable = corruptDesktopState || unwritableDesktopState || malformedRoutingState || unverifiedLegacyAdoption;
+const stateUnavailable = corruptDesktopState || unwritableDesktopState || malformedRoutingState || malformedNativeMemberIndex || unverifiedLegacyAdoption;
 const server = createServer();
 server.listen(0, "127.0.0.1");
 await once(server, "listening");
@@ -44,6 +45,8 @@ if (unwritableDesktopState) {
 const malformedState = JSON.stringify({ version: 11, accountConnections: [], ownerHostOwnerSubject: 42,
   profile: { hubUrl: "http://127.0.0.1:31310", connectionKind: "owner-host" } });
 if (malformedRoutingState) await writeFile(desktopStatePath, malformedState);
+const malformedMemberState = JSON.stringify({ version: 12, nativeMemberKeyIndex: { v: 1, entries: "must-preserve-corrupt-index" } });
+if (malformedNativeMemberIndex) await writeFile(desktopStatePath, malformedMemberState);
 const unverifiedLegacyState = JSON.stringify({ version: 11, legacyOwnerHostAdoptionPending: true,
   encryptedBoardApiToken: "fake-legacy-proof", companies: [{ id: "fixture-workspace" }] });
 if (unverifiedLegacyAdoption) await writeFile(desktopStatePath, unverifiedLegacyState);
@@ -133,6 +136,7 @@ try {
     assert.equal(await readFile(desktopStatePath, "utf8"), retainedState);
   }
   if (malformedRoutingState) assert.equal(await readFile(desktopStatePath, "utf8"), malformedState);
+  if (malformedNativeMemberIndex) assert.equal(await readFile(desktopStatePath, "utf8"), malformedMemberState);
   if (unverifiedLegacyAdoption) assert.equal(await readFile(desktopStatePath, "utf8"), unverifiedLegacyState);
   if (stateUnavailable) {
     assert.equal(await evaluate("document.querySelector('#desktop-state-error').hidden"), false);

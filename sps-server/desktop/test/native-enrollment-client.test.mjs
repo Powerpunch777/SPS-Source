@@ -6,7 +6,8 @@ import { createSpsNativeHostIdentity } from "../src/native-identity-certificates
 import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate,
   publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
-import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient } from "../src/native-enrollment-client.mjs";
+import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
+  createSpsNativeEnrollmentRecoveryClient } from "../src/native-enrollment-client.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "22222222-2222-4222-8222-222222222222";
@@ -92,7 +93,15 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
     t.after(() => result.dispose());
     return result;
   }
-  return { requests, received, issuance, context, code, client, bootstrap,
+  const target = { v: 1, kind: "sps.native.member-host-target", context,
+    origin: `https://127.0.0.1:${server.address().port}`, serverCertificatePem: host.server.certificatePem };
+  function recovery(overrides = {}) {
+    const result = createSpsNativeEnrollmentRecoveryClient({ target, context, timeoutMs: 3000,
+      assertCurrent() {}, ...overrides });
+    t.after(() => result.dispose());
+    return result;
+  }
+  return { requests, received, issuance, context, code, client, bootstrap, recovery, target,
     replaceIdentity(identity) { server.setSecureContext({ key: identity.server.privateKeyPem,
       cert: identity.server.certificatePem, ca: host.memberIssuer.certificatePem }); } };
 }
@@ -309,4 +318,100 @@ test("bootstrap never contacts a different actual peer and disposal rejects a la
   await assert.rejects(bootstrap.inspect(), { code: "native_enrollment_client_disposed" });
   assert.equal(good.requests.length, 0);
   assert.throws(() => good.bootstrap({ context: good.context }), safe);
+});
+
+test("recovery uses the retained peer and existing issued key without an invitation or enrollment methods", async t => {
+  const f = await fixture(t), first = f.client();
+  await first.exchange(TOKEN);
+  const issuance = await first.issue(keyRequest);
+  await first.complete({ keyRequest, issuance, displayName: "Fixture PC" });
+  first.dispose();
+  const recovered = f.recovery();
+  assert.deepEqual(Object.keys(recovered), ["exchange", "reconcile", "dispose"]);
+  assert.equal(Object.isFrozen(recovered), true);
+  const expiredPairing = { ...issuance, expiresAt: new Date(Date.now() - 1000).toISOString() };
+  await recovered.exchange(TOKEN);
+  assert.deepEqual(await recovered.reconcile({ keyRequest, issuance: expiredPairing }), { deviceId: DEVICE, status: "pending" });
+  const request = f.requests.at(-1);
+  assert.equal(request.path, "/sps-native/v1/enrollment/reconcile");
+  assert.equal(request.authorized, true);
+  assert.equal(request.resumed, false);
+  assert.equal(request.protocol, "TLSv1.3");
+  assert.ok(request.peer.equals(new X509Certificate(certificate.certificatePem).raw));
+  assert.equal(request.cookie, COOKIE);
+  assert.equal(request.authorization, undefined);
+  assert.deepEqual(JSON.parse(request.body), { enrollmentId: ENROLLMENT });
+  assert.doesNotMatch(request.body, /pairing|PRIVATE KEY|subject|userId|displayName/);
+  await recovered.reconcile({ keyRequest, issuance: expiredPairing });
+  assert.equal(f.requests.filter(row => row.path.endsWith("/issue") || row.path.endsWith("/complete")).length, 2);
+});
+
+test("recovery observes pending, approved and revoked without interpreting them as enrollment permission", async t => {
+  for (const status of ["pending", "approved", "revoked"]) {
+    const f = await fixture(t, { respond({ item, send, value }) {
+      send(item.path.endsWith("/reconcile") ? { deviceId: DEVICE, status } : value);
+    } });
+    const client = f.recovery();
+    await assert.rejects(client.reconcile({ keyRequest, issuance: f.issuance }), { code: "native_enrollment_client_session_required" });
+    await client.exchange(TOKEN);
+    assert.deepEqual(await client.reconcile({ keyRequest, issuance: f.issuance }), { deviceId: DEVICE, status });
+    assert.deepEqual(f.requests.map(row => row.path), ["/sps-native/v1/session/exchange", "/sps-native/v1/enrollment/reconcile"]);
+  }
+});
+
+test("recovery rejects changed scope, pins, issuer and local key without replaying pairing", async t => {
+  const f = await fixture(t);
+  for (const changes of [{ context: { ...f.context, subject: "another-account" } },
+    { target: { ...f.target, serverCertificatePem: other.server.certificatePem } },
+    { target: { ...f.target, origin: "https://wrong.example.test" } }, { invitationCode: f.code }]) {
+    assert.throws(() => f.recovery(changes), safe);
+  }
+  const client = f.recovery();
+  await client.exchange(TOKEN);
+  await assert.rejects(client.reconcile({ keyRequest: { ...keyRequest, deviceKeyId: HOST }, issuance: f.issuance }), safe);
+  assert.equal(f.requests.length, 1);
+  await client.exchange(TOKEN);
+  await assert.rejects(client.reconcile({ keyRequest, issuance: { ...f.issuance,
+    issuerCertificate: new X509Certificate(other.memberIssuer.certificatePem).raw.toString("base64url") } }), safe);
+  assert.equal(f.requests.length, 2);
+  const badPeer = await fixture(t, { identity: other });
+  await assert.rejects(badPeer.recovery().exchange(TOKEN), safe);
+  assert.equal(badPeer.requests.length, 0);
+});
+
+test("recovery cancellation or lost current account cannot accept late results or silently retry", async t => {
+  let deliver, current = true;
+  async function waitForResponse() {
+    const deadline = Date.now() + 2000;
+    while (!deliver && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(typeof deliver, "function", "The owned fixture must receive the request before its deadline.");
+  }
+  const f = await fixture(t, { respond({ item, send }) {
+    if (item.path.endsWith("/reconcile")) deliver = send;
+    else send();
+  } });
+  const client = f.recovery({ assertCurrent() { if (!current) throw new Error("private former account"); } });
+  await client.exchange(TOKEN);
+  const controller = new AbortController();
+  const running = client.reconcile({ keyRequest, issuance: f.issuance }, { signal: controller.signal });
+  const rejected = assert.rejects(running, { code: "native_enrollment_client_cancelled" });
+  await waitForResponse();
+  await assert.rejects(client.reconcile({ keyRequest, issuance: f.issuance }), { code: "native_enrollment_client_busy" });
+  controller.abort();
+  await rejected;
+  deliver();
+  assert.equal(f.requests.length, 2);
+  await assert.rejects(client.reconcile({ keyRequest, issuance: f.issuance }), { code: "native_enrollment_client_session_required" });
+  deliver = null;
+  await client.exchange(TOKEN);
+  const late = assert.rejects(client.reconcile({ keyRequest, issuance: f.issuance }), safe);
+  await waitForResponse();
+  current = false;
+  deliver();
+  await late;
+  current = true;
+  await assert.rejects(client.reconcile({ keyRequest, issuance: f.issuance }), { code: "native_enrollment_client_session_required" });
+  assert.equal(f.requests.length, 4);
+  client.dispose();
+  await assert.rejects(client.exchange(TOKEN), { code: "native_enrollment_client_disposed" });
 });

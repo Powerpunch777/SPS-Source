@@ -10,9 +10,11 @@ import { publicSpsNativeMemberEnrollmentRequest } from "./native-member-certific
 import { validateSpsNativeMemberCredential } from "./native-member-credential.mjs";
 import { parseSpsNativeEnrollmentResponse } from "./native-enrollment-response.mjs";
 import { validateSpsNativeMemberIssuerCertificate } from "./native-identity-certificates.mjs";
+import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
 
 const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/sps-native/v1/session/exchange",
-  issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete" });
+  issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete",
+  reconcile: "/sps-native/v1/enrollment/reconcile" });
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
   unavailable: "The Native enrollment request could not complete.",
   invalid_response: "The Native enrollment response is invalid.",
@@ -49,24 +51,37 @@ function derPem(value) {
 // Main-private transport only. The caller supplies independently trusted issuer
 // scope and rechecks its current account/Host generation. No UI or listener is wired.
 export function createSpsNativeEnrollmentClient(input) {
-  return createClient(input, false);
+  return createClient(input, "enroll");
 }
 
 // The invitation already authenticates the server. Only public issuer metadata
 // is learned here; a successful read grants no session or device approval.
 export function createSpsNativeEnrollmentBootstrap(input) {
-  return createClient(input, true);
+  return createClient(input, "bootstrap");
 }
 
-function createClient(input, bootstrap) {
-  let options, context, invitation, target;
+// Recovery uses an independently retained, protected target and the existing
+// issued key. It cannot create/complete enrollment or extend an invitation.
+export function createSpsNativeEnrollmentRecoveryClient(input) {
+  return createClient(input, "recover");
+}
+
+function createClient(input, mode) {
+  const bootstrap = mode === "bootstrap", recovery = mode === "recover";
+  let options, context, invitation, target, retainedTarget;
   try {
-    options = record(input, ["invitationCode", ...(bootstrap ? [] : ["context"]), "timeoutMs", "assertCurrent"]);
+    options = record(input, [recovery ? "target" : "invitationCode", ...(bootstrap ? [] : ["context"]), "timeoutMs", "assertCurrent"]);
     context = bootstrap ? null : validateSpsNativeMemberPendingContext(options.context);
-    invitation = parseSpsNativeInviteCode(options.invitationCode);
-    target = verifySpsNativeInvitationCertificate(options.invitationCode);
-    if (!invitation || context && (invitation.hostId !== context.hostId || target.spkiSha256 !== context.serverSpkiSha256)
-      || !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 60_000
+    if (recovery) {
+      retainedTarget = validateSpsNativeMemberHostTarget(options.target, context);
+      target = { origin: retainedTarget.origin, spkiSha256: context.serverSpkiSha256,
+        certificatePem: retainedTarget.serverCertificatePem };
+    } else {
+      invitation = parseSpsNativeInviteCode(options.invitationCode);
+      target = verifySpsNativeInvitationCertificate(options.invitationCode);
+      if (!invitation || context && (invitation.hostId !== context.hostId || target.spkiSha256 !== context.serverSpkiSha256)) throw new Error();
+    }
+    if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 60_000
       || typeof options.assertCurrent !== "function") throw new Error();
   } catch { throw failure("invalid_options"); }
   const expectedCertificate = new X509Certificate(target.certificatePem);
@@ -83,7 +98,8 @@ function createClient(input, bootstrap) {
       throw failure("invalid_options");
     }
     if (disposed) throw failure("disposed");
-    verifySpsNativeInvitationCertificate(options.invitationCode);
+    if (recovery) validateSpsNativeMemberHostTarget(retainedTarget, context);
+    else verifySpsNativeInvitationCertificate(options.invitationCode);
   }
   function requireSession() {
     if (!cookie || Date.now() >= sessionExpiresAt) {
@@ -217,7 +233,7 @@ function createClient(input, bootstrap) {
     if (typeof issuance.enrollmentId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(issuance.enrollmentId)
       || typeof issuance.expiresAt !== "string" || issuance.expiresAt.length !== 24
       || new Date(issuance.expiresAt).toISOString() !== issuance.expiresAt
-      || Date.parse(issuance.expiresAt) !== invitation.expiresAt) throw failure("invalid_response");
+      || !recovery && Date.parse(issuance.expiresAt) !== invitation.expiresAt) throw failure("invalid_response");
     const issuerCertificatePem = derPem(issuance.issuerCertificate);
     const credential = await validateSpsNativeMemberCredential({ keyRequest: key,
       certificate: { v: 1, kind: "sps.native.member-certificate", hostId: context.hostId, deviceKeyId: context.deviceKeyId,
@@ -245,19 +261,32 @@ function createClient(input, bootstrap) {
     },
     dispose,
   });
-  return Object.freeze({
-    exchange(accessToken, signalInput = {}) {
-      return run("exchange", signalInput, async operation => {
-        if (cookie || typeof accessToken !== "string" || accessToken.length >= 8192
-          || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(accessToken)) throw failure("invalid_options");
-        const startedAt = Date.now();
-        const result = await post("exchange", Buffer.alloc(0), accessToken, null, operation);
-        operation.guard();
-        cookie = result.cookie;
-        sessionExpiresAt = startedAt + result.expiresInSeconds * 1000;
-        return Object.freeze({ state: "session_prepared", expiresAt: new Date(sessionExpiresAt).toISOString() });
+  function exchange(accessToken, signalInput = {}) {
+    return run("exchange", signalInput, async operation => {
+      if (cookie || typeof accessToken !== "string" || accessToken.length >= 8192
+        || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(accessToken)) throw failure("invalid_options");
+      const startedAt = Date.now();
+      const result = await post("exchange", Buffer.alloc(0), accessToken, null, operation);
+      operation.guard();
+      cookie = result.cookie;
+      sessionExpiresAt = startedAt + result.expiresInSeconds * 1000;
+      return Object.freeze({ state: "session_prepared", expiresAt: new Date(sessionExpiresAt).toISOString() });
+    });
+  }
+  if (recovery) return Object.freeze({
+    exchange,
+    reconcile(input, signalInput = {}) {
+      return run("reconcile", signalInput, async operation => {
+        const value = record(input, ["keyRequest", "issuance"]);
+        const { key } = await checkedKey(value.keyRequest, operation.guard);
+        const { issuance, credential } = await checkedIssuance(value.issuance, key, operation.guard);
+        return post("reconcile", Buffer.from(JSON.stringify({ enrollmentId: issuance.enrollmentId })), cookie, credential, operation);
       });
     },
+    dispose,
+  });
+  return Object.freeze({
+    exchange,
     issue(keyRequest, signalInput = {}) {
       return run("issue", signalInput, async operation => {
         const { key, publicRequest } = await checkedKey(keyRequest, operation.guard);

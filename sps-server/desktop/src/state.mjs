@@ -1,8 +1,9 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { normalizeSpsAccountConnection } from "./account-connections.mjs";
+import { normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
 
-const STATE_VERSION = 11;
+const STATE_VERSION = 12;
 const legacyConnectionMigrations = new WeakSet();
 const legacyOwnerAdoptions = new WeakSet();
 
@@ -21,6 +22,7 @@ function assertConnectionShape(value) {
 
 function assertCriticalStateShape(value) {
   if (!isRecord(value)) throw new Error("SPS Desktop connection settings are malformed.");
+  if (value.nativeMemberKeyIndex !== undefined) normalizeSpsNativeMemberKeyIndex(value.nativeMemberKeyIndex);
   const owner = value.ownerHostOwnerSubject;
   if (owner !== undefined && owner !== null
     && (typeof owner !== "string" || !owner.trim() || owner.length > 512 || owner !== owner.trim())) {
@@ -94,6 +96,9 @@ export function emptyState() {
     desktopAccountLastAttempt: null,
     desktopJoinLastAttempt: null,
     desktopDeviceId: null,
+    // Public identifiers only, separate from Node keys and account routing.
+    // Credential bytes and trusted pins remain in guarded encrypted storage.
+    nativeMemberKeyIndex: normalizeSpsNativeMemberKeyIndex({ v: 1, entries: [] }),
     accountConnections: {},
     ownerHostOwnerSubject: null,
     // A narrowly-scoped bridge for SPS Desktop states created before SPS
@@ -125,7 +130,7 @@ export async function loadState(userDataPath, { strictVersion = false } = {}) {
     // Windows tools can write a UTF-8 BOM even when the content is otherwise
     // valid JSON. Treat it as transport encoding, not as part of the state.
     const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
-    if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, STATE_VERSION].includes(parsed?.version)) {
+    if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, STATE_VERSION].includes(parsed?.version)) {
       if (strictVersion) throw new Error("SPS Desktop connection settings use an unsupported version.");
       return emptyState();
     }
@@ -134,6 +139,11 @@ export async function loadState(userDataPath, { strictVersion = false } = {}) {
     // account-scoped connection records while keeping the physical Owner Host
     // and its vault on this computer.
     const state = { ...emptyState(), ...parsed, version: STATE_VERSION };
+    // Missing legacy metadata is empty; present corrupt metadata is never
+    // silently replaced, even for a non-strict inspection load.
+    state.nativeMemberKeyIndex = normalizeSpsNativeMemberKeyIndex(
+      parsed.nativeMemberKeyIndex === undefined ? { v: 1, entries: [] } : parsed.nativeMemberKeyIndex,
+    );
     // Version 8 retires the former per-machine Google OAuth configuration.
     // The central SPS Identity service owns the confidential Google client.
     delete state.desktopGoogleClientId;
