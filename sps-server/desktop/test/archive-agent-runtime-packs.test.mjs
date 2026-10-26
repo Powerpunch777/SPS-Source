@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 test("Windows runtime pack archive records the exact ZIP hash and size", {
   skip: process.platform !== "win32",
+  timeout: 120_000,
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "sps-runtime-archive-test-"));
   try {
@@ -24,7 +25,9 @@ test("Windows runtime pack archive records the exact ZIP hash and size", {
       "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
       fileURLToPath(new URL("../scripts/archive-agent-runtime-packs.ps1", import.meta.url)),
       "-SourceRoot", source, "-DistRoot", dist,
-    ], { windowsHide: true, timeout: 30_000, stdio: "pipe" });
+    // Include cold PowerShell/module startup under the parallel Windows suite.
+    // Archive contents, exact byte count and hash still require full validation.
+    ], { windowsHide: true, timeout: 90_000, stdio: "pipe" });
     const catalog = JSON.parse(await readFile(path.join(dist, "sps-agent-runtime-packs.json"), "utf8"));
     assert.equal(catalog.schemaVersion, 1);
     assert.equal(catalog.packs.length, 1);

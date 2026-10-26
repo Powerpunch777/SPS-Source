@@ -130,15 +130,18 @@ test("bounded JSON rejects oversized responses and preserves a private 403", asy
 
 test("matching Core close disposes only the workspace channel", async t => {
   const f = fixture();
-  const unrelatedMessageListeners = f.child.listenerCount("message");
-  const unrelatedLifecycleListeners = Object.fromEntries(["disconnect", "exit", "error"]
-    .map(event => [event, f.child.listenerCount(event)]));
+  const messageSentinel = () => {};
+  const lifecycleSentinels = Object.fromEntries(["disconnect", "exit", "error"].map(event => [event, () => {}]));
+  f.child.on("message", messageSentinel);
+  for (const [event, listener] of Object.entries(lifecycleSentinels)) f.child.on(event, listener);
   t.after(() => f.channel.dispose());
   await f.bootstrap();
   f.child.emit("message", { v: 1, kind: "sps.native.workspace.bootstrap.close", id: ID });
-  assert.equal(f.child.listenerCount("message"), unrelatedMessageListeners - 1);
-  for (const event of Object.keys(unrelatedLifecycleListeners)) {
-    assert.equal(f.child.listenerCount(event), unrelatedLifecycleListeners[event]);
+  assert.equal(f.child.listenerCount("message"), 1);
+  assert.equal(f.child.listenerCount("message", messageSentinel), 1);
+  for (const [event, listener] of Object.entries(lifecycleSentinels)) {
+    assert.equal(f.child.listenerCount(event), 1);
+    assert.equal(f.child.listenerCount(event, listener), 1);
   }
   assert.throws(() => f.channel.inspect());
   assert.equal(f.child.connected, true);
@@ -146,10 +149,37 @@ test("matching Core close disposes only the workspace channel", async t => {
 
 test("disposing an active Main channel sends one matching close without disconnecting Core", async t => {
   const f = fixture();
+  const lifecycleSentinels = Object.fromEntries(["disconnect", "exit", "error"].map(event => [event, () => {}]));
+  for (const [event, listener] of Object.entries(lifecycleSentinels)) f.child.on(event, listener);
   t.after(() => f.channel.dispose());
   await f.bootstrap(); f.ready(); await tick();
   const before = f.sent.length;
   f.channel.dispose();
+  f.channel.dispose();
   assert.deepEqual(f.sent.slice(before), [{ v: 1, kind: "sps.native.workspace.bootstrap.close", id: ID }]);
   assert.equal(f.child.connected, true);
+  for (const [event, listener] of Object.entries(lifecycleSentinels)) {
+    assert.equal(f.child.listenerCount(event), 1);
+    assert.equal(f.child.listenerCount(event, listener), 1);
+  }
+});
+
+test("each owned child-loss event removes every channel listener and preserves unrelated listeners", t => {
+  for (const event of ["disconnect", "exit", "error"]) {
+    const f = fixture();
+    const lifecycleSentinels = Object.fromEntries(["disconnect", "exit", "error"].map(name => [name, () => {}]));
+    for (const [name, listener] of Object.entries(lifecycleSentinels)) f.child.on(name, listener);
+    const messageSentinel = () => {};
+    f.child.on("message", messageSentinel);
+
+    f.child.emit(event, ...(event === "error" ? [new Error("fixture child loss")] : []));
+    assert.equal(f.child.listenerCount("message", messageSentinel), 1, `${event}: message sentinel`);
+    for (const [name, listener] of Object.entries(lifecycleSentinels)) {
+      assert.equal(f.child.listenerCount(name), 1, `${event}: ${name} count`);
+      assert.equal(f.child.listenerCount(name, listener), 1, `${event}: ${name} sentinel`);
+    }
+    assert.throws(() => f.channel.inspect(), undefined, event);
+    f.channel.dispose();
+    assert.equal(f.child.connected, true, `${event}: preserve Core connection`);
+  }
 });

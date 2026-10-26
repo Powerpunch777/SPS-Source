@@ -96,7 +96,7 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
     bootstrapController?.abort();
     bootstrapController = null;
     child.removeListener("message", onMessage);
-    for (const event of ["disconnect", "exit", "error"]) child.removeListener(event, dispose);
+    for (const event of ["disconnect", "exit", "error"]) child.removeListener(event, onChildLoss);
     for (const controller of controllers) controller.abort();
     controllers.clear();
     port = null;
