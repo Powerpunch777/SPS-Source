@@ -194,6 +194,14 @@ jobs:
       - name: Require clean Linux catalog build
         run: git diff --exit-code -- packages/skills-catalog/generated/catalog.json packages/teams-catalog/generated/catalog.json
 
+      - name: Install Desktop transport dependencies without Electron startup
+        working-directory: sps-server/desktop
+        run: npm ci --ignore-scripts
+
+      - name: Verify Native Desktop client against the real isolated Core
+        timeout-minutes: 5
+        run: pnpm exec tsx ../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-enrollment-client
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest

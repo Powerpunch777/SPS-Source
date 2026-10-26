@@ -3,6 +3,15 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { Script } from "node:vm";
 
+const normalizeSourceLineEndings = (source) => source.replace(/\r\n?/g, "\n");
+
+const extractFinalCleanup = (source) => {
+  const normalizedSource = normalizeSourceLineEndings(source);
+  const cleanupStart = normalizedSource.lastIndexOf("} finally {\n  const failedStages");
+  assert.notEqual(cleanupStart, -1, "Missing final cleanup boundary");
+  return normalizedSource.slice(cleanupStart);
+};
+
 test("ships a packaged Desktop Workspace Surfaces E2E harness", async () => {
   const [packageJson, script] = await Promise.all([
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -103,14 +112,19 @@ test("prepared Native management exercises the real Main/Core route without a co
 });
 
 test("Workspace acceptance retains every Main and does not turn forced cleanup into success", async () => {
-  const script = await readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8");
+  const source = await readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8");
+  const script = normalizeSourceLineEndings(source);
+  const exactSourceLF = script;
+  const exactSourceCRLF = exactSourceLF.replace(/\n/g, "\r\n");
+  const cleanup = extractFinalCleanup(exactSourceLF);
+  assert.equal(extractFinalCleanup(exactSourceCRLF), cleanup,
+    "Final cleanup extraction must work for exact LF and CRLF source");
   assert.ok(script.indexOf("launched.track(child)") > script.indexOf("child = spawn(binary"));
   const restart = script.slice(script.indexOf("async function closeDesktopForRestart()"), script.indexOf("const setupTarget"));
   for (const assertion of ["assert.equal(child.exitCode, 0", "await launched.waitForOutputEnd(5000)",
     "assert.equal(prior.orderly, prior.children", "assert.equal(prior.outputFailed, 0", "assert.equal(prior.outputEnded, prior.children * 2"])
     assert.ok(restart.includes(assertion), `Missing restart fence ${assertion}`);
   assert.ok(restart.indexOf("assert.equal(prior.outputEnded") < restart.indexOf("workspaceCdp = null"));
-  const cleanup = script.slice(script.lastIndexOf("} finally {\n  const failedStages"));
   for (const assertion of ["shutdownPreviewE2eDesktop", 'if (!ownedJobCleanupPending) await attempt("packaged_orphans", () => assertNoPackagedRuntimeOrphans',
     "boundedCleanup(mockIdentity.close()", "workspaceE2eCleanupDisposition", "identityClosed: identityClosed === true", "launched.dispose()",
     "new AggregateError", "...(acceptanceFailure ? [acceptanceFailure] : [])", "process.exit(cleanupDisposition.exitCode)"])

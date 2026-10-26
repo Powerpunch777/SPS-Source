@@ -16,6 +16,14 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+후속 [Native 등록 호출부](../reviews/NATIVE-ENROLLMENT-CLIENT-2026-10-26.md)는
+Main 전용 비활성 클라이언트로, 매번 새 TLS 1.3 연결의 정확한 서버 인증서를 확인한 뒤
+기존 세션 교환·CSR 발급·mTLS pending 등록을 호출한다. 토큰·쿠키·개인키는 renderer나
+SDK에 노출하지 않고, 계정/Host guard·취소·시간 제한·응답 계약을 검증한다. 실제 Core와
+임시 DB를 쓴 loopback 통합 시험에서 일회용 초대 소비·재사용 거부·권한 자동 부여 없음을
+확인했다. 아직 앱 Main startup/초대 UI·DPAPI 저장 조합·issuer 신뢰 bootstrap에 연결하지
+않았으므로 실제 사용자의 최초 연결이나 내장 LAN 지원이 아니다.
+
 사용자 승인 후 Core Settings의 로컬 정상 종료 버튼과
 [앱 시험 종료 검증](../reviews/WORKSPACE-E2E-CLEANUP-2026-10-26.md)을 보완했다.
 Desktop 883건 중 882건 통과·기존 제외 1건, 별도 Settings 7가지 소스 앱 시험과
