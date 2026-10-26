@@ -28,6 +28,11 @@ invitations. No migration or public SDK change is involved.
 
 Focused controller, Settings IPC/preload, malformed DTO, Owner/requester race,
 confirmation, pending-only action and renderer tests cover these boundaries.
+The final focused run passed 81/81. The existing prepared Host E2E now explicitly
+clicks Refresh invitations, verifies the real Main/Core empty list with Plugin
+startup disabled, and confirms the ordinary Workspace renderer is denied. It
+repeats the read after separate-process reload; no invitation is issued and no
+native confirmation is bypassed by this read-only gate.
 The exact new UI still requires hosted E2E verification; earlier Native Host
 management E2E success is not evidence of this new panel or physical LAN.
 Rollback removes the panel/caller; existing Core invitation/device data remain

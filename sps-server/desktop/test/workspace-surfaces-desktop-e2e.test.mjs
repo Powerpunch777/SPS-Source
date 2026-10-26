@@ -87,6 +87,8 @@ test("prepared Native management exercises the real Main/Core route without a co
   for (const required of ["prepare-native-host-e2e-fixture.mjs", "await closeDesktopForRestart()",
     'disabled: true', '"separate-process-reload"', 'before.nativeConnectivity.serverSpkiSha256, prepared.serverSpkiSha256',
     'devices, { state: "available", lanEnabled: false, devices: [] }', 'status: 423, code: "plugin_recovery_active"',
+    '#refresh-native-invitations', 'invitations, { state: "available", invitations: [] }',
+    "fetch('/api/sps/native-pairings', { credentials: 'include' })",
     'rendererManagement, 403', 'no actual security confirmation, enrollment, device approval or two-PC claim']) {
     assert.ok(script.includes(required), `Missing Native prepared source assertion: ${required}`);
   }

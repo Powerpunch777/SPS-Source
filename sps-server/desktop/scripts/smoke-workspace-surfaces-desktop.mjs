@@ -834,6 +834,13 @@ try {
       assert.match(running.host.state, /^running/);
       const devices = await setupCdp.evaluate("window.spsCoreSettings.listNativeDevices()", true);
       assert.deepEqual(devices, { state: "available", lanEnabled: false, devices: [] });
+      nativeManagementStage = "invitation_read";
+      assert.equal(await workspaceCdp.evaluate("fetch('/api/sps/native-pairings', { credentials: 'include' }).then(response => response.status)", true),
+        403, "The ordinary Workspace renderer must not acquire the Main-only invitation management proof.");
+      await click(setupCdp, "#refresh-native-invitations", "Read Host invitations explicitly without Agents or Plugins");
+      await waitForPage(setupCdp, page => page.body.includes("No Host invitations are available."), "available empty Host invitation list");
+      const invitations = await setupCdp.evaluate("window.spsCoreSettings.listNativeInvitations()", true);
+      assert.deepEqual(invitations, { state: "available", invitations: [] });
       if (screenshotPath) await captureScreenshot(setupCdp, path.join(path.dirname(screenshotPath), `native-management-${phase}.png`));
       console.log(`[native-management] ${phase}: real Main/Core session and Host binding, zero Agents, plugin startup blocked, renderer management denied, LAN OFF.`);
       nativeManagementStage = "shutdown";
