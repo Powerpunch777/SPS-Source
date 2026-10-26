@@ -9,11 +9,12 @@ const MAX_HEADER_PAIRS = 64;
 const MAX_HEADER_BYTES = 16_384;
 const MAX_DER_BYTES = 4096;
 const MAX_BASE64URL_LENGTH = Math.ceil(MAX_DER_BYTES * 4 / 3);
-const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200 });
+const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200, identity: 200 });
 const RESPONSE_KEYS = Object.freeze({
   exchange: ["expiresInSeconds"],
   issue: ["enrollmentId", "certificate", "issuerCertificate", "expiresAt"],
   complete: ["deviceId", "status"],
+  identity: ["hostId", "serverSpkiSha256", "issuerSpkiSha256", "issuerCertificate"],
 });
 const SENSITIVE_HEADERS = new Set([
   "cache-control", "content-encoding", "content-length", "content-type",
@@ -127,12 +128,26 @@ function validateIssue(value) {
   });
 }
 
+function validateIdentity(value) {
+  uuid(value.hostId);
+  if (typeof value.serverSpkiSha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.serverSpkiSha256)
+    || typeof value.issuerSpkiSha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.issuerSpkiSha256)) reject();
+  const issuerCertificate = decodeCanonicalBase64Url(value.issuerCertificate);
+  return Object.freeze({
+    hostId: value.hostId,
+    serverSpkiSha256: value.serverSpkiSha256,
+    issuerSpkiSha256: value.issuerSpkiSha256,
+    issuerCertificate,
+  });
+}
+
 function validateBody(operation, value, cookie) {
   if (operation === "exchange") {
     if (value.expiresInSeconds !== 604800) reject();
     return Object.freeze({ cookie: `sps_identity_session=${cookie}`, expiresInSeconds: 604800 });
   }
   if (operation === "issue") return validateIssue(value);
+  if (operation === "identity") return validateIdentity(value);
   uuid(value.deviceId);
   if (value.status !== "pending") reject();
   return Object.freeze({ deviceId: value.deviceId, status: "pending" });

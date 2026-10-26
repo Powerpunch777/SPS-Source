@@ -5,6 +5,12 @@ not Desktop enrollment UI, external LAN, two-PC or signed-release qualified.
 Desktop remains unreleased 0.4.137. Core `b0611dbd5` and public SDK `d4d692084`
 are unchanged by this increment.
 
+Follow-up: [public issuer bootstrap](NATIVE-ISSUER-BOOTSTRAP-2026-10-26.md)
+closes the earlier missing issuer-trust read over the exactly pinned connection.
+It is source-tested and inactive; product Main/DPAPI/UI composition and external
+LAN qualification are still missing. Its newer Core pin supersedes the historical
+revision above for the current unreleased candidate.
+
 ## Implementation
 
 The new internal client composes the existing invitation/certificate checks,
@@ -74,7 +80,7 @@ node --test test/*.test.mjs
 From `external/sps-core` (requires its pinned development dependencies):
 
 ```text
-npx --offline pnpm@11.9.0 exec tsx ../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-enrollment-client
+npx --offline pnpm@11.9.0 --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-enrollment-client
 ```
 
 The real-service integration uses an owned temporary PostgreSQL database and

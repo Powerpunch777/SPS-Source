@@ -59,7 +59,7 @@ test("ships a packaged Desktop Workspace Surfaces E2E harness", async () => {
     "무엇을 만들까요?",
     "Team Workplane",
     "taskkill",
-    "removeTemporaryDirectory",
+    "createWorkspaceE2eFixture",
   ]) {
     assert.ok(script.includes(required), `Workspace Surfaces E2E is missing ${required}`);
   }
@@ -108,6 +108,11 @@ test("prepared Native management exercises the real Main/Core route without a co
     assert.doesNotMatch(sanitizedFailure, /appOutput|describePage|console\.log|errorText\(error\)\}\n/);
   }
   assert.match(script, /temporaryDataRemoved = await attempt/);
+  assert.match(script, /const fixture = await createWorkspaceE2eFixture\(\);\s*const userDataDirectory = fixture\.directory/);
+  assert.match(script, /boundedCleanup\(fixture\.remove\(\), "temporary data", 20_000\)/);
+  assert.match(script, /error\?\.code === "ERR_WORKSPACE_E2E_FIXTURE"/);
+  assert.match(script, /fixtureStages\.includes\(error\.stage\) \? error\.stage : "operation_failed"/);
+  assert.match(script, /cleanup failure: \$\{JSON\.stringify\(\{ stage, reason \}\)\}/);
   assert.match(script, /Workspace E2E cleanup is incomplete; the test cannot be accepted/);
 });
 

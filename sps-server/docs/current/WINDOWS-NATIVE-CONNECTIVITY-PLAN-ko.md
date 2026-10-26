@@ -16,12 +16,29 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+후속 Core `028396f93`은 일반 종료 시 Worker 실제 종료를 기다리고, 초기화/개별 중지/
+재사용 bulk stop 경합을 차단한다. 임시 폴더는 canonical 경로·생성 당시 신원을 매 삭제
+시도마다 확인한다. Desktop **925건 중 923 통과·제외 2**, Worker/시작-종료 **23/23**,
+Core 전체 타입 검사·빌드는 통과했다. 실제 개발 앱 No-AI/준비된 Host 시험도 각각 정상
+종료했지만 그 런타임은 이전 Core `f9e2f9f2f`/dirty Source 기준이므로 최신 서명본 또는
+새 Core의 hosted 전체 자식 Job 수용 증거로 재사용하지 않는다. 상세 범위는
+[종료 검증 후속](../reviews/WORKSPACE-E2E-CLEANUP-2026-10-26.md)을 따른다.
+
+후속 [발급기관 bootstrap](../reviews/NATIVE-ISSUER-BOOTSTRAP-2026-10-26.md)은
+초대의 정확한 서버 인증서를 확인한 TLS 연결에서만 공개 Host/발급기관 정보를 가져온다.
+로그인 토큰·쿠키·초대 secret 없이 전체 issuer 프로파일·Host/서버 지문 일치를 검증하고,
+그 결과로 기존 등록 클라이언트의 신뢰 문맥을 만든다. 세션·기기·Workspace 권한은 생기지
+않는다. Core 핸들러와 Main 전용 facade의 실제 Core/임시 DB loopback 연동은 통과했고,
+제품 startup·초대 UI·listener는 연결하지 않았다. CI launcher의 선언되지 않은 root `tsx`
+의존도도 제거했으며, 새 HEAD의 hosted 성공 여부는 별도로 확인한다.
+
 후속 [Native 등록 호출부](../reviews/NATIVE-ENROLLMENT-CLIENT-2026-10-26.md)는
 Main 전용 비활성 클라이언트로, 매번 새 TLS 1.3 연결의 정확한 서버 인증서를 확인한 뒤
 기존 세션 교환·CSR 발급·mTLS pending 등록을 호출한다. 토큰·쿠키·개인키는 renderer나
 SDK에 노출하지 않고, 계정/Host guard·취소·시간 제한·응답 계약을 검증한다. 실제 Core와
 임시 DB를 쓴 loopback 통합 시험에서 일회용 초대 소비·재사용 거부·권한 자동 부여 없음을
-확인했다. 아직 앱 Main startup/초대 UI·DPAPI 저장 조합·issuer 신뢰 bootstrap에 연결하지
+확인했다. 공개 issuer 신뢰 bootstrap은 후속 소스 검증을 추가했다. 아직 앱 Main startup/
+초대 UI·DPAPI 저장 조합에 연결하지
 않았으므로 실제 사용자의 최초 연결이나 내장 LAN 지원이 아니다.
 
 사용자 승인 후 Core Settings의 로컬 정상 종료 버튼과

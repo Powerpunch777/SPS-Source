@@ -7,6 +7,7 @@ test("Native client/Core interoperability is an isolated explicit real-service g
   for (const required of ["--isolated-native-enrollment-client", "startEmbeddedPostgresTestDatabase",
     'server/src/auth/sps-identity.ts', 'server/src/services/sps-native-session-exchange-http.ts',
     'server/src/services/sps-native-enrollment-http.ts', 'createSpsNativeEnrollmentClient',
+    'server/src/services/sps-native-identity-http.ts', 'createSpsNativeEnrollmentBootstrap',
     'assert.equal(requests.length, 0', 'status, "pending"', 'status, "consumed"',
     'await assert.rejects(replay.complete', 'for (const table of [agents, plugins, companyMemberships, spsNodes])',
     'globalThis.fetch = previousFetch', 'await db.$client.end()', 'await database.cleanup()']) {
@@ -14,6 +15,14 @@ test("Native client/Core interoperability is an isolated explicit real-service g
   }
   assert.match(script, /server\.listen\(0, "127\.0\.0\.1", resolve\)/);
   assert.match(script, /assert\.equal\(support\.supported, true/);
+  const bootstrapStart = script.indexOf("const metadata = await bootstrap.inspect()");
+  const sessionStart = script.indexOf("await member.exchange(token())");
+  assert.ok(bootstrapStart > 0 && sessionStart > bootstrapStart);
+  const bootstrap = script.slice(bootstrapStart, sessionStart);
+  assert.match(bootstrap, /assert\.deepEqual\(await db\.select\(\)\.from\(authSessions\), \[\]\)/);
+  assert.match(bootstrap, /assert\.equal\(requests\[0\]\.hasBearer, false\)/);
+  assert.match(bootstrap, /assert\.equal\(requests\[0\]\.hasCookie, false\)/);
+  assert.match(bootstrap, /issuerSpkiSha256: metadata\.issuerSpkiSha256/);
   assert.ok(script.lastIndexOf('console.log("Native enrollment') > script.indexOf("await database.cleanup()"));
   assert.doesNotMatch(script, /safeStorage|electron|app\.whenReady|0\.0\.0\.0|sps-production/);
 });
@@ -26,7 +35,7 @@ test("full Linux Core verification also runs the actual Desktop transport integr
   const job = workflow.slice(at, end);
   assert.match(job, /working-directory: external\/sps-core/);
   assert.match(job, /working-directory: sps-server\/desktop\s+run: npm ci --ignore-scripts/);
-  assert.match(job, /timeout-minutes: 5\s+run: pnpm exec tsx \.\.\/\.\.\/sps-server\/desktop\/scripts\/smoke-native-enrollment-client-core\.mjs --isolated-native-enrollment-client/);
+  assert.match(job, /timeout-minutes: 5\s+run: pnpm --filter @paperclipai\/db exec tsx (?:\.\.\/){4}sps-server\/desktop\/scripts\/smoke-native-enrollment-client-core\.mjs --isolated-native-enrollment-client/);
   assert.doesNotMatch(job, /continue-on-error|\|\| true/);
 });
 

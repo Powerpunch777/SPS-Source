@@ -1,4 +1,4 @@
-import { X509Certificate } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { checkServerIdentity } from "node:tls";
@@ -9,8 +9,9 @@ import { validateSpsNativeMemberPendingContext } from "./native-member-pending-c
 import { publicSpsNativeMemberEnrollmentRequest } from "./native-member-certificates.mjs";
 import { validateSpsNativeMemberCredential } from "./native-member-credential.mjs";
 import { parseSpsNativeEnrollmentResponse } from "./native-enrollment-response.mjs";
+import { validateSpsNativeMemberIssuerCertificate } from "./native-identity-certificates.mjs";
 
-const PATHS = Object.freeze({ exchange: "/sps-native/v1/session/exchange",
+const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/sps-native/v1/session/exchange",
   issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete" });
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
   unavailable: "The Native enrollment request could not complete.",
@@ -48,13 +49,23 @@ function derPem(value) {
 // Main-private transport only. The caller supplies independently trusted issuer
 // scope and rechecks its current account/Host generation. No UI or listener is wired.
 export function createSpsNativeEnrollmentClient(input) {
+  return createClient(input, false);
+}
+
+// The invitation already authenticates the server. Only public issuer metadata
+// is learned here; a successful read grants no session or device approval.
+export function createSpsNativeEnrollmentBootstrap(input) {
+  return createClient(input, true);
+}
+
+function createClient(input, bootstrap) {
   let options, context, invitation, target;
   try {
-    options = record(input, ["invitationCode", "context", "timeoutMs", "assertCurrent"]);
-    context = validateSpsNativeMemberPendingContext(options.context);
+    options = record(input, ["invitationCode", ...(bootstrap ? [] : ["context"]), "timeoutMs", "assertCurrent"]);
+    context = bootstrap ? null : validateSpsNativeMemberPendingContext(options.context);
     invitation = parseSpsNativeInviteCode(options.invitationCode);
     target = verifySpsNativeInvitationCertificate(options.invitationCode);
-    if (!invitation || invitation.hostId !== context.hostId || target.spkiSha256 !== context.serverSpkiSha256
+    if (!invitation || context && (invitation.hostId !== context.hostId || target.spkiSha256 !== context.serverSpkiSha256)
       || !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 60_000
       || typeof options.assertCurrent !== "function") throw new Error();
   } catch { throw failure("invalid_options"); }
@@ -97,7 +108,7 @@ export function createSpsNativeEnrollmentClient(input) {
     };
     try {
       guard();
-      if (operation !== "exchange") requireSession();
+      if (operation !== "exchange" && operation !== "identity") requireSession();
       const result = await action({ guard, signal, deadline });
       guard();
       return result;
@@ -151,7 +162,8 @@ export function createSpsNativeEnrollmentClient(input) {
             } catch { return failure("unavailable"); }
           },
           headers: { "Content-Type": "application/json; charset=utf-8", "Content-Length": String(bytes.length),
-            Connection: "close", ...(operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
+            Connection: "close", ...(operation === "identity" ? {}
+              : operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
         }, response => {
           const chunks = [];
           let size = 0;
@@ -181,7 +193,7 @@ export function createSpsNativeEnrollmentClient(input) {
               guard();
               if (!socket.authorized || socket.getProtocol() !== "TLSv1.3" || socket.isSessionReused()
                 || !socket.getPeerX509Certificate()?.raw.equals(expectedCertificate.raw)) throw new Error();
-              if (operation !== "exchange") requireSession();
+              if (operation !== "exchange" && operation !== "identity") requireSession();
               // No HTTP headers/body are flushed before this exact handshake.
               request.end(bytes);
             } catch (error) { stop(safeFailure(error)); }
@@ -215,6 +227,24 @@ export function createSpsNativeEnrollmentClient(input) {
     return { issuance, credential };
   }
 
+  const dispose = () => { if (!disposed) { disposed = true; cookie = null; cancelRequest?.(); } };
+  if (bootstrap) return Object.freeze({
+    inspect(signalInput = {}) {
+      return run("identity", signalInput, async operation => {
+        const value = await post("identity", Buffer.alloc(0), null, null, operation);
+        operation.guard();
+        if (value.hostId !== invitation.hostId || value.serverSpkiSha256 !== target.spkiSha256) throw failure("invalid_response");
+        const issuerCertificatePem = derPem(value.issuerCertificate);
+        const issuer = validateSpsNativeMemberIssuerCertificate(issuerCertificatePem, invitation.hostId, Date.now());
+        const pin = createHash("sha256").update(issuer.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+        if (pin !== value.issuerSpkiSha256 || pin === target.spkiSha256) throw failure("invalid_response");
+        operation.guard();
+        return Object.freeze({ hostId: invitation.hostId, serverSpkiSha256: target.spkiSha256,
+          issuerSpkiSha256: pin, issuerCertificatePem });
+      });
+    },
+    dispose,
+  });
   return Object.freeze({
     exchange(accessToken, signalInput = {}) {
       return run("exchange", signalInput, async operation => {
@@ -253,6 +283,6 @@ export function createSpsNativeEnrollmentClient(input) {
         return result;
       });
     },
-    dispose() { if (!disposed) { disposed = true; cookie = null; cancelRequest?.(); } },
+    dispose,
   });
 }

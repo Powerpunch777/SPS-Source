@@ -8,6 +8,88 @@ The user subsequently approved a local Core Settings Quit button. That narrow
 product control is part of this increment; no account auth, listener, Host or
 execution grant, installer or updater is changed.
 
+## Follow-Up: Canonical Fixture And Plugin Shutdown
+
+The statements below supersede the earlier checkpoint only for this new source
+increment. Current Core is `028396f937a56a6ba271d89a6c183eb984521058`;
+Desktop remains unreleased 0.4.137 and SDK remains `d4d692084`.
+
+Exact Source `b25b32b` push `40256564360` and PR `40256568343` each finished
+15/18 jobs successful. Both Windows No-AI runs passed their functional cases,
+with three orderly Mains, six natural EOFs, and a final graceful exit without
+force. Both then failed `temporary_data,qualification`; their owning Job could
+not become empty naturally and correctly rejected forced cleanup. Neither is a
+passed E2E. Full Linux build failed before Native interop because root `tsx` was
+not declared; the revised DB-package launcher is recorded in the issuer review.
+The separate production Zod policy gate remained blocked, not bypassed.
+
+The old fixture compared raw `os.tmpdir()` spelling to filesystem real paths.
+That is an unsafe acceptance assumption on Windows 8.3 TEMP aliases. The exact
+CI filesystem exception was not captured, so this is a demonstrated code hazard,
+not a claim that the complete CI failure's root cause is proven. The new fixture
+captures the canonical plain temp root and an exclusively created child, plus
+bigint filesystem identities for both. Each removal attempt rechecks the same
+identities and plain ancestors before touching only that owned child. Replaced
+roots, symlinks and junctions fail closed; sibling files are preserved. Internal
+recursive-delete retries are disabled so retries do not skip identity checks.
+No rejected old temporary directory is retried or removed by this change.
+Failure output includes only a bounded fixture-stage label, never a raw path.
+
+Separately, Core's normal shutdown previously disposed Host services without
+awaiting plugin worker termination. It now closes scheduling/discovery and
+worker admission, joins in-flight startup, and waits for actual worker process
+exit before Host services and embedded PostgreSQL teardown. Previously returned
+managed handles cannot restart after terminal shutdown. Concurrent stop callers
+share a promise; a surviving child makes shutdown fail instead of becoming a
+fake `stopped` state. The reusable `stopAll` contract is preserved. This is a
+real lifecycle fix, not proof that those workers caused the earlier CI residue.
+
+Verification so far:
+
+```text
+# From sps-server/desktop
+node --test test/workspace-e2e-fixture.test.mjs test/workspace-surfaces-desktop-e2e.test.mjs
+npm test
+
+# From external/sps-core
+npx --offline pnpm@11.9.0 exec vitest run server/src/__tests__/plugin-worker-shutdown.test.ts server/src/__tests__/plugin-worker-manager.test.ts server/src/__tests__/plugin-recovery-startup-contract.test.ts --reporter=dot
+npx --offline pnpm@11.9.0 -r typecheck
+npx --offline pnpm@11.9.0 -r build
+```
+
+- Desktop: **925 total / 923 pass / 0 fail / 2 skips** (one existing skip;
+  this filesystem cannot supply a distinct real 8.3 alias for the owned fixture,
+  so that platform-specific check is not claimed as executed).
+- Worker/startup lifecycle: initially **21/21**, then **23/23** after the
+  independent-review race fixes, including real Node child exit after RPC
+  response, delayed initialize, rejected retained-handle restart and reusable
+  `stopAll`; Host-service disposal waits for failure or success.
+- Core full workspace typecheck and build: passed. Existing CSS annotation and
+  chunk warnings remain; this is not full Linux regression or signed evidence.
+- Fresh development-runtime Electron **runtime-discovery and prepared Native
+  management both exited 0** against Core `f9e2f9f2f`, with three orderly Mains,
+  six natural EOFs, Identity close and owned temporary-data removal in each.
+  Final Main quit was graceful without force (189 ms and 0 ms respectively).
+  This development runtime's baseline explicitly records Source `b25b32b` with
+  `sourceDirty:true`, Core `f9e2f9f2f` and SDK `d4d692084` clean; it is not a
+  signed installer or exact final Source-release tuple. Desktop reported local
+  Electron 43.7.7 / Node 24.21.0; the prepared Core runtime uses Node 26.4.0.
+- Independent follow-up review then found two older reusable-stop races:
+  initialize could publish `running` after stop, and bulk stop could erase a
+  concurrently started worker from the map. The follow-up fixes temporarily fence
+  bulk-stop admission, preserve failed handles, delete only matching stopped
+  handles and reject later starts through a removed handle. A fixture releases
+  successful initialization only after stop begins, before actual child exit;
+  this tests the reported race rather than an early process failure. These
+  deterministic real-child regressions are a subsequent Core increment. The
+  E2Es above do not qualify that newer revision. Core `f9e2f9f2f` PR workflow
+  `40258642248` passed **15/15** jobs, but that also predates the follow-up race
+  fixes. Exact-head hosted whole-Job acceptance is still
+  required. No gate timeout, Job qualification or force-cleanup rule was weakened.
+- Runtime preparation rebuilt tracked Discovery/Room worker bundles against the
+  current pinned public SDK and Core shared code. Generated output is refreshed;
+  no manifest capability, package activation or implicit execution grant changed.
+
 ## Observations And Implementation
 
 - The preceding No-AI flow reached its functional assertions but retained two

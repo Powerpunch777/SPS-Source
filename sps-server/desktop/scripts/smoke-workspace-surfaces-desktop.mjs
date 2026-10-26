@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { mkdtemp, rm, access, readFile, mkdir, writeFile, lstat, realpath } from "node:fs/promises";
+import { access, readFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { once } from "node:events";
-import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -16,6 +15,7 @@ import { OWNED_JOB_CLEANUP_ARGUMENT } from "./preview-e2e-cleanup-contract.mjs";
 import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 import { createWorkspaceE2eChildTracker } from "./workspace-e2e-child-tracker.mjs";
 import { workspaceE2eCleanupDisposition } from "./workspace-e2e-cleanup-contract.mjs";
+import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 import { annotatePreviewE2eCdpFailure, snapshotPreviewE2eFailure } from "./preview-e2e-failure-diagnostics.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -97,27 +97,6 @@ async function findAvailablePort() {
       server.close((error) => error ? reject(error) : port ? resolve(port) : reject(new Error("Could not reserve a CDP port.")));
     });
   });
-}
-
-async function removeTemporaryDirectory(directory) {
-  const resolved = path.resolve(directory);
-  const samePath = (a, b) => a.toLowerCase() === b.toLowerCase();
-  assert.ok(samePath(path.dirname(resolved), path.resolve(os.tmpdir()))
-    && path.basename(resolved).startsWith("sps-workspace-surfaces-e2e-"), "Invalid owned E2E cleanup target");
-  const stat = await lstat(resolved);
-  assert.ok(stat.isDirectory() && !stat.isSymbolicLink() && samePath(await realpath(resolved), resolved),
-    "Linked owned E2E cleanup target");
-  let lastError = null;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    try {
-      await rm(directory, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
-      return;
-    } catch (error) {
-      lastError = error;
-      await delay(300);
-    }
-  }
-  throw lastError;
 }
 
 async function stopProcessTree(child) {
@@ -439,7 +418,8 @@ async function captureScreenshot(cdp, outputPath) {
 
 const mockIdentity = createMockIdentityServer();
 let debugPort = await findAvailablePort();
-const userDataDirectory = await mkdtemp(path.join(os.tmpdir(), "sps-workspace-surfaces-e2e-"));
+const fixture = await createWorkspaceE2eFixture();
+const userDataDirectory = fixture.directory;
 if (keepE2eData) console.log(`Preserving SPS Workspace E2E data at: ${userDataDirectory}`);
 let child = null;
 let setupCdp = null;
@@ -1275,7 +1255,14 @@ try {
   let cleanupStage = "desktop_shutdown";
   const attempt = async (stage, operation) => {
     try { return await operation(); }
-    catch { failedStages.add(stage); return null; }
+    catch (error) {
+      failedStages.add(stage);
+      const fixtureStages = ["arguments", "temporary-directory", "create", "assert-current", "remove"];
+      const reason = stage === "temporary_data" && error?.code === "ERR_WORKSPACE_E2E_FIXTURE"
+        && fixtureStages.includes(error.stage) ? error.stage : "operation_failed";
+      console.log(`[workspace-e2e] cleanup failure: ${JSON.stringify({ stage, reason })}`);
+      return null;
+    }
   };
   try {
     if (workspaceCdp) await workspaceCdp.evaluate(d2RequestMonitorStopExpression).catch(() => undefined);
@@ -1295,7 +1282,7 @@ try {
     const identityClosed = await attempt("identity_close", () => boundedCleanup(mockIdentity.close(), "mock Identity").then(() => true));
     let temporaryDataRemoved = false;
     if (!keepE2eData) {
-      temporaryDataRemoved = await attempt("temporary_data", () => boundedCleanup(removeTemporaryDirectory(userDataDirectory), "temporary data", 20_000)
+      temporaryDataRemoved = await attempt("temporary_data", () => boundedCleanup(fixture.remove(), "temporary data", 20_000)
         .then(() => true)) === true;
     }
     cleanupStage = "output_end";

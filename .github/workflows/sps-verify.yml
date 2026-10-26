@@ -200,7 +200,7 @@ jobs:
 
       - name: Verify Native Desktop client against the real isolated Core
         timeout-minutes: 5
-        run: pnpm exec tsx ../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-enrollment-client
+        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-enrollment-client
 
   room-plugin:
     name: SPS Room workplane

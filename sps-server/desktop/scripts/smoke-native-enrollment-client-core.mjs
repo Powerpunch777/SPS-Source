@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { createSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate } from "../src/native-member-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
-import { createSpsNativeEnrollmentClient } from "../src/native-enrollment-client.mjs";
+import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient } from "../src/native-enrollment-client.mjs";
 import { defaultSpsNativePairingIssue, SPS_NATIVE_PAIRING_DEFAULT_POLICY } from "../src/native-connection-policy.mjs";
 
 // Cross-repository verification only: never imported by product Main. Run with
@@ -26,13 +26,14 @@ const { spsNativeEnrollmentService } = await load("server/src/services/sps-nativ
 const { createSpsNativeSessionEnrollment } = await load("server/src/services/sps-native-session-enrollment.ts");
 const { createSpsNativeEnrollmentRequestHandler } = await load("server/src/services/sps-native-enrollment-http.ts");
 const { createSpsNativeSessionExchangeRequestHandler } = await load("server/src/services/sps-native-session-exchange-http.ts");
+const { createSpsNativeIdentityRequestHandler } = await load("server/src/services/sps-native-identity-http.ts");
 const support = await getEmbeddedPostgresTestSupport();
 assert.equal(support.supported, true, "The real isolated Core database must be supported; do not skip integration.");
 const database = await startEmbeddedPostgresTestDatabase("sps-native-client-core-");
 const db = createDb(database.connectionString);
 const previousFetch = globalThis.fetch;
 const clients = [], sockets = new Set();
-let server, exchange, enrollment;
+let server, exchange, enrollment, metadataHandler;
 let succeeded = false;
 try {
   const hostId = randomUUID(), deviceKeyId = randomUUID();
@@ -74,6 +75,9 @@ try {
     { readTimeoutMs: 1000, operationTimeoutMs: 5000, maxConcurrentRequests: 2 });
   enrollment = createSpsNativeEnrollmentRequestHandler(createSpsNativeSessionEnrollment(identity, service),
     { maxBodyBytes: 8192, readTimeoutMs: 1000, operationTimeoutMs: 5000, maxConcurrentRequests: 2 });
+  metadataHandler = createSpsNativeIdentityRequestHandler(async () => ({ hostId, serverSpkiSha256: serverPin,
+    issuerSpkiSha256: issuerPin, issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") }),
+  { readTimeoutMs: 1000, operationTimeoutMs: 5000, maxConcurrentRequests: 2 });
   const requests = [];
   server = createServer({ cert: host.server.certificatePem, key: host.server.privateKeyPem,
     ca: host.memberIssuer.certificatePem, requestCert: true, rejectUnauthorized: false,
@@ -81,7 +85,8 @@ try {
     requests.push({ path: req.url, hasBearer: typeof req.headers.authorization === "string",
       hasCookie: typeof req.headers.cookie === "string", tls: req.socket.getProtocol(), resumed: req.socket.isSessionReused(),
       clientAuthorized: req.socket.authorized });
-    if (req.url === "/sps-native/v1/session/exchange") exchange.handle(req, res);
+    if (req.url === "/sps-native/v1/identity") metadataHandler.handle(req, res);
+    else if (req.url === "/sps-native/v1/session/exchange") exchange.handle(req, res);
     else enrollment.handle(req, res);
   });
   server.on("tlsClientError", () => {});
@@ -95,7 +100,7 @@ try {
       spkiSha256: fingerprint(identity.server.certificatePem),
       serverCertificate: new X509Certificate(identity.server.certificatePem).raw.toString("base64url"), ...invitation });
   }
-  const context = { identityIssuer: fixtureIssuer, subject: "fixture-member", hostId, deviceKeyId,
+  let context = { identityIssuer: fixtureIssuer, subject: "fixture-member", hostId, deviceKeyId,
     serverSpkiSha256: serverPin, issuerSpkiSha256: issuerPin };
   const client = (invitationCode = invite(), expected = context) => {
     const instance = createSpsNativeEnrollmentClient({ invitationCode, context: expected, timeoutMs: 8000, assertCurrent() {} });
@@ -113,6 +118,19 @@ try {
   await assert.rejects(client(invite(other), { ...context, serverSpkiSha256: fingerprint(other.server.certificatePem) }).exchange(token()));
   assert.equal(requests.length, 0, "Wrong actual peer must fail before HTTP credentials.");
   assert.deepEqual(await db.select().from(authSessions), []);
+  const bootstrap = createSpsNativeEnrollmentBootstrap({ invitationCode: invite(), timeoutMs: 8000, assertCurrent() {} });
+  clients.push(bootstrap);
+  const metadata = await bootstrap.inspect();
+  assert.equal(metadata.hostId, hostId);
+  assert.equal(metadata.serverSpkiSha256, serverPin);
+  assert.equal(metadata.issuerSpkiSha256, issuerPin);
+  assert.equal(metadata.issuerCertificatePem, host.memberIssuer.certificatePem);
+  assert.deepEqual(await db.select().from(authSessions), []);
+  assert.deepEqual(await db.select().from(spsMemberDevices), []);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].hasBearer, false);
+  assert.equal(requests[0].hasCookie, false);
+  context = { ...context, issuerSpkiSha256: metadata.issuerSpkiSha256 };
   const member = client();
   assert.equal((await member.exchange(token())).state, "session_prepared");
   const key = await createSpsNativeMemberKeyRequest({ hostId, deviceKeyId });
@@ -141,8 +159,8 @@ try {
   for (const table of [agents, plugins, companyMemberships, spsNodes]) assert.deepEqual(await db.select().from(table), []);
   assert.ok(requests.every(row => row.tls === "TLSv1.3" && row.resumed === false));
   assert.ok(requests.filter(row => row.path.endsWith("/complete")).every(row => row.clientAuthorized));
-  assert.ok(requests.every(row => row.hasBearer !== row.hasCookie));
-  assert.equal(requests.length, 6, "Only explicit exchange/issue/complete calls reach this fixture.");
+  assert.ok(requests.filter(row => !row.path.endsWith("/identity")).every(row => row.hasBearer !== row.hasCookie));
+  assert.equal(requests.length, 7, "Only explicit identity/exchange/issue/complete calls reach this fixture.");
   const pendingInvites = [];
   for (let index = 0; index < 10; index++) pendingInvites.push(await pairings.issue(defaultSpsNativePairingIssue("fixture-host")));
   await assert.rejects(pairings.issue(defaultSpsNativePairingIssue("fixture-host")), { code: "limit_reached" });
@@ -168,7 +186,7 @@ try {
   succeeded = true;
 } finally {
   for (const client of clients) client.dispose();
-  exchange?.dispose(); enrollment?.dispose();
+  metadataHandler?.dispose(); exchange?.dispose(); enrollment?.dispose();
   for (const socket of sockets) socket.destroy();
   if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   globalThis.fetch = previousFetch;
@@ -176,4 +194,4 @@ try {
   await database.cleanup();
 }
 assert.equal(succeeded, true);
-console.log("Native enrollment Main-private client/Core integration passed: actual temporary DB/session/issuance/fresh mTLS pending registration, wrong peer sends no HTTP credentials, one-use replay denied, approved 1-hour/5-attempt/10-active policy enforced, no Workspace/Plugin/Agent/Node grant; loopback/source only, not Desktop UI/DPAPI/two-PC/LAN qualification.");
+console.log("Native enrollment Main-private client/Core integration passed: pinned public issuer bootstrap before account session, actual temporary DB/session/issuance/fresh mTLS pending registration, wrong peer sends no HTTP credentials, one-use replay denied, approved 1-hour/5-attempt/10-active policy enforced, no Workspace/Plugin/Agent/Node grant; loopback/source only, not Desktop UI/DPAPI/two-PC/LAN qualification.");

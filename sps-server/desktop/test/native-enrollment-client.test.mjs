@@ -6,7 +6,7 @@ import { createSpsNativeHostIdentity } from "../src/native-identity-certificates
 import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate,
   publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
-import { createSpsNativeEnrollmentClient } from "../src/native-enrollment-client.mjs";
+import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient } from "../src/native-enrollment-client.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "22222222-2222-4222-8222-222222222222";
@@ -50,7 +50,10 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
         peer: req.socket.getPeerCertificate().raw };
       requests.push(item); notify();
       const exchange = req.url === "/sps-native/v1/session/exchange";
-      const value = exchange ? { expiresInSeconds: 604800 }
+      const value = req.url === "/sps-native/v1/identity" ? { hostId: HOST,
+        serverSpkiSha256: spki(host.server.certificatePem), issuerSpkiSha256: spki(host.memberIssuer.certificatePem),
+        issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") }
+        : exchange ? { expiresInSeconds: 604800 }
         : req.url.endsWith("/issue") ? issuance : { deviceId: DEVICE, status: "pending" };
       const send = (data = value, status = exchange ? 201 : 200, extraHeaders = {}) => {
         if (res.destroyed) return;
@@ -84,7 +87,12 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
     t.after(() => result.dispose());
     return result;
   }
-  return { requests, received, issuance, context, code, client,
+  function bootstrap(overrides = {}) {
+    const result = createSpsNativeEnrollmentBootstrap({ invitationCode: code, timeoutMs: 3000, assertCurrent() {}, ...overrides });
+    t.after(() => result.dispose());
+    return result;
+  }
+  return { requests, received, issuance, context, code, client, bootstrap,
     replaceIdentity(identity) { server.setSecureContext({ key: identity.server.privateKeyPem,
       cert: identity.server.certificatePem, ca: host.memberIssuer.certificatePem }); } };
 }
@@ -260,4 +268,45 @@ test("losing account scope after certificate verification still prevents HTTP he
   await assert.rejects(client.exchange(TOKEN), safe);
   assert.equal(checks, 4);
   assert.equal(f.requests.length, 0);
+});
+
+test("bootstrap learns only public issuer context on the pinned connection without credentials or session methods", async t => {
+  const f = await fixture(t), bootstrap = f.bootstrap();
+  assert.deepEqual(Object.keys(bootstrap), ["inspect", "dispose"]);
+  const metadata = await bootstrap.inspect();
+  assert.deepEqual(metadata, { hostId: HOST, serverSpkiSha256: f.context.serverSpkiSha256,
+    issuerSpkiSha256: f.context.issuerSpkiSha256, issuerCertificatePem: host.memberIssuer.certificatePem });
+  assert.equal(Object.isFrozen(metadata), true);
+  assert.deepEqual(f.requests.map(({ path, authorization, cookie, body }) => ({ path, authorization, cookie, body })),
+    [{ path: "/sps-native/v1/identity", authorization: undefined, cookie: undefined, body: "" }]);
+  const client = f.client({ context: { ...f.context, issuerSpkiSha256: metadata.issuerSpkiSha256 } });
+  await client.exchange(TOKEN);
+  const issuance = await client.issue(keyRequest);
+  assert.equal((await client.complete({ keyRequest, issuance, displayName: "Fixture PC" })).status, "pending");
+});
+
+test("bootstrap rejects mismatched Host/server/issuer metadata and non-issuer certificates", async t => {
+  for (const update of [value => ({ ...value, hostId: DEVICE }), value => ({ ...value, serverSpkiSha256: "0".repeat(64) }),
+    value => ({ ...value, issuerSpkiSha256: "0".repeat(64) }),
+    value => ({ ...value, issuerCertificate: new X509Certificate(host.server.certificatePem).raw.toString("base64url"),
+      issuerSpkiSha256: spki(host.server.certificatePem) }),
+    value => ({ ...value, issuerCertificate: new X509Certificate(other.memberIssuer.certificatePem).raw.toString("base64url") }),
+  ]) {
+    const f = await fixture(t, { respond({ send, value }) { send(update(value)); } });
+    await assert.rejects(f.bootstrap().inspect(), safe);
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.requests[0].authorization, undefined);
+    assert.equal(f.requests[0].cookie, undefined);
+  }
+});
+
+test("bootstrap never contacts a different actual peer and disposal rejects a later public read", async t => {
+  const bad = await fixture(t, { identity: other });
+  await assert.rejects(bad.bootstrap().inspect(), safe);
+  assert.equal(bad.requests.length, 0);
+  const good = await fixture(t), bootstrap = good.bootstrap();
+  bootstrap.dispose();
+  await assert.rejects(bootstrap.inspect(), { code: "native_enrollment_client_disposed" });
+  assert.equal(good.requests.length, 0);
+  assert.throws(() => good.bootstrap({ context: good.context }), safe);
 });

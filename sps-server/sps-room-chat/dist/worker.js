@@ -4520,7 +4520,11 @@ var PLUGIN_CAPABILITIES = [
   "execution.workspaces.read",
   "sps.workspaceSources.read",
   "sps.runtimes.read",
+  "sps.models.read",
+  "sps.models.submit",
+  "sps.models.cancel",
   "sps.executionGrants.read",
+  "sps.executions.read",
   "sps.runs.read",
   "sps.artifacts.read",
   "issues.read",
@@ -4565,6 +4569,8 @@ var PLUGIN_CAPABILITIES = [
   "agent.sessions.create",
   "agent.sessions.list",
   "agent.sessions.send",
+  "agent.sessions.read",
+  "agent.sessions.cancel",
   "agent.sessions.close",
   "activity.log.write",
   "metrics.write",
@@ -4596,6 +4602,7 @@ var PLUGIN_CAPABILITIES = [
   "local.folders",
   "sps.executionGrants.write",
   "sps.runs.dispatch",
+  "sps.runs.cancel",
   "sps.artifacts.write",
   // Agent Tools
   "agent.tools.register",
@@ -5189,6 +5196,54 @@ var FEEDBACK_VOTE_VALUES = ["up", "down"];
 var FEEDBACK_DATA_SHARING_PREFERENCES = ["allowed", "not_allowed", "prompt"];
 var DEFAULT_FEEDBACK_DATA_SHARING_PREFERENCE = "prompt";
 var FEEDBACK_TRACE_STATUSES = ["local_only", "pending", "sent", "failed"];
+
+// ../../external/sps-core/packages/shared/src/validators/sps-model-connections.ts
+var createSpsModelConnectionSchema = external_exports.object({
+  displayName: external_exports.string().trim().min(1).max(160),
+  secretId: external_exports.string().uuid(),
+  version: external_exports.union([external_exports.literal("latest"), external_exports.number().int().min(1).max(2147483647)]).optional(),
+  transport: external_exports.object({
+    endpoint: external_exports.string().min(1).max(2048),
+    model: external_exports.string().min(1).max(160),
+    allowLoopbackHttp: external_exports.boolean().optional(),
+    timeoutMs: external_exports.number().int().min(1e3).max(12e4).optional(),
+    maxOutputTokens: external_exports.number().int().min(1).max(32768).optional(),
+    maxRequestBytes: external_exports.number().int().min(256).max(1048576).optional(),
+    maxResponseBytes: external_exports.number().int().min(256).max(4194304).optional(),
+    maxConcurrentRequests: external_exports.number().int().min(1).max(16).optional()
+  }).strict()
+}).strict();
+var updateSpsModelConnectionStatusSchema = external_exports.object({ status: external_exports.enum(["active", "disabled"]) }).strict();
+var grantSpsModelConnectionSchema = external_exports.object({ pluginId: external_exports.string().uuid() }).strict();
+
+// ../../external/sps-core/packages/shared/src/validators/sps-member-devices.ts
+var BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+var memberDeviceCertificateSchema = external_exports.string().min(1).max(5462).superRefine((value, context) => {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+    context.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Certificate must be canonical unpadded base64url" });
+    return;
+  }
+  const remainder = value.length % 4;
+  if (remainder === 1) {
+    context.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Certificate must be canonical unpadded base64url" });
+    return;
+  }
+  const finalSextet = BASE64URL_ALPHABET.indexOf(value[value.length - 1]);
+  if (remainder === 2 && (finalSextet & 15) !== 0 || remainder === 3 && (finalSextet & 3) !== 0) {
+    context.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Certificate must use canonical base64url trailing bits" });
+    return;
+  }
+  const decodedByteLength = Math.floor(value.length / 4) * 3 + (remainder === 2 ? 1 : remainder === 3 ? 2 : 0);
+  if (decodedByteLength < 1 || decodedByteLength > 4096) {
+    context.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Certificate must encode between 1 and 4096 bytes" });
+  }
+});
+var createSpsMemberDeviceRequestSchema = external_exports.object({
+  displayName: external_exports.string().regex(/^(?![\s\S]*[\u0000-\u001f\u007f])[\s\S]*$/, "Display name must not contain ASCII control characters").trim().min(1).max(80),
+  certificate: memberDeviceCertificateSchema
+}).strict();
+var approveSpsMemberDeviceSchema = external_exports.object({}).strict().default({});
+var revokeSpsMemberDeviceSchema = external_exports.object({}).strict().default({});
 
 // ../../external/sps-core/packages/shared/src/validators/feedback.ts
 var feedbackTargetTypeSchema = external_exports.enum(FEEDBACK_TARGET_TYPES);
@@ -9060,6 +9115,20 @@ var spsNodeCommandCompleteSchema = external_exports.object({
   timedOut: external_exports.boolean().default(false),
   error: external_exports.string().trim().max(16e3).nullable().optional()
 });
+var spsNodeUsageTokenCountSchema = external_exports.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+var spsNodeUsageReportSchema = external_exports.object({
+  schemaVersion: external_exports.literal(1),
+  source: external_exports.literal("claude_model_usage_v1"),
+  inputTokens: spsNodeUsageTokenCountSchema.nullable(),
+  cachedInputTokens: spsNodeUsageTokenCountSchema.nullable(),
+  outputTokens: spsNodeUsageTokenCountSchema.nullable()
+}).strict().refine(
+  (report) => report.inputTokens !== null || report.cachedInputTokens !== null || report.outputTokens !== null,
+  { message: "At least one token count must be reported" }
+);
+var spsPluginNodeRunCompleteSchema = spsNodeCommandCompleteSchema.extend({
+  usageReport: spsNodeUsageReportSchema.optional()
+});
 var reportSpsNodeRunnerAvailabilitySchema = external_exports.object({
   runners: external_exports.array(external_exports.object({
     runnerKey: external_exports.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/),
@@ -9733,7 +9802,9 @@ var SPS_CORE_PRIMITIVES = [
   "workspace.sources.route",
   "runtimes.list",
   "runtimes.dispatch",
+  "executions.observe",
   "runs.observe",
+  "runs.cancel",
   "artifacts.write",
   "secrets.use"
 ];
@@ -9742,7 +9813,9 @@ var SPS_CORE_PRIMITIVE_CAPABILITIES = {
   "workspace.sources.route": ["sps.workspaceSources.read"],
   "runtimes.list": ["sps.runtimes.read"],
   "runtimes.dispatch": ["sps.runs.dispatch"],
+  "executions.observe": ["sps.executions.read"],
   "runs.observe": ["sps.runs.read"],
+  "runs.cancel": ["sps.runs.cancel"],
   "artifacts.write": ["sps.artifacts.write"],
   "secrets.use": ["secrets.read-ref"]
 };
@@ -10868,13 +10941,22 @@ function startWorkerRpcHost(options) {
     const spsTransport = Object.freeze({
       request(operation, input) {
         switch (operation) {
+          case "sps.executions.list":
+          case "sps.executions.get":
+          case "sps.executions.summarize":
           case "sps.workspaceSources.list":
           case "sps.runtimes.list":
+          case "sps.models.list":
+          case "sps.models.submit":
+          case "sps.models.get":
+          case "sps.models.cancel":
           case "sps.executionGrants.list":
           case "sps.executionGrants.upsert":
           case "sps.executionGrants.revoke":
           case "sps.runs.dispatch":
           case "sps.runs.get":
+          case "sps.runs.list":
+          case "sps.runs.cancel":
           case "sps.runs.listEvents":
           case "sps.artifacts.publish":
           case "sps.artifacts.list":
@@ -10885,6 +10967,31 @@ function startWorkerRpcHost(options) {
       }
     });
     const sps = {
+      models: {
+        async list(companyId) {
+          return callHost("sps.models.list", { companyId });
+        },
+        async submit(input) {
+          return callHost("sps.models.submit", input);
+        },
+        async get(companyId, runId) {
+          return callHost("sps.models.get", { companyId, runId });
+        },
+        async cancel(companyId, runId) {
+          return callHost("sps.models.cancel", { companyId, runId });
+        }
+      },
+      executions: {
+        async summarize(companyId, options2) {
+          return spsTransport.request("sps.executions.summarize", { ...options2, companyId });
+        },
+        async list(companyId, options2 = {}) {
+          return spsTransport.request("sps.executions.list", { ...options2, companyId });
+        },
+        async get(companyId, lane, runId) {
+          return spsTransport.request("sps.executions.get", { companyId, lane, runId });
+        }
+      },
       workspaceSources: {
         async list(companyId) {
           return spsTransport.request("sps.workspaceSources.list", { companyId });
@@ -10907,6 +11014,12 @@ function startWorkerRpcHost(options) {
         }
       },
       runs: {
+        async list(companyId, options2 = {}) {
+          return spsTransport.request("sps.runs.list", { ...options2, companyId });
+        },
+        async cancel(companyId, runId) {
+          return spsTransport.request("sps.runs.cancel", { companyId, runId });
+        },
         async dispatch(input) {
           return spsTransport.request("sps.runs.dispatch", input);
         },
@@ -11473,6 +11586,9 @@ function startWorkerRpcHost(options) {
         }
       },
       agents: {
+        async describeExecution(agentId, companyId) {
+          return callHost("agents.describeExecution", { agentId, companyId });
+        },
         async list(input) {
           return callHost("agents.list", {
             companyId: input.companyId,
@@ -11505,6 +11621,12 @@ function startWorkerRpcHost(options) {
           }
         },
         sessions: {
+          async getRun(sessionId, companyId, runId) {
+            return callHost("agents.sessions.getRun", { sessionId, companyId, runId });
+          },
+          async cancel(sessionId, companyId, runId) {
+            return callHost("agents.sessions.cancel", { sessionId, companyId, runId });
+          },
           async create(agentId, companyId, opts) {
             return callHost("agents.sessions.create", {
               agentId,

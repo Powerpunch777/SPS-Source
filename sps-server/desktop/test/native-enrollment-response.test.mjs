@@ -4,6 +4,9 @@ import { parseSpsNativeEnrollmentResponse } from "../src/native-enrollment-respo
 
 const DEVICE_ID = "deadbeef-cafe-4bad-8dad-0123456789ab";
 const ENROLLMENT_ID = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+const HOST_ID = "deadbeef-cafe-4bad-8dad-0123456789ab";
+const SERVER_PIN = "a".repeat(64);
+const ISSUER_PIN = "b".repeat(64);
 const SESSION_TOKEN = "A".repeat(64);
 const COOKIE = `sps_identity_session=${SESSION_TOKEN}; Max-Age=604800; Path=/; HttpOnly; Secure; SameSite=Lax`;
 const JSON_HEADERS = ["Content-Type", "application/json; charset=utf-8", "Cache-Control", "no-store"];
@@ -56,6 +59,88 @@ test("accepts Core exchange, issue, and pending-completion responses as frozen D
   }));
   assert.deepEqual(completed, { deviceId: DEVICE_ID, status: "pending" });
   assert.equal(Object.isFrozen(completed), true);
+});
+
+test("accepts the exact public identity response as a frozen four-field DTO", () => {
+  const identity = parseSpsNativeEnrollmentResponse("identity", response("identity", {
+    hostId: HOST_ID,
+    serverSpkiSha256: SERVER_PIN,
+    issuerSpkiSha256: ISSUER_PIN,
+    issuerCertificate: "AQID",
+  }));
+  assert.deepEqual(identity, {
+    hostId: HOST_ID,
+    serverSpkiSha256: SERVER_PIN,
+    issuerSpkiSha256: ISSUER_PIN,
+    issuerCertificate: "AQID",
+  });
+  assert.deepEqual(Object.keys(identity), ["hostId", "serverSpkiSha256", "issuerSpkiSha256", "issuerCertificate"]);
+  assert.equal(Object.isFrozen(identity), true);
+
+  const maxBoundCertificate = Buffer.alloc(4096, 0x01).toString("base64url");
+  assert.equal(parseSpsNativeEnrollmentResponse("identity", response("identity", {
+    hostId: HOST_ID,
+    serverSpkiSha256: SERVER_PIN,
+    issuerSpkiSha256: ISSUER_PIN,
+    issuerCertificate: maxBoundCertificate,
+  })).issuerCertificate, maxBoundCertificate);
+});
+
+test("identity requires canonical host, pins, certificate encoding, and exact public fields", () => {
+  const valid = {
+    hostId: HOST_ID,
+    serverSpkiSha256: SERVER_PIN,
+    issuerSpkiSha256: ISSUER_PIN,
+    issuerCertificate: "AQID",
+  };
+  for (const change of [
+    { hostId: HOST_ID.toUpperCase() },
+    { hostId: "11111111-1111-4111-8111-11111111111g" },
+    { serverSpkiSha256: "A".repeat(64) },
+    { serverSpkiSha256: "a".repeat(63) },
+    { issuerSpkiSha256: "g".repeat(64) },
+    { issuerSpkiSha256: "b".repeat(65) },
+    { issuerCertificate: "AQID=" },
+    { issuerCertificate: "AR" },
+    { issuerCertificate: "AQ+_" },
+    { issuerCertificate: "" },
+    { issuerCertificate: Buffer.alloc(4097, 0x01).toString("base64url") },
+  ]) {
+    expectInvalid("identity", response("identity", { ...valid, ...change }));
+  }
+
+  for (const extra of [
+    { accessToken: "secret" },
+    { refreshToken: "secret" },
+    { userId: "user-1" },
+    { roles: ["admin"] },
+  ]) {
+    expectInvalid("identity", response("identity", { ...valid, ...extra }));
+  }
+});
+
+test("identity rejects cookies, wrong status, and accessor-backed envelope fields without invoking getters", () => {
+  const value = {
+    hostId: HOST_ID,
+    serverSpkiSha256: SERVER_PIN,
+    issuerSpkiSha256: ISSUER_PIN,
+    issuerCertificate: "AQID",
+  };
+  const base = response("identity", value);
+  expectInvalid("Identity", base);
+  expectInvalid("identity", { ...base, statusCode: 201 });
+  for (const name of ["Set-Cookie", "Cookie"]) {
+    expectInvalid("identity", { ...base, rawHeaders: [...base.rawHeaders, name, COOKIE] });
+  }
+
+  let getterCalled = false;
+  const accessorInput = response("identity", value);
+  Object.defineProperty(accessorInput, "statusCode", {
+    enumerable: true,
+    get() { getterCalled = true; return 200; },
+  });
+  expectInvalid("identity", accessorInput);
+  assert.equal(getterCalled, false);
 });
 
 test("accepts case-insensitive standard header names and media/cache values", () => {
