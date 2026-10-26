@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
-import { workspaceE2eCleanupDisposition } from "../scripts/workspace-e2e-cleanup-contract.mjs";
+import { workspaceE2eCleanupDisposition, workspaceE2eCleanupFailureReason } from "../scripts/workspace-e2e-cleanup-contract.mjs";
 
 const local = { delegated: false, children: 3, exited: 3, orderly: 3, outputEnded: 6,
   outputFailed: 0, finalDesktopGraceful: true, temporaryDataRemoved: true, identityClosed: true };
@@ -30,6 +30,19 @@ test("malformed, incomplete and contradictory process counts fail closed", () =>
     assert.throws(() => workspaceE2eCleanupDisposition({ ...local, ...change }), TypeError);
   }
   assert.throws(() => workspaceE2eCleanupDisposition(), TypeError);
+});
+
+test("temporary fixture diagnostics distinguish bounded timeout from known safe-path failures", () => {
+  assert.equal(workspaceE2eCleanupFailureReason("temporary_data",
+    Object.assign(new Error("private path"), { code: "ERR_WORKSPACE_E2E_CLEANUP_TIMEOUT" })), "timeout");
+  for (const stage of ["arguments", "temporary-directory", "create", "assert-current", "remove"]) {
+    assert.equal(workspaceE2eCleanupFailureReason("temporary_data",
+      Object.assign(new Error("private path"), { code: "ERR_WORKSPACE_E2E_FIXTURE", stage })), stage);
+  }
+  assert.equal(workspaceE2eCleanupFailureReason("temporary_data",
+    Object.assign(new Error("private path"), { code: "EPERM" })), "operation_failed");
+  assert.equal(workspaceE2eCleanupFailureReason("identity_close",
+    Object.assign(new Error("private path"), { code: "ERR_WORKSPACE_E2E_CLEANUP_TIMEOUT" })), "operation_failed");
 });
 
 test("a standalone Workspace child with delegated evidence exits nonzero", async () => {

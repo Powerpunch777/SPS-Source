@@ -21,7 +21,7 @@ export function requireSpsNativeHostListenInput(input) {
 // Product orchestration: explicit per-launch opt-in, independent of Plugins and
 // Agents. It never changes Windows Firewall, OS trust or existing Core binds.
 export function createSpsNativeHostController({ getAuthority, authenticate, getIdentity,
-  getCoreIdentity, localAddresses, createIngress, dispatch, issuePairing, copyInvitation }) {
+  getCoreIdentity, localAddresses, createIngress, dispatch, dispatchWorkspace, issuePairing, copyInvitation }) {
   let current = null, busy = false, generation = 0;
   function capture() {
     try {
@@ -83,7 +83,8 @@ export function createSpsNativeHostController({ getAuthority, authenticate, getI
         // The settings requester authorizes start, but a closed settings window
         // is not an account/Host revocation after successful opt-in.
         candidate = createIngress({ getIdentity: () => identity,
-          assertCurrent: () => guard(authority, epoch), dispatch });
+          assertCurrent: () => guard(authority, epoch), dispatch,
+          ...(dispatchWorkspace ? { dispatchWorkspace } : {}) });
         const bound = await candidate.start(value);
         check();
         if (!bound || bound.state !== "listening" || bound.bindAddress !== value.bindAddress || bound.port !== value.port

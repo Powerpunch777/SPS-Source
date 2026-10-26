@@ -49,6 +49,33 @@ function fakeChild(onKill = () => {}) {
   return child;
 }
 
+test("Native Workspace parent channel attaches only to a prepared owned Core child", async t => {
+  for (const [environment, expectedListeners] of [
+    [{}, 2],
+    [{ SPS_NATIVE_WORKSPACE_CHANNEL: "1", SPS_NATIVE_PARENT_INGRESS: "1" }, 2],
+    [{ SPS_NATIVE_WORKSPACE_CHANNEL: "1", SPS_NATIVE_PARENT_INGRESS: "1", SPS_NATIVE_HOST_MANAGEMENT: "1" }, 3],
+  ]) {
+    let healthy = false;
+    const child = fakeChild();
+    const manager = createSpsOwnerHostManager({
+      url: "http://127.0.0.1:31310",
+      fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+      resolveRuntime: async () => ({ command: "node", args: ["host.mjs"], environment }),
+      spawn: () => { healthy = true; return child; },
+      startupAttempts: 1,
+      delay: async () => {},
+      createNativeSigner: () => ({ inspect: async () => ({ hostId: "11111111-1111-4111-8111-111111111111",
+        serverSpkiSha256: "a".repeat(64), issuerSpkiSha256: "b".repeat(64), issuerCertificate: "AQID" }),
+      sign: async () => ({}), dispose() {} }),
+      terminateTree: async () => { healthy = false; child.exitCode = 0; child.emit("exit", 0); },
+    });
+    t.after(() => manager.stop({ force: true }));
+    assert.equal((await manager.start()).state, "running");
+    assert.equal(child.listenerCount("message"), expectedListeners);
+    if (expectedListeners === 2) await assert.rejects(manager.readNativeWorkspace({}));
+  }
+});
+
 test("starts an internal Owner Host when its runtime is available", async () => {
   let healthy = false;
   const child = new EventEmitter();

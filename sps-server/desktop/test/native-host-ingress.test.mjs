@@ -35,11 +35,11 @@ before(async () => {
   });
 });
 
-function post(port, { route, body = "", headers = {}, certificate, key, session = false } = {}) {
+function post(port, { route, body = "", headers = {}, certificate, key, session = false, workspace = false } = {}) {
   return new Promise((resolve, reject) => {
-    const request = httpsRequest({ hostname: "127.0.0.1", port, path: route, method: "POST", agent: false,
+    const request = httpsRequest({ hostname: "127.0.0.1", port, path: route, method: workspace ? "GET" : "POST", agent: false,
       ca: identity.server.certificatePem, cert: certificate, key, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
-      headers: { "Content-Type": "application/json; charset=utf-8", "Content-Length": String(Buffer.byteLength(body)),
+      headers: { ...(!workspace ? { "Content-Type": "application/json; charset=utf-8" } : {}), "Content-Length": String(Buffer.byteLength(body)),
         Connection: "close", ...(session ? { Cookie: `sps_identity_session=${"a".repeat(64)}` } : {}), ...headers } }, response => {
       const chunks = [];
       response.on("data", chunk => chunks.push(chunk));
@@ -107,6 +107,55 @@ test("only exact Native paths and closed canonical requests dispatch over fresh 
   assert.equal(calls[2].body.requestPem, memberKey.requestPem);
   assert.equal(calls[2].credential.sessionCookie, `sps_identity_session=${"a".repeat(64)}`);
   assert.equal("peerCertificateDer" in calls[2].transport, false);
+});
+
+test("explicit Workspace surface forwarding requires actual fresh mTLS and a session without Owner proof", async t => {
+  const calls = [];
+  const ingress = createSpsNativeHostIngress({ getIdentity: () => identity, assertCurrent() {},
+    dispatch() { assert.fail("Workspace requests must not use the enrollment dispatcher"); },
+    async dispatchWorkspace(input, options) {
+      options.assertCurrent();
+      calls.push(input);
+      return { mode: "neutral" };
+    },
+  });
+  t.after(() => ingress.dispose());
+  const bound = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  const workspaceId = "44444444-4444-4444-8444-444444444444";
+  const input = { route: `/api/companies/${workspaceId}/workspace-shell`, workspace: true,
+    certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem, session: true };
+  const success = await post(bound.port, input);
+  assert.equal(success.statusCode, 200);
+  assert.deepEqual(JSON.parse(success.body), { mode: "neutral" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].workspaceId, workspaceId);
+  assert.equal(calls[0].target, input.route);
+  assert.equal(calls[0].cookie, `sps_identity_session=${"a".repeat(64)}`);
+  assert.deepEqual(calls[0].peerCertificateDer, new X509Certificate(memberCertificate.certificatePem).raw);
+  for (const denied of [
+    { ...input, certificate: undefined, key: undefined },
+    { ...input, session: false },
+    { ...input, body: "{}" },
+    { ...input, headers: { "X-SPS-Desktop-Owner-Bootstrap": "owner" } },
+    { ...input, headers: { "X-SPS-Native-Workspace-Proof": "forged" } },
+    { ...input, headers: { Origin: "https://evil.invalid" } },
+    { ...input, route: "/api/companies" },
+    { ...input, route: `/api/companies/${workspaceId}/workspace-shell?archived=true` },
+    { ...input, route: `/api/companies/${workspaceId}/workspace-inbox?archived=true&extra=true` },
+  ]) {
+    const response = await post(bound.port, denied);
+    assert.notEqual(response.statusCode, 200);
+  }
+  assert.equal(calls.length, 1);
+});
+
+test("Workspace paths stay unmounted unless the private dispatcher is explicitly supplied", async t => {
+  const ingress = createSpsNativeHostIngress({ getIdentity: () => identity, assertCurrent() {}, dispatch() { assert.fail(); } });
+  t.after(() => ingress.dispose());
+  const { port } = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  const response = await post(port, { route: "/api/companies/44444444-4444-4444-8444-444444444444/workspace-shell",
+    workspace: true, certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem, session: true });
+  assert.equal(response.statusCode, 404);
 });
 
 test("production bootstrap, enrollment and recovery clients interoperate end-to-end over the ingress", async t => {

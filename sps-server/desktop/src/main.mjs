@@ -1370,6 +1370,10 @@ function ensureNativeHostController() {
       if (!ownerHostManager) return Promise.reject(new Error("The owned Native Host is unavailable."));
       return ownerHostManager.dispatchNativeIngress(operation, request, options);
     },
+    dispatchWorkspace: (request, options) => {
+      if (!ownerHostManager) return Promise.reject(new Error("The owned Native Host is unavailable."));
+      return ownerHostManager.readNativeWorkspace(request, options);
+    },
   });
   return nativeHostController;
 }
@@ -1703,6 +1707,7 @@ async function ensureOwnerHostManager() {
           ...coreRecoveryEnvironment(recovery),
           SPS_NATIVE_HOST_MANAGEMENT: nativeManagementPrepared ? "1" : "0",
           SPS_NATIVE_PARENT_INGRESS: nativeManagementPrepared ? "1" : "0",
+          SPS_NATIVE_WORKSPACE_CHANNEL: nativeManagementPrepared ? "1" : "0",
           // SPS Identity's current private Core user mapping. This is trusted
           // per-child configuration, never a renderer/request-selected user.
           SPS_NATIVE_HOST_OWNER_USER_ID: nativeManagementPrepared

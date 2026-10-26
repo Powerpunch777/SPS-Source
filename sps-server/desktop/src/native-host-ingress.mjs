@@ -72,7 +72,7 @@ function parseBody(bytes, kind) {
   return parsed;
 }
 
-function readHeaders(request) {
+function readHeaders(request, workspace = false) {
   const raw = request.rawHeaders;
   if (!Array.isArray(raw) || raw.length % 2 || raw.length / 2 > 32) throw fail();
   let total = 0;
@@ -89,13 +89,14 @@ function readHeaders(request) {
   const headers = request.headers;
   if (headers["transfer-encoding"] !== undefined || headers["content-encoding"] !== undefined
     || headers.expect !== undefined || headers.upgrade !== undefined) throw fail();
-  if (headers["content-type"] !== "application/json; charset=utf-8") throw fail();
+  if (workspace ? headers["content-type"] !== undefined : headers["content-type"] !== "application/json; charset=utf-8") throw fail();
   if (headers["connection"]?.toLowerCase() !== "close") throw fail();
   const rawLength = headers["content-length"];
   if (typeof rawLength !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(rawLength)) throw fail();
   const length = Number(rawLength);
   if (!Number.isSafeInteger(length)) throw fail();
   if (length > MAX_BODY_BYTES) throw fail(413);
+  if (workspace && length !== 0) throw fail();
   return { length, headers };
 }
 
@@ -118,10 +119,10 @@ function exactCredential(route, headers) {
   return { sessionCookie: value };
 }
 
-function writeJson(response, statusCode, value, cookie = null) {
+function writeJson(response, statusCode, value, cookie = null, maximum = MAX_RESPONSE_BYTES) {
   if (response.destroyed || response.writableEnded) return;
   const bytes = Buffer.from(JSON.stringify(value), "utf8");
-  if (bytes.length > MAX_RESPONSE_BYTES) {
+  if (bytes.length > maximum) {
     response.destroy();
     return;
   }
@@ -181,10 +182,11 @@ function canonicalAddress(value) {
   return value.toLowerCase();
 }
 
-export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatch, limits: inputLimits } = {}) {
+export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatch, dispatchWorkspace, limits: inputLimits } = {}) {
   if (typeof getIdentity !== "function" || typeof assertCurrent !== "function" || typeof dispatch !== "function") {
     throw new TypeError("Invalid Native Host ingress dependencies.");
   }
+  if (dispatchWorkspace !== undefined && typeof dispatchWorkspace !== "function") throw new TypeError("Invalid Native Workspace dispatcher.");
   const limits = validateLimits(inputLimits);
   let server = null;
   let disposed = false;
@@ -238,9 +240,11 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
     response.once("close", stopResponse);
     try {
       if (disposed || !server) throw fail(503);
-      const route = ROUTES[request.url];
-      if (request.method !== "POST" || !route || request.url.includes("?") || request.url.includes("#")) throw fail(404);
-      const { length, headers } = readHeaders(request);
+      const workspacePath = request.method === "GET" && typeof dispatchWorkspace === "function"
+        && /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/.exec(request.url);
+      const route = workspacePath ? { peer: true, credential: "sessionCookie", body: null } : ROUTES[request.url];
+      if (!workspacePath && (request.method !== "POST" || !route || request.url.includes("?") || request.url.includes("#"))) throw fail(404);
+      const { length, headers } = readHeaders(request, Boolean(workspacePath));
       const credential = exactCredential(route, headers);
       const peer = socket.getPeerCertificate?.(true);
       const peerPresent = Boolean(peer?.raw?.length);
@@ -291,10 +295,19 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
         errorResponse(response, 504);
       }, limits.operationTimeoutMs);
       try {
-        const result = await dispatch(route.operation, Object.freeze({ body, transport, ...(credential ? { credential } : {}) }),
-          { signal: controller.signal, assertCurrent: () => { assertIdentityCurrent(expected); } });
+        const dispatchOptions = { signal: controller.signal, assertCurrent: () => { assertIdentityCurrent(expected); } };
+        const result = workspacePath
+          ? await dispatchWorkspace(Object.freeze({ workspaceId: workspacePath[1], target: request.url,
+            cookie: credential.sessionCookie, peerCertificateDer: Buffer.from(peer.raw) }), dispatchOptions)
+          : await dispatch(route.operation, Object.freeze({ body, transport, ...(credential ? { credential } : {}) }), dispatchOptions);
         if (disposed || controller.signal.aborted || finished || response.destroyed) return;
         assertIdentityCurrent(expected);
+        if (workspacePath) {
+          // Core's private reader owns session/device/Workspace authorization.
+          // Only its selected public surface result is serialized here.
+          writeJson(response, 200, result, null, 256 * 1024);
+          return;
+        }
         validateResult(route.operation, result, expected);
         const cookie = route.operation === "session.exchange" ? (() => {
           if (typeof result.token !== "string" || !/^[A-Za-z0-9_-]{64}$/.test(result.token)

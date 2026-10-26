@@ -40,3 +40,23 @@ test("Linux Core verification runs the bounded signer-verifier protocol gate", a
   assert.match(step, /timeout-minutes: 3/);
   assert.match(workflow, /pnpm --filter @paperclipai\/db exec tsx \.\.\/\.\.\/\.\.\/\.\.\/sps-server\/desktop\/scripts\/smoke-native-workspace-proof\.mjs --isolated-native-workspace-proof/);
 });
+
+test("the Workspace channel gate uses real Core authorization and requires explicit isolated startup", async () => {
+  const script = await read("../scripts/smoke-native-workspace-channel.mjs");
+  const child = await read("../scripts/fixtures/native-workspace-channel-child.mjs");
+  const workflow = await read("../../../.github/workflows/sps-verify.yml");
+  const main = await read("../src/main.mjs");
+  assert.doesNotMatch(main, /smoke-native-workspace-channel/);
+  assert.match(script, /process\.argv\[2\] !== "--isolated-native-workspace-channel"/);
+  for (const evidence of ["startEmbeddedPostgresTestDatabase", "attachSpsNativeWorkspaceParentChannel",
+    "createSpsNativeHostIngress", "devices.revoke", "await database.cleanup()", 'minVersion: "TLSv1.3"']) {
+    assert.ok(script.includes(evidence), evidence);
+  }
+  assert.match(child, /createSpsNativeWorkspaceChannel/);
+  const position = workflow.indexOf("      - name: Verify Native Workspace TLS and owned Core channel");
+  assert.ok(position > 0);
+  const step = workflow.slice(position, workflow.indexOf("\n  room-plugin:", position));
+  assert.match(step, /timeout-minutes: 5/);
+  assert.match(step, /smoke-native-workspace-channel\.mjs --isolated-native-workspace-channel/);
+  assert.doesNotMatch(step, /continue-on-error|\|\| true/);
+});

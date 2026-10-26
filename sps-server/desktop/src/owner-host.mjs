@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { attachSpsNativeMemberSignerChannel } from "./native-member-signer-channel.mjs";
 import { createSpsNativeParentIngressClient } from "./native-parent-ingress-client.mjs";
+import { attachSpsNativeWorkspaceParentChannel } from "./native-workspace-parent-channel.mjs";
 
 function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
@@ -350,6 +351,7 @@ export function createSpsOwnerHostManager({
   let startedAt = null;
   let nativeChannel = null;
   let nativeIngress = null;
+  let nativeWorkspace = null;
   let lifecycleGeneration = 0;
   let startPromise = null;
   let startPromiseGeneration = null;
@@ -406,6 +408,7 @@ export function createSpsOwnerHostManager({
       child.stdio?.[4]?.on?.("error", () => {});
       ownedChild = child;
       let childChannel = null;
+      let childWorkspace = null;
       if (createNativeSigner) {
         let signer;
         try {
@@ -413,6 +416,21 @@ export function createSpsOwnerHostManager({
           childChannel = attachSpsNativeMemberSignerChannel(child, signer, { isCurrent: () => ownedChild === child });
           nativeChannel = childChannel;
           nativeIngress = createSpsNativeParentIngressClient(child, { isCurrent: () => ownedChild === child });
+          const childEnvironment = runtime.environment ?? {};
+          if (childEnvironment.SPS_NATIVE_WORKSPACE_CHANNEL === "1"
+            && childEnvironment.SPS_NATIVE_PARENT_INGRESS === "1"
+            && childEnvironment.SPS_NATIVE_HOST_MANAGEMENT === "1") {
+            try {
+              childWorkspace = attachSpsNativeWorkspaceParentChannel(child, {
+                inspectBinding: options => signer.inspect(options),
+                isCurrent: () => ownedChild === child,
+              });
+              nativeWorkspace = childWorkspace;
+            } catch {
+              childWorkspace?.dispose();
+              childWorkspace = null;
+            }
+          }
         } catch {
           // Native signing is unavailable, not an alternative route to Owner
           // authority. Preserve the ordinary Host when no channel can attach.
@@ -421,6 +439,8 @@ export function createSpsOwnerHostManager({
           if (nativeChannel === childChannel) nativeChannel = null;
           nativeIngress?.dispose();
           nativeIngress = null;
+          childWorkspace?.dispose();
+          if (nativeWorkspace === childWorkspace) nativeWorkspace = null;
         }
       }
       startedAt = new Date().toISOString();
@@ -441,6 +461,8 @@ export function createSpsOwnerHostManager({
         childChannel?.dispose();
         nativeIngress?.dispose();
         nativeIngress = null;
+        childWorkspace?.dispose();
+        if (nativeWorkspace === childWorkspace) nativeWorkspace = null;
         try { onNativeInvalidation(); } catch { /* Authority remains revoked. */ }
         if (nativeChannel === childChannel) nativeChannel = null;
         if (code && code !== 0) {
@@ -490,6 +512,8 @@ export function createSpsOwnerHostManager({
     try { onNativeInvalidation(); } catch { /* Authority remains revoked. */ }
     nativeIngress?.dispose();
     nativeIngress = null;
+    nativeWorkspace?.dispose();
+    nativeWorkspace = null;
     const channel = nativeChannel;
     nativeChannel = null;
     channel?.dispose();
@@ -535,5 +559,10 @@ export function createSpsOwnerHostManager({
     }
     return nativeIngress.dispatch(operation, request, options);
   }
-  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress };
+  function readNativeWorkspace(request, options) {
+    if (!ownedChild || ownedChild.exitCode != null || !nativeWorkspace) return Promise.reject(Object.assign(
+      new Error("The owned Native Workspace channel is unavailable."), { code: "native_workspace_unavailable" }));
+    return nativeWorkspace.read(request, options);
+  }
+  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace };
 }

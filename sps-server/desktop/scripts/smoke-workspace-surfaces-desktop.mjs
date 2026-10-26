@@ -14,7 +14,7 @@ import { saveCoreRecoverySettings } from "../src/core-recovery-store.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT } from "./preview-e2e-cleanup-contract.mjs";
 import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 import { createWorkspaceE2eChildTracker } from "./workspace-e2e-child-tracker.mjs";
-import { workspaceE2eCleanupDisposition } from "./workspace-e2e-cleanup-contract.mjs";
+import { workspaceE2eCleanupDisposition, workspaceE2eCleanupFailureReason } from "./workspace-e2e-cleanup-contract.mjs";
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 import { annotatePreviewE2eCdpFailure, snapshotPreviewE2eFailure } from "./preview-e2e-failure-diagnostics.mjs";
 
@@ -123,7 +123,9 @@ async function assertNoPackagedRuntimeOrphans(userDataDirectory) {
 async function boundedCleanup(operation, label, timeoutMs = 15_000) {
   let timer;
   try { return await Promise.race([operation, new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} cleanup timed out.`)), timeoutMs);
+    timer = setTimeout(() => reject(Object.assign(new Error(`${label} cleanup timed out.`), {
+      code: "ERR_WORKSPACE_E2E_CLEANUP_TIMEOUT",
+    })), timeoutMs);
   })]); }
   finally { clearTimeout(timer); }
 }
@@ -1399,9 +1401,7 @@ try {
     try { return await operation(); }
     catch (error) {
       failedStages.add(stage);
-      const fixtureStages = ["arguments", "temporary-directory", "create", "assert-current", "remove"];
-      const reason = stage === "temporary_data" && error?.code === "ERR_WORKSPACE_E2E_FIXTURE"
-        && fixtureStages.includes(error.stage) ? error.stage : "operation_failed";
+        const reason = workspaceE2eCleanupFailureReason(stage, error);
       console.log(`[workspace-e2e] cleanup failure: ${JSON.stringify({ stage, reason })}`);
       return null;
     }

@@ -214,6 +214,10 @@ jobs:
         timeout-minutes: 3
         run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-proof.mjs --isolated-native-workspace-proof
 
+      - name: Verify Native Workspace TLS and owned Core channel with actual authorization
+        timeout-minutes: 5
+        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-channel.mjs --isolated-native-workspace-channel
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest
