@@ -421,7 +421,16 @@ public static class RestrictedE2eRunner
             if (String.Equals(name, "node.exe", StringComparison.OrdinalIgnoreCase)) return 0;
             if (String.Equals(name, "postgres.exe", StringComparison.OrdinalIgnoreCase)) return 1;
             if (String.Equals(name, "electron.exe", StringComparison.OrdinalIgnoreCase)) return 2;
-            if (name.StartsWith("crashpad", StringComparison.OrdinalIgnoreCase)) return 3;
+            if (String.Equals(name, "chrome_crashpad_handler.exe", StringComparison.OrdinalIgnoreCase)
+                || String.Equals(name, "crashpad_handler.exe", StringComparison.OrdinalIgnoreCase)) return 3;
+            if (String.Equals(name, "powershell.exe", StringComparison.OrdinalIgnoreCase)
+                || String.Equals(name, "pwsh.exe", StringComparison.OrdinalIgnoreCase)) return 6;
+            if (String.Equals(name, "cmd.exe", StringComparison.OrdinalIgnoreCase)) return 7;
+            if (String.Equals(name, "conhost.exe", StringComparison.OrdinalIgnoreCase)
+                || String.Equals(name, "OpenConsole.exe", StringComparison.OrdinalIgnoreCase)) return 8;
+            if (String.Equals(name, "WerFault.exe", StringComparison.OrdinalIgnoreCase)
+                || String.Equals(name, "WerFaultSecure.exe", StringComparison.OrdinalIgnoreCase)
+                || String.Equals(name, "wermgr.exe", StringComparison.OrdinalIgnoreCase)) return 9;
             return 4;
         }
         catch { return 5; }
@@ -431,6 +440,7 @@ public static class RestrictedE2eRunner
     {
         uint total = 0, bounded = 0;
         int node = 0, postgres = 0, electron = 0, crashpad = 0, other = 0, unavailable = 0;
+        int powershell = 0, shell = 0, console = 0, windowsError = 0;
         bool truncated = false, readOK = true;
         IntPtr buffer = IntPtr.Zero;
         try
@@ -475,6 +485,10 @@ public static class RestrictedE2eRunner
                         else if (category == 2) electron++;
                         else if (category == 3) crashpad++;
                         else if (category == 4) other++;
+                        else if (category == 6) powershell++;
+                        else if (category == 7) shell++;
+                        else if (category == 8) console++;
+                        else if (category == 9) windowsError++;
                         else unavailable++;
                     }
                 }
@@ -491,6 +505,7 @@ public static class RestrictedE2eRunner
         {
             Console.WriteLine("{\"node\":" + node + ",\"postgres\":" + postgres + ",\"electron\":" + electron
                 + ",\"crashpad\":" + crashpad + ",\"other\":" + other + ",\"unavailable\":" + unavailable
+                + ",\"powershell\":" + powershell + ",\"shell\":" + shell + ",\"console\":" + console + ",\"windowsError\":" + windowsError
                 + ",\"total\":" + total + ",\"bounded\":" + bounded + ",\"truncated\":"
                 + (truncated ? "true" : "false") + ",\"readOK\":" + (readOK ? "true" : "false") + "}");
         }

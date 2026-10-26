@@ -92,6 +92,20 @@ npx --offline pnpm@11.9.0 -r build
 
 ## Observations And Implementation
 
+Source `c7abdaf` push workflow `40261366848`, Windows job `121374280009`,
+passed the No-AI functional cases and removed its temporary data after about
+9.2 seconds, with three orderly Mains / six EOFs and a graceful final quit in
+84 ms. It correctly exited with the delegated pending code 76. The owned Job
+still contained nine descendants after the unchanged ten-second natural wait:
+the fixed counts reported Node/PostgreSQL/Electron/crashpad zero, `other:9`,
+`unavailable:0`. Forced Job cleanup was rejected with exit 125, not accepted.
+This proves data cleanup for that run, not whole-Job acceptance or the identity
+of the nine remaining processes. Current diagnostics add only fixed PowerShell,
+cmd, console-host and Windows-error categories, and exact crash-handler names,
+inside the existing bounded owned-Job query. They expose no PID/name/path/args
+and change no timeout, process grant, cleanup or acceptance rule. The focused
+Windows helper suite still passes **17/17**; fresh hosted observation is needed.
+
 Latest clean Source `cdac18b` push workflow `40259518612` completed **16/18**.
 All nine Linux shards and full typecheck/build plus the corrected real Native
 transport interop passed. Production compatibility remains blocked by held Zod

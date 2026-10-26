@@ -70,9 +70,10 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
   const diagnostics = output.find(record => Object.hasOwn(record, "readOK") && Object.hasOwn(record, "truncated"));
   assert.ok(diagnostics);
   assert.deepEqual(Object.keys(diagnostics).sort(), [
-    "node", "postgres", "electron", "crashpad", "other", "unavailable", "total", "bounded", "truncated", "readOK",
+    "node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError",
+    "total", "bounded", "truncated", "readOK",
   ].sort());
-  for (const category of ["node", "postgres", "electron", "crashpad", "other", "unavailable", "total", "bounded"]) {
+  for (const category of ["node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError", "total", "bounded"]) {
     assert.equal(Number.isSafeInteger(diagnostics[category]) && diagnostics[category] >= 0, true);
   }
   assert.equal(diagnostics.readOK, true);
@@ -81,7 +82,8 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
   assert.equal(diagnostics.bounded <= 256, true);
   assert.equal(diagnostics.other >= 1, true);
   assert.equal(
-    diagnostics.node + diagnostics.postgres + diagnostics.electron + diagnostics.crashpad + diagnostics.other + diagnostics.unavailable,
+    diagnostics.node + diagnostics.postgres + diagnostics.electron + diagnostics.crashpad + diagnostics.other + diagnostics.unavailable
+      + diagnostics.powershell + diagnostics.shell + diagnostics.console + diagnostics.windowsError,
     diagnostics.bounded,
   );
   assert.doesNotMatch(JSON.stringify(diagnostics), /[A-Za-z]:[\\/]|\\\\|\b\d{4,}\b/);
@@ -227,6 +229,19 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   const processMembershipCheck = source.indexOf("IsProcessInJob(process, job, out inJob)");
   const processImageRead = source.indexOf("QueryFullProcessImageName(process, 0, image, ref imageLength)");
   assert.ok(processMembershipCheck >= 0 && processImageRead > processMembershipCheck);
+  const processClassifierStart = source.indexOf("    static int OwnedProcessCategory(");
+  const processDiagnosticsWriter = source.indexOf("    static void WriteOwnedJobProcessDiagnostics(", processClassifierStart);
+  const processDiagnosticsEnd = source.indexOf("    static bool WaitForNaturalJobEmpty(", processDiagnosticsWriter);
+  assert.ok(processClassifierStart >= 0 && processDiagnosticsWriter > processClassifierStart && processDiagnosticsEnd > processDiagnosticsWriter);
+  const processClassifier = source.slice(processClassifierStart, processDiagnosticsWriter);
+  for (const image of [
+    "chrome_crashpad_handler.exe", "crashpad_handler.exe", "powershell.exe", "pwsh.exe", "cmd.exe",
+    "conhost.exe", "OpenConsole.exe", "WerFault.exe", "WerFaultSecure.exe", "wermgr.exe",
+  ]) {
+    assert.ok(processClassifier.includes(`String.Equals(name, "${image}", StringComparison.OrdinalIgnoreCase)`));
+  }
+  assert.doesNotMatch(processClassifier, /StartsWith|EndsWith|\bConsole\./);
+  assert.doesNotMatch(source.slice(processClassifierStart, processDiagnosticsEnd), /ProcessStartInfo|Process\.Start|CreateProcess|RunNode/);
   const naturalWait = source.indexOf("bool naturallyEmpty = WaitForNaturalJobEmpty(job, OwnedJobWaitMilliseconds(mode))");
   const forcedDiagnostics = source.indexOf("WriteOwnedJobProcessDiagnostics(job);", naturalWait);
   const forcedTermination = source.indexOf("TerminateAndConfirmJob(job);", forcedDiagnostics);
@@ -266,7 +281,7 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   assert.match(source, /if \(mode == "native-management"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", "--native-management", OwnedJobCleanupArgument\);/);
   assert.match(source, /if \(mode == "workspace-surfaces"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", OwnedJobCleanupArgument\);/);
   assert.match(source, /start\.UseShellExecute = false;/);
-  assert.doesNotMatch(source, /(?:powershell|cmd\.exe)/i);
+  assert.doesNotMatch(source.slice(0, processClassifierStart) + source.slice(processDiagnosticsEnd), /(?:powershell|cmd\.exe)/i);
   assert.match(wrapper, /Write-ExitDiagnostic 'restricted_e2e_helper_exit'/);
   assert.match(wrapper, /\$phase = 'helper_exit'/);
 });
