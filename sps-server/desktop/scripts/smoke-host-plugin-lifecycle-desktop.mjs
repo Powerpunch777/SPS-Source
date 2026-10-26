@@ -10,6 +10,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
+import { createE2eIdentityAuthorization } from "./e2e-identity-authorization.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -67,7 +68,7 @@ async function removeRetry(target) {
 function mockIdentity() {
   const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const publicJwk = keys.publicKey.export({ format: "jwk" });
-  const codes = new Set();
+  const authorization = createE2eIdentityAuthorization();
   const refreshTokens = new Set();
   let origin = null;
   let signIns = 0;
@@ -87,18 +88,11 @@ function mockIdentity() {
   const server = createServer(async (request, response) => {
     const url = new URL(request.url || "/", origin || "http://127.0.0.1");
     if (request.method === "GET" && url.pathname === "/.well-known/jwks.json") return response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ keys: [{ ...publicJwk, kid: "lifecycle-e2e", alg: "RS256", use: "sig" }] }));
-    if (request.method === "GET" && url.pathname === "/v1/desktop/authorize") {
-      const redirect = new URL(url.searchParams.get("redirect_uri") || "");
-      const state = url.searchParams.get("state");
-      if (!state) return response.writeHead(400).end("Missing state");
-      const code = `code-${randomBytes(18).toString("base64url")}`;
-      codes.add(code); redirect.searchParams.set("code", code); redirect.searchParams.set("state", state);
-      return response.writeHead(302, { location: redirect.toString() }).end();
-    }
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     let body = {}; try { body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch {}
+    if (await authorization.handle(request, response, url, body, origin)) return;
     if (request.method === "POST" && url.pathname === "/v1/desktop/token") {
-      if (!codes.delete(String(body.code || ""))) return response.writeHead(400).end(JSON.stringify({ error: "invalid code" }));
+      if (!authorization.consumeCode(body)) return response.writeHead(400).end(JSON.stringify({ error: "invalid code" }));
       return response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(tokenResponse()));
     }
     if (request.method === "POST" && url.pathname === "/v1/desktop/refresh") {
@@ -109,6 +103,7 @@ function mockIdentity() {
     return response.writeHead(404).end("Not found");
   });
   return {
+    followAuthorization: () => authorization.follow(origin),
     async start() {
       await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
       origin = `http://127.0.0.1:${server.address().port}`;
@@ -283,6 +278,7 @@ try {
   setup = await cdpFor(await waitTarget(debugPort, child, (entry) => entry.title === "SPS Desktop", "SPS sign-in window"));
   await waitPage(setup, (current) => current.text.includes("SPS"), "SPS sign-in UI");
   await clickText(setup, ["#start-sps-account", "Sign in", "Continue with Google"], "SPS sign-in");
+  await identity.followAuthorization();
   await waitPage(setup, () => identityState.signIns > 0, "mock Identity callback", 35000);
   await waitPage(setup, (current) => /Create|Server/.test(current.text), "Owner Host choice");
   await clickText(setup, ["#create-owner-server", "Create Owner Host", "Create Server", "Create"], "Create Owner Host");

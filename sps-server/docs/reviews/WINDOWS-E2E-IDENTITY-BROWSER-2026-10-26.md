@@ -33,3 +33,18 @@ mock-WebSocket tests cover these boundaries without running another Desktop.
 The 8-second open and 10-second command deadlines and actual process/output
 exit checks are unchanged. A separate stale HTML assertion now recognizes the
 dynamic listener status element while still requiring its default-off content.
+
+Source `b39744a` hosted run `40294574829` passed the No-AI Workspace/runtime
+discovery and owned-Job natural cleanup gate. The later packaged Preview failed
+before Host creation: its separate mock Identity did not implement the new
+capture endpoint, while the isolated packaged launch also enabled the two E2E
+flags. The same omission existed in the Host plugin lifecycle harness.
+
+Both packaged fixtures now use a shared, test-only authorization helper that
+accepts the exact loopback capture, validates S256/device/state, and follows the
+real Desktop callback before waiting for login. The mock consumes the code only
+after verifier/device matching. A real loopback HTTP test exercises the normal
+Desktop sign-in factory and callback with no browser invocation; malformed
+cross-origin capture is denied. This corrects the harness regression without
+changing product Identity behavior, Preview/Builder architecture or exit gates.
+Packaged Preview and Host lifecycle still need their complete hosted runs.

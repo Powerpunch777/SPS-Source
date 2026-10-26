@@ -21,6 +21,7 @@ import { collectPreviewE2eHostDiagnostics } from "./preview-e2e-host-diagnostics
 import { annotatePreviewE2eApiFailure, annotatePreviewE2eCdpFailure, snapshotPreviewE2eFailure } from "./preview-e2e-failure-diagnostics.mjs";
 import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, previewE2eCleanupDisposition } from "./preview-e2e-cleanup-contract.mjs";
+import { createE2eIdentityAuthorization } from "./e2e-identity-authorization.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -108,7 +109,7 @@ async function stopTemporaryPostgres(targetRoot) {
 function mockIdentity() {
   const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const publicJwk = keys.publicKey.export({ format: "jwk" });
-  const codes = new Set();
+  const authorization = createE2eIdentityAuthorization();
   const refreshTokens = new Set();
   let origin;
   let signIns = 0;
@@ -128,18 +129,11 @@ function mockIdentity() {
   const server = createServer(async (request, result) => {
     const url = new URL(request.url || "/", origin || "http://127.0.0.1");
     if (request.method === "GET" && url.pathname === "/.well-known/jwks.json") return result.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ keys: [{ ...publicJwk, kid: "preview-e2e", alg: "RS256", use: "sig" }] }));
-    if (request.method === "GET" && url.pathname === "/v1/desktop/authorize") {
-      const redirect = new URL(url.searchParams.get("redirect_uri") || "");
-      const state = url.searchParams.get("state");
-      if (!state) return result.writeHead(400).end("Missing state");
-      const code = `code-${randomBytes(18).toString("base64url")}`;
-      codes.add(code); redirect.searchParams.set("code", code); redirect.searchParams.set("state", state);
-      return result.writeHead(302, { location: redirect.toString() }).end();
-    }
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     let body = {}; try { body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch {}
+    if (await authorization.handle(request, result, url, body, origin)) return;
     if (request.method === "POST" && url.pathname === "/v1/desktop/token") {
-      if (!codes.delete(String(body.code || ""))) return result.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "invalid code" }));
+      if (!authorization.consumeCode(body)) return result.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "invalid code" }));
       return result.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(response()));
     }
     if (request.method === "POST" && url.pathname === "/v1/desktop/refresh") {
@@ -150,6 +144,7 @@ function mockIdentity() {
     return result.writeHead(404).end("Not found");
   });
   return {
+    followAuthorization: () => authorization.follow(origin),
     async start() { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); origin = `http://127.0.0.1:${server.address().port}`; return { origin, get signIns() { return signIns; } }; },
     async close() {
       if (!server.listening) return;
@@ -498,6 +493,7 @@ try {
   await waitPage(setup, (page) => page.text.includes("SPS"), "SPS sign-in UI");
   step("signing in and creating Owner Host", "owner_creation");
   await setup.evaluate("document.querySelector('#start-sps-account')?.click()");
+  await identity.followAuthorization();
   await waitPage(setup, () => identityState.signIns > 0, "mock Identity callback", 35_000);
   await waitPage(setup, (page) => page.text.includes("Create") || page.text.includes("Server"), "Owner Host choice");
   await setup.evaluate("document.querySelector('#create-owner-server')?.click()");
