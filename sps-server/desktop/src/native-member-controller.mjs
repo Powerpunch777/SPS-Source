@@ -216,8 +216,7 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
         return Object.freeze(choices.map(input => {
           const row = record(input, ["id", "name"]);
           uuid(row.id);
-          if (seen.has(row.id) || typeof row.name !== "string" || !row.name.trim() || row.name.length > 300
-            || /[\u0000-\u001f\u007f]/.test(row.name)) throw failure("unavailable");
+          if (seen.has(row.id) || typeof row.name !== "string" || row.name.length === 0) throw failure("unavailable");
           seen.add(row.id);
           return Object.freeze({ id: row.id, name: row.name });
         }));

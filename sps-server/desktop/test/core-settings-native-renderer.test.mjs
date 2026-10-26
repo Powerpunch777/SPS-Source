@@ -218,9 +218,11 @@ test("saved Host Workspace discovery requires Show Workspaces and renders exact 
   const calls = [];
   const hostId = "11111111-1111-4111-8111-111111111111";
   const workspaceId = "22222222-2222-4222-8222-222222222222";
+  const workspaceIds = [workspaceId, "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"];
+  const names = ["<img src=x onerror=alert(1)>", "   ", `line\nbreak\t\u0000${"x".repeat(301)}`];
   const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
     listNativeRegistrations: async () => [{ hostId }],
-    listNativeMemberWorkspaces: async input => { calls.push({ ...input }); return [{ id: workspaceId, name: "<img src=x onerror=alert(1)>" }]; },
+    listNativeMemberWorkspaces: async input => { calls.push({ ...input }); return names.map((name, index) => ({ id: workspaceIds[index], name })); },
   } });
   await settle();
   assert.deepEqual(calls, []);
@@ -234,8 +236,8 @@ test("saved Host Workspace discovery requires Show Workspaces and renders exact 
   show.dispatch("click");
   await settle();
   assert.deepEqual(calls, [{ hostId }]);
-  assert.equal(row.children[2].children[0].textContent, `<img src=x onerror=alert(1)> · ${workspaceId}`);
-  assert.equal(row.children[2].children[0].innerHTML, undefined);
+  assert.deepEqual(row.children[2].children.map(child => child.textContent), names.map((name, index) => `${name} · ${workspaceIds[index]}`));
+  assert.ok(row.children[2].children.every(child => child.innerHTML === undefined));
 });
 
 test("Workspace discovery shows generic empty/error states and ignores late results after refresh", async () => {

@@ -799,8 +799,7 @@ async function showNativeMemberWorkspaces(hostId, resultRegion) {
     const values = entries.map(candidate => {
       const entry = exactDataRecord(candidate, ["id", "name"]);
       if (!entry || typeof entry.id !== "string" || !nativeDeviceIdPattern.test(entry.id) || ids.has(entry.id)
-        || typeof entry.name !== "string" || !entry.name.trim() || entry.name.length > 300
-        || /[\u0000-\u001f\u007f]/.test(entry.name)) throw new Error("Invalid Workspace");
+        || typeof entry.name !== "string" || entry.name.length === 0) throw new Error("Invalid Workspace");
       ids.add(entry.id);
       return entry;
     });

@@ -102,8 +102,7 @@ function memberWorkspaces(value) {
   return Object.freeze(value.map(item => {
     const entry = exactDataRecord(item, ["id", "name"]);
     if (!entry || typeof entry.id !== "string" || !NATIVE_DEVICE_ID.test(entry.id) || ids.has(entry.id)
-      || typeof entry.name !== "string" || !entry.name.trim() || entry.name.length > 300
-      || /[\u0000-\u001f\u007f]/.test(entry.name)) throw new Error("Native Member Workspaces are unavailable.");
+      || typeof entry.name !== "string" || entry.name.length === 0) throw new Error("Native Member Workspaces are unavailable.");
     ids.add(entry.id);
     return Object.freeze({ id: entry.id, name: entry.name });
   }));

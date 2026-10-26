@@ -168,8 +168,7 @@ function parseWorkspaceChoices(body) {
   return Object.freeze(choices.map(input => {
     const value = record(input, ["id", "name"]);
     uuid(value.id);
-    if (seen.has(value.id) || typeof value.name !== "string" || !value.name.trim() || value.name.length > 300
-      || /[\u0000-\u001f\u007f]/.test(value.name)) reject();
+    if (seen.has(value.id) || typeof value.name !== "string" || value.name.length === 0) reject();
     seen.add(value.id);
     return Object.freeze({ id: value.id, name: value.name });
   }));

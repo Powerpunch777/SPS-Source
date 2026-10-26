@@ -41,12 +41,17 @@ test("Workspace discovery accepts only bounded public ID/name rows and never coo
   assert.equal(Object.isFrozen(actual), true);
   assert.equal(Object.isFrozen(actual[0]), true);
   assert.deepEqual(parseSpsNativeEnrollmentResponse("workspaces", response("workspaces", [])), []);
+  const unusualNames = ["   ", "x".repeat(301), "line\nbreak\t\u0000\u007f"].map((name, index) => ({
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, name,
+  }));
+  assert.deepEqual(parseSpsNativeEnrollmentResponse("workspaces", response("workspaces", unusualNames)), unusualNames);
   for (const bad of [
     {}, [{ id: "wrong", name: "Workspace" }], [{ id: DEVICE_ID, name: "" }],
     [{ id: DEVICE_ID, name: "Workspace", privateKeyPem: "secret" }], [...choices, ...choices],
-    Array.from({ length: 201 }, () => choices[0]), [{ id: DEVICE_ID, name: "x".repeat(301) }],
-    [{ id: DEVICE_ID, name: "line\nbreak" }],
+    Array.from({ length: 201 }, () => choices[0]),
   ]) expectInvalid("workspaces", response("workspaces", bad));
+  const oversized = Buffer.from(JSON.stringify([{ id: DEVICE_ID, name: "x".repeat(256 * 1024) }]), "utf8");
+  expectInvalid("workspaces", response("workspaces", choices, { body: oversized }));
   expectInvalid("workspaces", response("workspaces", choices, { body: Buffer.from(` ${JSON.stringify(choices)}`) }));
   const envelope = response("workspaces", choices);
   envelope.rawHeaders.push("Set-Cookie", COOKIE);

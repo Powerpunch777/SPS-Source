@@ -101,6 +101,20 @@ test("Workspace discovery uses only saved account-bound credentials and returns 
   assert.deepEqual(f.calls.slice(missingKeyCallStart), ["read-protected-target", "read-key"]);
 });
 
+test("Workspace discovery preserves nonempty Core names without normalization", async () => {
+  const names = ["   ", "x".repeat(301), "line\nbreak\t\u0000\u007f"];
+  const f = fixture({ createWorkspace: () => ({
+    async exchange() {},
+    async listAvailableWorkspaces() {
+      return names.map((name, index) => ({ id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, name }));
+    },
+    dispose() {},
+  }) });
+  await enroll(f);
+  const result = await f.controller.listWorkspaces({ hostId: HOST });
+  assert.deepEqual(result.map(row => row.name), names);
+});
+
 test("Main composition orders stable index, protected key/target, issuance persistence before completion", async () => {
   const f = fixture();
   assert.deepEqual(await enroll(f), { hostId: HOST, deviceId: DEVICE, status: "pending" });

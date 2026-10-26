@@ -98,11 +98,15 @@ test("Native Member Workspace discovery is explicit, guarded, and returns only e
   const ctx = setup({ authorizeMutation: () => { throw new Error("not a Host owner"); },
     listNativeMemberWorkspaces: async (input, options) => {
       assert.deepEqual(input, { hostId }); options.assertRequester(); queried++;
-      return [{ id: workspaceId, name: "Team Workspace" }];
+      return [{ id: workspaceId, name: "   " },
+        { id: "33333333-3333-4333-8333-333333333333", name: `line\nbreak\t\u0000${"x".repeat(301)}` }];
     },
   });
   await ctx.controller.show();
-  assert.deepEqual(await ctx.invoke("list-native-member-workspaces", [{ hostId }]), [{ id: workspaceId, name: "Team Workspace" }]);
+  assert.deepEqual(await ctx.invoke("list-native-member-workspaces", [{ hostId }]), [
+    { id: workspaceId, name: "   " },
+    { id: "33333333-3333-4333-8333-333333333333", name: `line\nbreak\t\u0000${"x".repeat(301)}` },
+  ]);
   assert.equal(queried, 1);
   for (const badInput of [{ hostId, token: "forbidden" }, { hostId: "../bad" }]) {
     await assert.rejects(ctx.invoke("list-native-member-workspaces", [badInput]));
@@ -118,9 +122,7 @@ test("Native Member Workspace IPC rejects malformed and private response fields"
   const id = "22222222-2222-4222-8222-222222222222";
   for (const result of [
     [{ id, name: "Workspace", cookie: "private" }],
-    [{ id, name: "   " }],
-    [{ id, name: `bad\u0000name` }],
-    [{ id, name: "x".repeat(301) }],
+    [{ id, name: "" }],
     [{ id, name: "One" }, { id, name: "Duplicate" }],
     Array.from({ length: 201 }, (_, index) => ({ id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, name: "Workspace" })),
   ]) {
