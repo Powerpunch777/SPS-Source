@@ -130,7 +130,7 @@ export async function runNoAiChecklistAcceptance({ cdp, company, api, click, res
   await workspace.command("Page.reload");
   await eventually(() => workspace.evaluate(`document.querySelector('[data-testid="checklist-jobs"]')?.textContent`), text => text === "Jobs: 1", "reload persisted public UI");
 
-  workspace = await restart();
+  workspace = await restart({ companyPrefix: company.issuePrefix, pluginId: plugin.id });
   console.log("[no-ai] Desktop and Owner Host restarted with the same temporary data");
   assert.deepEqual(await data(plugin), persisted, "Host restart lost checklist data/event/Job state");
   assert.deepEqual((await data(plugin, second.id)).items, []);

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { checklistManifest, createChecklistPackage } from "../scripts/no-ai-checklist-package.mjs";
 
 test("No-AI reference declares only optional UI, scoped state, events and Jobs", () => {
@@ -96,7 +97,7 @@ test("No-AI Electron acceptance is opt-in, source-only, and never enters the Age
   assert.match(closer, /assert.equal\(child.exitCode, 0/);
   assert.doesNotMatch(closer, /taskkill/);
   const acceptance = await readFile(new URL("../scripts/no-ai-checklist-acceptance.mjs", import.meta.url), "utf8");
-  for (const step of ["await restart()", "await openRecovery()", "scope-probe", "denied-read", "denied-write", "jobs/${job.id}/trigger", "Page.reload"]) {
+  for (const step of ["await restart({ companyPrefix: company.issuePrefix, pluginId: plugin.id })", "await openRecovery()", "scope-probe", "denied-read", "denied-write", "jobs/${job.id}/trigger", "Page.reload"]) {
     assert.ok(acceptance.includes(step), `Missing acceptance boundary: ${step}`);
   }
 });
@@ -133,6 +134,26 @@ test("waits for Native recovery renderer readiness before refreshing devices", a
   assert.equal((readinessWait.match(/await waitForPage\(/g) || []).length, 1, "Use one bounded readiness wait, not retries");
   assert.match(script, /async function waitForPage\(cdp, predicate, description, timeoutMs = 45_000\)/,
     "Keep the existing page-wait deadline");
+});
+
+test("No-AI restart reopens the exact reference UI even when startup restores another Workspace", async () => {
+  const script = await readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8");
+  const acceptance = await readFile(new URL("../scripts/no-ai-checklist-acceptance.mjs", import.meta.url), "utf8");
+  assert.ok(acceptance.includes("await restart({ companyPrefix: company.issuePrefix, pluginId: plugin.id })"));
+  const restart = script.slice(script.indexOf("restart: async ({ companyPrefix, pluginId })"), script.indexOf("openRecovery: async () => {"));
+  assert.ok(restart.includes("const expectedPath = `/${companyPrefix}/plugins/${pluginId}`"));
+  assert.ok(restart.indexOf("location.assign") < restart.indexOf("await waitForPage(workspaceCdp"));
+  const predicate = restart.match(/await waitForPage\(workspaceCdp, (page => [^\n]+),/);
+  assert.ok(predicate);
+  const expectedPath = "/REF/plugins/fixture-id";
+  const ready = runInNewContext(`(${predicate[1]})`, { URL, expectedPath });
+  assert.equal(ready({ route: "http://127.0.0.1:31310/MOD", body: "Model request fixture", checklistReady: false }), false);
+  assert.equal(ready({ route: `http://127.0.0.1:31310${expectedPath}`, checklistReady: false }), false);
+  assert.equal(ready({ route: "http://127.0.0.1:31310/OTHER/plugins/fixture-id", checklistReady: true }), false);
+  assert.equal(ready({ route: `http://127.0.0.1:31310${expectedPath}`, body: "custom localized title", checklistReady: true }), true);
+  assert.ok(script.includes('checklistReady: document.querySelector(\'[data-testid="checklist-jobs"]\')?.textContent === "Jobs: 1"'));
+  for (const gate of ["Host restart lost checklist data/event/Job state", "No-AI reference must not dispatch Agent work", "await openRecovery()"])
+    assert.ok(acceptance.includes(gate), `Preserve existing acceptance gate ${gate}`);
 });
 
 test("Windows verification requires the No-AI source Electron acceptance", async () => {

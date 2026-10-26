@@ -314,6 +314,7 @@ async function openCdp(target) {
 async function describePage(cdp) {
   return await cdp.evaluate(`({ title: document.title, route: location.href, body: document.body?.innerText?.slice(0, 4000) || "",
     workspaceEntry: document.querySelector('[data-sps-workspace-entry]')?.getAttribute('data-sps-workspace-entry') || null,
+    checklistReady: document.querySelector('[data-testid="checklist-jobs"]')?.textContent === "Jobs: 1",
     legacyLayout: Boolean(document.querySelector('#main-content') && document.querySelector('aside') && document.querySelector('nav[aria-label="breadcrumb"]')),
     usageReady: Boolean(document.querySelector('[data-testid="sps-plugin-usage"] table')) && document.querySelector('[aria-label="Refresh execution usage"]')?.disabled === false,
     usagePeriod: document.querySelector('#sps-usage-period')?.value,
@@ -690,12 +691,17 @@ try {
   } else if (noAiChecklist) {
     await runNoAiChecklistAcceptance({
       cdp: workspaceCdp, company, api, click, captureScreenshot, screenshotPath, temporaryRoot: userDataDirectory, runtimeDiscovery,
-      restart: async () => {
+      restart: async ({ companyPrefix, pluginId }) => {
         await closeDesktopForRestart();
         launchDesktop();
         workspaceCdp = await openCdp(await waitForTarget(debugPort, child,
           target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""), "restarted No-AI Host Workspace", hostReadyTimeoutMs));
-        await waitForPage(workspaceCdp, page => page.body.includes("Workspace") || page.body.includes("checklist"), "restarted Workspace");
+        // Startup may correctly restore the separate model-fixture Workspace.
+        // Reopen the exact reference UI before checking its persisted state.
+        const expectedPath = `/${companyPrefix}/plugins/${pluginId}`;
+        await workspaceCdp.evaluate(`location.assign(${JSON.stringify(expectedPath)})`);
+        await waitForPage(workspaceCdp, page => new URL(page.route).pathname === expectedPath && page.checklistReady === true,
+          "restarted reference Workspace checklist UI");
         return workspaceCdp;
       },
       openRecovery: async () => {

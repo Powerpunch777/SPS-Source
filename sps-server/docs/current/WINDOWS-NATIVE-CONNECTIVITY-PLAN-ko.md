@@ -16,6 +16,12 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+후속 [Native 세션 교환](../reviews/NATIVE-SESSION-EXCHANGE-2026-10-26.md)은 기존
+Identity 검증·사용자·세션 저장을 재사용하는 비활성 TLS 전용 핸들러다. 등록 전에
+Bearer를 세션 쿠키로 교환하되 기기 승인·Workspace/Plugin/Node/Source 권한은
+추가하지 않는다. Native 쿠키는 항상 Secure이며 기존 hub 쿠키 설정은 보존한다.
+실제 제품 Main caller, 초대 화면, listener·LAN·두 PC 증거는 아직 아니다.
+
 후속 [Host 초대 관리](../reviews/NATIVE-HOST-PAIRING-MANAGEMENT-2026-10-26.md)는
 기존 저장소를 재사용하는 비활성 Owner 세션 facade다. 1시간·검증된 수신자 요청이라는
 승인 범위만 고정하고 시도/활성 초대 수는 명시적 입력으로 남겼다. 트랜잭션 중 권한
