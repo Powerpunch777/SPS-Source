@@ -52,6 +52,51 @@ async function verifyInFreshProcess(runtimeRoot) {
       || invalid.error.issues.at(-1)?.message !== OVERFLOW_MESSAGE) {
       throw new Error(`Packaged Core server Zod ${label} entrypoint does not enforce the ${ISSUE_LIMIT}-issue budget.`);
     }
+
+    function trackedArray() {
+      let reads = 0;
+      const value = new Array(250);
+      for (let index = 0; index < value.length; index++) {
+        Object.defineProperty(value, String(index), { configurable: true, enumerable: true,
+          get() { reads++; return 1; } });
+      }
+      return { value, reads: () => reads };
+    }
+    for (const [constraint, schema] of [
+      ["max", z.array(z.string()).max(10)],
+      ["exact length", z.array(z.string()).length(10)],
+    ]) {
+      const tracked = trackedArray();
+      const result = schema.safeParse(tracked.value);
+      if (result.success || tracked.reads() !== 0
+        || !result.error.issues.some(issue => issue.code === "too_big" && issue.type === "array")) {
+        throw new Error(`Packaged Core server Zod ${label} entrypoint read array elements before rejecting the over-limit ${constraint}.`);
+      }
+    }
+
+    const trackedSet = (() => {
+      let reads = 0;
+      class TrackedSet extends Set {
+        values() { reads++; return super.values(); }
+      }
+      return { value: new TrackedSet(Array.from({ length: 250 }, (_, index) => `value-${index}`)), reads: () => reads };
+    })();
+    const setResult = z.set(z.string()).max(10).safeParse(trackedSet.value);
+    if (setResult.success || trackedSet.reads() !== 0
+      || !setResult.error.issues.some(issue => issue.code === "too_big" && issue.type === "set")) {
+      throw new Error(`Packaged Core server Zod ${label} entrypoint iterated Set values before rejecting an over-limit Set.`);
+    }
+
+    const asyncTracked = trackedArray();
+    let transformCalls = 0;
+    const asyncResult = await z.array(z.string().transform(async value => {
+      transformCalls++;
+      return value;
+    })).max(10).safeParseAsync(asyncTracked.value);
+    if (asyncResult.success || asyncTracked.reads() !== 0 || transformCalls !== 0
+      || !asyncResult.error.issues.some(issue => issue.code === "too_big" && issue.type === "array")) {
+      throw new Error(`Packaged Core server Zod ${label} entrypoint executed an async child transform before rejecting an over-limit array.`);
+    }
   }
   return { version: zodManifest.version, issueLimit: ISSUE_LIMIT, entrypoints: entries.map(([label]) => label) };
 }

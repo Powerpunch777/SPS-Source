@@ -74,3 +74,26 @@ The test is deliberately bounded and does not estimate worst-case memory use.
    low configured ceiling.
 
 No package manifest, lockfile, or product source was changed for this review.
+
+## Subsequent Core mitigation (2026-10-27)
+
+Core's exact patched `zod@3.25.76` now combines the retained 100-issue budget
+with early rejection of arrays above explicit max/exact-length bounds and Sets
+above explicit maximum-size bounds. ESM and CommonJS abort after recording the
+existing size issue, before element traversal, result allocation or child async
+transforms. Parent refinements do not receive fabricated empty collections.
+Valid under-limit inputs retain their behavior; oversized invalid inputs omit
+child diagnostics and can produce different invalid-union errors.
+
+Patch SHA-256 and pnpm lock hash are
+`82d58282a08d684b253417bf277f6fef5ca2eed4e0dddce73a0c37ccf1fac79d`.
+Offline lock regeneration and scoped frozen installation passed. Core's two
+focused validation suites passed 17/17. Source's fresh-process deployed-runtime
+verifier suite passed 10/10 across root/v3 ESM/CommonJS, including tampered
+fixtures that retain the issue cap but remove the early guards.
+
+This does not cap unbounded collection traversal, arbitrary union work, Map
+parsing, JSON decoding or every non-HTTP input. The advisory and release gate
+remain active without an exception. Public SDK versions, imports and types are
+unchanged. See Core's `doc/SPS-ZOD-V3-ISSUE-BUDGET.md` for compatibility and
+rollback details. These scoped checks do not replace final release qualification.

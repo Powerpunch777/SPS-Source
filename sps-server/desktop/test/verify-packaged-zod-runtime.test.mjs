@@ -46,6 +46,25 @@ async function withRuntimeFixture(run) {
   }
 }
 
+async function removeV3EarlyGuard(packageJsonPath, kind) {
+  const packageRoot = path.dirname(packageJsonPath);
+  for (const relative of ["v3/helpers/parseUtil.js", "v3/helpers/parseUtil.cjs"]) {
+    const source = await readFile(path.join(packageRoot, relative), "utf8");
+    assert.match(source, /MAX_RETAINED_ISSUES = 100/);
+    assert.match(source, /Too many validation issues; additional issues omitted\./);
+  }
+  const matcher = kind === "array"
+    ? /if \(\(def\.exactLength !== null && ctx\.data\.length > def\.exactLength\.value\) \|\|\s*\(def\.maxLength !== null && ctx\.data\.length > def\.maxLength\.value\)\) \{/m
+    : /if \(def\.maxSize !== null && ctx\.data\.size > def\.maxSize\.value\) \{/m;
+  for (const relative of ["v3/types.js", "v3/types.cjs"]) {
+    const file = path.join(packageRoot, relative);
+    const source = await readFile(file, "utf8");
+    const updated = source.replace(matcher, "if (false) {");
+    assert.notEqual(updated, source, `${relative} must contain the ${kind} early-reject guard`);
+    await writeFile(file, updated);
+  }
+}
+
 test("verifies only the Core server's deployed Zod dependency across public entrypoints", async () => {
   await withRuntimeFixture(async runtimeRoot => {
     const result = await verifyPackagedZodRuntime(runtimeRoot);
@@ -73,6 +92,20 @@ test("rechecks replaced package code at the same path in a fresh verifier proces
       await writeFile(file, source.replaceAll("const issueLimit = budget.limit ?? MAX_RETAINED_ISSUES", "const issueLimit = 1000000"));
     }
     await assert.rejects(verifyPackagedZodRuntime(runtimeRoot), /does not enforce the 100-issue budget/);
+  });
+});
+
+test("rejects a deployed runtime missing the array early guard while retaining the issue cap", async () => {
+  await withRuntimeFixture(async (runtimeRoot, packageJsonPath) => {
+    await removeV3EarlyGuard(packageJsonPath, "array");
+    await assert.rejects(verifyPackagedZodRuntime(runtimeRoot), /read array elements before rejecting/);
+  });
+});
+
+test("rejects a deployed runtime missing the Set early guard while retaining the issue cap", async () => {
+  await withRuntimeFixture(async (runtimeRoot, packageJsonPath) => {
+    await removeV3EarlyGuard(packageJsonPath, "set");
+    await assert.rejects(verifyPackagedZodRuntime(runtimeRoot), /iterated Set values before rejecting/);
   });
 });
 
