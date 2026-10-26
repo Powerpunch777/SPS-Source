@@ -110,7 +110,9 @@ CLI/Gateway/OCE의 후속 확장보다 위 Windows 연결 작업을 먼저 진�
    모델 요청·CLI·Agent 세션과 OCE 관리의 서로 다른 능력/권한/실행 소유권은 계속 정렬한다.
 3. Direct API Stage 3a의 내부 전송/Secret 기반에 Stage 3b의 Host 연결·grant,
    공개 `models.list/submit/get/cancel`, 중복 방지 Run과 별도 실행 기록을 결속했다.
-   설정 UI·실제 제공자 인증은 아직 없고 mock-first source 범위다.
+   Host 모델 연결·Plugin 승인 설정 UI는 기존 API에 연결했고,
+   실제 제공자 인증은 아직 검증하지 않은 mock-first source 범위다.
+   [Host 설정 후속](../reviews/MODEL-HOST-SETTINGS-2026-10-27.md)을 따른다.
    [Stage 3b 검증 상태](../reviews/MODEL-BROKER-ACCEPTANCE-2026-10-25.md)를 따른다.
    [Stage 3a 검증](../reviews/MODEL-TRANSPORT-FOUNDATION-ACCEPTANCE-2026-10-25.md)은
    당시 내부 기반의 증거로만 유지한다. CLI 사례도 승인된 시험 범위에서 구현한다.

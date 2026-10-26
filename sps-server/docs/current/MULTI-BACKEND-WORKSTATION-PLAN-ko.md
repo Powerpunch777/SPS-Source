@@ -59,7 +59,7 @@ LAN을 먼저 검토하고 Linux 제품 구현은 뒤로 둔다. Linux CI는 계
 | Agent 대화/취소 | 공개 SDK **`platform`**의 `agents.sessions.create/list/sendMessage/getRun/cancel` | 내부 SDK와 공개 facade의 옵션/close 차이, 실제 backend별 능력·종료 증거 확인 |
 | 기술 관측 | `executions.list/get/summarize`, provenance-aware usage, Artifacts | Stage 3b는 model_request lane을 추가. OCE 배포를 기존 lane에 위장하지 않음 |
 | 일반 OpenClaw | 기존 `openclaw_gateway` 어댑터와 mock WS 시험 | 최신 pairing/challenge, 재연결·승인·취소·세션·Secret 범위를 재검증 |
-| Direct model API | Stage 3a 내부 전송 + Stage 3b 영속 연결/grant/Run과 공개 models API | Responses-compatible 텍스트 subset의 mock-first 구현. 설정 UI·실제 제공자 인증은 미완료 |
+| Direct model API | Stage 3a 내부 전송 + Stage 3b 영속 연결/grant/Run과 공개 models API | Responses-compatible 텍스트 subset의 mock-first 구현. Host 연결·Plugin 승인 설정 UI 연결, 실제 제공자 인증은 미검증 |
 | OCE 관리 | 현재 직접 재사용 가능한 전용 Connector 미확인 | 읽기 전용 자원 조회부터 별도 connector; 일반 Gateway 세션과 다른 권한/수명주기 |
 | 키 사용 | Node credential-local, 암호화 Secret + model connection 전용 grant/binding | models API는 Host 내부에서 키 사용, 원문 resolve RPC는 계속 거부. OCE 관리 broker는 미구현 |
 
