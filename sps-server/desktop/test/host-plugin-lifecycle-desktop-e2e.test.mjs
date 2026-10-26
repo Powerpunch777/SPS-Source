@@ -6,6 +6,7 @@ import test from "node:test";
 const desktopRoot = path.resolve(import.meta.dirname, "..");
 const harnessPath = path.join(desktopRoot, "scripts", "smoke-host-plugin-lifecycle-desktop.mjs");
 const fixturePath = path.join(desktopRoot, "scripts", "fixtures", "deterministic-marketplace-acp.mjs");
+const managedHomeHelperPath = path.join(desktopRoot, "scripts", "e2e-managed-codex-home.mjs");
 
 test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketplace/Builder side-effect free", async () => {
   const harness = await readFile(harnessPath, "utf8");
@@ -64,6 +65,7 @@ test("required Host lifecycle E2E uses a deterministic ACP fixture with Marketpl
 test("deterministic Host lifecycle E2E wires isolated synthetic Codex auth to its pinned local fixture", async () => {
   const harness = await readFile(harnessPath, "utf8");
   const fixture = await readFile(fixturePath, "utf8");
+  const managedHomeHelper = await readFile(managedHomeHelperPath, "utf8");
   assert.match(harness, /deterministicAgentCommand = `"\$\{process\.execPath\}" "\$\{deterministicAcp\}"`/);
   assert.match(harness, /syntheticOpenAiApiKey = "sk-test-sps-e2e-not-valid-for-provider"/);
   assert.match(harness, /syntheticCodexHome = liveAgent \? null : path\.join\(temporaryRoot, "synthetic-codex-home"\)/);
@@ -87,7 +89,12 @@ test("deterministic Host lifecycle E2E wires isolated synthetic Codex auth to it
     assert.equal(credentialEnvironmentName.test(name), false, `${name} must remain available to the deterministic E2E process.`);
   }
   assert.match(harness, /managedCodexHome\?\.type, "plain"/);
-  assert.match(harness, /managedHomeRelative = path\.relative\(userData, managedCodexHome\.value\)/);
+  assert.match(harness, /resolveIsolatedE2eManagedCodexHomeRelative\(userData, managedCodexHome\.value\)/);
+  assert.match(managedHomeHelper, /await realpath\(userDataDirectory\)/);
+  assert.match(managedHomeHelper, /error\?\.code !== "ENOENT"/);
+  assert.match(managedHomeHelper, /await lstat\(candidate\)/);
+  assert.match(managedHomeHelper, /path\.relative\(root, candidate\)/);
+  assert.match(managedHomeHelper, /relative\.startsWith\(`\.\.\$\{path\.sep\}`\)/);
   assert.match(harness, /path\.join\("companies", company\.id, "agents", lifecycleAgent\.id, "codex-home"\)/);
   assert.match(fixture, /spawn\(marketplaceServer\.command[\s\S]*?shell: false/);
   assert.doesNotMatch(fixture, /spawn\(\s*["']codex(?:\.exe)?["']/i);

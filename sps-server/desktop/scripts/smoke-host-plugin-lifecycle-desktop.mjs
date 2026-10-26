@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { createE2eIdentityAuthorization } from "./e2e-identity-authorization.mjs";
+import { resolveIsolatedE2eManagedCodexHomeRelative } from "./e2e-managed-codex-home.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -310,8 +311,7 @@ try {
     const managedCodexHome = lifecycleAgent.adapterConfig?.env?.CODEX_HOME;
     assert.equal(managedCodexHome?.type, "plain", "Core must return its canonical managed-home binding.");
     assert.ok(typeof managedCodexHome.value === "string" && path.isAbsolute(managedCodexHome.value), "Core must create the managed per-Agent Codex home.");
-    const managedHomeRelative = path.relative(userData, managedCodexHome.value);
-    assert.ok(managedHomeRelative && !managedHomeRelative.startsWith("..") && !path.isAbsolute(managedHomeRelative), "Managed Codex home must stay in the isolated test userData.");
+    const managedHomeRelative = await resolveIsolatedE2eManagedCodexHomeRelative(userData, managedCodexHome.value);
     assert.ok(managedHomeRelative.endsWith(path.join("companies", company.id, "agents", lifecycleAgent.id, "codex-home")), "Core must preserve per-Agent credential isolation.");
     assert.deepEqual(lifecycleAgent.adapterConfig?.env?.OPENAI_API_KEY, { type: "plain", value: syntheticOpenAiApiKey }, "Deterministic lifecycle E2E must use only its canonical synthetic key binding.");
   }
