@@ -71,11 +71,16 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
   assert.ok(diagnostics);
   assert.deepEqual(Object.keys(diagnostics).sort(), [
     "node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError",
-    "total", "bounded", "truncated", "readOK", "unknownImages", "exitedParent",
+    "total", "bounded", "truncated", "readOK", "unknownImages", "exitedParent", "unavailableOpenProcess",
+    "unavailableJobCheck", "unavailableImageRead", "unavailableImageName", "unavailableException", "parentSnapshotOK",
+    "openProcessAccessDenied", "openProcessInvalidParameter", "openProcessOtherError",
   ].sort());
-  for (const category of ["node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError", "total", "bounded", "exitedParent"]) {
+  for (const category of ["node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError", "total", "bounded", "exitedParent",
+    "unavailableOpenProcess", "unavailableJobCheck", "unavailableImageRead", "unavailableImageName", "unavailableException",
+    "openProcessAccessDenied", "openProcessInvalidParameter", "openProcessOtherError"]) {
     assert.equal(Number.isSafeInteger(diagnostics[category]) && diagnostics[category] >= 0, true);
   }
+  assert.equal(typeof diagnostics.parentSnapshotOK, "boolean");
   assert.equal(diagnostics.exitedParent <= 1, true);
   assert.equal(diagnostics.readOK, true);
   assert.equal(diagnostics.truncated, false);
@@ -94,6 +99,10 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
       + diagnostics.powershell + diagnostics.shell + diagnostics.console + diagnostics.windowsError + diagnostics.exitedParent,
     diagnostics.bounded,
   );
+  assert.equal(diagnostics.unavailableOpenProcess + diagnostics.unavailableJobCheck + diagnostics.unavailableImageRead
+    + diagnostics.unavailableImageName + diagnostics.unavailableException, diagnostics.unavailable);
+  assert.equal(diagnostics.openProcessAccessDenied + diagnostics.openProcessInvalidParameter
+    + diagnostics.openProcessOtherError, diagnostics.unavailableOpenProcess);
   assert.doesNotMatch(JSON.stringify(diagnostics), /[A-Za-z]:[\\/]|\\\\|\b\d{4,}\b/);
   assert.equal(result.stderr, "");
 });

@@ -437,10 +437,14 @@ public static class RestrictedE2eRunner
         catch { return new Dictionary<uint, ProcessEntry>(); }
         finally { CloseHandle(snapshot); }
     }
-    static int OwnedProcessCategory(IntPtr job, uint processId, uint exitedRunnerChildProcessId, out bool readOK, out string imageName)
+    static int OwnedProcessCategory(IntPtr job, uint processId, uint exitedRunnerChildProcessId, out bool readOK, out string imageName, out int readFailureStage, out int openProcessError)
     {
         readOK = false;
         imageName = "unavailable";
+        // Fixed, path-free stages identify which Windows query failed without
+        // turning an unreadable process into an accepted cleanup result.
+        readFailureStage = 0;
+        openProcessError = 0;
         // The launcher's exact child is known to have exited once its retained
         // process handle was signaled. Windows may still return that PID in
         // the Job list while the handle remains open; it is not a live process
@@ -455,17 +459,17 @@ public static class RestrictedE2eRunner
         try
         {
             process = OpenProcess(0x1000, false, processId);
-            if (!Valid(process)) return 5;
+            if (!Valid(process)) { readFailureStage = 1; openProcessError = Marshal.GetLastWin32Error(); return 5; }
 
             bool inJob;
-            if (!IsProcessInJob(process, job, out inJob) || !inJob) return 5;
+            if (!IsProcessInJob(process, job, out inJob) || !inJob) { readFailureStage = 2; return 5; }
 
             uint imageLength = 32768;
             var image = new StringBuilder((int)imageLength);
-            if (!QueryFullProcessImageName(process, 0, image, ref imageLength)) return 5;
+            if (!QueryFullProcessImageName(process, 0, image, ref imageLength)) { readFailureStage = 3; return 5; }
             string imagePath = Path.GetFullPath(image.ToString());
             string name = Path.GetFileName(imagePath);
-            if (String.IsNullOrEmpty(name)) return 5;
+            if (String.IsNullOrEmpty(name)) { readFailureStage = 4; return 5; }
 
             readOK = true;
             imageName = SanitizedImageName(name);
@@ -484,17 +488,74 @@ public static class RestrictedE2eRunner
                 || String.Equals(imagePath, Path.Combine(systemDirectory, "wermgr.exe"), StringComparison.OrdinalIgnoreCase)) return 9;
             return 4;
         }
-        catch { return 5; }
+        catch { readFailureStage = 5; return 5; }
         finally { if (Valid(process)) CloseHandle(process); }
     }
-    static void WriteOwnedJobProcessDiagnostics(IntPtr job, uint exitedRunnerChildProcessId)
+    static List<uint> ReadOwnedJobProcessIds(IntPtr job, out uint total, out bool truncated, out bool readOK)
+    {
+        total = 0;
+        truncated = false;
+        readOK = false;
+        IntPtr buffer = IntPtr.Zero;
+        try
+        {
+            uint bufferSize = (uint)(8 + OwnedProcessDiagnosticLimit * IntPtr.Size);
+            buffer = Marshal.AllocHGlobal((int)bufferSize);
+            if (!QueryInformationJobObject(job, 3, buffer, bufferSize, IntPtr.Zero))
+            {
+                truncated = Marshal.GetLastWin32Error() == 234;
+                return null;
+            }
+            total = unchecked((uint)Marshal.ReadInt32(buffer));
+            uint bounded = unchecked((uint)Marshal.ReadInt32(buffer, 4));
+            if (bounded > OwnedProcessDiagnosticLimit || bounded > total)
+            {
+                total = 0;
+                truncated = true;
+                return null;
+            }
+            truncated = bounded < total;
+            var ids = new List<uint>((int)bounded);
+            for (uint index = 0; index < bounded; index++)
+            {
+                int offset = 8 + (int)index * IntPtr.Size;
+                uint processId = IntPtr.Size == 8
+                    ? unchecked((uint)Marshal.ReadInt64(buffer, offset))
+                    : unchecked((uint)Marshal.ReadInt32(buffer, offset));
+                ids.Add(processId);
+            }
+            readOK = true;
+            return ids;
+        }
+        catch { return null; }
+        finally { if (Valid(buffer)) Marshal.FreeHGlobal(buffer); }
+    }
+    static bool SameJobProcessIds(List<uint> left, List<uint> right)
+    {
+        if (left == null || right == null || left.Count != right.Count) return false;
+        left.Sort();
+        right.Sort();
+        for (int index = 0; index < left.Count; index++) if (left[index] != right[index]) return false;
+        return true;
+    }
+    static void WriteOwnedJobProcessDiagnostics(IntPtr job, uint exitedRunnerChildProcessId, int collectionAttempt = 0)
     {
         uint total = 0, bounded = 0;
         int node = 0, postgres = 0, electron = 0, crashpad = 0, other = 0, unavailable = 0;
         int powershell = 0, shell = 0, console = 0, windowsError = 0;
         int exitedParent = 0;
+        int unavailableOpenProcess = 0, unavailableJobCheck = 0, unavailableImageRead = 0;
+        int unavailableImageName = 0, unavailableException = 0;
+        int openProcessAccessDenied = 0, openProcessInvalidParameter = 0, openProcessOtherError = 0;
+        bool parentSnapshotOK = false;
         var unknownImages = new List<string>();
         bool truncated = false, readOK = true;
+        uint initialTotal, finalTotal;
+        bool initialTruncated, initialReadOK, finalTruncated, finalReadOK;
+        List<uint> initialIds = ReadOwnedJobProcessIds(job, out initialTotal, out initialTruncated, out initialReadOK);
+        List<uint> failedOpenProcessIds = new List<uint>();
+        List<uint> workingIds = new List<uint>();
+        bool openProcessFailed = false;
         IntPtr buffer = IntPtr.Zero;
         try
         {
@@ -521,11 +582,14 @@ public static class RestrictedE2eRunner
                     truncated = bounded < total;
                     bool parentReadOK;
                     Dictionary<uint, ProcessEntry> processParents = SnapshotProcessParents(out parentReadOK);
+                    parentSnapshotOK = parentReadOK;
                     if (!parentReadOK) readOK = false;
                     for (uint index = 0; index < bounded; index++)
                     {
                         int category = 5;
                         bool processReadOK = false;
+                        int readFailureStage = 0;
+                        int openProcessError = 0;
                         string imageName = "unavailable";
                         try
                         {
@@ -533,7 +597,9 @@ public static class RestrictedE2eRunner
                             uint processId = IntPtr.Size == 8
                                 ? unchecked((uint)Marshal.ReadInt64(buffer, offset))
                                 : unchecked((uint)Marshal.ReadInt32(buffer, offset));
-                            category = OwnedProcessCategory(job, processId, exitedRunnerChildProcessId, out processReadOK, out imageName);
+                            workingIds.Add(processId);
+                            category = OwnedProcessCategory(job, processId, exitedRunnerChildProcessId, out processReadOK, out imageName, out readFailureStage, out openProcessError);
+                            if (readFailureStage == 1) { openProcessFailed = true; failedOpenProcessIds.Add(processId); }
                             if (category == 4 && unknownImages.Count < OwnedProcessDiagnosticLimit)
                             {
                                 string parentName = "unavailable";
@@ -549,6 +615,16 @@ public static class RestrictedE2eRunner
                         }
                         catch { }
                         if (!processReadOK) readOK = false;
+                        if (readFailureStage == 1) unavailableOpenProcess++;
+                        else if (readFailureStage == 2) unavailableJobCheck++;
+                        else if (readFailureStage == 3) unavailableImageRead++;
+                        else if (readFailureStage == 4) unavailableImageName++;
+                        else if (readFailureStage == 5) unavailableException++;
+                        if (readFailureStage == 1) {
+                            if (openProcessError == 5) openProcessAccessDenied++;
+                            else if (openProcessError == 87) openProcessInvalidParameter++;
+                            else openProcessOtherError++;
+                        }
                         if (category == 0) node++;
                         else if (category == 1) postgres++;
                         else if (category == 2) electron++;
@@ -571,12 +647,37 @@ public static class RestrictedE2eRunner
             catch { readOK = false; }
         }
 
+        List<uint> finalIds = ReadOwnedJobProcessIds(job, out finalTotal, out finalTruncated, out finalReadOK);
+        bool membershipStable = initialReadOK && finalReadOK && !initialTruncated && !finalTruncated
+            && SameJobProcessIds(initialIds, workingIds) && SameJobProcessIds(initialIds, finalIds);
+        if (!initialReadOK || !finalReadOK || initialTruncated || finalTruncated) readOK = false;
+        if (!membershipStable && collectionAttempt == 0 && openProcessFailed && initialReadOK && finalReadOK
+            && !initialTruncated && !finalTruncated
+            && failedOpenProcessIds.Exists(processId => !finalIds.Contains(processId)))
+        {
+            // A PID disappeared from the actual Job set while OpenProcess was
+            // inspecting the earlier snapshot. Discard the mixed-time result
+            // and recollect once. Stable unreadable PIDs remain failures.
+            WriteOwnedJobProcessDiagnostics(job, exitedRunnerChildProcessId, 1);
+            return;
+        }
+        if (!membershipStable) readOK = false;
+
         try
         {
             Console.WriteLine("{\"node\":" + node + ",\"postgres\":" + postgres + ",\"electron\":" + electron
                 + ",\"crashpad\":" + crashpad + ",\"other\":" + other + ",\"unavailable\":" + unavailable
                 + ",\"powershell\":" + powershell + ",\"shell\":" + shell + ",\"console\":" + console + ",\"windowsError\":" + windowsError
                 + ",\"exitedParent\":" + exitedParent
+                + ",\"unavailableOpenProcess\":" + unavailableOpenProcess
+                + ",\"unavailableJobCheck\":" + unavailableJobCheck
+                + ",\"unavailableImageRead\":" + unavailableImageRead
+                + ",\"unavailableImageName\":" + unavailableImageName
+                + ",\"unavailableException\":" + unavailableException
+                + ",\"openProcessAccessDenied\":" + openProcessAccessDenied
+                + ",\"openProcessInvalidParameter\":" + openProcessInvalidParameter
+                + ",\"openProcessOtherError\":" + openProcessOtherError
+                + ",\"parentSnapshotOK\":" + (parentSnapshotOK ? "true" : "false")
                 + ",\"total\":" + total + ",\"bounded\":" + bounded + ",\"truncated\":"
                 + (truncated ? "true" : "false") + ",\"readOK\":" + (readOK ? "true" : "false")
                 + ",\"unknownImages\":[" + String.Join(",", unknownImages.ToArray()) + "]}");
