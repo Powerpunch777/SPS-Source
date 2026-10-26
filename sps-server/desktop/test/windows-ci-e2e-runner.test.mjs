@@ -71,11 +71,12 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
   assert.ok(diagnostics);
   assert.deepEqual(Object.keys(diagnostics).sort(), [
     "node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError",
-    "total", "bounded", "truncated", "readOK", "unknownImages",
+    "total", "bounded", "truncated", "readOK", "unknownImages", "exitedParent",
   ].sort());
-  for (const category of ["node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError", "total", "bounded"]) {
+  for (const category of ["node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError", "total", "bounded", "exitedParent"]) {
     assert.equal(Number.isSafeInteger(diagnostics[category]) && diagnostics[category] >= 0, true);
   }
+  assert.equal(diagnostics.exitedParent <= 1, true);
   assert.equal(diagnostics.readOK, true);
   assert.equal(diagnostics.truncated, false);
   assert.equal(diagnostics.total, diagnostics.bounded);
@@ -90,7 +91,7 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
   }
   assert.equal(
     diagnostics.node + diagnostics.postgres + diagnostics.electron + diagnostics.crashpad + diagnostics.other + diagnostics.unavailable
-      + diagnostics.powershell + diagnostics.shell + diagnostics.console + diagnostics.windowsError,
+      + diagnostics.powershell + diagnostics.shell + diagnostics.console + diagnostics.windowsError + diagnostics.exitedParent,
     diagnostics.bounded,
   );
   assert.doesNotMatch(JSON.stringify(diagnostics), /[A-Za-z]:[\\/]|\\\\|\b\d{4,}\b/);
@@ -255,7 +256,7 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   assert.doesNotMatch(processClassifier, /StartsWith|EndsWith|\bConsole\./);
   assert.doesNotMatch(source.slice(processClassifierStart, processDiagnosticsEnd), /ProcessStartInfo|Process\.Start|CreateProcess|RunNode/);
   const naturalWait = source.indexOf("bool naturallyEmpty = WaitForNaturalJobEmpty(job, OwnedJobWaitMilliseconds(mode))");
-  const forcedDiagnostics = source.indexOf("WriteOwnedJobProcessDiagnostics(job);", naturalWait);
+  const forcedDiagnostics = source.indexOf("WriteOwnedJobProcessDiagnostics(job, childExitObserved ? child.ProcessId : 0);", naturalWait);
   const forcedTermination = source.indexOf("TerminateAndConfirmJob(job);", forcedDiagnostics);
   assert.ok(naturalWait >= 0 && forcedDiagnostics > naturalWait && forcedTermination > forcedDiagnostics);
   assert.doesNotMatch(source, /System\.Management|ManagementObject|Win32_Process|Process\.GetProcesses|Get-Process|tasklist/i);

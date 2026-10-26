@@ -437,10 +437,20 @@ public static class RestrictedE2eRunner
         catch { return new Dictionary<uint, ProcessEntry>(); }
         finally { CloseHandle(snapshot); }
     }
-    static int OwnedProcessCategory(IntPtr job, uint processId, out bool readOK, out string imageName)
+    static int OwnedProcessCategory(IntPtr job, uint processId, uint exitedRunnerChildProcessId, out bool readOK, out string imageName)
     {
         readOK = false;
         imageName = "unavailable";
+        // The launcher's exact child is known to have exited once its retained
+        // process handle was signaled. Windows may still return that PID in
+        // the Job list while the handle remains open; it is not a live process
+        // whose image can still be queried.
+        if (exitedRunnerChildProcessId != 0 && processId == exitedRunnerChildProcessId)
+        {
+            readOK = true;
+            imageName = "exited_runner_child";
+            return 10;
+        }
         IntPtr process = IntPtr.Zero;
         try
         {
@@ -477,11 +487,12 @@ public static class RestrictedE2eRunner
         catch { return 5; }
         finally { if (Valid(process)) CloseHandle(process); }
     }
-    static void WriteOwnedJobProcessDiagnostics(IntPtr job)
+    static void WriteOwnedJobProcessDiagnostics(IntPtr job, uint exitedRunnerChildProcessId)
     {
         uint total = 0, bounded = 0;
         int node = 0, postgres = 0, electron = 0, crashpad = 0, other = 0, unavailable = 0;
         int powershell = 0, shell = 0, console = 0, windowsError = 0;
+        int exitedParent = 0;
         var unknownImages = new List<string>();
         bool truncated = false, readOK = true;
         IntPtr buffer = IntPtr.Zero;
@@ -522,7 +533,7 @@ public static class RestrictedE2eRunner
                             uint processId = IntPtr.Size == 8
                                 ? unchecked((uint)Marshal.ReadInt64(buffer, offset))
                                 : unchecked((uint)Marshal.ReadInt32(buffer, offset));
-                            category = OwnedProcessCategory(job, processId, out processReadOK, out imageName);
+                            category = OwnedProcessCategory(job, processId, exitedRunnerChildProcessId, out processReadOK, out imageName);
                             if (category == 4 && unknownImages.Count < OwnedProcessDiagnosticLimit)
                             {
                                 string parentName = "unavailable";
@@ -547,6 +558,7 @@ public static class RestrictedE2eRunner
                         else if (category == 7) shell++;
                         else if (category == 8) console++;
                         else if (category == 9) windowsError++;
+                        else if (category == 10) exitedParent++;
                         else unavailable++;
                     }
                 }
@@ -564,6 +576,7 @@ public static class RestrictedE2eRunner
             Console.WriteLine("{\"node\":" + node + ",\"postgres\":" + postgres + ",\"electron\":" + electron
                 + ",\"crashpad\":" + crashpad + ",\"other\":" + other + ",\"unavailable\":" + unavailable
                 + ",\"powershell\":" + powershell + ",\"shell\":" + shell + ",\"console\":" + console + ",\"windowsError\":" + windowsError
+                + ",\"exitedParent\":" + exitedParent
                 + ",\"total\":" + total + ",\"bounded\":" + bounded + ",\"truncated\":"
                 + (truncated ? "true" : "false") + ",\"readOK\":" + (readOK ? "true" : "false")
                 + ",\"unknownImages\":[" + String.Join(",", unknownImages.ToArray()) + "]}");
@@ -807,7 +820,7 @@ public static class RestrictedE2eRunner
                             }
                             else
                             {
-                                WriteOwnedJobProcessDiagnostics(job);
+                                WriteOwnedJobProcessDiagnostics(job, childExitObserved ? child.ProcessId : 0);
                                 TerminateAndConfirmJob(job);
                                 Console.WriteLine("{\"ownedJobEmpty\":true,\"ownedJobCleanup\":\"forced\",\"accepted\":false}");
                                 if (resultCode == 0 || resultCode == unchecked((int)OwnedJobCleanupPendingExitCode)) resultCode = 125;
@@ -816,7 +829,7 @@ public static class RestrictedE2eRunner
                     }
                     else if (Valid(job))
                     {
-                        if (mode == "probe-descendant") WriteOwnedJobProcessDiagnostics(job);
+                        if (mode == "probe-descendant") WriteOwnedJobProcessDiagnostics(job, childExitObserved ? child.ProcessId : 0);
                         TerminateAndConfirmJob(job);
                     }
                     Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm E2E child exit");
