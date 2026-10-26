@@ -16,7 +16,13 @@ Desktop proofs, not a caller-selected actor, Workspace or legacy admin role.
 The approved initial invitation is one hour and any verified recipient. Attempt
 and active-invitation caps are required constructor inputs with strict data-field
 validation; tests use explicit 2/4 values, not product defaults. Proposed 5/10
-defaults are still unapproved. No URI, port or public code is invented while the
+defaults were unapproved at that checkpoint. The user subsequently approved
+five wrong-secret attempts and ten active invitations per Host on 2026-10-26;
+Desktop now exports that frozen explicit policy and the
+[client/Core integration](NATIVE-ENROLLMENT-CLIENT-2026-10-26.md) verifies it.
+Core still requires explicit constructor configuration; older fixture limits
+are not rewritten or presented as the current product defaults.
+No URI, port or public code is invented while the
 Native listener is off.
 
 Storage `issue`/`revoke` accept an additive optional transaction authorizer, and

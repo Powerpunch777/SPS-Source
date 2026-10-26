@@ -41,7 +41,9 @@ Bearer를 세션 쿠키로 교환하되 기기 승인·Workspace/Plugin/Node/Sou
 
 후속 [Host 초대 관리](../reviews/NATIVE-HOST-PAIRING-MANAGEMENT-2026-10-26.md)는
 기존 저장소를 재사용하는 비활성 Owner 세션 facade다. 1시간·검증된 수신자 요청이라는
-승인 범위만 고정하고 시도/활성 초대 수는 명시적 입력으로 남겼다. 트랜잭션 중 권한
+승인 범위를 고정하고 시도/활성 초대 수는 Core의 명시적 입력으로 남겼다. 후속 사용자
+승인으로 Desktop 기본 정책은 초대별 5회 오입력 시 `exhausted`·Host별 활성 10개다.
+트랜잭션 중 권한
 상실은 발급/취소와 감사 기록을 롤백하지만, 커밋 후 연결 상실은 결과만 보류하고
 이미 커밋한 상태를 되돌리지 않는다. 실제 세션·임시 DB 시험이지 앱의 초대 버튼,
 네트워크 listener, 자동 재시도 또는 두 PC 최초 연결 수용이 아니다.
@@ -303,6 +305,11 @@ D6 승인(2026-10-25): 초대코드를 받은 사람이 Google/SPS 로그인 후
 있으며 특정 이메일로 제한하지 않는다. 기본 유효기간은 **1시간**, 첫 성공한 등록 요청으로
 일회 소모한다. Host 기기 승인과 Workspace/Plugin/Node/Source 권한은 자동으로 생기지 않는다.
 잘못된 secret이나 잘못된 대상 요청이 정상 등록의 성공으로 취급되는 정책은 아니다.
+**D6 추가 승인(2026-10-26):** 초대별 검증된 잘못된 secret 5회면 `exhausted`로
+더 이상 사용할 수 없고, Host별 활성 초대는 최대 10개다. 만료·소진·소비·철회된
+초대는 활성 수에서 제외한다. 로컬 코드 형식 오류나 미인증 요청을 오입력 횟수로
+과금하지 않으며, Core의 기존 원자적 한도 검사를 Desktop 명시적 기본 정책으로 쓴다.
+이는 초대 UI나 외부 listener 활성화 승인이 아니다.
 
 **D7 승인(2026-10-25):** 서버 및 Member 기기 인증서의 기본 유효기간은 각각 **90일**,
 별도 issuer CA 인증서의 기본 유효기간은 **365일**이다. 여전히 승인된 기기는 만료 전에
@@ -319,7 +326,7 @@ D4~D5와 키 회전·최대 TTL·rate limit·보관 기간·listener 배치의 �
 | D1 승인 | 전체 초대코드 + Host 서버 지문 확인 우선 | 고객 관리 CA 후속; 미확인 TOFU 자동 수락 금지 | 비활성 초대 envelope 계약·거부 테스트, 실제 TLS/키 정책은 별도 |
 | D2 승인 | PC별 별도 Member mTLS 인증서 + Host 승인 | 사용자/Node/CLI/Source 권한 분리, 재설치/키 분실 시 재승인 | 발급·보관·철회·회전 세부 계약, 기존 키와 용도 분리 |
 | D3 승인 | LAN 기본 off, Host 명시 opt-in, 선택 사설망 + 전용 TLS 포트 | local_trusted bind 확대/자동 방화벽 변경 금지; 배치 세부는 검수 | loopback TLS 시험, 외부 listener/방화벽/두 PC는 별도 동의 |
-| D6 승인 | 코드 받은 verified 사용자·1시간·첫 등록 요청 시 소모 | 기기 승인·Workspace/실행 권한 별도 | 비활성 Desktop 요청 기본값; 발급 활성화/enrollment·전송은 후속 |
+| D6 승인 | 코드 받은 verified 사용자·1시간·첫 등록 요청 시 소모·오입력 5회 소진·Host 활성 10개 | 기기 승인·Workspace/실행 권한 별도 | 비활성 Desktop 기본값과 실제 Core 한도 시험; 앱 초대 UI·전송은 후속 |
 | D7 승인 | 서버/Member 인증서 90일, 별도 issuer CA 365일; 승인 기기 기존 키·현재 신원으로 만료 전 갱신 | 키 변경/분실은 명시적 재신뢰·재승인, 철회 기기는 갱신 금지, 주기적 재로그인/코드 재입력 강제 없음 | Host PKI/보관·비활성 Member CSR/발급 및 loopback TLS 시험; 갱신·issuer 회전·발급 활성화/enrollment·mTLS ingress 미완료 |
 | D4 | Tailscale 없는 Host Source 접근 | 제한된 파일 broker vs OS 공유; 경로/링크/충돌/철회 검증과 권한 명시 | 현재 SMB 보존, read/write/rename/delete 요구 정리 |
 | D5 | WAN / 자동 검색 / 운영 모델 | LAN 수용 뒤 기업 TLS endpoint·relay·NAT 대안 비교 | 이번 구현 범위에서 제외 |

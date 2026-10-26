@@ -6,6 +6,7 @@ import {
   SPS_NATIVE_ISSUER_CA_CERT_VALIDITY_DAYS,
   SPS_NATIVE_MEMBER_DEVICE_CERT_VALIDITY_DAYS,
   SPS_NATIVE_PAIRING_DEFAULT_TTL_MS,
+  SPS_NATIVE_PAIRING_DEFAULT_POLICY,
   SPS_NATIVE_SERVER_CERT_VALIDITY_DAYS,
 } from "../src/native-connection-policy.mjs";
 
@@ -21,6 +22,14 @@ test("does not invent a Host identity or accept unbounded user labels", () => {
   for (const value of [undefined, null, "", "  ", "user\n", "x".repeat(201), { actorUserId: "host" }]) {
     assert.throws(() => defaultSpsNativePairingIssue(value), TypeError);
   }
+});
+
+test("uses the approved five-attempt and ten-active-invitation frozen Host policy", () => {
+  assert.deepEqual(SPS_NATIVE_PAIRING_DEFAULT_POLICY, { maxTtlMs: 3_600_000, maxAttempts: 5, maxActiveInvites: 10 });
+  assert.equal(Object.isFrozen(SPS_NATIVE_PAIRING_DEFAULT_POLICY), true);
+  assert.equal(defaultSpsNativePairingIssue("fixture-host").ttlMs, SPS_NATIVE_PAIRING_DEFAULT_POLICY.maxTtlMs);
+  assert.throws(() => { SPS_NATIVE_PAIRING_DEFAULT_POLICY.maxAttempts = 100; }, TypeError);
+  assert.throws(() => { SPS_NATIVE_PAIRING_DEFAULT_POLICY.maxActiveInvites = 100; }, TypeError);
 });
 
 test("uses the approved frozen certificate validity defaults", () => {

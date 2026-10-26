@@ -127,3 +127,26 @@ unchanged. This fixes the demonstrated test defect, not an unexecuted E2E pass.
 Production security policy remains blocked by held Zod High, and exact-head
 packaged Preview, Identity operations, Core main/independent approval, final
 code signing and physical two-PC gates remain open. Native LAN remains OFF.
+
+## Approved Invitation Limits
+
+On 2026-10-26 the human approved **five wrong-secret attempts per invitation**
+and **ten active invitations per Host**, retaining one hour and one successful
+use. `SPS_NATIVE_PAIRING_DEFAULT_POLICY` is a frozen Desktop product value passed
+explicitly to the existing Core store, not a new Core-global hardcoded role or
+rate limiter. Existing issued records, keys and customer data are untouched.
+
+The isolated Core smoke now uses that approved policy. Ten pending invitations
+are accepted; the eleventh fails `limit_reached`. Five authenticated, correctly
+framed but wrong-secret attempts make one invitation `exhausted` with exactly
+five failures. Even its correct secret cannot revive it. One replacement then
+fits the released quota and has a one-hour TTL; ten invitations remain pending.
+Malformed unauthenticated/local-code failures do not become charged attempts.
+This uses the existing transaction/advisory-lock and audit semantics, not an IP
+throttle or auto-reissue feature. The product invitation UI/listener remains
+inactive; approving limits does not authorize a network/OS change.
+
+With approved limits applied, the real Core smoke again completed **exit 0**.
+Policy plus focused transport contracts pass **35/35**; final full Desktop
+regression is **912 total / 911 pass / 0 fail / 1 existing skip**. The preceding
+911-test result remains historical, not the final policy revision's count.

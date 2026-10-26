@@ -7,6 +7,7 @@ import { createSpsNativeHostIdentity } from "../src/native-identity-certificates
 import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate } from "../src/native-member-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { createSpsNativeEnrollmentClient } from "../src/native-enrollment-client.mjs";
+import { defaultSpsNativePairingIssue, SPS_NATIVE_PAIRING_DEFAULT_POLICY } from "../src/native-connection-policy.mjs";
 
 // Cross-repository verification only: never imported by product Main. Run with
 // the pinned Core's tsx loader so its real services and DB migrations are used.
@@ -54,10 +55,10 @@ try {
   const at = new Date();
   await db.insert(authUsers).values({ id: "fixture-host", name: "Fixture Host", email: "host@example.test",
     emailVerified: true, createdAt: at, updatedAt: at });
-  // Explicit fixture limits, not product defaults for unanswered policy decisions.
-  const policy = { maxTtlMs: 60_000, maxAttempts: 2, maxActiveInvites: 4 };
+  // User-approved 1-hour / 5 wrong secrets / 10 active invitations product policy.
+  const policy = SPS_NATIVE_PAIRING_DEFAULT_POLICY;
   const pairings = spsNativePairingService(db, hostId, policy, { serverSpkiSha256: serverPin });
-  const invitation = await pairings.issue({ actorUserId: "fixture-host", target: { kind: "any_verified_user" }, ttlMs: 60_000 });
+  const invitation = await pairings.issue(defaultSpsNativePairingIssue("fixture-host"));
   let signings = 0;
   const service = spsNativeEnrollmentService(db, { hostId, serverSpkiSha256: serverPin,
     issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url"),
@@ -142,6 +143,28 @@ try {
   assert.ok(requests.filter(row => row.path.endsWith("/complete")).every(row => row.clientAuthorized));
   assert.ok(requests.every(row => row.hasBearer !== row.hasCookie));
   assert.equal(requests.length, 6, "Only explicit exchange/issue/complete calls reach this fixture.");
+  const pendingInvites = [];
+  for (let index = 0; index < 10; index++) pendingInvites.push(await pairings.issue(defaultSpsNativePairingIssue("fixture-host")));
+  await assert.rejects(pairings.issue(defaultSpsNativePairingIssue("fixture-host")), { code: "limit_reached" });
+  const accountId = devices[0].ownerUserId;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await assert.rejects(pairings.withEnrollmentInvitation({ pairingId: pendingInvites[0].pairingId,
+      pairingSecret: Buffer.alloc(32, 9).toString("base64url"), userId: accountId }, async () => {
+      assert.fail("Wrong secret must not invoke the enrollment operation.");
+    }));
+  }
+  const exhausted = (await pairings.listHost()).find(item => item.id === pendingInvites[0].pairingId);
+  assert.equal(exhausted.status, "exhausted");
+  assert.equal(exhausted.failedAttempts, 5);
+  assert.equal(exhausted.maxAttempts, 5);
+  await assert.rejects(pairings.withEnrollmentInvitation({ pairingId: pendingInvites[0].pairingId,
+    pairingSecret: pendingInvites[0].pairingSecret, userId: accountId }, async () => {
+    assert.fail("Even the correct secret must not revive an exhausted invitation.");
+  }));
+  const replacement = await pairings.issue(defaultSpsNativePairingIssue("fixture-host"));
+  assert.equal(replacement.expiresAt - replacement.issuedAt, 3_600_000);
+  assert.equal((await pairings.listHost()).filter(item => item.status === "pending").length, 10);
+  for (const table of [agents, plugins, companyMemberships, spsNodes]) assert.deepEqual(await db.select().from(table), []);
   succeeded = true;
 } finally {
   for (const client of clients) client.dispose();
@@ -153,4 +176,4 @@ try {
   await database.cleanup();
 }
 assert.equal(succeeded, true);
-console.log("Native enrollment Main-private client/Core integration passed: actual temporary DB/session/issuance/fresh mTLS pending registration, wrong peer sends no HTTP credentials, one-use replay denied, no Workspace/Plugin/Agent/Node grant; loopback/source only, not Desktop UI/DPAPI/two-PC/LAN qualification.");
+console.log("Native enrollment Main-private client/Core integration passed: actual temporary DB/session/issuance/fresh mTLS pending registration, wrong peer sends no HTTP credentials, one-use replay denied, approved 1-hour/5-attempt/10-active policy enforced, no Workspace/Plugin/Agent/Node grant; loopback/source only, not Desktop UI/DPAPI/two-PC/LAN qualification.");

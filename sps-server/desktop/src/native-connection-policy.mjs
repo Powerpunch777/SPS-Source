@@ -1,4 +1,10 @@
 export const SPS_NATIVE_PAIRING_DEFAULT_TTL_MS = 60 * 60 * 1000;
+// Approved product policy; Core primitives still require explicit configuration.
+export const SPS_NATIVE_PAIRING_DEFAULT_POLICY = Object.freeze({
+  maxTtlMs: SPS_NATIVE_PAIRING_DEFAULT_TTL_MS,
+  maxAttempts: 5,
+  maxActiveInvites: 10,
+});
 
 export const SPS_NATIVE_SERVER_CERT_VALIDITY_DAYS = 90;
 export const SPS_NATIVE_MEMBER_DEVICE_CERT_VALIDITY_DAYS = 90;
