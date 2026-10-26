@@ -23,8 +23,18 @@ Core Settings의 명시적 초대 등록·기존 등록 조회·중단 저장 �
 정리한다. 계정 갱신의 늦은 결과와 동시 상태 저장 경합도 차단한다. Windows 개발 checkout의
 권한 없는 symlink 오류를 junction으로 보완한 Core `1e107a67`을 현재 지원 행렬에 고정했다.
 아래의 이전 체크포인트 검증을 새 통합의 전체 수용 증거로 재사용하지 않는다.
-제품 Native TLS ingress는 여전히 미연결이며 LAN OFF, 실제 DPAPI 앱 등록·두 PC·서명본·전체
-CI/보안/종료 검증은 진행 중이다. Marketplace 정책과 Plugin Builder 구조는 변경하지 않았다.
+후속 [Native ingress 소유권 구현](../reviews/NATIVE-INGRESS-OWNERSHIP-DESIGN-REVIEW-2026-10-26.md)은
+Main의 전용 TLS와 직접 소유한 Core 자식 IPC를 연결했다. Host는 앱 실행마다 명시적으로
+선택한 사설 NIC/포트를 확인한 뒤 등록 listener를 켜고, 별도 확인으로 일회용 초대를
+클립보드에 복사한다. Core의 로컬 Owner 관리 API가 실제 세션으로 초대를 발급하며,
+Main에는 서버/issuer 개인키가 남는다. 일반 Core HTTP bind와 방화벽은 바꾸지 않는다.
+실제 Core 자식·임시 PostgreSQL·Main 서명·loopback TLS를 연결한 시험은 exit 0이며,
+응답 유실 후 저장된 키/인덱스로 동일 pending 기기를 두 번 복구하고 변경 없음과 자연
+종료를 확인했다. 이 시험은 DPAPI 대신 AES fixture를 사용한다. Native LAN 기본 OFF,
+실제 DPAPI 앱 등록·전체 HTTP/WS/Source/Node 전송·갱신·두 PC·서명본·전체 CI/보안/종료
+검증은 미완료다. Marketplace 정책과 Plugin Builder 구조는 변경하지 않았다.
+
+아래 체크포인트는 각 당시 소스의 검증 이력이며, 현재 구현 범위는 위 후속 상태를 따른다.
 
 사용자 D8 승인 후 [등록 복구 조회/기기 ID 보관](../reviews/NATIVE-ENROLLMENT-RECOVERY-2026-10-26.md)을
 추가했다. Core `8c76edabd`는 현재 사용자 세션과 실제 발급 기기 TLS 키로 이미 소비한 초대의

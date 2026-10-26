@@ -66,13 +66,13 @@
         <div class="section-heading compact-heading">
           <div>
             <h2 id="native-heading">Native LAN (in development)</h2>
-            <p class="muted">LAN access is off and not active. Preparing an identity does not enable LAN access.</p>
+            <p class="muted">Native device registration is off until you enable it for this app session. Preparing an identity does not enable LAN access.</p>
           </div>
         </div>
         <dl class="native-grid">
           <div class="native-item">
             <dt>LAN access</dt>
-            <dd>Off · not active</dd>
+            <dd id="native-listener-state">Off · not active</dd>
           </div>
           <div class="native-item">
             <dt>Host identity</dt>
@@ -109,6 +109,17 @@
         <p id="native-devices-empty" class="muted" hidden>No Native devices are registered.</p>
         <p id="native-devices-error" class="inline-warning" role="status" hidden>Native device management is unavailable. Diagnostic details are hidden.</p>
         <div id="native-devices-list" class="action-list" aria-live="polite"></div>
+        <div class="native-form" id="native-listener-form" hidden>
+          <h3>Host registration listener</h3>
+          <p class="help-text">Choose this computer's private network address covered by its prepared certificate. This session accepts device registration only; Workspace access remains separate.</p>
+          <label for="native-listener-address">Private network address</label>
+          <input id="native-listener-address" type="text" autocomplete="off" spellcheck="false" maxlength="45" />
+          <label for="native-listener-port">Registration port</label>
+          <input id="native-listener-port" type="number" min="1024" max="65535" value="43123" />
+          <button id="start-native-listener" class="button secondary" type="button" disabled>Enable registration</button>
+          <button id="stop-native-listener" class="button secondary" type="button" disabled>Stop registration</button>
+          <button id="copy-native-invitation" class="button secondary" type="button" disabled>Create and copy invitation</button>
+        </div>
         <div class="section-heading compact-heading">
           <div>
             <h3>This computer's Native registration</h3>

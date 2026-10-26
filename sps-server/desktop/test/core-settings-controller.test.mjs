@@ -48,6 +48,29 @@ function setup(overrides = {}) {
   return { controller, windows, calls, invoke, event };
 }
 
+test("Host registration listener requires local ownership and live settings confirmation", async () => {
+  let started = 0, stopped = 0;
+  const ctx = setup({
+    confirmNativeHostListener: async (_window, input) => input.bindAddress === "192.168.1.10",
+    startNativeHostListener: async (input, options) => {
+      options.assertRequester();
+      assert.equal(await options.confirm(input), true); options.assertRequester(); started++;
+    },
+    stopNativeHostListener: async () => { stopped++; },
+  });
+  await ctx.controller.show();
+  await assert.rejects(ctx.invoke("start-native-host-listener", [{ bindAddress: "0.0.0.0", port: 43123 }]));
+  await ctx.invoke("start-native-host-listener", [{ bindAddress: "192.168.1.10", port: 43123 }]);
+  await ctx.invoke("stop-native-host-listener");
+  assert.equal(started, 1); assert.equal(stopped, 1);
+  assert.equal(ctx.calls.filter(value => value === "authorize").length, 3);
+  const denied = setup({ authorizeMutation: () => { throw new Error("not owner"); },
+    startNativeHostListener: async () => { started++; } });
+  await denied.controller.show();
+  await assert.rejects(denied.invoke("start-native-host-listener", [{ bindAddress: "192.168.1.10", port: 43123 }]));
+  assert.equal(started, 1);
+});
+
 test("Native Member query is account-authorized by Main without requiring local Host ownership", async () => {
   const hostId = "11111111-1111-4111-8111-111111111111";
   let queried = 0;

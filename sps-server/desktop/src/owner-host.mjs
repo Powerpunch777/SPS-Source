@@ -4,6 +4,7 @@ import { spawn as spawnChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { attachSpsNativeMemberSignerChannel } from "./native-member-signer-channel.mjs";
+import { createSpsNativeParentIngressClient } from "./native-parent-ingress-client.mjs";
 
 function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
@@ -341,12 +342,14 @@ export function createSpsOwnerHostManager({
   startupAttempts = 720,
   terminateTree = terminateWindowsProcessTree,
   createNativeSigner = null,
+  onNativeInvalidation = () => {},
 } = {}) {
   if (!url) throw new Error("SPS Owner Host URL is required.");
   let ownedChild = null;
   let lastError = null;
   let startedAt = null;
   let nativeChannel = null;
+  let nativeIngress = null;
   let lifecycleGeneration = 0;
   let startPromise = null;
   let startPromiseGeneration = null;
@@ -409,12 +412,15 @@ export function createSpsOwnerHostManager({
           signer = createNativeSigner();
           childChannel = attachSpsNativeMemberSignerChannel(child, signer, { isCurrent: () => ownedChild === child });
           nativeChannel = childChannel;
+          nativeIngress = createSpsNativeParentIngressClient(child, { isCurrent: () => ownedChild === child });
         } catch {
           // Native signing is unavailable, not an alternative route to Owner
           // authority. Preserve the ordinary Host when no channel can attach.
           childChannel?.dispose();
           try { signer?.dispose(); } catch { /* Native remains unavailable. */ }
           if (nativeChannel === childChannel) nativeChannel = null;
+          nativeIngress?.dispose();
+          nativeIngress = null;
         }
       }
       startedAt = new Date().toISOString();
@@ -433,6 +439,9 @@ export function createSpsOwnerHostManager({
       child.once("exit", (code) => {
         if (ownedChild !== child) return;
         childChannel?.dispose();
+        nativeIngress?.dispose();
+        nativeIngress = null;
+        try { onNativeInvalidation(); } catch { /* Authority remains revoked. */ }
         if (nativeChannel === childChannel) nativeChannel = null;
         if (code && code !== 0) {
           const details = hostDiagnostics(childOutput);
@@ -478,6 +487,9 @@ export function createSpsOwnerHostManager({
   }
 
   function invalidateNativeSigner() {
+    try { onNativeInvalidation(); } catch { /* Authority remains revoked. */ }
+    nativeIngress?.dispose();
+    nativeIngress = null;
     const channel = nativeChannel;
     nativeChannel = null;
     channel?.dispose();
@@ -517,5 +529,11 @@ export function createSpsOwnerHostManager({
     return operation;
   }
 
-  return { inspect, start, stop, invalidateNativeSigner };
+  function dispatchNativeIngress(operation, request, options) {
+    if (!ownedChild || ownedChild.exitCode != null || !nativeIngress) {
+      return Promise.reject(Object.assign(new Error("The owned Native Host channel is unavailable."), { code: "native_ingress_unavailable" }));
+    }
+    return nativeIngress.dispatch(operation, request, options);
+  }
+  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress };
 }

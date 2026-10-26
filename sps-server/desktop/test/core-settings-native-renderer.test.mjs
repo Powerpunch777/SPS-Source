@@ -90,6 +90,71 @@ async function settle() {
 
 function element(ctx, id) { return ctx.elements.get(id); }
 
+const listenerHost = "11111111-1111-4111-8111-111111111111";
+const listening = { state: "listening", hostId: listenerHost, bindAddress: "192.168.1.10", port: 43123 };
+function preparedHost(nativeListener = { state: "off" }) {
+  return coreStatus({ nativeConnectivity: validNative({ state: "identity_prepared", canPrepare: false,
+    serverSpkiSha256: "a".repeat(64), serverNotAfter: 1_900_000_000_000, memberIssuerNotAfter: 1_950_000_000_000 }), nativeListener });
+}
+
+test("Host registration stays off until an explicit click and renders start and stop results", async () => {
+  const calls = [];
+  const ctx = createRenderer({ getStatus: async () => preparedHost(), api: {
+    startNativeHostListener: async input => { calls.push({ ...input }); return preparedHost(listening); },
+    stopNativeHostListener: async () => { calls.push("stop"); return preparedHost(); },
+  } });
+  await settle();
+  assert.deepEqual(calls, []);
+  assert.match(element(ctx, "native-listener-state").textContent, /^Off/);
+  element(ctx, "native-listener-address").value = listening.bindAddress;
+  element(ctx, "native-listener-port").value = "43123";
+  element(ctx, "native-listener-address").dispatch("input");
+  assert.equal(element(ctx, "start-native-listener").disabled, false);
+  element(ctx, "start-native-listener").dispatch("click");
+  await settle();
+  assert.deepEqual(calls, [{ bindAddress: listening.bindAddress, port: 43123 }]);
+  assert.match(element(ctx, "native-listener-state").textContent, /192\.168\.1\.10:43123/);
+  assert.equal(element(ctx, "native-listener-address").disabled, true);
+  assert.equal(element(ctx, "copy-native-invitation").disabled, false);
+  element(ctx, "stop-native-listener").dispatch("click");
+  await settle();
+  assert.deepEqual(calls.at(-1), "stop");
+  assert.match(element(ctx, "native-listener-state").textContent, /^Off/);
+  assert.equal(element(ctx, "copy-native-invitation").disabled, true);
+});
+
+test("invalid Host listener observations never enable copy or claim to be listening", async () => {
+  for (const nativeListener of [undefined, { state: "listening" }, { ...listening, port: -1 },
+    { ...listening, hostId: "invalid" }, { ...listening, privateKey: "private-marker" }]) {
+    const ctx = createRenderer({ getStatus: async () => preparedHost(nativeListener) });
+    await settle();
+    assert.equal(element(ctx, "copy-native-invitation").disabled, true);
+    assert.equal(element(ctx, "stop-native-listener").disabled, true);
+    assert.doesNotMatch(element(ctx, "native-listener-state").textContent, /Registration listening/);
+  }
+});
+
+test("Host invitation copy requires an explicit click and displays only a strict public acknowledgement", async () => {
+  let copies = 0;
+  const ctx = createRenderer({ getStatus: async () => preparedHost(listening), api: {
+    copyNativeHostInvitation: async () => { copies++; return { copied: true, expiresAt: "2030-01-01T00:00:00.000Z" }; },
+  } });
+  await settle();
+  assert.equal(copies, 0);
+  element(ctx, "copy-native-invitation").dispatch("click");
+  await settle();
+  assert.equal(copies, 1);
+  assert.match(element(ctx, "native-member-result").textContent, /Invitation copied/);
+  const malformed = createRenderer({ getStatus: async () => preparedHost(listening), api: {
+    copyNativeHostInvitation: async () => ({ copied: true, expiresAt: "2030-01-01T00:00:00.000Z", invitationCode: "private-marker" }),
+  } });
+  await settle();
+  element(malformed, "copy-native-invitation").dispatch("click");
+  await settle();
+  assert.match(element(malformed, "action-notice").textContent, /failed/);
+  assert.doesNotMatch(element(malformed, "native-member-result").textContent, /private-marker|Invitation copied/);
+});
+
 test("Member registration needs a signed-in account, explicit input and click, with no automatic network request", async () => {
   const calls = [];
   const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageHost: false, canManageNativeMember: true }),
@@ -161,9 +226,9 @@ test("Native LAN starts unavailable when native DTO is missing and never prepare
   assert.equal(element(ctx, "native-identity-form").hidden, true);
   assert.equal(element(ctx, "native-identity-state").textContent, "Unavailable");
   assert.equal(element(ctx, "prepare-native-identity").disabled, true);
-  assert.match(htmlSource, /LAN access<\/dt>\s*<dd>Off · not active<\/dd>/);
+  assert.match(htmlSource, /LAN access<\/dt>\s*<dd id="native-listener-state">Off · not active<\/dd>/);
   assert.match(htmlSource, /Native LAN \(in development\)/);
-  assert.doesNotMatch(htmlSource, /listener|online/i);
+  assert.match(htmlSource, /Native device registration is off until you enable it/);
 });
 
 test("missing or malformed native DTOs fail closed as unavailable", async () => {

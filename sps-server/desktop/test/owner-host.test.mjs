@@ -146,12 +146,12 @@ test("a late old-child exit cannot revoke the replacement child's signer channel
   assert.equal(disposed[0], 1);
   assert.equal((await manager.start()).state, "running");
   const replacement = children[1];
-  assert.equal(replacement.listenerCount("message"), 1);
+  assert.equal(replacement.listenerCount("message"), 2);
 
   children[0].exitCode = 0;
   children[0].emit("exit", 0);
   assert.equal((await manager.inspect()).owned, true);
-  assert.equal(replacement.listenerCount("message"), 1);
+  assert.equal(replacement.listenerCount("message"), 2);
   assert.equal(disposed[1], 0);
   await manager.stop({ force: true });
   assert.equal(disposed[1], 1);
@@ -183,7 +183,7 @@ test("invalidating Native signing disconnects only IPC and never reattaches to a
   });
 
   assert.equal((await manager.start()).state, "running");
-  assert.equal(child.listenerCount("message"), 1);
+  assert.equal(child.listenerCount("message"), 2);
   manager.invalidateNativeSigner();
 
   assert.equal(child.exitCode, null);
@@ -253,7 +253,7 @@ test("only a directly owned Core process gets the private signer IPC and stop re
   });
   await manager.start(); assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe", "ipc", "pipe"]);
   assert.equal(options.env.SPS_DESKTOP_OWNED_SHUTDOWN_PIPE, "1");
-  assert.equal(child.listenerCount("message"), 1); await manager.stop({ force: true });
+  assert.equal(child.listenerCount("message"), 2); await manager.stop({ force: true });
   assert.equal(child.listenerCount("message"), 0); assert.equal(child.connected, false); assert.equal(disposed, 1);
   let attached = false;
   const existing = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", fetchImpl: async () => response({ status: "ok" }),

@@ -3,6 +3,7 @@ import { constants, createCipheriv, createDecipheriv, createHash, generateKeyPai
 import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createServer } from "node:https";
+import { fork } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,11 +15,15 @@ import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
 import { createSpsNativeMemberController } from "../src/native-member-controller.mjs";
 import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader } from "../src/native-member-pending-store.mjs";
 import { defaultSpsNativePairingIssue, SPS_NATIVE_PAIRING_DEFAULT_POLICY } from "../src/native-connection-policy.mjs";
+import { createSpsNativeHostIngress } from "../src/native-host-ingress.mjs";
+import { createSpsNativeParentIngressClient } from "../src/native-parent-ingress-client.mjs";
+import { createSpsNativeMemberMainSigner } from "../src/native-member-main-signer.mjs";
+import { attachSpsNativeMemberSignerChannel } from "../src/native-member-signer-channel.mjs";
 
 // Cross-repository verification only: never imported by product Main. Run with
 // the pinned Core's tsx loader so its real services and DB migrations are used.
 const mode = process.argv[2];
-if (process.argv.length !== 3 || !["--isolated-native-enrollment-client", "--isolated-native-member-controller"].includes(mode)) {
+if (process.argv.length !== 3 || !["--isolated-native-enrollment-client", "--isolated-native-member-controller", "--isolated-native-parent-ingress"].includes(mode)) {
   throw new Error("Use an isolated Native enrollment integration command.");
 }
 const core = path.resolve(import.meta.dirname, "../../../external/sps-core");
@@ -41,11 +46,15 @@ const db = createDb(database.connectionString);
 const previousFetch = globalThis.fetch;
 const clients = [], sockets = new Set();
 let server, exchange, enrollment, metadataHandler;
+let ownedChild, signerChannel, parentIngress, productIngress;
+const throughParent = mode === "--isolated-native-parent-ingress";
 let localFixtureRoot = null;
 let localFixtureIdentity = null;
 let localFixtureCanonical = null;
 let localFixtureParent = null;
 let succeeded = false;
+let integrationFailure = null;
+const signingEvidence = { inspectRequests: 0, inspectSuccess: 0, inspectFailure: 0, signRequests: 0, signSuccess: 0, signFailure: 0 };
 try {
   const hostId = randomUUID(), deviceKeyId = randomUUID();
   const now = Math.floor(Date.now() / 1000) * 1000;
@@ -83,6 +92,87 @@ try {
     return { certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
       requestSha256: createHash("sha256").update(input.requestPem).digest("hex") };
   });
+  const requests = [];
+  let discardCompletionResponse = false;
+  let origin;
+  if (throughParent) {
+    ownedChild = fork(new URL("./fixtures/native-parent-ingress-child.mjs", import.meta.url),
+      ["--isolated-native-parent-ingress-child"], { stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true });
+    // Never relay fixture output, DB credentials, tokens, certificates or paths.
+    ownedChild.stdout.resume(); ownedChild.stderr.resume();
+    const current = () => ownedChild.connected && ownedChild.exitCode === null;
+    const send = ownedChild.send.bind(ownedChild);
+    ownedChild.send = (message, ...options) => {
+      const serialized = JSON.stringify(message);
+      assert.equal(serialized.includes(host.server.privateKeyPem), false);
+      assert.equal(serialized.includes(host.memberIssuer.privateKeyPem), false);
+      assert.doesNotMatch(serialized, /-----BEGIN (?:EC |RSA )?PRIVATE KEY-----/);
+      return send(message, ...options);
+    };
+    const signer = createSpsNativeMemberMainSigner({
+      getAuthority: () => ({ ownerSubject: "fixture-host", userDataDirectory: "isolated-memory-profile",
+        vaultDirectory: "isolated-memory-vault", generation: 1n }),
+      authenticateHost: async () => {}, getStore: () => ({ read: async () => host }),
+    });
+    // Fixed counters identify a broken process boundary without exposing raw
+    // child output, identity material or per-request credentials.
+    signerChannel = attachSpsNativeMemberSignerChannel(ownedChild, {
+      async inspect(options) {
+        signingEvidence.inspectRequests++;
+        try { const value = await signer.inspect(options); signingEvidence.inspectSuccess++; return value; }
+        catch (error) { signingEvidence.inspectFailure++; throw error; }
+      },
+      async sign(input, options) {
+        signingEvidence.signRequests++;
+        try { const value = await signer.sign(input, options); signingEvidence.signSuccess++; return value; }
+        catch (error) { signingEvidence.signFailure++; throw error; }
+      },
+      dispose: () => signer.dispose(),
+    }, { isCurrent: current });
+    parentIngress = createSpsNativeParentIngressClient(ownedChild, { isCurrent: current });
+    const ready = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(new Error("Isolated Core child did not become ready.")), 30_000);
+      const onError = () => finish(new Error("Isolated Core child failed."));
+      const onMessage = message => {
+        if (message?.kind === "sps.test.native-parent.ready") finish(null, message.identity);
+        else if (message?.kind === "sps.test.native-parent.failure"
+          && ["imports", "identity", "parent-enrollment", "parent-ingress"].includes(message.stage)) {
+          finish(new Error(`Isolated Core child failed at ${message.stage}.`));
+        }
+      };
+      function finish(error, value) {
+        clearTimeout(timer); ownedChild.removeListener("message", onMessage);
+        ownedChild.removeListener("error", onError); ownedChild.removeListener("exit", onError);
+        if (error) reject(error); else resolve(value);
+      }
+      ownedChild.on("message", onMessage); ownedChild.once("error", onError); ownedChild.once("exit", onError);
+      ownedChild.send({ kind: "sps.test.native-parent.configure", connectionString: database.connectionString,
+        issuer: fixtureIssuer, publicJwk: { ...jwk, kid, alg: "RS256", use: "sig" } }, error => { if (error) onError(); });
+    });
+    assert.deepEqual(ready, { hostId, serverSpkiSha256: serverPin, issuerSpkiSha256: issuerPin,
+      issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") });
+    productIngress = createSpsNativeHostIngress({ getIdentity: () => host,
+      assertCurrent() { assert.equal(current(), true); },
+      dispatch: async (operation, request, options) => {
+        const suffix = operation === "identity" ? "identity" : operation.replaceAll(".", "/");
+        requests.push({ path: `/sps-native/v1/${suffix}`, hasBearer: Boolean(request.credential?.accessToken),
+          hasCookie: Boolean(request.credential?.sessionCookie), tls: request.transport.tlsVersion,
+          resumed: request.transport.sessionReused, clientAuthorized: Boolean(request.transport.peerCertificateDer) });
+        const result = await parentIngress.dispatch(operation, request, options);
+        if (discardCompletionResponse && operation === "enrollment.complete") {
+          discardCompletionResponse = false;
+          // Core has committed; withhold the response until the real client
+          // deadline closes its TLS socket. The listener suppresses late output.
+          await new Promise(resolve => {
+            if (options.signal.aborted) resolve(); else options.signal.addEventListener("abort", resolve, { once: true });
+          });
+        }
+        return result;
+      },
+    });
+    const listening = await productIngress.start({ bindAddress: "127.0.0.1", port: 0 });
+    origin = `https://127.0.0.1:${listening.port}`;
+  } else {
   exchange = createSpsNativeSessionExchangeRequestHandler(identity,
     { readTimeoutMs: 1000, operationTimeoutMs: 5000, maxConcurrentRequests: 2 });
   enrollment = createSpsNativeEnrollmentRequestHandler(createSpsNativeSessionEnrollment(identity, service),
@@ -90,8 +180,6 @@ try {
   metadataHandler = createSpsNativeIdentityRequestHandler(async () => ({ hostId, serverSpkiSha256: serverPin,
     issuerSpkiSha256: issuerPin, issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") }),
   { readTimeoutMs: 1000, operationTimeoutMs: 5000, maxConcurrentRequests: 2 });
-  const requests = [];
-  let discardCompletionResponse = false;
   server = createServer({ cert: host.server.certificatePem, key: host.server.privateKeyPem,
     ca: host.memberIssuer.certificatePem, requestCert: true, rejectUnauthorized: false,
     minVersion: "TLSv1.3", maxVersion: "TLSv1.3", secureOptions: constants.SSL_OP_NO_TICKET }, (req, res) => {
@@ -112,7 +200,8 @@ try {
     sockets.add(socket); socket.on("error", () => {}); socket.once("close", () => sockets.delete(socket));
   });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
-  const origin = `https://127.0.0.1:${server.address().port}`;
+  origin = `https://127.0.0.1:${server.address().port}`;
+  }
   function invite(identity = host) {
     return createSpsNativeInviteCode({ v: 2, kind: "sps.native-lan.pairing", hostId, origin,
       spkiSha256: fingerprint(identity.server.certificatePem),
@@ -131,7 +220,7 @@ try {
       exp: Math.floor(Date.now() / 1000) + 60 })).toString("base64url");
     return `${header}.${payload}.${sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), keys.privateKey).toString("base64url")}`;
   };
-  if (mode === "--isolated-native-member-controller") {
+  if (mode === "--isolated-native-member-controller" || throughParent) {
     const tempRoot = localFixtureRoot = await mkdtemp(path.join(os.tmpdir(), "sps-native-member-main-core-"));
     localFixtureIdentity = await lstat(tempRoot, { bigint: true });
     localFixtureCanonical = await realpath(tempRoot);
@@ -322,9 +411,45 @@ try {
   assert.equal((await pairings.listHost()).filter(item => item.status === "pending").length, 10);
   for (const table of [agents, plugins, companyMemberships, spsNodes]) assert.deepEqual(await db.select().from(table), []);
   }
+  if (throughParent) {
+    assert.ok(signingEvidence.inspectSuccess >= 1);
+    assert.equal(signingEvidence.signSuccess, 1);
+    assert.equal(signingEvidence.inspectFailure + signingEvidence.signFailure, 0);
+  }
   succeeded = true;
+} catch (error) {
+  integrationFailure = error;
+  if (throughParent) console.error("Isolated signer boundary counts:", JSON.stringify(signingEvidence));
+  throw error;
 } finally {
+  let childCleanupFailure = null;
   for (const client of clients) client.dispose();
+  await productIngress?.dispose();
+  parentIngress?.dispose();
+  if (ownedChild) {
+    try {
+      await new Promise((resolve, reject) => {
+        if (ownedChild.exitCode !== null || ownedChild.signalCode !== null) {
+          if (ownedChild.exitCode === 0) resolve(); else reject(new Error("Isolated Core child failed."));
+          return;
+        }
+        const timer = setTimeout(() => { reject(new Error("Isolated Core child did not exit naturally.")); }, 20_000);
+        ownedChild.once("exit", code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error("Isolated Core child failed.")); });
+        if (ownedChild.connected) ownedChild.send({ kind: "sps.test.native-parent.stop" });
+      });
+    } catch (error) {
+      if (ownedChild.exitCode === null && ownedChild.signalCode === null) {
+        // Test-failure cleanup only, never counted as natural-exit success.
+        const exited = new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("Isolated Core failure cleanup could not confirm exit.")), 10_000);
+          ownedChild.once("exit", () => { clearTimeout(timer); resolve(); });
+        });
+        ownedChild.kill();
+        await exited;
+      }
+      if (!integrationFailure) childCleanupFailure = error;
+    } finally { signerChannel?.dispose(); }
+  }
   metadataHandler?.dispose(); exchange?.dispose(); enrollment?.dispose();
   for (const socket of sockets) socket.destroy();
   if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -343,8 +468,16 @@ try {
     await rm(localFixtureRoot, { recursive: true, force: true });
     assert.equal(existsSync(localFixtureRoot), false, "The exact isolated Member fixture directory must be removed.");
   }
+  if (childCleanupFailure) throw childCleanupFailure;
 }
 assert.equal(succeeded, true);
-console.log(mode === "--isolated-native-member-controller"
+if (throughParent) {
+  const resources = Object.create(null);
+  for (const name of process.getActiveResourcesInfo()) resources[name] = (resources[name] ?? 0) + 1;
+  console.error("Isolated final resource counts:", JSON.stringify(resources));
+}
+console.log(throughParent
+  ? "Native parent ingress integration passed: real Main TLS listener and direct-child IPC, real Core Identity/DB/enrollment and child-to-Main signing, pending registration committed before a lost response, persisted Member controller reconstructed for read-only recovery with no new rows/events, wrong current account denied before network, and isolated Core child exited naturally. Host private keys remained in parent memory; AES safeStorage substitute, not DPAPI, Desktop UI, physical LAN or product startup qualification."
+  : mode === "--isolated-native-member-controller"
   ? "Native Main controller/Core integration passed: real temporary Core DB + fresh loopback TLS, production enrollment/controller/client/store factories, stable persisted account/Host index, dropped post-commit completion response recovered after controller reconstruction without invitation/re-enrollment/new rows/events, and wrong current account denied before network; AES safeStorage substitute only, not DPAPI, product listener, Desktop UI, or two-PC/LAN qualification."
   : "Native enrollment client/Core integration passed: pinned public issuer bootstrap before account session, actual temporary DB/session/issuance/fresh mTLS pending registration, lost completion response recovered read-only using the existing certificate without an invitation or new device/events, wrong peer sends no HTTP credentials, one-use replay denied, approved 1-hour/5-attempt/10-active policy enforced, no Workspace/Plugin/Agent/Node grant; loopback/source only, not Desktop UI/DPAPI/two-PC/LAN qualification.");

@@ -3,6 +3,7 @@ import { createSpsSetupWindowPreferences } from "./window-security.mjs";
 import { requireSpsNativeIdentityPreparationInput } from "./native-identity-controller.mjs";
 import { requireSpsNativeMemberEnrollmentInput, requireSpsNativeMemberRecoveryInput } from "./native-member-controller.mjs";
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
+import { requireSpsNativeHostListenInput } from "./native-host-controller.mjs";
 
 export const SPS_CORE_SETTINGS_SHORTCUT = "CommandOrControl+Alt+S";
 const NATIVE_DEVICE_STATES = new Set(["available", "host_required", "identity_required", "host_restart_required", "unavailable"]);
@@ -123,6 +124,11 @@ export function createCoreSettingsController({
   repairNativeMemberStorage,
   confirmNativeMember,
   confirmNativeMemberRepair,
+  startNativeHostListener,
+  stopNativeHostListener,
+  confirmNativeHostListener,
+  copyNativeHostInvitation,
+  confirmNativeHostInvitation,
   requestQuit,
 }) {
   let window = null;
@@ -282,6 +288,31 @@ export function createCoreSettingsController({
       if (typeof listNativeRegistrations !== "function") throw new Error("Native Member registration is unavailable.");
       return memberRegistrations(await awaitAndAssertSender(event, () => listNativeRegistrations()));
     });
+    bind("start-native-host-listener", async (input, event) => {
+      const validated = requireSpsNativeHostListenInput(input);
+      if (typeof startNativeHostListener !== "function" || typeof confirmNativeHostListener !== "function") throw new Error("Native Host connectivity is unavailable.");
+      await awaitAndAssertSender(event, () => startNativeHostListener(validated, {
+        assertRequester: () => assertSender(event),
+        confirm: target => awaitAndAssertSender(event, () => confirmNativeHostListener(window, target)),
+      }));
+      return status();
+    }, { writes: true, input: true });
+    bind("stop-native-host-listener", async (_input, event) => {
+      if (typeof stopNativeHostListener !== "function") throw new Error("Native Host connectivity is unavailable.");
+      await awaitAndAssertSender(event, () => stopNativeHostListener());
+      return status();
+    }, { writes: true });
+    bind("copy-native-host-invitation", async (_input, event) => {
+      if (typeof copyNativeHostInvitation !== "function" || typeof confirmNativeHostInvitation !== "function") throw new Error("Native Host invitations are unavailable.");
+      const result = await awaitAndAssertSender(event, () => copyNativeHostInvitation({
+        assertRequester: () => assertSender(event),
+        confirm: target => awaitAndAssertSender(event, () => confirmNativeHostInvitation(window, target)),
+      }));
+      if (exactDataRecord(result, ["cancelled"])?.cancelled === true) return { cancelled: true };
+      const value = exactDataRecord(result, ["copied", "expiresAt"]);
+      if (!value || value.copied !== true || typeof value.expiresAt !== "string" || new Date(value.expiresAt).toISOString() !== value.expiresAt) throw new Error("Native invitation delivery is unavailable.");
+      return value;
+    }, { writes: true });
     bind("enroll-native-member", async (input, event) => {
       const validated = requireSpsNativeMemberEnrollmentInput(input);
       if (typeof enrollNativeMember !== "function" || typeof confirmNativeMember !== "function") throw new Error("Native Member registration is unavailable.");

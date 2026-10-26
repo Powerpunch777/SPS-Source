@@ -15,6 +15,8 @@ import { inspectSpsNativeHostIdentity, requireCurrentSpsNativeHostIdentity } fro
 import { createNativeDeviceManagementController, nativeHostCoreOwnerUserId } from "./native-device-management-controller.mjs";
 import { createSpsNativeMemberMainSigner } from "./native-member-main-signer.mjs";
 import { createSpsNativeMemberController } from "./native-member-controller.mjs";
+import { createSpsNativeHostController } from "./native-host-controller.mjs";
+import { createSpsNativeHostIngress } from "./native-host-ingress.mjs";
 import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader,
   createSpsNativeMemberPublicationRecovery } from "./native-member-pending-store.mjs";
 import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
@@ -263,9 +265,11 @@ let coreSettingsController = null;
 let nativeIdentityController = null;
 let nativeDeviceManagementController = null;
 let nativeMemberController = null;
+let nativeHostController = null;
 const nativeIdentityStores = new Map();
 const ownerVaultOperations = createSpsOwnerVaultOperationGate({
   onInvalidation: () => {
+    void nativeHostController?.stop().catch(() => {});
     ownerHostManager?.invalidateNativeSigner();
     nativeMemberController?.dispose();
     nativeMemberController = null;
@@ -1344,6 +1348,29 @@ function nativeMemberAuthority() {
     vaultDirectory: ownerVaultRoot(), generation: ownerVaultOperations.connectionGeneration() };
 }
 
+function ensureNativeHostController() {
+  if (!nativeHostController) nativeHostController = createSpsNativeHostController({
+    getAuthority: () => {
+      const current = isQuitting ? null : nativeIdentityAuthority();
+      return current ? { ...current, generation: ownerVaultOperations.connectionGeneration() } : null;
+    },
+    authenticate: async () => {
+      if (!nativeIdentityAuthority() || !await ensureDesktopIdentityAccessToken() || !nativeIdentityAuthority()) throw new Error("The signed-in local Host session is required.");
+    },
+    getIdentity: context => nativeIdentityStore({ userDataDirectory: context.userDataDirectory, vaultDirectory: context.vaultDirectory }).read(),
+    getCoreIdentity: () => ownerHostApi("/sps/member-devices/status", { ownerBootstrap: true, sessionOnly: true }),
+    localAddresses: () => Object.values(os.networkInterfaces()).flatMap(entries => (entries ?? []).filter(entry => !entry.internal).map(entry => entry.address)),
+    createIngress: createSpsNativeHostIngress,
+    issuePairing: () => ownerHostApi("/sps/native-pairings", { method: "POST", body: {}, ownerBootstrap: true, sessionOnly: true }),
+    copyInvitation: code => { clipboard.writeText(code); },
+    dispatch: (operation, request, options) => {
+      if (!ownerHostManager) return Promise.reject(new Error("The owned Native Host is unavailable."));
+      return ownerHostManager.dispatchNativeIngress(operation, request, options);
+    },
+  });
+  return nativeHostController;
+}
+
 function ensureNativeMemberController() {
   if (!nativeMemberController) nativeMemberController = createSpsNativeMemberController({
     getAuthority: nativeMemberAuthority,
@@ -1586,6 +1613,7 @@ async function ensureOwnerHostManager() {
     })
     : null;
   ownerHostManager = createSpsOwnerHostManager({
+    onNativeInvalidation: () => { void nativeHostController?.stop().catch(() => {}); },
     createNativeSigner: () => createSpsNativeMemberMainSigner({
       getAuthority: () => {
         const current = isQuitting ? null : nativeIdentityAuthority();
@@ -1645,6 +1673,7 @@ async function ensureOwnerHostManager() {
         environment: {
           ...coreRecoveryEnvironment(recovery),
           SPS_NATIVE_HOST_MANAGEMENT: nativeManagementPrepared ? "1" : "0",
+          SPS_NATIVE_PARENT_INGRESS: nativeManagementPrepared ? "1" : "0",
           // SPS Identity's current private Core user mapping. This is trusted
           // per-child configuration, never a renderer/request-selected user.
           SPS_NATIVE_HOST_OWNER_USER_ID: nativeManagementPrepared
@@ -4062,6 +4091,7 @@ function ensureCoreSettingsController() {
         host: { state: host.state, startupDeferred: backgroundStartupDeferred, lastError: host.lastError ? redactLocalDiagnostic(host.lastError) : null },
         recovery: { ...recovery, needsRestart: ownerHostRecoveryPluginsDisabled !== null && recovery.pluginsDisabled !== ownerHostRecoveryPluginsDisabled },
         nativeConnectivity: await ensureNativeIdentityController().inspect(),
+        nativeListener: ensureNativeHostController().inspect(),
         canManageNativeMember: Boolean(nativeMemberAuthority()),
       };
     },
@@ -4080,6 +4110,7 @@ function ensureCoreSettingsController() {
       const current = await ownerHostManager?.inspect();
       if (current?.state === "running-existing") throw new Error("SPS cannot restart a Host process it does not own.");
       closeWorkspaceWindow();
+      await nativeHostController?.stop();
       await cancelSpsNodeCommands("The local Host was explicitly restarted from Core Settings.");
       await defaultMemoryManager?.stop({ force: false });
       await ownerHostManager?.stop({ force: false });
@@ -4111,6 +4142,27 @@ function ensureCoreSettingsController() {
       return choice.response === 1;
     },
     prepareNativeIdentity: (input, options) => ensureNativeIdentityController().prepare(input, options),
+    startNativeHostListener: (input, options) => ensureNativeHostController().start(input, options),
+    stopNativeHostListener: () => ensureNativeHostController().stop(),
+    copyNativeHostInvitation: options => ensureNativeHostController().copyInvite(options),
+    confirmNativeHostInvitation: async (parentWindow, { bindAddress, port }) => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Copy a Native device invitation?",
+        message: `Create a one-use invitation for ${bindAddress}:${port} and copy it to the clipboard?`,
+        detail: "Send it only to the intended person through a trusted channel. It expires in one hour. Five incorrect secret attempts exhaust it; at most ten active invitations are allowed. Registration creates a pending device and does not grant Workspace or execution access.",
+        buttons: ["Cancel", "Create and copy"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
+    confirmNativeHostListener: async (parentWindow, { bindAddress, port, serverSpkiSha256 }) => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Enable Native device registration on this network?",
+        message: `Listen on ${bindAddress}:${port} for Native device registration?`,
+        detail: `Server fingerprint: ${serverSpkiSha256}\n\nThis opens a dedicated registration port for this app session. Host approval and Workspace access remain separate. Windows Firewall and certificate trust settings are not changed. Closing SPS or changing accounts stops this listener.`,
+        buttons: ["Cancel", "Enable registration"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
     listNativeRegistrations: () => ensureNativeMemberController().list(),
     enrollNativeMember: (input, options) => ensureNativeMemberController().enroll(input, options),
     recoverNativeMember: (input, options) => ensureNativeMemberController().recover(input, options),
@@ -5459,6 +5511,7 @@ app.on("activate", () => {
 });
 async function stopDesktopRuntimeGracefully() {
   isQuitting = true;
+  await nativeHostController?.stop().catch(() => {});
   traceDesktopShutdown("stop_scheduling_start");
   stopNodeScheduling();
   traceDesktopShutdown("stop_scheduling_done");

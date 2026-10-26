@@ -206,6 +206,10 @@ jobs:
         timeout-minutes: 5
         run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-member-controller
 
+      - name: Verify Main TLS and parent IPC enrollment against the real isolated Core child
+        timeout-minutes: 5
+        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-parent-ingress
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest

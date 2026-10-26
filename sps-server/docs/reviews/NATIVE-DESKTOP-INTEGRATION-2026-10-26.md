@@ -130,14 +130,32 @@ Repository vulnerability alerts/dependency graph were enabled through GitHub's
 documented administration endpoint and the failed review rerun was requested.
 This does not change the SPS security policy or waive Zod.
 
+## Host ingress implementation follow-up
+
+The next source increment implements a Main-owned, per-launch opt-in TLS
+registration listener and a fixed private owned-Core-child IPC adapter. Core
+startup now composes the private dispatcher after prepared identity binding;
+the generic Core HTTP listener remains unchanged. Core Settings provides
+explicit start/stop and one-use invitation copy through local Owner-only
+management routes. See
+`NATIVE-INGRESS-OWNERSHIP-DESIGN-REVIEW-2026-10-26.md` for ownership and current
+verification limits. This replaces the earlier statement that no product
+registration composition exists; it does not qualify full Native LAN.
+
+Latest pushed Source `23265d3` adds only bounded, sanitized executable and parent
+basenames to Windows owned-Job diagnostics (17/17 focused helper contract tests).
+Prior `da2d052` CI passed Windows units and runtime-discovery functional checks,
+then failed natural cleanup with nine unclassified owned Job members despite
+three orderly Main exits. The new diagnostics preserve the existing acceptance
+gate and need a new hosted run to identify those members.
+
 ## Remaining product and release work
 
-Core's Native identity, session exchange and enrollment handlers remain
-unmounted. Desktop actions cannot connect to a product Host until the dedicated
-opt-in TLS ingress is implemented. No generic Core HTTP proxy, listener, firewall
-rule, installed application, customer credentials or production service was
-changed. Native LAN remains off/unsupported; the supported remote transport
-remains Tailscale.
+The new opt-in registration path remains under verification and is off at
+launch. No actual product LAN listener, firewall rule, installed application,
+customer credentials or production service was changed during verification.
+The supported release remote transport remains Tailscale until full Native
+transport and release qualification pass.
 
 Source full CI, the held Zod High security gate, exact-head Windows owned-Job
 natural cleanup, actual DPAPI enrollment/recovery composition, certificate

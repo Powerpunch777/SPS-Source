@@ -23,7 +23,7 @@ test("Native client/Core interoperability is an isolated explicit real-service g
   assert.match(bootstrap, /assert\.equal\(requests\[0\]\.hasBearer, false\)/);
   assert.match(bootstrap, /assert\.equal\(requests\[0\]\.hasCookie, false\)/);
   assert.match(bootstrap, /issuerSpkiSha256: metadata\.issuerSpkiSha256/);
-  assert.ok(script.lastIndexOf('console.log(mode === "--isolated-native-member-controller"') > script.indexOf("await database.cleanup()"));
+  assert.ok(script.lastIndexOf('console.log(throughParent') > script.indexOf("await database.cleanup()"));
   assert.match(script, /AES safeStorage substitute only/);
   assert.match(script, /createSpsNativeMemberController/);
   assert.match(script, /assert\.equal\(current\.ino, localFixtureIdentity\?\.ino\)/);
@@ -40,6 +40,7 @@ test("full Linux Core verification also runs the actual Desktop transport integr
   assert.match(job, /working-directory: sps-server\/desktop\s+run: npm ci --ignore-scripts/);
   assert.match(job, /timeout-minutes: 5\s+run: pnpm --filter @paperclipai\/db exec tsx (?:\.\.\/){4}sps-server\/desktop\/scripts\/smoke-native-enrollment-client-core\.mjs --isolated-native-enrollment-client/);
   assert.match(job, /timeout-minutes: 5\s+run: pnpm --filter @paperclipai\/db exec tsx (?:\.\.\/){4}sps-server\/desktop\/scripts\/smoke-native-enrollment-client-core\.mjs --isolated-native-member-controller/);
+  assert.match(job, /timeout-minutes: 5\s+run: pnpm --filter @paperclipai\/db exec tsx (?:\.\.\/){4}sps-server\/desktop\/scripts\/smoke-native-enrollment-client-core\.mjs --isolated-native-parent-ingress/);
   assert.doesNotMatch(job, /continue-on-error|\|\| true/);
 });
 

@@ -60,6 +60,18 @@ const coreSettingsApi = Object.freeze({
     return ipcRenderer.invoke("desktop:core-settings-prepare-native-identity", { serverAddress: input.serverAddress });
   },
   listNativeDevices: () => ipcRenderer.invoke("desktop:core-settings-list-native-devices"),
+  startNativeHostListener: input => {
+    let value;
+    try {
+      const descriptors = Object.getOwnPropertyDescriptors(input ?? {});
+      if (Reflect.ownKeys(descriptors).length !== 2 || typeof descriptors.bindAddress?.value !== "string"
+        || descriptors.bindAddress.value.length > 45 || !Number.isSafeInteger(descriptors.port?.value)) throw new TypeError("Select a private network address and port.");
+      value = { bindAddress: descriptors.bindAddress.value, port: descriptors.port.value };
+    } catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-start-native-host-listener", value);
+  },
+  stopNativeHostListener: () => ipcRenderer.invoke("desktop:core-settings-stop-native-host-listener"),
+  copyNativeHostInvitation: () => ipcRenderer.invoke("desktop:core-settings-copy-native-host-invitation"),
   listNativeRegistrations: () => ipcRenderer.invoke("desktop:core-settings-list-native-registrations"),
   enrollNativeMember: input => {
     let value;

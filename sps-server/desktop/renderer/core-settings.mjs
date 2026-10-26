@@ -95,6 +95,19 @@ function isCoreStatus(value) {
   return isRecord(value) && isRecord(value.host) && isRecord(value.recovery);
 }
 
+function nativeListenerStatus(value) {
+  try {
+    const off = exactDataRecord(value, ["state"]);
+    if (off?.state === "off") return off;
+    const active = exactDataRecord(value, ["state", "bindAddress", "port", "hostId"]);
+    if (!active || active.state !== "listening" || typeof active.bindAddress !== "string"
+      || !/^[0-9a-fA-F:.]{2,45}$/.test(active.bindAddress)
+      || !Number.isSafeInteger(active.port) || active.port < 1024 || active.port > 65535
+      || typeof active.hostId !== "string" || !nativeDeviceIdPattern.test(active.hostId)) return null;
+    return active;
+  } catch { return null; }
+}
+
 function isEpochMilliseconds(value) {
   return Number.isSafeInteger(value) && value > 0 && Number.isFinite(new Date(value).getTime());
 }
@@ -141,6 +154,16 @@ function syncControls() {
   byId("native-member-name").disabled = memberBusy;
   for (const button of nativeRegistrationButtons) button.disabled = memberBusy;
   const busy = statusLoading || nativeDevicesLoading || pending.size > 0 || quitPending;
+  const listenerReady = currentStatus?.canManageHost === true && nativeConnectivity?.state === "identity_prepared";
+  const listenerActive = nativeListenerStatus(currentStatus?.nativeListener)?.state === "listening";
+  const listenerPort = Number(byId("native-listener-port").value);
+  byId("native-listener-form").hidden = !listenerReady && !listenerActive;
+  byId("start-native-listener").disabled = busy || !listenerReady || listenerActive || !byId("native-listener-address").value.trim()
+    || !Number.isSafeInteger(listenerPort) || listenerPort < 1024 || listenerPort > 65535;
+  byId("native-listener-address").disabled = busy || !listenerReady || listenerActive;
+  byId("native-listener-port").disabled = busy || !listenerReady || listenerActive;
+  byId("stop-native-listener").disabled = busy || !listenerActive || currentStatus?.canManageHost !== true;
+  byId("copy-native-invitation").disabled = busy || !listenerActive || currentStatus?.canManageHost !== true;
   quitDesktopButton.disabled = pending.size > 0 || quitPending;
   byId("native-identity-form").hidden = nativeConnectivity?.canPrepare !== true || currentStatus?.canManageHost !== true;
   for (const button of actionButtons) {
@@ -311,6 +334,9 @@ function renderStatus(status) {
   byId("host-state").textContent = host.startupDeferred ? "Startup deferred (recovery)" : safeText(host.state);
   byId("desktop-state-error").hidden = status.desktopStateAvailable !== false;
   byId("app-version").textContent = safeText(status.appVersion);
+  const listener = nativeListenerStatus(status.nativeListener);
+  byId("native-listener-state").textContent = listener?.state === "listening"
+    ? `Registration listening · ${listener.bindAddress}:${listener.port}` : listener?.state === "off" ? "Off · not active" : "Unavailable";
   if (status.canManageNativeMember !== true) byId("native-member-result").textContent = "Sign in to manage this computer's registration.";
 
   const shortcut = status.shortcut;
@@ -463,6 +489,28 @@ byId("native-member-invitation").addEventListener("input", syncControls);
 byId("native-member-name").addEventListener("input", syncControls);
 byId("register-native-member").addEventListener("click", () => void registerNativeMember());
 byId("refresh-native-registrations").addEventListener("click", () => void loadNativeRegistrations());
+byId("native-listener-address").addEventListener("input", syncControls);
+byId("native-listener-port").addEventListener("input", syncControls);
+byId("start-native-listener").addEventListener("click", () => {
+  if (byId("start-native-listener").disabled) return;
+  void runAction("native-host-listener", () => window.spsCoreSettings.startNativeHostListener({
+    bindAddress: byId("native-listener-address").value.trim(), port: Number(byId("native-listener-port").value),
+  }), "Registration listener request completed.");
+});
+byId("stop-native-listener").addEventListener("click", () => {
+  if (byId("stop-native-listener").disabled) return;
+  void runAction("native-host-listener", () => window.spsCoreSettings.stopNativeHostListener(), "Registration listener stopped.");
+});
+byId("copy-native-invitation").addEventListener("click", () => {
+  if (byId("copy-native-invitation").disabled) return;
+  void runAction("native-host-invitation", async () => {
+    const result = await window.spsCoreSettings.copyNativeHostInvitation();
+    if (result?.cancelled === true) return;
+    const value = exactDataRecord(result, ["copied", "expiresAt"]);
+    if (!value || value.copied !== true || typeof value.expiresAt !== "string" || !Number.isFinite(Date.parse(value.expiresAt))) throw new Error("Invalid invitation result");
+    byId("native-member-result").textContent = `Invitation copied. It expires at ${new Date(value.expiresAt).toLocaleString()}. Share it only through a trusted channel.`;
+  }, "Invitation request completed.");
+});
 window.addEventListener("focus", () => void loadStatus());
 void loadStatus();
 
