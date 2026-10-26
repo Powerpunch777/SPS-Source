@@ -92,6 +92,27 @@ npx --offline pnpm@11.9.0 -r build
 
 ## Observations And Implementation
 
+Latest clean Source `cdac18b` push workflow `40259518612` completed **16/18**.
+All nine Linux shards and full typecheck/build plus the corrected real Native
+transport interop passed. Production compatibility remains blocked by held Zod
+High `1243066`. Windows job `121368635313` again reached every No-AI functional
+assertion and three orderly Mains / six natural EOFs, with final Main graceful
+exit in 340 ms. The new cleanup failed only after the 20-second data-deletion
+bound (`operation_failed`); this differs from the old immediate guard rejection.
+The owning Job still required forced cleanup and correctly rejected acceptance.
+Canonical TEMP handling and plugin shutdown are not claimed to have resolved
+this hosted failure. Final clean local development-runtime No-AI and prepared
+Native checks passed, but do not substitute for this hosted whole-Job result.
+
+The runner now takes a read-only, bounded snapshot of the exact Job's remaining
+process IDs before forced cleanup, rechecks each open process's membership in
+that same Job and uses only limited image-query access. Logs contain fixed
+node/postgres/electron/crashpad/other/unavailable counts plus total/bounded/
+truncated/readOK; no PID, path, command line or raw executable name is emitted.
+This is diagnosis, not a process-ownership bypass or successful cleanup. Existing
+timeouts, pending-exit protocol, reduced privileges and failed-exit preservation
+are unchanged. It adds no product or external process inspection.
+
 - The preceding No-AI flow reached its functional assertions but retained two
   referenced output pipes after the last Main exited. Diagnostic inspection
   identified harness `captureOutput` listeners, not the remaining writer

@@ -14,6 +14,7 @@ public static class RestrictedE2eRunner
     static string stage = "arguments";
     const string OwnedJobCleanupArgument = "--owned-job-cleanup-pending";
     const uint OwnedJobCleanupPendingExitCode = 76;
+    const int OwnedProcessDiagnosticLimit = 256;
     [StructLayout(LayoutKind.Sequential)] struct SidAttributes { public IntPtr Sid; public uint Attributes; }
     [StructLayout(LayoutKind.Sequential)] struct TokenDefaultDacl { public IntPtr DefaultDacl; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct StartupInfo
@@ -55,6 +56,11 @@ public static class RestrictedE2eRunner
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr info, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "QueryFullProcessImageNameW", SetLastError = true)]
+    static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder image, ref uint size);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr process, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
@@ -393,6 +399,103 @@ public static class RestrictedE2eRunner
             System.Threading.Thread.Sleep(20);
         }
     }
+    static int OwnedProcessCategory(IntPtr job, uint processId, out bool readOK)
+    {
+        readOK = false;
+        IntPtr process = IntPtr.Zero;
+        try
+        {
+            process = OpenProcess(0x1000, false, processId);
+            if (!Valid(process)) return 5;
+
+            bool inJob;
+            if (!IsProcessInJob(process, job, out inJob) || !inJob) return 5;
+
+            uint imageLength = 32768;
+            var image = new StringBuilder((int)imageLength);
+            if (!QueryFullProcessImageName(process, 0, image, ref imageLength)) return 5;
+            string name = Path.GetFileName(image.ToString());
+            if (String.IsNullOrEmpty(name)) return 5;
+
+            readOK = true;
+            if (String.Equals(name, "node.exe", StringComparison.OrdinalIgnoreCase)) return 0;
+            if (String.Equals(name, "postgres.exe", StringComparison.OrdinalIgnoreCase)) return 1;
+            if (String.Equals(name, "electron.exe", StringComparison.OrdinalIgnoreCase)) return 2;
+            if (name.StartsWith("crashpad", StringComparison.OrdinalIgnoreCase)) return 3;
+            return 4;
+        }
+        catch { return 5; }
+        finally { if (Valid(process)) CloseHandle(process); }
+    }
+    static void WriteOwnedJobProcessDiagnostics(IntPtr job)
+    {
+        uint total = 0, bounded = 0;
+        int node = 0, postgres = 0, electron = 0, crashpad = 0, other = 0, unavailable = 0;
+        bool truncated = false, readOK = true;
+        IntPtr buffer = IntPtr.Zero;
+        try
+        {
+            uint bufferSize = (uint)(8 + OwnedProcessDiagnosticLimit * IntPtr.Size);
+            buffer = Marshal.AllocHGlobal((int)bufferSize);
+            if (!QueryInformationJobObject(job, 3, buffer, bufferSize, IntPtr.Zero))
+            {
+                truncated = Marshal.GetLastWin32Error() == 234; // ERROR_MORE_DATA; no uninitialized buffer reads.
+                readOK = false;
+            }
+            else
+            {
+                total = unchecked((uint)Marshal.ReadInt32(buffer));
+                bounded = unchecked((uint)Marshal.ReadInt32(buffer, 4));
+                if (bounded > OwnedProcessDiagnosticLimit || bounded > total)
+                {
+                    total = 0;
+                    bounded = 0;
+                    truncated = true;
+                    readOK = false;
+                }
+                else
+                {
+                    truncated = bounded < total;
+                    for (uint index = 0; index < bounded; index++)
+                    {
+                        int category = 5;
+                        bool processReadOK = false;
+                        try
+                        {
+                            int offset = 8 + (int)index * IntPtr.Size;
+                            uint processId = IntPtr.Size == 8
+                                ? unchecked((uint)Marshal.ReadInt64(buffer, offset))
+                                : unchecked((uint)Marshal.ReadInt32(buffer, offset));
+                            category = OwnedProcessCategory(job, processId, out processReadOK);
+                        }
+                        catch { }
+                        if (!processReadOK) readOK = false;
+                        if (category == 0) node++;
+                        else if (category == 1) postgres++;
+                        else if (category == 2) electron++;
+                        else if (category == 3) crashpad++;
+                        else if (category == 4) other++;
+                        else unavailable++;
+                    }
+                }
+            }
+        }
+        catch { readOK = false; }
+        finally
+        {
+            try { if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer); }
+            catch { readOK = false; }
+        }
+
+        try
+        {
+            Console.WriteLine("{\"node\":" + node + ",\"postgres\":" + postgres + ",\"electron\":" + electron
+                + ",\"crashpad\":" + crashpad + ",\"other\":" + other + ",\"unavailable\":" + unavailable
+                + ",\"total\":" + total + ",\"bounded\":" + bounded + ",\"truncated\":"
+                + (truncated ? "true" : "false") + ",\"readOK\":" + (readOK ? "true" : "false") + "}");
+        }
+        catch { }
+    }
     static bool WaitForNaturalJobEmpty(IntPtr job, int timeoutMilliseconds)
     {
         var deadline = Stopwatch.StartNew();
@@ -630,13 +733,18 @@ public static class RestrictedE2eRunner
                             }
                             else
                             {
+                                WriteOwnedJobProcessDiagnostics(job);
                                 TerminateAndConfirmJob(job);
                                 Console.WriteLine("{\"ownedJobEmpty\":true,\"ownedJobCleanup\":\"forced\",\"accepted\":false}");
                                 if (resultCode == 0 || resultCode == unchecked((int)OwnedJobCleanupPendingExitCode)) resultCode = 125;
                             }
                         }
                     }
-                    else if (Valid(job)) TerminateAndConfirmJob(job);
+                    else if (Valid(job))
+                    {
+                        if (mode == "probe-descendant") WriteOwnedJobProcessDiagnostics(job);
+                        TerminateAndConfirmJob(job);
+                    }
                     Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm E2E child exit");
                     if (assigned && !OwnedJobGateMode(mode)) Console.WriteLine("{\"ownedJobEmpty\":true}");
                 }

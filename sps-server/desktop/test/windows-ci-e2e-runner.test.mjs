@@ -66,7 +66,25 @@ test("Windows CI E2E timeout terminates and confirms the job before failing", { 
 test("Windows CI E2E cleans a still-live owned descendant after its parent exits", { skip: process.platform !== "win32" }, async () => {
   const result = await run("probe-descendant");
   const output = assertCleanup(result.stdout);
-  assert.deepEqual(output.slice(-3, -1), [{ ownedDescendantCreated: true }, { ownedJobEmpty: true }]);
+  assert.equal(output.some(record => record.ownedDescendantCreated === true), true);
+  const diagnostics = output.find(record => Object.hasOwn(record, "readOK") && Object.hasOwn(record, "truncated"));
+  assert.ok(diagnostics);
+  assert.deepEqual(Object.keys(diagnostics).sort(), [
+    "node", "postgres", "electron", "crashpad", "other", "unavailable", "total", "bounded", "truncated", "readOK",
+  ].sort());
+  for (const category of ["node", "postgres", "electron", "crashpad", "other", "unavailable", "total", "bounded"]) {
+    assert.equal(Number.isSafeInteger(diagnostics[category]) && diagnostics[category] >= 0, true);
+  }
+  assert.equal(diagnostics.readOK, true);
+  assert.equal(diagnostics.truncated, false);
+  assert.equal(diagnostics.total, diagnostics.bounded);
+  assert.equal(diagnostics.bounded <= 256, true);
+  assert.equal(diagnostics.other >= 1, true);
+  assert.equal(
+    diagnostics.node + diagnostics.postgres + diagnostics.electron + diagnostics.crashpad + diagnostics.other + diagnostics.unavailable,
+    diagnostics.bounded,
+  );
+  assert.doesNotMatch(JSON.stringify(diagnostics), /[A-Za-z]:[\\/]|\\\\|\b\d{4,}\b/);
   assert.equal(result.stderr, "");
 });
 
@@ -203,6 +221,17 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   }
   assert.match(source, /if \(mode == "plugin-preview"\) return RunNode\(node, directory, "smoke-plugin-preview-desktop\.mjs", OwnedJobCleanupArgument\);/);
   assert.match(source, /WaitForNaturalJobEmpty\(job, OwnedJobWaitMilliseconds\(mode\)\)/);
+  assert.match(source, /const int OwnedProcessDiagnosticLimit = 256;/);
+  assert.match(source, /QueryInformationJobObject\(job, 3, buffer/);
+  assert.match(source, /OpenProcess\(0x1000, false, processId\)/);
+  const processMembershipCheck = source.indexOf("IsProcessInJob(process, job, out inJob)");
+  const processImageRead = source.indexOf("QueryFullProcessImageName(process, 0, image, ref imageLength)");
+  assert.ok(processMembershipCheck >= 0 && processImageRead > processMembershipCheck);
+  const naturalWait = source.indexOf("bool naturallyEmpty = WaitForNaturalJobEmpty(job, OwnedJobWaitMilliseconds(mode))");
+  const forcedDiagnostics = source.indexOf("WriteOwnedJobProcessDiagnostics(job);", naturalWait);
+  const forcedTermination = source.indexOf("TerminateAndConfirmJob(job);", forcedDiagnostics);
+  assert.ok(naturalWait >= 0 && forcedDiagnostics > naturalWait && forcedTermination > forcedDiagnostics);
+  assert.doesNotMatch(source, /System\.Management|ManagementObject|Win32_Process|Process\.GetProcesses|Get-Process|tasklist/i);
   assert.doesNotMatch(source, /PreviewJobGateMode|PreviewJobWaitMilliseconds/);
   assert.ok(source.includes('Console.WriteLine("{\\"ownedJobEmpty\\":true,\\"ownedJobCleanup\\":\\"natural\\"}");'));
   assert.ok(source.includes('Console.WriteLine("{\\"ownedJobEmpty\\":true,\\"ownedJobCleanup\\":\\"forced\\",\\"accepted\\":false}");'));
