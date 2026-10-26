@@ -72,6 +72,14 @@ ESM/CommonJS entrypoints must accept valid inputs and enforce the 100-record
 diagnostic ceiling. This confirms the mitigation reaches the selected runtime;
 it does not resolve the advisory or replace full artifact qualification.
 
+The runtime verifier and packaging contract suite passed 18/18, including
+replacement at the same package path, a checkout junction escaping the runtime,
+missing dependency/server manifest and wrong Zod version. A subsequent exact
+Core manifest-name rejection test passed separately. These fixture tests copy
+the actually installed patched Core dependency and require the frozen Core
+dependencies to be installed first. Full deployed/package execution is still
+required; these are not signed artifact or installation results.
+
 ## Existing security gate
 
 The SPS release audit maps dependency findings to exact package/advisory policy

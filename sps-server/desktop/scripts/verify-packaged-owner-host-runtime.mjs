@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { materializeSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
+import { verifyPackagedZodRuntime } from "./verify-packaged-zod-runtime.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -55,6 +56,8 @@ if (missing.length > 0) {
   );
 }
 
+const packagedZod = await verifyPackagedZodRuntime(runtimeRoot);
+console.log(`Verified packaged Core Zod ${packagedZod.version} issue budget (${packagedZod.issueLimit} records).`);
 const [runtimeManifest, releaseBaseline, windowsPostgresModule, embeddedPostgresModule] = await Promise.all([
   readFile(path.join(runtimeRoot, "sps-owner-host-runtime.json"), "utf8").then(JSON.parse),
   readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8").then(JSON.parse),

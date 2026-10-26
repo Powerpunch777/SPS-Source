@@ -138,6 +138,26 @@ test("uses a cross-platform DB migration copy step for Windows Desktop builds", 
   assert.doesNotMatch(packageManifest.scripts.build, /\bcp -r\b/);
 });
 
+test("verifies the deployed Core Zod version and issue budget during preparation and packaging", async () => {
+  const buildScript = await readFile(path.join(desktopDirectory, "scripts", "prepare-owner-host-runtime.mjs"), "utf8");
+  const packagedVerifier = await readFile(path.join(desktopDirectory, "scripts", "verify-packaged-owner-host-runtime.mjs"), "utf8");
+  const zodVerifier = await readFile(path.join(desktopDirectory, "scripts", "verify-packaged-zod-runtime.mjs"), "utf8");
+  const packageManifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
+
+  assert.match(buildScript, /"deploy"/);
+  assert.ok(buildScript.indexOf('"deploy"') < buildScript.indexOf("verifyPackagedZodRuntime(runtimeRoot)"));
+  assert.match(packagedVerifier, /verifyPackagedZodRuntime\(runtimeRoot\)/);
+  assert.match(zodVerifier, /createRequire\(serverReal\)/);
+  assert.match(zodVerifier, /EXPECTED_ZOD_VERSION = "3\.25\.76"/);
+  assert.match(zodVerifier, /ISSUE_LIMIT = 100/);
+  assert.match(zodVerifier, /root ESM/);
+  assert.match(zodVerifier, /v3 ESM/);
+  assert.match(zodVerifier, /root CommonJS/);
+  assert.match(zodVerifier, /v3 CommonJS/);
+  for (const scriptName of ["package:win", "release:win", "package:candidate:win"]) {
+    assert.match(packageManifest.scripts[scriptName], /verify:packaged-owner-host-runtime/);
+  }
+});
 test("packages the managed Windows PostgreSQL Unicode-path compatibility patch", async () => {
   const coreRoot = path.resolve(desktopDirectory, "..", "..", "external", "sps-core");
   const buildScript = await readFile(path.join(desktopDirectory, "scripts", "prepare-owner-host-runtime.mjs"), "utf8");

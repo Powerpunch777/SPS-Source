@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { writeSpsReleaseBaseline } from "./release-baseline.mjs";
 import { createSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
+import { verifyPackagedZodRuntime } from "./verify-packaged-zod-runtime.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -705,6 +706,8 @@ await run(
   { shell: pnpm.shell, environment: pnpm.environment },
 );
 
+const packagedZod = await verifyPackagedZodRuntime(runtimeRoot);
+console.log(`Verified deployed Core Zod ${packagedZod.version} issue budget (${packagedZod.issueLimit} records).`);
 await normalizeWorkspacePackageExports(runtimeRoot);
 for (const relative of ["default/AGENTS.md", "ceo/AGENTS.md", "ceo/HEARTBEAT.md", "ceo/SOUL.md", "ceo/TOOLS.md"]) {
   const deployed = path.join(runtimeRoot, "node_modules", "@paperclipai", "server", "dist", "onboarding-assets", relative);
