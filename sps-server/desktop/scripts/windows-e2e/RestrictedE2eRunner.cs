@@ -41,6 +41,12 @@ public static class RestrictedE2eRunner
         public long UserTime, KernelTime, PeriodUserTime, PeriodKernelTime;
         public uint PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses;
     }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct ProcessEntry
+    {
+        public uint Size, Usage, ProcessId; public IntPtr DefaultHeapId; public uint ModuleId, Threads, ParentProcessId;
+        public int BasePriority; public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string ExecutableName;
+    }
 
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
@@ -57,6 +63,9 @@ public static class RestrictedE2eRunner
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint exitCode);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, uint size, IntPtr returned);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr info, uint size, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "Process32FirstW", SetLastError = true)] static extern bool Process32First(IntPtr snapshot, ref ProcessEntry entry);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "Process32NextW", SetLastError = true)] static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry entry);
     [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "QueryFullProcessImageNameW", SetLastError = true)]
@@ -399,9 +408,39 @@ public static class RestrictedE2eRunner
             System.Threading.Thread.Sleep(20);
         }
     }
-    static int OwnedProcessCategory(IntPtr job, uint processId, out bool readOK)
+    static string SanitizedImageName(string value)
+    {
+        if (String.IsNullOrEmpty(value) || value.Length > 64) return "unavailable";
+        foreach (char c in value) if (!(Char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.')) return "unavailable";
+        return value;
+    }
+    static Dictionary<uint, ProcessEntry> SnapshotProcessParents(out bool readOK)
     {
         readOK = false;
+        var entries = new Dictionary<uint, ProcessEntry>();
+        IntPtr snapshot = CreateToolhelp32Snapshot(2, 0);
+        if (!Valid(snapshot)) return entries;
+        try
+        {
+            var entry = new ProcessEntry();
+            entry.Size = (uint)Marshal.SizeOf(typeof(ProcessEntry));
+            if (!Process32First(snapshot, ref entry)) return entries;
+            do
+            {
+                if (entries.Count >= 32768) return new Dictionary<uint, ProcessEntry>();
+                if (entry.ProcessId > 0 && entry.ExecutableName != null) entries[entry.ProcessId] = entry;
+                entry.Size = (uint)Marshal.SizeOf(typeof(ProcessEntry));
+            } while (Process32Next(snapshot, ref entry));
+            readOK = true;
+            return entries;
+        }
+        catch { return new Dictionary<uint, ProcessEntry>(); }
+        finally { CloseHandle(snapshot); }
+    }
+    static int OwnedProcessCategory(IntPtr job, uint processId, out bool readOK, out string imageName)
+    {
+        readOK = false;
+        imageName = "unavailable";
         IntPtr process = IntPtr.Zero;
         try
         {
@@ -419,6 +458,7 @@ public static class RestrictedE2eRunner
             if (String.IsNullOrEmpty(name)) return 5;
 
             readOK = true;
+            imageName = SanitizedImageName(name);
             if (String.Equals(name, "node.exe", StringComparison.OrdinalIgnoreCase)) return 0;
             if (String.Equals(name, "postgres.exe", StringComparison.OrdinalIgnoreCase)) return 1;
             if (String.Equals(name, "electron.exe", StringComparison.OrdinalIgnoreCase)) return 2;
@@ -442,6 +482,7 @@ public static class RestrictedE2eRunner
         uint total = 0, bounded = 0;
         int node = 0, postgres = 0, electron = 0, crashpad = 0, other = 0, unavailable = 0;
         int powershell = 0, shell = 0, console = 0, windowsError = 0;
+        var unknownImages = new List<string>();
         bool truncated = false, readOK = true;
         IntPtr buffer = IntPtr.Zero;
         try
@@ -467,17 +508,33 @@ public static class RestrictedE2eRunner
                 else
                 {
                     truncated = bounded < total;
+                    bool parentReadOK;
+                    Dictionary<uint, ProcessEntry> processParents = SnapshotProcessParents(out parentReadOK);
+                    if (!parentReadOK) readOK = false;
                     for (uint index = 0; index < bounded; index++)
                     {
                         int category = 5;
                         bool processReadOK = false;
+                        string imageName = "unavailable";
                         try
                         {
                             int offset = 8 + (int)index * IntPtr.Size;
                             uint processId = IntPtr.Size == 8
                                 ? unchecked((uint)Marshal.ReadInt64(buffer, offset))
                                 : unchecked((uint)Marshal.ReadInt32(buffer, offset));
-                            category = OwnedProcessCategory(job, processId, out processReadOK);
+                            category = OwnedProcessCategory(job, processId, out processReadOK, out imageName);
+                            if (category == 4 && unknownImages.Count < OwnedProcessDiagnosticLimit)
+                            {
+                                string parentName = "unavailable";
+                                ProcessEntry childEntry;
+                                if (processParents.TryGetValue(processId, out childEntry))
+                                {
+                                    ProcessEntry parentEntry;
+                                    if (processParents.TryGetValue(childEntry.ParentProcessId, out parentEntry))
+                                        parentName = SanitizedImageName(parentEntry.ExecutableName);
+                                }
+                                unknownImages.Add("{\"image\":\"" + imageName + "\",\"parentImage\":\"" + parentName + "\"}");
+                            }
                         }
                         catch { }
                         if (!processReadOK) readOK = false;
@@ -508,7 +565,8 @@ public static class RestrictedE2eRunner
                 + ",\"crashpad\":" + crashpad + ",\"other\":" + other + ",\"unavailable\":" + unavailable
                 + ",\"powershell\":" + powershell + ",\"shell\":" + shell + ",\"console\":" + console + ",\"windowsError\":" + windowsError
                 + ",\"total\":" + total + ",\"bounded\":" + bounded + ",\"truncated\":"
-                + (truncated ? "true" : "false") + ",\"readOK\":" + (readOK ? "true" : "false") + "}");
+                + (truncated ? "true" : "false") + ",\"readOK\":" + (readOK ? "true" : "false")
+                + ",\"unknownImages\":[" + String.Join(",", unknownImages.ToArray()) + "]}");
         }
         catch { }
     }

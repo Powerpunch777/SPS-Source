@@ -71,7 +71,7 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
   assert.ok(diagnostics);
   assert.deepEqual(Object.keys(diagnostics).sort(), [
     "node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError",
-    "total", "bounded", "truncated", "readOK",
+    "total", "bounded", "truncated", "readOK", "unknownImages",
   ].sort());
   for (const category of ["node", "postgres", "electron", "crashpad", "other", "unavailable", "powershell", "shell", "console", "windowsError", "total", "bounded"]) {
     assert.equal(Number.isSafeInteger(diagnostics[category]) && diagnostics[category] >= 0, true);
@@ -81,6 +81,13 @@ test("Windows CI E2E cleans a still-live owned descendant after its parent exits
   assert.equal(diagnostics.total, diagnostics.bounded);
   assert.equal(diagnostics.bounded <= 256, true);
   assert.equal(diagnostics.other >= 1, true);
+  assert.equal(Array.isArray(diagnostics.unknownImages), true);
+  assert.equal(diagnostics.unknownImages.length <= diagnostics.other, true);
+  for (const entry of diagnostics.unknownImages) {
+    assert.deepEqual(Object.keys(entry).sort(), ["image", "parentImage"]);
+    assert.match(entry.image, /^[A-Za-z0-9_.-]{1,64}$/);
+    assert.match(entry.parentImage, /^(?:[A-Za-z0-9_.-]{1,64}|unavailable)$/);
+  }
   assert.equal(
     diagnostics.node + diagnostics.postgres + diagnostics.electron + diagnostics.crashpad + diagnostics.other + diagnostics.unavailable
       + diagnostics.powershell + diagnostics.shell + diagnostics.console + diagnostics.windowsError,
