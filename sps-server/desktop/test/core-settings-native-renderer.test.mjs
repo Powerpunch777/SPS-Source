@@ -57,7 +57,7 @@ function coreStatus(overrides = {}) {
   };
 }
 
-function createRenderer({ getStatus = async () => coreStatus(), prepareNativeIdentity = async () => coreStatus() } = {}) {
+function createRenderer({ getStatus = async () => coreStatus(), prepareNativeIdentity = async () => coreStatus(), api = {} } = {}) {
   const elements = new Map();
   for (const [, id] of htmlSource.matchAll(/\bid="([^"]+)"/g)) elements.set(id, new ElementFixture(id));
   const actionButtons = ["open-workspace", "check-updates", "restart-host", "export-host", "inspect-transfer"]
@@ -74,7 +74,7 @@ function createRenderer({ getStatus = async () => coreStatus(), prepareNativeIde
   };
   const windowListeners = new Map();
   const window = {
-    spsCoreSettings: { getStatus, prepareNativeIdentity },
+    spsCoreSettings: { getStatus, prepareNativeIdentity, ...api },
     addEventListener(type, listener) { windowListeners.set(type, listener); },
   };
   runInNewContext(rendererSource, { window, document }, { filename: rendererUrl.pathname });
@@ -213,4 +213,152 @@ test("returned malformed status never changes the identity display to prepared",
 
   assert.equal(element(ctx, "native-identity-state").textContent, "Not prepared");
   assert.match(element(ctx, "action-notice").textContent, /action failed/i);
+});
+
+test("quit button is a bottom local desktop action and does not quit on startup", async () => {
+  let quitCalls = 0;
+  const ctx = createRenderer({ api: { quitDesktop: () => { quitCalls += 1; } } });
+  await settle();
+
+  assert.match(htmlSource, /<section class="section" aria-labelledby="local-desktop-heading">[\s\S]*?<button id="quit-desktop"[^>]*>Quit SPS Desktop<\/button>[\s\S]*?<\/section>\s*<\/main>/);
+  assert.equal(element(ctx, "quit-desktop").disabled, false);
+  assert.equal(quitCalls, 0);
+});
+
+test("quit works when status is unavailable or the current user is a Member", async () => {
+  for (const getStatus of [
+    async () => { throw new Error("private status diagnostic"); },
+    async () => coreStatus({ canManageHost: false }),
+  ]) {
+    let quitCalls = 0;
+    let statusCalls = 0;
+    const ctx = createRenderer({
+      getStatus: async () => { statusCalls += 1; return getStatus(); },
+      api: { quitDesktop: () => { quitCalls += 1; } },
+    });
+    await settle();
+    const button = element(ctx, "quit-desktop");
+    assert.equal(button.disabled, false);
+    button.dispatch("click");
+    await settle();
+
+    assert.equal(quitCalls, 1);
+    assert.equal(statusCalls, 1);
+    assert.equal(button.disabled, true);
+  }
+});
+
+test("quit calls the bridge once with no arguments and reports pending without claiming completion", async () => {
+  const calls = [];
+  const ctx = createRenderer({ api: { quitDesktop: (...args) => { calls.push(args); } } });
+  await settle();
+
+  element(ctx, "quit-desktop").dispatch("click");
+  await settle();
+
+  assert.deepEqual(calls, [[]]);
+  assert.equal(element(ctx, "action-notice").textContent, "Closing SPS Desktop...");
+  assert.equal(element(ctx, "quit-desktop").disabled, true);
+});
+
+test("quit rejects with a fixed safe message and can be retried without refreshing status", async () => {
+  let statusCalls = 0;
+  let quitCalls = 0;
+  const ctx = createRenderer({
+    getStatus: async () => { statusCalls += 1; return coreStatus(); },
+    api: {
+      quitDesktop: async () => {
+        quitCalls += 1;
+        if (quitCalls === 1) throw new Error("C:\\private\\secret-token.txt");
+      },
+    },
+  });
+  await settle();
+  const button = element(ctx, "quit-desktop");
+  button.dispatch("click");
+  await settle();
+
+  assert.equal(element(ctx, "action-notice").textContent, "Could not close SPS Desktop. Try again.");
+  assert.equal(element(ctx, "action-notice").classes.has("error"), true);
+  assert.doesNotMatch(element(ctx, "action-notice").textContent, /secret-token|private/i);
+  assert.equal(button.disabled, false);
+
+  button.dispatch("click");
+  await settle();
+  assert.equal(quitCalls, 2);
+  assert.equal(statusCalls, 1);
+  assert.equal(element(ctx, "action-notice").textContent, "Closing SPS Desktop...");
+  assert.equal(button.disabled, true);
+});
+
+test("a pending quit disables the button and ignores overlapping clicks", async () => {
+  let resolveQuit;
+  let quitCalls = 0;
+  const ctx = createRenderer({
+    api: {
+      quitDesktop: () => {
+        quitCalls += 1;
+        return new Promise(resolve => { resolveQuit = resolve; });
+      },
+    },
+  });
+  await settle();
+  const button = element(ctx, "quit-desktop");
+  button.dispatch("click");
+  assert.equal(button.disabled, true);
+  assert.equal(element(ctx, "action-notice").textContent, "Closing SPS Desktop...");
+  button.dispatch("click");
+  await settle();
+
+  assert.equal(quitCalls, 1);
+  resolveQuit();
+  await settle();
+  assert.equal(button.disabled, true);
+  button.dispatch("click");
+  await settle();
+  assert.equal(quitCalls, 1);
+  assert.equal(element(ctx, "action-notice").textContent, "Closing SPS Desktop...");
+});
+
+test("a pending host mutation disables quit and a dispatched click does not call it", async () => {
+  let resolveUpdate;
+  let quitCalls = 0;
+  const ctx = createRenderer({
+    api: {
+      checkUpdates: () => new Promise(resolve => { resolveUpdate = resolve; }),
+      quitDesktop: () => { quitCalls += 1; },
+    },
+  });
+  await settle();
+  const quitButton = element(ctx, "quit-desktop");
+  ctx.actionButtons.find(button => button.dataset.action === "check-updates").dispatch("click");
+  assert.equal(quitButton.disabled, true);
+  quitButton.dispatch("click");
+  await settle();
+
+  assert.equal(quitCalls, 0);
+  resolveUpdate();
+  await settle();
+  assert.equal(quitButton.disabled, false);
+});
+
+test("quit stays available during initial status loading and late failure cannot overwrite its pending state", async () => {
+  let rejectStatus;
+  let quitCalls = 0;
+  const ctx = createRenderer({
+    getStatus: () => new Promise((_resolve, reject) => { rejectStatus = reject; }),
+    api: { quitDesktop: async () => { quitCalls += 1; } },
+  });
+  const button = element(ctx, "quit-desktop");
+  assert.equal(button.disabled, false);
+  button.dispatch("click");
+  await settle();
+  rejectStatus(new Error("private status detail"));
+  await settle();
+  button.dispatch("click");
+  await settle();
+
+  assert.equal(quitCalls, 1);
+  assert.equal(button.disabled, true);
+  assert.equal(element(ctx, "action-notice").textContent, "Closing SPS Desktop...");
 });

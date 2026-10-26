@@ -252,18 +252,22 @@ public static class RestrictedE2eRunner
     {
         return value == "probe" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
             || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
+            || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle";
     }
-    static bool PreviewJobGateMode(string value)
+    static bool OwnedJobGateMode(string value)
     {
-        return value == "plugin-preview" || value == "probe-preview-pending"
+        return value == "plugin-preview" || value == "runtime-discovery" || value == "native-management" || value == "workspace-surfaces"
+            || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
-            || value == "probe-preview-zeroexit";
+            || value == "probe-preview-zeroexit" || value == "workspace-pending"
+            || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit";
     }
-    static int PreviewJobWaitMilliseconds(string mode)
+    static int OwnedJobWaitMilliseconds(string mode)
     {
-        return mode == "probe-preview-pending-descendant" || mode == "probe-preview-failure-descendant" ? 1500 : 10000;
+        return mode == "probe-preview-pending-descendant" || mode == "probe-preview-failure-descendant"
+            || mode == "workspace-pending-descendant" || mode == "workspace-failure-descendant" ? 1500 : 10000;
     }
     static IntPtr EnvironmentBlock()
     {
@@ -323,7 +327,10 @@ public static class RestrictedE2eRunner
         if (mode == "probe-timeout") { System.Threading.Thread.Sleep(60000); return 1; }
         if (mode == "probe-preview-pending") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-preview-zeroexit") return 0;
-        if (mode == "probe-descendant" || mode == "probe-preview-pending-descendant" || mode == "probe-preview-failure-descendant")
+        if (mode == "workspace-pending") return unchecked((int)OwnedJobCleanupPendingExitCode);
+        if (mode == "workspace-zeroexit") return 0;
+        if (mode == "probe-descendant" || mode == "probe-preview-pending-descendant" || mode == "probe-preview-failure-descendant"
+            || mode == "workspace-pending-descendant" || mode == "workspace-failure-descendant")
         {
             var start = new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName, "--probe-leaf");
             start.UseShellExecute = false; start.CreateNoWindow = true;
@@ -332,8 +339,9 @@ public static class RestrictedE2eRunner
                 if (descendant.HasExited) throw new InvalidOperationException("Missing owned descendant");
                 Console.WriteLine("{\"ownedDescendantCreated\":true}");
             }
-            if (mode == "probe-preview-pending-descendant") return unchecked((int)OwnedJobCleanupPendingExitCode);
-            return mode == "probe-preview-failure-descendant" ? 7 : 0;
+            if (mode == "probe-preview-pending-descendant" || mode == "workspace-pending-descendant")
+                return unchecked((int)OwnedJobCleanupPendingExitCode);
+            return mode == "probe-preview-failure-descendant" || mode == "workspace-failure-descendant" ? 7 : 0;
         }
         if (mode == "probe-node") return RunNode(node, directory, "windows-e2e/probe-node.mjs", "a \"quoted\" value", "tail\\", "unicode-\uD55C\uAE00");
         if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true"
@@ -344,9 +352,9 @@ public static class RestrictedE2eRunner
             int code = RunNode(node, directory, script);
             if (code != 0) return code;
         }
-        if (mode == "runtime-discovery") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--runtime-discovery");
-        if (mode == "native-management") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--native-management");
-        if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs");
+        if (mode == "runtime-discovery") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--runtime-discovery", OwnedJobCleanupArgument);
+        if (mode == "native-management") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--native-management", OwnedJobCleanupArgument);
+        if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs", OwnedJobCleanupArgument);
         return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs");
     }
@@ -581,7 +589,7 @@ public static class RestrictedE2eRunner
                 stage = "child_exit";
                 uint code; Require(GetExitCodeProcess(child.Process, out code), "Read E2E exit code");
                 childExitObserved = true; childExitCode = code;
-                bool pendingCode = code == OwnedJobCleanupPendingExitCode && PreviewJobGateMode(mode);
+                bool pendingCode = code == OwnedJobCleanupPendingExitCode && OwnedJobGateMode(mode);
                 if (code != 0 && !pendingCode) Console.Error.WriteLine("restricted_e2e_child_exit:phase=child_exit,mode=" + mode + ",code=" + code + ",hex=0x" + code.ToString("X8"));
                 if (mode == "probe-descendant")
                 {
@@ -599,7 +607,7 @@ public static class RestrictedE2eRunner
                 if (Valid(child.Process))
                 {
                     if (!assigned) Require(TerminateProcess(child.Process, 125), "Terminate unassigned suspended child");
-                    else if (Valid(job) && PreviewJobGateMode(mode))
+                    else if (Valid(job) && OwnedJobGateMode(mode))
                     {
                         if (cleanupWasForced)
                         {
@@ -609,7 +617,7 @@ public static class RestrictedE2eRunner
                         }
                         else
                         {
-                            bool naturallyEmpty = WaitForNaturalJobEmpty(job, PreviewJobWaitMilliseconds(mode));
+                            bool naturallyEmpty = WaitForNaturalJobEmpty(job, OwnedJobWaitMilliseconds(mode));
                             if (naturallyEmpty)
                             {
                                 Console.WriteLine("{\"ownedJobEmpty\":true,\"ownedJobCleanup\":\"natural\"}");
@@ -630,7 +638,7 @@ public static class RestrictedE2eRunner
                     }
                     else if (Valid(job)) TerminateAndConfirmJob(job);
                     Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm E2E child exit");
-                    if (assigned && !PreviewJobGateMode(mode)) Console.WriteLine("{\"ownedJobEmpty\":true}");
+                    if (assigned && !OwnedJobGateMode(mode)) Console.WriteLine("{\"ownedJobEmpty\":true}");
                 }
             }
             finally

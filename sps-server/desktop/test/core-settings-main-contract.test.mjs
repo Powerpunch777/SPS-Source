@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 
 const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
 
@@ -62,4 +63,24 @@ test("restoring account routing cannot infer Host ownership from a top-level pro
   assert.doesNotMatch(restore, /ownerHostOwnerSubject\s*=(?!=)/);
   const adoption = section("async function adoptLegacyOwnerHostIfNeeded() {", "function sendDesktopAccountStatus()");
   assert.match(adoption, /if \(!hasPendingLegacyDesktopOwnerAdoption\(state\) \|\| !currentDesktopAccount\(\)\)/);
+});
+
+test("Core Settings and tray use one deferred normal quit without a force-stop or Host dependency", () => {
+  const declaration = section("function requestDesktopQuit() {", "const startedHidden");
+  let quits = 0;
+  const scheduled = [];
+  const context = { desktopQuitRequested: false, isQuitting: false,
+    app: { quit() { quits++; } }, setImmediate(action) { scheduled.push(action); } };
+  runInNewContext(`${declaration}; requestDesktopQuit(); requestDesktopQuit();`, context);
+  assert.equal(context.isQuitting, true);
+  assert.equal(context.desktopQuitRequested, true);
+  assert.equal(quits, 0, "The existing trusted IPC can acknowledge before frame teardown");
+  assert.equal(scheduled.length, 1);
+  scheduled[0]();
+  assert.equal(quits, 1);
+  assert.match(main, /requestQuit: requestDesktopQuit,/);
+  assert.match(main, /label: "Quit SPS Desktop", click: requestDesktopQuit/);
+  assert.doesNotMatch(declaration, /app\.exit|\.kill\(|taskkill|assertRegistryOwner|currentDesktopAccount|startOwnerHost/);
+  const quit = section('app.on("before-quit"', "});", main.indexOf('app.on("before-quit"'));
+  assert.match(quit, /stopDesktopRuntimeGracefully/);
 });

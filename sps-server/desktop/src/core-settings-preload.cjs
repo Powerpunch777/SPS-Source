@@ -35,6 +35,10 @@ const coreSettingsApi = Object.freeze({
   inspectTransfer: async () => {
     await ipcRenderer.invoke("desktop:core-settings-inspect-transfer");
   },
+  quitDesktop: (...args) => {
+    if (args.length !== 0) return Promise.reject(new TypeError("quitDesktop accepts no arguments."));
+    return ipcRenderer.invoke("desktop:core-settings-quit-desktop");
+  },
   prepareNativeIdentity: (input) => {
     if (!input || typeof input.serverAddress !== "string") {
       return Promise.reject(new TypeError("A private certificate address is required."));

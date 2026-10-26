@@ -93,7 +93,7 @@ test("No-AI Electron acceptance is opt-in, source-only, and never enters the Age
   assert.match(script, /noAiChecklist && !sourceElectron/);
   assert.match(script, /if \(noAiChecklist\) \{[\s\S]*?runNoAiChecklistAcceptance\([\s\S]*?\} else \{\s*\/\/ This fixture uses only an isolated/);
   const closer = script.slice(script.indexOf("async function closeDesktopForRestart()"), script.indexOf("const setupTarget"));
-  assert.ok(closer.indexOf('once(child, "exit")') < closer.indexOf('.command("Browser.close")'), "Observe process exit before closing CDP");
+  assert.ok(closer.indexOf('once(child, "exit")') < closer.indexOf('requestBrowserShutdown()'), "Observe process exit before closing CDP");
   assert.match(closer, /assert.equal\(child.exitCode, 0/);
   assert.doesNotMatch(closer, /taskkill/);
   const acceptance = await readFile(new URL("../scripts/no-ai-checklist-acceptance.mjs", import.meta.url), "utf8");
@@ -142,11 +142,15 @@ test("No-AI restart reopens the exact reference UI even when startup restores an
   assert.ok(acceptance.includes("await restart({ companyPrefix: company.issuePrefix, pluginId: plugin.id })"));
   const restart = script.slice(script.indexOf("restart: async ({ companyPrefix, pluginId })"), script.indexOf("openRecovery: async () => {"));
   assert.ok(restart.includes("const expectedPath = `/${companyPrefix}/plugins/${pluginId}`"));
-  assert.ok(restart.indexOf("location.assign") < restart.indexOf("await waitForPage(workspaceCdp"));
+  assert.ok(restart.indexOf('command("Page.navigate", { url: expectedUrl })') < restart.indexOf("await waitForPage(workspaceCdp"));
+  assert.ok(restart.includes("const expectedUrl = new URL(expectedPath, restartedTarget.url).href"));
+  assert.doesNotMatch(restart, /evaluate\(`location\.assign/);
   const predicate = restart.match(/await waitForPage\(workspaceCdp, (page => [^\n]+),/);
   assert.ok(predicate);
   const expectedPath = "/REF/plugins/fixture-id";
-  const ready = runInNewContext(`(${predicate[1]})`, { URL, expectedPath });
+  const expectedUrl = `http://127.0.0.1:31310${expectedPath}`;
+  const ready = runInNewContext(`(${predicate[1]})`, { expectedUrl });
+  assert.equal(ready({ route: "about:blank", checklistReady: false }), false);
   assert.equal(ready({ route: "http://127.0.0.1:31310/MOD", body: "Model request fixture", checklistReady: false }), false);
   assert.equal(ready({ route: `http://127.0.0.1:31310${expectedPath}`, checklistReady: false }), false);
   assert.equal(ready({ route: "http://127.0.0.1:31310/OTHER/plugins/fixture-id", checklistReady: true }), false);

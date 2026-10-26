@@ -7,6 +7,7 @@ const nativePrepareButton = byId("prepare-native-identity");
 const nativeAddressInput = byId("native-certificate-address");
 const nativeDevicesRefreshButton = byId("refresh-native-devices");
 const nativeDevicesList = byId("native-devices-list");
+const quitDesktopButton = byId("quit-desktop");
 const pending = new Set();
 
 let currentStatus = null;
@@ -14,6 +15,7 @@ let nativeConnectivity = null;
 let statusLoading = false;
 let nativeDevices = null;
 let nativeDevicesLoading = false;
+let quitPending = false;
 let nativeDeviceButtons = [];
 let nativeDevicesRequest = 0;
 
@@ -124,12 +126,14 @@ function hasReportedError(value) {
 }
 
 function setNotice(message = "", isError = false) {
+  if (quitPending && message !== "Closing SPS Desktop...") return;
   actionNotice.textContent = message;
   actionNotice.classList.toggle("error", isError);
 }
 
 function syncControls() {
-  const busy = statusLoading || nativeDevicesLoading || pending.size > 0;
+  const busy = statusLoading || nativeDevicesLoading || pending.size > 0 || quitPending;
+  quitDesktopButton.disabled = pending.size > 0 || quitPending;
   byId("native-identity-form").hidden = nativeConnectivity?.canPrepare !== true || currentStatus?.canManageHost !== true;
   for (const button of actionButtons) {
     const ownerAction = ["restart-host", "export-host"].includes(button.dataset.action);
@@ -221,7 +225,7 @@ function renderNativeDevices(value) {
 }
 
 async function loadNativeDevices() {
-  if (nativeDevicesLoading || pending.size > 0) return;
+  if (nativeDevicesLoading || pending.size > 0 || quitPending) return;
   nativeDevicesLoading = true;
   const request = ++nativeDevicesRequest;
   clearNativeDevices({ loading: true });
@@ -242,7 +246,7 @@ async function loadNativeDevices() {
 }
 
 async function runNativeDeviceAction(action, deviceId) {
-  if (statusLoading || nativeDevicesLoading || pending.size > 0 || !currentStatus
+  if (statusLoading || nativeDevicesLoading || pending.size > 0 || quitPending || !currentStatus
     || currentStatus.canManageHost !== true || nativeDevices?.state !== "available") return;
   const device = nativeDevices.devices.find(item => item.id === deviceId);
   if (!device || (action === "approve" && device.status !== "pending")
@@ -342,7 +346,7 @@ function showStatusLoading() {
 }
 
 async function loadStatus() {
-  if (statusLoading || pending.size > 0) return;
+  if (statusLoading || pending.size > 0 || quitPending) return;
   showStatusLoading();
   try {
     const status = await window.spsCoreSettings.getStatus();
@@ -366,7 +370,7 @@ async function loadStatus() {
 }
 
 async function prepareNativeIdentity() {
-  if (!currentStatus || statusLoading || pending.size > 0 || !nativeConnectivity
+  if (!currentStatus || statusLoading || pending.size > 0 || quitPending || !nativeConnectivity
     || nativeConnectivity.canPrepare !== true || currentStatus.canManageHost !== true || !nativeAddressInput.value.trim()) return;
 
   pending.add("prepare-native-identity");
@@ -386,7 +390,7 @@ async function prepareNativeIdentity() {
 }
 
 async function runAction(name, task, successMessage, { restorePluginToggle = false } = {}) {
-  if (!currentStatus || statusLoading || pending.size > 0) return;
+  if (!currentStatus || statusLoading || pending.size > 0 || quitPending) return;
   pending.add(name);
   setNotice();
   syncControls();
@@ -440,5 +444,20 @@ retryButton.addEventListener("click", () => void loadStatus());
 nativeDevicesRefreshButton.addEventListener("click", () => void loadNativeDevices());
 nativeAddressInput.addEventListener("input", () => syncControls());
 nativePrepareButton.addEventListener("click", () => void prepareNativeIdentity());
+quitDesktopButton.addEventListener("click", () => void quitDesktop());
 window.addEventListener("focus", () => void loadStatus());
 void loadStatus();
+
+async function quitDesktop() {
+  if (pending.size > 0 || quitPending) return;
+  quitPending = true;
+  setNotice("Closing SPS Desktop...");
+  syncControls();
+  try {
+    await window.spsCoreSettings.quitDesktop();
+  } catch {
+    quitPending = false;
+    setNotice("Could not close SPS Desktop. Try again.", true);
+    syncControls();
+  }
+}

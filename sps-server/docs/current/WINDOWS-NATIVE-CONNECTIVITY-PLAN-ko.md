@@ -16,6 +16,15 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+사용자 승인 후 Core Settings의 로컬 정상 종료 버튼과
+[앱 시험 종료 검증](../reviews/WORKSPACE-E2E-CLEANUP-2026-10-26.md)을 보완했다.
+Desktop 883건 중 882건 통과·기존 제외 1건, 별도 Settings 7가지 소스 앱 시험과
+No-AI·준비된 Host의 정상 종료/재시작·출력 종료·임시 데이터 정리를 확인했다.
+설치본 교체나 최종 HEAD의 hosted CI·전체 자식 Job 종료 증거를 뜻하지 않는다.
+종료는 계정·Agent·Plugin·Host 권한과 별개인 로컬 앱 제어이며, LAN을 켜거나
+실행 권한을 추가하지 않는다. 실제 종료·출력 EOF와 CI 소유 Job 자연 종료는
+분리해서 기록하며, 강제 정리는 성공으로 인정하지 않는다.
+
 후속 [Native 세션 교환](../reviews/NATIVE-SESSION-EXCHANGE-2026-10-26.md)은 기존
 Identity 검증·사용자·세션 저장을 재사용하는 비활성 TLS 전용 핸들러다. 등록 전에
 Bearer를 세션 쿠키로 교환하되 기기 승인·Workspace/Plugin/Node/Source 권한은

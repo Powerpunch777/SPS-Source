@@ -98,5 +98,37 @@ test("prepared Native management exercises the real Main/Core route without a co
     assert.doesNotMatch(sanitizedFailure, /JSON\.stringify\((?:status|native|error|document|appOutput)\)/);
     assert.doesNotMatch(sanitizedFailure, /appOutput|describePage|console\.log|errorText\(error\)\}\n/);
   }
-  assert.match(script, /if \(nativeManagement\) throw new Error\("Prepared Native Host E2E temporary data cleanup could not be confirmed/);
+  assert.match(script, /temporaryDataRemoved = await attempt/);
+  assert.match(script, /Workspace E2E cleanup is incomplete; the test cannot be accepted/);
+});
+
+test("Workspace acceptance retains every Main and does not turn forced cleanup into success", async () => {
+  const script = await readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8");
+  assert.ok(script.indexOf("launched.track(child)") > script.indexOf("child = spawn(binary"));
+  const restart = script.slice(script.indexOf("async function closeDesktopForRestart()"), script.indexOf("const setupTarget"));
+  for (const assertion of ["assert.equal(child.exitCode, 0", "await launched.waitForOutputEnd(5000)",
+    "assert.equal(prior.orderly, prior.children", "assert.equal(prior.outputFailed, 0", "assert.equal(prior.outputEnded, prior.children * 2"])
+    assert.ok(restart.includes(assertion), `Missing restart fence ${assertion}`);
+  assert.ok(restart.indexOf("assert.equal(prior.outputEnded") < restart.indexOf("workspaceCdp = null"));
+  const cleanup = script.slice(script.lastIndexOf("} finally {\n  const failedStages"));
+  for (const assertion of ["shutdownPreviewE2eDesktop", 'if (!ownedJobCleanupPending) await attempt("packaged_orphans", () => assertNoPackagedRuntimeOrphans',
+    "boundedCleanup(mockIdentity.close()", "workspaceE2eCleanupDisposition", "identityClosed: identityClosed === true", "launched.dispose()",
+    "new AggregateError", "...(acceptanceFailure ? [acceptanceFailure] : [])", "process.exit(cleanupDisposition.exitCode)"])
+    assert.ok(cleanup.includes(assertion), `Missing final cleanup gate ${assertion}`);
+  assert.match(script, /timeout: 15_000, windowsHide: true/);
+  assert.doesNotMatch(script, /Stop-Process/);
+  assert.doesNotMatch(cleanup, /\.catch\([^)]*console\.warn/);
+  assert.ok(cleanup.indexOf('await attempt("identity_close", () => boundedCleanup(mockIdentity.close()')
+    < cleanup.indexOf("workspaceE2eCleanupDisposition"), "Always attempt mock fixture closure before qualification");
+  assert.ok(cleanup.indexOf("process.exit(cleanupDisposition.exitCode)") > cleanup.indexOf("evidence flushed"));
+  const browserShutdown = script.slice(script.indexOf("async function requestBrowserShutdown()"), script.indexOf("async function describePage"));
+  assert.match(browserShutdown, /setupCdp\.evaluate\("Boolean\(document\.querySelector\('#quit-desktop'\)\)"\)/);
+  assert.match(browserShutdown, /await click\(setupCdp, "#quit-desktop", "Quit SPS Desktop through Core Settings"\)/);
+  assert.ok(browserShutdown.indexOf('await click(setupCdp, "#quit-desktop"') < browserShutdown.indexOf("/json/version"));
+  assert.doesNotMatch(browserShutdown, /spsCoreSettings\.quitDesktop|ipcRenderer|desktop:core-settings-quit/);
+  assert.match(browserShutdown, /\/json\/version/);
+  assert.match(browserShutdown, /endpoint\.hostname, "127\.0\.0\.1"/);
+  assert.match(browserShutdown, /endpoint\.port, String\(debugPort\)/);
+  assert.match(browserShutdown, /await browser\.command\("Browser.close"\)/);
+  assert.doesNotMatch(script, /(?:quitCdp|workspaceCdp|setupCdp)\.command\("Browser.close"\)/);
 });

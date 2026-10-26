@@ -122,6 +122,125 @@ test("async authority denial is awaited and action errors never expose details",
   await assert.rejects(failed.invoke("restart-host"), error => !error.message.includes("secret") && /could not complete/.test(error.message));
 });
 
+test("Desktop quit is an unauthenticated local action and returns only a scheduled-request acknowledgement", async () => {
+  let statusReads = 0;
+  const ctx = setup({
+    authorizeMutation: undefined,
+    getStatus: async () => { statusReads += 1; throw new Error("status must not be read"); },
+    requestQuit: (...args) => { ctx.calls.push(["quit", args]); },
+  });
+  await ctx.controller.show();
+
+  let getterRan = false;
+  const extraArgument = Object.defineProperty({}, "secret", {
+    enumerable: true,
+    get() { getterRan = true; throw new Error("argument getter must not run"); },
+  });
+  await assert.rejects(ctx.invoke("quit-desktop", [extraArgument]), /Unexpected Core Settings arguments/);
+  assert.equal(getterRan, false);
+
+  assert.deepEqual(await ctx.invoke("quit-desktop"), { requested: true });
+  assert.deepEqual(ctx.calls.filter(value => Array.isArray(value) && value[0] === "quit"), [["quit", []]]);
+  assert.equal(ctx.calls.includes("authorize"), false);
+  assert.equal(statusReads, 0);
+});
+
+test("Desktop quit requires the exact live Core Settings main frame", async () => {
+  const foreign = setup({ requestQuit: () => foreign.calls.push("quit") });
+  await foreign.controller.show();
+  await assert.rejects(foreign.invoke("quit-desktop", [], { sender: {}, senderFrame: {} }), /trusted Native/);
+  await assert.rejects(foreign.invoke("quit-desktop", [], {
+    ...foreign.event(), senderFrame: { url: foreign.event().senderFrame.url },
+  }), /trusted Native/);
+  assert.equal(foreign.calls.includes("quit"), false);
+
+  const navigated = setup({ requestQuit: () => navigated.calls.push("quit") });
+  await navigated.controller.show();
+  navigated.event().senderFrame.url = "https://untrusted.example";
+  await assert.rejects(navigated.invoke("quit-desktop"), /trusted Native/);
+  assert.equal(navigated.calls.includes("quit"), false);
+
+  const closed = setup({ requestQuit: () => closed.calls.push("quit") });
+  await closed.controller.show();
+  closed.windows[0].destroy();
+  await assert.rejects(closed.invoke("quit-desktop"), /trusted Native/);
+  assert.equal(closed.calls.includes("quit"), false);
+});
+
+test("Desktop quit rechecks sender state when its serialized action begins", async () => {
+  const navigated = setup({ requestQuit: () => navigated.calls.push("quit") });
+  await navigated.controller.show();
+  const navigationRequest = navigated.invoke("quit-desktop");
+  navigated.event().senderFrame.url = "https://untrusted.example";
+  await assert.rejects(navigationRequest, /could not complete/);
+  assert.equal(navigated.calls.includes("quit"), false);
+
+  const closed = setup({ requestQuit: () => closed.calls.push("quit") });
+  await closed.controller.show();
+  const closeRequest = closed.invoke("quit-desktop");
+  closed.windows[0].destroy();
+  await assert.rejects(closeRequest, /could not complete/);
+  assert.equal(closed.calls.includes("quit"), false);
+});
+
+test("Desktop quit does not require Core authority and stays serialized with existing mutations", async () => {
+  let releaseMutation;
+  let mutationStarted;
+  const started = new Promise(resolve => { mutationStarted = resolve; });
+  const mutationGate = new Promise(resolve => { releaseMutation = resolve; });
+  const ctx = setup({
+    setPluginsDisabled: async () => { mutationStarted(); await mutationGate; },
+    requestQuit: () => ctx.calls.push("quit"),
+  });
+  await ctx.controller.show();
+
+  const pendingMutation = ctx.invoke("set-plugins-disabled", [{ disabled: true }]);
+  await started;
+  await assert.rejects(ctx.invoke("quit-desktop"), /could not complete/);
+  assert.equal(ctx.calls.includes("quit"), false);
+  releaseMutation();
+  await pendingMutation;
+
+  assert.deepEqual(await ctx.invoke("quit-desktop"), { requested: true });
+  assert.equal(ctx.calls.filter(value => value === "quit").length, 1);
+});
+
+test("Desktop quit callback failures and missing callbacks fail closed without details", async () => {
+  for (const requestQuit of [
+    undefined,
+    () => { throw new TypeError("secret-token C:\\private\\user-data"); },
+    async () => { throw new Error("secret-token C:\\private\\user-data"); },
+  ]) {
+    const ctx = setup({ requestQuit });
+    await ctx.controller.show();
+    await assert.rejects(ctx.invoke("quit-desktop"), error => {
+      assert.equal(error.message, "The Core Settings action could not complete. Check the local Host status and retry.");
+      assert.doesNotMatch(error.message, /secret-token|private/);
+      return true;
+    });
+  }
+});
+
+test("Desktop quit invokes its callback once per call and rechecks the sender after awaiting it", async () => {
+  let releaseQuit;
+  let quitStarted;
+  const started = new Promise(resolve => { quitStarted = resolve; });
+  const quitGate = new Promise(resolve => { releaseQuit = resolve; });
+  const ctx = setup({ requestQuit: async (...args) => { ctx.calls.push(["quit", args]); quitStarted(); await quitGate; } });
+  await ctx.controller.show();
+
+  const pending = ctx.invoke("quit-desktop");
+  await started;
+  ctx.event().senderFrame.url = "https://untrusted.example";
+  releaseQuit();
+  await assert.rejects(pending, /could not complete/);
+  assert.deepEqual(ctx.calls.filter(value => Array.isArray(value) && value[0] === "quit"), [["quit", []]]);
+
+  ctx.event().senderFrame.url = pathToFileURL(path.resolve("renderer/core-settings.html")).href;
+  assert.deepEqual(await ctx.invoke("quit-desktop"), { requested: true });
+  assert.equal(ctx.calls.filter(value => Array.isArray(value) && value[0] === "quit").length, 2);
+});
+
 test("restart rechecks ownership after the Native confirmation", async () => {
   let ownsHost = true;
   const ctx = setup({

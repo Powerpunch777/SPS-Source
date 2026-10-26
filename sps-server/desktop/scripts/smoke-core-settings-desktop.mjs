@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { promisify } from "node:util";
 import path from "node:path";
 import os from "node:os";
+import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const binary = path.join(root, "node_modules", "electron", "dist", process.platform === "win32" ? "electron.exe" : "electron");
@@ -57,6 +58,7 @@ const child = spawn(binary, [".", ...(stateUnavailable ? [] : ["--sps-core-setti
   stdio: "ignore",
 });
 let socket;
+let emergencyStopUsed = false;
 
 try {
   let target;
@@ -153,6 +155,15 @@ try {
         fontLoaded: [...document.fonts].some(font => font.family === 'Pretendard Variable' && font.status === 'loaded') }; })()`);
     assert.equal(layout.overflow, false, "Core Settings overflows horizontally.");
     assert.equal(layout.fontLoaded, true);
+    const quitPresentation = await evaluate(`(() => {
+      const button = document.querySelector('#quit-desktop');
+      button.scrollIntoView({ block: 'center' });
+      const bounds = button.getBoundingClientRect();
+      return { visible: bounds.width > 0 && bounds.height > 0 && bounds.top >= 0 && bounds.bottom <= innerHeight,
+        enabled: !button.disabled };
+    })()`);
+    assert.equal(quitPresentation.visible, true, `Quit button is not visible at ${width}px.`);
+    assert.equal(quitPresentation.enabled, true, `Quit button is disabled at ${width}px.`);
     if (screenshotRoot) {
       const capture = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
       await writeFile(path.join(screenshotRoot, `core-settings-${scenario}-${width}x${height}.png`), Buffer.from(capture.data, "base64"));
@@ -162,14 +173,47 @@ try {
   await evaluate("document.querySelector('#retry-status').click()");
   await pause(150);
   assert.equal(await evaluate("document.querySelector('#status-details').hidden"), false);
-  console.log(`Independent Core Settings source Electron smoke passed (${scenario}): no Core session, no Workspace bridge, owner mutations blocked, desktop/mobile layout and local font verified.`);
   if (holdMs) { console.log(`Keeping only this isolated test window open for ${holdMs}ms observation.`); await pause(holdMs); }
+
+  let quitButtonClicked = false;
+  await call("Emulation.clearDeviceMetricsOverride");
+  const quitResult = await shutdownPreviewE2eDesktop({
+    child,
+    requestBrowserClose: async () => {
+      const clicked = await evaluate(`(() => {
+        const button = document.querySelector('#quit-desktop');
+        if (!button || button.hidden || button.disabled) return false;
+        button.scrollIntoView({ block: 'center' });
+        const bounds = button.getBoundingClientRect();
+        if (bounds.width === 0 || bounds.height === 0 || bounds.top < 0 || bounds.bottom > innerHeight) return false;
+        button.click();
+        return true;
+      })()`);
+      assert.equal(clicked, true, "Could not click the visible Core Settings Quit button.");
+      quitButtonClicked = true;
+    },
+  });
+  assert.equal(quitButtonClicked, true, "The spawned Desktop exited before its Quit button was clicked.");
+  assert.equal(quitResult.graceful, true,
+    `Core Settings Quit did not naturally exit its spawned Electron process with code 0: ${JSON.stringify(quitResult)}.`);
 } finally {
   socket?.close();
-  if (child.exitCode === null && child.pid) {
-    if (process.platform === "win32") await promisify(execFile)("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"]).catch(() => {});
-    else child.kill("SIGKILL");
-    await Promise.race([once(child, "exit").catch(() => {}), pause(5000)]);
+  if (child.exitCode === null && child.signalCode === null && child.pid) {
+    emergencyStopUsed = true;
+    let childExitConfirmed = false;
+    const exited = once(child, "exit").then(([code, signal]) => {
+      childExitConfirmed = Number.isInteger(code) || typeof signal === "string";
+    }).catch(() => {});
+    if (process.platform === "win32") {
+      await promisify(execFile)("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
+        timeout: 5000,
+        windowsHide: true,
+      }).catch(() => {});
+    } else {
+      child.kill("SIGKILL");
+    }
+    await Promise.race([exited, pause(5000)]);
+    assert.equal(childExitConfirmed, true, "Could not confirm the spawned Main exited; refusing recursive fixture cleanup.");
   }
   assert.equal(path.dirname(userData), path.resolve(os.tmpdir()));
   assert.ok(path.basename(userData).startsWith("sps-core-settings-e2e-"));
@@ -186,4 +230,6 @@ try {
     try { await rm(canonical, { recursive: true, force: true }); cleaned = true; break; } catch { await pause(250); }
   }
   assert.equal(cleaned, true, "Could not remove isolated Core Settings test data.");
+  assert.equal(emergencyStopUsed, false, "Emergency-stopping the spawned Desktop cannot qualify as a passing Quit smoke.");
 }
+console.log(`Independent Core Settings source Electron smoke passed (${scenario}): no Core session, no Workspace bridge, owner mutations blocked, desktop/mobile layout and local font verified, and the Quit button closed the spawned process naturally.`);

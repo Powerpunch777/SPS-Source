@@ -120,6 +120,47 @@ test("Windows CI E2E does not normalize a spoofed pending exit from an unrelated
   });
 });
 
+test("Windows CI E2E accepts workspace pending cleanup only after natural owned-Job emptiness", { skip: process.platform !== "win32" }, async () => {
+  const result = await run("workspace-pending");
+  const output = assertCleanup(result.stdout);
+  assert.deepEqual(output.find(record => record.ownedJobCleanup), { ownedJobEmpty: true, ownedJobCleanup: "natural" });
+  assert.equal(result.stderr, "");
+});
+
+test("Windows CI E2E rejects workspace pending cleanup after force-cleaning a live descendant", { skip: process.platform !== "win32" }, async () => {
+  await assert.rejects(run("workspace-pending-descendant"), failure => {
+    assert.equal(failure.code, 125);
+    const output = assertCleanup(failure.stdout);
+    assert.deepEqual(output.find(record => record.ownedJobCleanup), {
+      ownedJobEmpty: true, ownedJobCleanup: "forced", accepted: false,
+    });
+    assert.equal(output.some(record => record.ownedDescendantCreated === true), true);
+    return true;
+  });
+});
+
+test("Windows CI E2E preserves a workspace child failure after force-cleaning its descendant", { skip: process.platform !== "win32" }, async () => {
+  await assert.rejects(run("workspace-failure-descendant"), failure => {
+    assert.equal(failure.code, 7);
+    const output = assertCleanup(failure.stdout);
+    assert.deepEqual(output.find(record => record.ownedJobCleanup), {
+      ownedJobEmpty: true, ownedJobCleanup: "forced", accepted: false,
+    });
+    assert.match(failure.stderr, /restricted_e2e_child_exit:phase=child_exit,mode=workspace-failure-descendant,code=7,hex=0x00000007/);
+    return true;
+  });
+});
+
+test("Windows CI E2E rejects workspace zero exit without the pending protocol", { skip: process.platform !== "win32" }, async () => {
+  await assert.rejects(run("workspace-zeroexit"), failure => {
+    assert.equal(failure.code, 125);
+    const output = assertCleanup(failure.stdout);
+    assert.deepEqual(output.find(record => record.ownedJobCleanup), { ownedJobEmpty: true, ownedJobCleanup: "natural" });
+    assert.match(failure.stderr, /restricted_e2e_pending_exit_required:mode=workspace-zeroexit/);
+    return true;
+  });
+});
+
 test("Windows CI E2E forwards Node output and exact quoted, trailing-slash and Unicode arguments", { skip: process.platform !== "win32" }, async () => {
   const result = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Mode", "probe-node"], {
     env: { ...process.env, NODE_OPTIONS: "--no-warnings", ELECTRON_RUN_AS_NODE: "1", GITHUB_TOKEN: "fixture-ci-token", SPS_CI_E2E_SECRET_SENTINEL: "fixture-secret" },
@@ -156,12 +197,13 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   assert.ok(Number.isInteger(pendingExitCode));
   assert.ok(source.includes(`const string OwnedJobCleanupArgument = "${cleanupArgument}";`));
   assert.ok(source.includes(`const uint OwnedJobCleanupPendingExitCode = ${pendingExitCode};`));
-  for (const mode of ["probe-preview-pending", "probe-preview-pending-descendant", "probe-preview-failure-descendant", "probe-preview-zeroexit", "probe-exit-76"]) {
+  for (const mode of ["probe-preview-pending", "probe-preview-pending-descendant", "probe-preview-failure-descendant", "probe-preview-zeroexit", "workspace-pending", "workspace-pending-descendant", "workspace-failure-descendant", "workspace-zeroexit", "probe-exit-76"]) {
     assert.match(wrapper, new RegExp(`'${mode}'`));
     assert.match(source, new RegExp(`value == "${mode}"`));
   }
   assert.match(source, /if \(mode == "plugin-preview"\) return RunNode\(node, directory, "smoke-plugin-preview-desktop\.mjs", OwnedJobCleanupArgument\);/);
-  assert.match(source, /WaitForNaturalJobEmpty\(job, PreviewJobWaitMilliseconds\(mode\)\)/);
+  assert.match(source, /WaitForNaturalJobEmpty\(job, OwnedJobWaitMilliseconds\(mode\)\)/);
+  assert.doesNotMatch(source, /PreviewJobGateMode|PreviewJobWaitMilliseconds/);
   assert.ok(source.includes('Console.WriteLine("{\\"ownedJobEmpty\\":true,\\"ownedJobCleanup\\":\\"natural\\"}");'));
   assert.ok(source.includes('Console.WriteLine("{\\"ownedJobEmpty\\":true,\\"ownedJobCleanup\\":\\"forced\\",\\"accepted\\":false}");'));
   assert.match(source, /childExitCode == OwnedJobCleanupPendingExitCode\) resultCode = 0/);
@@ -188,8 +230,12 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   assert.ok(jobClose >= 0 && desktopClose > jobClose && tokenClose > desktopClose);
   assert.doesNotMatch(source, /SANDBOX_INERT|CREATE_BREAKAWAY_FROM_JOB|LogonUser|SetUserObjectSecurity|SetSecurityInfo|net user|New-LocalUser/);
   assert.match(wrapper, /ValidateSet\([^)]*'native-management'/);
+  assert.match(wrapper, /\$workspaceProbeModes = @\('workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit'\)/);
+  assert.match(wrapper, /\$workspaceProbeModes -ccontains \$Mode/);
   assert.match(source, /value == "native-management"/);
-  assert.match(source, /if \(mode == "native-management"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", "--native-management"\);/);
+  assert.match(source, /if \(mode == "runtime-discovery"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", "--runtime-discovery", OwnedJobCleanupArgument\);/);
+  assert.match(source, /if \(mode == "native-management"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", "--native-management", OwnedJobCleanupArgument\);/);
+  assert.match(source, /if \(mode == "workspace-surfaces"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", OwnedJobCleanupArgument\);/);
   assert.match(source, /start\.UseShellExecute = false;/);
   assert.doesNotMatch(source, /(?:powershell|cmd\.exe)/i);
   assert.match(wrapper, /Write-ExitDiagnostic 'restricted_e2e_helper_exit'/);

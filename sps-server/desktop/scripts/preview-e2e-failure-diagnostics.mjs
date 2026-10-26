@@ -1,7 +1,8 @@
 const PHASES = new Set(["bootstrap", "identity_start", "desktop_launch", "owner_creation", "owner_workspace",
   "agent_registration", "builder_tools", "builder_project", "builder_surface", "developer_registry",
   "project_handoff", "sdk_project", "lead_folder", "preview_feedback", "live_authoring", "authoring_gates",
-  "preview_apply", "isolation_checks", "packaging", "diagnostics", "production_install", "cleanup"]);
+  "preview_apply", "isolation_checks", "packaging", "diagnostics", "production_install", "cleanup",
+  "workspace_surfaces", "workspace_restart", "native_recovery"]);
 const OPERATIONS = new Set(["plugin_tools_list", "plugin_tool_execute", "plugin_list", "agent_get",
   "agent_create", "heartbeat_invoke", "project_list", "project_create"]);
 const CODES = new Set(["ERR_ASSERTION", "EACCES", "EPERM", "ENOENT", "EEXIST", "EINVAL", "EBUSY",

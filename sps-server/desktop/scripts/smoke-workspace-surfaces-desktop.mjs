@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { mkdtemp, rm, access, readFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, access, readFile, mkdir, writeFile, lstat, realpath } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { once } from "node:events";
@@ -12,6 +12,11 @@ import { fileURLToPath } from "node:url";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { runNoAiChecklistAcceptance } from "./no-ai-checklist-acceptance.mjs";
 import { saveCoreRecoverySettings } from "../src/core-recovery-store.mjs";
+import { OWNED_JOB_CLEANUP_ARGUMENT } from "./preview-e2e-cleanup-contract.mjs";
+import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
+import { createWorkspaceE2eChildTracker } from "./workspace-e2e-child-tracker.mjs";
+import { workspaceE2eCleanupDisposition } from "./workspace-e2e-cleanup-contract.mjs";
+import { annotatePreviewE2eCdpFailure, snapshotPreviewE2eFailure } from "./preview-e2e-failure-diagnostics.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -26,6 +31,9 @@ const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
 const runtimeDiscovery = process.argv.includes("--runtime-discovery");
 const noAiChecklist = runtimeDiscovery || process.argv.includes("--no-ai-checklist");
 const nativeManagement = process.argv.includes("--native-management");
+const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
+const launched = createWorkspaceE2eChildTracker();
+let cleanupDisposition;
 
 if (process.platform !== "win32") {
   throw new Error("Workspace Surfaces Desktop E2E currently targets the Windows release.");
@@ -92,6 +100,13 @@ async function findAvailablePort() {
 }
 
 async function removeTemporaryDirectory(directory) {
+  const resolved = path.resolve(directory);
+  const samePath = (a, b) => a.toLowerCase() === b.toLowerCase();
+  assert.ok(samePath(path.dirname(resolved), path.resolve(os.tmpdir()))
+    && path.basename(resolved).startsWith("sps-workspace-surfaces-e2e-"), "Invalid owned E2E cleanup target");
+  const stat = await lstat(resolved);
+  assert.ok(stat.isDirectory() && !stat.isSymbolicLink() && samePath(await realpath(resolved), resolved),
+    "Linked owned E2E cleanup target");
   let lastError = null;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
@@ -107,11 +122,12 @@ async function removeTemporaryDirectory(directory) {
 
 async function stopProcessTree(child) {
   if (!child?.pid || child.exitCode !== null) return;
-  await execFileAsync("taskkill", ["/pid", String(child.pid), "/T", "/F"]).catch(() => undefined);
+  await execFileAsync("taskkill", ["/pid", String(child.pid), "/T", "/F"],
+    { timeout: 15_000, windowsHide: true }).catch(() => undefined);
   await Promise.race([once(child, "exit").catch(() => undefined), delay(8_000)]);
 }
 
-async function stopPackagedRuntimeOrphans(userDataDirectory) {
+async function assertNoPackagedRuntimeOrphans(userDataDirectory) {
   const runtimeSuffix = path.join(userDataDirectory, "owner-host-runtime").replaceAll("\\", "/");
   const script = [
     `$suffix = ${JSON.stringify(runtimeSuffix)}`,
@@ -120,16 +136,17 @@ async function stopPackagedRuntimeOrphans(userDataDirectory) {
     "  $_.CommandLine -and",
     "  (($_.CommandLine -replace '\\\\', '/').IndexOf($suffix, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)",
     "}",
-    "$targets | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-    "Start-Sleep -Milliseconds 300",
-    "$remaining = Get-CimInstance Win32_Process | Where-Object {",
-    "  ($_.Name -eq 'node.exe' -or $_.Name -eq 'postgres.exe') -and",
-    "  $_.CommandLine -and",
-    "  (($_.CommandLine -replace '\\\\', '/').IndexOf($suffix, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)",
-    "}",
-    "if (@($remaining).Count -gt 0) { throw \"Packaged Owner Host runtime processes remain after E2E cleanup.\" }",
+    "if (@($targets).Count -gt 0) { throw \"Packaged Owner Host runtime processes remain after E2E cleanup.\" }",
   ].join("\n");
-  await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+  await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { timeout: 15_000, windowsHide: true });
+}
+
+async function boundedCleanup(operation, label, timeoutMs = 15_000) {
+  let timer;
+  try { return await Promise.race([operation, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} cleanup timed out.`)), timeoutMs);
+  })]); }
+  finally { clearTimeout(timer); }
 }
 
 function createMockIdentityServer() {
@@ -304,11 +321,32 @@ async function openCdp(target) {
     },
     async evaluate(expression, awaitPromise = false) {
       const result = await call("Runtime.evaluate", { expression, awaitPromise, returnByValue: true });
-      if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || "Desktop page evaluation failed.");
+      if (result.exceptionDetails) throw annotatePreviewE2eCdpFailure(
+        new Error(result.exceptionDetails.text || "Desktop page evaluation failed."), result.exceptionDetails);
       return result.result?.value;
     },
     async close() { socket.close(); },
   };
+}
+
+async function requestBrowserShutdown() {
+  if (setupCdp && await setupCdp.evaluate("Boolean(document.querySelector('#quit-desktop'))").catch(() => false)) {
+    // Exercise the real trusted Settings button, not a test-only Main command.
+    await click(setupCdp, "#quit-desktop", "Quit SPS Desktop through Core Settings");
+    return;
+  }
+  // Browser.close belongs to the browser endpoint, not an isolated renderer
+  // partition. Use only the debug port of this exact owned launch generation.
+  const version = await fetch(`http://127.0.0.1:${debugPort}/json/version`, { signal: AbortSignal.timeout(2000) })
+    .then(response => { if (!response.ok) throw new Error("Owned browser endpoint unavailable"); return response.json(); });
+  const endpoint = new URL(version.webSocketDebuggerUrl);
+  assert.equal(endpoint.hostname, "127.0.0.1");
+  assert.equal(endpoint.protocol, "ws:");
+  assert.equal(endpoint.port, String(debugPort));
+  assert.match(endpoint.pathname, /^\/devtools\/browser\/[A-Za-z0-9-]+$/);
+  const browser = await openCdp(version);
+  try { await browser.command("Browser.close"); }
+  finally { await browser.close(); }
 }
 
 async function describePage(cdp) {
@@ -408,6 +446,8 @@ let setupCdp = null;
 let workspaceCdp = null;
 let appOutput = "";
 let nativeManagementStage = "bootstrap";
+let acceptanceFailure = null;
+let failurePhase = "owner_creation";
 
 try {
   const { origin: identityUrl, issued } = await mockIdentity.start();
@@ -431,6 +471,7 @@ try {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+    launched.track(child);
     const captureOutput = (chunk) => {
       appOutput = `${appOutput}${chunk.toString()}`.slice(-24_000);
     };
@@ -445,7 +486,7 @@ try {
       // without acknowledging Browser.close, even after a clean process exit.
       const exited = once(child, "exit");
       let closeError;
-      void (workspaceCdp ?? setupCdp).command("Browser.close").catch(error => { closeError = error; });
+      void requestBrowserShutdown().catch(error => { closeError = error; });
       let timer;
       try {
         await Promise.race([exited, new Promise((_, reject) => {
@@ -456,6 +497,11 @@ try {
       }
     }
     assert.equal(child.exitCode, 0, "Desktop must shut down cleanly before reusing its temporary Host");
+    const prior = await launched.waitForOutputEnd(5000);
+    assert.equal(prior.orderly, prior.children, "Every earlier Main must exit zero before reusing the temporary Host");
+    assert.equal(prior.outputFailed, 0, "Earlier Main output streams must not fail during restart");
+    assert.equal(prior.outputEnded, prior.children * 2,
+      "Every earlier Main must close its output before the temporary Host can be reused");
     await workspaceCdp?.close().catch(() => undefined);
     await setupCdp?.close().catch(() => undefined);
     workspaceCdp = null;
@@ -687,24 +733,32 @@ try {
       nativeManagementStage = "shutdown";
       await closeDesktopForRestart();
     }
-    console.log(`Prepared Native Host management source E2E passed (Electron ${prepared.electronVersion}, Node ${prepared.nodeVersion}); no actual security confirmation, enrollment, device approval or two-PC claim.`);
+    console.log(`Prepared Native Host management functional assertions passed (Electron ${prepared.electronVersion}, Node ${prepared.nodeVersion}); cleanup qualification pending; no actual security confirmation, enrollment, device approval or two-PC claim.`);
   } else if (noAiChecklist) {
+    failurePhase = "workspace_surfaces";
     await runNoAiChecklistAcceptance({
       cdp: workspaceCdp, company, api, click, captureScreenshot, screenshotPath, temporaryRoot: userDataDirectory, runtimeDiscovery,
       restart: async ({ companyPrefix, pluginId }) => {
+        failurePhase = "workspace_restart";
         await closeDesktopForRestart();
         launchDesktop();
-        workspaceCdp = await openCdp(await waitForTarget(debugPort, child,
-          target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""), "restarted No-AI Host Workspace", hostReadyTimeoutMs));
+        const restartedTarget = await waitForTarget(debugPort, child,
+          target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""), "restarted No-AI Host Workspace", hostReadyTimeoutMs);
+        workspaceCdp = await openCdp(restartedTarget);
         // Startup may correctly restore the separate model-fixture Workspace.
         // Reopen the exact reference UI before checking its persisted state.
         const expectedPath = `/${companyPrefix}/plugins/${pluginId}`;
-        await workspaceCdp.evaluate(`location.assign(${JSON.stringify(expectedPath)})`);
-        await waitForPage(workspaceCdp, page => new URL(page.route).pathname === expectedPath && page.checklistReady === true,
+        const expectedUrl = new URL(expectedPath, restartedTarget.url).href;
+        // CDP can report the intended HTTP target before its document commits.
+        // Absolute Page.navigate is valid even while that document is blank.
+        await workspaceCdp.command("Page.navigate", { url: expectedUrl });
+        await waitForPage(workspaceCdp, page => page.route === expectedUrl && page.checklistReady === true,
           "restarted reference Workspace checklist UI");
+        failurePhase = "workspace_surfaces";
         return workspaceCdp;
       },
       openRecovery: async () => {
+        failurePhase = "native_recovery";
         await closeDesktopForRestart();
         launchDesktop(["--sps-core-settings"]);
         setupCdp = await openCdp(await waitForTarget(debugPort, child, target => target.title === "SPS Core Settings", "independent Native recovery"));
@@ -1187,9 +1241,10 @@ try {
     assert.equal(unavailableDom.legacyChrome, false, "Unavailable Shell root rendered legacy navigation or breadcrumbs.");
   }
 
-  console.log(`SPS Desktop Workspace Surfaces E2E passed (${packagedBinary ? "packaged" : "source"}).`);
+  console.log(`SPS Desktop Workspace Surfaces functional assertions passed (${packagedBinary ? "packaged" : "source"}); cleanup qualification pending.`);
   }
 } catch (error) {
+  acceptanceFailure = error;
   if (nativeManagement) {
     const safeSnapshot = setupCdp ? await setupCdp.evaluate(`(async () => {
       const api = window.spsCoreSettings;
@@ -1203,31 +1258,61 @@ try {
         pluginsDisabled: status?.recovery?.pluginsDisabled === true };
     })()`, true).catch(() => null) : null;
     const failureSha256 = createHash("sha256").update(errorText(error)).digest("hex");
-    throw new Error(`Prepared Native Host source E2E failed (stage=${nativeManagementStage}, failureSha256=${failureSha256}, snapshot=${JSON.stringify(safeSnapshot)}).`);
+    acceptanceFailure = new Error(`Prepared Native Host source E2E failed (stage=${nativeManagementStage}, failureSha256=${failureSha256}, snapshot=${JSON.stringify(safeSnapshot)}).`);
+    throw acceptanceFailure;
   }
   const diagnostics = [];
+  diagnostics.push(`Failure stage summary: ${JSON.stringify(snapshotPreviewE2eFailure(error, failurePhase))}`);
   for (const [label, cdp] of [["setup", setupCdp], ["workspace", workspaceCdp]]) {
     if (!cdp) continue;
     try { diagnostics.push(`${label}: ${JSON.stringify(await describePage(cdp))}`); } catch (diagnosticError) { diagnostics.push(`${label}: ${errorText(diagnosticError)}`); }
   }
   if (appOutput.trim()) diagnostics.push(`app-output:\n${appOutput.trim()}`);
-  throw new Error(`${errorText(error)}\n${diagnostics.join("\n")}`);
+  acceptanceFailure = new Error(`${errorText(error)}\n${diagnostics.join("\n")}`);
+  throw acceptanceFailure;
 } finally {
-  if (workspaceCdp) await workspaceCdp.evaluate(d2RequestMonitorStopExpression).catch(() => undefined);
-  const quitCdp = workspaceCdp ?? setupCdp;
-  if (quitCdp && child?.exitCode === null) {
-    await quitCdp.command("Browser.close").catch(() => undefined);
-    await Promise.race([once(child, "exit").catch(() => undefined), delay(20_000)]);
-  }
-  await workspaceCdp?.close().catch(() => undefined);
-  await setupCdp?.close().catch(() => undefined);
-  await stopProcessTree(child);
-  await stopPackagedRuntimeOrphans(userDataDirectory);
-  await mockIdentity.close().catch(() => undefined);
-  if (!keepE2eData) {
-    await removeTemporaryDirectory(userDataDirectory).catch((error) => {
-      if (nativeManagement) throw new Error("Prepared Native Host E2E temporary data cleanup could not be confirmed.");
-      console.warn(`Could not remove isolated SPS Desktop E2E data: ${errorText(error)}`);
-    });
-  }
+  const failedStages = new Set();
+  let cleanupStage = "desktop_shutdown";
+  const attempt = async (stage, operation) => {
+    try { return await operation(); }
+    catch { failedStages.add(stage); return null; }
+  };
+  try {
+    if (workspaceCdp) await workspaceCdp.evaluate(d2RequestMonitorStopExpression).catch(() => undefined);
+    const quitCdp = workspaceCdp ?? setupCdp;
+    let forceStopRequested = false, closeRequestFailed = false;
+    const shutdownStartedAt = Date.now();
+    const stopped = await attempt("desktop_shutdown", () => shutdownPreviewE2eDesktop({ child,
+      requestBrowserClose: quitCdp ? () => requestBrowserShutdown().catch(error => {
+        closeRequestFailed = true; throw error;
+      }) : undefined,
+      forceStop: target => { forceStopRequested = true; return stopProcessTree(target); } }));
+    console.log(`[workspace-e2e] final Main shutdown: ${JSON.stringify({ ...stopped, forceStopRequested,
+      closeRequestFailed, elapsedMs: Date.now() - shutdownStartedAt })}`);
+    await workspaceCdp?.close().catch(() => undefined);
+    await setupCdp?.close().catch(() => undefined);
+    if (!ownedJobCleanupPending) await attempt("packaged_orphans", () => assertNoPackagedRuntimeOrphans(userDataDirectory));
+    const identityClosed = await attempt("identity_close", () => boundedCleanup(mockIdentity.close(), "mock Identity").then(() => true));
+    let temporaryDataRemoved = false;
+    if (!keepE2eData) {
+      temporaryDataRemoved = await attempt("temporary_data", () => boundedCleanup(removeTemporaryDirectory(userDataDirectory), "temporary data", 20_000)
+        .then(() => true)) === true;
+    }
+    cleanupStage = "output_end";
+    const processEvidence = await launched.waitForOutputEnd(5000);
+    console.log(`[workspace-e2e] owned Main/output summary: ${JSON.stringify(processEvidence)}`);
+    cleanupStage = "qualification";
+    cleanupDisposition = workspaceE2eCleanupDisposition({ delegated: ownedJobCleanupPending, ...processEvidence,
+      finalDesktopGraceful: stopped?.graceful === true, temporaryDataRemoved, identityClosed: identityClosed === true });
+  } catch { failedStages.add(cleanupStage); }
+  finally { launched.dispose(); }
+  if (failedStages.size) throw new AggregateError([
+    ...(acceptanceFailure ? [acceptanceFailure] : []),
+    new Error(`Workspace E2E cleanup stages failed: ${[...failedStages].join(",")}.`),
+  ], "Workspace E2E cleanup is incomplete; the test cannot be accepted.");
 }
+
+if (ownedJobCleanupPending) console.log("[workspace-e2e] standalone child is not qualified; natural owned-Job cleanup is pending");
+else console.log("[workspace-e2e] local Main/output/data cleanup confirmed; not whole-descendant or physical qualification");
+await new Promise(resolve => process.stdout.write("[workspace-e2e] evidence flushed\n", resolve));
+process.exit(cleanupDisposition.exitCode);

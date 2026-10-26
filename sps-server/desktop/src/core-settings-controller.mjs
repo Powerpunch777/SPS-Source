@@ -95,6 +95,7 @@ export function createCoreSettingsController({
   approveNativeDevice,
   revokeNativeDevice,
   confirmNativeDeviceAction,
+  requestQuit,
 }) {
   let window = null;
   let registered = false;
@@ -195,6 +196,16 @@ export function createCoreSettingsController({
     bind("check-updates", async () => { await checkUpdates(); return status(); });
     bind("export-host", async () => { await exportHost(); }, { writes: true });
     bind("inspect-transfer", async () => { await inspectTransfer(); });
+    bind("quit-desktop", async (_input, event) => {
+      assertSender(event);
+      if (typeof requestQuit !== "function") throw new Error("Desktop quit is unavailable.");
+      try {
+        await awaitAndAssertSender(event, () => requestQuit());
+      } catch {
+        throw new Error("Desktop quit could not be requested.");
+      }
+      return { requested: true };
+    }, { writes: true, authorizeBeforeAction: false });
     bind("prepare-native-identity", async (input, event) => {
       const validated = requireSpsNativeIdentityPreparationInput(input);
       if (typeof confirmNativeIdentity !== "function" || typeof prepareNativeIdentity !== "function") {

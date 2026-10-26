@@ -1,13 +1,15 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('probe', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle')]
+  [ValidateSet('probe', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle')]
   [string] $Mode
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($env:OS -ne 'Windows_NT') { throw 'Windows E2E requires Windows.' }
-if (-not $Mode.StartsWith('probe', [StringComparison]::Ordinal) -and
+$workspaceProbeModes = @('workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit')
+$isProbe = $Mode.StartsWith('probe', [StringComparison]::Ordinal) -or $workspaceProbeModes -ccontains $Mode
+if (-not $isProbe -and
     ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows')) {
   throw 'Desktop launch mode is restricted to Windows CI.'
 }

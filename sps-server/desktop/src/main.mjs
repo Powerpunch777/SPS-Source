@@ -282,6 +282,15 @@ let tray = null;
 let isQuitting = false;
 let shutdownPromise = null;
 let shutdownComplete = false;
+let desktopQuitRequested = false;
+
+function requestDesktopQuit() {
+  if (desktopQuitRequested) return;
+  desktopQuitRequested = true;
+  isQuitting = true;
+  // Let the trusted local IPC acknowledge before normal quit closes its frame.
+  setImmediate(() => app.quit());
+}
 const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
 // Status is rendered often by the setup screen. Do not synchronously ask
 // Windows for login-item settings on that hot IPC path: some Windows builds
@@ -4033,6 +4042,7 @@ function ensureCoreSettingsController() {
     checkUpdates: checkForDesktopBetaUpdate,
     exportHost: exportOwnerVaultTransfer,
     inspectTransfer: inspectOwnerVaultTransfer,
+    requestQuit: requestDesktopQuit,
     confirmNativeIdentity: async (parentWindow, { serverAddress }) => {
       const choice = await dialog.showMessageBox(parentWindow, {
         type: "warning", title: "Prepare a local Native Host identity?",
@@ -4277,7 +4287,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: "이 컴퓨터에서 로그아웃", enabled: Boolean(account), click: () => { void signOutDesktopAccount(); } },
     { type: "separator" },
-    { label: "Quit SPS Desktop", click: () => { isQuitting = true; app.quit(); } },
+    { label: "Quit SPS Desktop", click: requestDesktopQuit },
   ]));
 }
 
