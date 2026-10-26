@@ -54,6 +54,15 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
       const exchange = req.url === "/sps-native/v1/session/exchange";
       const workspaces = req.url === "/sps-native/v1/workspaces";
       const workspaceBootstrap = req.url === `/api/companies/${DEVICE}/workspace-bootstrap`;
+      const workspaceSurfaces = new Map([
+        [`/api/companies/${DEVICE}/workspace-shell`, { mode: "neutral", providerPluginId: null,
+          providerPluginKey: null, shell: null, fallbackReason: null }],
+        [`/api/companies/${DEVICE}/workspace-shell/providers`, []],
+        [`/api/companies/${DEVICE}/workspace-dashboard`, { widgets: [] }],
+        [`/api/companies/${DEVICE}/workspace-inbox`, { items: [{ id: "55555555-5555-4555-8555-555555555555", companyId: DEVICE, title: "Inbox" }] }],
+        [`/api/companies/${DEVICE}/workspace-inbox?archived=true`, { items: [{ id: "55555555-5555-4555-8555-555555555555", companyId: DEVICE, title: "Archived" }] }],
+      ]);
+      const workspaceSurface = workspaceSurfaces.has(req.url);
       const value = req.url === "/sps-native/v1/identity" ? { hostId: HOST,
         serverSpkiSha256: spki(host.server.certificatePem), issuerSpkiSha256: spki(host.memberIssuer.certificatePem),
         issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") }
@@ -62,6 +71,7 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
         : workspaceBootstrap ? { v: 1, kind: "sps.native.workspace.bootstrap",
           workspace: { id: DEVICE, name: "Member Workspace", issuePrefix: "member" }, member: { userId: "fixture-user" },
           capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] }
+        : workspaceSurface ? workspaceSurfaces.get(req.url)
         : req.url.endsWith("/issue") ? issuance : { deviceId: DEVICE, status: "pending" };
       const send = (data = value, status = exchange ? 201 : 200, extraHeaders = {}) => {
         if (res.destroyed) return;
@@ -219,6 +229,77 @@ test("Member Workspace bootstrap rejects invalid selectors and mismatched respon
   await mismatchedClient.exchange(TOKEN);
   await assert.rejects(mismatchedClient.getWorkspaceBootstrap({ workspaceId: DEVICE,
     keyRequest, issuance: mismatched.issuance }), safe);
+});
+
+test("Member Workspace reads use only fixed pinned GET paths and saved credentials", async t => {
+  const f = await fixture(t), client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  const shell = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "shell", keyRequest, issuance: f.issuance });
+  const providers = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "providers", keyRequest, issuance: f.issuance });
+  const dashboard = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "dashboard", keyRequest, issuance: f.issuance });
+  const inbox = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "inbox", archived: true, keyRequest, issuance: f.issuance });
+  assert.deepEqual(JSON.parse(JSON.stringify(shell)), { mode: "neutral", providerPluginId: null,
+    providerPluginKey: null, shell: null, fallbackReason: null });
+  assert.deepEqual(JSON.parse(JSON.stringify(providers)), []);
+  assert.deepEqual(JSON.parse(JSON.stringify(dashboard)), { widgets: [] });
+  assert.deepEqual(JSON.parse(JSON.stringify(inbox)), { items: [{ id: "55555555-5555-4555-8555-555555555555",
+    companyId: DEVICE, title: "Archived" }] });
+  const reads = f.requests.slice(1);
+  assert.deepEqual(reads.map(request => request.path), [
+    `/api/companies/${DEVICE}/workspace-shell`,
+    `/api/companies/${DEVICE}/workspace-shell/providers`,
+    `/api/companies/${DEVICE}/workspace-dashboard`,
+    `/api/companies/${DEVICE}/workspace-inbox?archived=true`,
+  ]);
+  for (const request of reads) {
+    assert.equal(request.method, "GET");
+    assert.equal(request.body, "");
+    assert.equal(request.contentLength, "0");
+    assert.equal(request.contentType, undefined);
+    assert.equal(request.cookie, COOKIE);
+    assert.equal(request.authorization, undefined);
+    assert.equal(request.protocol, "TLSv1.3");
+    assert.equal(request.resumed, false);
+    assert.equal(request.authorized, true);
+    assert.ok(request.peer.equals(new X509Certificate(certificate.certificatePem).raw));
+  }
+});
+
+test("Member Workspace surface selectors cannot choose URLs or invalid archive variants", async t => {
+  const f = await fixture(t), client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  for (const input of [
+    { workspaceId: "../private", surface: "shell", keyRequest, issuance: f.issuance },
+    { workspaceId: DEVICE, surface: "https://attacker.invalid", keyRequest, issuance: f.issuance },
+    { workspaceId: DEVICE, surface: "shell", url: "https://attacker.invalid", keyRequest, issuance: f.issuance },
+    { workspaceId: DEVICE, surface: "inbox", archived: "true", keyRequest, issuance: f.issuance },
+    { workspaceId: DEVICE, surface: "providers", archived: false, keyRequest, issuance: f.issuance },
+  ]) assert.throws(() => client.readWorkspaceSurface(input), safe);
+  assert.equal(f.requests.length, 1);
+});
+
+test("aborting a delayed Workspace surface TLS read withholds the body and releases the client operation slot", async t => {
+  let finishSurface;
+  const f = await fixture(t, { respond({ req, send }) {
+    if (req.url === `/api/companies/${DEVICE}/workspace-shell`) finishSurface = send;
+    else send();
+  } });
+  const client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  const controller = new AbortController();
+  const pending = client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "shell", keyRequest, issuance: f.issuance },
+    { signal: controller.signal });
+  await f.received;
+  for (let attempt = 0; attempt < 50 && !finishSurface; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(typeof finishSurface, "function");
+  controller.abort();
+  await assert.rejects(pending, safe);
+  finishSurface();
+  assert.equal(f.requests.length, 2);
+  await client.exchange(TOKEN);
+  const choices = await client.listAvailableWorkspaces({ keyRequest, issuance: f.issuance });
+  assert.deepEqual(choices, [{ id: DEVICE, name: "Member Workspace" }]);
+  assert.equal(f.requests.length, 4);
 });
 
 test("Workspace choices are withheld when the account guard changes before the TLS response arrives", async t => {

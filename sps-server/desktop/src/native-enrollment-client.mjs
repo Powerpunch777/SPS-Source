@@ -8,7 +8,7 @@ import { nativeCertificateRecord as record, nativeCertificateUuid as uuid, encod
 import { validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
 import { publicSpsNativeMemberEnrollmentRequest } from "./native-member-certificates.mjs";
 import { validateSpsNativeMemberCredential } from "./native-member-credential.mjs";
-import { parseSpsNativeEnrollmentResponse } from "./native-enrollment-response.mjs";
+import { parseSpsNativeEnrollmentResponse, parseSpsNativeWorkspaceSurfaceResponse } from "./native-enrollment-response.mjs";
 import { validateSpsNativeMemberIssuerCertificate } from "./native-identity-certificates.mjs";
 import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
 
@@ -16,6 +16,7 @@ const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/s
   issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete",
   reconcile: "/sps-native/v1/enrollment/reconcile", workspaces: "/sps-native/v1/workspaces",
   workspaceBootstrap: "/api/companies" });
+const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox"]);
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
   unavailable: "The Native enrollment request could not complete.",
   invalid_response: "The Native enrollment response is invalid.",
@@ -47,6 +48,31 @@ function derPem(value) {
   const bytes = Buffer.from(value, "base64url");
   if (!bytes.length || bytes.length > 4096 || bytes.toString("base64url") !== value) throw new Error();
   return encodeNativeCertificatePem(bytes, "CERTIFICATE");
+}
+
+function workspaceSurfaceRequest(input) {
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    const hasArchived = Object.hasOwn(descriptors, "archived");
+    const value = record(input, hasArchived
+      ? ["workspaceId", "surface", "archived", "keyRequest", "issuance"]
+      : ["workspaceId", "surface", "keyRequest", "issuance"]);
+    uuid(value.workspaceId);
+    if (!WORKSPACE_SURFACES.has(value.surface)) throw new Error();
+    if (value.surface === "inbox") {
+      if (hasArchived && typeof value.archived !== "boolean") throw new Error();
+    } else if (hasArchived) throw new Error();
+    return value;
+  } catch { throw failure("invalid_options"); }
+}
+
+function workspaceSurfacePath(workspaceId, surface, archived) {
+  const base = `/api/companies/${workspaceId}`;
+  if (surface === "shell") return `${base}/workspace-shell`;
+  if (surface === "providers") return `${base}/workspace-shell/providers`;
+  if (surface === "dashboard") return `${base}/workspace-dashboard`;
+  if (surface === "inbox") return `${base}/workspace-inbox${archived === undefined ? "" : `?archived=${archived}`}`;
+  throw failure("invalid_options");
 }
 
 // Main-private transport only. The caller supplies independently trusted issuer
@@ -143,11 +169,12 @@ function createClient(input, mode) {
     finally { busy = false; }
   }
 
-  function post(operation, bytes, auth, credential, { guard, signal, deadline, workspaceId }) {
+  function post(operation, bytes, auth, credential, { guard, signal, deadline, workspaceId, surface, archived }) {
     guard();
     if (!Buffer.isBuffer(bytes) || bytes.length > 8192) throw failure("invalid_options");
     const path = operation === "workspaceBootstrap"
-      ? `${PATHS.workspaceBootstrap}/${workspaceId}/workspace-bootstrap` : PATHS[operation];
+      ? `${PATHS.workspaceBootstrap}/${workspaceId}/workspace-bootstrap`
+      : operation === "workspaceSurface" ? workspaceSurfacePath(workspaceId, surface, archived) : PATHS[operation];
     return new Promise((resolve, reject) => {
       let request, socket, timer, outcome, finished = false;
       const onAbort = () => stop(failure("cancelled"));
@@ -174,7 +201,7 @@ function createClient(input, mode) {
       if (signal?.aborted || disposed) { stop(failure(disposed ? "disposed" : "cancelled")); return; }
       try {
         request = httpsRequest({ hostname, port: Number(address.port || 443), path,
-          method: operation === "workspaces" || operation === "workspaceBootstrap" ? "GET" : "POST", agent: false, maxHeaderSize: 16_384,
+          method: operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? "GET" : "POST", agent: false, maxHeaderSize: 16_384,
           ca: target.certificatePem, rejectUnauthorized: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
           ...(isIP(hostname) ? {} : { servername: hostname }),
           ...(credential ? { cert: credential.certificatePem, key: credential.privateKeyPem } : {}),
@@ -186,7 +213,7 @@ function createClient(input, mode) {
               return undefined;
             } catch { return failure("unavailable"); }
           },
-          headers: { ...(operation === "workspaces" || operation === "workspaceBootstrap" ? {} : { "Content-Type": "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
+          headers: { ...(operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? {} : { "Content-Type": "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
             Connection: "close", ...(operation === "identity" ? {}
               : operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
         }, response => {
@@ -195,7 +222,7 @@ function createClient(input, mode) {
           response.on("error", () => stop(failure("unavailable")));
           response.once("aborted", () => stop(failure("invalid_response")));
           response.on("data", chunk => {
-            if (!Buffer.isBuffer(chunk) || size + chunk.length > (operation === "workspaces" || operation === "workspaceBootstrap" ? 256 * 1024 : 16_384)) { stop(failure("invalid_response")); return; }
+            if (!Buffer.isBuffer(chunk) || size + chunk.length > (operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? 256 * 1024 : 16_384)) { stop(failure("invalid_response")); return; }
             size += chunk.length; chunks.push(chunk);
           });
           response.once("end", () => {
@@ -203,8 +230,10 @@ function createClient(input, mode) {
             try {
               guard();
               if (!response.complete) throw new Error();
-              const value = parseSpsNativeEnrollmentResponse(operation,
-                { statusCode: response.statusCode, rawHeaders: response.rawHeaders, body: Buffer.concat(chunks, size) });
+              const envelope = { statusCode: response.statusCode, rawHeaders: response.rawHeaders, body: Buffer.concat(chunks, size) };
+              const value = operation === "workspaceSurface"
+                ? parseSpsNativeWorkspaceSurfaceResponse(surface, workspaceId, envelope)
+                : parseSpsNativeEnrollmentResponse(operation, envelope);
               stop(null, value);
             } catch (error) { stop(ownErrors.has(error) ? error : failure("invalid_response")); }
           });
@@ -305,6 +334,15 @@ function createClient(input, mode) {
         operation.guard();
         if (result.workspace.id !== value.workspaceId) throw failure("invalid_response");
         return result;
+      });
+    },
+    readWorkspaceSurface(input, signalInput = {}) {
+      const value = workspaceSurfaceRequest(input);
+      return run("workspaceSurface", signalInput, async operation => {
+        const { key } = await checkedKey(value.keyRequest, operation.guard);
+        const { credential } = await checkedIssuance(value.issuance, key, operation.guard);
+        return post("workspaceSurface", Buffer.alloc(0), cookie, credential,
+          { ...operation, workspaceId: value.workspaceId, surface: value.surface, archived: value.archived });
       });
     },
     dispose,

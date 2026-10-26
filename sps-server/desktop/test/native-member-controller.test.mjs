@@ -174,6 +174,69 @@ test("Workspace bootstrap uses saved Member credentials, exact selectors, and cu
   }
 });
 
+test("Workspace surface reads use saved credentials, exact selectors, safe DTO cloning, and abortable per-call guards", async () => {
+  const workspaceId = "55555555-5555-4555-8555-555555555555";
+  const rawInbox = JSON.parse(`{"items":[{"companyId":"${workspaceId}","opaqueReference":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}}]}`);
+  const bootstrap = { v: 1, kind: "sps.native.workspace.bootstrap",
+    workspace: { id: workspaceId, name: "Workspace", issuePrefix: "workspace" }, member: { userId: "member" },
+    capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] };
+  let surfaceInput;
+  let signalAtExchange;
+  let signalAtSurface;
+  let delaySurface = false;
+  const f = fixture({ createWorkspace: () => ({
+    async exchange(_token, options) { signalAtExchange = options?.signal; },
+    async getWorkspaceBootstrap(_input, options) { signalAtBootstrap = options?.signal; return bootstrap; },
+    async readWorkspaceSurface(input, options) {
+      surfaceInput = input;
+      signalAtSurface = options?.signal;
+      if (delaySurface) {
+        if (options.signal.aborted) throw Object.assign(new Error("aborted"), { code: "native_enrollment_client_cancelled" });
+        await new Promise((_, reject) => options.signal.addEventListener("abort",
+          () => reject(Object.assign(new Error("aborted"), { code: "native_enrollment_client_cancelled" })), { once: true }));
+      }
+      return rawInbox;
+    },
+    dispose() {},
+  }) });
+  let signalAtBootstrap;
+  await enroll(f);
+  const before = f.snapshot();
+  const bootstrapSignal = new AbortController();
+  const receivedBootstrap = await f.controller.getWorkspaceBootstrap({ hostId: HOST, workspaceId }, { signal: bootstrapSignal.signal });
+  assert.equal(Object.isFrozen(receivedBootstrap), true);
+  assert.equal(signalAtExchange, bootstrapSignal.signal);
+  assert.equal(signalAtBootstrap, bootstrapSignal.signal);
+
+  const signal = new AbortController();
+  const result = await f.controller.readWorkspaceSurface({ hostId: HOST, workspaceId, surface: "inbox", archived: true }, {
+    assertRequester() {}, signal: signal.signal,
+  });
+  assert.deepEqual(surfaceInput, { workspaceId, surface: "inbox", archived: true,
+    keyRequest: before.key, issuance: before.issued });
+  assert.equal(signalAtExchange, signal.signal);
+  assert.equal(signalAtSurface, signal.signal);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), rawInbox);
+  assert.equal(Object.getPrototypeOf(result.items[0].opaqueReference), null);
+  assert.equal(Object.prototype.polluted, undefined);
+  assert.deepEqual(f.snapshot(), before);
+
+  delaySurface = true;
+  const cancelled = new AbortController();
+  const pending = f.controller.readWorkspaceSurface({ hostId: HOST, workspaceId, surface: "shell" }, { signal: cancelled.signal });
+  await new Promise(resolve => setImmediate(resolve));
+  cancelled.abort();
+  await assert.rejects(pending, { code: "native_member_changed" });
+  delaySurface = false;
+  await f.controller.getWorkspaceBootstrap({ hostId: HOST, workspaceId });
+  for (const input of [
+    { hostId: HOST, workspaceId, surface: "other" },
+    { hostId: HOST, workspaceId, surface: "shell", archived: false },
+    { hostId: HOST, workspaceId, surface: "inbox", archived: "true" },
+    { hostId: HOST, workspaceId, surface: "inbox", url: "https://attacker.invalid" },
+  ]) assert.throws(() => f.controller.readWorkspaceSurface(input), { code: "native_member_invalid" });
+});
+
 test("Main composition orders stable index, protected key/target, issuance persistence before completion", async () => {
   const f = fixture();
   assert.deepEqual(await enroll(f), { hostId: HOST, deviceId: DEVICE, status: "pending" });

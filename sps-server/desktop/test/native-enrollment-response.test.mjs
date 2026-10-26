@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseSpsNativeEnrollmentResponse } from "../src/native-enrollment-response.mjs";
+import { parseSpsNativeEnrollmentResponse, parseSpsNativeWorkspaceSurfaceResponse,
+  validateSpsNativeWorkspaceSurface } from "../src/native-enrollment-response.mjs";
 
 const DEVICE_ID = "deadbeef-cafe-4bad-8dad-0123456789ab";
 const ENROLLMENT_ID = "abcdefab-cdef-4abc-8def-abcdefabcdef";
@@ -108,6 +109,89 @@ test("Workspace parsers preserve valid Unicode replacement and BOM code points b
     expectInvalid(operation, response(operation, value, { body: Buffer.from([0xc3, 0x28]) }));
   }
 });
+
+test("workspace surface parser validates exact wrappers and preserves inert JSON metadata", () => {
+  const workspaceId = "11111111-1111-4111-8111-111111111111";
+  const shell = { mode: "plugin", providerPluginId: "plugin-id", providerPluginKey: "plugin-key",
+    shell: { id: "main", displayName: "Main" }, fallbackReason: null };
+  const dashboard = JSON.parse('{"widgets":[{"widget":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}}]}');
+  const inbox = { items: [{ id: DEVICE_ID, companyId: workspaceId, opaqueReference: { itemKey: "x" } }] };
+  const cases = [
+    ["shell", shell],
+    ["providers", [{ pluginId: "plugin-id", pluginKey: "plugin-key", shell: { displayName: "Shell" } }]],
+    ["dashboard", dashboard],
+    ["inbox", inbox],
+  ];
+  for (const [surface, value] of cases) {
+    const responseEnvelope = response("workspaceSurface", value);
+    const actual = parseSpsNativeWorkspaceSurfaceResponse(surface, workspaceId, responseEnvelope);
+    assert.deepEqual(JSON.parse(JSON.stringify(actual)), value);
+    assert.equal(Object.isFrozen(actual), true);
+  }
+  const actualDashboard = parseSpsNativeWorkspaceSurfaceResponse("dashboard", workspaceId,
+    response("workspaceSurface", dashboard));
+  const metadata = actualDashboard.widgets[0].widget;
+  assert.equal(Object.getPrototypeOf(metadata), null);
+  assert.equal(Object.prototype.polluted, undefined);
+  assert.deepEqual(Object.keys(metadata).sort(), ["__proto__", "constructor"]);
+  assert.equal(Object.isFrozen(actualDashboard.widgets), true);
+  assert.equal(Object.isFrozen(actualDashboard.widgets[0].widget), true);
+  assert.equal(validateSpsNativeWorkspaceSurface("inbox", workspaceId, inbox).items[0].companyId, workspaceId);
+
+  for (const [surface, value] of [
+    ["shell", { ...shell, extra: true }],
+    ["shell", { ...shell, mode: "neutral" }],
+    ["dashboard", { ...dashboard, extra: true }],
+    ["inbox", { items: [{ ...inbox.items[0], companyId: DEVICE_ID }] }],
+  ]) {
+    assert.throws(() => validateSpsNativeWorkspaceSurface(surface, workspaceId, value));
+  }
+  for (const archived of [true, false]) {
+    const path = `/api/companies/${workspaceId}/workspace-inbox?archived=${archived}`;
+    assert.ok(path.includes(`archived=${archived}`));
+  }
+});
+
+test("workspace surface JSON clone rejects accessors, cycles, holes, and excessive nesting or nodes", () => {
+  const workspaceId = "11111111-1111-4111-8111-111111111111";
+  let getterCalls = 0;
+  const accessor = { widgets: [] };
+  Object.defineProperty(accessor.widgets, "0", { enumerable: true, get() { getterCalls++; return {}; } });
+  Object.defineProperty(accessor.widgets, "length", { value: 1 });
+  assert.throws(() => validateSpsNativeWorkspaceSurface("dashboard", workspaceId, accessor));
+  assert.equal(getterCalls, 0);
+  const cycle = { widgets: [] };
+  cycle.widgets.push(cycle);
+  assert.throws(() => validateSpsNativeWorkspaceSurface("dashboard", workspaceId, cycle));
+  assert.throws(() => validateSpsNativeWorkspaceSurface("dashboard", workspaceId, { widgets: new Array(1) }));
+  let nested = {};
+  const deep = { widgets: [nested] };
+  for (let index = 0; index < 35; index++) nested.value = nested = {};
+  assert.throws(() => validateSpsNativeWorkspaceSurface("dashboard", workspaceId, deep));
+  assert.throws(() => validateSpsNativeWorkspaceSurface("dashboard", workspaceId,
+    { widgets: Array.from({ length: 10_001 }, () => null) }));
+});
+
+test("workspace surface parser rejects noncanonical JSON, invalid UTF-8, BOM prefixes, and oversized bodies", () => {
+  const workspaceId = "11111111-1111-4111-8111-111111111111";
+  const valid = { widgets: [] };
+  expectInvalidSurface("dashboard", workspaceId, response("workspaceSurface", valid, {
+    body: Buffer.from(` ${JSON.stringify(valid)}`),
+  }));
+  expectInvalidSurface("dashboard", workspaceId, response("workspaceSurface", valid, {
+    body: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(valid))]),
+  }));
+  expectInvalidSurface("dashboard", workspaceId, response("workspaceSurface", valid, { body: Buffer.from([0xc3, 0x28]) }));
+  const oversized = Buffer.from(JSON.stringify({ widgets: ["x".repeat(256 * 1024)] }), "utf8");
+  expectInvalidSurface("dashboard", workspaceId, response("workspaceSurface", valid, { body: oversized }));
+});
+
+function expectInvalidSurface(surface, workspaceId, envelope) {
+  assert.throws(() => parseSpsNativeWorkspaceSurfaceResponse(surface, workspaceId, envelope), error => {
+    assert.equal(error.code, "native_enrollment_response_invalid");
+    return true;
+  });
+}
 
 test("accepts Core exchange, issue, and pending-completion responses as frozen DTOs", () => {
   const exchange = parseSpsNativeEnrollmentResponse("exchange", response("exchange", { expiresInSeconds: 604800 }));

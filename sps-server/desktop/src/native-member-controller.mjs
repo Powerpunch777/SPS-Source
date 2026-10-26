@@ -6,7 +6,7 @@ import { createSpsNativeMemberKeyRequest } from "./native-member-certificates.mj
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { verifySpsNativeInvitationCertificate } from "./native-connection-tls.mjs";
 import { validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
-import { validateSpsNativeWorkspaceBootstrap } from "./native-enrollment-response.mjs";
+import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface } from "./native-enrollment-response.mjs";
 
 const MESSAGES = Object.freeze({
   account_required: "Sign in to the current SPS account before connecting a Native device.",
@@ -19,6 +19,7 @@ const MESSAGES = Object.freeze({
 });
 const failure = kind => Object.assign(new Error(MESSAGES[kind]), { code: `native_member_${kind}` });
 const KEYS = ["identityIssuer", "subject", "userDataDirectory", "vaultDirectory", "generation"];
+const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox"]);
 
 function authority(input) {
   const value = record(input, KEYS);
@@ -57,6 +58,23 @@ export function requireSpsNativeMemberWorkspaceBootstrapInput(input) {
   } catch { throw failure("invalid"); }
 }
 
+export function requireSpsNativeMemberWorkspaceSurfaceInput(input) {
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    const hasArchived = Object.hasOwn(descriptors, "archived");
+    const value = record(input, hasArchived
+      ? ["hostId", "workspaceId", "surface", "archived"]
+      : ["hostId", "workspaceId", "surface"]);
+    uuid(value.hostId);
+    uuid(value.workspaceId);
+    if (!WORKSPACE_SURFACES.has(value.surface)) throw new Error();
+    if (value.surface === "inbox") {
+      if (hasArchived && typeof value.archived !== "boolean") throw new Error();
+    } else if (hasArchived) throw new Error();
+    return Object.freeze(value);
+  } catch { throw failure("invalid"); }
+}
+
 // Electron Main owns this composition. Callers supply current account/session
 // authority; no token, private key, certificate or stored pin is returned to UI.
 // Network operations are explicit and never retried automatically.
@@ -71,12 +89,13 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
     if (disposed) throw failure("disposed");
     try { return authority(getAuthority()); } catch { throw failure("account_required"); }
   }
-  function guard(expected, assertRequester) {
+  function guard(expected, assertRequester, signal) {
     if (disposed) throw failure("disposed");
+    if (signal?.aborted) throw failure("changed");
     assertRequester?.();
     let current;
     try { current = capture(); } catch { throw failure("changed"); }
-    if (KEYS.some(key => current[key] !== expected[key])) throw failure("changed");
+    if (signal?.aborted || KEYS.some(key => current[key] !== expected[key])) throw failure("changed");
   }
   function indexFor(expected) {
     guard(expected);
@@ -85,17 +104,19 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
   async function run(options, action) {
     if (disposed) throw failure("disposed");
     if (busy) throw failure("busy");
+    if (options?.signal !== undefined && !(options.signal instanceof AbortSignal)) throw failure("invalid");
     busy = true;
     const owned = [];
     try {
       const expected = capture();
-      const check = () => guard(expected, options.assertRequester);
+      const check = () => guard(expected, options?.assertRequester, options?.signal);
       check();
       const use = client => { clients.add(client); owned.push(client); return client; };
       const result = await action(expected, check, use);
       check();
       return result;
     } catch (error) {
+      if (options?.signal?.aborted) throw failure("changed");
       if (Object.keys(MESSAGES).some(key => error?.code === `native_member_${key}`)) throw failure(error.code.slice(14));
       throw failure("unavailable");
     } finally {
@@ -109,10 +130,10 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
     if (!["pending", "approved", "revoked"].includes(result.status)) throw failure("unavailable");
     return Object.freeze({ hostId, deviceId: result.deviceId, status: result.status });
   }
-  async function exchange(client, check) {
+  async function exchange(client, check, signal) {
     const token = await authenticate();
     check();
-    await client.exchange(token);
+    await client.exchange(token, signal ? { signal } : undefined);
     check();
   }
   return Object.freeze({
@@ -249,11 +270,38 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
         check();
         if (!stored?.issuance) throw failure("recovery_required");
         const client = use(createWorkspace({ target, context: target.context, timeoutMs, assertCurrent: check }));
-        await exchange(client, check);
+        await exchange(client, check, options?.signal);
         const result = validateSpsNativeWorkspaceBootstrap(await client.getWorkspaceBootstrap({ workspaceId: value.workspaceId,
-          keyRequest: key, issuance: stored.issuance }));
+          keyRequest: key, issuance: stored.issuance }, options?.signal ? { signal: options.signal } : undefined));
         check();
         if (result.workspace.id !== value.workspaceId) throw failure("unavailable");
+        return result;
+      });
+    },
+    readWorkspaceSurface(input, options = {}) {
+      const value = requireSpsNativeMemberWorkspaceSurfaceInput(input);
+      return run(options, async (expected, check, use) => {
+        const scope = indexFor(expected).entries.find(entry => entry.identityIssuer === expected.identityIssuer
+          && entry.subject === expected.subject && entry.hostId === value.hostId);
+        if (!scope) throw failure("recovery_required");
+        const target = await getTargetReader({ ...expected, scope }).read();
+        check();
+        if (!target) throw failure("recovery_required");
+        const store = getStore({ ...expected, context: target.context });
+        const key = await store.read();
+        check();
+        if (!key) throw failure("recovery_required");
+        const stored = await store.readIssued();
+        check();
+        if (!stored?.issuance) throw failure("recovery_required");
+        const client = use(createWorkspace({ target, context: target.context, timeoutMs, assertCurrent: check }));
+        await exchange(client, check, options?.signal);
+        const request = { workspaceId: value.workspaceId, surface: value.surface,
+          ...(Object.hasOwn(value, "archived") ? { archived: value.archived } : {}),
+          keyRequest: key, issuance: stored.issuance };
+        const raw = await client.readWorkspaceSurface(request, options?.signal ? { signal: options.signal } : undefined);
+        const result = validateSpsNativeWorkspaceSurface(value.surface, value.workspaceId, raw);
+        check();
         return result;
       });
     },

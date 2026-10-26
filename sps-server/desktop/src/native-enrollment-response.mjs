@@ -7,6 +7,8 @@ import {
 const MAX_BODY_BYTES = 16_384;
 const MAX_HEADER_PAIRS = 64;
 const MAX_HEADER_BYTES = 16_384;
+const MAX_WORKSPACE_JSON_DEPTH = 32;
+const MAX_WORKSPACE_JSON_NODES = 10_000;
 const MAX_DER_BYTES = 4096;
 const MAX_BASE64URL_LENGTH = Math.ceil(MAX_DER_BYTES * 4 / 3);
 const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200, reconcile: 200, identity: 200,
@@ -78,7 +80,8 @@ function validateHeaders(headers, operation, bodyLength) {
   const contentLength = oneHeader(headers, "content-length");
   if (!/^(?:0|[1-9][0-9]*)$/.test(contentLength)) reject();
   const declaredLength = Number(contentLength);
-  const maximum = operation === "workspaces" || operation === "workspaceBootstrap" ? 256 * 1024 : MAX_BODY_BYTES;
+  const maximum = operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface"
+    ? 256 * 1024 : MAX_BODY_BYTES;
   if (!Number.isSafeInteger(declaredLength) || declaredLength > maximum || declaredLength !== bodyLength) reject();
 
   const contentType = oneHeader(headers, "content-type");
@@ -214,6 +217,107 @@ function parseWorkspaceBootstrap(body) {
   const parsed = JSON.parse(text);
   if (JSON.stringify(parsed) !== text) reject();
   return validateSpsNativeWorkspaceBootstrap(parsed);
+}
+
+function plainJsonObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) reject();
+  return value;
+}
+
+function cloneBoundedJson(input) {
+  let nodes = 0;
+  const active = new WeakSet();
+  function visit(value, depth) {
+    if (++nodes > MAX_WORKSPACE_JSON_NODES || depth > MAX_WORKSPACE_JSON_DEPTH) reject();
+    if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) reject();
+      return value;
+    }
+    if (typeof value !== "object" || active.has(value)) reject();
+    active.add(value);
+    try {
+      if (Array.isArray(value)) {
+        if (Object.getPrototypeOf(value) !== Array.prototype) reject();
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+        if (!lengthDescriptor || !Object.hasOwn(lengthDescriptor, "value")
+          || !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value > MAX_WORKSPACE_JSON_NODES) reject();
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        const length = descriptors.length;
+        if (!length || !Object.hasOwn(length, "value") || length.enumerable
+          || !Number.isSafeInteger(length.value) || length.value < 0
+          || Reflect.ownKeys(descriptors).length !== length.value + 1) reject();
+        const result = new Array(length.value);
+        for (let index = 0; index < length.value; index++) {
+          const descriptor = descriptors[String(index)];
+          if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")) reject();
+          result[index] = visit(descriptor.value, depth + 1);
+        }
+        return Object.freeze(result);
+      }
+      plainJsonObject(value);
+      const descriptors = Object.getOwnPropertyDescriptors(value);
+      if (Reflect.ownKeys(descriptors).some(key => typeof key !== "string")) reject();
+      const result = Object.create(null);
+      for (const key of Reflect.ownKeys(descriptors)) {
+        const descriptor = descriptors[key];
+        if (!descriptor.enumerable || !Object.hasOwn(descriptor, "value")) reject();
+        Object.defineProperty(result, key, { value: visit(descriptor.value, depth + 1), enumerable: true });
+      }
+      return Object.freeze(result);
+    } finally { active.delete(value); }
+  }
+  return visit(input, 0);
+}
+
+export function validateSpsNativeWorkspaceSurface(surface, workspaceId, input) {
+  uuid(workspaceId);
+  if (!["shell", "providers", "dashboard", "inbox"].includes(surface)) reject();
+  if (surface === "shell") {
+    const shell = record(input, ["mode", "providerPluginId", "providerPluginKey", "shell", "fallbackReason"]);
+    if (!["neutral", "plugin"].includes(shell.mode)
+      || shell.providerPluginId !== null && typeof shell.providerPluginId !== "string"
+      || shell.providerPluginKey !== null && typeof shell.providerPluginKey !== "string"
+      || shell.fallbackReason !== null && typeof shell.fallbackReason !== "string"
+      || shell.mode === "neutral" && shell.shell !== null
+      || shell.mode === "plugin" && (!shell.shell || typeof shell.shell !== "object" || Array.isArray(shell.shell))) reject();
+    return cloneBoundedJson(shell);
+  }
+  if (surface === "providers") {
+    if (!Array.isArray(input)) reject();
+    return cloneBoundedJson(input);
+  }
+  if (surface === "dashboard") {
+    const dashboard = record(input, ["widgets"]);
+    if (!Array.isArray(dashboard.widgets)) reject();
+    return cloneBoundedJson(dashboard);
+  }
+  const inbox = record(input, ["items"]);
+  if (!Array.isArray(inbox.items)) reject();
+  for (const item of inbox.items) {
+    plainJsonObject(item);
+    const descriptor = Object.getOwnPropertyDescriptor(item, "companyId");
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value") || descriptor.value !== workspaceId) reject();
+  }
+  return cloneBoundedJson(inbox);
+}
+
+export function parseSpsNativeWorkspaceSurfaceResponse(surface, workspaceId, input) {
+  try {
+    if (!["shell", "providers", "dashboard", "inbox"].includes(surface)) reject();
+    uuid(workspaceId);
+    const envelope = record(input, ["statusCode", "rawHeaders", "body"]);
+    if (envelope.statusCode !== 200) reject();
+    const headers = readRawHeaders(envelope.rawHeaders);
+    const body = envelope.body;
+    if (!Buffer.isBuffer(body) || body.length > 256 * 1024) reject();
+    validateHeaders(headers, "workspaceSurface", body.length);
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body);
+    const parsed = JSON.parse(text);
+    if (JSON.stringify(parsed) !== text) reject();
+    return validateSpsNativeWorkspaceSurface(surface, workspaceId, parsed);
+  } catch { throw invalidResponseError(); }
 }
 
 export function parseSpsNativeEnrollmentResponse(operation, input) {
