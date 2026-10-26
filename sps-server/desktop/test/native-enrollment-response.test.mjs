@@ -41,7 +41,7 @@ test("Workspace discovery accepts only bounded public ID/name rows and never coo
   assert.equal(Object.isFrozen(actual), true);
   assert.equal(Object.isFrozen(actual[0]), true);
   assert.deepEqual(parseSpsNativeEnrollmentResponse("workspaces", response("workspaces", [])), []);
-  const unusualNames = ["   ", "x".repeat(301), "line\nbreak\t\u0000\u007f"].map((name, index) => ({
+  const unusualNames = ["   ", "x".repeat(301), "line\nbreak\t\u0000\u007f\uFEFF\uFFFD"].map((name, index) => ({
     id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, name,
   }));
   assert.deepEqual(parseSpsNativeEnrollmentResponse("workspaces", response("workspaces", unusualNames)), unusualNames);
@@ -56,6 +56,57 @@ test("Workspace discovery accepts only bounded public ID/name rows and never coo
   const envelope = response("workspaces", choices);
   envelope.rawHeaders.push("Set-Cookie", COOKIE);
   expectInvalid("workspaces", envelope);
+});
+
+test("Workspace bootstrap accepts only the exact bounded, least-privilege DTO", () => {
+  const bootstrap = {
+    v: 1,
+    kind: "sps.native.workspace.bootstrap",
+    workspace: { id: DEVICE_ID, name: `  Workspace\n${"x".repeat(301)}\u0000`, issuePrefix: "  prefix  " },
+    member: { userId: ` ${"u".repeat(199)}` },
+    capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"],
+  };
+  const actual = parseSpsNativeEnrollmentResponse("workspaceBootstrap", response("workspaceBootstrap", bootstrap));
+  assert.deepEqual(actual, bootstrap);
+  assert.equal(Object.isFrozen(actual), true);
+  assert.equal(Object.isFrozen(actual.workspace), true);
+  assert.equal(Object.isFrozen(actual.member), true);
+  assert.equal(Object.isFrozen(actual.capabilities), true);
+  const invalid = [
+    { ...bootstrap, extra: "private" },
+    { ...bootstrap, v: 2 },
+    { ...bootstrap, kind: "sps.native.workspace.other" },
+    { ...bootstrap, workspace: { ...bootstrap.workspace, id: "invalid" } },
+    { ...bootstrap, workspace: { ...bootstrap.workspace, name: "" } },
+    { ...bootstrap, workspace: { ...bootstrap.workspace, issuePrefix: "" } },
+    { ...bootstrap, workspace: { ...bootstrap.workspace, extra: true } },
+    { ...bootstrap, member: { userId: "" } },
+    { ...bootstrap, member: { userId: "u".repeat(201) } },
+    { ...bootstrap, member: { userId: "bad\nuser" } },
+    { ...bootstrap, member: { userId: "member", role: "owner" } },
+    { ...bootstrap, capabilities: [...bootstrap.capabilities, "workspace.admin"] },
+    { ...bootstrap, capabilities: ["workspace.shell.read", "workspace.admin", "workspace.inbox.read"] },
+  ];
+  for (const value of invalid) expectInvalid("workspaceBootstrap", response("workspaceBootstrap", value));
+  const oversized = Buffer.from(JSON.stringify({ ...bootstrap,
+    workspace: { ...bootstrap.workspace, name: `x${"x".repeat(256 * 1024)}\uFEFF\uFFFD` } }), "utf8");
+  expectInvalid("workspaceBootstrap", response("workspaceBootstrap", bootstrap, { body: oversized }));
+});
+
+test("Workspace parsers preserve valid Unicode replacement and BOM code points but reject BOM prefixes and invalid UTF-8", () => {
+  const choices = [{ id: DEVICE_ID, name: "workspace\uFEFF\uFFFD" }];
+  assert.deepEqual(parseSpsNativeEnrollmentResponse("workspaces", response("workspaces", choices)), choices);
+  const bootstrap = { v: 1, kind: "sps.native.workspace.bootstrap",
+    workspace: { id: DEVICE_ID, name: "workspace\uFEFF\uFFFD", issuePrefix: "prefix\uFEFF\uFFFD" },
+    member: { userId: "member" },
+    capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] };
+  assert.deepEqual(parseSpsNativeEnrollmentResponse("workspaceBootstrap", response("workspaceBootstrap", bootstrap)), bootstrap);
+  for (const operation of ["workspaces", "workspaceBootstrap"]) {
+    const value = operation === "workspaces" ? choices : bootstrap;
+    const json = Buffer.from(JSON.stringify(value), "utf8");
+    expectInvalid(operation, response(operation, value, { body: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), json]) }));
+    expectInvalid(operation, response(operation, value, { body: Buffer.from([0xc3, 0x28]) }));
+  }
 });
 
 test("accepts Core exchange, issue, and pending-completion responses as frozen DTOs", () => {

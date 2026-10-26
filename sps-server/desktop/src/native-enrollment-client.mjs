@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { checkServerIdentity } from "node:tls";
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { verifySpsNativeInvitationCertificate } from "./native-connection-tls.mjs";
-import { nativeCertificateRecord as record, encodeNativeCertificatePem } from "./native-certificate-primitives.mjs";
+import { nativeCertificateRecord as record, nativeCertificateUuid as uuid, encodeNativeCertificatePem } from "./native-certificate-primitives.mjs";
 import { validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
 import { publicSpsNativeMemberEnrollmentRequest } from "./native-member-certificates.mjs";
 import { validateSpsNativeMemberCredential } from "./native-member-credential.mjs";
@@ -14,7 +14,8 @@ import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsul
 
 const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/sps-native/v1/session/exchange",
   issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete",
-  reconcile: "/sps-native/v1/enrollment/reconcile", workspaces: "/sps-native/v1/workspaces" });
+  reconcile: "/sps-native/v1/enrollment/reconcile", workspaces: "/sps-native/v1/workspaces",
+  workspaceBootstrap: "/api/companies" });
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
   unavailable: "The Native enrollment request could not complete.",
   invalid_response: "The Native enrollment response is invalid.",
@@ -142,9 +143,11 @@ function createClient(input, mode) {
     finally { busy = false; }
   }
 
-  function post(operation, bytes, auth, credential, { guard, signal, deadline }) {
+  function post(operation, bytes, auth, credential, { guard, signal, deadline, workspaceId }) {
     guard();
     if (!Buffer.isBuffer(bytes) || bytes.length > 8192) throw failure("invalid_options");
+    const path = operation === "workspaceBootstrap"
+      ? `${PATHS.workspaceBootstrap}/${workspaceId}/workspace-bootstrap` : PATHS[operation];
     return new Promise((resolve, reject) => {
       let request, socket, timer, outcome, finished = false;
       const onAbort = () => stop(failure("cancelled"));
@@ -170,8 +173,8 @@ function createClient(input, mode) {
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted || disposed) { stop(failure(disposed ? "disposed" : "cancelled")); return; }
       try {
-        request = httpsRequest({ hostname, port: Number(address.port || 443), path: PATHS[operation],
-          method: operation === "workspaces" ? "GET" : "POST", agent: false, maxHeaderSize: 16_384,
+        request = httpsRequest({ hostname, port: Number(address.port || 443), path,
+          method: operation === "workspaces" || operation === "workspaceBootstrap" ? "GET" : "POST", agent: false, maxHeaderSize: 16_384,
           ca: target.certificatePem, rejectUnauthorized: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
           ...(isIP(hostname) ? {} : { servername: hostname }),
           ...(credential ? { cert: credential.certificatePem, key: credential.privateKeyPem } : {}),
@@ -183,7 +186,7 @@ function createClient(input, mode) {
               return undefined;
             } catch { return failure("unavailable"); }
           },
-          headers: { ...(operation === "workspaces" ? {} : { "Content-Type": "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
+          headers: { ...(operation === "workspaces" || operation === "workspaceBootstrap" ? {} : { "Content-Type": "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
             Connection: "close", ...(operation === "identity" ? {}
               : operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
         }, response => {
@@ -192,7 +195,7 @@ function createClient(input, mode) {
           response.on("error", () => stop(failure("unavailable")));
           response.once("aborted", () => stop(failure("invalid_response")));
           response.on("data", chunk => {
-            if (!Buffer.isBuffer(chunk) || size + chunk.length > (operation === "workspaces" ? 256 * 1024 : 16_384)) { stop(failure("invalid_response")); return; }
+            if (!Buffer.isBuffer(chunk) || size + chunk.length > (operation === "workspaces" || operation === "workspaceBootstrap" ? 256 * 1024 : 16_384)) { stop(failure("invalid_response")); return; }
             size += chunk.length; chunks.push(chunk);
           });
           response.once("end", () => {
@@ -287,6 +290,21 @@ function createClient(input, mode) {
         const { key } = await checkedKey(value.keyRequest, operation.guard);
         const { credential } = await checkedIssuance(value.issuance, key, operation.guard);
         return post("workspaces", Buffer.alloc(0), cookie, credential, operation);
+      });
+    },
+    getWorkspaceBootstrap(input, signalInput = {}) {
+      return run("workspaceBootstrap", signalInput, async operation => {
+        const value = record(input, ["workspaceId", "keyRequest", "issuance"]);
+        let workspaceId;
+        try { workspaceId = uuid(value.workspaceId); }
+        catch { throw failure("invalid_options"); }
+        const { key } = await checkedKey(value.keyRequest, operation.guard);
+        const { credential } = await checkedIssuance(value.issuance, key, operation.guard);
+        const result = await post("workspaceBootstrap", Buffer.alloc(0), cookie, credential,
+          { ...operation, workspaceId: value.workspaceId });
+        operation.guard();
+        if (result.workspace.id !== value.workspaceId) throw failure("invalid_response");
+        return result;
       });
     },
     dispose,

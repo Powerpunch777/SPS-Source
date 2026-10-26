@@ -9,7 +9,8 @@ const MAX_HEADER_PAIRS = 64;
 const MAX_HEADER_BYTES = 16_384;
 const MAX_DER_BYTES = 4096;
 const MAX_BASE64URL_LENGTH = Math.ceil(MAX_DER_BYTES * 4 / 3);
-const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200, reconcile: 200, identity: 200, workspaces: 200 });
+const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200, reconcile: 200, identity: 200,
+  workspaces: 200, workspaceBootstrap: 200 });
 const RESPONSE_KEYS = Object.freeze({
   exchange: ["expiresInSeconds"],
   issue: ["enrollmentId", "certificate", "issuerCertificate", "expiresAt"],
@@ -77,7 +78,7 @@ function validateHeaders(headers, operation, bodyLength) {
   const contentLength = oneHeader(headers, "content-length");
   if (!/^(?:0|[1-9][0-9]*)$/.test(contentLength)) reject();
   const declaredLength = Number(contentLength);
-  const maximum = operation === "workspaces" ? 256 * 1024 : MAX_BODY_BYTES;
+  const maximum = operation === "workspaces" || operation === "workspaceBootstrap" ? 256 * 1024 : MAX_BODY_BYTES;
   if (!Number.isSafeInteger(declaredLength) || declaredLength > maximum || declaredLength !== bodyLength) reject();
 
   const contentType = oneHeader(headers, "content-type");
@@ -161,7 +162,6 @@ function validateBody(operation, value, cookie) {
 
 function parseWorkspaceChoices(body) {
   const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body);
-  if (text.includes("\uFEFF") || text.includes("\0") || text.includes("\uFFFD")) reject();
   const choices = JSON.parse(text);
   if (!Array.isArray(choices) || choices.length > 200 || JSON.stringify(choices) !== text) reject();
   const seen = new Set();
@@ -174,6 +174,48 @@ function parseWorkspaceChoices(body) {
   }));
 }
 
+const WORKSPACE_BOOTSTRAP_CAPABILITIES = Object.freeze([
+  "workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read",
+]);
+
+function exactCapabilities(input) {
+  if (!Array.isArray(input) || Object.getPrototypeOf(input) !== Array.prototype) reject();
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  const length = descriptors.length;
+  if (!length || !Object.hasOwn(length, "value") || length.enumerable
+    || length.value !== WORKSPACE_BOOTSTRAP_CAPABILITIES.length
+    || Reflect.ownKeys(descriptors).length !== length.value + 1) reject();
+  for (let index = 0; index < WORKSPACE_BOOTSTRAP_CAPABILITIES.length; index++) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value")
+      || descriptor.value !== WORKSPACE_BOOTSTRAP_CAPABILITIES[index]) reject();
+  }
+  return Object.freeze([...WORKSPACE_BOOTSTRAP_CAPABILITIES]);
+}
+
+export function validateSpsNativeWorkspaceBootstrap(input) {
+  const value = record(input, ["v", "kind", "workspace", "member", "capabilities"]);
+  if (value.v !== 1 || value.kind !== "sps.native.workspace.bootstrap") reject();
+  const workspace = record(value.workspace, ["id", "name", "issuePrefix"]);
+  uuid(workspace.id);
+  if (typeof workspace.name !== "string" || workspace.name.length === 0
+    || typeof workspace.issuePrefix !== "string" || workspace.issuePrefix.length === 0) reject();
+  const member = record(value.member, ["userId"]);
+  if (typeof member.userId !== "string" || member.userId.length === 0 || member.userId.length > 200
+    || /[\u0000-\u001f\u007f]/.test(member.userId)) reject();
+  const capabilities = exactCapabilities(value.capabilities);
+  return Object.freeze({ v: 1, kind: "sps.native.workspace.bootstrap",
+    workspace: Object.freeze({ id: workspace.id, name: workspace.name, issuePrefix: workspace.issuePrefix }),
+    member: Object.freeze({ userId: member.userId }), capabilities: Object.freeze(capabilities) });
+}
+
+function parseWorkspaceBootstrap(body) {
+  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body);
+  const parsed = JSON.parse(text);
+  if (JSON.stringify(parsed) !== text) reject();
+  return validateSpsNativeWorkspaceBootstrap(parsed);
+}
+
 export function parseSpsNativeEnrollmentResponse(operation, input) {
   try {
     if (typeof operation !== "string" || !Object.hasOwn(EXPECTED_STATUS, operation)) reject();
@@ -181,9 +223,10 @@ export function parseSpsNativeEnrollmentResponse(operation, input) {
     if (envelope.statusCode !== EXPECTED_STATUS[operation]) reject();
     const headers = readRawHeaders(envelope.rawHeaders);
     const body = envelope.body;
-    if (!Buffer.isBuffer(body) || body.length > (operation === "workspaces" ? 256 * 1024 : MAX_BODY_BYTES)) reject();
+    if (!Buffer.isBuffer(body) || body.length > (operation === "workspaces" || operation === "workspaceBootstrap" ? 256 * 1024 : MAX_BODY_BYTES)) reject();
     const cookie = validateHeaders(headers, operation, body.length);
     if (operation === "workspaces") return parseWorkspaceChoices(body);
+    if (operation === "workspaceBootstrap") return parseWorkspaceBootstrap(body);
     const value = parseCanonicalBody(body, RESPONSE_KEYS[operation]);
     return validateBody(operation, value, cookie);
   } catch {

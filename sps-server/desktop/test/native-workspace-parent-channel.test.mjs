@@ -81,6 +81,24 @@ test("provider list surfaces preserve their JSON array result", async t => {
   assert.deepEqual(await f.channel.read({ ...input(), target }), [{ id: "provider-a" }]);
 });
 
+test("selected Workspace bootstrap is bound to the exact Workspace and target", async t => {
+  let fetches = 0;
+  const target = `/api/companies/${WORKSPACE}/workspace-bootstrap`;
+  const f = fixture({ fetchImpl: async url => {
+    fetches++;
+    assert.equal(url, `http://127.0.0.1:43210${target}`);
+    return response({ v: 1, workspace: { id: WORKSPACE } });
+  } });
+  t.after(() => f.channel.dispose());
+  await f.bootstrap(); f.ready(); await tick();
+  assert.deepEqual(await f.channel.read({ ...input(), target }), { v: 1, workspace: { id: WORKSPACE } });
+  for (const invalid of [{ ...input(), target, workspaceId: null },
+    { ...input(), target, workspaceId: HOST }, { ...input(), target: `${target}?all=true` }]) {
+    await assert.rejects(f.channel.read(invalid));
+  }
+  assert.equal(fetches, 1);
+});
+
 test("workspace discovery signs only the nullable fixed discovery route", async t => {
   const target = "/sps-native/v1/workspaces";
   let observed;

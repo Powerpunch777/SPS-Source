@@ -6,6 +6,7 @@ import { createSpsNativeMemberKeyRequest } from "./native-member-certificates.mj
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { verifySpsNativeInvitationCertificate } from "./native-connection-tls.mjs";
 import { validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
+import { validateSpsNativeWorkspaceBootstrap } from "./native-enrollment-response.mjs";
 
 const MESSAGES = Object.freeze({
   account_required: "Sign in to the current SPS account before connecting a Native device.",
@@ -45,6 +46,15 @@ export function requireSpsNativeMemberEnrollmentInput(input) {
 export function requireSpsNativeMemberRecoveryInput(input) {
   try { const value = record(input, ["hostId"]); uuid(value.hostId); return Object.freeze(value); }
   catch { throw failure("invalid"); }
+}
+
+export function requireSpsNativeMemberWorkspaceBootstrapInput(input) {
+  try {
+    const value = record(input, ["hostId", "workspaceId"]);
+    uuid(value.hostId);
+    uuid(value.workspaceId);
+    return Object.freeze(value);
+  } catch { throw failure("invalid"); }
 }
 
 // Electron Main owns this composition. Callers supply current account/session
@@ -220,6 +230,31 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
           seen.add(row.id);
           return Object.freeze({ id: row.id, name: row.name });
         }));
+      });
+    },
+    getWorkspaceBootstrap(input, options = {}) {
+      const value = requireSpsNativeMemberWorkspaceBootstrapInput(input);
+      return run(options, async (expected, check, use) => {
+        const scope = indexFor(expected).entries.find(entry => entry.identityIssuer === expected.identityIssuer
+          && entry.subject === expected.subject && entry.hostId === value.hostId);
+        if (!scope) throw failure("recovery_required");
+        const target = await getTargetReader({ ...expected, scope }).read();
+        check();
+        if (!target) throw failure("recovery_required");
+        const store = getStore({ ...expected, context: target.context });
+        const key = await store.read();
+        check();
+        if (!key) throw failure("recovery_required");
+        const stored = await store.readIssued();
+        check();
+        if (!stored?.issuance) throw failure("recovery_required");
+        const client = use(createWorkspace({ target, context: target.context, timeoutMs, assertCurrent: check }));
+        await exchange(client, check);
+        const result = validateSpsNativeWorkspaceBootstrap(await client.getWorkspaceBootstrap({ workspaceId: value.workspaceId,
+          keyRequest: key, issuance: stored.issuance }));
+        check();
+        if (result.workspace.id !== value.workspaceId) throw failure("unavailable");
+        return result;
       });
     },
     repair(input, options = {}) {

@@ -46,17 +46,22 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
     req.on("data", chunk => chunks.push(chunk));
     req.once("end", () => {
       const item = { path: req.url, method: req.method, authorization: req.headers.authorization,
-        cookie: req.headers.cookie, contentType: req.headers["content-type"], body: Buffer.concat(chunks).toString("utf8"),
+        cookie: req.headers.cookie, contentType: req.headers["content-type"], contentLength: req.headers["content-length"],
+        body: Buffer.concat(chunks).toString("utf8"),
         protocol: req.socket.getProtocol(), resumed: req.socket.isSessionReused(), authorized: req.socket.authorized,
         peer: req.socket.getPeerCertificate().raw };
       requests.push(item); notify();
       const exchange = req.url === "/sps-native/v1/session/exchange";
       const workspaces = req.url === "/sps-native/v1/workspaces";
+      const workspaceBootstrap = req.url === `/api/companies/${DEVICE}/workspace-bootstrap`;
       const value = req.url === "/sps-native/v1/identity" ? { hostId: HOST,
         serverSpkiSha256: spki(host.server.certificatePem), issuerSpkiSha256: spki(host.memberIssuer.certificatePem),
         issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") }
         : exchange ? { expiresInSeconds: 604800 }
           : workspaces ? [{ id: DEVICE, name: "Member Workspace" }]
+        : workspaceBootstrap ? { v: 1, kind: "sps.native.workspace.bootstrap",
+          workspace: { id: DEVICE, name: "Member Workspace", issuePrefix: "member" }, member: { userId: "fixture-user" },
+          capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] }
         : req.url.endsWith("/issue") ? issuance : { deviceId: DEVICE, status: "pending" };
       const send = (data = value, status = exchange ? 201 : 200, extraHeaders = {}) => {
         if (res.destroyed) return;
@@ -170,6 +175,50 @@ test("Member Workspace discovery uses a fresh pinned TLS GET and returns only ID
   assert.equal(discovery.authorization, undefined);
   assert.equal(discovery.cookie, COOKIE);
   assert.doesNotMatch(JSON.stringify({ choices, client }), /PRIVATE KEY|fixture\.header|sps_identity_session/);
+});
+
+test("Member Workspace bootstrap uses the saved certificate and cookie on one fixed fresh TLS GET", async t => {
+  const f = await fixture(t), client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  const result = await client.getWorkspaceBootstrap({ workspaceId: DEVICE, keyRequest, issuance: f.issuance });
+  assert.deepEqual(result, {
+    v: 1, kind: "sps.native.workspace.bootstrap",
+    workspace: { id: DEVICE, name: "Member Workspace", issuePrefix: "member" },
+    member: { userId: "fixture-user" },
+    capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"],
+  });
+  const [exchange, bootstrap] = f.requests;
+  assert.equal(f.requests.length, 2);
+  assert.equal(exchange.method, "POST");
+  assert.equal(bootstrap.path, `/api/companies/${DEVICE}/workspace-bootstrap`);
+  assert.equal(bootstrap.method, "GET");
+  assert.equal(bootstrap.protocol, "TLSv1.3");
+  assert.equal(bootstrap.resumed, false);
+  assert.equal(bootstrap.authorized, true);
+  assert.equal(bootstrap.cookie, COOKIE);
+  assert.equal(bootstrap.authorization, undefined);
+  assert.equal(bootstrap.contentType, undefined);
+  assert.equal(bootstrap.contentLength, "0");
+  assert.equal(bootstrap.body, "");
+  assert.ok(bootstrap.peer.equals(new X509Certificate(certificate.certificatePem).raw));
+});
+
+test("Member Workspace bootstrap rejects invalid selectors and mismatched response identity", async t => {
+  const f = await fixture(t), client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  await assert.rejects(client.getWorkspaceBootstrap({ workspaceId: "../private", keyRequest, issuance: f.issuance }), safe);
+  await assert.rejects(client.getWorkspaceBootstrap({ workspaceId: DEVICE, keyRequest, issuance: f.issuance, url: "https://attacker.invalid" }), safe);
+  assert.equal(f.requests.length, 1);
+
+  const mismatched = await fixture(t, { respond({ req, send, value }) {
+    if (req.url.endsWith("/workspace-bootstrap")) send({ ...value,
+      workspace: { ...value.workspace, id: HOST } });
+    else send();
+  } });
+  const mismatchedClient = mismatched.workspaceClient();
+  await mismatchedClient.exchange(TOKEN);
+  await assert.rejects(mismatchedClient.getWorkspaceBootstrap({ workspaceId: DEVICE,
+    keyRequest, issuance: mismatched.issuance }), safe);
 });
 
 test("Workspace choices are withheld when the account guard changes before the TLS response arrives", async t => {

@@ -149,6 +149,28 @@ test("explicit Workspace surface forwarding requires actual fresh mTLS and a ses
   assert.equal(calls.length, 1);
 });
 
+test("Workspace bootstrap requires fresh mTLS, session and an exact body-free GET", async t => {
+  const calls = [];
+  const workspaceId = "44444444-4444-4444-8444-444444444444";
+  const ingress = createSpsNativeHostIngress({ getIdentity: () => identity, assertCurrent() {},
+    dispatch() { assert.fail("Bootstrap cannot use enrollment authority"); },
+    async dispatchWorkspace(input) { calls.push(input); return { workspace: { id: workspaceId } }; },
+  });
+  t.after(() => ingress.dispose());
+  const { port } = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  const input = { route: `/api/companies/${workspaceId}/workspace-bootstrap`, workspace: true,
+    certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem, session: true };
+  assert.equal((await post(port, input)).statusCode, 200);
+  assert.equal(calls[0].workspaceId, workspaceId);
+  assert.equal(calls[0].target, input.route);
+  for (const invalid of [{ ...input, certificate: undefined, key: undefined }, { ...input, session: false },
+    { ...input, body: "{}" }, { ...input, workspace: false }, { ...input, route: `${input.route}?all=true` },
+    { ...input, headers: { "X-SPS-Desktop-Owner-Bootstrap": "forbidden" } }]) {
+    assert.notEqual((await post(port, invalid)).statusCode, 200);
+  }
+  assert.equal(calls.length, 1);
+});
+
 test("Workspace discovery accepts only the exact GET with fresh mTLS and an SPS session", async t => {
   const calls = [];
   const ingress = createSpsNativeHostIngress({ getIdentity: () => identity, assertCurrent() {},

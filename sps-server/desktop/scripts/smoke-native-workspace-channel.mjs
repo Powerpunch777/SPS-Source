@@ -12,6 +12,7 @@ const { createSpsNativeHostIdentity } = await import("../src/native-identity-cer
 const { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate } = await import("../src/native-member-certificates.mjs");
 const { createSpsNativeHostIngress } = await import("../src/native-host-ingress.mjs");
 const { attachSpsNativeWorkspaceParentChannel } = await import("../src/native-workspace-parent-channel.mjs");
+const { parseSpsNativeEnrollmentResponse } = await import("../src/native-enrollment-response.mjs");
 const core = path.resolve(import.meta.dirname, "../../../external/sps-core");
 const load = relative => import(pathToFileURL(path.join(core, relative)).href);
 const { createDb, getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase,
@@ -39,8 +40,8 @@ try {
   await db.insert(authSessions).values({ id: `sps_identity_${randomUUID()}`, userId,
     token: createHash("sha256").update(secret).digest("base64url"), expiresAt: new Date(now + 3_600_000),
     createdAt: at, updatedAt: at, ipAddress: null, userAgent: null });
-  await db.insert(companies).values({ id: companyId, name: "Native Channel Fixture",
-    issuePrefix: `N${randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}` });
+  const issuePrefix = `N${randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`;
+  await db.insert(companies).values({ id: companyId, name: "Native Channel Fixture", issuePrefix });
   await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: userId,
     status: "active", membershipRole: "member" });
   const devices = spsMemberDeviceService(db, hostId);
@@ -82,11 +83,24 @@ try {
       const chunks = [];
       response.on("data", chunk => chunks.push(chunk));
       response.once("error", reject);
-      response.once("end", () => resolve({ status: response.statusCode, body: JSON.parse(Buffer.concat(chunks).toString()) }));
+      response.once("end", () => {
+        try {
+          const bytes = Buffer.concat(chunks);
+          const body = target.endsWith("/workspace-bootstrap") && response.statusCode === 200
+            ? parseSpsNativeEnrollmentResponse("workspaceBootstrap", {
+              statusCode: response.statusCode, rawHeaders: response.rawHeaders, body: bytes,
+            }) : JSON.parse(bytes.toString());
+          resolve({ status: response.statusCode, body });
+        } catch (error) { reject(error); }
+      });
     });
     request.once("error", reject); request.end();
   });
   const root = `/api/companies/${companyId}`;
+  assert.deepEqual(await read(`${root}/workspace-bootstrap`), { status: 200, body: {
+    v: 1, kind: "sps.native.workspace.bootstrap", workspace: { id: companyId, name: "Native Channel Fixture", issuePrefix },
+    member: { userId }, capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"],
+  } });
   const discovery = "/sps-native/v1/workspaces";
   assert.deepEqual(await read(discovery), { status: 200, body: [{ id: companyId, name: "Native Channel Fixture" }] });
   assert.notEqual((await read(discovery, { noCertificate: true })).status, 200);
@@ -104,6 +118,7 @@ try {
   // recreate access when an approved device loses its Workspace membership.
   await db.update(companyMemberships).set({ status: "suspended" });
   assert.deepEqual(await read(discovery), { status: 200, body: [] });
+  assert.equal((await read(`${root}/workspace-bootstrap`)).status, 403);
   assert.equal((await read(`${root}/workspace-shell`)).status, 403);
   await devices.revoke(device.id, "fixture-host");
   assert.equal((await read(discovery)).status, 403);

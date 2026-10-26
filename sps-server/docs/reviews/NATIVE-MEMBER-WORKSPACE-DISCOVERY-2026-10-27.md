@@ -23,6 +23,28 @@ as text, results clear on status refresh, and late responses cannot repopulate
 an obsolete registration view. The query needs no local Host ownership. Main
 keeps the target, Identity token, session cookie, certificate and key private.
 
+Existing nonempty Workspace names are preserved verbatim, including whitespace,
+long names and valid Unicode within JSON strings. Display uses text content;
+discovery does not impose a new naming policy. The 200-row and 256 KiB response
+bounds remain in force, and malformed UTF-8 or a leading JSON BOM is rejected.
+
+## Selected Workspace bootstrap
+
+The same private channel also admits exact GET
+`/api/companies/<uuid>/workspace-bootstrap`. Inside the existing authorized
+transaction, Core reads only that Workspace's ID, name and issue prefix, and
+returns its versioned descriptor, the current Member user ID and the three
+currently supported read capabilities. Prefixes are data, not permission to
+choose a route. The closed version-1 capability list grants no Host, Plugin,
+execution or WebSocket authority.
+
+The Main-private client reuses saved credentials and checks that the returned
+Workspace ID equals the requested ID. A shared DTO validator rejects extra
+nested fields or capabilities and clones/freezes accepted data. Account and
+requesting-frame changes suppress delivery. This prepares a trusted Native
+bootstrap for the existing Workspace SPA; it does not yet mount that SPA or
+add an unrestricted Core proxy.
+
 ## Verification
 
 - Main proof, private parent channel and Host TLS ingress: 34 focused tests passed.
@@ -43,8 +65,16 @@ keeps the target, Identity token, session cookie, certificate and key private.
   and denies the revoked device. Existing four Workspace surface families still
   work. No Agent, Plugin or Node is created; child and DB cleanup finish naturally.
 
-These are focused results, not complete Windows LAN qualification. Updated full
-Desktop regression and CI results must be assessed at the resulting candidate.
+Source `b833290` subsequently passed full Desktop regression: 1,128 passed, zero
+failed and 12 skipped. The naming compatibility change passed 85 focused tests.
+Bootstrap Host TLS/parent-channel checks passed 28/28; Member TLS/parser/controller
+checks passed 67/67, followed by 43/43 response/controller checks after stronger
+DTO cloning and Unicode coverage. Core's real DB/HTTP surface suite passed 6/6.
+The extended actual Main TLS/Core child/private HTTP/DB integration also exited
+0 after adding bootstrap, using the same strict Member response parser against
+Core's real reply, followed by membership-removal denial and natural cleanup.
+These are source and focused results, not complete Windows LAN qualification;
+later increments use targeted verification as requested by the user.
 
 ## Remaining integration
 

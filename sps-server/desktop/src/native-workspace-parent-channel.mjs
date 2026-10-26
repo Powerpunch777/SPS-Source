@@ -9,7 +9,7 @@ const CLOSE = "sps.native.workspace.bootstrap.close";
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const unavailable = () => Object.assign(new Error("The owned Native Workspace channel is unavailable."), { code: "native_workspace_unavailable" });
 const pin = value => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
-const WORKSPACE_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/;
+const WORKSPACE_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-bootstrap|workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/;
 const DISCOVERY_TARGET = "/sps-native/v1/workspaces";
 
 function identity(value) {

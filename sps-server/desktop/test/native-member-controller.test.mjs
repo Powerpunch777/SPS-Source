@@ -115,6 +115,65 @@ test("Workspace discovery preserves nonempty Core names without normalization", 
   assert.deepEqual(result.map(row => row.name), names);
 });
 
+test("Workspace bootstrap uses saved Member credentials, exact selectors, and current-request guards", async () => {
+  const workspaceId = "55555555-5555-4555-8555-555555555555";
+  const bootstrap = { v: 1, kind: "sps.native.workspace.bootstrap",
+    workspace: { id: workspaceId, name: "Member workspace", issuePrefix: "member" },
+    member: { userId: "member-user" },
+    capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] };
+  let received;
+  const f = fixture({ createWorkspace: ({ target, context }) => ({
+    async exchange() { assert.equal(target.context, context); },
+    async getWorkspaceBootstrap(input) { received = input; return bootstrap; },
+    dispose() { f.calls.push("dispose-workspace-bootstrap"); },
+  }) });
+  await enroll(f);
+  const before = f.snapshot();
+  f.calls.length = 0;
+  let requesterChecks = 0;
+  const result = await f.controller.getWorkspaceBootstrap({ hostId: HOST, workspaceId }, {
+    assertRequester() { requesterChecks += 1; },
+  });
+  assert.deepEqual(result, bootstrap);
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.workspace), true);
+  assert.equal(Object.isFrozen(result.member), true);
+  assert.equal(Object.isFrozen(result.capabilities), true);
+  assert.deepEqual(f.snapshot(), before);
+  assert.deepEqual(received, { workspaceId, keyRequest: f.snapshot().key, issuance: f.snapshot().issued });
+  assert.deepEqual(f.calls, ["read-protected-target", "read-key", "read-issued", "authenticate", "dispose-workspace-bootstrap"]);
+  assert.ok(requesterChecks >= 2);
+  bootstrap.workspace.name = "Mutated after return";
+  bootstrap.member.userId = "mutated-user";
+  bootstrap.capabilities[0] = "workspace.admin";
+  assert.equal(result.workspace.name, "Member workspace");
+  assert.equal(result.member.userId, "member-user");
+  assert.equal(result.capabilities[0], "workspace.shell.read");
+  for (const input of [
+    { hostId: HOST }, { hostId: HOST, workspaceId: "../private" },
+    { hostId: HOST, workspaceId, url: "https://attacker.invalid" },
+  ]) assert.throws(() => f.controller.getWorkspaceBootstrap(input), { code: "native_member_invalid" });
+
+  const valid = { v: 1, kind: "sps.native.workspace.bootstrap",
+    workspace: { id: workspaceId, name: "Member workspace", issuePrefix: "member" },
+    member: { userId: "member-user" },
+    capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] };
+  const malformed = [
+    { ...valid, workspace: { ...valid.workspace, id: DEVICE } },
+    { ...valid, workspace: { ...valid.workspace, name: "" } },
+    { ...valid, member: { ...valid.member, privateKey: "secret" } },
+    { ...valid, capabilities: [...valid.capabilities, "workspace.admin"] },
+  ];
+  for (const dto of malformed) {
+    const invalid = fixture({ createWorkspace: () => ({ async exchange() {},
+      async getWorkspaceBootstrap() { return dto; }, dispose() {},
+    }) });
+    await enroll(invalid);
+    await assert.rejects(invalid.controller.getWorkspaceBootstrap({ hostId: HOST, workspaceId }),
+      { code: "native_member_unavailable" });
+  }
+});
+
 test("Main composition orders stable index, protected key/target, issuance persistence before completion", async () => {
   const f = fixture();
   assert.deepEqual(await enroll(f), { hostId: HOST, deviceId: DEVICE, status: "pending" });
