@@ -20,7 +20,7 @@ const fail = name => {
   internalFailures.set(error, name);
   return error;
 };
-const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+const sameFile = (a, b) => a?.dev?.toString() === b?.dev?.toString() && a?.ino?.toString() === b?.ino?.toString();
 const sameDirectory = (a, b) => sameFile(a, b) && a.birthtimeNs === b.birthtimeNs;
 const isWithin = (root, child) => {
   const relative = path.relative(root, child);
@@ -98,6 +98,55 @@ async function boundedRead(file, expected) {
   } finally { await handle.close(); }
 }
 
+function sameLinkedFile(a, b) {
+  return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode
+    && a.size === b.size && a.birthtimeNs === b.birthtimeNs;
+}
+
+async function boundedReadLinked(file, expected) {
+  const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const start = await handle.stat({ bigint: true });
+    const pathStart = await fs.lstat(file, { bigint: true });
+    if (!start.isFile() || start.nlink !== 2n || start.size > BigInt(MAX_BYTES)
+      || !sameLinkedFile(start, expected) || !pathStart.isFile() || pathStart.isSymbolicLink()
+      || pathStart.nlink !== 2n || !sameLinkedFile(start, pathStart)) throw fail("CORRUPT");
+    const bytes = Buffer.alloc(MAX_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const end = await handle.stat({ bigint: true });
+    const pathEnd = await fs.lstat(file, { bigint: true });
+    if (length > MAX_BYTES || end.nlink !== 2n || !sameLinkedFile(start, end)
+      || !pathEnd.isFile() || pathEnd.isSymbolicLink() || pathEnd.nlink !== 2n
+      || !sameLinkedFile(end, pathEnd)) throw fail("CORRUPT");
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length)); }
+    catch { throw fail("CORRUPT"); }
+  } finally { await handle.close(); }
+}
+
+const TEMPORARY_ALIAS = /^\.pending-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
+
+async function findTemporaryAlias(folder, final) {
+  if (final.nlink !== 2n) throw fail("CORRUPT");
+  const names = (await fs.readdir(folder)).filter(name => TEMPORARY_ALIAS.test(name));
+  const matches = [];
+  for (const name of names) {
+    const file = path.join(folder, name);
+    let stat;
+    try { stat = await fs.lstat(file, { bigint: true }); }
+    catch (error) { if (error?.code === "ENOENT") continue; throw error; }
+    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 2n && sameLinkedFile(final, stat)) {
+      matches.push({ file, stat });
+    }
+  }
+  if (matches.length !== 1) throw fail("CORRUPT");
+  return matches[0];
+}
+
 // Main-private create-only pending-key storage. This does not authenticate a user,
 // trust a new pin, approve a device, rotate credentials or grant Node/Source access.
 export function createSpsNativeMemberPendingKeyStore(options) {
@@ -110,7 +159,13 @@ export function createSpsNativeMemberHostTargetReader(options) {
   return createStore(options, true);
 }
 
-function createStore(options, targetReader) {
+// Explicit cold-start recovery derives its full pin context only from protected
+// target or pending ciphertext that matches the indexed account/Host/device scope.
+export function createSpsNativeMemberPublicationRecovery(options) {
+  return createStore(options, true, "publication-recovery");
+}
+
+function createStore(options, targetReader, mode = "full") {
   let config, context;
   try {
     const descriptors = Object.getOwnPropertyDescriptors(options ?? {});
@@ -219,12 +274,113 @@ function createStore(options, targetReader) {
     if (!sameFile(stat, await slotStat(target.file))) throw fail("CORRUPT");
     return { value: validateSpsNativeMemberHostTarget(result, result.context), target, stat, bytes };
   }
+  async function readScopeBoundContext(kind) {
+    const target = await paths(false, kind);
+    if (!target) return null;
+    let stat;
+    try { stat = await slotStat(target.file, false); }
+    catch { throw fail("CORRUPT"); }
+    if (!stat) { await recheck(target); return null; }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BYTES) throw fail("CORRUPT");
+    let raw;
+    let linkedIdentity, linkedAlias;
+    if (stat.nlink === 1) raw = await boundedRead(target.file, stat);
+    else {
+      if (stat.nlink !== 2) throw fail("CORRUPT");
+      const bigintStat = await fs.lstat(target.file, { bigint: true });
+      const alias = await findTemporaryAlias(target.folder, bigintStat);
+      linkedIdentity = bigintStat;
+      linkedAlias = alias.file;
+      await recheck(target);
+      raw = await boundedReadLinked(target.file, bigintStat);
+      const finalAgain = await fs.lstat(target.file, { bigint: true });
+      const aliasAgain = await fs.lstat(alias.file, { bigint: true });
+      if (finalAgain.nlink !== 2n || aliasAgain.nlink !== 2n || !sameLinkedFile(bigintStat, finalAgain)
+        || !sameLinkedFile(bigintStat, aliasAgain)) throw fail("CORRUPT");
+    }
+    let retainedContext;
+    try {
+      if (kind === "target") {
+        const value = await targetCapsule.open(raw, scope);
+        validateSpsNativeMemberHostTarget(value, value.context);
+        retainedContext = validateSpsNativeMemberPendingContext(value.context);
+      } else retainedContext = await capsule.openContext(raw, scope);
+    } catch { throw fail("CORRUPT"); }
+    await recheck(target);
+    if (linkedIdentity) {
+      const currentFinal = await fs.lstat(target.file, { bigint: true });
+      const currentAlias = await fs.lstat(linkedAlias, { bigint: true });
+      if (!sameLinkedFile(linkedIdentity, currentFinal) || !sameLinkedFile(linkedIdentity, currentAlias)
+        || currentFinal.nlink !== 2n || currentAlias.nlink !== 2n
+        || await boundedReadLinked(target.file, currentFinal) !== raw) throw fail("CORRUPT");
+    } else {
+      const current = await slotStat(target.file);
+      if (!current || !sameFile(stat, current) || current.nlink !== 1
+        || await boundedRead(target.file, current) !== raw) throw fail("CORRUPT");
+    }
+    return retainedContext;
+  }
   async function recheckTarget(expected) {
     await recheck(expected.target);
     const stat = await slotStat(expected.target.file);
     if (!stat || !sameFile(stat, expected.stat)
       || await boundedRead(expected.target.file, stat) !== expected.bytes) throw fail("CORRUPT");
     await recheck(expected.target);
+  }
+  async function recoverPublication(kind, authorize) {
+    if (!['pending', 'issued', 'target'].includes(kind)) throw fail("OPTIONS");
+    const target = await paths(false, kind);
+    if (!target) return false;
+    let final;
+    try { final = await fs.lstat(target.file, { bigint: true }); }
+    catch (error) { if (error?.code === "ENOENT") return false; throw error; }
+    if (!final.isFile() || final.isSymbolicLink() || final.size > BigInt(MAX_BYTES)) throw fail("CORRUPT");
+    if (final.nlink === 1n) return false;
+    if (final.nlink !== 2n) throw fail("CORRUPT");
+
+    // The link count proves there is exactly one other directory entry for this inode.
+    const alias = await findTemporaryAlias(target.folder, final);
+    await recheck(target);
+    let raw = await boundedReadLinked(target.file, final);
+
+    let pending;
+    if (kind !== "pending") {
+      pending = await readPending();
+      if (!pending) throw fail("CORRUPT");
+    }
+    try {
+      if (kind === "pending") await capsule.open(raw, context);
+      else if (kind === "issued") {
+        requireCurrentIssued(await issuedCapsule.open(raw, context, pending.key));
+        await recheckPending(pending);
+      } else {
+        const opened = await targetCapsule.open(raw, scope);
+        validateSpsNativeMemberHostTarget(opened, context);
+        await recheckPending(pending);
+      }
+    } catch { throw fail("CORRUPT"); }
+
+    // Revalidate the exact two paths and payload immediately before unlinking the alias.
+    await recheck(target);
+    const currentFinal = await fs.lstat(target.file, { bigint: true });
+    const currentAlias = await fs.lstat(alias.file, { bigint: true });
+    if (!currentFinal.isFile() || currentFinal.isSymbolicLink() || currentFinal.nlink !== 2n
+      || !sameLinkedFile(final, currentFinal) || !currentAlias.isFile() || currentAlias.isSymbolicLink()
+      || currentAlias.nlink !== 2n || !sameLinkedFile(final, currentAlias)
+      || await boundedReadLinked(target.file, currentFinal) !== raw) throw fail("CORRUPT");
+    if (pending) await recheckPending(pending);
+    authorize();
+    await fs.unlink(alias.file);
+
+    await recheck(target);
+    const complete = await fs.lstat(target.file, { bigint: true });
+    const completeStat = await slotStat(target.file);
+    if (!complete.isFile() || complete.isSymbolicLink() || complete.nlink !== 1n
+      || !sameLinkedFile(final, complete) || !completeStat || completeStat.nlink !== 1
+      || !sameFile(complete, completeStat) || await boundedRead(target.file, completeStat) !== raw) throw fail("CORRUPT");
+    await syncDirectory(target.folder);
+    await recheck(target);
+    return true;
   }
   async function createOnly(kind, prepare, authorize) {
     let temporary, owned, target;
@@ -266,7 +422,7 @@ function createStore(options, targetReader) {
     } catch (error) { throw fail(internalFailures.get(error) ?? "FAILED"); }
     finally { if (temporary && target) await cleanupTemporary(temporary, owned, target); }
   }
-  if (targetReader) return Object.freeze({
+  if (targetReader && mode !== "publication-recovery") return Object.freeze({
     read() {
       return serialize(async () => {
         try { return (await readTargetMetadata())?.value ?? null; }
@@ -274,7 +430,48 @@ function createStore(options, targetReader) {
       });
     },
   });
+  if (mode === "publication-recovery") return Object.freeze({
+    recoverInterruptedPublications(input) {
+      const authorize = commitGuard(input);
+      try {
+        const descriptors = Object.getOwnPropertyDescriptors(input ?? {});
+        if (Reflect.ownKeys(descriptors).length !== 1 || !Object.hasOwn(descriptors, "beforeCommit")
+          || typeof descriptors.beforeCommit.value !== "function") throw fail("OPTIONS");
+      } catch { throw fail("OPTIONS"); }
+      return serialize(async () => {
+        try {
+          let retainedContext = await readScopeBoundContext("target");
+          if (!retainedContext) retainedContext = await readScopeBoundContext("pending");
+          if (!retainedContext) throw fail("CORRUPT");
+          const fullStore = createSpsNativeMemberPendingKeyStore({
+            userDataDirectory: config.userDataDirectory,
+            vaultDirectory: config.vaultDirectory,
+            context: retainedContext,
+            safeStorage: config.safeStorage,
+            platform: config.platform,
+          });
+          const recovered = [];
+          for (const kind of ["pending", "issued", "target"]) {
+            if (await fullStore.recoverInterruptedPublication(kind, { beforeCommit: authorize })) recovered.push(kind);
+          }
+          return Object.freeze({ recovered: Object.freeze(recovered) });
+        } catch (error) { throw fail(internalFailures.get(error) ?? "FAILED"); }
+      });
+    },
+  });
   return Object.freeze({
+    recoverInterruptedPublication(kind, input) {
+      const authorize = commitGuard(input);
+      try {
+        const descriptors = Object.getOwnPropertyDescriptors(input ?? {});
+        if (Reflect.ownKeys(descriptors).length !== 1 || !Object.hasOwn(descriptors, "beforeCommit")
+          || typeof descriptors.beforeCommit.value !== "function") throw fail("OPTIONS");
+      } catch { throw fail("OPTIONS"); }
+      return serialize(async () => {
+        try { return await recoverPublication(kind, authorize); }
+        catch (error) { throw fail(internalFailures.get(error) ?? "FAILED"); }
+      });
+    },
     inspectPresence() {
       return serialize(async () => {
         try {

@@ -109,6 +109,22 @@
         <p id="native-devices-empty" class="muted" hidden>No Native devices are registered.</p>
         <p id="native-devices-error" class="inline-warning" role="status" hidden>Native device management is unavailable. Diagnostic details are hidden.</p>
         <div id="native-devices-list" class="action-list" aria-live="polite"></div>
+        <div class="section-heading compact-heading">
+          <div>
+            <h3>This computer's Native registration</h3>
+            <p class="muted">Register using an invitation from the Host owner. Approval and Workspace access are separate. Native LAN remains in development.</p>
+          </div>
+        </div>
+        <div class="native-form">
+          <label for="native-member-invitation">Host invitation</label>
+          <input id="native-member-invitation" type="password" autocomplete="off" spellcheck="false" maxlength="8192" />
+          <label for="native-member-name">Computer name</label>
+          <input id="native-member-name" type="text" autocomplete="off" maxlength="120" />
+          <button id="register-native-member" class="button secondary" type="button" disabled>Register this computer</button>
+        </div>
+        <p id="native-member-result" class="muted" role="status" aria-live="polite">Sign in to manage this computer's registration.</p>
+        <button id="refresh-native-registrations" class="button secondary" type="button" disabled>Show saved registrations</button>
+        <div id="native-registrations-list" class="action-list" aria-live="polite"></div>
       </section>
 
       <section class="section" aria-labelledby="recovery-heading">

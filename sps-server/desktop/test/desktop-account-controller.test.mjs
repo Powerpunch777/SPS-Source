@@ -162,6 +162,158 @@ test("adopts a token rotation completed by another Desktop process", async () =>
   assert.equal(state.encryptedDesktopAccount, persistedAccount);
 });
 
+test("does not adopt a persisted token rotation from another account", async () => {
+  const state = {
+    encryptedDesktopAccount: accountValue(),
+    desktopAccountLastAttempt: null,
+    companies: [],
+    projects: [],
+    profile: null,
+  };
+  const otherAccount = accountValue({
+    subject: "account-2",
+    accessToken: "other-access",
+    refreshToken: "other-refresh",
+    accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  let refreshCalls = 0;
+  const { controller } = createHarness({
+    state,
+    dependencies: {
+      loadPersistedState: async () => ({ ...state, encryptedDesktopAccount: otherAccount }),
+      refreshIdentity: async () => {
+        refreshCalls += 1;
+        return {
+          accessToken: "access-for-current-account",
+          refreshToken: "refresh-for-current-account",
+          accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        };
+      },
+    },
+  });
+
+  assert.equal(await controller.ensureAccessToken(), "access-for-current-account");
+  assert.equal(refreshCalls, 1);
+  assert.equal(JSON.parse(state.encryptedDesktopAccount).subject, "account-1");
+});
+
+test("does not let an old refresh overwrite an account signed in after it started", async () => {
+  const state = {
+    encryptedDesktopAccount: accountValue(),
+    desktopAccountLastAttempt: null,
+    companies: [],
+    projects: [],
+    profile: null,
+  };
+  let releaseRefresh;
+  const refreshGate = new Promise((resolve) => { releaseRefresh = resolve; });
+  const { controller, calls } = createHarness({
+    state,
+    dependencies: {
+      refreshIdentity: async () => {
+        await refreshGate;
+        return {
+          accessToken: "stale-refresh-token",
+          refreshToken: "stale-rotated-refresh-token",
+          accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        };
+      },
+    },
+  });
+
+  const staleRefresh = controller.ensureAccessToken();
+  await new Promise((resolve) => setImmediate(resolve));
+  await controller.signOut();
+  const signIn = await controller.signIn();
+  assert.equal(signIn.desktopAccount.pending, true);
+  await flushAccountWork(controller);
+  const signedInAccount = JSON.parse(state.encryptedDesktopAccount);
+
+  releaseRefresh();
+  await assert.rejects(staleRefresh, /account changed during token refresh/);
+  assert.deepEqual(JSON.parse(state.encryptedDesktopAccount), signedInAccount);
+  assert.equal(JSON.parse(state.encryptedDesktopAccount).accessToken, "access-old");
+  assert.equal(calls.persisted.at(-1).rememberActiveConnection, undefined);
+  assert.equal(typeof calls.persisted.at(-1).beforeCommit, "function");
+});
+
+test("starts a new refresh for a new account session while the old refresh is pending", async () => {
+  const state = {
+    encryptedDesktopAccount: accountValue(),
+    desktopAccountLastAttempt: null,
+    companies: [],
+    projects: [],
+    profile: null,
+  };
+  let releaseOldRefresh;
+  const oldRefreshGate = new Promise((resolve) => { releaseOldRefresh = resolve; });
+  let refreshCalls = 0;
+  const { controller } = createHarness({
+    state,
+    dependencies: {
+      refreshIdentity: async () => {
+        refreshCalls += 1;
+        if (refreshCalls === 1) {
+          await oldRefreshGate;
+          return {
+            accessToken: "stale-access",
+            refreshToken: "stale-refresh",
+            accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          };
+        }
+        return {
+          accessToken: "new-session-access",
+          refreshToken: "new-session-refresh",
+          accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        };
+      },
+    },
+  });
+
+  const oldRefresh = controller.ensureAccessToken();
+  await new Promise((resolve) => setImmediate(resolve));
+  await controller.signOut();
+  await controller.signIn();
+  await flushAccountWork(controller);
+  const newRefresh = controller.ensureAccessToken();
+  assert.equal(await newRefresh, "new-session-access");
+  assert.equal(refreshCalls, 2);
+  releaseOldRefresh();
+  await assert.rejects(oldRefresh, /account changed during token refresh/);
+  assert.equal(JSON.parse(state.encryptedDesktopAccount).accessToken, "new-session-access");
+});
+
+test("does not expire a new account when an old refresh reports an expired credential", async () => {
+  const state = {
+    encryptedDesktopAccount: accountValue(),
+    desktopAccountLastAttempt: null,
+    companies: [],
+    projects: [],
+    profile: null,
+  };
+  let rejectRefresh;
+  const refreshGate = new Promise((_, reject) => { rejectRefresh = reject; });
+  const { controller } = createHarness({
+    state,
+    dependencies: {
+      refreshIdentity: async () => await refreshGate,
+      isExpiredRefreshToken: (error) => error?.message === "expired old credential",
+    },
+  });
+
+  const staleRefresh = controller.ensureAccessToken();
+  await new Promise((resolve) => setImmediate(resolve));
+  await controller.signOut();
+  await controller.signIn();
+  await flushAccountWork(controller);
+  const signedInAccount = JSON.parse(state.encryptedDesktopAccount);
+
+  rejectRefresh(new Error("expired old credential"));
+  await assert.rejects(staleRefresh, /account changed during token refresh/);
+  assert.deepEqual(JSON.parse(state.encryptedDesktopAccount), signedInAccount);
+  assert.equal(controller.getStatus().lastAttempt.status, "succeeded");
+});
+
 test("expires only the central account while preserving the Member connection", async () => {
   const profile = { connectionKind: "remote", hubUrl: "https://host.example.test" };
   const accountConnections = [{ subject: "account-1", profile }];
@@ -192,7 +344,8 @@ test("expires only the central account while preserving the Member connection", 
   assert.equal(state.profile, profile);
   assert.equal(state.accountConnections, accountConnections);
   assert.deepEqual(events, ["clear-auth", "stop-node", "reset-node"]);
-  assert.deepEqual(calls.persisted.at(-1), { rememberActiveConnection: false });
+  assert.equal(calls.persisted.at(-1).rememberActiveConnection, false);
+  assert.equal(typeof calls.persisted.at(-1).beforeCommit, "function");
   assert.equal(controller.getStatus().lastAttempt.status, "failed");
 });
 

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { constants, createHash, generateKeyPairSync, randomUUID, sign, X509Certificate } from "node:crypto";
+import { constants, createCipheriv, createDecipheriv, createHash, generateKeyPairSync, randomBytes, randomUUID, sign, X509Certificate } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createServer } from "node:https";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
@@ -8,12 +11,15 @@ import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate } from
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
   createSpsNativeEnrollmentRecoveryClient } from "../src/native-enrollment-client.mjs";
+import { createSpsNativeMemberController } from "../src/native-member-controller.mjs";
+import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader } from "../src/native-member-pending-store.mjs";
 import { defaultSpsNativePairingIssue, SPS_NATIVE_PAIRING_DEFAULT_POLICY } from "../src/native-connection-policy.mjs";
 
 // Cross-repository verification only: never imported by product Main. Run with
 // the pinned Core's tsx loader so its real services and DB migrations are used.
-if (process.argv.length !== 3 || process.argv[2] !== "--isolated-native-enrollment-client") {
-  throw new Error("Use the isolated Native enrollment client integration command.");
+const mode = process.argv[2];
+if (process.argv.length !== 3 || !["--isolated-native-enrollment-client", "--isolated-native-member-controller"].includes(mode)) {
+  throw new Error("Use an isolated Native enrollment integration command.");
 }
 const core = path.resolve(import.meta.dirname, "../../../external/sps-core");
 const load = relative => import(pathToFileURL(path.join(core, relative)).href);
@@ -35,6 +41,7 @@ const db = createDb(database.connectionString);
 const previousFetch = globalThis.fetch;
 const clients = [], sockets = new Set();
 let server, exchange, enrollment, metadataHandler;
+let localFixtureRoot = null;
 let succeeded = false;
 try {
   const hostId = randomUUID(), deviceKeyId = randomUUID();
@@ -64,7 +71,8 @@ try {
   let signings = 0;
   const service = spsNativeEnrollmentService(db, { hostId, serverSpkiSha256: serverPin,
     issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url"),
-    pairingPolicy: policy, certificateLifetimeMs: 60_000, signingTimeoutMs: 2000, maxConcurrentSignings: 2 }, async input => {
+    pairingPolicy: policy, certificateLifetimeMs: mode === "--isolated-native-member-controller" ? 30 * 60_000 : 60_000,
+    signingTimeoutMs: 2000, maxConcurrentSignings: 2 }, async input => {
     signings++;
     const issued = await issueSpsNativeMemberCertificate({ hostIdentity: host,
       request: { v: 1, kind: "sps.native.member-enrollment-request", hostId, deviceKeyId: input.deviceKeyId,
@@ -120,6 +128,102 @@ try {
       exp: Math.floor(Date.now() / 1000) + 60 })).toString("base64url");
     return `${header}.${payload}.${sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), keys.privateKey).toString("base64url")}`;
   };
+  if (mode === "--isolated-native-member-controller") {
+    const tempRoot = localFixtureRoot = await mkdtemp(path.join(os.tmpdir(), "sps-native-member-main-core-"));
+    const userDataDirectory = path.join(tempRoot, "user-data");
+    const vaultDirectory = path.join(tempRoot, "owner-vault");
+    await Promise.all([mkdir(userDataDirectory), mkdir(vaultDirectory)]);
+    const statePath = path.join(userDataDirectory, "native-member-index.json");
+    const protectionKey = randomBytes(32);
+    // AES-GCM stands in for Electron safeStorage in this Node-only fixture.
+    // This exercises the production capsule/store/controller composition, not DPAPI.
+    const safeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString(value) {
+        const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", protectionKey, iv);
+        const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+        return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+      },
+      decryptString(value) {
+        const bytes = Buffer.from(value), decipher = createDecipheriv("aes-256-gcm", protectionKey, bytes.subarray(0, 12));
+        decipher.setAuthTag(bytes.subarray(12, 28));
+        return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString("utf8");
+      },
+    };
+    let index = { v: 1, entries: [] };
+    async function persistIndex(next, { beforeCommit }) {
+      beforeCommit();
+      const temporary = `${statePath}.tmp`;
+      await writeFile(temporary, JSON.stringify(next), { flag: "wx" });
+      beforeCommit();
+      await rename(temporary, statePath);
+      index = next;
+    }
+    async function reloadIndex() { index = JSON.parse(await readFile(statePath, "utf8")); }
+    function authority(subject = context.subject) {
+      return { identityIssuer: fixtureIssuer, subject, userDataDirectory, vaultDirectory, generation: 1n };
+    }
+    function createController(subject = context.subject) {
+      return createSpsNativeMemberController({
+        getAuthority: () => authority(subject), getIndex: () => index, saveIndex: persistIndex,
+        getStore: ({ userDataDirectory: data, vaultDirectory: vault, context: scopedContext }) =>
+          createSpsNativeMemberPendingKeyStore({ userDataDirectory: data, vaultDirectory: vault,
+            context: scopedContext, safeStorage, platform: "win32" }),
+        getTargetReader: ({ userDataDirectory: data, vaultDirectory: vault, scope }) =>
+          createSpsNativeMemberHostTargetReader({ userDataDirectory: data, vaultDirectory: vault,
+            scope, safeStorage, platform: "win32" }),
+        authenticate: async () => token(), timeoutMs: 8000,
+      });
+    }
+    const memberController = createController();
+    clients.push(memberController);
+    discardCompletionResponse = true;
+    await assert.rejects(memberController.enroll({ invitationCode: invite(), displayName: "Fixture Member PC" }, {
+      confirm: async target => target.hostId === hostId && target.origin === origin,
+    }));
+    const registrations = memberController.list();
+    assert.deepEqual(registrations, [{ hostId }]);
+    const indexOnDisk = JSON.parse(await readFile(statePath, "utf8"));
+    assert.deepEqual(indexOnDisk, index);
+    assert.equal(index.entries.length, 1);
+    const firstDeviceKeyId = index.entries[0].deviceKeyId;
+    const beforeRecovery = {
+      devices: await db.select().from(spsMemberDevices),
+      deviceEvents: await db.select().from(spsMemberDeviceEvents),
+      pairingEvents: await db.select().from(spsNativePairingEvents),
+    };
+    assert.equal(beforeRecovery.devices.length, 1, "Main enrollment committed despite losing only the completion response.");
+    memberController.dispose();
+    await reloadIndex();
+    const restartedController = createController();
+    clients.push(restartedController);
+    const repaired = await restartedController.recover({ hostId });
+    assert.equal(repaired.status, "pending");
+    assert.equal(repaired.deviceId, beforeRecovery.devices[0].id);
+    assert.deepEqual(await restartedController.recover({ hostId }), repaired);
+    assert.deepEqual(await db.select().from(spsMemberDevices), beforeRecovery.devices);
+    assert.deepEqual(await db.select().from(spsMemberDeviceEvents), beforeRecovery.deviceEvents);
+    assert.deepEqual(await db.select().from(spsNativePairingEvents), beforeRecovery.pairingEvents);
+    assert.deepEqual(restartedController.list(), [{ hostId }]);
+    assert.equal(index.entries[0].deviceKeyId, firstDeviceKeyId, "The persisted account/Host key ID remains stable across controller reconstruction.");
+    const requestsBeforeWrongAccount = requests.length;
+    const wrongAccountController = createController("different-account");
+    clients.push(wrongAccountController);
+    await assert.rejects(wrongAccountController.recover({ hostId }));
+    assert.equal(requests.length, requestsBeforeWrongAccount, "A different current account cannot reach the Host or use the retained key.");
+    const devices = await db.select().from(spsMemberDevices);
+    assert.equal(devices.length, 1);
+    assert.equal(devices[0].status, "pending");
+    assert.equal((await db.select().from(spsNativePairings))[0].status, "consumed");
+    assert.equal((await db.select().from(spsNativeEnrollments))[0].status, "issued");
+    for (const table of [agents, plugins, companyMemberships, spsNodes]) assert.deepEqual(await db.select().from(table), []);
+    assert.ok(requests.every(row => row.tls === "TLSv1.3" && row.resumed === false));
+    assert.ok(requests.filter(row => row.path.endsWith("/complete")).every(row => row.clientAuthorized));
+    assert.ok(requests.filter(row => row.path.endsWith("/reconcile")).every(row => row.clientAuthorized));
+    assert.equal(requests.filter(row => row.path.endsWith("/complete")).length, 1);
+    assert.equal(requests.filter(row => row.path.endsWith("/reconcile")).length, 2);
+    assert.equal(requests.length, 8, "Only explicit bootstrap/enrollment/recovery calls reach the isolated listener.");
+  } else {
   const other = await createSpsNativeHostIdentity({ hostId, hostnames: ["127.0.0.1"], notBefore: now - 1000,
     notAfter: now + 86_400_000, issuerNotAfter: now + 2 * 86_400_000 });
   await assert.rejects(client(invite(other), { ...context, serverSpkiSha256: fingerprint(other.server.certificatePem) }).exchange(token()));
@@ -208,6 +312,7 @@ try {
   assert.equal(replacement.expiresAt - replacement.issuedAt, 3_600_000);
   assert.equal((await pairings.listHost()).filter(item => item.status === "pending").length, 10);
   for (const table of [agents, plugins, companyMemberships, spsNodes]) assert.deepEqual(await db.select().from(table), []);
+  }
   succeeded = true;
 } finally {
   for (const client of clients) client.dispose();
@@ -217,6 +322,12 @@ try {
   globalThis.fetch = previousFetch;
   await db.$client.end();
   await database.cleanup();
+  if (localFixtureRoot) {
+    await rm(localFixtureRoot, { recursive: true, force: true });
+    assert.equal(existsSync(localFixtureRoot), false, "The exact isolated Member fixture directory must be removed.");
+  }
 }
 assert.equal(succeeded, true);
-console.log("Native enrollment Main-private client/Core integration passed: pinned public issuer bootstrap before account session, actual temporary DB/session/issuance/fresh mTLS pending registration, lost completion response recovered read-only using the existing certificate without an invitation or new device/events, wrong peer sends no HTTP credentials, one-use replay denied, approved 1-hour/5-attempt/10-active policy enforced, no Workspace/Plugin/Agent/Node grant; loopback/source only, not Desktop UI/DPAPI/two-PC/LAN qualification.");
+console.log(mode === "--isolated-native-member-controller"
+  ? "Native Main controller/Core integration passed: real temporary Core DB + fresh loopback TLS, production enrollment/controller/client/store factories, stable persisted account/Host index, dropped post-commit completion response recovered after controller reconstruction without invitation/re-enrollment/new rows/events, and wrong current account denied before network; AES safeStorage substitute only, not DPAPI, product listener, Desktop UI, or two-PC/LAN qualification."
+  : "Native enrollment client/Core integration passed: pinned public issuer bootstrap before account session, actual temporary DB/session/issuance/fresh mTLS pending registration, lost completion response recovered read-only using the existing certificate without an invitation or new device/events, wrong peer sends no HTTP credentials, one-use replay denied, approved 1-hour/5-attempt/10-active policy enforced, no Workspace/Plugin/Agent/Node grant; loopback/source only, not Desktop UI/DPAPI/two-PC/LAN qualification.");

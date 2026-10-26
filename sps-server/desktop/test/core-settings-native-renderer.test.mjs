@@ -19,6 +19,7 @@ class ElementFixture {
     this.checked = false;
     this.value = "";
     this.textContent = "";
+    this.children = [];
     this.attributes = new Map();
     this.listeners = new Map();
     this.classes = new Set();
@@ -41,6 +42,7 @@ class ElementFixture {
   }
 
   setAttribute(name, value) { this.attributes.set(name, value); }
+  append(...children) { this.children.push(...children); }
 }
 
 function validNative(overrides = {}) {
@@ -63,6 +65,7 @@ function createRenderer({ getStatus = async () => coreStatus(), prepareNativeIde
   const actionButtons = ["open-workspace", "check-updates", "restart-host", "export-host", "inspect-transfer"]
     .map(action => new ElementFixture(`action-${action}`, { action }));
   const document = {
+    createElement: tag => new ElementFixture(tag),
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, new ElementFixture(id));
       return elements.get(id);
@@ -86,6 +89,63 @@ async function settle() {
 }
 
 function element(ctx, id) { return ctx.elements.get(id); }
+
+test("Member registration needs a signed-in account, explicit input and click, with no automatic network request", async () => {
+  const calls = [];
+  const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageHost: false, canManageNativeMember: true }),
+    api: { enrollNativeMember: async input => { calls.push({ ...input }); return { hostId: "11111111-1111-4111-8111-111111111111",
+      deviceId: "22222222-2222-4222-8222-222222222222", status: "pending" }; } },
+  });
+  await settle();
+  assert.deepEqual(calls, []);
+  assert.equal(element(ctx, "register-native-member").disabled, true);
+  element(ctx, "native-member-invitation").value = "fixture-invitation-secret";
+  element(ctx, "native-member-name").value = "Member computer";
+  element(ctx, "native-member-name").dispatch("input");
+  assert.equal(element(ctx, "register-native-member").disabled, false);
+  element(ctx, "register-native-member").dispatch("click");
+  assert.equal(element(ctx, "native-member-invitation").value, "");
+  await settle();
+  assert.deepEqual(calls, [{ invitationCode: "fixture-invitation-secret", displayName: "Member computer" }]);
+  assert.match(element(ctx, "native-member-result").textContent, /Pending approval/);
+  assert.doesNotMatch(element(ctx, "native-member-result").textContent, /secret/);
+});
+
+test("Member failure never renders provider credentials or repeats enrollment", async () => {
+  let attempts = 0;
+  const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }),
+    api: { enrollNativeMember: async () => { attempts++; throw new Error("private-key-fixture-token"); } },
+  });
+  await settle();
+  element(ctx, "native-member-invitation").value = "fixture-secret";
+  element(ctx, "native-member-name").value = "Member";
+  element(ctx, "native-member-name").dispatch("input");
+  element(ctx, "register-native-member").dispatch("click");
+  await settle(); await settle();
+  assert.equal(attempts, 1);
+  assert.equal(element(ctx, "native-member-invitation").value, "");
+  assert.match(element(ctx, "native-member-result").textContent, /Existing credentials were kept/);
+  assert.doesNotMatch(element(ctx, "native-member-result").textContent, /fixture-token|private-key/);
+});
+
+test("saved Member registration queries are explicit and never use an invitation", async () => {
+  const calls = [];
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }),
+    api: { listNativeRegistrations: async () => { calls.push("list"); return [{ hostId }]; },
+      recoverNativeMember: async input => { calls.push({ ...input }); return { hostId, deviceId: hostId, status: "revoked" }; } },
+  });
+  await settle();
+  assert.deepEqual(calls, []);
+  element(ctx, "refresh-native-registrations").dispatch("click");
+  await settle();
+  const row = element(ctx, "native-registrations-list").children[0];
+  assert.ok(row);
+  row.children[1].children[0].dispatch("click");
+  await settle();
+  assert.deepEqual(calls, ["list", { hostId }]);
+  assert.match(element(ctx, "native-member-result").textContent, /Revoked/);
+});
 
 test("Native LAN starts unavailable when native DTO is missing and never prepares on load", async () => {
   let statusCalls = 0;

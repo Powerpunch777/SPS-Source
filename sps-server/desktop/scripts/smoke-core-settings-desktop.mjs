@@ -57,8 +57,15 @@ if (deferredOwner) {
 }
 const child = spawn(binary, [".", ...(stateUnavailable ? [] : ["--sps-core-settings"]), `--user-data-dir=${userData}`, `--remote-debugging-port=${port}`, "--remote-allow-origins=*"], {
   cwd: root,
-  env: { ...process.env, SPS_DESKTOP_E2E: "1", SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1", SPS_DESKTOP_E2E_USER_DATA_DIR: userData },
-  stdio: "ignore",
+  env: { ...process.env, SPS_DESKTOP_E2E: "1", SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1", SPS_DESKTOP_E2E_USER_DATA_DIR: userData, SPS_DESKTOP_E2E_SHUTDOWN_TRACE: "1" },
+  stdio: ["ignore", "ignore", "pipe"],
+});
+const shutdownTrace = [];
+child.stderr?.on("data", chunk => {
+  for (const line of String(chunk).split(/\r?\n/)) {
+    if (/^\[sps-shutdown\] stage=(?:quit_request_received|quit_scheduled|before_quit_start|before_quit_complete|stop_scheduling_start|stop_scheduling_done|cancel_commands_start|cancel_commands_done|stop_managers_start|stop_managers_done|drain_failed|drain_complete|retry_app_quit|will_quit|quit)$/.test(line)
+      && shutdownTrace.length < 32) shutdownTrace.push(line);
+  }
 });
 let socket;
 let emergencyStopUsed = false;
@@ -114,6 +121,10 @@ try {
   assert.match(status.body, /Recovery/);
   const settings = await evaluate("window.spsCoreSettings.getStatus()");
   assert.equal(settings.canManageHost, false);
+  assert.equal(settings.canManageNativeMember, false);
+  assert.equal(await evaluate("document.querySelector('#register-native-member').disabled"), true);
+  assert.equal(await evaluate("document.querySelector('#refresh-native-registrations').disabled"), true);
+  await evaluate("window.spsCoreSettings.listNativeRegistrations().then(() => { throw new Error('Unsigned account was accepted'); }, () => true)");
   assert.deepEqual(settings.nativeConnectivity, { state: "host_required", lanEnabled: false, canPrepare: false });
   assert.equal(await evaluate("document.querySelector('#prepare-native-identity').disabled"), true);
   assert.equal(await evaluate("document.querySelector('#native-identity-state').textContent"), "Host required");
@@ -169,6 +180,10 @@ try {
     assert.equal(quitPresentation.visible, true, `Quit button is not visible at ${width}px.`);
     assert.equal(quitPresentation.enabled, true, `Quit button is disabled at ${width}px.`);
     if (screenshotRoot) {
+      await evaluate("document.querySelector('#native-member-invitation').scrollIntoView({ block: 'center' })");
+      const memberCapture = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+      await writeFile(path.join(screenshotRoot, `core-settings-member-${scenario}-${width}x${height}.png`), Buffer.from(memberCapture.data, "base64"));
+      await evaluate("document.querySelector('#quit-desktop').scrollIntoView({ block: 'center' })");
       const capture = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
       await writeFile(path.join(screenshotRoot, `core-settings-${scenario}-${width}x${height}.png`), Buffer.from(capture.data, "base64"));
     }
@@ -200,7 +215,13 @@ try {
   assert.equal(quitButtonClicked, true, "The spawned Desktop exited before its Quit button was clicked.");
   assert.equal(quitResult.graceful, true,
     `Core Settings Quit did not naturally exit its spawned Electron process with code 0: ${JSON.stringify(quitResult)}.`);
+} catch (error) {
+  // Cleanup must still reject forced termination, while preserving the original
+  // isolated-fixture assertion that made normal Quit unreachable.
+  console.error("Core Settings smoke failed before cleanup:", error.message);
+  throw error;
 } finally {
+  if (shutdownTrace.length > 0) console.error(`Core Settings fixed shutdown trace: ${shutdownTrace.join("; ")}`);
   socket?.close();
   if (child.exitCode === null && child.signalCode === null && child.pid) {
     emergencyStopUsed = true;

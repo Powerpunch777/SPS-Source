@@ -84,6 +84,9 @@ export function createSpsDesktopAccountController({
   let refreshPromise = null;
   let pendingSignIn = null;
   let accountError = null;
+  // Fences asynchronous Identity work when the local account lifecycle moves
+  // on, including sign-out/sign-in back to the same account (an ABA change).
+  let accountSessionEpoch = 0;
 
   function currentAccount() {
     return parseEncryptedAccount(state.encryptedDesktopAccount, decrypt);
@@ -131,17 +134,31 @@ export function createSpsDesktopAccountController({
     if (Number.isFinite(expiresAt) && expiresAt > Date.now() + ACCOUNT_REFRESH_SKEW_MS) {
       return account.accessToken;
     }
-    if (!refreshPromise) {
-      refreshPromise = (async () => withRefreshLock({
+    const epoch = accountSessionEpoch;
+    if (!refreshPromise || refreshPromise.epoch !== epoch) {
+      const isSameAccount = (candidate) => Boolean(candidate
+        && candidate.subject === account.subject
+        && candidate.deviceId === account.deviceId
+        && (candidate.identityUrl || configuredIdentityUrl()) === (account.identityUrl || configuredIdentityUrl()));
+      const assertCurrent = () => {
+        if (epoch !== accountSessionEpoch || !isSameAccount(currentAccount())) {
+          throw new Error("The SPS account changed during token refresh.");
+        }
+      };
+      const pending = { epoch, promise: null };
+      pending.promise = (async () => withRefreshLock({
         directory: app.getPath("userData"),
         action: async () => {
           const persistedState = await loadPersistedState();
+          assertCurrent();
           const persistedAccount = parseEncryptedAccount(persistedState.encryptedDesktopAccount, decrypt);
-          const current = persistedAccount?.refreshToken && persistedAccount.refreshToken !== account.refreshToken
+          const current = isSameAccount(persistedAccount) && persistedAccount.refreshToken
+            && persistedAccount.refreshToken !== account.refreshToken
             ? persistedAccount
             : account;
           const persistedExpiry = Date.parse(current.accessTokenExpiresAt ?? "");
           if (Number.isFinite(persistedExpiry) && persistedExpiry > Date.now() + ACCOUNT_REFRESH_SKEW_MS) {
+            assertCurrent();
             state.encryptedDesktopAccount = persistedState.encryptedDesktopAccount;
             return current.accessToken;
           }
@@ -154,7 +171,11 @@ export function createSpsDesktopAccountController({
               deviceId: current.deviceId,
             });
           } catch (error) {
+            // An obsolete refresh must never sign out a newer account or leak
+            // its stale provider error to the caller.
+            assertCurrent();
             if (isExpiredRefreshToken(error)) {
+              accountSessionEpoch += 1;
               state.encryptedDesktopAccount = null;
               state.companies = [];
               state.projects = [];
@@ -162,26 +183,34 @@ export function createSpsDesktopAccountController({
               stopNodeScheduling();
               resetNodeRuntimeStatus();
               recordAttempt("failed", "SPS sign-in expired. Sign in again to continue.");
-              await persistState({ rememberActiveConnection: false });
+              const expiryEpoch = accountSessionEpoch;
+              await persistState({ rememberActiveConnection: false, beforeCommit: () => {
+                if (expiryEpoch !== accountSessionEpoch || currentAccount()) {
+                  throw new Error("The SPS account changed during token refresh.");
+                }
+              } });
               notifyStatus();
               throw new Error("SPS sign-in expired. Sign in again to continue.");
             }
             throw error;
           }
+          assertCurrent();
           state.encryptedDesktopAccount = encrypt(JSON.stringify({
             ...current,
             ...refreshed,
             identityUrl: current.identityUrl || configuredIdentityUrl(),
             verifiedAt: current.verifiedAt || new Date().toISOString(),
           }));
-          await persistState();
+          await persistState({ beforeCommit: assertCurrent });
+          assertCurrent();
           return refreshed.accessToken;
         },
       }))().finally(() => {
-        refreshPromise = null;
+        if (refreshPromise === pending) refreshPromise = null;
       });
+      refreshPromise = pending;
     }
-    return await refreshPromise;
+    return await refreshPromise.promise;
   }
 
   async function establishCoreSession(hubOrigin) {
@@ -263,10 +292,14 @@ export function createSpsDesktopAccountController({
 
   async function startSignIn() {
     if (pendingSignIn) return publicStatus();
+    const epoch = ++accountSessionEpoch;
     const identityUrl = configuredIdentityUrl();
     accountError = null;
     recordAttempt("pending");
-    await persistState();
+    await persistState({ beforeCommit: () => {
+      if (epoch !== accountSessionEpoch) throw new Error("The SPS account changed during sign-in.");
+    } });
+    if (epoch !== accountSessionEpoch) return publicStatus();
     let signIn;
     try {
       signIn = await startIdentitySignIn({
@@ -275,15 +308,21 @@ export function createSpsDesktopAccountController({
         openExternal,
       });
     } catch (error) {
+      if (epoch !== accountSessionEpoch) return publicStatus();
       accountError = safeAccountError(error);
       recordAttempt("failed", error);
       await persistState();
       notifyStatus();
       throw error;
     }
+    if (epoch !== accountSessionEpoch) {
+      signIn?.cancel();
+      return publicStatus();
+    }
     pendingSignIn = signIn;
     notifyStatus();
     void signIn.result.then(async (account) => {
+      if (epoch !== accountSessionEpoch || pendingSignIn !== signIn) return;
       state.encryptedDesktopAccount = encrypt(JSON.stringify({
         ...account,
         identityUrl,
@@ -292,18 +331,30 @@ export function createSpsDesktopAccountController({
       if (pendingSignIn === signIn) accountError = null;
       restoreCurrentAccountConnection();
       recordAttempt("succeeded");
-      await persistState();
+      await persistState({ beforeCommit: () => {
+        if (epoch !== accountSessionEpoch || pendingSignIn !== signIn) {
+          throw new Error("The SPS account changed during sign-in.");
+        }
+      } });
+      if (epoch !== accountSessionEpoch) return;
       if (state.legacyOwnerHostAdoptionPending && !state.ownerHostOwnerSubject) {
         try {
           await adoptLegacyOwnerHostIfNeeded();
         } catch (error) {
+          if (epoch !== accountSessionEpoch) return;
           onLegacyOwnerHostAdoptionError(error);
         }
       }
+      if (epoch !== accountSessionEpoch) return;
       const pendingJoin = getPendingJoin();
-      if (pendingJoin) await acceptDesktopJoinLink(pendingJoin);
-      else await maybeOpenWorkspaceForCurrentAccount();
+      if (pendingJoin) {
+        await acceptDesktopJoinLink(pendingJoin);
+        if (epoch !== accountSessionEpoch) return;
+      } else {
+        await maybeOpenWorkspaceForCurrentAccount();
+      }
     }).catch(async (error) => {
+      if (epoch !== accountSessionEpoch || pendingSignIn !== signIn) return;
       if (pendingSignIn === signIn) accountError = safeAccountError(error);
       recordAttempt("failed", error);
       await persistState().catch(() => {});
@@ -315,6 +366,7 @@ export function createSpsDesktopAccountController({
   }
 
   async function signOut() {
+    accountSessionEpoch += 1;
     const signIn = pendingSignIn;
     pendingSignIn = null;
     signIn?.cancel();

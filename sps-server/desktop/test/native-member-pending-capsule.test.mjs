@@ -107,6 +107,27 @@ test("seals and opens a real local Member key request using the injected Windows
   assert.equal(Object.isFrozen(opened), true);
 });
 
+test("opens only the retained context for an indexed account/device scope without returning private key data", async () => {
+  const { capsule } = capsuleFor();
+  const serialized = await capsule.seal({ context: CONTEXT, keyRequest });
+  const retained = await capsule.openContext(serialized, {
+    identityIssuer: CONTEXT.identityIssuer,
+    subject: CONTEXT.subject,
+    hostId: CONTEXT.hostId,
+    deviceKeyId: CONTEXT.deviceKeyId,
+  });
+  assert.deepEqual(retained, CONTEXT);
+  assert.equal(Object.isFrozen(retained), true);
+  assert.deepEqual(Object.keys(retained).sort(), Object.keys(CONTEXT).sort());
+  assert.equal(Object.hasOwn(retained, "privateKeyPem"), false);
+  await assert.rejects(capsule.openContext(serialized, {
+    identityIssuer: CONTEXT.identityIssuer,
+    subject: "other@example.test",
+    hostId: CONTEXT.hostId,
+    deviceKeyId: CONTEXT.deviceKeyId,
+  }), assertStaticInvalid);
+});
+
 test("binds every expected context field and does not adopt an embedded context", async () => {
   const { capsule } = capsuleFor();
   const serialized = await capsule.seal({ context: CONTEXT, keyRequest });

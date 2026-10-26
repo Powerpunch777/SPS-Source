@@ -414,7 +414,8 @@ public static class RestrictedE2eRunner
             uint imageLength = 32768;
             var image = new StringBuilder((int)imageLength);
             if (!QueryFullProcessImageName(process, 0, image, ref imageLength)) return 5;
-            string name = Path.GetFileName(image.ToString());
+            string imagePath = Path.GetFullPath(image.ToString());
+            string name = Path.GetFileName(imagePath);
             if (String.IsNullOrEmpty(name)) return 5;
 
             readOK = true;
@@ -423,14 +424,14 @@ public static class RestrictedE2eRunner
             if (String.Equals(name, "electron.exe", StringComparison.OrdinalIgnoreCase)) return 2;
             if (String.Equals(name, "chrome_crashpad_handler.exe", StringComparison.OrdinalIgnoreCase)
                 || String.Equals(name, "crashpad_handler.exe", StringComparison.OrdinalIgnoreCase)) return 3;
-            if (String.Equals(name, "powershell.exe", StringComparison.OrdinalIgnoreCase)
-                || String.Equals(name, "pwsh.exe", StringComparison.OrdinalIgnoreCase)) return 6;
-            if (String.Equals(name, "cmd.exe", StringComparison.OrdinalIgnoreCase)) return 7;
-            if (String.Equals(name, "conhost.exe", StringComparison.OrdinalIgnoreCase)
-                || String.Equals(name, "OpenConsole.exe", StringComparison.OrdinalIgnoreCase)) return 8;
-            if (String.Equals(name, "WerFault.exe", StringComparison.OrdinalIgnoreCase)
-                || String.Equals(name, "WerFaultSecure.exe", StringComparison.OrdinalIgnoreCase)
-                || String.Equals(name, "wermgr.exe", StringComparison.OrdinalIgnoreCase)) return 9;
+            string systemDirectory = Path.GetFullPath(Environment.SystemDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (String.Equals(imagePath, Path.Combine(systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"), StringComparison.OrdinalIgnoreCase)) return 6;
+            if (String.Equals(imagePath, Path.Combine(systemDirectory, "cmd.exe"), StringComparison.OrdinalIgnoreCase)) return 7;
+            if (String.Equals(imagePath, Path.Combine(systemDirectory, "conhost.exe"), StringComparison.OrdinalIgnoreCase)
+                || String.Equals(imagePath, Path.Combine(systemDirectory, "OpenConsole.exe"), StringComparison.OrdinalIgnoreCase)) return 8;
+            if (String.Equals(imagePath, Path.Combine(systemDirectory, "WerFault.exe"), StringComparison.OrdinalIgnoreCase)
+                || String.Equals(imagePath, Path.Combine(systemDirectory, "WerFaultSecure.exe"), StringComparison.OrdinalIgnoreCase)
+                || String.Equals(imagePath, Path.Combine(systemDirectory, "wermgr.exe"), StringComparison.OrdinalIgnoreCase)) return 9;
             return 4;
         }
         catch { return 5; }

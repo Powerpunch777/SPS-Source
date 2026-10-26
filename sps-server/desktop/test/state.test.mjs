@@ -6,6 +6,52 @@ import path from "node:path";
 import { consumeLegacyDesktopConnectionMigration, emptyState, hasPendingLegacyDesktopOwnerAdoption, loadState, saveState } from "../src/state.mjs";
 import { allocateSpsNativeMemberKeyIndex } from "../src/native-member-key-index.mjs";
 
+async function isolatedSaveDirectory(t) {
+  const created = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-save-"));
+  const root = await fs.realpath(created);
+  const identity = await fs.lstat(root, { bigint: true });
+  const parent = await fs.realpath(os.tmpdir());
+  t.after(async () => {
+    assert.equal(path.dirname(await fs.realpath(root)), parent);
+    assert.ok(path.basename(root).startsWith("sps-state-save-"));
+    const current = await fs.lstat(root, { bigint: true });
+    assert.equal(current.isDirectory() && !current.isSymbolicLink(), true);
+    assert.equal(current.dev, identity.dev); assert.equal(current.ino, identity.ino);
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  return root;
+}
+
+test("concurrent local saves preserve complete snapshots and the latest account/Node state", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const saves = [];
+  for (let index = 0; index < 24; index++) {
+    saves.push(saveState(root, { ...emptyState(), encryptedDesktopAccount: `encrypted-account-${index}`, nodeId: `node-${index}` }));
+  }
+  await Promise.all(saves);
+  const saved = await loadState(root, { strictVersion: true });
+  assert.equal(saved.encryptedDesktopAccount, "encrypted-account-23");
+  assert.equal(saved.nodeId, "node-23");
+  assert.deepEqual(saved.nativeMemberKeyIndex, { v: 1, entries: [] });
+});
+
+test("a stale Native commit guard preserves existing state and does not poison later saves", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const original = { ...emptyState(), encryptedDesktopAccount: "existing-encrypted-account" };
+  await saveState(root, original);
+  const file = path.join(root, "sps-desktop-state.json");
+  const bytes = await fs.readFile(file, "utf8");
+  let checks = 0;
+  await assert.rejects(saveState(root, { ...original, encryptedDesktopAccount: "stale-account" }, {
+    beforeCommit() { checks++; if (checks === 3) throw new Error("account changed before rename"); },
+  }), /account changed/);
+  assert.equal(await fs.readFile(file, "utf8"), bytes);
+  await assert.rejects(saveState(root, original, { beforeCommit: async () => {} }), /synchronous/);
+  assert.equal(await fs.readFile(file, "utf8"), bytes);
+  await saveState(root, { ...original, nodeId: "new-node" });
+  assert.equal((await loadState(root, { strictVersion: true })).nodeId, "new-node");
+});
+
 test("migrates v11 public Member key metadata without changing accounts, Node keys or routing", async () => {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-member-index-"));
   const root = await fs.realpath(created);

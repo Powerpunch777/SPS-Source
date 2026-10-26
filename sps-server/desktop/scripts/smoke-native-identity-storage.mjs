@@ -7,10 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
-import { createSpsNativeHostIdentityStore } from "../src/native-identity-store.mjs";
-import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate, publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
-import { createSpsNativeMemberPendingKeyStore } from "../src/native-member-pending-store.mjs";
 import { createHash, createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
 import { canonicalNativeSmokeDirectorySync } from "../src/native-identity-smoke-paths.mjs";
 import {
@@ -157,6 +153,15 @@ async function electronPhase() {
     }
 
     stage = "identity_store";
+    // Node's coordinator must reject runtime overrides without loading PKI or
+    // key-store code. Electron loads it only after its pre-ready path setup,
+    // pinned-runtime and secure-storage checks have completed.
+    const { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity } = await import("../src/native-identity-certificates.mjs");
+    const { createSpsNativeHostIdentityStore } = await import("../src/native-identity-store.mjs");
+    const { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate,
+      publicSpsNativeMemberEnrollmentRequest } = await import("../src/native-member-certificates.mjs");
+    const { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader,
+      createSpsNativeMemberPublicationRecovery } = await import("../src/native-member-pending-store.mjs");
     const store = createSpsNativeHostIdentityStore({ userDataDirectory, vaultDirectory, safeStorage });
     if (args[2] === "create") {
       assert.equal(await store.read(), null);
@@ -197,8 +202,8 @@ async function electronPhase() {
     stage = "member_pending_reload";
     const memberDirectory = path.join(userDataDirectory, "native-connectivity", "member-pending");
     const memberFiles = await readdir(memberDirectory);
-    assert.equal(memberFiles.length, args[2] === "create" ? 1 : 2);
-    const memberFile = path.join(memberDirectory, memberFiles.find(name => !name.endsWith(".issued.json")));
+    assert.equal(memberFiles.length, args[2] === "create" ? 1 : 3);
+    const memberFile = path.join(memberDirectory, memberFiles.find(name => !name.endsWith(".issued.json") && !name.endsWith(".target.json")));
     const memberStat = await lstat(memberFile);
     assert.ok(memberStat.isFile() && !memberStat.isSymbolicLink() && memberStat.nlink === 1 && memberStat.size <= 96 * 1024);
     const memberBytes = await readFile(memberFile, "utf8");
@@ -238,6 +243,23 @@ async function electronPhase() {
     assert.equal(await readFile(memberFile, "utf8"), memberBytes);
     assert.equal((await lstat(memberFile)).ino, memberStat.ino);
     const memberIssuedCertificateSha256 = createHash("sha256").update(new X509Certificate(prepared.credential.certificatePem).raw).digest("hex");
+    const retainedTarget = { v: 1, kind: "sps.native.member-host-target", context: memberContext,
+      origin: "https://127.0.0.1:43123", serverCertificatePem: loaded.server.certificatePem };
+    const indexedScope = { identityIssuer: memberContext.identityIssuer, subject: memberContext.subject,
+      hostId: memberContext.hostId, deviceKeyId: memberContext.deviceKeyId };
+    if (args[2] === "create") await memberStore.createTarget(retainedTarget);
+    const coldOptions = { userDataDirectory, vaultDirectory, scope: indexedScope, safeStorage };
+    assert.deepEqual(await createSpsNativeMemberHostTargetReader(coldOptions).read(), retainedTarget);
+    // Verify the explicit cold recovery composition against real Windows
+    // encryption too. A completed store must require no alias removal.
+    assert.deepEqual(await createSpsNativeMemberPublicationRecovery(coldOptions)
+      .recoverInterruptedPublications({ beforeCommit() {} }), { recovered: [] });
+    assert.equal((await memberStore.read()).privateKeyPem, memberKey.privateKeyPem);
+    assert.equal((await memberStore.readIssued()).credential.certificatePem, prepared.credential.certificatePem);
+    const targetFiles = (await readdir(memberDirectory)).filter(name => name.endsWith(".target.json"));
+    assert.equal(targetFiles.length, 1);
+    const targetBytes = await readFile(path.join(memberDirectory, targetFiles[0]), "utf8");
+    assert.doesNotMatch(targetBytes, /PRIVATE KEY|CERTIFICATE|privateKeyPem|native-smoke-fixture-user|127\.0\.0\.1/);
     assert.equal((await readdir(vaultDirectory)).length, 0);
     const memberPendingSpkiSha256 = createHash("sha256")
       .update(createPublicKey(createPrivateKey(memberKey.privateKeyPem)).export({ type: "spki", format: "der" })).digest("hex");

@@ -1,6 +1,8 @@
 import { pathToFileURL } from "node:url";
 import { createSpsSetupWindowPreferences } from "./window-security.mjs";
 import { requireSpsNativeIdentityPreparationInput } from "./native-identity-controller.mjs";
+import { requireSpsNativeMemberEnrollmentInput, requireSpsNativeMemberRecoveryInput } from "./native-member-controller.mjs";
+import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 
 export const SPS_CORE_SETTINGS_SHORTCUT = "CommandOrControl+Alt+S";
 const NATIVE_DEVICE_STATES = new Set(["available", "host_required", "identity_required", "host_restart_required", "unavailable"]);
@@ -30,6 +32,26 @@ function validateNativeDeviceInput(input) {
     throw new TypeError("Native device actions require one canonical device UUID.");
   }
   return Object.freeze({ deviceId: record.deviceId });
+}
+
+function memberObservation(value, hostId, allowCancellation = false) {
+  const cancelled = allowCancellation && exactDataRecord(value, ["cancelled"]);
+  if (cancelled?.cancelled === true) return Object.freeze({ cancelled: true });
+  const result = exactDataRecord(value, ["hostId", "deviceId", "status"]);
+  if (!result || result.hostId !== hostId || typeof result.deviceId !== "string" || !NATIVE_DEVICE_ID.test(result.deviceId)
+    || !NATIVE_DEVICE_STATUSES.has(result.status)) throw new Error("Native Member status is unavailable.");
+  return Object.freeze(result);
+}
+
+function memberRegistrations(value) {
+  if (!Array.isArray(value) || value.length > 128) throw new Error("Native Member registrations are unavailable.");
+  const ids = new Set();
+  return Object.freeze(value.map(item => {
+    const entry = exactDataRecord(item, ["hostId"]);
+    if (!entry || typeof entry.hostId !== "string" || !NATIVE_DEVICE_ID.test(entry.hostId) || ids.has(entry.hostId)) throw new Error("Native Member registrations are unavailable.");
+    ids.add(entry.hostId);
+    return Object.freeze(entry);
+  }));
 }
 
 function sanitizeNativeDevicesSnapshot(value) {
@@ -95,6 +117,12 @@ export function createCoreSettingsController({
   approveNativeDevice,
   revokeNativeDevice,
   confirmNativeDeviceAction,
+  listNativeRegistrations,
+  enrollNativeMember,
+  recoverNativeMember,
+  repairNativeMemberStorage,
+  confirmNativeMember,
+  confirmNativeMemberRepair,
   requestQuit,
 }) {
   let window = null;
@@ -250,6 +278,39 @@ export function createCoreSettingsController({
     }, { writes: true, input: true, authorizeBeforeAction: false });
 
     bind("list-native-devices", async (_input, event) => listNativeDevicesFor(event));
+    bind("list-native-registrations", async (_input, event) => {
+      if (typeof listNativeRegistrations !== "function") throw new Error("Native Member registration is unavailable.");
+      return memberRegistrations(await awaitAndAssertSender(event, () => listNativeRegistrations()));
+    });
+    bind("enroll-native-member", async (input, event) => {
+      const validated = requireSpsNativeMemberEnrollmentInput(input);
+      if (typeof enrollNativeMember !== "function" || typeof confirmNativeMember !== "function") throw new Error("Native Member registration is unavailable.");
+      const result = await awaitAndAssertSender(event, () => enrollNativeMember(validated, {
+        assertRequester: () => assertSender(event),
+        confirm: target => awaitAndAssertSender(event, () => confirmNativeMember(window, target)),
+      }));
+      return memberObservation(result, parseSpsNativeInviteCode(validated.invitationCode).hostId, true);
+    }, { writes: true, input: true, authorizeBeforeAction: false });
+    bind("recover-native-member", async (input, event) => {
+      const validated = requireSpsNativeMemberRecoveryInput(input);
+      if (typeof recoverNativeMember !== "function") throw new Error("Native Member recovery is unavailable.");
+      const result = await awaitAndAssertSender(event, () => recoverNativeMember(validated, { assertRequester: () => assertSender(event) }));
+      return memberObservation(result, validated.hostId);
+    }, { writes: true, input: true, authorizeBeforeAction: false });
+    bind("repair-native-member-storage", async (input, event) => {
+      const validated = requireSpsNativeMemberRecoveryInput(input);
+      if (typeof repairNativeMemberStorage !== "function" || typeof confirmNativeMemberRepair !== "function") throw new Error("Native Member recovery is unavailable.");
+      const result = await awaitAndAssertSender(event, () => repairNativeMemberStorage(validated, {
+        assertRequester: () => assertSender(event),
+        confirm: target => awaitAndAssertSender(event, () => confirmNativeMemberRepair(window, target)),
+      }));
+      if (exactDataRecord(result, ["cancelled"])?.cancelled === true) return Object.freeze({ cancelled: true });
+      const value = exactDataRecord(result, ["hostId", "recovered"]);
+      if (!value || value.hostId !== validated.hostId || !Array.isArray(value.recovered) || value.recovered.length > 3
+        || new Set(value.recovered).size !== value.recovered.length
+        || value.recovered.some(kind => !["pending", "issued", "target"].includes(kind))) throw new Error("Native Member local recovery is unavailable.");
+      return Object.freeze({ hostId: value.hostId, recovered: Object.freeze([...value.recovered]) });
+    }, { writes: true, input: true, authorizeBeforeAction: false });
     bindNativeDeviceAction("approve-native-device", "approve", approveNativeDevice);
     bindNativeDeviceAction("revoke-native-device", "revoke", revokeNativeDevice);
   }

@@ -16,6 +16,20 @@ function nativeDeviceInput(input) {
   }
 }
 
+function nativeMemberInput(input, keys) {
+  if (!input || typeof input !== "object" || Array.isArray(input)
+    || (Object.getPrototypeOf(input) !== null && Object.getPrototypeOf(Object.getPrototypeOf(input)) !== null)) throw new TypeError("Invalid Native Member request.");
+  const ownKeys = Reflect.ownKeys(input);
+  if (ownKeys.length !== keys.length || ownKeys.some(key => !keys.includes(key))) throw new TypeError("Invalid Native Member request.");
+  const value = {};
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, key);
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "string") throw new TypeError("Invalid Native Member request.");
+    value[key] = descriptor.value;
+  }
+  return value;
+}
+
 const coreSettingsApi = Object.freeze({
   getStatus: () => ipcRenderer.invoke("desktop:core-settings-get-status"),
   setPluginsDisabled: (input) => {
@@ -46,6 +60,27 @@ const coreSettingsApi = Object.freeze({
     return ipcRenderer.invoke("desktop:core-settings-prepare-native-identity", { serverAddress: input.serverAddress });
   },
   listNativeDevices: () => ipcRenderer.invoke("desktop:core-settings-list-native-devices"),
+  listNativeRegistrations: () => ipcRenderer.invoke("desktop:core-settings-list-native-registrations"),
+  enrollNativeMember: input => {
+    let value;
+    try {
+      value = nativeMemberInput(input, ["invitationCode", "displayName"]);
+      if (!value.invitationCode || value.invitationCode.length > 8192 || !value.displayName.trim() || value.displayName.length > 120) throw new TypeError("A Native invitation and device name are required.");
+    } catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-enroll-native-member", value);
+  },
+  recoverNativeMember: input => {
+    let value;
+    try { value = nativeMemberInput(input, ["hostId"]); if (!nativeDeviceIdPattern.test(value.hostId)) throw new TypeError("A Native Host ID is required."); }
+    catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-recover-native-member", value);
+  },
+  repairNativeMemberStorage: input => {
+    let value;
+    try { value = nativeMemberInput(input, ["hostId"]); if (!nativeDeviceIdPattern.test(value.hostId)) throw new TypeError("A Native Host ID is required."); }
+    catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-repair-native-member-storage", value);
+  },
   approveNativeDevice: input => {
     let validated;
     try { validated = nativeDeviceInput(input); }

@@ -155,7 +155,7 @@ test("accepts a signed-in desktop invitation without relying on setup-screen tim
 
   assert.match(main, /async function acceptDesktopJoinLink\(join\) \{[\s\S]*?acceptInviteCode\(\{ code: join\.code, hub: join\.hub \}\)[\s\S]*?maybeOpenWorkspaceForCurrentAccount\(\)/);
   assert.match(main, /function sendJoinToRenderer\(value\) \{[\s\S]*?pendingJoin = join;[\s\S]*?void acceptDesktopJoinLink\(join\);/);
-  assert.match(accountController, /const pendingJoin = getPendingJoin\(\);[\s\S]*?if \(pendingJoin\) await acceptDesktopJoinLink\(pendingJoin\);[\s\S]*?else await maybeOpenWorkspaceForCurrentAccount\(\);/);
+  assert.match(accountController, /const pendingJoin = getPendingJoin\(\);[\s\S]*?if \(pendingJoin\) \{\s*await acceptDesktopJoinLink\(pendingJoin\);\s*if \(epoch !== accountSessionEpoch\) return;\s*\} else \{\s*await maybeOpenWorkspaceForCurrentAccount\(\);/);
   assert.match(main, /Before SPS account sign-in, retain the full routed invitation in the[\s\S]*?if \(!currentDesktopAccount\(\) \|\| isOwnerHostProfile\(\)\) return null;/);
 });
 
@@ -287,11 +287,11 @@ test("shares one in-flight Desktop token refresh across concurrent SPS requests"
   assert.match(accountController, /let refreshPromise = null;/);
   assert.match(
     accountController,
-    /if \(!refreshPromise\) \{[\s\S]*?refreshPromise = \(async \(\) => withRefreshLock\([\s\S]*?refreshIdentity\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?refreshPromise = null;/,
+    /refreshPromise\.epoch !== epoch[\s\S]*?pending\.promise = \(async \(\) => withRefreshLock\([\s\S]*?refreshIdentity\([\s\S]*?\.finally\(\(\) => \{\s*if \(refreshPromise === pending\) refreshPromise = null;/,
   );
   assert.match(accountController, /const persistedState = await loadPersistedState\(\);/);
-  assert.match(accountController, /persistedAccount\?\.refreshToken && persistedAccount\.refreshToken !== account\.refreshToken/);
-  assert.match(accountController, /return await refreshPromise;/);
+  assert.match(accountController, /isSameAccount\(persistedAccount\) && persistedAccount\.refreshToken\s*&& persistedAccount\.refreshToken !== account\.refreshToken/);
+  assert.match(accountController, /return await refreshPromise\.promise;/);
 });
 
 test("keeps central OAuth secrets out of the Desktop renderer and uses SPS Identity", async () => {

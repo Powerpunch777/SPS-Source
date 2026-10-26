@@ -10,6 +10,7 @@ import { createSpsNativeMemberKeyRequest } from "../src/native-member-certificat
 import {
   createSpsNativeMemberHostTargetReader,
   createSpsNativeMemberPendingKeyStore,
+  createSpsNativeMemberPublicationRecovery,
 } from "../src/native-member-pending-store.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
@@ -135,6 +136,10 @@ async function makeFixture() {
     },
     reader(overrides = {}) {
       return createSpsNativeMemberHostTargetReader({ userDataDirectory, vaultDirectory, scope: scopeFor(),
+        safeStorage, platform: "win32", ...overrides });
+    },
+    publicationRecovery(overrides = {}) {
+      return createSpsNativeMemberPublicationRecovery({ userDataDirectory, vaultDirectory, scope: scopeFor(),
         safeStorage, platform: "win32", ...overrides });
     },
     async cleanup() { await cleanup(); },
@@ -372,6 +377,52 @@ test("interrupted target publication fails closed without deleting a same-inode 
   assert.deepEqual(await readFile(final), before);
   assert.deepEqual(await readFile(alias), before);
   assert.equal((await lstat(final)).nlink, 2);
+}));
+
+test("explicit target recovery authenticates both protected records and preserves the read-only cold-reader boundary", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  await store.createTarget(target);
+  const final = targetPath(fixture);
+  const alias = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  await link(final, alias);
+  await assert.rejects(fixture.reader().read(), storeError("CORRUPT"));
+  assert.equal(await store.recoverInterruptedPublication("target", { beforeCommit() {} }), true);
+  assert.equal((await lstat(final)).nlink, 1);
+  assert.deepEqual(await store.readTarget(), target);
+  assert.deepEqual(await fixture.reader().read(), target);
+}));
+
+test("indexed-scope restart recovery repairs linked target metadata, then exposes it through the ordinary cold reader", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  await store.createTarget(target);
+  const final = targetPath(fixture);
+  const alias = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  await link(final, alias);
+  await assert.rejects(fixture.reader().read(), storeError("CORRUPT"));
+  const recovery = fixture.publicationRecovery();
+  await assert.rejects(recovery.recoverInterruptedPublications({ beforeCommit() { throw new Error("account changed"); } }),
+    storeError("FAILED"));
+  assert.equal((await lstat(final)).nlink, 2);
+  assert.equal((await lstat(alias)).nlink, 2);
+  assert.deepEqual(await recovery.recoverInterruptedPublications({ beforeCommit() {} }), { recovered: ["target"] });
+  assert.equal((await lstat(final)).nlink, 1);
+  assert.deepEqual(await fixture.reader().read(), target);
+  assert.deepEqual(await store.readTarget(), target);
+}));
+
+test("indexed-scope restart recovery derives context from the pending capsule when target metadata is absent", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  const final = pendingPath(fixture);
+  const alias = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  await link(final, alias);
+  const recovery = fixture.publicationRecovery();
+  assert.deepEqual(await recovery.recoverInterruptedPublications({ beforeCommit() {} }), { recovered: ["pending"] });
+  assert.equal((await lstat(final)).nlink, 1);
+  assert.deepEqual(await store.read(), keyRequest);
+  assert.equal(await store.readTarget(), null);
 }));
 
 test.before(async () => {

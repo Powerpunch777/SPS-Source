@@ -48,6 +48,47 @@ function setup(overrides = {}) {
   return { controller, windows, calls, invoke, event };
 }
 
+test("Native Member query is account-authorized by Main without requiring local Host ownership", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  let queried = 0;
+  const ctx = setup({ authorizeMutation: () => { throw new Error("not a Host owner"); },
+    listNativeRegistrations: () => [{ hostId }],
+    recoverNativeMember: async (input, options) => {
+      assert.deepEqual(input, { hostId }); options.assertRequester(); queried++;
+      return { hostId, deviceId: hostId, status: "pending" };
+    },
+  });
+  await ctx.controller.show();
+  assert.deepEqual(await ctx.invoke("list-native-registrations"), [{ hostId }]);
+  assert.equal((await ctx.invoke("recover-native-member", [{ hostId }])).status, "pending");
+  assert.equal(queried, 1);
+  await assert.rejects(ctx.invoke("recover-native-member", [{ hostId, token: "forbidden" }]));
+  assert.equal(queried, 1);
+  const stale = ctx.event(); stale.senderFrame = {};
+  await assert.rejects(ctx.invoke("recover-native-member", [{ hostId }], stale));
+});
+
+test("Native Member query suppresses late results after the requesting frame closes", async () => {
+  let release;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const ctx = setup({ recoverNativeMember: async () => { await waiting; return { status: "pending" }; } });
+  await ctx.controller.show();
+  const result = ctx.invoke("recover-native-member", [{ hostId: "11111111-1111-4111-8111-111111111111" }]);
+  await new Promise(resolve => setImmediate(resolve));
+  ctx.windows[0].destroy(); release();
+  await assert.rejects(result, /could not complete/);
+});
+
+test("Native Member IPC rejects unexpected fields instead of exposing private Main records", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const ctx = setup({ listNativeRegistrations: () => [{ hostId, subject: "private-account" }],
+    recoverNativeMember: () => ({ hostId, deviceId: hostId, status: "approved", privateKeyPem: "private-key" }),
+  });
+  await ctx.controller.show();
+  await assert.rejects(ctx.invoke("list-native-registrations"), error => !error.message.includes("private-account"));
+  await assert.rejects(ctx.invoke("recover-native-member", [{ hostId }]), error => !error.message.includes("private-key"));
+});
+
 test("settings opens without Core, uses its own partition, and never loads plugin content", async () => {
   const ctx = setup();
   await ctx.controller.show();

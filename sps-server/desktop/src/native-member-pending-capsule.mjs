@@ -4,6 +4,7 @@ import { nativeCertificateRecord as record, nativeCertificateUuid as uuid } from
 const KIND = "sps.native.member-pending-capsule";
 const INNER_KIND = "sps.native.member-pending";
 const CONTEXT_KEYS = ["identityIssuer", "subject", "hostId", "deviceKeyId", "serverSpkiSha256", "issuerSpkiSha256"];
+const SCOPE_KEYS = ["identityIssuer", "subject", "hostId", "deviceKeyId"];
 const KEY_KEYS = ["v", "kind", "hostId", "deviceKeyId", "requestPem", "privateKeyPem"];
 const OUTER_KEYS = ["v", "kind", "ciphertext"];
 const INNER_KEYS = ["v", "kind", "context", "keyRequest"];
@@ -137,6 +138,20 @@ export function createSpsNativeMemberPendingCapsule(options) {
         const canonical = JSON.stringify({ v: 1, kind: INNER_KIND, context, keyRequest });
         if (canonical !== plaintext) throw new Error("canonical");
         return keyRequest;
+      } catch { throw failure("invalid"); }
+    },
+    async openContext(input, expectedScopeInput) {
+      try {
+        const expectedScope = record(expectedScopeInput, SCOPE_KEYS);
+        const encrypted = decodeCiphertext(canonicalOuter(input));
+        const plaintext = decrypt.call(config.safeStorage, encrypted);
+        const parsed = canonicalInner(plaintext);
+        const context = parsed.context;
+        if (SCOPE_KEYS.some(name => context[name] !== expectedScope[name])) throw new Error("scope");
+        const keyRequest = await validateKeyRequest(parsed.keyRequest, context);
+        const canonical = JSON.stringify({ v: 1, kind: INNER_KIND, context, keyRequest });
+        if (canonical !== plaintext) throw new Error("canonical");
+        return context;
       } catch { throw failure("invalid"); }
     },
   });

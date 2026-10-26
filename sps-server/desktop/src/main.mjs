@@ -14,6 +14,9 @@ import { assertSpsNativeHostCredentialsAbsentForRestore, createSpsNativeIdentity
 import { inspectSpsNativeHostIdentity, requireCurrentSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
 import { createNativeDeviceManagementController, nativeHostCoreOwnerUserId } from "./native-device-management-controller.mjs";
 import { createSpsNativeMemberMainSigner } from "./native-member-main-signer.mjs";
+import { createSpsNativeMemberController } from "./native-member-controller.mjs";
+import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader,
+  createSpsNativeMemberPublicationRecovery } from "./native-member-pending-store.mjs";
 import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
 import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
 import {
@@ -259,9 +262,14 @@ let officialExtensionsWindow = null;
 let coreSettingsController = null;
 let nativeIdentityController = null;
 let nativeDeviceManagementController = null;
+let nativeMemberController = null;
 const nativeIdentityStores = new Map();
 const ownerVaultOperations = createSpsOwnerVaultOperationGate({
-  onInvalidation: () => ownerHostManager?.invalidateNativeSigner(),
+  onInvalidation: () => {
+    ownerHostManager?.invalidateNativeSigner();
+    nativeMemberController?.dispose();
+    nativeMemberController = null;
+  },
 });
 let ownerHostRecoveryPluginsDisabled = null;
 let state = emptyState();
@@ -283,13 +291,28 @@ let isQuitting = false;
 let shutdownPromise = null;
 let shutdownComplete = false;
 let desktopQuitRequested = false;
+const DESKTOP_SHUTDOWN_TRACE_STAGES = new Set([
+  "quit_request_received", "quit_scheduled", "before_quit_start", "before_quit_complete",
+  "stop_scheduling_start", "stop_scheduling_done", "cancel_commands_start", "cancel_commands_done",
+  "stop_managers_start", "stop_managers_done", "drain_failed", "drain_complete", "retry_app_quit",
+  "will_quit", "quit",
+]);
+function traceDesktopShutdown(stage) {
+  if (process.env.SPS_DESKTOP_E2E_SHUTDOWN_TRACE === "1" && DESKTOP_SHUTDOWN_TRACE_STAGES.has(stage)) {
+    console.error(`[sps-shutdown] stage=${stage}`);
+  }
+}
 
 function requestDesktopQuit() {
   if (desktopQuitRequested) return;
+  traceDesktopShutdown("quit_request_received");
   desktopQuitRequested = true;
   isQuitting = true;
   // Let the trusted local IPC acknowledge before normal quit closes its frame.
-  setImmediate(() => app.quit());
+  setImmediate(() => {
+    traceDesktopShutdown("quit_scheduled");
+    app.quit();
+  });
 }
 const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
 // Status is rendered often by the setup screen. Do not synchronously ask
@@ -395,13 +418,13 @@ function decrypt(value) {
   return safeStorage.decryptString(Buffer.from(value, "base64"));
 }
 
-async function persistState({ rememberActiveConnection = true } = {}) {
+async function persistState({ rememberActiveConnection = true, beforeCommit = () => {} } = {}) {
   if (desktopStateUnavailable) throw new Error("SPS Desktop connection settings are unavailable. Existing settings were not replaced.");
   // Keep the original legacy file until adoption succeeds. New credentials are
   // only in memory if migration fails, so restart can retry the genuine source.
   if (hasPendingLegacyDesktopOwnerAdoption(state)) return;
   if (rememberActiveConnection) rememberCurrentAccountConnection();
-  await saveState(app.getPath("userData"), state);
+  await saveState(app.getPath("userData"), state, { beforeCommit });
 }
 
 function enterDesktopStateRecovery() {
@@ -1309,6 +1332,40 @@ function nativeIdentityAuthority() {
   if (desktopStateUnavailable || ownerVaultOperations.isRestoring() || ownerVaultOperations.isChangingConnection() || !isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) return null;
   try { requireSpsOwnerHostOrigin(state.profile.hubUrl); } catch { return null; }
   return { ownerSubject: currentDesktopAccountSubject(), userDataDirectory: app.getPath("userData"), vaultDirectory: ownerVaultRoot() };
+}
+
+function nativeMemberAuthority() {
+  const account = currentDesktopAccount();
+  if (isQuitting || desktopStateUnavailable || ownerVaultOperations.isRestoring()
+    || ownerVaultOperations.isChangingConnection() || hasPendingLegacyDesktopOwnerAdoption(state)
+    || !account?.subject || !account.verifiedAt) return null;
+  const identityIssuer = account.identityUrl || configuredDesktopIdentityUrl();
+  return { identityIssuer, subject: account.subject, userDataDirectory: app.getPath("userData"),
+    vaultDirectory: ownerVaultRoot(), generation: ownerVaultOperations.connectionGeneration() };
+}
+
+function ensureNativeMemberController() {
+  if (!nativeMemberController) nativeMemberController = createSpsNativeMemberController({
+    getAuthority: nativeMemberAuthority,
+    getIndex: () => state.nativeMemberKeyIndex,
+    saveIndex: async (index, { beforeCommit }) => {
+      beforeCommit();
+      state.nativeMemberKeyIndex = index;
+      await persistState({ rememberActiveConnection: false, beforeCommit });
+      beforeCommit();
+    },
+    getStore: ({ userDataDirectory, vaultDirectory, context }) => createSpsNativeMemberPendingKeyStore({
+      userDataDirectory, vaultDirectory, context, safeStorage,
+    }),
+    getTargetReader: ({ userDataDirectory, vaultDirectory, scope }) => createSpsNativeMemberHostTargetReader({
+      userDataDirectory, vaultDirectory, scope, safeStorage,
+    }),
+    getPublicationRecovery: ({ userDataDirectory, vaultDirectory, scope }) => createSpsNativeMemberPublicationRecovery({
+      userDataDirectory, vaultDirectory, scope, safeStorage,
+    }),
+    authenticate: ensureDesktopIdentityAccessToken,
+  });
+  return nativeMemberController;
 }
 
 function ensureNativeIdentityController() {
@@ -4005,6 +4062,7 @@ function ensureCoreSettingsController() {
         host: { state: host.state, startupDeferred: backgroundStartupDeferred, lastError: host.lastError ? redactLocalDiagnostic(host.lastError) : null },
         recovery: { ...recovery, needsRestart: ownerHostRecoveryPluginsDisabled !== null && recovery.pluginsDisabled !== ownerHostRecoveryPluginsDisabled },
         nativeConnectivity: await ensureNativeIdentityController().inspect(),
+        canManageNativeMember: Boolean(nativeMemberAuthority()),
       };
     },
     authorizeMutation: assertRegistryOwner,
@@ -4053,6 +4111,28 @@ function ensureCoreSettingsController() {
       return choice.response === 1;
     },
     prepareNativeIdentity: (input, options) => ensureNativeIdentityController().prepare(input, options),
+    listNativeRegistrations: () => ensureNativeMemberController().list(),
+    enrollNativeMember: (input, options) => ensureNativeMemberController().enroll(input, options),
+    recoverNativeMember: (input, options) => ensureNativeMemberController().recover(input, options),
+    repairNativeMemberStorage: (input, options) => ensureNativeMemberController().repair(input, options),
+    confirmNativeMemberRepair: async (parentWindow, { hostId }) => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Recover saved Native credentials?",
+        message: "Finish an interrupted credential write using the original protected credentials?",
+        detail: `Host ID: ${hostId}\n\nThis local recovery keeps existing keys and trust information. It does not contact the Host, repeat registration, approve a device or change Workspace access. Damaged or unexpected files are left for further recovery.`,
+        buttons: ["Cancel", "Recover credentials"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
+    confirmNativeMember: async (parentWindow, target) => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Register this computer with a Native Host?",
+        message: "Trust the Host from this invitation and request device registration?",
+        detail: `Host: ${target.origin}\nServer fingerprint: ${target.serverSpkiSha256}\n\nVerify this invitation came from the intended Host owner. Registration stores protected credentials on this computer. Host approval and Workspace, Plugin, Agent, Node and Source access remain separate.`,
+        buttons: ["Cancel", "Register device"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
     listNativeDevices: () => ensureNativeDeviceManagementController().list(),
     approveNativeDevice: (input, options) => ensureNativeDeviceManagementController().change("approve", input, options),
     revokeNativeDevice: (input, options) => ensureNativeDeviceManagementController().change("revoke", input, options),
@@ -5379,30 +5459,44 @@ app.on("activate", () => {
 });
 async function stopDesktopRuntimeGracefully() {
   isQuitting = true;
+  traceDesktopShutdown("stop_scheduling_start");
   stopNodeScheduling();
+  traceDesktopShutdown("stop_scheduling_done");
+  traceDesktopShutdown("cancel_commands_start");
   await cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped.");
+  traceDesktopShutdown("cancel_commands_done");
   desktopUpdateController.stop();
   // A forced process-tree kill interrupts embedded PostgreSQL and turns every
   // normal Desktop exit into database crash recovery on the next start. Each
   // manager already escalates after its bounded graceful wait when necessary.
+  traceDesktopShutdown("stop_managers_start");
   await Promise.allSettled([
     defaultMemoryManager?.stop({ force: false }),
     ownerHostManager?.stop({ force: false }),
     pluginPreviewRuntime?.manager?.stop({ force: false }),
   ]);
+  traceDesktopShutdown("stop_managers_done");
   pluginPreviewRuntime = null;
 }
 
 app.on("before-quit", (event) => {
+  traceDesktopShutdown(shutdownComplete ? "before_quit_complete" : "before_quit_start");
   if (shutdownComplete) return;
   event.preventDefault();
   isQuitting = true;
+  nativeMemberController?.dispose();
   if (!shutdownPromise) {
     shutdownPromise = stopDesktopRuntimeGracefully()
-      .catch(() => undefined)
+      .catch(() => {
+        traceDesktopShutdown("drain_failed");
+      })
       .finally(() => {
+        traceDesktopShutdown("drain_complete");
         shutdownComplete = true;
+        traceDesktopShutdown("retry_app_quit");
         app.quit();
       });
   }
 });
+app.on("will-quit", () => traceDesktopShutdown("will_quit"));
+app.on("quit", () => traceDesktopShutdown("quit"));

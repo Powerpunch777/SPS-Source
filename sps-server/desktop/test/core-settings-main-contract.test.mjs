@@ -70,6 +70,7 @@ test("Core Settings and tray use one deferred normal quit without a force-stop o
   let quits = 0;
   const scheduled = [];
   const context = { desktopQuitRequested: false, isQuitting: false,
+    traceDesktopShutdown() {},
     app: { quit() { quits++; } }, setImmediate(action) { scheduled.push(action); } };
   runInNewContext(`${declaration}; requestDesktopQuit(); requestDesktopQuit();`, context);
   assert.equal(context.isQuitting, true);

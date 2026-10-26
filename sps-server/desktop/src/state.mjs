@@ -191,10 +191,35 @@ export async function loadState(userDataPath, { strictVersion = false } = {}) {
   }
 }
 
-export async function saveState(userDataPath, value) {
-  await fs.mkdir(userDataPath, { recursive: true });
-  const destination = statePath(userDataPath);
-  const temporary = destination + ".tmp";
-  await fs.writeFile(temporary, JSON.stringify(value, null, 2) + "\n", "utf8");
-  await fs.rename(temporary, destination);
+const pendingStateSaves = new Map();
+
+// Account refresh, Node bookkeeping and explicit settings actions may save at
+// the same time. Serialize each local destination so they cannot overwrite the
+// same temporary file or rename another save's bytes. This is process-local;
+// it is not a cross-process lock or power-loss durability guarantee.
+export async function saveState(userDataPath, value, { beforeCommit = () => {} } = {}) {
+  if (typeof beforeCommit !== "function") throw new TypeError("Invalid Desktop state commit guard.");
+  const bytes = JSON.stringify(value, null, 2) + "\n";
+  const destination = path.resolve(statePath(userDataPath));
+  const queueKey = process.platform === "win32" ? destination.toLowerCase() : destination;
+  function guard() {
+    const result = beforeCommit();
+    if (result !== undefined) {
+      if (result instanceof Promise) void result.catch(() => {});
+      throw new TypeError("Desktop state commit guards must be synchronous.");
+    }
+  }
+  const pending = (pendingStateSaves.get(queueKey) ?? Promise.resolve()).then(async () => {
+    guard();
+    await fs.mkdir(userDataPath, { recursive: true });
+    guard();
+    const temporary = destination + ".tmp";
+    await fs.writeFile(temporary, bytes, "utf8");
+    guard();
+    await fs.rename(temporary, destination);
+  });
+  const settled = pending.catch(() => {});
+  pendingStateSaves.set(queueKey, settled);
+  void settled.then(() => { if (pendingStateSaves.get(queueKey) === settled) pendingStateSaves.delete(queueKey); });
+  await pending;
 }

@@ -121,9 +121,53 @@ silently deleting a file or rotating/replacing credentials. A regression fixture
 now reproduces that filesystem state and verifies that both readers and a new
 create preserve the original bytes and aliases. This is not an actual power-loss
 test or a fix for interrupted publication. An explicitly verified interrupted-
-commit recovery design/test remains required before claiming comprehensive app
-restart recovery. Normal completed-store reopening and lost HTTP response
-reconciliation are separate, successful cases.
+commit recovery tests and explicit store support are now present, but app
+orchestration is still required before claiming restart recovery. Normal
+completed-store reopening and lost HTTP response reconciliation are separate,
+successful cases.
+
+## Explicit Store Publication Recovery Primitive
+
+The full Main-private Member store now exposes an explicit
+`recoverInterruptedPublication(kind, { beforeCommit })` operation for the
+`pending`, `issued`, and `target` slots. A separate
+`createSpsNativeMemberPublicationRecovery(...).recoverInterruptedPublications`
+factory supports cold startup from only the persisted four-field Member index.
+It validates the encrypted target capsule against that scope (including a
+verified two-link publication) to recover the full pin context; when no target
+record exists it derives context from the encrypted pending capsule without
+returning key material. The explicit operation then repairs the three slots in
+dependency order. Ordinary reads and creates never invoke recovery, and the
+cold target reader remains read-only. A synchronous guard is required and runs
+immediately before each alias unlink so Main can fence account/context changes.
+
+The primitive only removes a generated `.pending-<UUID>.tmp` directory entry
+when the exact scope-derived final slot and that alias are regular files in the
+same already-verified store directory, have matching device/inode/mode/size/
+birth time and exactly two links, and contain a bounded record that authenticates
+for the requested scope/context. Issued and target recovery additionally require
+the original live pending key; issued certificates and target trust are checked
+again. It never repairs or replaces the final slot. Foreign links, malformed
+names, extra links, corrupt or expired protected records, and changed directory
+identity fail closed while preserving the bytes. An orphan temporary alias with
+no published final slot is left untouched.
+
+Regression tests simulate link-before-unlink for all three slot kinds, verify
+that guarded recovery preserves the encrypted bytes and returns the original
+key/issuance/target, and exercise a foreign alias outside the store and a
+same-directory alias of a corrupt record and an unrecognized temporary name.
+Indexed-scope cold-start tests cover a linked target, a missing target with
+pending context, and issuance recovery from a pending-derived context. These are
+filesystem-state fixtures, not process-kill, power-loss, DPAPI, cross-process
+race, or production Main orchestration tests. Product repair remains a separate
+explicit locally confirmed action; the focused storage tests do not qualify
+that integration or full product restart recovery.
+
+After adding cold-start recovery, the complete focused pending/target/issued
+store suites passed **47/47** on this Windows host. File symlink probes
+diagnosed `EPERM` as unsupported and continued; hard-link, directory, junction,
+ciphertext and recovery checks still ran. SafeStorage remains an AES-GCM
+substitute and does not exercise Electron DPAPI.
 
 ```text
 # external/sps-core
@@ -137,11 +181,12 @@ node --test test/native-member-target-capsule.test.mjs test/native-member-target
 npx --offline pnpm@11.9.0 --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-enrollment-client-core.mjs --isolated-native-enrollment-client
 ```
 
-The index is not yet allocated by an app enrollment action. Protected target
-storage and post-invitation recovery transport are now source-tested, but actual
-Main/account lifecycle composition, real DPAPI enrollment/recovery orchestration
-and user confirmation/UI remain unfinished. These isolated modules and a
-service-level lookup are not product restart recovery.
+The initial checkpoint above preceded Main composition. The subsequent
+[Desktop integration checkpoint](NATIVE-DESKTOP-INTEGRATION-2026-10-26.md) now
+allocates the index through an explicit app enrollment action and connects
+account-bound Main/UI enrollment, lookup and local publication recovery.
+Full DPAPI orchestration, product TLS ingress and physical two-PC qualification
+remain unfinished; source composition is not complete product restart recovery.
 CI's remaining owned-process/data cleanup failure and held Zod High are separate
 unresolved gates. No real key, external listener, firewall, installed runtime,
 production Identity, Tailscale, Workspace/Plugin/Node/Source grant was changed.

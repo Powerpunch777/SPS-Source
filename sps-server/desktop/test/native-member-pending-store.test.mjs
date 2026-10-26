@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, rmdir, stat, writeFile, link } from "node:fs/promises";
 import { mkdirSync, renameSync, symlinkSync } from "node:fs";
 import os from "node:os";
@@ -221,6 +221,85 @@ test("creates and reads an actual Member key request outside the Vault without c
   assert.equal(vaultAfter.ino, vaultIdentity.ino);
 }));
 
+test("explicit recovery removes only the verified pending publication alias after a synchronous account guard", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  const [name] = await slotFiles(fixture);
+  const final = path.join(storeDirectory(fixture), name);
+  const alias = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  const original = await readFile(final);
+  await link(final, alias);
+  assert.throws(() => store.recoverInterruptedPublication("pending"), storeError("OPTIONS"));
+  assert.equal((await lstat(final)).nlink, 2);
+  assert.equal(await store.recoverInterruptedPublication("pending", { beforeCommit() {} }), true);
+  assert.equal((await lstat(final)).nlink, 1);
+  await assert.rejects(lstat(alias), { code: "ENOENT" });
+  assert.deepEqual(await readFile(final), original);
+  assert.deepEqual(await store.read(), keyRequest);
+  assert.equal(await store.recoverInterruptedPublication("pending", { beforeCommit() {} }), false);
+}));
+
+test("explicit recovery preserves linked slots whose alias is outside the store directory", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  const [name] = await slotFiles(fixture);
+  const final = path.join(storeDirectory(fixture), name);
+  const foreignAlias = path.join(fixture.root, `foreign-${randomUUID()}.json`);
+  const original = await readFile(final);
+  await link(final, foreignAlias);
+  await assert.rejects(store.recoverInterruptedPublication("pending", { beforeCommit() {} }), storeError("CORRUPT"));
+  assert.deepEqual(await readFile(final), original);
+  assert.deepEqual(await readFile(foreignAlias), original);
+  assert.equal((await lstat(final)).nlink, 2);
+}));
+
+test("explicit recovery does not unlink an exact-name alias when the linked encrypted record is corrupt", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  const [name] = await slotFiles(fixture);
+  const final = path.join(storeDirectory(fixture), name);
+  const alias = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  await link(final, alias);
+  await writeFile(final, "tampered encrypted record", "utf8");
+  const corruptBytes = await readFile(final);
+  await assert.rejects(store.recoverInterruptedPublication("pending", { beforeCommit() {} }), storeError("CORRUPT"));
+  assert.deepEqual(await readFile(final), corruptBytes);
+  assert.deepEqual(await readFile(alias), corruptBytes);
+  assert.equal((await lstat(final)).nlink, 2);
+  assert.equal((await lstat(alias)).nlink, 2);
+}));
+
+test("explicit recovery does not unlink a same-inode alias with an unrecognized temporary name", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  const [name] = await slotFiles(fixture);
+  const final = path.join(storeDirectory(fixture), name);
+  const alias = path.join(storeDirectory(fixture), ".pending-not-a-uuid.tmp");
+  const original = await readFile(final);
+  await link(final, alias);
+  await assert.rejects(store.recoverInterruptedPublication("pending", { beforeCommit() {} }), storeError("CORRUPT"));
+  assert.deepEqual(await readFile(final), original);
+  assert.deepEqual(await readFile(alias), original);
+  assert.equal((await lstat(final)).nlink, 2);
+}));
+
+test("explicit recovery preserves any slot with more than the expected two links", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  const [name] = await slotFiles(fixture);
+  const final = path.join(storeDirectory(fixture), name);
+  const first = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  const second = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  const original = await readFile(final);
+  await link(final, first);
+  await link(final, second);
+  await assert.rejects(store.recoverInterruptedPublication("pending", { beforeCommit() {} }), storeError("CORRUPT"));
+  assert.deepEqual(await readFile(final), original);
+  assert.deepEqual(await readFile(first), original);
+  assert.deepEqual(await readFile(second), original);
+  assert.equal((await lstat(final)).nlink, 3);
+}));
+
 test("refuses a second create when the logical slot is corrupt and preserves its bytes", async () => withFixture(async fixture => {
   const store = fixture.store();
   await store.create(keyRequest);
@@ -294,7 +373,7 @@ test("ciphertext copied into another logical slot is rejected", async () => with
   assert.deepEqual(await first.read(), keyRequest);
 }));
 
-test("rejects malformed, oversized, nonregular, linked, and hardlinked slot files", async () => withFixture(async fixture => {
+test("rejects malformed, oversized, nonregular, linked, and hardlinked slot files", async t => withFixture(async fixture => {
   const store = fixture.store();
   const cases = [
     ["malformed", async slot => writeFile(slot, "not-json", "utf8")],
@@ -304,14 +383,23 @@ test("rejects malformed, oversized, nonregular, linked, and hardlinked slot file
       await rm(slot);
       const target = path.join(fixture.root, "owned-link-target.txt");
       await writeFile(target, "not a capsule", "utf8");
-      symlinkSync(target, slot, "file");
+      try { symlinkSync(target, slot, "file"); }
+      catch (error) {
+        if (process.platform === "win32" && ["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) {
+          t.diagnostic(`File symlink check unavailable on this host (${error.code}); remaining checks still run.`);
+          await rm(slot, { force: true });
+          return false;
+        }
+        throw error;
+      }
     }],
     ["hardlink", async slot => link(slot, `${slot}.owned-alias`)],
   ];
   for (const [name, corrupt] of cases) {
     await store.create(keyRequest);
     const slot = path.join(storeDirectory(fixture), (await slotFiles(fixture))[0]);
-    await corrupt(slot);
+    const created = await corrupt(slot);
+    if (created === false) continue;
     await assert.rejects(store.read(), storeError("CORRUPT"), name);
     await removeOwnedEntry(fixture, name === "hardlink" ? `${slot}.owned-alias` : slot);
   }

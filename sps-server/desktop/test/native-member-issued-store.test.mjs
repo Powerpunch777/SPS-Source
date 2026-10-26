@@ -10,7 +10,7 @@ import { createSpsNativeHostIdentity } from "../src/native-identity-certificates
 import {
   createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate, publicSpsNativeMemberEnrollmentRequest,
 } from "../src/native-member-certificates.mjs";
-import { createSpsNativeMemberPendingKeyStore } from "../src/native-member-pending-store.mjs";
+import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberPublicationRecovery } from "../src/native-member-pending-store.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
 const OTHER_HOST = "22222222-2222-4222-8222-222222222222";
@@ -127,6 +127,12 @@ async function makeFixture() {
       return createSpsNativeMemberPendingKeyStore({
         userDataDirectory, vaultDirectory, context, safeStorage, platform: "win32", ...overrides,
       });
+    },
+    publicationRecovery(overrides = {}) {
+      const scope = { identityIssuer: context.identityIssuer, subject: context.subject,
+        hostId: context.hostId, deviceKeyId: context.deviceKeyId };
+      return createSpsNativeMemberPublicationRecovery({ userDataDirectory, vaultDirectory, scope,
+        safeStorage, platform: "win32", ...overrides });
     },
     cleanup,
   };
@@ -302,6 +308,34 @@ test("returns null for an absent issued slot and rejects issuance without a pend
   await assert.rejects(store.createIssued(await makeIssuance()), unavailableOrCorruptError);
   assert.deepEqual(await readdir(fixture.userDataDirectory), []);
   assert.deepEqual(await readdir(fixture.vaultDirectory), []);
+}));
+
+test("explicit issued recovery requires its matching live pending key and removes only the verified alias", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  const issuance = await makeIssuance();
+  await saveIssued(fixture, store, issuance);
+  const final = await issuedPath(fixture);
+  const alias = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  const original = await readFile(final);
+  await link(final, alias);
+  assert.equal(await store.recoverInterruptedPublication("issued", { beforeCommit() {} }), true);
+  assert.equal((await lstat(final)).nlink, 1);
+  await assert.rejects(lstat(alias), { code: "ENOENT" });
+  assert.deepEqual(await readFile(final), original);
+  assertFrozenResult(await store.readIssued(), issuance);
+}));
+
+test("cold indexed-scope recovery derives pins from the protected pending record before repairing an issued slot", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  const issuance = await makeIssuance();
+  await saveIssued(fixture, store, issuance);
+  const final = await issuedPath(fixture);
+  const alias = path.join(storeDirectory(fixture), `.pending-${randomUUID()}.tmp`);
+  await link(final, alias);
+  const recovery = fixture.publicationRecovery();
+  assert.deepEqual(await recovery.recoverInterruptedPublications({ beforeCommit() {} }), { recovered: ["issued"] });
+  assert.equal((await lstat(final)).nlink, 1);
+  assertFrozenResult(await store.readIssued(), issuance);
 }));
 
 test("an orphan issued copy is corrupt without its pending key; other logical slots are absent and pin changes reject", async () => withFixture(async fixture => {
@@ -543,7 +577,7 @@ test("rejects malformed or tampered issued capsules without changing the pending
   });
 });
 
-test("rejects issued symlinks, hardlinks, and directories without following or overwriting them", async () => {
+test("rejects issued symlinks, hardlinks, and directories without following or overwriting them", async t => {
   for (const mode of ["symlink", "hardlink", "directory"]) await withFixture(async fixture => {
     const store = fixture.store();
     await saveIssued(fixture, store, await makeIssuance());
@@ -552,7 +586,14 @@ test("rejects issued symlinks, hardlinks, and directories without following or o
       await rm(issuedFile);
       const target = path.join(fixture.root, "owned-issued-link-target.txt");
       await writeFile(target, "not an issued capsule", "utf8");
-      symlinkSync(target, issuedFile, "file");
+      try { symlinkSync(target, issuedFile, "file"); }
+      catch (error) {
+        if (process.platform === "win32" && ["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) {
+          t.diagnostic(`File symlink check unavailable on this host (${error.code}); hardlink and directory checks still run.`);
+          return;
+        }
+        throw error;
+      }
     } else if (mode === "hardlink") {
       await link(issuedFile, `${issuedFile}.owned-alias`);
     } else {

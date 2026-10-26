@@ -60,7 +60,7 @@ test("the Native signer stays in owned Main-to-Core IPC, outside renderer and Pl
   assert.match(main, /createNativeSigner: \(\) => createSpsNativeMemberMainSigner/);
   assert.match(main, /generation: ownerVaultOperations\.connectionGeneration\(\)/);
   assert.match(main, /ownerVaultOperations\.isChangingConnection\(\)/);
-  assert.match(main, /onInvalidation: \(\) => ownerHostManager\?\.invalidateNativeSigner\(\)/);
+  assert.match(main, /onInvalidation: \(\) => \{\s*ownerHostManager\?\.invalidateNativeSigner\(\);\s*nativeMemberController\?\.dispose\(\)/);
   assert.doesNotMatch(main, /ipcMain\.handle\(["'][^"']*(?:native.*sign|sign.*native)/);
   assert.doesNotMatch(main, /\.createIssued\(|\.readIssued\(/);
   const signer = await read("../src/native-member-main-signer.mjs");

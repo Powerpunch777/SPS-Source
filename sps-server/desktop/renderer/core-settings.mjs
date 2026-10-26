@@ -18,6 +18,8 @@ let nativeDevicesLoading = false;
 let quitPending = false;
 let nativeDeviceButtons = [];
 let nativeDevicesRequest = 0;
+let nativeRegistrationRequest = 0;
+let nativeRegistrationButtons = [];
 
 const nativeDeviceStates = new Map([
   ["available", "Device management available"],
@@ -132,6 +134,12 @@ function setNotice(message = "", isError = false) {
 }
 
 function syncControls() {
+  const memberBusy = statusLoading || pending.size > 0 || quitPending || currentStatus?.canManageNativeMember !== true;
+  byId("register-native-member").disabled = memberBusy || !byId("native-member-invitation").value.trim() || !byId("native-member-name").value.trim();
+  byId("refresh-native-registrations").disabled = memberBusy;
+  byId("native-member-invitation").disabled = memberBusy;
+  byId("native-member-name").disabled = memberBusy;
+  for (const button of nativeRegistrationButtons) button.disabled = memberBusy;
   const busy = statusLoading || nativeDevicesLoading || pending.size > 0 || quitPending;
   quitDesktopButton.disabled = pending.size > 0 || quitPending;
   byId("native-identity-form").hidden = nativeConnectivity?.canPrepare !== true || currentStatus?.canManageHost !== true;
@@ -303,6 +311,7 @@ function renderStatus(status) {
   byId("host-state").textContent = host.startupDeferred ? "Startup deferred (recovery)" : safeText(host.state);
   byId("desktop-state-error").hidden = status.desktopStateAvailable !== false;
   byId("app-version").textContent = safeText(status.appVersion);
+  if (status.canManageNativeMember !== true) byId("native-member-result").textContent = "Sign in to manage this computer's registration.";
 
   const shortcut = status.shortcut;
   if (isRecord(shortcut) && typeof shortcut.registered === "boolean") {
@@ -332,6 +341,11 @@ function renderStatus(status) {
 }
 
 function showStatusLoading() {
+  nativeRegistrationRequest++;
+  nativeRegistrationButtons = [];
+  byId("native-registrations-list").textContent = "";
+  byId("native-member-invitation").value = "";
+  byId("native-member-result").textContent = "Saved credentials are kept. Select a registration to check its current status.";
   currentStatus = null;
   renderNativeConnectivity(null);
   statusLoading = true;
@@ -445,8 +459,116 @@ nativeDevicesRefreshButton.addEventListener("click", () => void loadNativeDevice
 nativeAddressInput.addEventListener("input", () => syncControls());
 nativePrepareButton.addEventListener("click", () => void prepareNativeIdentity());
 quitDesktopButton.addEventListener("click", () => void quitDesktop());
+byId("native-member-invitation").addEventListener("input", syncControls);
+byId("native-member-name").addEventListener("input", syncControls);
+byId("register-native-member").addEventListener("click", () => void registerNativeMember());
+byId("refresh-native-registrations").addEventListener("click", () => void loadNativeRegistrations());
 window.addEventListener("focus", () => void loadStatus());
 void loadStatus();
+
+function showNativeMemberObservation(value) {
+  const result = exactDataRecord(value, ["hostId", "deviceId", "status"]);
+  if (!result || !nativeDeviceIdPattern.test(result.hostId) || !nativeDeviceIdPattern.test(result.deviceId)
+    || !nativeDeviceStatuses.has(result.status)) throw new Error("Invalid registration response");
+  byId("native-member-result").textContent = `${nativeDeviceStatuses.get(result.status)}. This status does not grant Workspace or execution access.`;
+}
+
+async function registerNativeMember() {
+  if (byId("register-native-member").disabled) return;
+  const input = { invitationCode: byId("native-member-invitation").value.trim(), displayName: byId("native-member-name").value.trim() };
+  // Invitations contain a one-use secret; never retain it in the rendered form.
+  byId("native-member-invitation").value = "";
+  pending.add("native-member");
+  syncControls();
+  try {
+    const value = await window.spsCoreSettings.enrollNativeMember(input);
+    if (value?.cancelled === true) byId("native-member-result").textContent = "Registration cancelled.";
+    else showNativeMemberObservation(value);
+  } catch {
+    byId("native-member-result").textContent = "Registration could not complete. Existing credentials were kept. If registration reached the Host, check the saved registration before trying another invitation.";
+  } finally {
+    input.invitationCode = "";
+    pending.delete("native-member");
+    syncControls();
+  }
+}
+
+async function loadNativeRegistrations() {
+  if (byId("refresh-native-registrations").disabled) return;
+  const request = ++nativeRegistrationRequest;
+  pending.add("native-member-list");
+  syncControls();
+  try {
+    const entries = await window.spsCoreSettings.listNativeRegistrations();
+    if (request !== nativeRegistrationRequest) return;
+    if (!Array.isArray(entries) || entries.length > 128) throw new Error("Invalid registrations");
+    const ids = new Set();
+    for (const entry of entries) {
+      const value = exactDataRecord(entry, ["hostId"]);
+      if (!value || !nativeDeviceIdPattern.test(value.hostId) || ids.has(value.hostId)) throw new Error("Invalid registration");
+      ids.add(value.hostId);
+    }
+    byId("native-registrations-list").textContent = "";
+    nativeRegistrationButtons = [];
+    for (const { hostId } of entries) {
+      const row = document.createElement("div");
+      row.className = "action-row native-registration-row";
+      const label = document.createElement("p");
+      label.className = "help-text";
+      label.textContent = `Host ${hostId}`;
+      const button = document.createElement("button");
+      button.className = "button secondary";
+      button.type = "button";
+      button.textContent = "Check registration";
+      button.addEventListener("click", () => void checkNativeRegistration(hostId));
+      nativeRegistrationButtons.push(button);
+      const repair = document.createElement("button");
+      repair.className = "button secondary";
+      repair.type = "button";
+      repair.textContent = "Recover saved credentials";
+      repair.addEventListener("click", () => void repairNativeRegistration(hostId));
+      nativeRegistrationButtons.push(repair);
+      const actions = document.createElement("div");
+      actions.className = "native-registration-actions";
+      actions.append(button, repair);
+      row.append(label, actions);
+      byId("native-registrations-list").append(row);
+    }
+    byId("native-member-result").textContent = entries.length ? "Select a Host to check its existing registration." : "No saved registrations for this account.";
+  } catch {
+    if (request === nativeRegistrationRequest) {
+      nativeRegistrationButtons = [];
+      byId("native-registrations-list").textContent = "";
+      byId("native-member-result").textContent = "Saved registrations are unavailable. Existing credentials were kept.";
+    }
+  } finally { pending.delete("native-member-list"); syncControls(); }
+}
+
+async function checkNativeRegistration(hostId) {
+  if (pending.size || statusLoading || quitPending || currentStatus?.canManageNativeMember !== true) return;
+  pending.add("native-member");
+  syncControls();
+  try { showNativeMemberObservation(await window.spsCoreSettings.recoverNativeMember({ hostId })); }
+  catch { byId("native-member-result").textContent = "Registration status could not be checked. Existing credentials were kept; no registration was repeated."; }
+  finally { pending.delete("native-member"); syncControls(); }
+}
+
+async function repairNativeRegistration(hostId) {
+  if (pending.size || statusLoading || quitPending || currentStatus?.canManageNativeMember !== true) return;
+  pending.add("native-member");
+  syncControls();
+  try {
+    const value = await window.spsCoreSettings.repairNativeMemberStorage({ hostId });
+    if (value?.cancelled === true) { byId("native-member-result").textContent = "Local recovery cancelled."; return; }
+    const result = exactDataRecord(value, ["hostId", "recovered"]);
+    if (!result || result.hostId !== hostId || !Array.isArray(result.recovered) || result.recovered.length > 3
+      || result.recovered.some(kind => !["pending", "issued", "target"].includes(kind))) throw new Error("Invalid recovery response");
+    byId("native-member-result").textContent = result.recovered.length
+      ? "Local recovery completed using the original credentials. Check registration to contact the Host."
+      : "No interrupted credential write was found. Existing credentials were kept.";
+  } catch { byId("native-member-result").textContent = "Local recovery could not finish. Some interrupted writes may already be repaired. Existing credentials were kept; no new keys were created. You can explicitly retry recovery."; }
+  finally { pending.delete("native-member"); syncControls(); }
+}
 
 async function quitDesktop() {
   if (pending.size > 0 || quitPending) return;

@@ -53,6 +53,9 @@ h2 { margin: 0; font-size: 15px; font-weight: 680; }
 .action-row:last-child { padding-bottom: 0; }
 .action-row h3 { margin: 0; font-size: 13px; font-weight: 640; }
 .action-row .help-text { max-width: 560px; }
+.native-registration-row { flex-wrap: wrap; }
+.native-registration-row p { min-width: 0; overflow-wrap: anywhere; }
+.native-registration-actions { display: flex; flex-wrap: wrap; max-width: 100%; gap: 8px; }
 .button { min-height: 34px; flex: 0 0 auto; padding: 7px 11px; border: 1px solid #d5dbe0; border-radius: 5px; font-size: 12px; font-weight: 650; }
 .secondary { color: #303840; background: #f7f8f9; }
 .secondary:hover:not(:disabled) { background: #edf0f2; }

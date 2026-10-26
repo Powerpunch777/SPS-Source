@@ -234,9 +234,14 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   const processDiagnosticsEnd = source.indexOf("    static bool WaitForNaturalJobEmpty(", processDiagnosticsWriter);
   assert.ok(processClassifierStart >= 0 && processDiagnosticsWriter > processClassifierStart && processDiagnosticsEnd > processDiagnosticsWriter);
   const processClassifier = source.slice(processClassifierStart, processDiagnosticsWriter);
+  assert.match(processClassifier, /Path\.GetFullPath\(Environment\.SystemDirectory\)/);
+  assert.match(processClassifier, /Path\.Combine\(systemDirectory, "conhost\.exe"\)/);
+  assert.match(processClassifier, /Path\.Combine\(systemDirectory, "OpenConsole\.exe"\)/);
+  assert.match(processClassifier, /Path\.Combine\(systemDirectory, "cmd\.exe"\)/);
+  assert.match(processClassifier, /Path\.Combine\(systemDirectory, "WindowsPowerShell", "v1\.0", "powershell\.exe"\)/);
+  assert.doesNotMatch(processClassifier, /String\.Equals\(name, "(?:conhost|OpenConsole|powershell|pwsh|cmd|WerFault)[^\"]*"/);
   for (const image of [
-    "chrome_crashpad_handler.exe", "crashpad_handler.exe", "powershell.exe", "pwsh.exe", "cmd.exe",
-    "conhost.exe", "OpenConsole.exe", "WerFault.exe", "WerFaultSecure.exe", "wermgr.exe",
+    "chrome_crashpad_handler.exe", "crashpad_handler.exe",
   ]) {
     assert.ok(processClassifier.includes(`String.Equals(name, "${image}", StringComparison.OrdinalIgnoreCase)`));
   }

@@ -552,13 +552,22 @@ test("rejects linked roots, junctioned storage directories, and linked slot file
   const file = await slotFile(paths.userDataDirectory, paths.vaultDirectory);
   const linkedFile = path.join(outside, "outside-secret.json");
   await writeFile(linkedFile, "outside sentinel");
-  await symlink(linkedFile, file);
-  await assert.rejects(junctionStore.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
-  await assert.rejects(junctionStore.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_ALREADY_EXISTS" });
-  assert.deepEqual(await junctionStore.inspectPresence(), { state: "present" });
-  assert.equal(await readFile(linkedFile, "utf8"), "outside sentinel");
+  let fileSymlinkCreated = false;
+  try { await symlink(linkedFile, file); fileSymlinkCreated = true; }
+  catch (error) {
+    if (process.platform === "win32" && ["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) {
+      t.diagnostic(`File symlink check unavailable on this host (${error.code}); hardlink and directory checks still run.`);
+      await rm(file, { force: true });
+    } else throw error;
+  }
+  if (fileSymlinkCreated) {
+    await assert.rejects(junctionStore.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
+    await assert.rejects(junctionStore.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_ALREADY_EXISTS" });
+    assert.deepEqual(await junctionStore.inspectPresence(), { state: "present" });
+    assert.equal(await readFile(linkedFile, "utf8"), "outside sentinel");
+    await rm(file);
+  }
 
-  await rm(file);
   await writeFile(file, "hard-linked slot");
   await link(file, path.join(outside, "hard-link.json"));
   await assert.rejects(junctionStore.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
