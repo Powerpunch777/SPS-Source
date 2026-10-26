@@ -341,7 +341,7 @@ test("Native device UI fails closed without API and renders DTO data with textCo
   refresh.dispatch("click");
   await settle();
   assert.equal(listCalls, 2);
-  assert.match(htmlSource, /LAN access<\/dt>\s*<dd>Off · not active<\/dd>/);
+  assert.match(htmlSource, /LAN access<\/dt>\s*<dd id="native-listener-state">Off · not active<\/dd>/);
   assert.doesNotMatch(htmlSource, /invite|add device/i);
   assert.doesNotMatch(rendererSource, /\.innerHTML\s*=/);
 });

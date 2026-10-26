@@ -322,24 +322,93 @@ async function followCapturedIdentityAuthorization(mockIdentity, expectedOrigin)
 
 async function openCdp(target) {
   const socket = new WebSocket(target.webSocketDebuggerUrl);
-  await Promise.race([
-    once(socket, "open"),
-    delay(8_000).then(() => { throw new Error("Timed out opening a Desktop CDP session."); }),
-  ]);
   let id = 0;
+  const pending = new Map();
+  let socketFailed = false;
+  const socketFailure = () => {
+    if (socketFailed) return;
+    socketFailed = true;
+    for (const request of pending.values()) {
+      clearTimeout(request.timeout);
+      socket.removeEventListener("message", request.listener);
+      request.reject(new Error("CDP socket closed before the response arrived."));
+    }
+    pending.clear();
+  };
+  let opened = false;
+  let rejectOpen;
+  let openTimeout;
+  let openingListener;
+  const onSocketFailure = () => {
+    socketFailure();
+    if (!opened) {
+      clearTimeout(openTimeout);
+      if (openingListener) socket.removeEventListener("open", openingListener);
+      rejectOpen?.(new Error("CDP socket failed before opening."));
+    }
+    try { socket.close(); } catch {}
+  };
+  socket.addEventListener("close", onSocketFailure);
+  socket.addEventListener("error", onSocketFailure);
+  await new Promise((resolve, reject) => {
+    rejectOpen = reject;
+    openingListener = () => {
+      opened = true;
+      clearTimeout(openTimeout);
+      socket.removeEventListener("open", openingListener);
+      resolve();
+    };
+    openTimeout = setTimeout(() => {
+      socket.removeEventListener("open", openingListener);
+      reject(new Error("Timed out opening a Desktop CDP session after 8000ms."));
+      socket.close();
+    }, 8_000);
+    socket.addEventListener("open", openingListener);
+  });
+  rejectOpen = null;
   const call = (method, params = {}) => new Promise((resolve, reject) => {
+    if (socketFailed) {
+      reject(new Error("CDP socket is closed."));
+      return;
+    }
     const requestId = ++id;
-    const timeout = setTimeout(() => reject(new Error(`CDP ${method} timed out.`)), 10_000);
     const listener = (event) => {
-      const message = JSON.parse(event.data);
+      let message;
+      try { message = JSON.parse(event.data); }
+      catch {
+        pending.delete(requestId);
+        clearTimeout(timeout);
+        socket.removeEventListener("message", listener);
+        reject(new Error("CDP returned a malformed JSON response."));
+        socketFailure();
+        socket.close();
+        return;
+      }
       if (message.id !== requestId) return;
-      clearTimeout(timeout);
+      const active = pending.get(requestId);
+      if (!active) return;
+      clearTimeout(active.timeout);
+      pending.delete(requestId);
       socket.removeEventListener("message", listener);
       if (message.error) reject(new Error(message.error.message));
       else resolve(message.result);
     };
+    const timeout = setTimeout(() => {
+      pending.delete(requestId);
+      socket.removeEventListener("message", listener);
+      reject(new Error(`CDP ${method} timed out after 10000ms.`));
+      socketFailure();
+      socket.close();
+    }, 10_000);
+    pending.set(requestId, { reject, listener, timeout });
     socket.addEventListener("message", listener);
-    socket.send(JSON.stringify({ id: requestId, method, params }));
+    try { socket.send(JSON.stringify({ id: requestId, method, params })); }
+    catch (error) {
+      clearTimeout(timeout);
+      pending.delete(requestId);
+      socket.removeEventListener("message", listener);
+      reject(error);
+    }
   });
   return {
     async command(method, params = {}) {
@@ -351,8 +420,15 @@ async function openCdp(target) {
         new Error(result.exceptionDetails.text || "Desktop page evaluation failed."), result.exceptionDetails);
       return result.result?.value;
     },
-    async close() { socket.close(); },
+    async close() {
+      socketFailure();
+      socket.close();
+    },
   };
+}
+
+function recoveryPhase(value) {
+  console.log(`[workspace-e2e] native recovery phase=${value}`);
 }
 
 async function requestBrowserShutdown() {
@@ -523,6 +599,7 @@ try {
         clearTimeout(timer);
       }
     }
+
     assert.equal(child.exitCode, 0, "Desktop must shut down cleanly before reusing its temporary Host");
     const prior = await launched.waitForOutputEnd(5000);
     assert.equal(prior.orderly, prior.children, "Every earlier Main must exit zero before reusing the temporary Host");
@@ -788,9 +865,13 @@ try {
       },
       openRecovery: async () => {
         failurePhase = "native_recovery";
+        recoveryPhase("close-prior-generation");
         await closeDesktopForRestart();
+        recoveryPhase("launch-settings-generation");
         launchDesktop(["--sps-core-settings"]);
+        recoveryPhase("wait-settings-target");
         setupCdp = await openCdp(await waitForTarget(debugPort, child, target => target.title === "SPS Core Settings", "independent Native recovery"));
+        recoveryPhase("evaluate-settings-status");
         const recovery = await setupCdp.evaluate(`(async () => ({
           status: await window.spsCoreSettings.getStatus(), origin: location.protocol,
           workspaceBridge: typeof window.spsDesktopWorkspace, scripts: document.scripts.length
@@ -799,18 +880,23 @@ try {
         assert.equal(recovery.workspaceBridge, "undefined");
         assert.equal(recovery.scripts, 1);
         assert.ok(recovery.status.recovery);
+        recoveryPhase("evaluate-native-device-state");
         const devicesBeforePreparation = await setupCdp.evaluate("window.spsCoreSettings.listNativeDevices()", true);
         assert.deepEqual(devicesBeforePreparation, { state: "identity_required", lanEnabled: false, devices: [] },
           "A signed-in Owner without prepared Native keys must not invent device state or enable LAN.");
+        recoveryPhase("wait-status-render");
         await waitForPage(setupCdp, page => page.nativeManagement?.hostBusy === false
           && page.nativeManagement.hostMessage === "Current local desktop status."
           && page.nativeManagement.devicesBusy === false
           && page.nativeManagement.devicesMessage === "Prepare Host identity first"
           && page.nativeManagement.refreshDisabled === false,
         "loaded Native recovery Host status, identity-required device state, and enabled refresh control");
+        recoveryPhase("click-device-refresh");
         await click(setupCdp, "#refresh-native-devices", "Refresh Native device management without Agent or Plugin dependencies");
+        recoveryPhase("wait-device-refresh");
         await waitForPage(setupCdp, page => !page.body.includes("Loading native devices..."), "Native device management unavailable state");
         if (screenshotPath) await captureScreenshot(setupCdp, path.join(path.dirname(screenshotPath), "no-ai-native-recovery.png"));
+        recoveryPhase("complete");
       },
     });
   } else {

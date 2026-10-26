@@ -25,3 +25,11 @@ on CDP evaluation/close deadlines. Both Main processes subsequently exited
 orderly with code 0 and all four output streams ended. That is partial evidence,
 not full E2E or owned-Job qualification. Hosted CI and the recovery timeout
 remain required; no cleanup gate, deadline or process-kill acceptance was relaxed.
+
+Follow-up adds fixed Native recovery subphase markers and closes the owned CDP
+WebSocket on malformed responses, command/open deadlines or disposal. Pending
+calls reject and remove their listeners/timers on socket close. Five focused
+mock-WebSocket tests cover these boundaries without running another Desktop.
+The 8-second open and 10-second command deadlines and actual process/output
+exit checks are unchanged. A separate stale HTML assertion now recognizes the
+dynamic listener status element while still requiring its default-off content.
