@@ -4198,6 +4198,7 @@ function ensureCoreSettingsController() {
       return choice.response === 1;
     },
     listNativeRegistrations: () => ensureNativeMemberController().list(),
+    listNativeMemberWorkspaces: (input, options) => ensureNativeMemberController().listWorkspaces(input, options),
     enrollNativeMember: (input, options) => ensureNativeMemberController().enroll(input, options),
     recoverNativeMember: (input, options) => ensureNativeMemberController().recover(input, options),
     repairNativeMemberStorage: (input, options) => ensureNativeMemberController().repair(input, options),

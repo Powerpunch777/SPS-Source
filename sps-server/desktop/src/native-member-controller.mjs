@@ -1,7 +1,7 @@
 import { allocateSpsNativeMemberKeyIndex, normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
 import { nativeCertificateRecord as record, nativeCertificateUuid as uuid } from "./native-certificate-primitives.mjs";
 import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
-  createSpsNativeEnrollmentRecoveryClient } from "./native-enrollment-client.mjs";
+  createSpsNativeEnrollmentRecoveryClient, createSpsNativeMemberWorkspaceClient } from "./native-enrollment-client.mjs";
 import { createSpsNativeMemberKeyRequest } from "./native-member-certificates.mjs";
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { verifySpsNativeInvitationCertificate } from "./native-connection-tls.mjs";
@@ -53,7 +53,8 @@ export function requireSpsNativeMemberRecoveryInput(input) {
 export function createSpsNativeMemberController({ getAuthority, getIndex, saveIndex, getStore, getTargetReader,
   getPublicationRecovery, authenticate, maxEntries = 128, timeoutMs = 15000,
   createKey = createSpsNativeMemberKeyRequest, createBootstrap = createSpsNativeEnrollmentBootstrap,
-  createEnrollment = createSpsNativeEnrollmentClient, createRecovery = createSpsNativeEnrollmentRecoveryClient }) {
+  createEnrollment = createSpsNativeEnrollmentClient, createRecovery = createSpsNativeEnrollmentRecoveryClient,
+  createWorkspace = createSpsNativeMemberWorkspaceClient }) {
   let busy = false, disposed = false;
   const clients = new Set();
   function capture() {
@@ -188,6 +189,38 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
         const result = await client.reconcile({ keyRequest: key, issuance });
         check();
         return observation(scope.hostId, result);
+      });
+    },
+    listWorkspaces(input, options = {}) {
+      const value = requireSpsNativeMemberRecoveryInput(input);
+      return run(options, async (expected, check, use) => {
+        const scope = indexFor(expected).entries.find(entry => entry.identityIssuer === expected.identityIssuer
+          && entry.subject === expected.subject && entry.hostId === value.hostId);
+        if (!scope) throw failure("recovery_required");
+        const target = await getTargetReader({ ...expected, scope }).read();
+        check();
+        if (!target) throw failure("recovery_required");
+        const store = getStore({ ...expected, context: target.context });
+        const key = await store.read();
+        check();
+        if (!key) throw failure("recovery_required");
+        const stored = await store.readIssued();
+        check();
+        if (!stored?.issuance) throw failure("recovery_required");
+        const client = use(createWorkspace({ target, context: target.context, timeoutMs, assertCurrent: check }));
+        await exchange(client, check);
+        const choices = await client.listAvailableWorkspaces({ keyRequest: key, issuance: stored.issuance });
+        check();
+        if (!Array.isArray(choices) || choices.length > 200) throw failure("unavailable");
+        const seen = new Set();
+        return Object.freeze(choices.map(input => {
+          const row = record(input, ["id", "name"]);
+          uuid(row.id);
+          if (seen.has(row.id) || typeof row.name !== "string" || !row.name.trim() || row.name.length > 300
+            || /[\u0000-\u001f\u007f]/.test(row.name)) throw failure("unavailable");
+          seen.add(row.id);
+          return Object.freeze({ id: row.id, name: row.name });
+        }));
       });
     },
     repair(input, options = {}) {

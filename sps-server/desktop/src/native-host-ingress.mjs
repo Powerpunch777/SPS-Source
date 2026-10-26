@@ -11,6 +11,7 @@ const ROUTES = Object.freeze({
   "/sps-native/v1/enrollment/complete": { operation: "enrollment.complete", peer: true, credential: "sessionCookie", body: "complete" },
   "/sps-native/v1/enrollment/reconcile": { operation: "enrollment.reconcile", peer: true, credential: "sessionCookie", body: "reconcile" },
 });
+const WORKSPACE_DISCOVERY_TARGET = "/sps-native/v1/workspaces";
 const MAX_BODY_BYTES = 8192;
 const MAX_RESPONSE_BYTES = 16_384;
 const MAX_HEADERS_BYTES = 16_384;
@@ -242,9 +243,12 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       if (disposed || !server) throw fail(503);
       const workspacePath = request.method === "GET" && typeof dispatchWorkspace === "function"
         && /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/.exec(request.url);
-      const route = workspacePath ? { peer: true, credential: "sessionCookie", body: null } : ROUTES[request.url];
-      if (!workspacePath && (request.method !== "POST" || !route || request.url.includes("?") || request.url.includes("#"))) throw fail(404);
-      const { length, headers } = readHeaders(request, Boolean(workspacePath));
+      const workspaceDiscovery = request.method === "GET" && typeof dispatchWorkspace === "function"
+        && request.url === WORKSPACE_DISCOVERY_TARGET;
+      const workspaceRequest = Boolean(workspacePath || workspaceDiscovery);
+      const route = workspaceRequest ? { peer: true, credential: "sessionCookie", body: null } : ROUTES[request.url];
+      if (!workspaceRequest && (request.method !== "POST" || !route || request.url.includes("?") || request.url.includes("#"))) throw fail(404);
+      const { length, headers } = readHeaders(request, workspaceRequest);
       const credential = exactCredential(route, headers);
       const peer = socket.getPeerCertificate?.(true);
       const peerPresent = Boolean(peer?.raw?.length);
@@ -296,13 +300,13 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       }, limits.operationTimeoutMs);
       try {
         const dispatchOptions = { signal: controller.signal, assertCurrent: () => { assertIdentityCurrent(expected); } };
-        const result = workspacePath
-          ? await dispatchWorkspace(Object.freeze({ workspaceId: workspacePath[1], target: request.url,
+        const result = workspaceRequest
+          ? await dispatchWorkspace(Object.freeze({ workspaceId: workspaceDiscovery ? null : workspacePath[1], target: request.url,
             cookie: credential.sessionCookie, peerCertificateDer: Buffer.from(peer.raw) }), dispatchOptions)
           : await dispatch(route.operation, Object.freeze({ body, transport, ...(credential ? { credential } : {}) }), dispatchOptions);
         if (disposed || controller.signal.aborted || finished || response.destroyed) return;
         assertIdentityCurrent(expected);
-        if (workspacePath) {
+        if (workspaceRequest) {
           // Core's private reader owns session/device/Workspace authorization.
           // Only its selected public surface result is serialized here.
           writeJson(response, 200, result, null, 256 * 1024);

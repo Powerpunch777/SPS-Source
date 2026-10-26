@@ -80,6 +80,10 @@ test("rejects unapproved methods, malformed targets, bodies, cookies and TLS cer
   const invalid = [
     { method: "POST" },
     { method: "DELETE" },
+    { workspaceId: null },
+    { workspaceId: null, target: "/sps-native/v1/workspaces", method: "PUT" },
+    { workspaceId: null, target: "/sps-native/v1/workspaces/extra" },
+    { target: "/sps-native/v1/workspaces" },
     { target: "https://example.invalid/api" },
     { target: "//example.invalid/api" },
     { target: "/api/../secrets" },
@@ -107,6 +111,14 @@ test("rejects unapproved methods, malformed targets, bodies, cookies and TLS cer
       return true;
     });
   }
+});
+
+test("allows a null workspace only for the exact discovery GET route", t => {
+  const { signer } = fixture();
+  t.after(() => signer.dispose());
+  const proof = decode(signer.signWorkspaceRequest(request({ workspaceId: null,
+    target: "/sps-native/v1/workspaces", contentType: "" })));
+  assert.deepEqual(proof.fields.slice(0, 5), [1, HOST_ID, null, "GET", "/sps-native/v1/workspaces"]);
 });
 
 test("rejects accessors and non-record requests without evaluating getters", t => {

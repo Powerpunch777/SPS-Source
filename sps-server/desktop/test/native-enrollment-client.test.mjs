@@ -7,7 +7,7 @@ import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate,
   publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
-  createSpsNativeEnrollmentRecoveryClient } from "../src/native-enrollment-client.mjs";
+  createSpsNativeEnrollmentRecoveryClient, createSpsNativeMemberWorkspaceClient } from "../src/native-enrollment-client.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "22222222-2222-4222-8222-222222222222";
@@ -46,15 +46,17 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
     req.on("data", chunk => chunks.push(chunk));
     req.once("end", () => {
       const item = { path: req.url, method: req.method, authorization: req.headers.authorization,
-        cookie: req.headers.cookie, body: Buffer.concat(chunks).toString("utf8"),
+        cookie: req.headers.cookie, contentType: req.headers["content-type"], body: Buffer.concat(chunks).toString("utf8"),
         protocol: req.socket.getProtocol(), resumed: req.socket.isSessionReused(), authorized: req.socket.authorized,
         peer: req.socket.getPeerCertificate().raw };
       requests.push(item); notify();
       const exchange = req.url === "/sps-native/v1/session/exchange";
+      const workspaces = req.url === "/sps-native/v1/workspaces";
       const value = req.url === "/sps-native/v1/identity" ? { hostId: HOST,
         serverSpkiSha256: spki(host.server.certificatePem), issuerSpkiSha256: spki(host.memberIssuer.certificatePem),
         issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") }
         : exchange ? { expiresInSeconds: 604800 }
+          : workspaces ? [{ id: DEVICE, name: "Member Workspace" }]
         : req.url.endsWith("/issue") ? issuance : { deviceId: DEVICE, status: "pending" };
       const send = (data = value, status = exchange ? 201 : 200, extraHeaders = {}) => {
         if (res.destroyed) return;
@@ -101,7 +103,14 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
     t.after(() => result.dispose());
     return result;
   }
+  function workspaceClient(overrides = {}) {
+    const result = createSpsNativeMemberWorkspaceClient({ target, context, timeoutMs: 3000,
+      assertCurrent() {}, ...overrides });
+    t.after(() => result.dispose());
+    return result;
+  }
   return { requests, received, issuance, context, code, client, bootstrap, recovery, target,
+    workspaceClient,
     replaceIdentity(identity) { server.setSecureContext({ key: identity.server.privateKeyPem,
       cert: identity.server.certificatePem, ca: host.memberIssuer.certificatePem }); } };
 }
@@ -137,6 +146,50 @@ test("uses three fresh pinned TLS connections and keeps tokens/cookies out of re
   assert.ok(f.requests[2].peer.equals(new X509Certificate(certificate.certificatePem).raw));
   assert.doesNotMatch(JSON.stringify({ acknowledgement, issued, completed, client }), /sps_identity_session|PRIVATE KEY|fixture\.header/);
   await assert.rejects(client.issue(keyRequest), safe);
+});
+
+test("Member Workspace discovery uses a fresh pinned TLS GET and returns only ID/name choices", async t => {
+  const f = await fixture(t), client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  const choices = await client.listAvailableWorkspaces({ keyRequest, issuance: f.issuance });
+  assert.deepEqual(choices, [{ id: DEVICE, name: "Member Workspace" }]);
+  assert.equal(Object.isFrozen(choices), true);
+  assert.equal(Object.isFrozen(choices[0]), true);
+  assert.equal(f.requests.length, 2);
+  const [exchange, discovery] = f.requests;
+  assert.equal(exchange.path, "/sps-native/v1/session/exchange");
+  assert.equal(exchange.method, "POST");
+  assert.equal(discovery.path, "/sps-native/v1/workspaces");
+  assert.equal(discovery.method, "GET");
+  assert.equal(discovery.body, "");
+  assert.equal(discovery.contentType, undefined);
+  assert.equal(discovery.protocol, "TLSv1.3");
+  assert.equal(discovery.resumed, false);
+  assert.equal(discovery.authorized, true);
+  assert.ok(discovery.peer.equals(new X509Certificate(certificate.certificatePem).raw));
+  assert.equal(discovery.authorization, undefined);
+  assert.equal(discovery.cookie, COOKIE);
+  assert.doesNotMatch(JSON.stringify({ choices, client }), /PRIVATE KEY|fixture\.header|sps_identity_session/);
+});
+
+test("Workspace choices are withheld when the account guard changes before the TLS response arrives", async t => {
+  let current = true, finishWorkspace;
+  const f = await fixture(t, { respond({ req, send }) {
+    if (req.url === "/sps-native/v1/workspaces") finishWorkspace = send;
+    else send();
+  } });
+  const client = f.workspaceClient({ assertCurrent() { if (!current) throw new Error("private account detail"); } });
+  await client.exchange(TOKEN);
+  const pending = client.listAvailableWorkspaces({ keyRequest, issuance: f.issuance });
+  for (let attempt = 0; attempt < 50 && !finishWorkspace; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(typeof finishWorkspace, "function");
+  current = false;
+  finishWorkspace();
+  await assert.rejects(pending, safe);
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.requests[1].method, "GET");
+  assert.equal(f.requests[1].cookie, COOKIE);
+  assert.equal(f.requests[1].authorized, true);
 });
 
 test("a different actual TLS peer receives no HTTP Authorization or pairing secret", async t => {

@@ -5,6 +5,7 @@ const HEADER = "X-SPS-Native-Workspace-Proof";
 const COOKIE = /^sps_identity_session=[A-Za-z0-9_-]{64}$/;
 const CONTENT_TYPES = new Set(["", "application/json"]);
 const METHODS = new Set(["GET", "PUT", "PATCH"]);
+const DISCOVERY_TARGET = "/sps-native/v1/workspaces";
 const MAX_TARGET_BYTES = 2048;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CERTIFICATE_BYTES = 4096;
@@ -34,7 +35,12 @@ function proofTarget(value) {
 
 function requestFields(input) {
   const value = record(input, ["workspaceId", "method", "target", "body", "cookie", "contentType", "peerCertificateDer"]);
-  uuid(value.workspaceId);
+  if (value.workspaceId === null) {
+    if (value.method !== "GET" || value.target !== DISCOVERY_TARGET) throw new Error();
+  } else {
+    uuid(value.workspaceId);
+    if (value.target === DISCOVERY_TARGET) throw new Error();
+  }
   if (!METHODS.has(value.method)) throw new Error();
   const target = proofTarget(value.target);
   if (!Buffer.isBuffer(value.body) || value.body.length > MAX_BODY_BYTES) throw new Error();

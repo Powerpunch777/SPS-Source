@@ -55,6 +55,17 @@ function fixture(overrides = {}) {
       async complete(value) { assert.equal(value.keyRequest, key); assert.equal(value.issuance, issued); await step("complete"); return { deviceId: DEVICE, status: outcome }; },
       dispose() { calls.push("dispose-enrollment"); },
     }),
+    createWorkspace: ({ context, target: retained }) => {
+      assert.equal(context, target.context); assert.equal(retained, target);
+      return {
+        async exchange(token) { assert.equal(token, "fixture-account-token"); await step("workspace-exchange"); },
+        async listAvailableWorkspaces(value) {
+          assert.equal(value.keyRequest, key); assert.equal(value.issuance, issued); await step("workspaces");
+          return [{ id: DEVICE, name: "Allowed Workspace" }];
+        },
+        dispose() { calls.push("dispose-workspace"); },
+      };
+    },
     createRecovery: ({ context, target: retained }) => {
       assert.equal(context, target.context); assert.equal(retained, target);
       return {
@@ -72,6 +83,23 @@ function fixture(overrides = {}) {
   };
 }
 const enroll = (f, options = {}) => f.controller.enroll({ invitationCode, displayName: "Alice computer" }, { confirm: async () => true, ...options });
+
+test("Workspace discovery uses only saved account-bound credentials and returns public choices", async () => {
+  const f = fixture();
+  await enroll(f);
+  const before = f.snapshot();
+  f.calls.length = 0;
+  assert.deepEqual(await f.controller.listWorkspaces({ hostId: HOST }), [{ id: DEVICE, name: "Allowed Workspace" }]);
+  assert.deepEqual(f.snapshot(), before);
+  assert.deepEqual(f.calls, ["read-protected-target", "read-key", "read-issued", "authenticate", "workspace-exchange", "workspaces", "dispose-workspace"]);
+  f.hooks.workspaces = f.change;
+  await assert.rejects(f.controller.listWorkspaces({ hostId: HOST }), { code: "native_member_changed" });
+  assert.equal(f.calls.at(-1), "dispose-workspace");
+  f.removeKey();
+  const missingKeyCallStart = f.calls.length;
+  await assert.rejects(f.controller.listWorkspaces({ hostId: HOST }), { code: "native_member_recovery_required" });
+  assert.deepEqual(f.calls.slice(missingKeyCallStart), ["read-protected-target", "read-key"]);
+});
 
 test("Main composition orders stable index, protected key/target, issuance persistence before completion", async () => {
   const f = fixture();

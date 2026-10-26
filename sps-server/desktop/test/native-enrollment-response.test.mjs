@@ -34,6 +34,25 @@ function expectInvalid(operation, input) {
   });
 }
 
+test("Workspace discovery accepts only bounded public ID/name rows and never cookies or credentials", () => {
+  const choices = [{ id: DEVICE_ID, name: "개인 Workspace" }];
+  const actual = parseSpsNativeEnrollmentResponse("workspaces", response("workspaces", choices));
+  assert.deepEqual(actual, choices);
+  assert.equal(Object.isFrozen(actual), true);
+  assert.equal(Object.isFrozen(actual[0]), true);
+  assert.deepEqual(parseSpsNativeEnrollmentResponse("workspaces", response("workspaces", [])), []);
+  for (const bad of [
+    {}, [{ id: "wrong", name: "Workspace" }], [{ id: DEVICE_ID, name: "" }],
+    [{ id: DEVICE_ID, name: "Workspace", privateKeyPem: "secret" }], [...choices, ...choices],
+    Array.from({ length: 201 }, () => choices[0]), [{ id: DEVICE_ID, name: "x".repeat(301) }],
+    [{ id: DEVICE_ID, name: "line\nbreak" }],
+  ]) expectInvalid("workspaces", response("workspaces", bad));
+  expectInvalid("workspaces", response("workspaces", choices, { body: Buffer.from(` ${JSON.stringify(choices)}`) }));
+  const envelope = response("workspaces", choices);
+  envelope.rawHeaders.push("Set-Cookie", COOKIE);
+  expectInvalid("workspaces", envelope);
+});
+
 test("accepts Core exchange, issue, and pending-completion responses as frozen DTOs", () => {
   const exchange = parseSpsNativeEnrollmentResponse("exchange", response("exchange", { expiresInSeconds: 604800 }));
   assert.deepEqual(exchange, { cookie: `sps_identity_session=${SESSION_TOKEN}`, expiresInSeconds: 604800 });

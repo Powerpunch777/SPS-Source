@@ -10,6 +10,7 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 const unavailable = () => Object.assign(new Error("The owned Native Workspace channel is unavailable."), { code: "native_workspace_unavailable" });
 const pin = value => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 const WORKSPACE_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/;
+const DISCOVERY_TARGET = "/sps-native/v1/workspaces";
 
 function identity(value) {
   const keys = ["hostId", "serverSpkiSha256", "issuerSpkiSha256",
@@ -204,13 +205,14 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
         if (!proofSigner || port === null || !binding || signal !== undefined && !(signal instanceof AbortSignal)
           || typeof assertCurrent !== "function" || signal?.aborted || activeReads >= 4) throw unavailable();
         const request = record(input, ["workspaceId", "target", "cookie", "peerCertificateDer"]);
-        uuid(request.workspaceId);
+        const discovery = request.workspaceId === null && request.target === DISCOVERY_TARGET;
+        if (!discovery) uuid(request.workspaceId);
         if (typeof request.target !== "string" || typeof request.cookie !== "string"
           || !Buffer.isBuffer(request.peerCertificateDer)) throw unavailable();
         const snapshot = Object.freeze({ workspaceId: request.workspaceId, target: request.target,
           cookie: request.cookie, peerCertificateDer: Buffer.from(request.peerCertificateDer) });
-        const route = WORKSPACE_TARGET.exec(snapshot.target);
-        if (!route || route[1] !== snapshot.workspaceId) throw unavailable();
+        const route = discovery ? null : WORKSPACE_TARGET.exec(snapshot.target);
+        if (!discovery && (!route || route[1] !== snapshot.workspaceId)) throw unavailable();
         activeReads += 1;
         counted = true;
         controller = new AbortController();

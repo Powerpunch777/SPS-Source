@@ -25,6 +25,7 @@ let nativeDevicesRequest = 0;
 let nativeInvitationsRequest = 0;
 let nativeRegistrationRequest = 0;
 let nativeRegistrationButtons = [];
+let nativeWorkspaceResults = [];
 let nativeInvitationButtons = [];
 
 const nativeDeviceStates = new Map([
@@ -528,6 +529,7 @@ function renderStatus(status) {
 function showStatusLoading() {
   nativeRegistrationRequest++;
   nativeRegistrationButtons = [];
+  clearNativeWorkspaceResults();
   byId("native-registrations-list").textContent = "";
   byId("native-member-invitation").value = "";
   byId("native-member-result").textContent = "Saved credentials are kept. Select a registration to check its current status.";
@@ -710,6 +712,8 @@ async function registerNativeMember() {
 async function loadNativeRegistrations() {
   if (byId("refresh-native-registrations").disabled) return;
   const request = ++nativeRegistrationRequest;
+  clearNativeWorkspaceResults();
+  nativeWorkspaceResults = [];
   pending.add("native-member-list");
   syncControls();
   try {
@@ -742,10 +746,22 @@ async function loadNativeRegistrations() {
       repair.textContent = "Recover saved credentials";
       repair.addEventListener("click", () => void repairNativeRegistration(hostId));
       nativeRegistrationButtons.push(repair);
+      const showWorkspaces = document.createElement("button");
+      showWorkspaces.className = "button secondary";
+      showWorkspaces.type = "button";
+      showWorkspaces.textContent = "Show Workspaces";
+      showWorkspaces.addEventListener("click", () => void showNativeMemberWorkspaces(hostId, workspaceResults));
+      nativeRegistrationButtons.push(showWorkspaces);
       const actions = document.createElement("div");
       actions.className = "native-registration-actions";
-      actions.append(button, repair);
-      row.append(label, actions);
+      actions.append(button, repair, showWorkspaces);
+      const workspaceResults = document.createElement("div");
+      workspaceResults.className = "native-workspace-results";
+      workspaceResults.setAttribute("role", "status");
+      workspaceResults.setAttribute("aria-live", "polite");
+      workspaceResults.setAttribute("aria-busy", "false");
+      nativeWorkspaceResults.push(workspaceResults);
+      row.append(label, actions, workspaceResults);
       byId("native-registrations-list").append(row);
     }
     byId("native-member-result").textContent = entries.length ? "Select a Host to check its existing registration." : "No saved registrations for this account.";
@@ -756,6 +772,56 @@ async function loadNativeRegistrations() {
       byId("native-member-result").textContent = "Saved registrations are unavailable. Existing credentials were kept.";
     }
   } finally { pending.delete("native-member-list"); syncControls(); }
+}
+
+function clearNativeWorkspaceResults() {
+  for (const result of nativeWorkspaceResults) {
+    result.textContent = "";
+    result.setAttribute("aria-busy", "false");
+  }
+}
+
+async function showNativeMemberWorkspaces(hostId, resultRegion) {
+  if (pending.size || statusLoading || quitPending || currentStatus?.canManageNativeMember !== true
+    || !nativeDeviceIdPattern.test(hostId)) return;
+  const request = ++nativeRegistrationRequest;
+  const pendingKey = `native-member-workspace-list:${request}`;
+  clearNativeWorkspaceResults();
+  resultRegion.setAttribute("aria-busy", "true");
+  resultRegion.textContent = "Checking saved Workspace membership...";
+  pending.add(pendingKey);
+  syncControls();
+  try {
+    const entries = await window.spsCoreSettings.listNativeMemberWorkspaces({ hostId });
+    if (request !== nativeRegistrationRequest) return;
+    if (!Array.isArray(entries) || entries.length > 200) throw new Error("Invalid Workspaces");
+    const ids = new Set();
+    const values = entries.map(candidate => {
+      const entry = exactDataRecord(candidate, ["id", "name"]);
+      if (!entry || typeof entry.id !== "string" || !nativeDeviceIdPattern.test(entry.id) || ids.has(entry.id)
+        || typeof entry.name !== "string" || !entry.name.trim() || entry.name.length > 300
+        || /[\u0000-\u001f\u007f]/.test(entry.name)) throw new Error("Invalid Workspace");
+      ids.add(entry.id);
+      return entry;
+    });
+    resultRegion.textContent = "";
+    if (values.length === 0) {
+      resultRegion.textContent = "No available Workspaces for this Host.";
+      return;
+    }
+    for (const value of values) {
+      const workspace = document.createElement("p");
+      workspace.className = "help-text";
+      workspace.textContent = `${value.name} · ${value.id}`;
+      resultRegion.append(workspace);
+    }
+  } catch {
+    if (request === nativeRegistrationRequest) resultRegion.textContent = "Saved Workspaces are unavailable. Check the connection and retry.";
+  } finally {
+    resultRegion.setAttribute("aria-busy", "false");
+    pending.delete(pendingKey);
+    syncControls();
+  }
 }
 
 async function checkNativeRegistration(hostId) {

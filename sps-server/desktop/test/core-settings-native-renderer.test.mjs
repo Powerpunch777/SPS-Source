@@ -18,8 +18,8 @@ class ElementFixture {
     this.disabled = false;
     this.checked = false;
     this.value = "";
-    this.textContent = "";
     this.children = [];
+    this._textContent = "";
     this.attributes = new Map();
     this.listeners = new Map();
     this.classes = new Set();
@@ -42,7 +42,9 @@ class ElementFixture {
   }
 
   setAttribute(name, value) { this.attributes.set(name, value); }
-  append(...children) { this.children.push(...children); }
+  get textContent() { return this._textContent; }
+  set textContent(value) { this._textContent = String(value); this.children = []; }
+  append(...children) { this._textContent = ""; this.children.push(...children); }
 }
 
 function validNative(overrides = {}) {
@@ -210,6 +212,94 @@ test("saved Member registration queries are explicit and never use an invitation
   await settle();
   assert.deepEqual(calls, ["list", { hostId }]);
   assert.match(element(ctx, "native-member-result").textContent, /Revoked/);
+});
+
+test("saved Host Workspace discovery requires Show Workspaces and renders exact text safely", async () => {
+  const calls = [];
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const workspaceId = "22222222-2222-4222-8222-222222222222";
+  const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }],
+    listNativeMemberWorkspaces: async input => { calls.push({ ...input }); return [{ id: workspaceId, name: "<img src=x onerror=alert(1)>" }]; },
+  } });
+  await settle();
+  assert.deepEqual(calls, []);
+  element(ctx, "refresh-native-registrations").dispatch("click");
+  await settle();
+  const row = element(ctx, "native-registrations-list").children[0];
+  const show = row.children[1].children[2];
+  assert.equal(show.textContent, "Show Workspaces");
+  assert.equal(row.children[2].children.length, 0);
+  assert.deepEqual(calls, []);
+  show.dispatch("click");
+  await settle();
+  assert.deepEqual(calls, [{ hostId }]);
+  assert.equal(row.children[2].children[0].textContent, `<img src=x onerror=alert(1)> · ${workspaceId}`);
+  assert.equal(row.children[2].children[0].innerHTML, undefined);
+});
+
+test("Workspace discovery shows generic empty/error states and ignores late results after refresh", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const empty = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }], listNativeMemberWorkspaces: async () => [],
+  } });
+  await settle();
+  element(empty, "refresh-native-registrations").dispatch("click"); await settle();
+  const emptyRow = element(empty, "native-registrations-list").children[0];
+  emptyRow.children[1].children[2].dispatch("click"); await settle();
+  assert.equal(emptyRow.children[2].textContent, "No available Workspaces for this Host.");
+
+  const failed = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }], listNativeMemberWorkspaces: async () => { throw new Error("private cookie"); },
+  } });
+  await settle();
+  element(failed, "refresh-native-registrations").dispatch("click"); await settle();
+  const failedRow = element(failed, "native-registrations-list").children[0];
+  failedRow.children[1].children[2].dispatch("click"); await settle();
+  assert.equal(failedRow.children[2].textContent, "Saved Workspaces are unavailable. Check the connection and retry.");
+  assert.doesNotMatch(failedRow.children[2].textContent, /cookie|private/);
+
+  let release;
+  const late = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }],
+    listNativeMemberWorkspaces: async () => new Promise(resolve => { release = resolve; }),
+  } });
+  await settle();
+  element(late, "refresh-native-registrations").dispatch("click"); await settle();
+  const oldRow = element(late, "native-registrations-list").children[0];
+  oldRow.children[1].children[2].dispatch("click");
+  await settle();
+  element(late, "refresh-native-registrations").disabled = false;
+  element(late, "refresh-native-registrations").dispatch("click");
+  await settle();
+  release([{ id: "22222222-2222-4222-8222-222222222222", name: "Late workspace" }]);
+  await settle();
+  const newRow = element(late, "native-registrations-list").children[0];
+  assert.equal(newRow.children[2].textContent, "");
+  assert.equal(oldRow.children[2].textContent, "");
+});
+
+test("a status refresh clears previously displayed member Workspace names and IDs", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const workspaceId = "22222222-2222-4222-8222-222222222222";
+  let workspaceCalls = 0;
+  const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageNativeMember: true }), api: {
+    listNativeRegistrations: async () => [{ hostId }],
+    listNativeMemberWorkspaces: async () => { workspaceCalls += 1; return [{ id: workspaceId, name: "Private Team Name" }]; },
+  } });
+  await settle();
+  assert.equal(element(ctx, "refresh-native-registrations").disabled, false);
+  element(ctx, "refresh-native-registrations").dispatch("click"); await settle();
+  assert.equal(element(ctx, "native-registrations-list").children.length, 1);
+  const row = element(ctx, "native-registrations-list").children[0];
+  row.children[1].children[2].dispatch("click"); await settle();
+  assert.equal(workspaceCalls, 1);
+  assert.equal(row.children[2].children.length, 1);
+  assert.equal(row.children[2].children[0].textContent, `Private Team Name · ${workspaceId}`);
+  element(ctx, "retry-status").dispatch("click"); await settle();
+  assert.equal(element(ctx, "native-registrations-list").children.length, 0);
+  assert.equal(row.children[2].children.length, 0);
+  assert.equal(row.children[2].textContent, "");
 });
 
 test("Native LAN starts unavailable when native DTO is missing and never prepares on load", async () => {

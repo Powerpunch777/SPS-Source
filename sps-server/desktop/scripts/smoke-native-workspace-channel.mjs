@@ -87,6 +87,11 @@ try {
     request.once("error", reject); request.end();
   });
   const root = `/api/companies/${companyId}`;
+  const discovery = "/sps-native/v1/workspaces";
+  assert.deepEqual(await read(discovery), { status: 200, body: [{ id: companyId, name: "Native Channel Fixture" }] });
+  assert.notEqual((await read(discovery, { noCertificate: true })).status, 200);
+  assert.equal((await read(discovery, { cookie: `sps_identity_session=${"x".repeat(64)}` })).status, 403);
+  assert.equal((await read(`${discovery}?all=true`)).status, 404);
   assert.deepEqual(await read(`${root}/workspace-shell/providers`), { status: 200, body: [] });
   assert.equal((await read(`${root}/workspace-shell`)).body.mode, "neutral");
   assert.deepEqual(await read(`${root}/workspace-dashboard`), { status: 200, body: { widgets: [] } });
@@ -95,7 +100,13 @@ try {
   assert.equal((await read(`${root}/workspace-shell`, { cookie: `sps_identity_session=${"x".repeat(64)}` })).status, 403);
   assert.equal((await read(`/api/companies/${randomUUID()}/workspace-shell`)).status, 403);
   assert.equal((await read("/api/companies")).status, 404);
+  // This database contains only this fixture's membership. Discovery must never
+  // recreate access when an approved device loses its Workspace membership.
+  await db.update(companyMemberships).set({ status: "suspended" });
+  assert.deepEqual(await read(discovery), { status: 200, body: [] });
+  assert.equal((await read(`${root}/workspace-shell`)).status, 403);
   await devices.revoke(device.id, "fixture-host");
+  assert.equal((await read(discovery)).status, 403);
   assert.equal((await read(`${root}/workspace-shell`)).status, 403);
   for (const table of [agents, plugins, spsNodes]) assert.deepEqual(await db.select().from(table), []);
 } catch (error) { failure = error; throw error; }

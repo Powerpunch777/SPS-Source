@@ -12,6 +12,7 @@ const NATIVE_DEVICE_STATUSES = new Set(["pending", "approved", "revoked"]);
 const NATIVE_DEVICE_ID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const NATIVE_DEVICE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const MAX_NATIVE_DEVICES = 200;
+const MAX_NATIVE_MEMBER_WORKSPACES = 200;
 const UNAVAILABLE_NATIVE_DEVICES = Object.freeze({ state: "unavailable", lanEnabled: false, devices: Object.freeze([]) });
 const NATIVE_INVITATION_STATES = new Set(["available", "host_required", "identity_required", "host_restart_required", "unavailable"]);
 const NATIVE_INVITATION_STATUSES = new Set(["pending", "expired", "identity_changed", "consumed", "revoked", "exhausted"]);
@@ -95,6 +96,19 @@ function memberRegistrations(value) {
   }));
 }
 
+function memberWorkspaces(value) {
+  if (!Array.isArray(value) || value.length > MAX_NATIVE_MEMBER_WORKSPACES) throw new Error("Native Member Workspaces are unavailable.");
+  const ids = new Set();
+  return Object.freeze(value.map(item => {
+    const entry = exactDataRecord(item, ["id", "name"]);
+    if (!entry || typeof entry.id !== "string" || !NATIVE_DEVICE_ID.test(entry.id) || ids.has(entry.id)
+      || typeof entry.name !== "string" || !entry.name.trim() || entry.name.length > 300
+      || /[\u0000-\u001f\u007f]/.test(entry.name)) throw new Error("Native Member Workspaces are unavailable.");
+    ids.add(entry.id);
+    return Object.freeze({ id: entry.id, name: entry.name });
+  }));
+}
+
 function sanitizeNativeDevicesSnapshot(value) {
   try {
     const snapshot = exactDataRecord(value, ["state", "lanEnabled", "devices"]);
@@ -162,6 +176,7 @@ export function createCoreSettingsController({
   revokeNativeInvitation,
   confirmNativeInvitationRevoke,
   listNativeRegistrations,
+  listNativeMemberWorkspaces,
   enrollNativeMember,
   recoverNativeMember,
   repairNativeMemberStorage,
@@ -331,6 +346,14 @@ export function createCoreSettingsController({
       if (typeof listNativeRegistrations !== "function") throw new Error("Native Member registration is unavailable.");
       return memberRegistrations(await awaitAndAssertSender(event, () => listNativeRegistrations()));
     });
+    bind("list-native-member-workspaces", async (input, event) => {
+      const validated = requireSpsNativeMemberRecoveryInput(input);
+      if (typeof listNativeMemberWorkspaces !== "function") throw new Error("Native Member Workspaces are unavailable.");
+      const result = await awaitAndAssertSender(event, () => listNativeMemberWorkspaces(validated, {
+        assertRequester: () => assertSender(event),
+      }));
+      return memberWorkspaces(result);
+    }, { writes: true, input: true, authorizeBeforeAction: false });
     bind("start-native-host-listener", async (input, event) => {
       const validated = requireSpsNativeHostListenInput(input);
       if (typeof startNativeHostListener !== "function" || typeof confirmNativeHostListener !== "function") throw new Error("Native Host connectivity is unavailable.");

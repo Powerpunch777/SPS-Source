@@ -149,6 +149,35 @@ test("explicit Workspace surface forwarding requires actual fresh mTLS and a ses
   assert.equal(calls.length, 1);
 });
 
+test("Workspace discovery accepts only the exact GET with fresh mTLS and an SPS session", async t => {
+  const calls = [];
+  const ingress = createSpsNativeHostIngress({ getIdentity: () => identity, assertCurrent() {},
+    dispatch() { assert.fail("Workspace requests must not use the enrollment dispatcher"); },
+    async dispatchWorkspace(input, options) { options.assertCurrent(); calls.push(input); return [{ id: "44444444-4444-4444-8444-444444444444", name: "Main" }]; },
+  });
+  t.after(() => ingress.dispose());
+  const bound = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  const input = { route: "/sps-native/v1/workspaces", workspace: true,
+    certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem, session: true };
+  const success = await post(bound.port, input);
+  assert.equal(success.statusCode, 200);
+  assert.deepEqual(JSON.parse(success.body), [{ id: "44444444-4444-4444-8444-444444444444", name: "Main" }]);
+  assert.deepEqual(calls.map(({ workspaceId, target }) => ({ workspaceId, target })), [
+    { workspaceId: null, target: "/sps-native/v1/workspaces" },
+  ]);
+  for (const denied of [
+    { ...input, certificate: undefined, key: undefined },
+    { ...input, session: false },
+    { ...input, body: "{}" },
+    { ...input, headers: { "X-SPS-Desktop-Owner-Bootstrap": "owner" } },
+    { ...input, headers: { "X-SPS-Native-Workspace-Proof": "forged" } },
+    { ...input, headers: { Origin: "https://evil.invalid" } },
+    { ...input, route: "/sps-native/v1/workspaces?x=1" },
+    { ...input, route: "/sps-native/v1/workspaces/44444444-4444-4444-8444-444444444444" },
+  ]) assert.notEqual((await post(bound.port, denied)).statusCode, 200);
+  assert.equal(calls.length, 1);
+});
+
 test("Workspace paths stay unmounted unless the private dispatcher is explicitly supplied", async t => {
   const ingress = createSpsNativeHostIngress({ getIdentity: () => identity, assertCurrent() {}, dispatch() { assert.fail(); } });
   t.after(() => ingress.dispose());

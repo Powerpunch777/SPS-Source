@@ -14,7 +14,7 @@ import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsul
 
 const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/sps-native/v1/session/exchange",
   issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete",
-  reconcile: "/sps-native/v1/enrollment/reconcile" });
+  reconcile: "/sps-native/v1/enrollment/reconcile", workspaces: "/sps-native/v1/workspaces" });
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
   unavailable: "The Native enrollment request could not complete.",
   invalid_response: "The Native enrollment response is invalid.",
@@ -66,8 +66,14 @@ export function createSpsNativeEnrollmentRecoveryClient(input) {
   return createClient(input, "recover");
 }
 
+// Main-private access using an existing protected target and issued key. It
+// creates no registration and returns only authorized Workspace ID/name DTOs.
+export function createSpsNativeMemberWorkspaceClient(input) {
+  return createClient(input, "workspace");
+}
+
 function createClient(input, mode) {
-  const bootstrap = mode === "bootstrap", recovery = mode === "recover";
+  const bootstrap = mode === "bootstrap", workspace = mode === "workspace", recovery = mode === "recover" || workspace;
   let options, context, invitation, target, retainedTarget;
   try {
     options = record(input, [recovery ? "target" : "invitationCode", ...(bootstrap ? [] : ["context"]), "timeoutMs", "assertCurrent"]);
@@ -165,7 +171,7 @@ function createClient(input, mode) {
       if (signal?.aborted || disposed) { stop(failure(disposed ? "disposed" : "cancelled")); return; }
       try {
         request = httpsRequest({ hostname, port: Number(address.port || 443), path: PATHS[operation],
-          method: "POST", agent: false, maxHeaderSize: 16_384,
+          method: operation === "workspaces" ? "GET" : "POST", agent: false, maxHeaderSize: 16_384,
           ca: target.certificatePem, rejectUnauthorized: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
           ...(isIP(hostname) ? {} : { servername: hostname }),
           ...(credential ? { cert: credential.certificatePem, key: credential.privateKeyPem } : {}),
@@ -177,7 +183,7 @@ function createClient(input, mode) {
               return undefined;
             } catch { return failure("unavailable"); }
           },
-          headers: { "Content-Type": "application/json; charset=utf-8", "Content-Length": String(bytes.length),
+          headers: { ...(operation === "workspaces" ? {} : { "Content-Type": "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
             Connection: "close", ...(operation === "identity" ? {}
               : operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
         }, response => {
@@ -186,7 +192,7 @@ function createClient(input, mode) {
           response.on("error", () => stop(failure("unavailable")));
           response.once("aborted", () => stop(failure("invalid_response")));
           response.on("data", chunk => {
-            if (!Buffer.isBuffer(chunk) || size + chunk.length > 16_384) { stop(failure("invalid_response")); return; }
+            if (!Buffer.isBuffer(chunk) || size + chunk.length > (operation === "workspaces" ? 256 * 1024 : 16_384)) { stop(failure("invalid_response")); return; }
             size += chunk.length; chunks.push(chunk);
           });
           response.once("end", () => {
@@ -273,6 +279,18 @@ function createClient(input, mode) {
       return Object.freeze({ state: "session_prepared", expiresAt: new Date(sessionExpiresAt).toISOString() });
     });
   }
+  if (workspace) return Object.freeze({
+    exchange,
+    listAvailableWorkspaces(input, signalInput = {}) {
+      return run("workspaces", signalInput, async operation => {
+        const value = record(input, ["keyRequest", "issuance"]);
+        const { key } = await checkedKey(value.keyRequest, operation.guard);
+        const { credential } = await checkedIssuance(value.issuance, key, operation.guard);
+        return post("workspaces", Buffer.alloc(0), cookie, credential, operation);
+      });
+    },
+    dispose,
+  });
   if (recovery) return Object.freeze({
     exchange,
     reconcile(input, signalInput = {}) {
