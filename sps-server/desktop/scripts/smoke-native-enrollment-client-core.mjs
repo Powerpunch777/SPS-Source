@@ -131,12 +131,30 @@ try {
     }, { isCurrent: current });
     parentIngress = createSpsNativeParentIngressClient(ownedChild, { isCurrent: current });
     const ready = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => finish(new Error("Isolated Core child did not become ready.")), 30_000);
+      const stages = ["imports-db", "imports-identity", "imports-enrollment", "imports-ingress",
+        "identity-init", "enrollment-init", "ingress-init"];
+      let lastStage = "waiting-for-configuration";
+      let configurationSent = false;
+      const timer = setTimeout(() => finish(new Error(
+        `Isolated Core child did not become ready (last stage: ${lastStage}).`)), 30_000);
       const onError = () => finish(new Error("Isolated Core child failed."));
       const onMessage = message => {
         if (message?.kind === "sps.test.native-parent.ready") finish(null, message.identity);
+        else if (message?.kind === "sps.test.native-parent.configure-ready") {
+          if (configurationSent) {
+            finish(new Error("Isolated Core child repeated its configuration handshake."));
+            return;
+          }
+          configurationSent = true;
+          lastStage = "waiting-for-configuration";
+          ownedChild.send({ kind: "sps.test.native-parent.configure", connectionString: database.connectionString,
+            issuer: fixtureIssuer, publicJwk: { ...jwk, kid, alg: "RS256", use: "sig" } }, error => { if (error) onError(); });
+        }
+        else if (message?.kind === "sps.test.native-parent.progress" && stages.includes(message.stage)) {
+          lastStage = message.stage;
+        }
         else if (message?.kind === "sps.test.native-parent.failure"
-          && ["imports", "identity", "parent-enrollment", "parent-ingress"].includes(message.stage)) {
+          && stages.includes(message.stage)) {
           finish(new Error(`Isolated Core child failed at ${message.stage}.`));
         }
       };
@@ -146,8 +164,6 @@ try {
         if (error) reject(error); else resolve(value);
       }
       ownedChild.on("message", onMessage); ownedChild.once("error", onError); ownedChild.once("exit", onError);
-      ownedChild.send({ kind: "sps.test.native-parent.configure", connectionString: database.connectionString,
-        issuer: fixtureIssuer, publicJwk: { ...jwk, kid, alg: "RS256", use: "sig" } }, error => { if (error) onError(); });
     });
     assert.deepEqual(ready, { hostId, serverSpkiSha256: serverPin, issuerSpkiSha256: issuerPin,
       issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") });
@@ -455,7 +471,11 @@ try {
   if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   globalThis.fetch = previousFetch;
   await db.$client.end();
-  await database.cleanup();
+  try { await database.cleanup(); }
+  catch (cleanupError) {
+    if (integrationFailure) throw new AggregateError([integrationFailure, cleanupError], "Native integration and owned database cleanup both failed.");
+    throw cleanupError;
+  }
   if (localFixtureRoot) {
     const current = await lstat(localFixtureRoot, { bigint: true });
     assert.equal(current.isDirectory() && !current.isSymbolicLink(), true);

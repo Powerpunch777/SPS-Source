@@ -4,6 +4,7 @@ import test from "node:test";
 
 test("Native client/Core interoperability is an isolated explicit real-service gate, not a product mount", async () => {
   const script = await readFile(new URL("../scripts/smoke-native-enrollment-client-core.mjs", import.meta.url), "utf8");
+  const child = await readFile(new URL("../scripts/fixtures/native-parent-ingress-child.mjs", import.meta.url), "utf8");
   for (const required of ["--isolated-native-enrollment-client", "startEmbeddedPostgresTestDatabase",
     'server/src/auth/sps-identity.ts', 'server/src/services/sps-native-session-exchange-http.ts',
     'server/src/services/sps-native-enrollment-http.ts', 'createSpsNativeEnrollmentClient',
@@ -15,6 +16,13 @@ test("Native client/Core interoperability is an isolated explicit real-service g
   }
   assert.match(script, /server\.listen\(0, "127\.0\.0\.1", resolve\)/);
   assert.match(script, /assert\.equal\(support\.supported, true/);
+  assert.match(script, /last stage: \$\{lastStage\}/);
+  assert.match(script, /30_000\);/);
+  assert.match(script, /configure-ready/);
+  assert.match(script, /configurationSent/);
+  assert.match(child, /sps\.test\.native-parent\.progress/);
+  assert.ok(child.indexOf("process.once(\"message\"") < child.indexOf("sps.test.native-parent.configure-ready"));
+  assert.match(child, /imports-db[\s\S]*imports-identity[\s\S]*imports-enrollment[\s\S]*imports-ingress[\s\S]*identity-init[\s\S]*enrollment-init[\s\S]*ingress-init/);
   const bootstrapStart = script.indexOf("const metadata = await bootstrap.inspect()");
   const sessionStart = script.indexOf("await member.exchange(token())");
   assert.ok(bootstrapStart > 0 && sessionStart > bootstrapStart);
