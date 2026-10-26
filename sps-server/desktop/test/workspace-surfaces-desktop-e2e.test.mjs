@@ -112,8 +112,11 @@ test("prepared Native management exercises the real Main/Core route without a co
   assert.match(script, /temporaryDataRemoved = await attempt/);
   assert.match(script, /const fixture = await createWorkspaceE2eFixture\(\);\s*const userDataDirectory = fixture\.directory/);
   assert.match(script, /boundedCleanup\(fixture\.remove\(\), "temporary data", 20_000\)/);
-  assert.match(script, /error\?\.code === "ERR_WORKSPACE_E2E_FIXTURE"/);
-  assert.match(script, /fixtureStages\.includes\(error\.stage\) \? error\.stage : "operation_failed"/);
+  assert.match(script, /code: "ERR_WORKSPACE_E2E_CLEANUP_TIMEOUT"/);
+  assert.match(script, /workspaceE2eCleanupFailureReason\(stage, error\)/);
+  const cleanupContract = await readFile(new URL("../scripts/workspace-e2e-cleanup-contract.mjs", import.meta.url), "utf8");
+  assert.match(cleanupContract, /error\?\.code === "ERR_WORKSPACE_E2E_CLEANUP_TIMEOUT"\) return "timeout"/);
+  assert.match(cleanupContract, /FIXTURE_CLEANUP_STAGES\.has\(error\.stage\)/);
   assert.match(script, /cleanup failure: \$\{JSON\.stringify\(\{ stage, reason \}\)\}/);
   assert.match(script, /Workspace E2E cleanup is incomplete; the test cannot be accepted/);
 });

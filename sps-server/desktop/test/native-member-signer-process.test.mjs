@@ -24,10 +24,14 @@ async function verifyChild(coreClientUsed) {
   const channel = attachSpsNativeMemberSignerChannel(child, signer, { isCurrent: () => child.exitCode == null });
   let output = "", errors = "";
   child.stdout.on("data", bytes => { output += bytes; }); child.stderr.on("data", bytes => { errors += bytes; });
-  const completed = once(child, "exit");
-  const timer = setTimeout(() => child.kill(), 10_000);
+  // This deadline includes cold Node/package startup and key generation under
+  // the full parallel Windows suite. It does not change either IPC deadline.
+  const completed = once(child, "close");
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; child.kill(); }, process.platform === "win32" ? 45_000 : 15_000);
   try {
     const [code] = await completed;
+    assert.equal(timedOut, false, "The isolated signing child exceeded its cold-start/process deadline.");
     assert.equal(code, 0, errors); assert.equal(errors, "");
     assert.deepEqual(JSON.parse(output), { realChildIpc: true, coreClientUsed, receivedPublicOnly: true, signedCredentialMatchesChildKey: true });
     for (const secret of [identity.server.privateKeyPem, identity.memberIssuer.privateKeyPem, "fixture-owner", "fixture-vault"])
@@ -37,9 +41,9 @@ async function verifyChild(coreClientUsed) {
     if (child.exitCode == null) { child.kill(); await completed.catch(() => {}); }
   }
 }
-test("a real owned Node child receives only public issuance and validates it against its private local key", { timeout: 15_000 }, async () => {
+test("a real owned Node child receives only public issuance and validates it against its private local key", { timeout: 60_000 }, async () => {
   await verifyChild(false);
 });
-test("the actual Core IPC client interoperates with the Main signer in a separate process", { timeout: 15_000 }, async () => {
+test("the actual Core IPC client interoperates with the Main signer in a separate process", { timeout: 60_000 }, async () => {
   await verifyChild(true);
 });
