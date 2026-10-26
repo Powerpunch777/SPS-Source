@@ -109,6 +109,17 @@
         <p id="native-devices-empty" class="muted" hidden>No Native devices are registered.</p>
         <p id="native-devices-error" class="inline-warning" role="status" hidden>Native device management is unavailable. Diagnostic details are hidden.</p>
         <div id="native-devices-list" class="action-list" aria-live="polite"></div>
+        <div class="section-heading compact-heading native-invitations-heading">
+          <div>
+            <h3>Host invitations</h3>
+            <p class="muted">Review active and past invitations for this local Host. Refresh only when you choose to check.</p>
+          </div>
+          <button id="refresh-native-invitations" class="button secondary" type="button" disabled>Refresh invitations</button>
+        </div>
+        <p id="native-invitations-status" class="muted" role="status" aria-live="polite" aria-busy="false">Select Refresh to review Host invitations.</p>
+        <p id="native-invitations-empty" class="muted" hidden>No Host invitations are available.</p>
+        <p id="native-invitations-error" class="inline-warning" role="status" hidden>Native invitation management is unavailable. Diagnostic details are hidden.</p>
+        <div id="native-invitations-list" class="action-list" aria-live="polite"></div>
         <div class="native-form" id="native-listener-form" hidden>
           <h3>Host registration listener</h3>
           <p class="help-text">Choose this computer's private network address covered by its prepared certificate. This session accepts device registration only; Workspace access remains separate.</p>

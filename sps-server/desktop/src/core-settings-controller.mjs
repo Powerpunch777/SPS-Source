@@ -4,6 +4,7 @@ import { requireSpsNativeIdentityPreparationInput } from "./native-identity-cont
 import { requireSpsNativeMemberEnrollmentInput, requireSpsNativeMemberRecoveryInput } from "./native-member-controller.mjs";
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { requireSpsNativeHostListenInput } from "./native-host-controller.mjs";
+import { requireNativeInvitationRevokeInput } from "./native-invitation-management-controller.mjs";
 
 export const SPS_CORE_SETTINGS_SHORTCUT = "CommandOrControl+Alt+S";
 const NATIVE_DEVICE_STATES = new Set(["available", "host_required", "identity_required", "host_restart_required", "unavailable"]);
@@ -12,6 +13,12 @@ const NATIVE_DEVICE_ID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const NATIVE_DEVICE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const MAX_NATIVE_DEVICES = 200;
 const UNAVAILABLE_NATIVE_DEVICES = Object.freeze({ state: "unavailable", lanEnabled: false, devices: Object.freeze([]) });
+const NATIVE_INVITATION_STATES = new Set(["available", "host_required", "identity_required", "host_restart_required", "unavailable"]);
+const NATIVE_INVITATION_STATUSES = new Set(["pending", "expired", "identity_changed", "consumed", "revoked", "exhausted"]);
+const NATIVE_INVITATION_TARGETS = new Set(["any_verified_user", "verified_email"]);
+const NATIVE_INVITATION_ID = NATIVE_DEVICE_ID;
+const MAX_NATIVE_INVITATIONS = 200;
+const UNAVAILABLE_NATIVE_INVITATIONS = Object.freeze({ state: "unavailable", invitations: Object.freeze([]) });
 
 function exactDataRecord(value, keys) {
   if (!value || typeof value !== "object" || Array.isArray(value)
@@ -33,6 +40,39 @@ function validateNativeDeviceInput(input) {
     throw new TypeError("Native device actions require one canonical device UUID.");
   }
   return Object.freeze({ deviceId: record.deviceId });
+}
+
+function validateNativeInvitationInput(input) {
+  const record = requireNativeInvitationRevokeInput(input);
+  return record;
+}
+
+function sanitizeNativeInvitationsSnapshot(value) {
+  try {
+    const snapshot = exactDataRecord(value, ["state", "invitations"]);
+    if (!snapshot || !NATIVE_INVITATION_STATES.has(snapshot.state) || !Array.isArray(snapshot.invitations)
+      || snapshot.invitations.length > MAX_NATIVE_INVITATIONS
+      || snapshot.state !== "available" && snapshot.invitations.length !== 0) return null;
+    const ids = new Set();
+    const invitations = [];
+    for (const candidate of snapshot.invitations) {
+      const invitation = exactDataRecord(candidate, ["id", "status", "createdAt", "expiresAt", "failedAttempts", "maxAttempts", "target"]);
+      if (!invitation || typeof invitation.id !== "string" || !NATIVE_INVITATION_ID.test(invitation.id) || ids.has(invitation.id)
+        || !NATIVE_INVITATION_STATUSES.has(invitation.status)
+        || typeof invitation.createdAt !== "string" || invitation.createdAt.length !== 24
+        || typeof invitation.expiresAt !== "string" || invitation.expiresAt.length !== 24
+        || !Number.isFinite(Date.parse(invitation.createdAt)) || !Number.isFinite(Date.parse(invitation.expiresAt))
+        || new Date(invitation.createdAt).toISOString() !== invitation.createdAt
+        || new Date(invitation.expiresAt).toISOString() !== invitation.expiresAt
+        || Date.parse(invitation.expiresAt) <= Date.parse(invitation.createdAt)
+        || !Number.isSafeInteger(invitation.failedAttempts) || invitation.failedAttempts < 0 || invitation.failedAttempts > 20
+        || !Number.isSafeInteger(invitation.maxAttempts) || invitation.maxAttempts < 1 || invitation.maxAttempts > 20
+        || invitation.failedAttempts > invitation.maxAttempts || !NATIVE_INVITATION_TARGETS.has(invitation.target)) return null;
+      ids.add(invitation.id);
+      invitations.push(Object.freeze({ ...invitation }));
+    }
+    return Object.freeze({ state: snapshot.state, invitations: Object.freeze(invitations) });
+  } catch { return null; }
 }
 
 function memberObservation(value, hostId, allowCancellation = false) {
@@ -118,6 +158,9 @@ export function createCoreSettingsController({
   approveNativeDevice,
   revokeNativeDevice,
   confirmNativeDeviceAction,
+  listNativeInvitations,
+  revokeNativeInvitation,
+  confirmNativeInvitationRevoke,
   listNativeRegistrations,
   enrollNativeMember,
   recoverNativeMember,
@@ -344,6 +387,33 @@ export function createCoreSettingsController({
     }, { writes: true, input: true, authorizeBeforeAction: false });
     bindNativeDeviceAction("approve-native-device", "approve", approveNativeDevice);
     bindNativeDeviceAction("revoke-native-device", "revoke", revokeNativeDevice);
+    bind("list-native-invitations", async (_input, event) => listNativeInvitationsFor(event));
+    bind("revoke-native-invitation", async (input, event) => {
+      const validated = validateNativeInvitationInput(input);
+      if (typeof revokeNativeInvitation !== "function" || typeof confirmNativeInvitationRevoke !== "function") {
+        throw new Error("Native invitation management is unavailable.");
+      }
+      if (typeof authorizeMutation !== "function") throw new Error("Native invitation management is unavailable.");
+      await awaitAndAssertSender(event, () => authorizeMutation());
+      const value = await awaitAndAssertSender(event, () => revokeNativeInvitation(validated, {
+        assertRequester: () => assertSender(event),
+        confirm: async invitation => {
+          const target = sanitizeNativeInvitationsSnapshot({ state: "available", invitations: [invitation] })?.invitations[0];
+          if (!target || target.id !== validated.invitationId || target.status !== "pending") {
+            throw new Error("The current Native invitation is unavailable.");
+          }
+          await awaitAndAssertSender(event, () => authorizeMutation());
+          const confirmed = await awaitAndAssertSender(event,
+            () => confirmNativeInvitationRevoke(window, target));
+          await awaitAndAssertSender(event, () => authorizeMutation());
+          return confirmed === true;
+        },
+      }));
+      if (exactDataRecord(value, ["cancelled"])?.cancelled === true) return Object.freeze({ cancelled: true });
+      const snapshot = sanitizeNativeInvitationsSnapshot(value);
+      if (!snapshot) throw new Error("Native invitation action returned an invalid status.");
+      return snapshot;
+    }, { writes: true, input: true, authorizeBeforeAction: false });
   }
 
   async function listNativeDevicesFor(event) {
@@ -355,6 +425,18 @@ export function createCoreSettingsController({
     try { value = await awaitAndAssertSender(event, () => listNativeDevices()); }
     catch { throw new Error("Native device list is unavailable."); }
     return sanitizeNativeDevicesSnapshot(value) ?? UNAVAILABLE_NATIVE_DEVICES;
+  }
+
+  async function listNativeInvitationsFor(event) {
+    assertSender(event);
+    if (typeof authorizeMutation !== "function") throw new Error("Native invitation management is unavailable.");
+    await awaitAndAssertSender(event, () => authorizeMutation());
+    if (typeof listNativeInvitations !== "function") return UNAVAILABLE_NATIVE_INVITATIONS;
+    let value;
+    try {
+      value = await awaitAndAssertSender(event, () => listNativeInvitations({ assertRequester: () => assertSender(event) }));
+    } catch { throw new Error("Native invitation list is unavailable."); }
+    return sanitizeNativeInvitationsSnapshot(value) ?? UNAVAILABLE_NATIVE_INVITATIONS;
   }
 
   function registerShortcut() {

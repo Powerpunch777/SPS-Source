@@ -7,6 +7,8 @@ const nativePrepareButton = byId("prepare-native-identity");
 const nativeAddressInput = byId("native-certificate-address");
 const nativeDevicesRefreshButton = byId("refresh-native-devices");
 const nativeDevicesList = byId("native-devices-list");
+const nativeInvitationsRefreshButton = byId("refresh-native-invitations");
+const nativeInvitationsList = byId("native-invitations-list");
 const quitDesktopButton = byId("quit-desktop");
 const pending = new Set();
 
@@ -15,11 +17,15 @@ let nativeConnectivity = null;
 let statusLoading = false;
 let nativeDevices = null;
 let nativeDevicesLoading = false;
+let nativeInvitations = null;
+let nativeInvitationsLoading = false;
 let quitPending = false;
 let nativeDeviceButtons = [];
 let nativeDevicesRequest = 0;
+let nativeInvitationsRequest = 0;
 let nativeRegistrationRequest = 0;
 let nativeRegistrationButtons = [];
+let nativeInvitationButtons = [];
 
 const nativeDeviceStates = new Map([
   ["available", "Device management available"],
@@ -36,6 +42,21 @@ const nativeDeviceStatuses = new Map([
 const nativeDeviceIdPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const nativeDeviceFingerprintPattern = /^[0-9a-f]{64}$/;
 const maxNativeDevices = 200;
+const nativeInvitationStates = new Map([
+  ["available", "Invitation management available"],
+  ["host_required", "Local Host required"],
+  ["identity_required", "Prepare Host identity first"],
+  ["host_restart_required", "Restart Host to manage invitations"],
+  ["unavailable", "Native invitation management unavailable"],
+]);
+const nativeInvitationStatuses = new Map([
+  ["pending", "Pending"], ["expired", "Expired"], ["identity_changed", "Identity changed"],
+  ["consumed", "Used"], ["revoked", "Revoked"], ["exhausted", "Attempts exhausted"],
+]);
+const nativeInvitationTargets = new Map([["any_verified_user", "Any verified SPS account"], ["verified_email", "Verified email"]]);
+const nativeInvitationStatusesSet = new Set(nativeInvitationStatuses.keys());
+const nativeInvitationTargetsSet = new Set(nativeInvitationTargets.keys());
+const maxNativeInvitations = 200;
 
 const nativeIdentityStates = new Map([
   ["not_prepared", "Not prepared"],
@@ -89,6 +110,31 @@ function isNativeDevicesSnapshot(value) {
   } catch {
     return false;
   }
+}
+
+function isNativeInvitationsSnapshot(value) {
+  try {
+    const snapshot = exactDataRecord(value, ["state", "invitations"]);
+    if (!snapshot || !nativeInvitationStates.has(snapshot.state) || !Array.isArray(snapshot.invitations)
+      || snapshot.invitations.length > maxNativeInvitations
+      || snapshot.state !== "available" && snapshot.invitations.length !== 0) return false;
+    const ids = new Set();
+    for (const candidate of snapshot.invitations) {
+      const invitation = exactDataRecord(candidate, ["id", "status", "createdAt", "expiresAt", "failedAttempts", "maxAttempts", "target"]);
+      if (!invitation || typeof invitation.id !== "string" || !nativeDeviceIdPattern.test(invitation.id) || ids.has(invitation.id)
+        || !nativeInvitationStatusesSet.has(invitation.status)
+        || typeof invitation.createdAt !== "string" || typeof invitation.expiresAt !== "string"
+        || !Number.isFinite(Date.parse(invitation.createdAt)) || !Number.isFinite(Date.parse(invitation.expiresAt))
+        || new Date(invitation.createdAt).toISOString() !== invitation.createdAt
+        || new Date(invitation.expiresAt).toISOString() !== invitation.expiresAt
+        || Date.parse(invitation.expiresAt) <= Date.parse(invitation.createdAt)
+        || !Number.isSafeInteger(invitation.failedAttempts) || invitation.failedAttempts < 0 || invitation.failedAttempts > 20
+        || !Number.isSafeInteger(invitation.maxAttempts) || invitation.maxAttempts < 1 || invitation.maxAttempts > 20
+        || invitation.failedAttempts > invitation.maxAttempts || !nativeInvitationTargetsSet.has(invitation.target)) return false;
+      ids.add(invitation.id);
+    }
+    return true;
+  } catch { return false; }
 }
 
 function isCoreStatus(value) {
@@ -153,7 +199,7 @@ function syncControls() {
   byId("native-member-invitation").disabled = memberBusy;
   byId("native-member-name").disabled = memberBusy;
   for (const button of nativeRegistrationButtons) button.disabled = memberBusy;
-  const busy = statusLoading || nativeDevicesLoading || pending.size > 0 || quitPending;
+  const busy = statusLoading || nativeDevicesLoading || nativeInvitationsLoading || pending.size > 0 || quitPending;
   const listenerReady = currentStatus?.canManageHost === true && nativeConnectivity?.state === "identity_prepared";
   const listenerActive = nativeListenerStatus(currentStatus?.nativeListener)?.state === "listening";
   const listenerPort = Number(byId("native-listener-port").value);
@@ -181,6 +227,10 @@ function syncControls() {
   for (const button of nativeDeviceButtons) {
     button.disabled = busy || currentStatus?.canManageHost !== true || nativeDevices?.state !== "available";
   }
+  nativeInvitationsRefreshButton.disabled = busy || nativeInvitationsLoading || currentStatus?.canManageHost !== true;
+  for (const button of nativeInvitationButtons) {
+    button.disabled = busy || nativeInvitationsLoading || currentStatus?.canManageHost !== true || nativeInvitations?.state !== "available";
+  }
   retryButton.disabled = busy;
 }
 
@@ -197,6 +247,114 @@ function clearNativeDevices({ loading = false, invalidateRequest = false } = {})
   const status = byId("native-devices-status");
   status.setAttribute("aria-busy", String(loading));
   status.textContent = loading ? "Loading native devices..." : "Unavailable";
+}
+
+function clearNativeInvitations({ loading = false, invalidateRequest = false } = {}) {
+  if (invalidateRequest) {
+    nativeInvitationsRequest += 1;
+    nativeInvitationsLoading = false;
+  }
+  nativeInvitations = null;
+  nativeInvitationButtons = [];
+  nativeInvitationsList.textContent = "";
+  byId("native-invitations-empty").hidden = true;
+  byId("native-invitations-error").hidden = loading;
+  const status = byId("native-invitations-status");
+  status.setAttribute("aria-busy", String(loading));
+  status.textContent = loading ? "Loading Host invitations..." : "Select Refresh to review Host invitations.";
+  syncControls();
+}
+
+function renderNativeInvitations(value) {
+  nativeInvitations = isNativeInvitationsSnapshot(value) ? value : null;
+  nativeInvitationButtons = [];
+  nativeInvitationsList.textContent = "";
+  const status = byId("native-invitations-status");
+  status.setAttribute("aria-busy", "false");
+  status.textContent = nativeInvitations ? nativeInvitationStates.get(nativeInvitations.state) : "Unavailable";
+  byId("native-invitations-error").hidden = nativeInvitations !== null;
+  byId("native-invitations-empty").hidden = !nativeInvitations || nativeInvitations.state !== "available"
+    || nativeInvitations.invitations.length !== 0;
+  if (!nativeInvitations) { syncControls(); return; }
+
+  for (const invitation of nativeInvitations.invitations) {
+    const row = document.createElement("div");
+    row.className = "action-row native-invitation-row";
+    const details = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = safeText(nativeInvitationStatuses.get(invitation.status), "Unavailable", 40);
+    const identifier = document.createElement("p");
+    identifier.className = "help-text";
+    identifier.textContent = `Invitation ${invitation.id}`;
+    const metadata = document.createElement("p");
+    metadata.className = "help-text";
+    metadata.textContent = `${nativeInvitationTargets.get(invitation.target)} · ${invitation.failedAttempts}/${invitation.maxAttempts} failed attempts`;
+    const dates = document.createElement("p");
+    dates.className = "help-text";
+    dates.textContent = `Created ${invitation.createdAt} · Expires ${invitation.expiresAt}`;
+    details.append(title, identifier, metadata, dates);
+    row.append(details);
+    if (invitation.status === "pending" && Date.parse(invitation.expiresAt) > Date.now()) {
+      const revoke = document.createElement("button");
+      revoke.type = "button";
+      revoke.className = "button secondary";
+      revoke.textContent = "Revoke";
+      revoke.addEventListener("click", () => void revokeNativeInvitation(invitation.id));
+      nativeInvitationButtons.push(revoke);
+      row.append(revoke);
+    }
+    nativeInvitationsList.append(row);
+  }
+  syncControls();
+}
+
+async function loadNativeInvitations() {
+  if (nativeInvitationsLoading || pending.size > 0 || quitPending || currentStatus?.canManageHost !== true) return;
+  nativeInvitationsLoading = true;
+  const request = ++nativeInvitationsRequest;
+  clearNativeInvitations({ loading: true });
+  syncControls();
+  try {
+    const api = window.spsCoreSettings;
+    if (typeof api?.listNativeInvitations !== "function") throw new Error("Unavailable");
+    const result = await api.listNativeInvitations();
+    if (!isNativeInvitationsSnapshot(result)) throw new Error("Invalid snapshot");
+    if (request !== nativeInvitationsRequest) return;
+    renderNativeInvitations(result);
+  } catch {
+    if (request === nativeInvitationsRequest) renderNativeInvitations(null);
+  } finally {
+    if (request === nativeInvitationsRequest) nativeInvitationsLoading = false;
+    syncControls();
+  }
+}
+
+async function revokeNativeInvitation(invitationId) {
+  if (statusLoading || nativeInvitationsLoading || pending.size > 0 || quitPending || !currentStatus
+    || currentStatus.canManageHost !== true || nativeInvitations?.state !== "available") return;
+  const invitation = nativeInvitations.invitations.find(item => item.id === invitationId);
+  if (!invitation || invitation.status !== "pending" || Date.parse(invitation.expiresAt) <= Date.now()) return;
+  if (typeof window.spsCoreSettings?.revokeNativeInvitation !== "function") {
+    setNotice("Native invitation management is unavailable.", true);
+    return;
+  }
+  pending.add("native-invitation-revoke");
+  const request = nativeInvitationsRequest;
+  setNotice();
+  syncControls();
+  try {
+    const result = await window.spsCoreSettings.revokeNativeInvitation({ invitationId });
+    if (request !== nativeInvitationsRequest || currentStatus?.canManageHost !== true) return;
+    if (result?.cancelled === true) return;
+    if (!isNativeInvitationsSnapshot(result)) throw new Error("Invalid snapshot");
+    renderNativeInvitations(result);
+    setNotice("Host invitation list updated.");
+  } catch {
+    if (request === nativeInvitationsRequest) setNotice("The Native invitation action could not complete. Diagnostic details are hidden.", true);
+  } finally {
+    pending.delete("native-invitation-revoke");
+    syncControls();
+  }
 }
 
 function renderNativeDevices(value) {
@@ -329,6 +487,7 @@ function renderNativeConnectivity(value) {
 
 function renderStatus(status) {
   currentStatus = status;
+  if (status.canManageHost !== true) clearNativeInvitations({ invalidateRequest: true });
   const { host, recovery } = status;
   renderNativeConnectivity(status.nativeConnectivity);
   byId("host-state").textContent = host.startupDeferred ? "Startup deferred (recovery)" : safeText(host.state);
@@ -373,6 +532,7 @@ function showStatusLoading() {
   byId("native-member-invitation").value = "";
   byId("native-member-result").textContent = "Saved credentials are kept. Select a registration to check its current status.";
   currentStatus = null;
+  clearNativeInvitations({ invalidateRequest: true });
   renderNativeConnectivity(null);
   statusLoading = true;
   clearNativeDevices({ loading: true, invalidateRequest: true });
@@ -482,6 +642,7 @@ for (const button of actionButtons) {
 
 retryButton.addEventListener("click", () => void loadStatus());
 nativeDevicesRefreshButton.addEventListener("click", () => void loadNativeDevices());
+nativeInvitationsRefreshButton.addEventListener("click", () => void loadNativeInvitations());
 nativeAddressInput.addEventListener("input", () => syncControls());
 nativePrepareButton.addEventListener("click", () => void prepareNativeIdentity());
 quitDesktopButton.addEventListener("click", () => void quitDesktop());
@@ -511,7 +672,12 @@ byId("copy-native-invitation").addEventListener("click", () => {
     byId("native-member-result").textContent = `Invitation copied. It expires at ${new Date(value.expiresAt).toLocaleString()}. Share it only through a trusted channel.`;
   }, "Invitation request completed.");
 });
-window.addEventListener("focus", () => void loadStatus());
+window.addEventListener("focus", () => {
+  // Returning to Settings retires invitation observations even while a local
+  // mutation prevents the normal status refresh from starting immediately.
+  clearNativeInvitations({ invalidateRequest: true });
+  void loadStatus();
+});
 void loadStatus();
 
 function showNativeMemberObservation(value) {

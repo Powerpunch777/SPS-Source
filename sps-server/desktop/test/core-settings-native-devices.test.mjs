@@ -10,6 +10,14 @@ import { createCoreSettingsController } from "../src/core-settings-controller.mj
 const deviceId = "123e4567-e89b-42d3-a456-426614174000";
 const fingerprint = "a".repeat(64);
 const unavailable = { state: "unavailable", lanEnabled: false, devices: [] };
+const invitationId = "223e4567-e89b-42d3-a456-426614174000";
+const unavailableInvitations = { state: "unavailable", invitations: [] };
+
+function invitation(overrides = {}) {
+  return { id: invitationId, status: "pending", createdAt: "2026-10-26T00:00:00.000Z",
+    expiresAt: "2026-10-27T00:00:00.000Z", failedAttempts: 1, maxAttempts: 5,
+    target: "any_verified_user", ...overrides };
+}
 
 function snapshot(overrides = {}) {
   return {
@@ -111,6 +119,82 @@ test("missing list callback fails closed and foreign settings frames cannot list
   assert.deepEqual(await ctx.invoke("list-native-devices"), unavailable);
   await assert.rejects(ctx.invoke("list-native-devices", [], { sender: {}, senderFrame: {} }), /trusted Native/);
   assert.deepEqual(ctx.calls, ["authorize"]);
+});
+
+test("Native invitation list is authorized, strictly projected, bounded, and rechecks its Settings sender", async () => {
+  let release;
+  const valid = { state: "available", invitations: [{ id: invitationId, status: "pending",
+    createdAt: "2026-10-26T00:00:00.000Z", expiresAt: "2026-10-27T00:00:00.000Z",
+    failedAttempts: 1, maxAttempts: 5, target: "any_verified_user" }] };
+  const delayed = setup({ listNativeInvitations: async () => new Promise(resolve => { release = resolve; }) });
+  await delayed.controller.show();
+  const pending = delayed.invoke("list-native-invitations");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(delayed.calls, ["authorize"]);
+  delayed.event().senderFrame.url = "https://untrusted.example";
+  release(valid);
+  await assert.rejects(pending, /could not complete/);
+
+  for (const value of [
+    { state: "available", invitations: [{ ...valid.invitations[0], pairingSecret: "secret" }] },
+    { state: "host_required", invitations: [invitation()] },
+    { state: "available", invitations: Array.from({ length: 201 }, (_, index) => invitation({
+      id: `${String(index).padStart(8, "0")}-e89b-42d3-a456-426614174000`,
+    })) },
+  ]) {
+    const malformed = setup({ listNativeInvitations: async () => value });
+    await malformed.controller.show();
+    assert.deepEqual(await malformed.invoke("list-native-invitations"), unavailableInvitations);
+    assert.deepEqual(malformed.calls, ["authorize"]);
+  }
+
+  const safe = setup({ listNativeInvitations: async () => valid });
+  await safe.controller.show();
+  const result = await safe.invoke("list-native-invitations");
+  assert.deepEqual(result, valid);
+  assert.doesNotMatch(JSON.stringify(result), /pairingSecret|private-user/);
+});
+
+test("Native invitation revoke requires current Owner authorization, exact pending item confirmation, and safe DTO", async () => {
+  let confirmed;
+  let revoked = 0;
+  let authorized = true;
+  const ctx = setup({
+    authorizeMutation: async () => { ctx.calls.push("authorize"); if (!authorized) throw new Error("Owner session ended"); },
+    confirmNativeInvitationRevoke: async (parent, value) => {
+      confirmed = { parent: parent === ctx.windows[0], value };
+      return true;
+    },
+    revokeNativeInvitation: async (input, options) => {
+      assert.deepEqual(input, { invitationId });
+      const target = { ...invitation(), pairingSecret: undefined };
+      delete target.pairingSecret;
+      delete target.issuedByUserId;
+      delete target.consumedByUserId;
+      delete target.consumedDeviceSnapshotId;
+      if (await options.confirm(target)) revoked++;
+      return { state: "available", invitations: [{ id: invitationId, status: "revoked",
+        createdAt: "2026-10-26T00:00:00.000Z", expiresAt: "2026-10-27T00:00:00.000Z",
+        failedAttempts: 1, maxAttempts: 5, target: "any_verified_user" }] };
+    },
+  });
+  await ctx.controller.show();
+  const result = await ctx.invoke("revoke-native-invitation", [{ invitationId }]);
+  assert.deepEqual(confirmed, { parent: true, value: { id: invitationId, status: "pending",
+    createdAt: "2026-10-26T00:00:00.000Z", expiresAt: "2026-10-27T00:00:00.000Z",
+    failedAttempts: 1, maxAttempts: 5, target: "any_verified_user" } });
+  assert.equal(revoked, 1);
+  assert.deepEqual(result.invitations[0].status, "revoked");
+
+  const accessor = {};
+  Object.defineProperty(accessor, "invitationId", { enumerable: true, get() { assert.fail("input getter must not run"); } });
+  await assert.rejects(ctx.invoke("revoke-native-invitation", [accessor]), TypeError);
+  await assert.rejects(ctx.invoke("revoke-native-invitation", [{ invitationId, extra: true }]), TypeError);
+  assert.equal(revoked, 1);
+
+  authorized = false;
+  await assert.rejects(ctx.invoke("revoke-native-invitation", [{ invitationId }]), /could not complete/);
+  assert.equal(revoked, 1);
 });
 
 test("Native approve and revoke validate before confirmation and pass only narrow callback arguments", async () => {
@@ -224,15 +308,20 @@ test("Core settings preload exposes only narrow Native device IPC methods", asyn
   } });
 
   await exposed.listNativeDevices();
+  await exposed.listNativeInvitations();
   await exposed.approveNativeDevice(Object.assign(Object.create(null), { deviceId }));
   await exposed.revokeNativeDevice({ deviceId });
+  await exposed.revokeNativeInvitation({ invitationId });
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
     ["desktop:core-settings-list-native-devices"],
+    ["desktop:core-settings-list-native-invitations"],
     ["desktop:core-settings-approve-native-device", { deviceId }],
     ["desktop:core-settings-revoke-native-device", { deviceId }],
+    ["desktop:core-settings-revoke-native-invitation", { invitationId }],
   ]);
   await assert.rejects(exposed.approveNativeDevice({ deviceId, path: "secret" }), error => error.name === "TypeError");
-  assert.equal(calls.length, 3);
+  await assert.rejects(exposed.revokeNativeInvitation({ invitationId, secret: "no" }), error => error.name === "TypeError");
+  assert.equal(calls.length, 5);
 });
 
 const rendererSource = await readFile(new URL("../renderer/core-settings.mjs", import.meta.url), "utf8");
@@ -444,4 +533,84 @@ test("Host status refresh clears the prior Native device list and keeps loading/
   assert.equal(status.attributes.get("aria-busy"), "false");
   assert.equal(error.hidden, false);
   assert.equal(view.elements.get("refresh-native-devices").disabled, true);
+});
+
+test("Host invitation UI loads only on explicit refresh, renders pending-only revoke with textContent, and clears on Owner loss", async () => {
+  const id = invitationId;
+  const row = invitation();
+  let owner = true;
+  let listCalls = 0;
+  const revokeCalls = [];
+  const ctx = createRenderer({
+    getStatus: async () => ({ host: {}, recovery: { pluginsDisabled: false }, canManageHost: owner }),
+    listNativeInvitations: async () => { listCalls++; return { state: "available", invitations: [row,
+      invitation({ id: "323e4567-e89b-42d3-a456-426614174000", status: "revoked" })] }; },
+    revokeNativeInvitation: async input => {
+      revokeCalls.push(input);
+      return { state: "available", invitations: [invitation({ status: "revoked" })] };
+    },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(listCalls, 0, "invitation reads must never run on renderer startup");
+  const refresh = ctx.elements.get("refresh-native-invitations");
+  assert.equal(refresh.disabled, false);
+  refresh.dispatch("click");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(listCalls, 1);
+  const list = ctx.elements.get("native-invitations-list");
+  assert.equal(list.children.length, 2);
+  const pendingRow = allElements(list.children[0]);
+  assert.equal(pendingRow.find(node => node.tagName === "h3").textContent, "Pending");
+  assert.equal(pendingRow.find(node => node.tagName === "button")?.textContent, "Revoke");
+  assert.equal(allElements(list.children[1]).some(node => node.tagName === "button"), false);
+
+  pendingRow.find(node => node.tagName === "button").dispatch("click");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(JSON.parse(JSON.stringify(revokeCalls)), [{ invitationId: id }]);
+  assert.equal(allElements(list.children[0]).find(node => node.tagName === "h3").textContent, "Revoked");
+
+  owner = false;
+  ctx.window.dispatch("focus");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(listCalls, 1);
+  assert.equal(list.children.length, 0);
+  assert.equal(refresh.disabled, true);
+});
+
+test("Host invitation UI rejects a malformed or secret-bearing Core snapshot", async () => {
+  const ctx = createRenderer({ listNativeInvitations: async () => ({ state: "available", invitations: [
+    invitation({ pairingSecret: "secret" }),
+  ] }) });
+  await new Promise(resolve => setImmediate(resolve));
+  ctx.elements.get("refresh-native-invitations").dispatch("click");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ctx.elements.get("native-invitations-error").hidden, false);
+  assert.equal(ctx.elements.get("native-invitations-list").children.length, 0);
+});
+
+test("Host invitation revoke cannot repaint retired rows after Settings regains focus", async () => {
+  let owner = true, release;
+  const view = createRenderer({
+    getStatus: async () => ({ host: {}, recovery: {}, canManageHost: owner }),
+    listNativeInvitations: async () => ({ state: "available", invitations: [invitation()] }),
+    revokeNativeInvitation: () => new Promise(resolve => { release = resolve; }),
+  });
+  await settle();
+  view.elements.get("refresh-native-invitations").dispatch("click");
+  await settle();
+  const list = view.elements.get("native-invitations-list");
+  allElements(list).find(item => item.tagName === "button").dispatch("click");
+  await settle();
+  owner = false;
+  view.window.dispatch("focus");
+  await settle();
+  release({ state: "available", invitations: [invitation({ status: "revoked" })] });
+  await settle();
+  assert.equal(list.children.length, 0);
+  assert.notEqual(view.elements.get("action-notice").textContent, "Host invitation list updated.");
+  // Status loading is serialized behind the mutation; the next refresh can
+  // observe the changed Owner after the late mutation result was discarded.
+  view.window.dispatch("focus");
+  await settle();
+  assert.equal(view.elements.get("refresh-native-invitations").disabled, true);
 });

@@ -13,6 +13,7 @@ import { createSpsNativeHostIdentityStore } from "./native-identity-store.mjs";
 import { assertSpsNativeHostCredentialsAbsentForRestore, createSpsNativeIdentityController } from "./native-identity-controller.mjs";
 import { inspectSpsNativeHostIdentity, requireCurrentSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
 import { createNativeDeviceManagementController, nativeHostCoreOwnerUserId } from "./native-device-management-controller.mjs";
+import { createNativeInvitationManagementController } from "./native-invitation-management-controller.mjs";
 import { createSpsNativeMemberMainSigner } from "./native-member-main-signer.mjs";
 import { createSpsNativeMemberController } from "./native-member-controller.mjs";
 import { createSpsNativeHostController } from "./native-host-controller.mjs";
@@ -265,6 +266,7 @@ let officialExtensionsWindow = null;
 let coreSettingsController = null;
 let nativeIdentityController = null;
 let nativeDeviceManagementController = null;
+let nativeInvitationManagementController = null;
 let nativeMemberController = null;
 let nativeHostController = null;
 const nativeIdentityStores = new Map();
@@ -1433,6 +1435,32 @@ function ensureNativeDeviceManagementController() {
     }),
   });
   return nativeDeviceManagementController;
+}
+
+function ensureNativeInvitationManagementController() {
+  if (!nativeInvitationManagementController) nativeInvitationManagementController = createNativeInvitationManagementController({
+    getAuthority: () => {
+      const current = isQuitting ? null : nativeIdentityAuthority();
+      return current ? { ...current, generation: ownerVaultOperations.connectionGeneration() } : null;
+    },
+    authenticateHost: async () => {
+      if (!nativeIdentityAuthority() || !await ensureDesktopIdentityAccessToken() || !nativeIdentityAuthority()) throw new Error("The signed-in local Host session is required.");
+    },
+    getIdentity: async context => {
+      try {
+        const identity = requireCurrentSpsNativeHostIdentity(await nativeIdentityStore({
+          userDataDirectory: context.userDataDirectory, vaultDirectory: context.vaultDirectory,
+        }).read(), Date.now());
+        return { hostId: identity.hostId, serverSpkiSha256: inspectSpsNativeHostIdentity(identity).serverSpkiSha256 };
+      } catch { throw Object.assign(new Error("Native Host identity is unavailable."), { code: "native_identity_unavailable" }); }
+    },
+    getHostBinding: () => ownerHostApi("/sps/member-devices/status", { ownerBootstrap: true, sessionOnly: true }),
+    listInvitations: () => ownerHostApi("/sps/native-pairings", { ownerBootstrap: true, sessionOnly: true }),
+    revokeInvitation: id => ownerHostApi(`/sps/native-pairings/${encodeURIComponent(id)}/revoke`, {
+      method: "POST", body: {}, ownerBootstrap: true, sessionOnly: true,
+    }),
+  });
+  return nativeInvitationManagementController;
 }
 
 async function materializeCurrentSpsOwnerHostRuntime() {
@@ -4189,6 +4217,19 @@ function ensureCoreSettingsController() {
     listNativeDevices: () => ensureNativeDeviceManagementController().list(),
     approveNativeDevice: (input, options) => ensureNativeDeviceManagementController().change("approve", input, options),
     revokeNativeDevice: (input, options) => ensureNativeDeviceManagementController().change("revoke", input, options),
+    listNativeInvitations: options => ensureNativeInvitationManagementController().list(options),
+    revokeNativeInvitation: (input, options) => ensureNativeInvitationManagementController().revoke(input, options),
+    confirmNativeInvitationRevoke: async (parentWindow, invitation) => {
+      if (!invitation || typeof invitation.id !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(invitation.id)
+        || invitation.status !== "pending" || typeof invitation.expiresAt !== "string") throw new Error("The current Native invitation is unavailable.");
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Revoke this Native invitation?",
+        message: "This invitation will no longer allow device registration.",
+        detail: `Created: ${invitation.createdAt}\nExpires: ${invitation.expiresAt}\nFailed attempts: ${invitation.failedAttempts} of ${invitation.maxAttempts}\nAudience: ${invitation.target === "verified_email" ? "verified email" : "any verified SPS account"}\n\nA device that already completed registration is not removed by revoking its invitation.`,
+        buttons: ["Keep invitation", "Revoke invitation"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
     confirmNativeDeviceAction: async (parentWindow, { action, deviceId, device }) => {
       if (!device || device.id !== deviceId || !["approve", "revoke"].includes(action)) throw new Error("The current Native device is unavailable.");
       const choice = await dialog.showMessageBox(parentWindow, {

@@ -16,6 +16,21 @@ function nativeDeviceInput(input) {
   }
 }
 
+function nativeInvitationInput(input) {
+  try {
+    if (!input || typeof input !== "object" || Array.isArray(input)
+      || (Object.getPrototypeOf(input) !== null && Object.getPrototypeOf(Object.getPrototypeOf(input)) !== null)) throw new TypeError();
+    const keys = Reflect.ownKeys(input);
+    const descriptor = Object.getOwnPropertyDescriptor(input, "invitationId");
+    if (keys.length !== 1 || keys[0] !== "invitationId" || !descriptor?.enumerable
+      || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "string"
+      || !nativeDeviceIdPattern.test(descriptor.value)) throw new TypeError();
+    return { invitationId: descriptor.value };
+  } catch {
+    throw new TypeError("invitationId must be one canonical UUID");
+  }
+}
+
 function nativeMemberInput(input, keys) {
   if (!input || typeof input !== "object" || Array.isArray(input)
     || (Object.getPrototypeOf(input) !== null && Object.getPrototypeOf(Object.getPrototypeOf(input)) !== null)) throw new TypeError("Invalid Native Member request.");
@@ -60,6 +75,13 @@ const coreSettingsApi = Object.freeze({
     return ipcRenderer.invoke("desktop:core-settings-prepare-native-identity", { serverAddress: input.serverAddress });
   },
   listNativeDevices: () => ipcRenderer.invoke("desktop:core-settings-list-native-devices"),
+  listNativeInvitations: () => ipcRenderer.invoke("desktop:core-settings-list-native-invitations"),
+  revokeNativeInvitation: input => {
+    let validated;
+    try { validated = nativeInvitationInput(input); }
+    catch (error) { return Promise.reject(error); }
+    return ipcRenderer.invoke("desktop:core-settings-revoke-native-invitation", validated);
+  },
   startNativeHostListener: input => {
     let value;
     try {
