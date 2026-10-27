@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import os from "node:os";
 import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
+import { redactPluginPreviewDiagnosticMessage } from "../src/plugin-preview-diagnostics.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const binary = path.join(root, "node_modules", "electron", "dist", process.platform === "win32" ? "electron.exe" : "electron");
@@ -61,8 +62,39 @@ const child = spawn(binary, [".", ...(stateUnavailable ? [] : ["--sps-core-setti
   stdio: ["ignore", "ignore", "pipe"],
 });
 const shutdownTrace = [];
+const mainStderr = [];
+let mainStderrChars = 0;
+let childSpawnError = null;
+let childClose = null;
+let stderrPartial = "";
+let stderrLineDiscarded = false;
+const childClosed = once(child, "close").then(([code, signal]) => {
+  childClose = { code, signal };
+}).catch(() => {});
+function redactMainStderr(value) {
+  try { return redactPluginPreviewDiagnosticMessage(String(value).slice(0, 8192)); }
+  catch { return "<diagnostic unavailable>"; }
+}
+function retainMainStderr(line) {
+  const safeLine = redactMainStderr(line).slice(0, 1000);
+  if (!safeLine) return;
+  mainStderr.push(safeLine);
+  mainStderrChars += safeLine.length;
+  while (mainStderr.length > 48 || mainStderrChars > 12_000) {
+    mainStderrChars -= mainStderr.shift().length;
+  }
+}
+child.once("error", error => { childSpawnError = redactMainStderr(error?.message ?? "spawn error").slice(0, 1000); });
 child.stderr?.on("data", chunk => {
-  for (const line of String(chunk).split(/\r?\n/)) {
+  for (const character of String(chunk)) {
+    if (character !== "\n") {
+      if (!stderrLineDiscarded) stderrPartial += character;
+      if (stderrPartial.length > 8192) { stderrPartial = ""; stderrLineDiscarded = true; }
+      continue;
+    }
+    const line = stderrLineDiscarded ? "<oversized diagnostic omitted>" : stderrPartial.replace(/\r$/, "");
+    stderrPartial = ""; stderrLineDiscarded = false;
+    retainMainStderr(line);
     if (/^\[sps-shutdown\] stage=(?:quit_request_received|quit_scheduled|before_quit_start|before_quit_complete|stop_scheduling_start|stop_scheduling_done|cancel_commands_start|cancel_commands_done|stop_managers_start|stop_managers_done|drain_failed|drain_complete|retry_app_quit|will_quit|quit)$/.test(line)
       && shutdownTrace.length < 32) shutdownTrace.push(line);
   }
@@ -73,7 +105,10 @@ let emergencyStopUsed = false;
 try {
   let target;
   for (let attempt = 0; attempt < 80; attempt++) {
-    if (child.exitCode !== null) throw new Error(`Isolated Desktop exited with ${child.exitCode}.`);
+    if (childSpawnError) throw new Error(`Isolated Desktop failed to spawn: ${childSpawnError}`);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Isolated Desktop exited before opening settings (code=${child.exitCode}, signal=${child.signalCode ?? "none"}).`);
+    }
     try {
       const targets = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) }).then(response => response.json());
       target = targets.find(entry => entry.type === "page" && entry.title === "SPS Core Settings");
@@ -218,7 +253,11 @@ try {
 } catch (error) {
   // Cleanup must still reject forced termination, while preserving the original
   // isolated-fixture assertion that made normal Quit unreachable.
-  console.error("Core Settings smoke failed before cleanup:", error.message);
+  if (stderrPartial && !stderrLineDiscarded) retainMainStderr(stderrPartial);
+  console.error("Core Settings smoke failed before cleanup:", redactMainStderr(error.message),
+    JSON.stringify({ childPid: child.pid ?? null, childExitCode: child.exitCode, childSignal: child.signalCode, childSpawnError }));
+  if (mainStderr.length > 0) console.error(`Core Settings bounded Main stderr (redacted, ${mainStderr.length} lines):\n${mainStderr.join("\n")}`);
+  else console.error("Core Settings bounded Main stderr (redacted): <empty>");
   throw error;
 } finally {
   if (shutdownTrace.length > 0) console.error(`Core Settings fixed shutdown trace: ${shutdownTrace.join("; ")}`);
@@ -238,7 +277,26 @@ try {
       child.kill("SIGKILL");
     }
     await Promise.race([exited, pause(5000)]);
-    assert.equal(childExitConfirmed, true, "Could not confirm the spawned Main exited; refusing recursive fixture cleanup.");
+    await Promise.race([childClosed, pause(1000)]);
+    if (!childExitConfirmed && process.platform === "win32") {
+      // Electron may have exited before Node delivered its child event. Confirm
+      // only processes whose command line contains this unique fixture path;
+      // never broaden emergency cleanup to other Desktop/test processes.
+      const script = "$ErrorActionPreference = 'Stop'; $fixtureRoot = $env:SPS_DESKTOP_E2E_USER_DATA_DIR; $owned = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($fixtureRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select-Object ProcessId, Name); ConvertTo-Json -InputObject $owned -Compress";
+      try {
+        const { stdout } = await promisify(execFile)("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+          env: { ...process.env, SPS_DESKTOP_E2E_USER_DATA_DIR: userData }, timeout: 5000, windowsHide: true,
+        });
+        const snapshot = stdout.trim() ? JSON.parse(stdout.trim()) : [];
+        const owned = Array.isArray(snapshot) ? snapshot : [snapshot];
+        childExitConfirmed = owned.length === 0;
+        console.error(`Core Settings exact-fixture process snapshot after emergency stop: ${JSON.stringify(owned.map(({ ProcessId, Name }) => ({ ProcessId, Name })))}`);
+      } catch (error) {
+        console.error(`Core Settings exact-fixture process snapshot unavailable: ${redactMainStderr(error?.message ?? "snapshot failed").slice(0, 500)}`);
+      }
+    }
+    assert.equal(childExitConfirmed, true,
+      `Could not confirm the spawned Main exited; refusing recursive fixture cleanup. Child=${JSON.stringify({ pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, close: childClose })}.`);
   }
   assert.equal(path.dirname(userData), path.resolve(os.tmpdir()));
   assert.ok(path.basename(userData).startsWith("sps-core-settings-e2e-"));

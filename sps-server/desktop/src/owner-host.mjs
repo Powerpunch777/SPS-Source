@@ -21,14 +21,26 @@ function hostDiagnostics(value) {
   return text.split(/\r?\n/).filter(Boolean).slice(-12).join("\n").slice(-2_000);
 }
 
+function childHasExited(child) {
+  return Boolean(child && (child.exitCode != null || child.signalCode != null));
+}
+
 function waitForChildExit(child, timeoutMs) {
-  if (!child || child.exitCode != null) return Promise.resolve();
+  if (!child || childHasExited(child)) return Promise.resolve(true);
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    child.once("exit", () => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve();
-    });
+      child.removeListener?.("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(childHasExited(child)), timeoutMs);
+    child.once("exit", onExit);
+    // Cover exit between the initial check and listener registration.
+    if (childHasExited(child)) finish(true);
   });
 }
 
@@ -342,10 +354,14 @@ export function createSpsOwnerHostManager({
   // minutes while Windows inspects its native runtime files.
   startupAttempts = 720,
   terminateTree = terminateWindowsProcessTree,
+  exitConfirmationMs = 5_000,
   createNativeSigner = null,
   onNativeInvalidation = () => {},
 } = {}) {
   if (!url) throw new Error("SPS Owner Host URL is required.");
+  if (!Number.isSafeInteger(exitConfirmationMs) || exitConfirmationMs < 1 || exitConfirmationMs > 30_000) {
+    throw new Error("SPS Owner Host exit confirmation timeout must be between 1 and 30000 milliseconds.");
+  }
   let ownedChild = null;
   let lastError = null;
   let startedAt = null;
@@ -373,7 +389,7 @@ export function createSpsOwnerHostManager({
         lastError,
       };
     }
-    if (ownedChild && ownedChild.exitCode == null) {
+    if (ownedChild && !childHasExited(ownedChild)) {
       return { state: "starting", owned: true, url, health: null, startedAt, lastError };
     }
     return { state: "stopped", owned: false, url, health: null, startedAt: null, lastError };
@@ -522,7 +538,7 @@ export function createSpsOwnerHostManager({
   async function stopOwned({ force = false } = {}) {
     invalidateNativeSigner();
     const child = ownedChild;
-    if (child && child.exitCode == null) {
+    if (child && !childHasExited(child)) {
       if (force) {
         await terminateTree(child.pid);
       } else {
@@ -533,11 +549,18 @@ export function createSpsOwnerHostManager({
           try { child.send({ v: 1, kind: "sps.owner-host.shutdown" }, () => {}); } catch {}
         } else child.kill("SIGINT");
         await waitForChildExit(child, 12_000);
-        if (child.exitCode == null) await terminateTree(child.pid);
+        if (!childHasExited(child)) await terminateTree(child.pid);
+      }
+      if (!await waitForChildExit(child, exitConfirmationMs)) {
+        lastError = "SPS Owner Host process did not exit after termination was requested.";
+        throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
       }
     }
-    ownedChild = null;
-    startedAt = null;
+    if (child && ownedChild === child && childHasExited(child)) {
+      ownedChild = null;
+      startedAt = null;
+      if (child.exitCode === 0 || child.signalCode != null) lastError = null;
+    }
     return inspect();
   }
 

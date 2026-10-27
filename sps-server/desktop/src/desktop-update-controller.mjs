@@ -18,14 +18,16 @@ export function createSpsDesktopUpdateController({
   dialog,
   getMainWindow,
   stopDesktopRuntimeGracefully,
-  setQuitting,
-  setShutdownComplete,
+  setQuitting = () => {},
+  setShutdownComplete = () => {},
+  canInstall = () => true,
   importUpdater = () => import("electron-updater"),
   resolvePolicy = resolveSpsDesktopUpdatePolicy,
 }) {
   let updateService = null;
   let desktopAutoUpdater = null;
   let updateInstallPromise = null;
+  let suppressInstallFailurePrompt = false;
   let lastPromptedUpdateVersion = null;
   let updateStatus = initialStatus(app);
 
@@ -61,7 +63,10 @@ export function createSpsDesktopUpdateController({
         onInstallRequested: installDownloaded,
         onStatus: (nextStatus) => {
           publishStatus(nextStatus);
-          if (nextStatus.state === "ready") void prompt(nextStatus);
+          if (nextStatus.state === "ready") {
+            if (suppressInstallFailurePrompt) suppressInstallFailurePrompt = false;
+            else void prompt(nextStatus);
+          }
         },
       });
       publishStatus(updateService.getStatus());
@@ -132,16 +137,33 @@ export function createSpsDesktopUpdateController({
     const updater = desktopAutoUpdater;
     if (!updater) throw new Error("Desktop updates are unavailable in this SPS installation.");
 
-    updateInstallPromise = (async () => {
+    const installPromise = Promise.resolve().then(async () => {
       // electron-updater launches the NSIS installer before it schedules app.quit().
       // Stop the embedded Owner Host first so the installer never races the
       // asynchronous before-quit shutdown hook.
-      setQuitting();
-      await stopDesktopRuntimeGracefully().catch(() => undefined);
-      setShutdownComplete();
-      updater.quitAndInstall();
-    })();
-    return updateInstallPromise;
+      let ownsShutdown = false;
+      try {
+        if (!canInstall()) throw new Error("Desktop is already closing.");
+        ownsShutdown = true;
+        setQuitting(true);
+        await stopDesktopRuntimeGracefully();
+        setShutdownComplete(true);
+        updater.quitAndInstall();
+      } catch {
+        // A failed drain or updater handoff must leave quit/install retryable.
+        // Main owns making these setters reversible; no failure detail crosses
+        // this boundary because shutdown errors may contain local paths/tokens.
+        if (ownsShutdown) {
+          setShutdownComplete(false);
+          setQuitting(false);
+        }
+        if (updateInstallPromise === installPromise) updateInstallPromise = null;
+        suppressInstallFailurePrompt = true;
+        throw new Error("SPS could not close safely for the update. The update remains downloaded; retry Restart and install when ready.");
+      }
+    });
+    updateInstallPromise = installPromise;
+    return installPromise;
   }
 
   function stop() {
@@ -159,6 +181,7 @@ export function createSpsDesktopUpdateController({
       return publishStatus(status);
     },
     getStatus,
+    isInstalling: () => updateInstallPromise !== null,
     initialize,
     install: async () => {
       const status = await requireService().install();

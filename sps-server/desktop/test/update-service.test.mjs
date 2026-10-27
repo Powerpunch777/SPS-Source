@@ -91,6 +91,34 @@ test("delegates a restart install to the Desktop shutdown coordinator", async ()
   assert.equal(service.getStatus().state, "installing");
 });
 
+test("keeps a downloaded update explicitly retryable when safe shutdown fails", async () => {
+  const updater = createUpdater();
+  let installAttempts = 0;
+  const service = createSpsUpdateService({
+    app: { isPackaged: true, getVersion: () => "0.1.0" },
+    updater,
+    onInstallRequested: async () => {
+      installAttempts += 1;
+      if (installAttempts === 1) throw new Error("private shutdown detail");
+    },
+  });
+
+  updater.emit("update-available", { version: "0.2.0" });
+  await new Promise((resolve) => setImmediate(resolve));
+  updater.emit("update-downloaded", { version: "0.2.0" });
+
+  const failed = await service.install();
+  assert.equal(failed.state, "ready");
+  assert.equal(failed.availableVersion, "0.2.0");
+  assert.equal(failed.percent, 100);
+  assert.match(failed.message, /remains downloaded; retry Restart and install/);
+  assert.doesNotMatch(failed.message, /private shutdown detail/);
+
+  const retried = await service.install();
+  assert.equal(installAttempts, 2);
+  assert.equal(retried.state, "installing");
+});
+
 test("uses the same stable update channel for every SPS Desktop role", () => {
   const updater = createUpdater();
   const policy = resolveSpsDesktopUpdatePolicy();

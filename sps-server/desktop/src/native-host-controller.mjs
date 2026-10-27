@@ -24,7 +24,7 @@ export function requireSpsNativeHostListenInput(input) {
 export function createSpsNativeHostController({ getAuthority, authenticate, getIdentity,
   getCoreIdentity, localAddresses, createIngress, dispatch, dispatchWorkspace, issuePairing, copyInvitation,
   getServerCertificates }) {
-  let current = null, busy = false, stopping = 0, generation = 0;
+  let current = null, stoppingIngress = null, stopPromise = null, busy = false, stopping = 0, generation = 0;
   function capture() {
     try {
       const value = record(getAuthority(), AUTHORITY_KEYS);
@@ -64,18 +64,32 @@ export function createSpsNativeHostController({ getAuthority, authenticate, getI
     }
     return history;
   }
-  async function stop() {
+  function stop() {
+    if (stopPromise) return stopPromise;
     generation++;
-    const previous = current;
-    current = null;
-    if (previous) {
-      stopping++;
-      try { await previous.ingress.stop(); }
-      finally { stopping--; }
+    if (current) {
+      stoppingIngress = current;
+      current = null;
     }
+    const previous = stoppingIngress;
+    if (!previous) return Promise.resolve();
+    stopping++;
+    const operation = (async () => {
+      try {
+        await previous.ingress.stop();
+        if (stoppingIngress === previous) stoppingIngress = null;
+      } catch {
+        // Keep the exact ingress handle so an explicit later stop can retry.
+        throw error();
+      } finally { stopping--; }
+    })();
+    stopPromise = operation;
+    const clearStop = () => { if (stopPromise === operation) stopPromise = null; };
+    void operation.then(clearStop, clearStop);
+    return operation;
   }
   return Object.freeze({
-    isActive() { return busy || stopping > 0 || current !== null; },
+    isActive() { return busy || stopping > 0 || current !== null || stoppingIngress !== null; },
     inspect() {
       if (!current) return Object.freeze({ state: "off" });
       try { guard(current.authority, current.epoch); assertListening(current); }
@@ -84,7 +98,7 @@ export function createSpsNativeHostController({ getAuthority, authenticate, getI
     },
     async start(input, { confirm, assertRequester } = {}) {
       const value = requireSpsNativeHostListenInput(input);
-      if (busy || current || typeof confirm !== "function") throw error();
+      if (busy || current || stoppingIngress || typeof confirm !== "function") throw error();
       busy = true;
       let candidate = null;
       try {

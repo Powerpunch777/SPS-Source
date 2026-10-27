@@ -83,6 +83,8 @@ import {
   renameSpsWorkspaceSource,
 } from "./workspace-sources.mjs";
 import { createSpsDesktopUpdateController } from "./desktop-update-controller.mjs";
+import { createSpsDesktopRuntimeDrain } from "./desktop-runtime-drain.mjs";
+import { createSpsDesktopQuitCoordinator } from "./desktop-quit-coordinator.mjs";
 import { createSpsDesktopAccountController } from "./desktop-account-controller.mjs";
 import { spsRequestError, spsRequestTimeoutSignal } from "./desktop-request.mjs";
 import {
@@ -303,7 +305,6 @@ let setupMode = opensCoreSettingsOnLaunch;
 let nodeRuntimeStatus = emptyNodeRuntimeStatus();
 let tray = null;
 let isQuitting = false;
-let shutdownPromise = null;
 let shutdownComplete = false;
 let desktopQuitRequested = false;
 const DESKTOP_SHUTDOWN_TRACE_STAGES = new Set([
@@ -339,8 +340,9 @@ const desktopUpdateController = createSpsDesktopUpdateController({
   dialog,
   getMainWindow: () => mainWindow,
   stopDesktopRuntimeGracefully,
-  setQuitting: () => { isQuitting = true; },
-  setShutdownComplete: () => { shutdownComplete = true; },
+  canInstall: () => !isQuitting && !desktopQuitCoordinator.isPending() && !desktopQuitRequested,
+  setQuitting: (value = true) => { isQuitting = value; },
+  setShutdownComplete: (value = true) => { shutdownComplete = value; },
 });
 let ownerHostManager = null;
 let ownerHostRuntimePromise = null;
@@ -5654,50 +5656,56 @@ app.on("window-all-closed", () => {
 app.on("activate", () => {
   void showMainWindow();
 });
-async function stopDesktopRuntimeGracefully() {
-  isQuitting = true;
-  await nativeHostController?.stop().catch(() => {});
-  traceDesktopShutdown("stop_scheduling_start");
-  stopNodeScheduling();
-  traceDesktopShutdown("stop_scheduling_done");
-  traceDesktopShutdown("cancel_commands_start");
-  await cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped.");
-  traceDesktopShutdown("cancel_commands_done");
-  desktopUpdateController.stop();
+const drainDesktopRuntime = createSpsDesktopRuntimeDrain({
+  stopIngress: () => nativeHostController?.stop(),
+  stopScheduling: stopNodeScheduling,
+  cancelCommands: () => cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped."),
+  stopUpdates: () => desktopUpdateController.stop(),
+  trace: traceDesktopShutdown,
   // A forced process-tree kill interrupts embedded PostgreSQL and turns every
   // normal Desktop exit into database crash recovery on the next start. Each
   // manager already escalates after its bounded graceful wait when necessary.
-  traceDesktopShutdown("stop_managers_start");
-  const managerStops = await Promise.allSettled([
-    nativeWorkspaceWindowController?.dispose(),
-    nativePluginWindowController?.dispose(),
-    defaultMemoryManager?.stop({ force: false }),
-    ownerHostManager?.stop({ force: false }),
-    pluginPreviewRuntime?.manager?.stop({ force: false }),
-  ]);
-  traceDesktopShutdown("stop_managers_done");
-  pluginPreviewRuntime = null;
-  if (managerStops[0].status === "rejected") throw new Error("Native Workspace cleanup did not finish.");
+  getManagers: () => {
+    const preview = pluginPreviewRuntime;
+    return [
+      { name: "Native Workspace", stop: () => nativeWorkspaceWindowController?.dispose() },
+      { name: "Native Plugin", stop: () => nativePluginWindowController?.dispose() },
+      { name: "Memory", stop: () => defaultMemoryManager?.stop({ force: false }) },
+      { name: "Owner Host", stop: () => ownerHostManager?.stop({ force: false }) },
+      { name: "Plugin preview", stop: () => preview?.manager?.stop({ force: false }),
+        onStopped: () => { if (pluginPreviewRuntime === preview) pluginPreviewRuntime = null; } },
+    ];
+  },
+});
+
+async function stopDesktopRuntimeGracefully() {
+  isQuitting = true;
+  await drainDesktopRuntime();
 }
 
-app.on("before-quit", (event) => {
-  traceDesktopShutdown(shutdownComplete ? "before_quit_complete" : "before_quit_start");
-  if (shutdownComplete) return;
-  event.preventDefault();
-  isQuitting = true;
-  nativeMemberController?.dispose();
-  if (!shutdownPromise) {
-    shutdownPromise = stopDesktopRuntimeGracefully()
-      .catch(() => {
-        traceDesktopShutdown("drain_failed");
-      })
-      .finally(() => {
-        traceDesktopShutdown("drain_complete");
-        shutdownComplete = true;
-        traceDesktopShutdown("retry_app_quit");
-        app.quit();
-      });
-  }
+const desktopQuitCoordinator = createSpsDesktopQuitCoordinator({
+  isComplete: () => shutdownComplete,
+  isInstalling: () => desktopUpdateController.isInstalling(),
+  drain: () => {
+    nativeMemberController?.dispose();
+    return stopDesktopRuntimeGracefully();
+  },
+  setQuitting: value => { isQuitting = value; },
+  setShutdownComplete: value => { shutdownComplete = value; },
+  consumeQuitRequest: () => { desktopQuitRequested = false; },
+  quit: () => app.quit(),
+  requestQuit: requestDesktopQuit,
+  trace: traceDesktopShutdown,
+  showFailure: async () => {
+    const options = { type: "error", title: "SPS Desktop could not close safely",
+      message: "SPS could not confirm that all local work has stopped.",
+      detail: "The app will remain open. Retry closing to finish cleanup; work that already stopped will not restart automatically.",
+      buttons: ["Retry closing", "Keep open"], defaultId: 1, cancelId: 1 };
+    const result = await (mainWindow && !mainWindow.isDestroyed()
+      ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options));
+    return result.response === 0;
+  },
 });
+app.on("before-quit", event => { void desktopQuitCoordinator.handle(event); });
 app.on("will-quit", () => traceDesktopShutdown("will_quit"));
 app.on("quit", () => traceDesktopShutdown("quit"));

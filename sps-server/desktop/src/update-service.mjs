@@ -39,6 +39,10 @@ function safeErrorMessage() {
   return "SPS could not check for a Desktop update. Your current installation remains unchanged.";
 }
 
+function safeInstallErrorMessage() {
+  return "SPS could not close safely for the update. The update remains downloaded; retry Restart and install when ready.";
+}
+
 export function createSpsUpdateService({
   app,
   updater,
@@ -204,7 +208,9 @@ export function createSpsUpdateService({
     try {
       await onInstallRequested();
     } catch {
-      return publish({ state: "error", percent: null, message: safeErrorMessage() });
+      // The artifact is still downloaded. Keep the explicit install action
+      // available for a user-directed retry after the shutdown issue is fixed.
+      return publish({ state: "ready", percent: 100, message: safeInstallErrorMessage() });
     }
     return { ...status };
   }

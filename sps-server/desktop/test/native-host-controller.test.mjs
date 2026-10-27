@@ -10,11 +10,11 @@ before(async () => {
   identity = await createSpsNativeHostIdentity({ hostId: HOST, hostnames: ["192.168.1.10"],
     notBefore: now - 1000, notAfter: now + 3600000, issuerNotAfter: now + 86400000 });
 });
-function fixture({ startGate, stopGate, serverCertificates } = {}) {
+function fixture({ startGate, stopGate, stopFailures = 0, serverCertificates } = {}) {
   const calls = [];
   const copied = [];
   let generation = 0n, allowed = true, listenerState = "off", storedIdentity = null;
-  let ingressOptions = null;
+  let ingressOptions = null, stopCalls = 0;
   const controller = createSpsNativeHostController({
     getAuthority: () => allowed ? { ownerSubject: "fixture-owner", userDataDirectory: "C:/fixture", vaultDirectory: "C:/fixture/vault", generation } : null,
     authenticate: async () => { calls.push("authenticate"); },
@@ -25,7 +25,12 @@ function fixture({ startGate, stopGate, serverCertificates } = {}) {
     createIngress: options => { ingressOptions = options; return ({
       inspect() { return { state: listenerState, ...selection }; },
       async start(input) { calls.push("listen"); options.assertCurrent(); if (startGate) await startGate; listenerState = "listening"; return { state: "listening", ...input, hostId: HOST }; },
-      async stop() { if (stopGate) await stopGate; listenerState = "off"; calls.push("stop"); },
+      async stop() {
+        stopCalls++;
+        if (stopGate) await stopGate;
+        if (stopFailures > 0) { stopFailures--; throw new Error("private ingress failure detail"); }
+        listenerState = "off"; calls.push("stop");
+      },
     }); },
     dispatch: async () => {},
     issuePairing: async () => {
@@ -36,7 +41,7 @@ function fixture({ startGate, stopGate, serverCertificates } = {}) {
     },
     copyInvitation: code => { copied.push(code); },
   });
-  return { controller, calls, copied, get ingressOptions() { return ingressOptions; }, change: () => { generation++; }, signOut: () => { allowed = false; },
+  return { controller, calls, copied, get ingressOptions() { return ingressOptions; }, get stopCalls() { return stopCalls; }, change: () => { generation++; }, signOut: () => { allowed = false; },
     failListener: () => { listenerState = "failed"; }, replaceIdentity: value => { storedIdentity = value; } };
 }
 
@@ -66,6 +71,50 @@ test("isActive fences identity maintenance throughout pending start and stop", a
   assert.equal(f.controller.isActive(), true);
   await f.controller.stop();
   assert.equal(f.controller.isActive(), false);
+});
+
+test("failed ingress cleanup keeps the Host active and retries the same ingress on explicit stop", async () => {
+  const f = fixture({ stopFailures: 1 });
+  await f.controller.start(selection, { confirm: async () => true });
+
+  await assert.rejects(f.controller.stop(), error => {
+    assert.equal(error.code, "native_host_unavailable");
+    assert.doesNotMatch(error.message, /private ingress failure detail/);
+    return true;
+  });
+  assert.equal(f.controller.inspect().state, "off");
+  assert.equal(f.controller.isActive(), true);
+  await assert.rejects(f.controller.start(selection, { confirm: async () => true }));
+  assert.equal(f.stopCalls, 1);
+
+  await f.controller.stop();
+  assert.equal(f.stopCalls, 2);
+  assert.equal(f.controller.isActive(), false);
+  await f.controller.start(selection, { confirm: async () => true });
+  assert.equal(f.controller.inspect().state, "listening");
+  await f.controller.stop();
+});
+
+test("concurrent stops share cleanup and block a new listener until cleanup succeeds", async () => {
+  let releaseStop;
+  const stopGate = new Promise(resolve => { releaseStop = resolve; });
+  const f = fixture({ stopGate });
+  await f.controller.start(selection, { confirm: async () => true });
+
+  const first = f.controller.stop();
+  const second = f.controller.stop();
+  assert.strictEqual(second, first);
+  assert.equal(f.controller.inspect().state, "off");
+  assert.equal(f.controller.isActive(), true);
+  await assert.rejects(f.controller.start(selection, { confirm: async () => true }));
+  assert.equal(f.stopCalls, 1);
+
+  releaseStop();
+  await Promise.all([first, second]);
+  assert.equal(f.controller.isActive(), false);
+  await f.controller.start(selection, { confirm: async () => true });
+  assert.equal(f.controller.inspect().state, "listening");
+  await f.controller.stop();
 });
 
 test("Host start passes its frozen validated certificate history to ingress", async () => {

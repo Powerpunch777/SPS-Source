@@ -154,6 +154,7 @@ test("a late old-child exit cannot revoke the replacement child's signer channel
     resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
     spawn: () => {
       const child = fakeChild();
+      child.pid = 100 + children.length;
       children.push(child);
       healthyChild = child;
       return child;
@@ -165,7 +166,12 @@ test("a late old-child exit cannot revoke the replacement child's signer channel
       disposed.push(0);
       return { inspect: async () => ({}), sign: async () => ({}), dispose: () => { disposed[index]++; } };
     },
-    terminateTree: async () => { healthyChild = null; },
+    terminateTree: async pid => {
+      healthyChild = null;
+      const child = children.find(candidate => candidate.pid === pid);
+      child.exitCode = 0;
+      child.emit("exit", 0);
+    },
   });
 
   assert.equal((await manager.start()).state, "running");
@@ -436,6 +442,67 @@ test("forces only its own Host process tree when graceful shutdown does not fini
   await manager.start();
   await manager.stop({ force: true });
   assert.equal(terminatedPid, 42);
+});
+
+test("retains an owned child when forced termination is not followed by an exit, then retries that child", async () => {
+  let healthy = false, terminationCalls = 0;
+  const child = fakeChild();
+  child.pid = 43;
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310",
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    spawn: () => { healthy = true; return child; },
+    delay: async () => {},
+    startupAttempts: 1,
+    exitConfirmationMs: 1,
+    terminateTree: async pid => {
+      assert.equal(pid, child.pid);
+      terminationCalls++;
+      healthy = false;
+      if (terminationCalls === 2) {
+        child.exitCode = 0;
+        child.emit("exit", 0);
+      }
+    },
+  });
+
+  assert.equal((await manager.start()).state, "running");
+  await assert.rejects(manager.stop({ force: true }), error => {
+    assert.equal(error.code, "owner_host_stop_unconfirmed");
+    return /did not exit/.test(error.message);
+  });
+  const retained = await manager.inspect();
+  assert.equal(retained.state, "starting");
+  assert.equal(retained.owned, true);
+  assert.match(retained.lastError, /did not exit/);
+
+  assert.equal((await manager.stop({ force: true })).state, "stopped");
+  assert.equal(terminationCalls, 2);
+});
+
+test("treats a terminal signalCode as child exit and never terminates an existing Host", async () => {
+  let terminationCalls = 0;
+  const child = fakeChild();
+  child.pid = 44;
+  child.signalCode = "SIGTERM";
+  const owned = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => ({ ok: false }),
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    spawn: () => child, delay: async () => {}, startupAttempts: 0,
+    terminateTree: async () => { terminationCalls++; },
+  });
+  await owned.start();
+  assert.equal((await owned.stop({ force: true })).state, "stopped");
+  assert.equal(terminationCalls, 0);
+
+  const existing = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => response({ status: "ok" }),
+    terminateTree: async () => { terminationCalls++; },
+  });
+  assert.equal((await existing.start()).state, "running-existing");
+  assert.equal((await existing.stop({ force: true })).state, "running-existing");
+  assert.equal(terminationCalls, 0);
 });
 
 test("does not start when the packaged Owner Host runtime is missing", async () => {
