@@ -51,6 +51,16 @@ Run from external/sps-core:
 pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-channel.mjs --isolated-native-workspace-channel --with-native-execution-control
 ```
 
+After local package verification finished, the single phase-instrumented retry
+session40652 exited0 on Source6cb80cc/Core df7436dc/SDK607b48a. It reached the
+actual Member window and verified the stopped DTO, no controls, real Inbox state
+operations, device revocation, denied direct status and discovery/shell/status
+requests, refreshed UI clearing prior status, and natural Main/Core/database
+cleanup. The final success line was emitted only after all cleanup completed.
+Log: native-member-execution-status-joined-phase-2026-10-28.log. Earlier failed
+session91369 remains a failed attempt. The retry did not increase its deadlines.
+No claim is made that disk workload caused the earlier timeout.
+
 ## Independent Windows fake-test lifetime correction
 
 Source58aaaa55 Windows CI passed all app acceptance stages, including packaged
@@ -64,8 +74,12 @@ the correction; log windows-host-job-fake-lifetime-2026-10-28.log.
 
 The actual package artifact for Source58aaaa55/Core df7436dc/SDK607b48a was built
 separately and its hashes are recorded in packaged-host-artifact-58aaaa55-2026-10-28.json.
-It predates this Member fix. Its local materialization/verifier session95617 is
-still active; current CI evidence must not be expanded to this new source head.
+It predates this Member fix. Its local materialization/verifier session95617
+exited0: actual package/hash materialization, bundled Node/helper/gate, real file
+Worker acknowledgement, IPC/stop4/empty Job and actual child close, and runtime
+closure passed. Baseline Source58aaaa55/CoreDF/SDK607 dirty flags were all false.
+The first materialization was slow on this machine; no hash/path/size checks were
+bypassed. That artifact result does not qualify the newer Member fix package.
 
 No full local suite or manual CI rerun. Native remains off by default, Tailscale
 supported, Desktop0.4.137 a development candidate. Filesystem/Vault/network
