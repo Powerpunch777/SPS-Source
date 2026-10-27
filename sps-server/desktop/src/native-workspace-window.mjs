@@ -36,7 +36,7 @@ function syncGuard(guard) {
 
 function surfaceInput(value) {
   const input = record(value, ["surface", "archived"], ["surface"]);
-  if (!["shell", "providers", "dashboard", "inbox"].includes(input.surface)
+  if (!["shell", "providers", "dashboard", "inbox", "executionControl"].includes(input.surface)
     || Object.hasOwn(input, "archived") && (input.surface !== "inbox" || typeof input.archived !== "boolean")) throw unavailable();
   return Object.freeze(input);
 }

@@ -219,17 +219,20 @@ test("Native preload accepts no selectors, secrets, getters or extra arguments",
   assert.equal(calls.length, 0);
   await api.getBootstrap();
   await api.readSurface({ surface: "inbox", archived: true });
+  await api.readSurface({ surface: "executionControl" });
   assert.equal(calls[0][0], "desktop:native-workspace-bootstrap");
   assert.equal(calls[1][0], "desktop:native-workspace-read");
   assert.deepEqual(JSON.parse(JSON.stringify(calls[1][1])), { surface: "inbox", archived: true });
+  assert.equal(calls[2][0], "desktop:native-workspace-read");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[2][1])), { surface: "executionControl" });
   await api.updateInboxState({ itemId: hostId, read: false });
-  assert.equal(calls[2][0], "desktop:native-workspace-inbox-state");
+  assert.equal(calls[3][0], "desktop:native-workspace-inbox-state");
   await api.openPlugin({ pluginId, surface: "widget", surfaceId: "summary" });
-  assert.equal(calls[3][0], "desktop:native-workspace-open-plugin");
-  assert.deepEqual(JSON.parse(JSON.stringify(calls[3][1])), { pluginId, surface: "widget", surfaceId: "summary" });
+  assert.equal(calls[4][0], "desktop:native-workspace-open-plugin");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[4][1])), { pluginId, surface: "widget", surfaceId: "summary" });
   await assert.rejects(api.openPlugin({ pluginId, surface: "widget", surfaceId: "summary", workspaceId }));
   await assert.rejects(api.openPlugin({ pluginId, surface: "dashboard", surfaceId: "summary" }));
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
 });
 
 test("opens a selected Plugin window from retained Workspace scope and closes children with parent", async t => {

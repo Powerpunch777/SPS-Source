@@ -18,7 +18,13 @@ export function createOwnedProcessTerminator(options = {}) {
   const confirmationTimeoutMs = options.confirmationTimeoutMs ?? 2_000;
   const terminations = new WeakMap();
 
+  function hasOwnedJob(child) {
+    return platform === "win32" && typeof child?.terminateOwnedJob === "function"
+      && typeof child?.waitForOwnedJobTermination === "function";
+  }
+
   function isAlive(child) {
+    if (hasOwnedJob(child)) return child.exitCode === null && child.signalCode === null;
     if (!child?.pid) return false;
     // A Windows PID stops belonging to the child as soon as Node reports its
     // terminal event. Never signal it again: the OS may already have reused it.
@@ -41,11 +47,12 @@ export function createOwnedProcessTerminator(options = {}) {
     const state = child && (typeof child === "object" || typeof child === "function")
       ? terminations.get(child)
       : undefined;
-    return Boolean(state && state.status !== "succeeded");
+    return Boolean(state && state.status !== "succeeded")
+      || Boolean(hasOwnedJob(child) && child.hasUnconfirmedOwnedJobTermination?.());
   }
 
   function terminate(child) {
-    if (!child?.pid) return Promise.resolve();
+    if (!hasOwnedJob(child) && !child?.pid) return Promise.resolve();
 
     const prior = terminations.get(child);
     if (prior) {
@@ -53,7 +60,7 @@ export function createOwnedProcessTerminator(options = {}) {
       // A failure may be retried only while the exact child/process group is
       // still alive. A terminal Windows child must never cause another PID kill.
       if (!isAlive(child)) return Promise.reject(prior.error);
-    } else if (platform === "win32" && !isAlive(child)) {
+    } else if (platform === "win32" && !hasOwnedJob(child) && !isAlive(child)) {
       // Natural Windows child exit has no remaining tree handle to terminate.
       return Promise.resolve();
     }
@@ -61,7 +68,15 @@ export function createOwnedProcessTerminator(options = {}) {
     const state = { status: "running", promise: undefined, error: undefined };
     const operation = Promise.resolve().then(async () => {
       if (platform === "win32") {
-        await terminateWindows(child);
+        if (hasOwnedJob(child)) {
+          // The supervisor owns a retained Job Object. A terminal helper PID
+          // never authorizes a PID-based retry or substitutes for its empty-job ack.
+          await child.terminateOwnedJob();
+          await child.waitForOwnedJobTermination();
+          if (child.hasUnconfirmedOwnedJobTermination?.()) throw new Error(UNCONFIRMED_TERMINATION_FAILURE);
+        } else {
+          await terminateWindows(child);
+        }
       } else {
         try {
           signalProcess(-child.pid, "SIGTERM");

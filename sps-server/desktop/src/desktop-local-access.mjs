@@ -34,7 +34,11 @@ export function isSpsDesktopWorkspaceRequest({ url, workspaceOrigin }) {
 export function isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin, method }) {
   if (!isSpsDesktopWorkspaceRequest({ url, workspaceOrigin })) return false;
   try {
-    const pathname = new URL(url).pathname;
+    const parsed = new URL(url);
+    const pathname = parsed.pathname;
+    if (/^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/execution-control$/i.test(pathname)) {
+      return (method === "GET" || method === "POST") && !parsed.search && !parsed.hash;
+    }
     if (method === "GET" && /^\/api\/companies\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/sps-executions(?:\/summary|\/(?:node|agent_session|model_request)\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})?$/i.test(pathname)) {
       return true;
     }

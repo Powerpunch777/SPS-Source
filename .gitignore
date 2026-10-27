@@ -52,3 +52,6 @@ sps-server/sps-identity/artifacts/
 # Candidate-specific physical release evidence is injected from a protected
 # GitHub Actions secret. Committing it would change the revision it certifies.
 sps-server/release/evidence/v*.json
+
+# Built Windows execution supervisor; source and build recipe are versioned.
+sps-server/desktop-node/native/windows-job-supervisor/bin/

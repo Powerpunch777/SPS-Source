@@ -27,6 +27,7 @@
     "test:e2e:core-settings": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-core-settings-desktop.mjs && node scripts/smoke-core-settings-desktop.mjs --corrupt-recovery && node scripts/smoke-core-settings-desktop.mjs --corrupt-desktop-state && node scripts/smoke-core-settings-desktop.mjs --unwritable-desktop-state && node scripts/smoke-core-settings-desktop.mjs --malformed-routing-state && node scripts/smoke-core-settings-desktop.mjs --malformed-native-member-index && node scripts/smoke-core-settings-desktop.mjs --unverified-legacy-adoption && node scripts/smoke-core-settings-desktop.mjs --deferred-owner",
     "test:security:appcontainer-canary": "node scripts/security-poc/run-appcontainer-canary.mjs",
     "test:e2e:workspace-surfaces": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs",
+    "test:e2e:execution-control": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --execution-control",
     "test:e2e:no-ai-checklist": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --no-ai-checklist",
     "test:e2e:native-management": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --native-management",
     "test:e2e:runtime-discovery": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --runtime-discovery",
@@ -86,6 +87,10 @@
       {
         "from": ".owner-host-runtime-package",
         "to": "sps-owner-host-runtime-package"
+      },
+      {
+        "from": "../desktop-node/native/windows-job-supervisor/bin/SpsWindowsJobSupervisor.exe",
+        "to": "sps-windows-job-supervisor/SpsWindowsJobSupervisor.exe"
       }
     ],
     "icon": "assets/sps-logo.png",

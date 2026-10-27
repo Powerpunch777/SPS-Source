@@ -347,7 +347,20 @@ function cloneBoundedJson(input) {
 
 export function validateSpsNativeWorkspaceSurface(surface, workspaceId, input) {
   uuid(workspaceId);
-  if (!["shell", "providers", "dashboard", "inbox"].includes(surface)) reject();
+  if (!["shell", "providers", "dashboard", "inbox", "executionControl"].includes(surface)) reject();
+  if (surface === "executionControl") {
+    const control = record(input, ["state", "epoch", "revision", "updatedAt", "pending", "canControl"]);
+    const pending = record(control.pending, ["agents", "jobs", "models", "commands", "plugins"]);
+    if (!["running", "paused", "stopped"].includes(control.state)
+      || typeof control.epoch !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(control.epoch)
+      || !Number.isSafeInteger(control.revision) || control.revision < 0
+      || control.updatedAt !== null && (typeof control.updatedAt !== "string" || control.updatedAt.length !== 24
+        || !Number.isFinite(Date.parse(control.updatedAt)) || new Date(control.updatedAt).toISOString() !== control.updatedAt)
+      || control.canControl !== false
+      || Object.keys(pending).length !== 5
+      || Object.values(pending).some(value => !Number.isSafeInteger(value) || value < 0)) reject();
+    return cloneBoundedJson(control);
+  }
   if (surface === "shell") {
     const shell = record(input, ["mode", "providerPluginId", "providerPluginKey", "shell", "fallbackReason"]);
     if (!["neutral", "plugin"].includes(shell.mode)
@@ -379,7 +392,7 @@ export function validateSpsNativeWorkspaceSurface(surface, workspaceId, input) {
 
 export function parseSpsNativeWorkspaceSurfaceResponse(surface, workspaceId, input) {
   try {
-    if (!["shell", "providers", "dashboard", "inbox"].includes(surface)) reject();
+    if (!["shell", "providers", "dashboard", "inbox", "executionControl"].includes(surface)) reject();
     uuid(workspaceId);
     const envelope = record(input, ["statusCode", "rawHeaders", "body"]);
     if (envelope.statusCode !== 200) reject();

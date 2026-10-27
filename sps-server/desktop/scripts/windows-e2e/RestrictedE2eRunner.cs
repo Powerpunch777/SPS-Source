@@ -268,12 +268,12 @@ public static class RestrictedE2eRunner
         return value == "probe" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
             || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
-            || value == "runtime-discovery" || value == "native-management" || value == "workspace-surfaces"
+            || value == "runtime-discovery" || value == "native-management" || value == "execution-control" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle";
     }
     static bool OwnedJobGateMode(string value)
     {
-        return value == "plugin-preview" || value == "runtime-discovery" || value == "native-management" || value == "workspace-surfaces"
+        return value == "plugin-preview" || value == "runtime-discovery" || value == "native-management" || value == "execution-control" || value == "workspace-surfaces"
             || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "workspace-pending"
@@ -369,6 +369,7 @@ public static class RestrictedE2eRunner
         }
         if (mode == "runtime-discovery") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--runtime-discovery", OwnedJobCleanupArgument);
         if (mode == "native-management") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--native-management", OwnedJobCleanupArgument);
+        if (mode == "execution-control") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--execution-control", OwnedJobCleanupArgument);
         if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs", OwnedJobCleanupArgument);
         return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs");

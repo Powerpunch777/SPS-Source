@@ -431,6 +431,15 @@ jobs:
       - name: Require clean catalog after Native management E2E
         run: git -C external/sps-core diff --exit-code -- packages/skills-catalog/generated/catalog.json packages/teams-catalog/generated/catalog.json
 
+      - name: Verify Workspace execution control across Desktop restart
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_SOURCE: "1"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode execution-control
+
       - name: Build unpacked Windows Desktop for E2E
         working-directory: sps-server/desktop
         run: npx electron-builder --win dir --publish never

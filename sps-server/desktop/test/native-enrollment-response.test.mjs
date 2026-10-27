@@ -212,6 +212,24 @@ test("workspace surface parser validates exact wrappers and preserves inert JSON
   }
 });
 
+test("execution status is a closed read-only Native Workspace DTO", () => {
+  const workspaceId = "11111111-1111-4111-8111-111111111111";
+  const status = { state: "paused", epoch: "12", revision: 3, updatedAt: "2026-10-27T10:00:00.000Z",
+    pending: { agents: 0, jobs: 1, models: 0, commands: 2, plugins: 0 }, canControl: false };
+  assert.deepEqual(JSON.parse(JSON.stringify(validateSpsNativeWorkspaceSurface("executionControl", workspaceId, status))), status);
+  for (const invalid of [
+    { ...status, state: "stopping" },
+    { ...status, canControl: true },
+    { ...status, epoch: "01" },
+    { ...status, revision: -1 },
+    { ...status, revision: Number.MAX_SAFE_INTEGER + 1 },
+    { ...status, pending: { ...status.pending, agents: -1 } },
+    { ...status, pending: { ...status.pending, jobs: Number.MAX_SAFE_INTEGER + 1 } },
+    { ...status, pending: { ...status.pending, extra: 0 } },
+    { ...status, extra: false },
+  ]) assert.throws(() => validateSpsNativeWorkspaceSurface("executionControl", workspaceId, invalid));
+});
+
 test("workspace surface JSON clone rejects accessors, cycles, holes, and excessive nesting or nodes", () => {
   const workspaceId = "11111111-1111-4111-8111-111111111111";
   let getterCalls = 0;

@@ -192,6 +192,30 @@ async function clickText(cdp, texts, label, { exact = false, scopeText = null } 
   assert.equal(result?.ok, true, `${label} could not be clicked: ${result?.reason || "unknown"}. ${result?.body || result?.text || ""}`);
   return result;
 }
+function marketplaceTabProbeExpression(click = false) {
+  return `(() => {
+    const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+    const visible = (element) => {
+      const style = getComputedStyle(element);
+      return style.display !== 'none' && style.visibility !== 'hidden'
+        && element.getClientRects().length > 0 && !element.closest('[hidden],[aria-hidden="true"]');
+    };
+    const tablist = [...document.querySelectorAll('[role="tablist"]')]
+      .find((element) => normalize(element.getAttribute('aria-label')) === 'Plugin sections');
+    const tab = [...(tablist?.querySelectorAll('[role="tab"]') || [])]
+      .find((element) => normalize(element.getAttribute('aria-label') || element.innerText || element.textContent) === 'Marketplace');
+    if (!tab || !visible(tab) || tab.matches(':disabled') || tab.getAttribute('aria-disabled') === 'true') return false;
+    ${click ? "tab.click();" : ""}
+    return true;
+  })()`;
+}
+async function waitForAndClickMarketplaceTab(cdp) {
+  const readyPage = await waitPage(cdp, () => cdp.evaluate(marketplaceTabProbeExpression()),
+    "visible, enabled Workspace Marketplace tab");
+  const clicked = await cdp.evaluate(marketplaceTabProbeExpression(true));
+  assert.equal(clicked, true, "Workspace Marketplace tab stopped being visible or enabled before click.");
+  return readyPage;
+}
 async function setField(cdp, selector, value, label) {
   const result = await cdp.evaluate(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
@@ -318,17 +342,11 @@ try {
 
   const before = lifecycleSnapshot(await api(workspace, "/api/plugins"));
   await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/company/settings/instance/plugins`)})`);
-  let managerPage = await waitPage(
-    workspace,
-    (current) => !current.text.includes("Loading SPS extensions...")
-      && (current.text.includes("Marketplace") || current.text.includes("Install Plugin")),
-    "ready Workspace plugin manager",
-  );
+  let managerPage = await waitForAndClickMarketplaceTab(workspace);
   const hasGenericInstall = managerPage.text.includes("Install Plugin");
 
   // Marketplace Assistant is allowed to search and explain verified metadata,
   // but it must not mutate production plugin lifecycle state.
-  await clickText(workspace, "Marketplace", "Workspace Marketplace tab", { exact: true });
   await waitPage(workspace, (current) => current.text.includes("Marketplace Assistant"), "Marketplace Assistant panel");
   const assistantBefore = lifecycleSnapshot(await api(workspace, "/api/plugins"));
   const assistantAgent = await workspace.evaluate(`(() => {
@@ -373,7 +391,7 @@ try {
   // The baseline SPS UI delegates host installation to the signed Registry.
   // This is still an actual Desktop UI action; no lifecycle API is called.
   if (!hasGenericInstall) {
-    await clickText(workspace, "Marketplace", "Workspace Marketplace tab", { exact: true });
+    await waitForAndClickMarketplaceTab(workspace);
     await waitPage(workspace, (current) => current.text.includes("Open secure install review"), "Workspace secure install review control");
     await clickText(workspace, "Open secure install review", "Workspace secure install review");
     registry = await cdpFor(await waitTarget(debugPort, child, (entry) => entry.title?.startsWith("SPS Plugin Sources"), "Plugin Registry UI"));

@@ -17,6 +17,10 @@ test("keeps the unified SPS Desktop release on its explicit stable update channe
       from: ".owner-host-runtime-package",
       to: "sps-owner-host-runtime-package",
     },
+    {
+      from: "../desktop-node/native/windows-job-supervisor/bin/SpsWindowsJobSupervisor.exe",
+      to: "sps-windows-job-supervisor/SpsWindowsJobSupervisor.exe",
+    },
   ]);
 
   assert.deepEqual(manifest.build.publish, [{

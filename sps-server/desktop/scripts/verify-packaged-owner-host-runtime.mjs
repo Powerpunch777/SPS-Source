@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { materializeSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
 import { verifyPackagedZodRuntime } from "./verify-packaged-zod-runtime.mjs";
+import { spawnWindowsJobSupervisor } from "../../desktop-node/src/windows-job-supervisor.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -55,6 +56,26 @@ if (missing.length > 0) {
     `The packaged SPS Owner Host runtime is incomplete at ${runtimeRoot}. Missing: ${missing.join(", ")}`,
   );
 }
+
+const supervisorPath = path.join(desktopRoot, "dist", "win-unpacked", "resources", "sps-windows-job-supervisor", "SpsWindowsJobSupervisor.exe");
+await access(supervisorPath);
+const supervisor = spawnWindowsJobSupervisor({
+  executable: path.join(runtimeRoot, "bin", "node.exe"),
+  args: ["-e", 'process.stdout.write("sps-packaged-job-ok\\n")'],
+  cwd: runtimeRoot,
+  env: { SYSTEMROOT: process.env.SYSTEMROOT ?? "C:\\Windows", WINDIR: process.env.WINDIR ?? "C:\\Windows" },
+}, { helperPath: supervisorPath });
+let supervisorOutput = "";
+supervisor.stdout.on("data", chunk => { supervisorOutput = (supervisorOutput + chunk.toString("utf8")).slice(-1024); });
+supervisor.stderr.resume();
+supervisor.stdin.end();
+await supervisor.supervisorReady;
+const supervisedExit = await supervisor.waitForOwnedJobTermination();
+if (supervisedExit.type !== "exit" || supervisedExit.activeProcesses !== 0 || supervisedExit.code !== 0
+    || supervisorOutput !== "sps-packaged-job-ok\n") {
+  throw new Error("The packaged Windows command supervisor did not confirm a clean owned process tree.");
+}
+console.log("Verified the packaged Windows Job Object supervisor with the bundled Node runtime.");
 
 const packagedZod = await verifyPackagedZodRuntime(runtimeRoot);
 console.log(`Verified packaged Core Zod ${packagedZod.version} issue budget (${packagedZod.issueLimit} records).`);

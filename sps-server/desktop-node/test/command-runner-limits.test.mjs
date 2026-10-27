@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createWorkspaceE2eFixture } from "../../desktop/scripts/workspace-e2e-fixture.mjs";
 import {
   cancelSpsNodeCommands,
   executeSpsNodeCommand,
@@ -42,7 +42,8 @@ function makeExecutionOptions(command, overrides = {}) {
 }
 
 async function waitForFile(filePath) {
-  const deadline = Date.now() + 5_000;
+  // Include bounded supervisor startup and the CLI's first filesystem action.
+  const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     try {
       await fs.access(filePath);
@@ -130,7 +131,8 @@ test("clamps a 1 ms neutral plugin timeout to 1 second and waits for the child t
 });
 
 test("rejects duplicate active IDs without disturbing the original process and permits reuse after completion", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sps-command-duplicate-"));
+  const fixture = await createWorkspaceE2eFixture();
+  const directory = fixture.directory;
   const marker = path.join(directory, "original-started.txt");
   const completions = [];
   let invocationCount = 0;
@@ -187,12 +189,13 @@ test("rejects duplicate active IDs without disturbing the original process and p
   } finally {
     await cancelSpsNodeCommands("Clean up duplicate-guard test process").catch(() => undefined);
     await execution?.catch(() => undefined);
-    await fs.rm(directory, { recursive: true, force: true });
+    await fixture.remove();
   }
 });
 
 test("allows distinct command IDs to run concurrently without a global cap", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "sps-command-concurrent-"));
+  const fixture = await createWorkspaceE2eFixture();
+  const directory = fixture.directory;
   const markers = [path.join(directory, "one.txt"), path.join(directory, "two.txt")];
   const completions = [];
   let executions = [];
@@ -216,6 +219,6 @@ test("allows distinct command IDs to run concurrently without a global cap", asy
   } finally {
     await cancelSpsNodeCommands("Clean up concurrent test processes").catch(() => undefined);
     await Promise.all(executions.map((execution) => execution.catch(() => undefined)));
-    await fs.rm(directory, { recursive: true, force: true });
+    await fixture.remove();
   }
 });

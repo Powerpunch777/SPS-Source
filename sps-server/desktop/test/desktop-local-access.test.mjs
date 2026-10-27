@@ -120,3 +120,21 @@ test("model management Host proof requires exact local routes, UUIDs and methods
     assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `${workspaceOrigin}${pathname.replace(id, "not-uuid")}`, method: methods[0] }), !pathname.includes(id));
   }
 });
+
+test("Workspace execution control receives Host proof only on its exact local GET and POST", () => {
+  const workspaceOrigin = "http://127.0.0.1:31310";
+  const route = "/api/companies/11111111-1111-4111-8111-111111111111/execution-control";
+  const check = (url, method) => isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin, method });
+  for (const method of ["GET", "POST"]) {
+    assert.equal(check(`${workspaceOrigin}${route}`, method), true);
+    for (const url of [
+      `http://127.0.0.1:31311${route}`, `https://member.example.test${route}`,
+      `${workspaceOrigin}${route}/`, `${workspaceOrigin}${route}/stop`, `${workspaceOrigin}${route}-other`,
+      `${workspaceOrigin}${route}?action=stop`, `${workspaceOrigin}${route}#stop`,
+      `${workspaceOrigin}${route.replace("11111111-1111-4111-8111-111111111111", "not-uuid")}`,
+    ]) assert.equal(check(url, method), false);
+  }
+  for (const method of [undefined, "PATCH", "PUT", "DELETE", "OPTIONS", "HEAD"]) {
+    assert.equal(check(`${workspaceOrigin}${route}`, method), false);
+  }
+});

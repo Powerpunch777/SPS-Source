@@ -313,7 +313,7 @@ export function createSpsNativeHostIngress({ getIdentity, getServerCertificates,
     try {
       if (disposed || !server) throw fail(503);
       const workspacePath = request.method === "GET" && typeof dispatchWorkspace === "function"
-        && /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-bootstrap|workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/.exec(request.url);
+        && /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-bootstrap|execution-control|workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/.exec(request.url);
       const workspaceInboxPatch = request.method === "PATCH" && typeof dispatchWorkspace === "function"
         && WORKSPACE_INBOX_PATCH_TARGET.exec(request.url);
       const workspaceDiscovery = request.method === "GET" && typeof dispatchWorkspace === "function"

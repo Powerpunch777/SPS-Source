@@ -10,6 +10,8 @@ const targetRoot = path.resolve(desktopRoot, "node_modules", "@sps", "desktop-no
 const nodeModulesRoot = path.resolve(desktopRoot, "node_modules");
 const checkOnly = process.argv.includes("--check");
 
+if (!checkOnly) await import("../../desktop-node/scripts/prepare-windows-job-supervisor.mjs");
+
 if (!targetRoot.startsWith(`${nodeModulesRoot}${path.sep}`)) {
   throw new Error("Refusing to synchronize @sps/desktop-node outside this Desktop node_modules directory.");
 }

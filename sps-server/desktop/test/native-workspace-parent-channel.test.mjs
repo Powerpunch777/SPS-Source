@@ -287,6 +287,20 @@ test("selected Workspace bootstrap is bound to the exact Workspace and target", 
   assert.equal(fetches, 1);
 });
 
+test("execution status uses the fixed Workspace read route", async t => {
+  const target = `/api/companies/${WORKSPACE}/execution-control`;
+  let observed;
+  const status = { state: "stopped", epoch: "3", revision: 5, updatedAt: null,
+    pending: { agents: 0, jobs: 0, models: 0, commands: 0, plugins: 0 }, canControl: false };
+  const f = fixture({ fetchImpl: async (url, options) => { observed = { url, options }; return response(status); } });
+  t.after(() => f.channel.dispose());
+  await f.bootstrap(); f.ready(); await tick();
+  assert.deepEqual(await f.channel.read({ ...input(), target }), status);
+  assert.equal(observed.url, `http://127.0.0.1:43210${target}`);
+  assert.equal(observed.options.method, "GET");
+  await assert.rejects(f.channel.read({ ...input(), target: `${target}?extra=true` }));
+});
+
 test("workspace discovery signs only the nullable fixed discovery route", async t => {
   const target = "/sps-native/v1/workspaces";
   let observed;

@@ -254,6 +254,16 @@ test("prefers a Windows executable over an npm shell wrapper", async () => {
   assert.equal(resolved, "C:\\Program Files\\SPS\\codex.exe");
 });
 
+test("resolves relative Windows executable names before supervised launch and rejects unresolved names", async () => {
+  assert.equal(await resolveSpsNodeExecutable("codex.exe", {
+    platform: "win32",
+    findWindowsCommand: async () => ["codex.exe", "C:\\Program Files\\SPS\\codex.exe"],
+  }), "C:\\Program Files\\SPS\\codex.exe");
+  await assert.rejects(resolveSpsNodeExecutable("codex.exe", {
+    platform: "win32", findWindowsCommand: async () => [],
+  }), /could not resolve an executable/);
+});
+
 test("runs the Codex npm wrapper through node.exe without a command shell", async () => {
   const invocation = await resolveSpsNodeInvocation("codex", ["--version"], {
     platform: "win32",

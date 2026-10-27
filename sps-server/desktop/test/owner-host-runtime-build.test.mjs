@@ -55,6 +55,9 @@ test("ships one verified Owner Host runtime archive instead of expanded runtime 
   assert.deepEqual(packageManifest.build.extraResources, [{
     from: ".owner-host-runtime-package",
     to: "sps-owner-host-runtime-package",
+  }, {
+    from: "../desktop-node/native/windows-job-supervisor/bin/SpsWindowsJobSupervisor.exe",
+    to: "sps-windows-job-supervisor/SpsWindowsJobSupervisor.exe",
   }]);
   assert.doesNotMatch(JSON.stringify(packageManifest.build.extraResources), /"\.owner-host-runtime"/);
   assert.match(verifierScript, /materializeSpsOwnerHostRuntimePackage/);

@@ -122,3 +122,48 @@ test("preserves POSIX process-group cleanup after the direct child exits", async
   assert.ok(!signals.some(([pid, signal]) => pid === processChild.pid && signal === "SIGTERM"));
   assert.equal(terminator.hasUnconfirmedTermination(processChild), false);
 });
+
+test("uses the retained Job Object acknowledgment after the supervisor has exited without any PID operation", async () => {
+  let acknowledged = false;
+  let release;
+  const acknowledgment = new Promise(resolve => { release = resolve; });
+  const processChild = Object.assign(child(), {
+    exitCode: 0,
+    terminateOwnedJob: async () => { await acknowledgment; acknowledged = true; },
+    waitForOwnedJobTermination: async () => { await acknowledgment; },
+    hasUnconfirmedOwnedJobTermination: () => false,
+  });
+  const terminator = createOwnedProcessTerminator({
+    platform: "win32",
+    signalProcess: () => { throw new Error("must not probe or signal a PID"); },
+    terminateWindowsChild: () => { throw new Error("must not use taskkill"); },
+  });
+  const pending = terminator.terminate(processChild);
+  await Promise.resolve();
+  assert.equal(acknowledged, false);
+  assert.equal(terminator.hasUnconfirmedTermination(processChild), true);
+  release();
+  await pending;
+  assert.equal(acknowledged, true);
+  assert.equal(terminator.hasUnconfirmedTermination(processChild), false);
+});
+
+test("retains an unconfirmed Job Object after helper exit and never falls back to its reused PID", async () => {
+  let attempts = 0;
+  const processChild = Object.assign(child(), {
+    exitCode: 1,
+    terminateOwnedJob: async () => { attempts++; throw new Error("private helper details"); },
+    waitForOwnedJobTermination: async () => { throw new Error("missing empty-job ack"); },
+    hasUnconfirmedOwnedJobTermination: () => true,
+  });
+  const terminator = createOwnedProcessTerminator({
+    platform: "win32",
+    signalProcess: () => { throw new Error("must not probe or signal a PID"); },
+    terminateWindowsChild: () => { throw new Error("must not use taskkill"); },
+  });
+  assert.equal(terminator.hasUnconfirmedTermination(processChild), true);
+  await assert.rejects(terminator.terminate(processChild), /^Error: Local command termination failed\.$/);
+  await assert.rejects(terminator.terminate(processChild), /^Error: Local command termination failed\.$/);
+  assert.equal(attempts, 1);
+  assert.equal(terminator.hasUnconfirmedTermination(processChild), true);
+});

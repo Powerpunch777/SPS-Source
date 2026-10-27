@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
+import { spawn } from "node:child_process";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -47,18 +48,24 @@ const canary = async () => ({ executable: process.execPath, args: ["-e", "proces
 test("an unconfirmed tree termination retains Source ownership after its direct child exits", { timeout: 15000 }, async () => {
   const id = randomUUID(), ownership = Symbol("unconfirmed-termination"), completions = [];
   let leaseChecks = 0, sourceCloses = 0, ownedChild, stopped;
-  const processTermination = createOwnedProcessTerminator({
-    platform: "win32",
-    terminateWindowsChild: async child => {
-      ownedChild = child;
-      stopped = new Promise(resolve => child.once("close", resolve));
-      // Model taskkill failing after its fallback stops only the direct child.
-      // This fixture owns this exact canary and never signals a supplied PID.
-      child.kill();
-      throw new Error("fixture tree termination was not confirmed");
-    },
-  });
+  const processTermination = createOwnedProcessTerminator({ platform: "win32" });
   const options = { command: command(id), ownership, processTermination,
+    // Inject only the trusted local spawn boundary. Model loss of the retained
+    // job's confirmation after the owned canary exits; no PID kill is involved.
+    spawnCommand: (invocation, spawnOptions) => {
+      const child = ownedChild = spawn(invocation.executable, invocation.args, spawnOptions);
+      stopped = new Promise(resolve => child.once("close", resolve));
+      let unconfirmed = false;
+      child.hasUnconfirmedOwnedJobTermination = () => unconfirmed;
+      child.waitForOwnedJobTermination = async () => { throw new Error("fixture acknowledgment unavailable"); };
+      child.terminateOwnedJob = async () => {
+        unconfirmed = true;
+        child.kill();
+        await stopped;
+        throw new Error("fixture tree termination was not confirmed");
+      };
+      return child;
+    },
     hubUrl: "https://fixture.example", nodeId: "fixture", profile: {},
     resolveInvocation: async () => ({ executable: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"] }),
     checkCommandLease: async () => ({ active: ++leaseChecks === 1 }),

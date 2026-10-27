@@ -133,3 +133,54 @@ production provider/Identity, signed installation/update/restore, OS containment
 or the complete release tuple. Known unwaived Zod High and broader release gates
 remain. All earlier failed logs are retained; no security or cleanup gate is
 suppressed. Coordinator with GPT-6 Luna high subagents, with limit retries.
+# Follow-up: actual Desktop integration and CI regressions
+
+The initial control component was mounted only in retained CompanySettings; the
+default SPS route uses SpsCoreHostSettings. The latter now mounts the same Core
+component. A real source Electron acceptance then found that Desktop's fixed
+technical Host proof allowlist omitted execution-control: the legitimate Owner
+received canControl:false. Desktop now adds its existing second proof only to
+the exact local UUID endpoint with GET/POST and no query/fragment; Core authority
+checks and Native Member read-only behavior are unchanged. The allowlist test
+passed. Setup sign-in starts disabled until the renderer has installed handlers
+and rendered the initial account state, preventing an early no-op click.
+
+Actual source Electron/Core acceptance completed with exit0: zero Agents, local
+Host pause/stop, stale revision denial, independent second Workspace, persisted
+stopped epoch/revision across Main/Core restart, and resume without epoch reset.
+620/1000px layout checks and a screenshot were captured. Both Main processes
+exited0, four output streams ended, final shutdown was graceful without fallback,
+and temporary data cleanup was confirmed. This establishes the stated local
+Main/output/data scope, not whole-descendant, Native LAN or installed qualification.
+The source-only --execution-control mode is connected to the existing restricted
+Windows CI runner with the same owned-job cleanup gate. Its focused probe passed.
+
+Current-head CI identified two regressions. Archive cancellation entered new
+admission while the Workspace was already archived; finalization now always
+releases its owned issue/checkout references under the control lock, while
+recovery/promotion require active status, running control and matching epoch.
+Null/undefined DB compatibility fixtures now skip local stop registration; real
+DB registration remains. Selected archive4 and marketplace route3 passed. The
+archive fixture joins startup and always cleans the DB; Windows-only bounded
+setup/cleanup budgets accommodate observed provisioning without changing product
+deadlines. Earlier setup and cleanup timeouts remain recorded, not erased.
+
+Host settings/control UI tests4, Native Member UI tests12 and focused UI types
+passed. A focused server typecheck emitted no diagnostics, but its polling wrapper
+lost the exit code; it is unverified rather than reported passing. The earlier
+UI build passed. Full local tests/build were not rerun, and the previous CI Zod
+High compatibility failure is not resolved by these changes.
+
+The final Native Member Core DB case passed with real stop state, read-only DTO,
+POST denial and current membership/device revocation checks. A subsequent strict
+UI parser case passed after an earlier worker-start timeout with zero assertions;
+the parser does not coerce an untrusted state object. The refreshed token gate
+still reports the existing79 color/36 arbitrary-value/1 font-size violations;
+the three changed UI components are absent from its violation list.
+
+Old-head CI later finished with a packaged Host Plugin lifecycle failure:
+the smoke clicked Marketplace while the actual manager still displayed
+Loading Workspace extensions. The smoke now waits for its exact visible,
+enabled accessible tab and preserves the pre-click generic-install snapshot.
+Its focused contract3 and syntax checks pass; the actual packaged scenario has
+not been rerun. This changes no Marketplace policy or Plugin Builder structure.

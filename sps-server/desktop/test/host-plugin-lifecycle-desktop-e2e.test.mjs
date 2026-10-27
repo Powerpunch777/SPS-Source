@@ -17,6 +17,10 @@ test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketpl
   assert.match(harness, /#start-sps-account|Sign in/);
   assert.match(harness, /#create-owner-server|Create/);
   assert.match(harness, /company\/settings\/instance\/plugins/);
+  assert.match(harness, /function marketplaceTabProbeExpression\(click = false\)/);
+  assert.match(harness, /querySelectorAll\('\[role="tablist"\]'\)/);
+  assert.match(harness, /waitForAndClickMarketplaceTab\(workspace\)/);
+  assert.doesNotMatch(harness, /Loading SPS extensions\.\.\./, "Marketplace readiness must use the actual visible, enabled tab.");
   assert.match(harness, /Install Plugin/);
   assert.match(harness, /Start and use/);
   assert.match(harness, /Stop using/);

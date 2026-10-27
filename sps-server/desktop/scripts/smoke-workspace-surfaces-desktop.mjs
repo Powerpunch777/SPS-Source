@@ -31,6 +31,7 @@ const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
 const runtimeDiscovery = process.argv.includes("--runtime-discovery");
 const noAiChecklist = runtimeDiscovery || process.argv.includes("--no-ai-checklist");
 const nativeManagement = process.argv.includes("--native-management");
+const executionControlOnly = process.argv.includes("--execution-control");
 const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
 const launched = createWorkspaceE2eChildTracker();
 let cleanupDisposition;
@@ -44,6 +45,9 @@ if (!packagedBinary && !sourceElectron) {
 await access(packagedBinary || sourceElectron);
 if (noAiChecklist && !sourceElectron) throw new Error("The No-AI reference fixture is source-only acceptance, not packaged release evidence.");
 if (nativeManagement && (!sourceElectron || packagedBinary || noAiChecklist)) throw new Error("Prepared Native management is a separate source-only acceptance mode.");
+if (executionControlOnly && (!sourceElectron || packagedBinary || noAiChecklist || nativeManagement)) {
+  throw new Error("Workspace execution control is a separate source-only acceptance mode.");
+}
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -492,6 +496,18 @@ async function click(cdp, selector, label) {
   assert.equal(result?.ok, true, `${label} could not be clicked: ${result?.reason || "unknown"}`);
 }
 
+async function waitForEnabled(cdp, selector, label) {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    if (await cdp.evaluate(`(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      return Boolean(element && !element.disabled);
+    })()`)) return;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${label} to become available.`);
+}
+
 async function waitForPage(cdp, predicate, description, timeoutMs = 45_000) {
   const expiresAt = Date.now() + timeoutMs;
   let last = null;
@@ -629,12 +645,13 @@ try {
   );
   setupCdp = await openCdp(setupTarget);
   await waitForPage(setupCdp, (page) => page.body.includes("SPS"), "the SPS setup content");
+  await waitForEnabled(setupCdp, "#start-sps-account", "SPS sign-in readiness");
   await click(setupCdp, "#start-sps-account", "SPS sign-in");
   await followCapturedIdentityAuthorization(mockIdentity, identityUrl);
   console.log("[no-ai] mock Identity authorization followed the real loopback state/PKCE callback without starting a system browser");
   await waitForPage(setupCdp, () => issued.length > 0, "the mock Identity authorization callback", 30_000);
   await waitForPage(setupCdp, (page) => page.body.includes("Create") || page.body.includes("Server"), "the post-sign-in Host choice", 45_000);
-  if (screenshotPath && sourceElectron) {
+  if (screenshotPath && sourceElectron && !executionControlOnly) {
     const directory = path.dirname(screenshotPath);
     for (const [width, height] of [[1024, 720], [620, 760]]) {
       await setupCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
@@ -672,7 +689,7 @@ try {
   assert.ok(company?.id && company?.issuePrefix, `The isolated Host did not create a Workspace: ${JSON.stringify(companies)}`);
   const companyPrefix = company.issuePrefix;
 
-  if (sourceElectron) {
+  if (sourceElectron && !executionControlOnly) {
     const clearedShell = await api(workspaceCdp, `/api/companies/${company.id}/workspace-shell`, {
       method: "PUT",
       body: { pluginId: null },
@@ -768,7 +785,77 @@ try {
     console.log("D2 neutral entry E2E: zero Agents/default activations, independent root, legacy Plugin Manager link, and 620/1000px fit.");
   }
 
-  if (nativeManagement) {
+  if (executionControlOnly) {
+    failurePhase = "workspace_execution_control";
+    console.log("[execution-control] actual source Desktop opened its isolated Core Workspace.");
+    const controlPath = `/api/companies/${company.id}/execution-control`;
+    const agentsBefore = await api(workspaceCdp, `/api/companies/${company.id}/agents`);
+    assert.equal(agentsBefore.length, 0, "Execution controls must not require an Agent.");
+    const other = await api(workspaceCdp, "/api/companies", { method: "POST", body: { name: "Independent execution fixture" } });
+    assert.ok(other.id && other.id !== company.id);
+    const initial = await api(workspaceCdp, controlPath);
+    assert.equal(initial.canControl, true, "The real Desktop Host must have control authority.");
+    assert.equal(initial.state, "running");
+    const openSettings = async () => {
+      await workspaceCdp.evaluate(`location.assign(${JSON.stringify(`/${companyPrefix}/company/settings`)})`);
+      await waitForPage(workspaceCdp, page => page.body.includes("Host settings") && page.body.includes("Workspace 실행"), "baseline Host execution controls");
+    };
+    const waitForControl = async (state, revision) => {
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const value = await api(workspaceCdp, controlPath);
+        if (value.state === state && value.revision === revision) return value;
+        await delay(100);
+      }
+      throw new Error(`Workspace execution control did not reach ${state}.`);
+    };
+    await openSettings();
+    await waitForEnabled(workspaceCdp, '[data-sps-execution-action="pause"]', "Workspace pause action");
+    await click(workspaceCdp, '[data-sps-execution-action="pause"]', "Pause Workspace through baseline Host settings");
+    const paused = await waitForControl("paused", initial.revision + 1);
+    assert.equal(paused.epoch, initial.epoch);
+    assert.equal((await api(workspaceCdp, `/api/companies/${other.id}/execution-control`)).state, "running");
+    await waitForPage(workspaceCdp, page => page.body.includes("일시정지 — 새 작업 대기"), "paused execution state");
+    await waitForEnabled(workspaceCdp, '[data-sps-execution-action="stop"]', "Workspace stop action");
+    await click(workspaceCdp, '[data-sps-execution-action="stop"]', "Stop Workspace through baseline Host settings");
+    const stopped = await waitForControl("stopped", paused.revision + 1);
+    console.log("[execution-control] baseline Host settings pause and stop reached durable Core state.");
+    assert.equal(BigInt(stopped.epoch), BigInt(initial.epoch) + 1n);
+    const staleStatus = await workspaceCdp.evaluate(`(async () => (await fetch(${JSON.stringify(controlPath)}, {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body:JSON.stringify({action:'resume',expectedRevision:${initial.revision}}) })).status)()`, true);
+    assert.equal(staleStatus, 409, "A stale settings action must not resume the Workspace.");
+    await waitForPage(workspaceCdp, page => page.body.includes("중지됨"), "stopped execution state");
+    for (const [width, height] of [[620, 760], [1000, 760]]) {
+      await workspaceCdp.command("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+      const fits = await workspaceCdp.evaluate(`document.documentElement.scrollWidth <= innerWidth`);
+      assert.equal(fits, true, "Execution controls must fit the Host settings viewport.");
+    }
+    await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
+    if (screenshotPath) await captureScreenshot(workspaceCdp, screenshotPath);
+    await closeDesktopForRestart();
+    launchDesktop(["--sps-core-settings"]);
+    setupCdp = await openCdp(await waitForTarget(debugPort, child, target => target.title === "SPS Core Settings", "restart Core Settings"));
+    await waitForPage(setupCdp, page => page.body.includes("SPS"), "restart Core Settings readiness");
+    await waitForEnabled(setupCdp, '[data-action="open-workspace"]', "Core Settings Workspace action");
+    await click(setupCdp, '[data-action="open-workspace"]', "Reopen actual Host after restart");
+    workspaceCdp = await openCdp(await waitForTarget(debugPort, child, target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""), "restarted Workspace", hostReadyTimeoutMs));
+    await waitForPage(workspaceCdp, page => page.body.includes("Workspace") || page.workspaceEntry === "empty", "restarted Workspace UI");
+    const persisted = await api(workspaceCdp, controlPath);
+    assert.equal(persisted.state, "stopped");
+    assert.equal(persisted.epoch, stopped.epoch);
+    assert.equal(persisted.revision, stopped.revision);
+    console.log("[execution-control] stopped state and revision survived the owned Main/Core restart.");
+    await openSettings();
+    await waitForPage(workspaceCdp, page => page.body.includes("중지됨"), "persisted stopped UI after restart");
+    await waitForEnabled(workspaceCdp, '[data-sps-execution-action="resume"]', "Workspace resume action");
+    await click(workspaceCdp, '[data-sps-execution-action="resume"]', "Resume future Workspace work");
+    const resumed = await waitForControl("running", stopped.revision + 1);
+    assert.equal(resumed.epoch, stopped.epoch);
+    assert.equal((await api(workspaceCdp, `/api/companies/${other.id}/execution-control`)).state, "running");
+    assert.equal((await api(workspaceCdp, `/api/companies/${company.id}/agents`)).length, 0);
+    console.log("[execution-control] actual source Electron/Core baseline Host settings: pause, stop, stale revision denial, separate Workspace, persisted stop across Main/Core restart, and resume passed; zero Agents, no provider.");
+  } else if (nativeManagement) {
     // Seed only this stopped temporary Host, not a production IPC or an automated
     // approval of the real security confirmation. Main must read it independently.
     await closeDesktopForRestart();

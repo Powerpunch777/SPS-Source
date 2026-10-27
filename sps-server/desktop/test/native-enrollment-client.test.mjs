@@ -144,6 +144,8 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
           providerPluginKey: null, shell: null, fallbackReason: null }],
         [`/api/companies/${DEVICE}/workspace-shell/providers`, []],
         [`/api/companies/${DEVICE}/workspace-dashboard`, { widgets: [] }],
+        [`/api/companies/${DEVICE}/execution-control`, { state: "paused", epoch: "2", revision: 4, updatedAt: null,
+          pending: { agents: 0, jobs: 1, models: 0, commands: 0, plugins: 0 }, canControl: false }],
         [`/api/companies/${DEVICE}/workspace-inbox`, { items: [{ id: "55555555-5555-4555-8555-555555555555", companyId: DEVICE, title: "Inbox" }] }],
         [`/api/companies/${DEVICE}/workspace-inbox?archived=true`, { items: [{ id: "55555555-5555-4555-8555-555555555555", companyId: DEVICE, title: "Archived" }] }],
       ]);
@@ -412,11 +414,14 @@ test("Member Workspace reads use only fixed pinned GET paths and saved credentia
   const shell = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "shell", keyRequest, issuance: f.issuance });
   const providers = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "providers", keyRequest, issuance: f.issuance });
   const dashboard = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "dashboard", keyRequest, issuance: f.issuance });
+  const executionControl = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "executionControl", keyRequest, issuance: f.issuance });
   const inbox = await client.readWorkspaceSurface({ workspaceId: DEVICE, surface: "inbox", archived: true, keyRequest, issuance: f.issuance });
   assert.deepEqual(JSON.parse(JSON.stringify(shell)), { mode: "neutral", providerPluginId: null,
     providerPluginKey: null, shell: null, fallbackReason: null });
   assert.deepEqual(JSON.parse(JSON.stringify(providers)), []);
   assert.deepEqual(JSON.parse(JSON.stringify(dashboard)), { widgets: [] });
+  assert.deepEqual(JSON.parse(JSON.stringify(executionControl)), { state: "paused", epoch: "2", revision: 4, updatedAt: null,
+    pending: { agents: 0, jobs: 1, models: 0, commands: 0, plugins: 0 }, canControl: false });
   assert.deepEqual(JSON.parse(JSON.stringify(inbox)), { items: [{ id: "55555555-5555-4555-8555-555555555555",
     companyId: DEVICE, title: "Archived" }] });
   const reads = f.requests.slice(1);
@@ -424,6 +429,7 @@ test("Member Workspace reads use only fixed pinned GET paths and saved credentia
     `/api/companies/${DEVICE}/workspace-shell`,
     `/api/companies/${DEVICE}/workspace-shell/providers`,
     `/api/companies/${DEVICE}/workspace-dashboard`,
+    `/api/companies/${DEVICE}/execution-control`,
     `/api/companies/${DEVICE}/workspace-inbox?archived=true`,
   ]);
   for (const request of reads) {

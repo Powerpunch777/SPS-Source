@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld("spsNativeWorkspace", Object.freeze({
       if (!keys.includes("surface") || keys.some(key => !["surface", "archived"].includes(key))
         || keys.some(key => !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) throw new TypeError();
       const surface = descriptors.surface.value;
-      if (!["shell", "providers", "dashboard", "inbox"].includes(surface)) throw new TypeError();
+      if (!["shell", "providers", "dashboard", "inbox", "executionControl"].includes(surface)) throw new TypeError();
       const value = { surface };
       if (Object.hasOwn(descriptors, "archived")) {
         if (surface !== "inbox" || typeof descriptors.archived.value !== "boolean") throw new TypeError();

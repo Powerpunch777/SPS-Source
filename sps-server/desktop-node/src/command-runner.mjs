@@ -10,6 +10,7 @@ import {
 import { openSpsWorkspaceSourceRoute } from "./host-project-share.mjs";
 import { createSpsNodeUsageCollector } from "./usage-collector.mjs";
 import { createOwnedProcessTerminator } from "./owned-process-termination.mjs";
+import { assertWindowsJobSupervisorAvailable, spawnWindowsJobSupervisor } from "./windows-job-supervisor.mjs";
 
 const OUTPUT_CHUNK_LIMIT = 48 * 1024;
 const COMMAND_LEASE_CHECK_INTERVAL_MS = 2_000;
@@ -303,15 +304,15 @@ function throwIfCommandCancelled(activeRun, cancellationGeneration) {
 export async function resolveSpsNodeExecutable(command, options = {}) {
   if ((options.platform ?? process.platform) !== "win32") return command;
   const extension = path.extname(command).toLowerCase();
-  if (extension && extension !== ".cmd" && extension !== ".bat" && extension !== ".ps1") return command;
+  if (path.win32.isAbsolute(command) && /\.(exe|com)$/i.test(command)) return command;
   const findCandidates = options.findWindowsCommand ?? findWindowsCommandCandidates;
   const candidates = await findCandidates(command);
-  const executable = candidates.find((candidate) => /\.(exe|com)$/i.test(candidate));
+  const executable = candidates.find((candidate) => path.win32.isAbsolute(candidate) && /\.(exe|com)$/i.test(candidate));
   if (executable) return executable;
   if (extension === ".cmd" || extension === ".bat" || extension === ".ps1") {
     throw new Error(`SPS Desktop requires an executable for remote Node runs, not a shell wrapper: ${command}`);
   }
-  return command;
+  throw new Error(`SPS Desktop could not resolve an executable for remote Node runs: ${command}`);
 }
 
 async function fileExists(filePath) {
@@ -369,6 +370,12 @@ export async function resolveSpsNodeInvocation(command, args, options = {}) {
 }
 
 const defaultProcessTermination = createOwnedProcessTerminator();
+
+function spawnOwnedCommand(invocation, options) {
+  return process.platform === "win32"
+    ? spawnWindowsJobSupervisor({ ...invocation, cwd: options.cwd, env: options.env })
+    : spawn(invocation.executable, invocation.args, options);
+}
 
 async function closeOwnedSource(run) {
   if (run.sourceOpening) throw new Error("SPS Host Source preparation has not finished; cleanup is still pending.");
@@ -435,6 +442,7 @@ export async function executeSpsNodeCommand({
   marketplaceMcpRuntime = null,
   ownership,
   processTermination = defaultProcessTermination,
+  spawnCommand = spawnOwnedCommand,
 }) {
   const processScopeAlive = child => processTermination.isAlive(child);
   const terminateProcessTree = child => processTermination.terminate(child);
@@ -484,6 +492,7 @@ export async function executeSpsNodeCommand({
   activeCommands.set(command.id, activeRun);
   try {
     const prepared = await withCommandPreflightTimeout(async () => {
+      if (process.platform === "win32") await assertWindowsJobSupervisorAvailable();
       throwIfCommandCancelled(activeRun, cancellationGeneration);
       const ownerHasLocalSource = typeof command.workspaceSourceId === "string"
         && command.workspaceSourceId.trim()
@@ -562,15 +571,12 @@ export async function executeSpsNodeCommand({
         settled = true;
         callback(value);
       };
-      child = spawn(invocation.executable, invocation.args, {
-        cwd: workspace,
-        env: environment,
-        shell: false,
-        detached: process.platform !== "win32",
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
+      child = spawnCommand(invocation, {
+        cwd: workspace, env: environment, shell: false, detached: process.platform !== "win32",
+        windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
       });
       activeRun.child = child;
+      void child.supervisorReady?.catch(error => settle(reject, error));
       if (cancellationGeneration !== commandCancellationGeneration) {
         activeRun.cancellationError = lastCommandCancellationReason;
         void terminateProcessTree(child).catch(error => settle(reject, error));
@@ -583,8 +589,14 @@ export async function executeSpsNodeCommand({
       child.once("error", (error) => settle(reject, error));
       child.once("close", (exitCode, signal) => {
         if (leaseTimer) clearInterval(leaseTimer);
-        usageReport = usageCollector.finish();
-        settle(resolve, { exitCode, signal, timedOut });
+        if (timeout) clearTimeout(timeout);
+        void (async () => {
+          // Helper exit alone is not descendant-exit evidence. The retained
+          // job must report zero active processes and close with that result.
+          await child.waitForOwnedJobTermination?.();
+          usageReport = usageCollector.finish();
+          settle(resolve, { exitCode, signal, timedOut });
+        })().catch(error => settle(reject, error));
       });
       const checkLease = async () => {
         if (leaseCheckInFlight) return;
@@ -633,14 +645,19 @@ export async function executeSpsNodeCommand({
       dispatchLeaseCheck();
       if (typeof command.stdin === "string" && command.stdin.length > 0) child.stdin.end(command.stdin);
       else child.stdin.end();
-      if (timeoutMs > 0) {
+      const armExecutionTimeout = () => {
+        if (settled || timeoutMs <= 0) return;
         timeout = setTimeout(() => {
           timedOut = true;
           // Wait for the process tree to close before reporting completion.
           // Codex and other CLIs can spawn children that continue writing.
           void terminateProcessTree(child).catch(error => settle(reject, error));
         }, timeoutMs);
-      }
+      };
+      // Helper startup has its own bounded deadline. Start the command budget
+      // when its suspended process has joined the owned job and been resumed.
+      if (child.supervisorReady) void child.supervisorReady.then(armExecutionTimeout, error => settle(reject, error));
+      else armExecutionTimeout();
     });
     if (timeout) clearTimeout(timeout);
     if (leaseTimer) clearInterval(leaseTimer);

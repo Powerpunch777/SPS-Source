@@ -25,7 +25,7 @@ const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/s
   pluginRuntime: NATIVE_PLUGIN_TARGET,
   nodeRuntime: NATIVE_NODE_TARGET,
   workspaceBootstrap: "/api/companies" });
-const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox"]);
+const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox", "executionControl"]);
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
   unavailable: "The Native enrollment request could not complete.",
   invalid_response: "The Native enrollment response is invalid.",
@@ -77,6 +77,7 @@ function workspaceSurfaceRequest(input) {
 
 function workspaceSurfacePath(workspaceId, surface, archived) {
   const base = `/api/companies/${workspaceId}`;
+  if (surface === "executionControl") return `${base}/execution-control`;
   if (surface === "shell") return `${base}/workspace-shell`;
   if (surface === "providers") return `${base}/workspace-shell/providers`;
   if (surface === "dashboard") return `${base}/workspace-dashboard`;
