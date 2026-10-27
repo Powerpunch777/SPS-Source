@@ -3,6 +3,8 @@ import { constants as fsConstants } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
+import { nativePluginAssetType, validateSpsNativePluginAsset,
+  NATIVE_PLUGIN_MAX_ASSET } from "./native-plugin-protocol.mjs";
 
 const COOKIE_NAME = "sps_native_workspace_launch";
 const COOKIE_VALUE = /^[A-Za-z0-9_-]{43}$/;
@@ -105,6 +107,10 @@ function routeTarget(target) {
   if (typeof target !== "string" || target.length === 0 || Buffer.byteLength(target, "utf8") > MAX_TARGET_BYTES
     || !target.startsWith("/") || target.startsWith("//") || /[?#%\\\x00-\x20\x7f]/.test(target)) return null;
   if (target === "/") return { relative: "index.html", contentType: "text/html; charset=utf-8", isIndex: true };
+  if (target.startsWith("/plugin/")) {
+    const pluginPath = target.slice("/plugin/".length);
+    return { pluginPath, contentType: nativePluginAssetType(pluginPath), isPluginAsset: true, isIndex: false };
+  }
   const fixed = FIXED_FILES.get(target);
   if (fixed) return { relative: fixed[0], contentType: fixed[1], isIndex: false };
   if (!target.startsWith("/assets/")) return null;
@@ -149,6 +155,38 @@ function contentSecurityPolicy(hashes) {
   ].join("; ");
 }
 
+function pluginContentSecurityPolicy(hashes, nonce) {
+  return [
+    "default-src 'none'",
+    `script-src 'self' blob: 'nonce-${nonce}' ${hashes.join(" ")}`.trim(),
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "worker-src 'none'",
+    "frame-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "manifest-src 'self'",
+    "media-src 'none'",
+  ].join("; ");
+}
+
+function injectPluginNonce(index, nonce) {
+  let html;
+  try { html = new TextDecoder("utf-8", { fatal: true }).decode(index); } catch { fail(); }
+  let inserted = false;
+  html = html.replace(/<head\b[^>]*>/i, opening => {
+    if (inserted) fail();
+    inserted = true;
+    return `${opening}<meta name="sps-native-plugin-nonce" content="${nonce}">`;
+  });
+  if (!inserted) fail();
+  return Buffer.from(html, "utf8");
+}
+
 function writeEmpty(response, statusCode, headers = {}) {
   if (response.headersSent || response.destroyed) return;
   response.writeHead(statusCode, {
@@ -178,11 +216,18 @@ function validFraming(request) {
 export async function createSpsNativeWorkspaceAssets(options) {
   let rootInput;
   let assertCurrent;
+  let pluginReader = null;
   try {
     if (!options || typeof options !== "object" || Array.isArray(options)
-      || Object.keys(options).some(key => !["root", "assertCurrent"].includes(key))) throw new Error();
+      || Object.keys(options).some(key => !["root", "assertCurrent", "plugin"].includes(key))) throw new Error();
     if (typeof options.root !== "string" || options.root.trim().length === 0
       || typeof options.assertCurrent !== "function") throw new Error();
+    if (Object.hasOwn(options, "plugin")) {
+      const plugin = options.plugin;
+      if (!plugin || typeof plugin !== "object" || Array.isArray(plugin)
+        || Object.keys(plugin).some(key => key !== "readAsset") || typeof plugin.readAsset !== "function") throw new Error();
+      pluginReader = plugin.readAsset;
+    }
     rootInput = path.resolve(options.root);
     assertCurrent = options.assertCurrent;
   } catch { fail(); }
@@ -203,6 +248,7 @@ export async function createSpsNativeWorkspaceAssets(options) {
   let origin;
   let authority;
   let policy;
+  let pluginIndexBody = null;
 
   async function checkCurrent() {
     if (disposed) fail();
@@ -377,20 +423,55 @@ export async function createSpsNativeWorkspaceAssets(options) {
         writeEmpty(response, 404);
         return;
       }
+      if (target.isPluginAsset) {
+        if (!pluginReader) {
+          writeEmpty(response, 404);
+          return;
+        }
+        const controller = new AbortController();
+        const onClose = () => { if (!response.writableEnded) controller.abort(); };
+        response.once("close", onClose);
+        let timer;
+        try {
+          timer = setTimeout(() => controller.abort(), 10_000);
+          const value = validateSpsNativePluginAsset(
+            await withDeadline(pluginReader(target.pluginPath, controller.signal), 10_000), target.pluginPath);
+          await checkCurrent();
+          const body = Buffer.from(value.bytes, "base64url");
+          if (controller.signal.aborted || body.length > NATIVE_PLUGIN_MAX_ASSET) fail();
+          response.writeHead(200, {
+            "Cache-Control": "no-store",
+            "Content-Length": String(body.length),
+            "Content-Security-Policy": policy,
+            "Content-Type": target.contentType,
+            "Cross-Origin-Resource-Policy": "same-origin",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+          });
+          if (request.method === "HEAD") response.end();
+          else response.end(body);
+        } finally {
+          if (timer) clearTimeout(timer);
+          controller.abort();
+          response.removeListener("close", onClose);
+        }
+        return;
+      }
       const expected = manifest.get(target.relative);
       if (!expected) {
         writeEmpty(response, 404);
         return;
       }
       if (request.method === "HEAD") await assertPathIdentity(target.relative, expected);
-      const body = request.method === "HEAD" ? null : await readSnapshot(target.relative, expected);
+      const deliveredIndex = target.isIndex && pluginIndexBody ? pluginIndexBody : null;
+      const body = request.method === "HEAD" ? null : deliveredIndex ?? await readSnapshot(target.relative, expected);
       try { await checkCurrent(); } catch {
         writeEmpty(response, 403);
         return;
       }
       const headers = {
         "Cache-Control": "no-store",
-        "Content-Length": String(expected.identity.size),
+        "Content-Length": String(deliveredIndex?.length ?? expected.identity.size),
         "Content-Security-Policy": policy,
         "Content-Type": target.contentType,
         "Cross-Origin-Resource-Policy": "same-origin",
@@ -512,7 +593,12 @@ export async function createSpsNativeWorkspaceAssets(options) {
       if (error?.code !== "ENOENT") throw error;
     }
     const index = await readSnapshot("index.html", manifest.get("index.html"));
-    policy = contentSecurityPolicy(scriptHashes(new TextDecoder("utf-8", { fatal: true }).decode(index)));
+    const hashes = scriptHashes(new TextDecoder("utf-8", { fatal: true }).decode(index));
+    if (pluginReader) {
+      const nonce = randomBytes(32).toString("base64url");
+      policy = pluginContentSecurityPolicy(hashes, nonce);
+      pluginIndexBody = injectPluginNonce(index, nonce);
+    } else policy = contentSecurityPolicy(hashes);
     await checkCurrent();
 
     const addressPlaceholder = "127.0.0.1";

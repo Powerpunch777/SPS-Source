@@ -1,19 +1,23 @@
 # Native Plugin execution foundation — 2026-10-27
 
-This increment prepares the Core execution and Desktop private-channel boundaries.
-Native Plugin UI is **not yet exposed or usable**: there is no public TLS Plugin
-route, isolated Plugin window/preload, asset relay or live-event adapter. Native
-Workspace continues to display Plugin declarations without executing Plugin code.
-It must not load the ordinary SlotMount in its retained-authority renderer.
+This document records the earlier Core execution and Desktop private-channel
+foundation. The follow-up now opens declared shell pages and Dashboard widgets in
+separate sandboxed Native Plugin windows, with relative module chunks, CSS/assets,
+and scoped data/action calls. The joined Electron/Core/DB acceptance passed with
+exit 0; this is not a release qualification. See the current
+[Native Plugin UI integration record](NATIVE-PLUGIN-UI-2026-10-27.md) for scope,
+evidence and remaining limits. The retained-authority Workspace renderer still
+does not load Plugin code or the ordinary SlotMount.
 
 ## Ownership and authorization
 
-The private fixed `POST /sps-native/v1/plugin-runtime` accepts at most 64 KiB of
-canonical JSON with six fields: pluginId, surface, surfaceId, operation, key and
-params. Workspace, session and peer certificate come from the authenticated Main
-channel, never the body. Main signs the actual method, target, body, content type,
-cookie and peer DER. Other POST targets are denied. No Owner credential or generic
-API proxy is introduced; existing GET and Inbox PATCH restrictions remain.
+The private fixed `POST /sps-native/v1/plugin-runtime` retains the original six-field
+data/action request and adds revision-bound describe/asset operations. Requests are
+bounded canonical JSON. Workspace, session and peer certificate come from the
+authenticated Main channel, never the body. Main signs the actual method, target,
+body, content type, cookie and peer DER. Other POST targets are denied. No Owner
+credential or generic API proxy is introduced; existing GET and Inbox PATCH
+restrictions remain.
 
 Core resolves the real Identity session, approved current device/certificate and
 Workspace membership in short authorization transactions. The app supplies a lazy
@@ -76,12 +80,14 @@ No full local test suite, workspace build or full repository type check ran.
 
 ## Remaining work
 
-Next: a separate ephemeral Plugin renderer with fixed retained surface scope,
-authenticated runtime/assets relay and compatible SDK adapters, followed by an
-actual owned worker/UI data/action scenario with revocation and natural cleanup.
-Streams, navigation and other SDK operations require explicit product integration.
-Issuer rotation, expired-trust recovery, Native Source/Node, real AI execution,
-production Identity, installed/signed update/restore, physical two-PC LAN and
-current full CI/security qualification remain. Zod High has no waiver. Existing
-Marketplace policy, Plugin Builder architecture, public SDK and stored user data
-are unchanged.
+The separate ephemeral Plugin renderer, fixed surface scope, authenticated
+runtime/assets relay and data/action adapters are implemented. The separate joined
+Electron/Core/DB scenario passed UI data/action persistence, deactivation denial
+and natural cleanup; its evidence and substituted Identity boundary are recorded
+in the current UI review linked above, separately from these earlier checks.
+Streams, Host navigation/notifications and other SDK operations require explicit
+product integration. Full SDK compatibility, issuer rotation, expired-trust
+recovery, Native Source/Node, real AI execution, production Identity, signed
+update/restore, physical two-PC LAN and current full CI/security qualification
+remain. Marketplace policy, Plugin Builder architecture, public SDK and stored
+user data are unchanged.

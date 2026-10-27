@@ -63,7 +63,7 @@ function createIngress(dispatch, options = {}) {
   let valid = true;
   const ingress = createSpsNativeHostIngress({ getIdentity: () => current,
     assertCurrent() { if (!valid) throw new Error("authority changed"); }, dispatch,
-    cancel: options.cancel, limits: options.limits });
+    cancel: options.cancel, limits: options.limits, dispatchWorkspace: options.dispatchWorkspace });
   return { ingress, invalidate() { valid = false; }, setIdentity(value) { current = value; } };
 }
 
@@ -75,6 +75,32 @@ function publicIdentity() {
     issuerSpkiSha256: createHash("sha256").update(issuerCertificate.publicKey.export({ type: "spki", format: "der" })).digest("hex"),
     issuerCertificate: issuerCertificate.raw.toString("base64url") };
 }
+
+test("Native Plugin ingress admits only authenticated fixed POST and signs exact scoped bytes", async t => {
+  const calls = [];
+  const { ingress } = createIngress(async () => assert.fail("Plugin request must use the Workspace channel"), {
+    dispatchWorkspace: async (value, options) => { calls.push(value); options.assertCurrent(); return { data: { ok: true } }; },
+  });
+  t.after(() => ingress.dispose());
+  const bound = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  const body = JSON.stringify({ pluginId: ENROLLMENT_ID, surface: "widget", surfaceId: "count", revision: "a".repeat(64),
+    operation: "data", key: "count", params: {} });
+  const input = { route: "/sps-native/v1/plugin-runtime", workspace: true, method: "POST", body, session: true,
+    certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem,
+    headers: { "Content-Type": "application/json", "X-SPS-Native-Workspace": DEVICE_KEY_ID } };
+  assert.equal((await post(bound.port, input)).statusCode, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].workspaceId, DEVICE_KEY_ID);
+  assert.equal(calls[0].target, "/sps-native/v1/plugin-runtime");
+  assert.equal(calls[0].method, "POST"); assert.equal(calls[0].body.toString(), body);
+  assert.equal(calls[0].cookie, `sps_identity_session=${"a".repeat(64)}`);
+  assert.deepEqual(calls[0].peerCertificateDer, new X509Certificate(memberCertificate.certificatePem).raw);
+  assert.equal((await post(bound.port, { ...input, certificate: undefined, key: undefined })).statusCode, 401);
+  assert.equal((await post(bound.port, { ...input, headers: { "Content-Type": "application/json" } })).statusCode, 400);
+  assert.equal((await post(bound.port, { ...input, route: "/sps-native/v1/plugin-runtime?other=true" })).statusCode, 404);
+  assert.equal((await post(bound.port, { ...input, body: JSON.stringify({ ...JSON.parse(body), url: "http://other" }) })).statusCode, 400);
+  assert.equal(calls.length, 1);
+});
 
 test("only exact Native paths and closed canonical requests dispatch over fresh TLS", async t => {
   const calls = [];

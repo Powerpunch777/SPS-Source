@@ -6,6 +6,7 @@ import { TextDecoder } from "node:util";
 import { requireCurrentSpsNativeHostIdentity, validateSpsNativeServerCertificate,
   validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
 import { nativeServerCertificateServername, parseNativeServerCertificateServername } from "./native-server-certificate-selection.mjs";
+import { NATIVE_PLUGIN_TARGET, NATIVE_PLUGIN_MAX_RESPONSE, requireSpsNativePluginRequest } from "./native-plugin-protocol.mjs";
 
 const ROUTES = Object.freeze({
   "/sps-native/v1/identity": { operation: "identity", peer: false, credential: null, body: null },
@@ -28,8 +29,9 @@ const RESPONSE_HEADERS = Object.freeze({
   "x-content-type-options": "nosniff",
 });
 const SAFE_FAILURE = Object.freeze({ error: "native_enrollment_unavailable" });
-const ALLOWED_HEADERS = new Set(["host", "connection", "content-type", "content-length", "authorization", "cookie"]);
+const ALLOWED_HEADERS = new Set(["host", "connection", "content-type", "content-length", "authorization", "cookie", "x-sps-native-workspace"]);
 const BROWSER_HEADERS = new Set(["origin", "referer", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user", "upgrade", "proxy-authorization", "proxy-connection"]);
+const isUuid = value => typeof value === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value);
 
 function fail(statusCode = 400) {
   const error = new Error("request");
@@ -76,7 +78,6 @@ function parseBody(bytes, kind) {
       : kind === "renew" ? ["deviceKeyId", "requestPem"] : ["enrollmentId"];
   exactObject(parsed, keys);
   if (JSON.stringify(parsed) !== text) throw fail();
-  const isUuid = value => typeof value === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value);
   const isSecret = value => typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value)
     && Buffer.from(value, "base64url").toString("base64url") === value;
   if (kind === "issue") {
@@ -92,7 +93,7 @@ function parseBody(bytes, kind) {
   return parsed;
 }
 
-function readHeaders(request, workspace = false, workspacePatch = false) {
+function readHeaders(request, workspace = false, workspacePatch = false, plugin = false) {
   const raw = request.rawHeaders;
   if (!Array.isArray(raw) || raw.length % 2 || raw.length / 2 > 32) throw fail();
   let total = 0;
@@ -109,7 +110,9 @@ function readHeaders(request, workspace = false, workspacePatch = false) {
   const headers = request.headers;
   if (headers["transfer-encoding"] !== undefined || headers["content-encoding"] !== undefined
     || headers.expect !== undefined || headers.upgrade !== undefined) throw fail();
-  if (workspacePatch ? headers["content-type"] !== "application/json"
+  if (!plugin && headers["x-sps-native-workspace"] !== undefined) throw fail();
+  if (plugin && !isUuid(headers["x-sps-native-workspace"])) throw fail();
+  if (workspacePatch || plugin ? headers["content-type"] !== "application/json"
     : workspace ? headers["content-type"] !== undefined
       : headers["content-type"] !== "application/json; charset=utf-8") throw fail();
   if (headers["connection"]?.toLowerCase() !== "close") throw fail();
@@ -117,8 +120,9 @@ function readHeaders(request, workspace = false, workspacePatch = false) {
   if (typeof rawLength !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(rawLength)) throw fail();
   const length = Number(rawLength);
   if (!Number.isSafeInteger(length)) throw fail();
-  if (length > MAX_BODY_BYTES) throw fail(413);
-  if (workspace && !workspacePatch && length !== 0) throw fail();
+  if (length > (plugin ? 64 * 1024 : MAX_BODY_BYTES)) throw fail(413);
+  if (workspace && !workspacePatch && !plugin && length !== 0) throw fail();
+  if (plugin && length < 2) throw fail();
   if (workspacePatch && (length < 1 || length > 128)) throw fail(length > 128 ? 413 : 400);
   return { length, headers };
 }
@@ -311,11 +315,12 @@ export function createSpsNativeHostIngress({ getIdentity, getServerCertificates,
         && WORKSPACE_INBOX_PATCH_TARGET.exec(request.url);
       const workspaceDiscovery = request.method === "GET" && typeof dispatchWorkspace === "function"
         && request.url === WORKSPACE_DISCOVERY_TARGET;
-      const workspaceRequest = Boolean(workspacePath || workspaceDiscovery || workspaceInboxPatch);
+      const pluginRequest = request.method === "POST" && typeof dispatchWorkspace === "function" && request.url === NATIVE_PLUGIN_TARGET;
+      const workspaceRequest = Boolean(workspacePath || workspaceDiscovery || workspaceInboxPatch || pluginRequest);
       const workspacePatch = Boolean(workspaceInboxPatch);
       const route = workspaceRequest ? { peer: true, credential: "sessionCookie", body: null } : ROUTES[request.url];
       if (!workspaceRequest && (request.method !== "POST" || !route || request.url.includes("?") || request.url.includes("#"))) throw fail(404);
-      const { length, headers } = readHeaders(request, workspaceRequest, workspacePatch);
+      const { length, headers } = readHeaders(request, workspaceRequest, workspacePatch, pluginRequest);
       const credential = exactCredential(route, headers);
       const peer = socket.getPeerCertificate?.(true);
       const peerPresent = Boolean(peer?.raw?.length);
@@ -328,7 +333,7 @@ export function createSpsNativeHostIngress({ getIdentity, getServerCertificates,
       await new Promise((resolve, reject) => {
         timeout = setTimeout(() => reject(fail(408)), limits.readTimeoutMs);
         request.on("data", chunk => {
-          if (!Buffer.isBuffer(chunk) || received + chunk.length > MAX_BODY_BYTES) {
+          if (!Buffer.isBuffer(chunk) || received + chunk.length > (pluginRequest ? 64 * 1024 : MAX_BODY_BYTES)) {
             reject(fail(413));
             request.destroy();
             return;
@@ -348,8 +353,16 @@ export function createSpsNativeHostIngress({ getIdentity, getServerCertificates,
       // own the response lifetime instead of aborting dispatch on socket idle.
       socket.setTimeout(0);
       if (finished || response.destroyed || disposed) return;
-      const body = workspacePatch ? parseBody(Buffer.concat(pieces, received), "inboxState")
-        : parseBody(Buffer.concat(pieces, received), route.body);
+      const rawBody = Buffer.concat(pieces, received);
+      let pluginBody;
+      if (pluginRequest) {
+        try {
+          const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(rawBody);
+          pluginBody = requireSpsNativePluginRequest(JSON.parse(text));
+          if (JSON.stringify(pluginBody) !== text) throw fail();
+        } catch { throw fail(); }
+      }
+      const body = pluginRequest ? null : workspacePatch ? parseBody(rawBody, "inboxState") : parseBody(rawBody, route.body);
       const expected = assertIdentityCurrent(identitySnapshot);
       const selectedLeaf = selectedServerCertificate(socket);
       if (route.operation === "server-certificate") {
@@ -383,7 +396,10 @@ export function createSpsNativeHostIngress({ getIdentity, getServerCertificates,
       try {
         const dispatchOptions = { signal: controller.signal, assertCurrent: () => { assertIdentityCurrent(expected); } };
         const result = workspaceRequest
-          ? await dispatchWorkspace(Object.freeze(workspacePatch
+          ? await dispatchWorkspace(Object.freeze(pluginRequest
+            ? { workspaceId: headers["x-sps-native-workspace"], target: NATIVE_PLUGIN_TARGET, cookie: credential.sessionCookie,
+              peerCertificateDer: Buffer.from(peer.raw), method: "POST", body: rawBody }
+            : workspacePatch
             ? { workspaceId: workspaceInboxPatch[1], target: request.url, cookie: credential.sessionCookie,
               peerCertificateDer: Buffer.from(peer.raw), method: "PATCH", body: Buffer.from(pieces.length ? Buffer.concat(pieces, received) : []) }
             : { workspaceId: workspaceDiscovery ? null : workspacePath[1], target: request.url,
@@ -394,7 +410,7 @@ export function createSpsNativeHostIngress({ getIdentity, getServerCertificates,
         if (workspaceRequest) {
           // Core's private reader owns session/device/Workspace authorization.
           // Only its selected public surface result is serialized here.
-          writeJson(response, 200, result, null, 256 * 1024);
+          writeJson(response, 200, result, null, pluginBody?.operation === "asset" ? NATIVE_PLUGIN_MAX_RESPONSE : 256 * 1024);
           return;
         }
         validateResult(route.operation, result, expected);

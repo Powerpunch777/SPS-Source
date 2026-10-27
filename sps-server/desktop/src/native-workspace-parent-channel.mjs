@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { createSpsNativeWorkspaceRequestSigner } from "./native-workspace-proof.mjs";
 import { nativeCertificateRecord as record, nativeCertificateUuid as uuid } from "./native-certificate-primitives.mjs";
+import { requireSpsNativePluginRequest, NATIVE_PLUGIN_MAX_RESPONSE } from "./native-plugin-protocol.mjs";
 
 const REQUEST = "sps.native.workspace.bootstrap.request";
 const RESPONSE = "sps.native.workspace.bootstrap.response";
@@ -27,7 +28,7 @@ function identity(value) {
     issuerSpkiSha256: result.issuerSpkiSha256 });
 }
 
-async function boundedJson(response) {
+async function boundedJson(response, maximum = MAX_RESPONSE_BYTES) {
   if (!response?.body || typeof response.body.getReader !== "function") throw unavailable();
   const reader = response.body.getReader();
   const chunks = [];
@@ -38,7 +39,7 @@ async function boundedJson(response) {
       if (done) break;
       const chunk = Buffer.from(value);
       length += chunk.length;
-      if (length > MAX_RESPONSE_BYTES) {
+      if (length > maximum) {
         await reader.cancel().catch(() => {});
         throw unavailable();
       }
@@ -85,13 +86,15 @@ function pluginRuntimeBody(value) {
     parsed = JSON.parse(text);
   } catch { throw unavailable(); }
   let request;
-  try { request = record(parsed, ["pluginId", "surface", "surfaceId", "operation", "key", "params"]); }
+  try { request = requireSpsNativePluginRequest(parsed); }
   catch { throw unavailable(); }
-  if (JSON.stringify(Reflect.ownKeys(parsed)) !== JSON.stringify(PLUGIN_REQUEST_FIELDS)
+  const expectedFields = Object.hasOwn(parsed, "revision")
+    ? ["pluginId", "surface", "surfaceId", "revision", "operation", "key", "params"] : PLUGIN_REQUEST_FIELDS;
+  if (JSON.stringify(Reflect.ownKeys(parsed)) !== JSON.stringify(expectedFields)
     || JSON.stringify(parsed) !== text) throw unavailable();
   try { uuid(request.pluginId); } catch { throw unavailable(); }
   if ((request.surface !== "shell" && request.surface !== "widget")
-    || (request.operation !== "data" && request.operation !== "action")
+    || !["describe", "asset", "data", "action"].includes(request.operation)
     || typeof request.surfaceId !== "string" || request.surfaceId.length < 1 || request.surfaceId.length > 200
     || /[\u0000-\u001f\u007f]/.test(request.surfaceId)
     || typeof request.key !== "string" || request.key.length < 1 || request.key.length > 200
@@ -314,7 +317,8 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
         check();
         const contentType = response.headers?.get?.("content-type") ?? "";
         if (!/^application\/json(?:\s*;|$)/i.test(contentType)) throw unavailable();
-        const payload = await boundedJson(response);
+        const payload = await boundedJson(response, postRequest && JSON.parse(snapshot.body.toString("utf8")).operation === "asset"
+          ? NATIVE_PLUGIN_MAX_RESPONSE : MAX_RESPONSE_BYTES);
         check();
         const confirmed = identity(await inspectBinding({ signal: controller.signal }));
         check();

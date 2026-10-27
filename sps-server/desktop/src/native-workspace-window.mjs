@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface,
   validateSpsNativeInboxStateInput, validateSpsNativeInboxState } from "./native-enrollment-response.mjs";
 import { requireSpsNativeMemberWorkspaceBootstrapInput } from "./native-member-controller.mjs";
+import { requireSpsNativePluginSelection } from "./native-plugin-protocol.mjs";
 
 const ACCOUNT_KEYS = ["identityIssuer", "subject", "userDataDirectory", "vaultDirectory", "generation"];
-const CHANNELS = ["desktop:native-workspace-bootstrap", "desktop:native-workspace-read", "desktop:native-workspace-inbox-state"];
+const CHANNELS = ["desktop:native-workspace-bootstrap", "desktop:native-workspace-read",
+  "desktop:native-workspace-inbox-state", "desktop:native-workspace-open-plugin"];
 const unavailable = () => new Error("The Native Workspace is unavailable. Check the connection and retry.");
 
 function record(value, keys, required = keys) {
@@ -68,9 +70,11 @@ function awaitTurn(turn, signal) {
 /** Main-only window ownership. Every IPC selects its Host/Workspace from the
  * retained launch scope, never a renderer argument. */
 export function createSpsNativeWorkspaceWindowController({ BrowserWindow, getAuthority, getAssetRoot,
-  createAssets, preloadFile, getBootstrap, readSurface, updateInboxState, maxWindows = 4 }) {
+  createAssets, preloadFile, getBootstrap, readSurface, updateInboxState, openPlugin = null,
+  onPluginParentClosed = () => {}, maxWindows = 4 }) {
   if (typeof BrowserWindow !== "function" || [getAuthority, getAssetRoot, createAssets, getBootstrap, readSurface]
     .some(value => typeof value !== "function") || typeof preloadFile !== "string"
+    || openPlugin !== null && typeof openPlugin !== "function" || typeof onPluginParentClosed !== "function"
     || !Number.isSafeInteger(maxWindows) || maxWindows < 1 || maxWindows > 4) throw new TypeError("Invalid Native Workspace window configuration.");
   let disposed = false;
   let cleanupFailed = false;
@@ -98,6 +102,13 @@ export function createSpsNativeWorkspaceWindowController({ BrowserWindow, getAut
     launch.closed = true;
     launch.abort.abort();
     launches.delete(launch);
+    try {
+      const parentId = launch.window?.id;
+      if (Number.isSafeInteger(parentId)) {
+        const pending = onPluginParentClosed(parentId);
+        if (pending && typeof pending.then === "function") void Promise.resolve(pending).catch(() => {});
+      }
+    } catch { /* Parent-scoped Plugin windows are fenced by their own account guard. */ }
     try { if (launch.window && !launch.window.isDestroyed()) launch.window.destroy(); } catch { /* Authority is already fenced. */ }
     const closing = bounded((async () => {
       const assets = await launch.assetsPromise?.catch(() => null);
@@ -209,6 +220,21 @@ export function createSpsNativeWorkspaceWindowController({ BrowserWindow, getAut
           });
           assertSender(launch, event);
           return result;
+        } catch { throw unavailable(); }
+      });
+      ipcMain.handle(CHANNELS[3], async (event, ...args) => {
+        try {
+          const launch = fromEvent(event);
+          if (args.length !== 1 || typeof openPlugin !== "function") throw unavailable();
+          const selection = requireSpsNativePluginSelection(args[0]);
+          const result = await operate(launch, () => openPlugin(Object.freeze({ ...launch.scope, ...selection }), {
+            parentId: launch.window?.id,
+            signal: launch.abort.signal,
+            assertRequester: () => assertSender(launch, event),
+          }));
+          assertSender(launch, event);
+          if (!result || result.opened !== true) throw unavailable();
+          return Object.freeze({ opened: true });
         } catch { throw unavailable(); }
       });
     },

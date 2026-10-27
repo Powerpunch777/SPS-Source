@@ -39,4 +39,18 @@ contextBridge.exposeInMainWorld("spsNativeWorkspace", Object.freeze({
       return ipcRenderer.invoke("desktop:native-workspace-read", value);
     } catch { return Promise.reject(new TypeError("Invalid Workspace surface request.")); }
   },
+  openPlugin: (...args) => {
+    try {
+      if (args.length !== 1 || !args[0] || typeof args[0] !== "object" || Array.isArray(args[0])) throw new TypeError();
+      const descriptors = Object.getOwnPropertyDescriptors(args[0]);
+      const keys = Reflect.ownKeys(descriptors);
+      if (keys.length !== 3 || keys.some(key => !["pluginId", "surface", "surfaceId"].includes(key))
+        || keys.some(key => !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) throw new TypeError();
+      const { pluginId, surface, surfaceId } = Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+      if (typeof pluginId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(pluginId)
+        || !["shell", "widget"].includes(surface) || typeof surfaceId !== "string" || !surfaceId
+        || surfaceId.length > 200 || /[\x00-\x1f\x7f]/.test(surfaceId)) throw new TypeError();
+      return ipcRenderer.invoke("desktop:native-workspace-open-plugin", { pluginId, surface, surfaceId });
+    } catch { return Promise.reject(new TypeError("Invalid Native Plugin selection.")); }
+  },
 }));

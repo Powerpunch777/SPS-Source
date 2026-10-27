@@ -11,6 +11,7 @@ import { validateSpsNativeMemberPendingContext } from "./native-member-pending-c
 import { inspectSpsNativeMemberCredential } from "./native-member-credential.mjs";
 import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
 import { validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
+import { requireSpsNativePluginRequest } from "./native-plugin-protocol.mjs";
 import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface,
   validateSpsNativeInboxStateInput, validateSpsNativeInboxState } from "./native-enrollment-response.mjs";
 
@@ -109,6 +110,7 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
   createServerCertificate = null,
   inspectCredential = inspectSpsNativeMemberCredential }) {
   let busy = false, disposed = false;
+  let pluginTail = Promise.resolve(), pendingPlugins = 0;
   const clients = new Set();
   function capture() {
     if (disposed) throw failure("disposed");
@@ -148,6 +150,33 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
       for (const client of owned) { clients.delete(client); client.dispose(); }
       busy = false;
     }
+  }
+  // One saved-credential operation owns the controller at a time. Browser module
+  // and CSS requests may arrive together; keep their bounded queue outside run's
+  // single-flight gate instead of retrying a possibly dispatched action.
+  function runPlugin(options, action) {
+    if (pendingPlugins >= 12 || disposed) return Promise.reject(failure("busy"));
+    if (options?.signal !== undefined && !(options.signal instanceof AbortSignal)) return Promise.reject(failure("invalid"));
+    const expected = capture();
+    guard(expected, options?.assertRequester, options?.signal);
+    let cancelled = false, started = false, timer;
+    let rejectWaiting;
+    const waiting = new Promise((_, reject) => { rejectWaiting = reject; });
+    const abort = () => { cancelled = true; rejectWaiting(failure("changed")); };
+    options?.signal?.addEventListener("abort", abort, { once: true });
+    timer = setTimeout(() => { if (!started) abort(); }, timeoutMs);
+    pendingPlugins++;
+    const result = pluginTail.then(() => {
+      if (cancelled) throw failure("changed");
+      guard(expected, options?.assertRequester, options?.signal);
+      started = true; clearTimeout(timer);
+      return run(options, action);
+    });
+    pluginTail = result.then(() => { pendingPlugins--; }, () => { pendingPlugins--; });
+    return Promise.race([result, waiting]).finally(() => {
+      clearTimeout(timer);
+      options?.signal?.removeEventListener("abort", abort);
+    });
   }
   function observation(hostId, value) {
     const result = record(value, ["deviceId", "status"]);
@@ -480,6 +509,29 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
         await exchange(client, check, options?.signal);
         const result = validateSpsNativeInboxState(await client.updateInboxState({ workspaceId: selected.workspaceId,
           state, keyRequest: key, issuance: stored.issuance }, options?.signal ? { signal: options.signal } : undefined));
+        check();
+        return result;
+      });
+    },
+    async invokePlugin(input, options = {}) {
+      const value = record(input, ["hostId", "workspaceId", "pluginId", "surface", "surfaceId", "revision", "operation", "key", "params"]);
+      const selected = requireSpsNativeMemberWorkspaceBootstrapInput({ hostId: value.hostId, workspaceId: value.workspaceId });
+      const request = requireSpsNativePluginRequest({ pluginId: value.pluginId, surface: value.surface,
+        surfaceId: value.surfaceId, revision: value.revision, operation: value.operation, key: value.key, params: value.params });
+      return runPlugin(options, async (expected, check, use) => {
+        const scope = indexFor(expected).entries.find(entry => entry.identityIssuer === expected.identityIssuer
+          && entry.subject === expected.subject && entry.hostId === selected.hostId);
+        if (!scope) throw failure("recovery_required");
+        const target = await readSavedTarget(expected, scope, check, use, options); check();
+        if (!target) throw failure("recovery_required");
+        const store = getStore({ ...expected, context: target.context });
+        const key = await store.read(); check();
+        const stored = await store.readIssued(); check();
+        if (!key || !stored?.issuance) throw failure("recovery_required");
+        const client = use(createWorkspace({ target, context: target.context, timeoutMs, assertCurrent: check }));
+        await exchange(client, check, options?.signal);
+        const result = await client.invokePlugin({ workspaceId: selected.workspaceId, request,
+          keyRequest: key, issuance: stored.issuance }, options?.signal ? { signal: options.signal } : undefined);
         check();
         return result;
       });

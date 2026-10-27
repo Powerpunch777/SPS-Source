@@ -254,6 +254,62 @@ test("Workspace bootstrap uses saved Member credentials, exact selectors, and cu
   }
 });
 
+test("Native Plugin FIFO cancels queued work on abort/account change without dispatch", async () => {
+  const pluginId = "44444444-4444-4444-8444-444444444444";
+  const revision = "a".repeat(64);
+  const dispatched = [];
+  let releaseFirst;
+  const firstCall = new Promise(resolve => { releaseFirst = resolve; });
+  const f = fixture({ createWorkspace: () => ({
+    async exchange() {},
+    async invokePlugin(input) {
+      dispatched.push(input);
+      if (dispatched.length === 1) await firstCall;
+      return { data: { ok: true } };
+    },
+    dispose() {},
+  }) });
+  await enroll(f);
+  const request = operation => ({ hostId: HOST, workspaceId: DEVICE, pluginId, surface: "widget",
+    surfaceId: "summary", revision, operation, key: operation, params: {} });
+  const requestError = promise => promise.then(value => ({ value }), error => ({ error }));
+  const first = requestError(f.controller.invokePlugin(request("data")));
+  while (!dispatched.length) await new Promise(resolve => setImmediate(resolve));
+  const aborter = new AbortController();
+  const second = requestError(f.controller.invokePlugin({ ...request("asset"), key: "index.js" }, { signal: aborter.signal }));
+  const third = requestError(f.controller.invokePlugin(request("action")));
+  await new Promise(resolve => setImmediate(resolve));
+  aborter.abort();
+  assert.equal((await second).error?.code, "native_member_changed");
+  f.change();
+  releaseFirst();
+  assert.equal((await first).error?.code, "native_member_changed");
+  assert.equal((await third).error?.code, "native_member_changed");
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0].workspaceId, DEVICE);
+  assert.equal(Object.hasOwn(dispatched[0], "hostId"), false);
+  assert.equal(dispatched[0].request.operation, "data");
+});
+
+test("Native Plugin action is sent once with fixed Workspace scope and no Host selector", async () => {
+  const pluginId = "44444444-4444-4444-8444-444444444444";
+  const revision = "b".repeat(64);
+  const calls = [];
+  const f = fixture({ createWorkspace: () => ({ async exchange() {}, async invokePlugin(input) {
+    calls.push(input);
+    throw new Error("The response was lost after dispatch");
+  }, dispose() {} }) });
+  await enroll(f);
+  const input = { hostId: HOST, workspaceId: DEVICE, pluginId, surface: "widget", surfaceId: "summary", revision,
+    operation: "action", key: "increment", params: { amount: 1 } };
+  await assert.rejects(f.controller.invokePlugin(input), { code: "native_member_unavailable" });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].request, { pluginId, surface: "widget", surfaceId: "summary", revision,
+    operation: "action", key: "increment", params: { amount: 1 } });
+  assert.equal(calls[0].workspaceId, DEVICE);
+  assert.equal(Object.hasOwn(calls[0], "hostId"), false);
+});
+
 test("Workspace surface reads use saved credentials, exact selectors, safe DTO cloning, and abortable per-call guards", async () => {
   const workspaceId = "55555555-5555-4555-8555-555555555555";
   const rawInbox = JSON.parse(`{"items":[{"companyId":"${workspaceId}","opaqueReference":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}}]}`);

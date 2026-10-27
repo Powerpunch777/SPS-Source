@@ -7,6 +7,7 @@ import { createHash, X509Certificate } from "node:crypto";
 import path from "node:path";
 import { createSpsNativeWorkspaceAssets } from "../../src/native-workspace-assets.mjs";
 import { createSpsNativeWorkspaceWindowController } from "../../src/native-workspace-window.mjs";
+import { createSpsNativePluginWindowController } from "../../src/native-plugin-window.mjs";
 import { createSpsNativeMemberController } from "../../src/native-member-controller.mjs";
 import { createSpsNativeMemberWorkspaceClient, createSpsNativeMemberRenewalClient } from "../../src/native-enrollment-client.mjs";
 import { createSpsNativeServerCertificateClient } from "../../src/native-enrollment-client.mjs";
@@ -34,7 +35,7 @@ const shell = { mode: "neutral", providerPluginId: null, providerPluginKey: null
 const publicBootstrap = { v: 1, kind: "sps.native.workspace.bootstrap",
   workspace: { id: workspaceId, name: "Native Window Fixture", issuePrefix: "NATIVE" }, member: { userId: "member" },
   capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] };
-let generation = 0n, controller, member, configuration, failed = false, stage = "startup";
+let generation = 0n, controller, pluginController, member, configuration, failed = false, stage = "startup";
 const authority = () => ({ identityIssuer: configuration?.context.identityIssuer ?? "https://identity.example.test",
   subject: configuration?.context.subject ?? "member", userDataDirectory: profile,
   vaultDirectory: path.join(fixture, configuration ? "member-vault" : "unused-vault"), generation });
@@ -55,6 +56,18 @@ async function until(window, expression) {
     await pause(100);
   }
   throw new Error("Native Workspace fixture rendering timed out.");
+}
+async function untilText(window, text) {
+  return until(window, `document.body.innerText.includes(${JSON.stringify(text)})`);
+}
+async function untilWindowCount(count, parent) {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    assert.equal(parent.isDestroyed(), false);
+    if (windows.length >= count) return windows[count - 1];
+    await pause(100);
+  }
+  throw new Error("Native Plugin window did not open.");
 }
 try {
   mark("awaiting_app");
@@ -206,6 +219,34 @@ try {
     }
   }
   mark("window_open");
+  const withNativePlugin = realTransport && configuration?.withNativePlugin === true;
+  const loadedPluginAssets = new Set();
+  if (withNativePlugin) {
+    assert.ok(configuration.pluginId);
+    assert.ok(configuration.pluginSurfaceId);
+    const callPlugin = async (scope, request, options) => {
+      if (!member) throw new Error("Plugin calls require the real Native Member transport");
+      return member.invokePlugin({ ...scope, revision: scope.revision ?? null, ...request }, options);
+    };
+    pluginController = createSpsNativePluginWindowController({
+      BrowserWindow: hiddenWindow,
+      getAuthority: authority,
+      getAssetRoot: async () => path.resolve(import.meta.dirname, "../../../../external/sps-core/ui/dist"),
+      createAssets: createSpsNativeWorkspaceAssets,
+      preloadFile: path.resolve(import.meta.dirname, "../../src/native-plugin-preload.cjs"),
+      getBootstrap: (scope, options) => member.getWorkspaceBootstrap({ hostId: scope.hostId,
+        workspaceId: scope.workspaceId }, options),
+      getDescriptor: async (scope, options) => (await callPlugin(scope,
+        { operation: "describe", key: "surface", params: {} }, options)).data,
+      invoke: async (scope, request, options) => callPlugin(scope, request, options),
+      readAsset: async (scope, { path: assetPath }, options) => {
+        const result = (await callPlugin(scope, { operation: "asset", key: assetPath, params: {} }, options)).data;
+        loadedPluginAssets.add(assetPath);
+        return result;
+      },
+    });
+    pluginController.registerIpc(ipcMain);
+  }
   controller = createSpsNativeWorkspaceWindowController({ BrowserWindow: hiddenWindow,
     getAuthority: authority,
     getAssetRoot: async () => path.resolve(import.meta.dirname, "../../../../external/sps-core/ui/dist"),
@@ -233,6 +274,8 @@ try {
       if (!member) throw new Error("State writes require the real transport fixture");
       return member.updateInboxState(input, options);
     },
+    openPlugin: withNativePlugin ? (scope, options) => pluginController.open(scope, options) : null,
+    onPluginParentClosed: parentId => pluginController?.closeForParent(parentId),
   });
   controller.registerIpc(ipcMain);
   await controller.open({ hostId: configuration?.context.hostId ?? "11111111-1111-4111-8111-111111111111", workspaceId });
@@ -248,7 +291,44 @@ try {
   assert.equal(await window.webContents.executeJavaScript("fetch('/api/companies').then(() => false, () => true)"), true);
   mark("dashboard_render");
   await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Dashboard').click()");
-  await until(window, "document.body.innerText.includes('No dashboard content is available.')");
+  let pluginWindow = null;
+  if (withNativePlugin) {
+    await untilText(window, "Open Plugin view");
+    await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Open Plugin view').click()");
+    mark("plugin_window_open");
+    pluginWindow = await untilWindowCount(2, window);
+    await untilText(pluginWindow, "Native plugin count: 0");
+    assert.equal(await pluginWindow.webContents.executeJavaScript("typeof window.spsNativePlugin?.getData"), "function");
+    const pluginBootstrap = await pluginWindow.webContents.executeJavaScript("window.spsNativePlugin.bootstrap()");
+    assert.equal(pluginBootstrap.descriptor.pluginId, configuration.pluginId);
+    assert.equal(pluginBootstrap.descriptor.surfaceId, configuration.pluginSurfaceId);
+    for (const name of ["spsNativeWorkspace", "spsCoreSettings", "spsDesktopWorkspace", "spsDesktop"]) {
+      assert.equal(await pluginWindow.webContents.executeJavaScript(`typeof window[${JSON.stringify(name)}]`), "undefined");
+    }
+    assert.equal(await pluginWindow.webContents.executeJavaScript("typeof window.require"), "undefined");
+    assert.equal(await pluginWindow.webContents.executeJavaScript("typeof window.ipcRenderer"), "undefined");
+    assert.equal(await pluginWindow.webContents.executeJavaScript("typeof process"), "undefined");
+    assert.equal(await pluginWindow.webContents.executeJavaScript("navigator.serviceWorker.getRegistrations().then(rows => rows.length)"), 0);
+    await pluginWindow.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Increment Native count').click()");
+    await untilText(pluginWindow, "Native plugin count: 1");
+    const assetDeadline = Date.now() + 5000;
+    while (!loadedPluginAssets.has("dot.svg") && Date.now() < assetDeadline) await pause(100);
+    for (const relative of ["index.js", "counter-view.js", "index.css", "dot.svg"]) assert.equal(loadedPluginAssets.has(relative), true);
+    const deactivated = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { process.removeListener("message", receive); reject(new Error("Plugin deactivation timed out")); }, 15_000);
+      function receive(message) {
+        if (!["sps.test.native-plugin.deactivated", "sps.test.native-plugin.deactivation-failed"].includes(message?.kind)) return;
+        clearTimeout(timer); process.removeListener("message", receive);
+        message.kind.endsWith(".deactivated") ? resolve() : reject(new Error("Plugin deactivation failed"));
+      }
+      process.on("message", receive);
+    });
+    process.send({ kind: "sps.test.native-plugin.deactivate" });
+    await deactivated;
+    assert.equal(await pluginWindow.webContents.executeJavaScript("window.spsNativePlugin.performAction('fixture.increment', {}).then(() => false, () => true)"), true);
+    assert.equal(await pluginWindow.webContents.executeJavaScript("fetch('/plugin/index.js').then(response => response.status !== 200)"), true);
+    mark("plugin_deactivation_denied");
+  } else await until(window, "document.body.innerText.includes('No dashboard content is available.')");
   mark("inbox_render");
   await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Inbox').click()");
   if (realTransport) {
@@ -267,7 +347,10 @@ try {
   generation++;
   await controller.invalidate();
   assert.equal(window.isDestroyed(), true);
+  if (pluginWindow) assert.equal(pluginWindow.isDestroyed(), true);
+  await pluginController?.invalidate();
   await controller.dispose();
+  await pluginController?.dispose();
   await writeFile(path.join(fixture, "result.json"), JSON.stringify({ ok: true, views: ["workspace", "dashboard", "inbox"],
     actualElectron: true, fixtureBackend: !realTransport, actualDpapi: realTransport,
     ...(realTransport ? { wrongPeerDenied: true } : {}),
@@ -275,6 +358,7 @@ try {
       originalIssuedBytesPreserved: true, renewedEnrollmentReconciled: true } : {}),
     ...(realTransport && configuration?.hostRenewal ? { hostRenewalPublished: true, originalHostBytesPreserved: true,
       targetCertificateRefreshed: true, originalTargetBytesPreserved: true } : {}),
+    ...(withNativePlugin ? { pluginUi: true, pluginAction: true, pluginIsolated: true, pluginDeactivationDenied: true } : {}),
     ownerBridge: false, serviceWorkers: 0 }));
 } catch {
   failed = true;
@@ -282,6 +366,7 @@ try {
   console.error("Native Workspace isolated renderer verification failed.");
 } finally {
   try { await controller?.dispose(); } catch { failed = true; }
+  try { await pluginController?.dispose(); } catch { failed = true; }
   member?.dispose();
   for (const window of windows) if (!window.isDestroyed()) window.destroy();
   process.exitCode = failed ? 1 : 0;

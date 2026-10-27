@@ -97,6 +97,7 @@ test("serves only the allowed bundled files with an inline-script CSP hash", asy
   assert.ok(!csp.includes("unsafe-eval"));
   assert.ok(!csp.includes("http://"));
   assert.equal(index.headers["set-cookie"], undefined);
+  assert.equal((await send(assets, { target: "/plugin/index.js" })).status, 404);
 
   const asset = await send(assets, { target: "/assets/app.js", origin: assets.origin });
   assert.equal(asset.status, 200);
@@ -113,6 +114,51 @@ test("serves only the allowed bundled files with an inline-script CSP hash", asy
   assert.equal(head.status, 200);
   assert.equal(head.body.length, 0);
   assert.equal(head.headers["content-length"], String(Buffer.byteLength(INDEX)));
+});
+
+test("opt-in Plugin assets are bounded same-origin reads with a separate CSP", async t => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "sps-native-plugin-assets-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const root = path.join(parent, "ui-dist");
+  await mkdir(path.join(root, "assets"), { recursive: true });
+  await writeFile(path.join(root, "index.html"), INDEX);
+  await writeFile(path.join(root, "assets", "app.js"), "globalThis.host = true;");
+  const pluginBytes = Buffer.from("export default function View() {};");
+  const requested = [];
+  let corruptDigest = false;
+  const assets = await createSpsNativeWorkspaceAssets({ root, assertCurrent() {}, plugin: {
+    async readAsset(relativePath, signal) { requested.push(relativePath); assert.equal(signal.aborted, false);
+      return { path: relativePath, contentType: "text/javascript; charset=utf-8",
+        bytes: pluginBytes.toString("base64url"), sha256: corruptDigest ? "0".repeat(64)
+          : createHash("sha256").update(pluginBytes).digest("hex") };
+    },
+  } });
+  t.after(() => assets.dispose());
+
+  const index = await send(assets);
+  const csp = index.headers["content-security-policy"];
+  assert.match(csp, /script-src 'self' blob:/);
+  assert.match(csp, /connect-src 'self'/);
+  const nonce = /name="sps-native-plugin-nonce" content="([A-Za-z0-9_-]+)"/.exec(index.body.toString())[1];
+  assert.ok(csp.includes(`'nonce-${nonce}'`));
+  assert.ok(!csp.includes("unsafe-eval"));
+  assert.ok(!csp.includes("https://"));
+  assert.equal((await send(assets, { target: "/plugin/index.js", origin: assets.origin })).status, 200);
+  const script = await send(assets, { target: "/plugin/index.js", origin: assets.origin });
+  assert.equal(script.body.toString(), pluginBytes.toString());
+  assert.equal(script.headers["content-type"], "text/javascript; charset=utf-8");
+  assert.equal(script.headers["cache-control"], "no-store");
+  assert.deepEqual(requested, ["index.js", "index.js"]);
+  assert.equal((await send(assets, { target: "/plugin/index.js" })).status, 200);
+  assert.equal((await send(assets, { target: "/plugin/index.js", origin: "http://127.0.0.1:1" })).status, 403);
+  assert.deepEqual(requested, ["index.js", "index.js", "index.js"]);
+  corruptDigest = true;
+  assert.equal((await send(assets, { target: "/plugin/index.js", origin: assets.origin })).status, 404);
+  assert.deepEqual(requested, ["index.js", "index.js", "index.js", "index.js"]);
+  for (const target of ["/plugin/../secret.js", "/plugin/%2e%2e/secret.js", "/plugin/index.js.map", "/plugin/"]) {
+    assert.equal((await send(assets, { target })).status, 404, target);
+  }
+  assert.equal((await send(assets, { target: "/plugin/index.js", cookie: "wrong" })).status, 403);
 });
 
 test("serves a Main-selected bundled Core directory named dist", async t => {

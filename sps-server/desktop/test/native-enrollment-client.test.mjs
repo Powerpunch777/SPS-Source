@@ -17,6 +17,31 @@ const PAIRING = "33333333-3333-4333-8333-333333333333";
 const ENROLLMENT = "44444444-4444-4444-8444-444444444444";
 const TOKEN = "fixture.header.signature", COOKIE = `sps_identity_session=${"x".repeat(64)}`;
 
+test("Native Plugin client sends only fixed scoped POST over fresh mTLS and validates large asset responses", async t => {
+  const source = Buffer.alloc(300_000, 65);
+  const asset = { path: "index.js", contentType: "text/javascript; charset=utf-8", bytes: source.toString("base64url"),
+    sha256: createHash("sha256").update(source).digest("hex") };
+  const f = await fixture(t, { respond({ item, send, value }) {
+    send(item.path === "/sps-native/v1/plugin-runtime" ? { data: asset } : value);
+  } });
+  const client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  const request = { pluginId: PAIRING, surface: "widget", surfaceId: "count", revision: "a".repeat(64),
+    operation: "asset", key: "index.js", params: {} };
+  assert.deepEqual(await client.invokePlugin({ workspaceId: DEVICE, request, keyRequest, issuance: f.issuance }), { data: asset });
+  const observed = f.requests.at(-1);
+  assert.equal(observed.path, "/sps-native/v1/plugin-runtime");
+  assert.equal(observed.nativeWorkspace, DEVICE);
+  assert.equal(observed.contentType, "application/json");
+  assert.equal(observed.body, JSON.stringify(request));
+  assert.equal(observed.cookie, COOKIE); assert.equal(observed.authorization, undefined);
+  assert.equal(observed.authorized, true); assert.equal(observed.resumed, false);
+  const before = f.requests.length;
+  await assert.rejects(client.invokePlugin({ workspaceId: DEVICE,
+    request: { ...request, key: "../key.js" }, keyRequest, issuance: f.issuance }));
+  assert.equal(f.requests.length, before);
+});
+
 test("Inbox state uses the exact PATCH body with saved mTLS credentials", async t => {
   const value = { readAt: "2026-10-27T00:00:00.000Z", archivedAt: null };
   const f = await fixture(t, { respond({ item, send, value: fallback }) {
@@ -72,6 +97,7 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
     req.on("data", chunk => chunks.push(chunk));
     req.once("end", () => {
       const item = { path: req.url, method: req.method, authorization: req.headers.authorization,
+        nativeWorkspace: req.headers["x-sps-native-workspace"],
         cookie: req.headers.cookie, contentType: req.headers["content-type"], contentLength: req.headers["content-length"],
         body: Buffer.concat(chunks).toString("utf8"),
         protocol: req.socket.getProtocol(), resumed: req.socket.isSessionReused(), authorized: req.socket.authorized,

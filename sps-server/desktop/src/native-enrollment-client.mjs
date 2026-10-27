@@ -13,11 +13,14 @@ import { validateSpsNativeMemberIssuerCertificate, validateSpsNativeServerCertif
   validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
 import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
 import { nativeServerCertificateServername } from "./native-server-certificate-selection.mjs";
+import { requireSpsNativePluginRequest, parseSpsNativePluginResponse, NATIVE_PLUGIN_TARGET,
+  NATIVE_PLUGIN_MAX_RESPONSE } from "./native-plugin-protocol.mjs";
 
 const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/sps-native/v1/session/exchange",
   issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete",
   reconcile: "/sps-native/v1/enrollment/reconcile", renewal: "/sps-native/v1/enrollment/renew", workspaces: "/sps-native/v1/workspaces",
   serverCertificate: "/sps-native/v1/server-certificate",
+  pluginRuntime: NATIVE_PLUGIN_TARGET,
   workspaceBootstrap: "/api/companies" });
 const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox"]);
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
@@ -186,9 +189,9 @@ function createClient(input, mode) {
     finally { busy = false; }
   }
 
-  function post(operation, bytes, auth, credential, { guard, signal, deadline, workspaceId, surface, archived, itemId }) {
+  function post(operation, bytes, auth, credential, { guard, signal, deadline, workspaceId, surface, archived, itemId, pluginRequest }) {
     guard();
-    if (!Buffer.isBuffer(bytes) || bytes.length > 8192) throw failure("invalid_options");
+    if (!Buffer.isBuffer(bytes) || bytes.length > (operation === "pluginRuntime" ? 64 * 1024 : 8192)) throw failure("invalid_options");
     const path = operation === "workspaceBootstrap"
       ? `${PATHS.workspaceBootstrap}/${workspaceId}/workspace-bootstrap`
       : operation === "workspaceSurface" ? workspaceSurfacePath(workspaceId, surface, archived)
@@ -235,7 +238,8 @@ function createClient(input, mode) {
             } catch { return failure("unavailable"); }
           },
           headers: { ...(operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? {}
-            : { "Content-Type": operation === "inboxState" ? "application/json" : "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
+            : { "Content-Type": operation === "inboxState" || operation === "pluginRuntime" ? "application/json" : "application/json; charset=utf-8" }),
+            ...(operation === "pluginRuntime" ? { "X-SPS-Native-Workspace": workspaceId } : {}), "Content-Length": String(bytes.length),
             Connection: "close", ...(operation === "identity" || operation === "serverCertificate" ? {}
               : operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
         }, response => {
@@ -244,7 +248,9 @@ function createClient(input, mode) {
           response.on("error", () => stop(failure("unavailable")));
           response.once("aborted", () => stop(failure("invalid_response")));
           response.on("data", chunk => {
-            if (!Buffer.isBuffer(chunk) || size + chunk.length > (operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? 256 * 1024 : 16_384)) { stop(failure("invalid_response")); return; }
+            const maximum = operation === "pluginRuntime" ? pluginRequest?.operation === "asset" ? NATIVE_PLUGIN_MAX_RESPONSE : 256 * 1024
+              : operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? 256 * 1024 : 16_384;
+            if (!Buffer.isBuffer(chunk) || size + chunk.length > maximum) { stop(failure("invalid_response")); return; }
             size += chunk.length; chunks.push(chunk);
           });
           response.once("end", () => {
@@ -253,7 +259,8 @@ function createClient(input, mode) {
               guard();
               if (!response.complete) throw new Error();
               const envelope = { statusCode: response.statusCode, rawHeaders: response.rawHeaders, body: Buffer.concat(chunks, size) };
-              const value = operation === "inboxState" ? parseSpsNativeInboxStateResponse(envelope) : operation === "workspaceSurface"
+              const value = operation === "pluginRuntime" ? parseSpsNativePluginResponse(envelope, pluginRequest)
+                : operation === "inboxState" ? parseSpsNativeInboxStateResponse(envelope) : operation === "workspaceSurface"
                 ? parseSpsNativeWorkspaceSurfaceResponse(surface, workspaceId, envelope)
                 : parseSpsNativeEnrollmentResponse(operation, envelope);
               stop(null, value);
@@ -360,6 +367,22 @@ function createClient(input, mode) {
   }
   if (workspace) return Object.freeze({
     exchange,
+    async invokePlugin(input, signalInput = {}) {
+      const value = record(input, ["workspaceId", "request", "keyRequest", "issuance"]);
+      const workspaceId = uuid(value.workspaceId);
+      const pluginRequest = requireSpsNativePluginRequest(value.request);
+      return run("pluginRuntime", signalInput, async operation => {
+        const { key } = await checkedKey(value.keyRequest, operation.guard);
+        const { credential } = await checkedIssuance(value.issuance, key, operation.guard);
+        const result = await post("pluginRuntime", Buffer.from(JSON.stringify(pluginRequest)), cookie, credential,
+          { ...operation, workspaceId, pluginRequest });
+        operation.guard();
+        if (pluginRequest.operation === "describe" && (result.data.workspaceId !== workspaceId
+          || result.data.pluginId !== pluginRequest.pluginId || result.data.surface !== pluginRequest.surface
+          || result.data.surfaceId !== pluginRequest.surfaceId)) throw failure("invalid_response");
+        return result;
+      });
+    },
     updateInboxState(input, signalInput = {}) {
       return run("inboxState", signalInput, async operation => {
         const value = record(input, ["workspaceId", "state", "keyRequest", "issuance"]);

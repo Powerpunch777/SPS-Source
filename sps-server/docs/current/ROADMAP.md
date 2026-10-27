@@ -17,11 +17,14 @@
 [모델 설정 검증](../reviews/MODEL-HOST-SETTINGS-2026-10-27.md),
 [Member 갱신 검증](../reviews/NATIVE-MEMBER-RENEWAL-2026-10-27.md),
 [Host 갱신과 Member target 전환](../reviews/NATIVE-HOST-RENEWAL-2026-10-27.md)이 각 범위와 한계를 기록한다.
-Native 기본값은 OFF다. issuer 회전·만료 후 신뢰 복구, 격리된 Plugin 실행 UI,
-Native Source/Node, 실제 AI 실행, 설치/업데이트/복원과 물리 두 PC 및 보안 게이트는 남아 있다.
+Native 기본값은 OFF다. issuer 회전·만료 후 신뢰 복구, Native Source/Node, 실제 AI 실행,
+설치/업데이트/복원과 물리 두 PC 및 보안 게이트는 남아 있다.
 후속 [Native Plugin 실행 기반](../reviews/NATIVE-PLUGIN-EXECUTION-FOUNDATION-2026-10-27.md)은
 기존 앱 작업자와 비공개 고정 호출을 연결하고 호출별 현재 권한·취소·결과 전달 경계를 추가한다.
-실제 Plugin 화면·공개 TLS/자산 중계·SDK 이벤트 연결은 다음 단계이며 아직 사용할 수 없다.
+실제 선언 shell/widget 화면은 별도 Native Plugin 창에서 실행하고, 상대 모듈·CSS/자산과
+데이터/액션 호출을 연결했다. joined Electron/Core/DB E2E에서 상태 변경·비활성화 차단과 자연 종료를 통과했으며,
+스트림·Host 탐색/알림·전체 공개 SDK 지원은 미완료다. 자세한 범위와 증거는
+[Native Plugin UI 기록](../reviews/NATIVE-PLUGIN-UI-2026-10-27.md)을 참조한다.
 후속 [공개 Native 연결 SDK](../reviews/NATIVE-CONNECTIVITY-SDK-2026-10-27.md)는
 현재 호출의 검증된 연결 근거만 읽는 `connectivity.current()`와 전용 read capability를 추가한다.
 전체 Host 목록·연결 생성·이벤트 구독·실행 권한을 제공하는 API는 아니며 아직 미출시 소스다.

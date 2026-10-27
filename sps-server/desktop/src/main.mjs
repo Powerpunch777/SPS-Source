@@ -18,6 +18,7 @@ import { createSpsNativeMemberMainSigner } from "./native-member-main-signer.mjs
 import { createSpsNativeMemberController } from "./native-member-controller.mjs";
 import { createSpsNativeServerCertificateClient } from "./native-enrollment-client.mjs";
 import { createSpsNativeWorkspaceWindowController } from "./native-workspace-window.mjs";
+import { createSpsNativePluginWindowController } from "./native-plugin-window.mjs";
 import { createSpsNativeWorkspaceAssets } from "./native-workspace-assets.mjs";
 import { createSpsNativeHostController } from "./native-host-controller.mjs";
 import { createSpsNativeHostIngress } from "./native-host-ingress.mjs";
@@ -272,6 +273,7 @@ let nativeDeviceManagementController = null;
 let nativeInvitationManagementController = null;
 let nativeMemberController = null;
 let nativeWorkspaceWindowController = null;
+let nativePluginWindowController = null;
 let nativeHostController = null;
 const nativeIdentityStores = new Map();
 const ownerVaultOperations = createSpsOwnerVaultOperationGate({
@@ -281,6 +283,7 @@ const ownerVaultOperations = createSpsOwnerVaultOperationGate({
     nativeMemberController?.dispose();
     nativeMemberController = null;
     void nativeWorkspaceWindowController?.invalidate().catch(() => {});
+    void nativePluginWindowController?.invalidate().catch(() => {});
   },
 });
 let ownerHostRecoveryPluginsDisabled = null;
@@ -1370,10 +1373,41 @@ function ensureNativeWorkspaceWindowController() {
       getBootstrap: (input, options) => ensureNativeMemberController().getWorkspaceBootstrap(input, options),
       readSurface: (input, options) => ensureNativeMemberController().readWorkspaceSurface(input, options),
       updateInboxState: (input, options) => ensureNativeMemberController().updateInboxState(input, options),
+      openPlugin: (scope, options) => ensureNativePluginWindowController().open(scope, options),
+      onPluginParentClosed: parentId => nativePluginWindowController?.closeForParent(parentId),
     });
     nativeWorkspaceWindowController.registerIpc(ipcMain);
   }
   return nativeWorkspaceWindowController;
+}
+
+function invokeNativePlugin(scope, request, options) {
+  return ensureNativeMemberController().invokePlugin({ hostId: scope.hostId, workspaceId: scope.workspaceId,
+    pluginId: scope.pluginId, surface: scope.surface, surfaceId: scope.surfaceId,
+    revision: scope.revision ?? null, operation: request.operation, key: request.key, params: request.params }, options);
+}
+
+function ensureNativePluginWindowController() {
+  if (!nativePluginWindowController) {
+    nativePluginWindowController = createSpsNativePluginWindowController({
+      BrowserWindow,
+      getAuthority: nativeMemberAuthority,
+      getAssetRoot: async () => app.isPackaged
+        ? path.join(await materializeCurrentSpsOwnerHostRuntime(), "ui-dist")
+        : path.resolve(__dirname, "..", "..", "..", "external", "sps-core", "ui", "dist"),
+      createAssets: createSpsNativeWorkspaceAssets,
+      preloadFile: path.join(__dirname, "native-plugin-preload.cjs"),
+      getBootstrap: (scope, options) => ensureNativeMemberController().getWorkspaceBootstrap({
+        hostId: scope.hostId, workspaceId: scope.workspaceId }, options),
+      getDescriptor: async (scope, options) => (await invokeNativePlugin(scope,
+        { operation: "describe", key: "surface", params: {} }, options)).data,
+      invoke: (scope, request, options) => invokeNativePlugin(scope, request, options),
+      readAsset: async (scope, { path: assetPath }, options) => (await invokeNativePlugin(scope,
+        { operation: "asset", key: assetPath, params: {} }, options)).data,
+    });
+    nativePluginWindowController.registerIpc(ipcMain);
+  }
+  return nativePluginWindowController;
 }
 
 function ensureNativeHostController() {
@@ -5636,6 +5670,7 @@ async function stopDesktopRuntimeGracefully() {
   traceDesktopShutdown("stop_managers_start");
   const managerStops = await Promise.allSettled([
     nativeWorkspaceWindowController?.dispose(),
+    nativePluginWindowController?.dispose(),
     defaultMemoryManager?.stop({ force: false }),
     ownerHostManager?.stop({ force: false }),
     pluginPreviewRuntime?.manager?.stop({ force: false }),

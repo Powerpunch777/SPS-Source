@@ -7,6 +7,7 @@ import { createSpsNativeWorkspaceWindowController } from "../src/native-workspac
 
 const hostId = "11111111-1111-4111-8111-111111111111";
 const workspaceId = "22222222-2222-4222-8222-222222222222";
+const pluginId = "33333333-3333-4333-8333-333333333333";
 const scope = { hostId, workspaceId };
 const bootstrap = { v: 1, kind: "sps.native.workspace.bootstrap", workspace: { id: workspaceId, name: "Team", issuePrefix: "TEAM" },
   member: { userId: "member" }, capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] };
@@ -21,6 +22,7 @@ function fixture(overrides = {}) {
   class FakeWindow extends EventEmitter {
     constructor(options) {
       super(); this.options = options; this.dead = false;
+      this.id = windows.length + 1;
       this.webContents = new EventEmitter();
       this.webContents.mainFrame = { url: "about:blank" };
       this.webContents.getURL = () => this.webContents.mainFrame.url;
@@ -222,4 +224,30 @@ test("Native preload accepts no selectors, secrets, getters or extra arguments",
   assert.deepEqual(JSON.parse(JSON.stringify(calls[1][1])), { surface: "inbox", archived: true });
   await api.updateInboxState({ itemId: hostId, read: false });
   assert.equal(calls[2][0], "desktop:native-workspace-inbox-state");
+  await api.openPlugin({ pluginId, surface: "widget", surfaceId: "summary" });
+  assert.equal(calls[3][0], "desktop:native-workspace-open-plugin");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[3][1])), { pluginId, surface: "widget", surfaceId: "summary" });
+  await assert.rejects(api.openPlugin({ pluginId, surface: "widget", surfaceId: "summary", workspaceId }));
+  await assert.rejects(api.openPlugin({ pluginId, surface: "dashboard", surfaceId: "summary" }));
+  assert.equal(calls.length, 4);
+});
+
+test("opens a selected Plugin window from retained Workspace scope and closes children with parent", async t => {
+  const opened = [], closedParents = [];
+  const f = fixture({ openPlugin: async (input, options) => {
+    options.assertRequester(); opened.push({ input, parentId: options.parentId, signal: options.signal }); return { opened: true };
+  }, onPluginParentClosed: parentId => closedParents.push(parentId) });
+  t.after(() => f.controller.dispose());
+  await f.controller.open(scope);
+  const result = await f.invoke("open-plugin", [{ pluginId, surface: "widget", surfaceId: "summary" }]);
+  assert.deepEqual(result, { opened: true });
+  assert.deepEqual(opened[0].input, { ...scope, pluginId, surface: "widget", surfaceId: "summary" });
+  assert.equal(opened[0].parentId, f.windows[0].id);
+  assert.equal(opened[0].signal.aborted, false);
+  await assert.rejects(f.invoke("open-plugin", [{ pluginId, surface: "widget", surfaceId: "summary", workspaceId: hostId }]));
+  assert.equal(opened.length, 1);
+  f.windows[0].destroy();
+  await tick();
+  assert.deepEqual(closedParents, [f.windows[0].id]);
+  assert.equal(opened[0].signal.aborted, true);
 });
