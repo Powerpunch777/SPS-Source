@@ -130,7 +130,6 @@ export function parseSpsNativeNodeResponse(envelope) {
       || values.get("cache-control") !== "no-store" || values.get("content-length") !== String(envelope.body.length)
       || values.has("set-cookie") || values.has("location") || values.has("content-encoding") || values.has("transfer-encoding")) throw new Error();
     const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(envelope.body);
-    if (text.includes("\uFEFF") || text.includes("\0") || text.includes("\uFFFD")) throw new Error();
     const parsed = JSON.parse(text);
     const response = record(parsed, ["data"]);
     if (JSON.stringify(parsed) !== text) throw new Error();

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, randomBytes, randomUUID, X509Certificate } from "node:crypto";
+import { constants, createHash, createPublicKey, publicEncrypt, randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { fork, spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
@@ -11,10 +11,13 @@ const withWindow = process.argv[3] === "--with-native-window";
 const withHostRenewal = process.argv[3] === "--with-native-host-renewal";
 const withNativePlugin = process.argv[3] === "--with-native-plugin";
 const withNativeNode = process.argv[3] === "--with-native-node";
+const withNativePluginNode = process.argv[3] === "--with-native-plugin-node";
+const withNativePluginSource = process.argv[3] === "--with-native-plugin-source";
+const withNativeNodeIntegration = withNativeNode || withNativePluginNode || withNativePluginSource;
 const withRenewal = process.argv[3] === "--with-native-renewal" || withHostRenewal;
 const withNativeWindow = withWindow || withRenewal || withNativePlugin;
 if (![3, 4].includes(process.argv.length) || process.argv[2] !== "--isolated-native-workspace-channel"
-  || process.argv.length === 4 && (!withNativeWindow && !withNativeNode || withNativeWindow && process.platform !== "win32")) {
+  || process.argv.length === 4 && (!withNativeWindow && !withNativeNodeIntegration || withNativeWindow && process.platform !== "win32")) {
   throw new Error("Use the explicit isolated Native Workspace channel command.");
 }
 const { createSpsNativeHostIdentity } = await import("../src/native-identity-certificates.mjs");
@@ -35,13 +38,15 @@ const load = relative => import(pathToFileURL(path.join(core, relative)).href);
 const { createDb, getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase,
   authUsers, authSessions, companies, companyMemberships, agents, plugins, spsNodes, spsMemberDevices,
   spsNodeRunnerProfiles, spsNodeAgentGrants, spsNodeAgentRunnerGrants, spsAgentNodeBindings, spsNodeCommands, spsNodeCommandEvents,
+  spsPluginExecutionGrants, spsPluginNodeRuns, spsPluginNodeRunEvents,
+  spsWorkspaceSources, spsWorkspaceSourceNodeGrants,
   spsPluginInboxItems, spsPluginInboxUserStates, spsMemberDeviceRenewalCertificates, pluginState, pluginCompanySettings,
   spsNativePairings, spsNativePairingEvents, spsNativeEnrollments } = await load("packages/db/src/index.ts");
 const { spsMemberDeviceService } = await load("server/src/services/sps-member-devices.ts");
 assert.equal((await getEmbeddedPostgresTestSupport()).supported, true);
 const database = await startEmbeddedPostgresTestDatabase("sps-native-workspace-channel-");
 let db, child, parent, ingress, signerChannel, parentIngress, failure, childShutdownStage = "not-started";
-let applyHostRenewal;
+let applyHostRenewal, nativePluginSourceExpected = null;
 let pluginFixture, pluginConfiguration;
 
 async function runWindow(configuration) {
@@ -214,12 +219,12 @@ export function NativeCount({data, refresh}) {
     parentIngress = createSpsNativeParentIngressClient(child, { isCurrent: current });
   }
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error("Isolated Native Workspace child readiness timed out.")), withNativePlugin || withNativeNode ? 90_000 : 45_000);
+    const timer = setTimeout(() => finish(new Error("Isolated Native Workspace child readiness timed out.")), withNativePlugin || withNativeNodeIntegration ? 90_000 : 45_000);
     const onFailure = () => finish(new Error("Isolated Native Workspace child failed."));
     const onMessage = message => {
       if (message?.kind === "sps.test.native-workspace.configure-ready") child.send({ kind: "sps.test.native-workspace.configure", binding,
         connectionString: database.connectionString, identityIssuer: "https://workspace.example.test", renewal: withRenewal,
-        ...(withNativePlugin ? { nativePlugin: pluginConfiguration } : {}), ...(withNativeNode ? { nativeNode: true } : {}) }, error => { if (error) onFailure(); });
+        ...(withNativePlugin ? { nativePlugin: pluginConfiguration } : {}), ...(withNativeNodeIntegration ? { nativeNode: true } : {}) }, error => { if (error) onFailure(); });
       else if (message?.kind === "sps.test.native-workspace.ready") finish();
       else if (message?.kind === "sps.test.native-workspace.failure") onFailure();
     };
@@ -238,7 +243,7 @@ export function NativeCount({data, refresh}) {
       // Only the Identity-provider exchange is substituted. The returned token
       // is a real existing Core DB session and grants no device or membership.
       if (operation === "session.exchange") {
-        assert.equal(withNativeWindow || withNativeNode, true);
+        assert.equal(withNativeWindow || withNativeNodeIntegration, true);
         assert.equal(input.credential.accessToken, "fixture.header.signature");
         return { token: secret, expiresInSeconds: 604800 };
       }
@@ -298,9 +303,26 @@ export function NativeCount({data, refresh}) {
   assert.equal((await read(`${root}/workspace-shell`, { cookie: `sps_identity_session=${"x".repeat(64)}` })).status, 403);
   assert.equal((await read(`/api/companies/${randomUUID()}/workspace-shell`)).status, 403);
   assert.equal((await read("/api/companies")).status, 404);
-  if (withNativeNode) {
+  if (withNativeNodeIntegration) {
     let nativeNodeStage = "setup";
+    const sourceExpectations = new Map(), sourceRouteEvidence = [];
+    let sourceMappingCloseCount = 0;
+    let sourceA, sourceB, sourceAPath, sourceBPath, changedSourceAPath, pluginExecutionService;
     const nativeNodeWorkspaceFixture = await createWorkspaceE2eFixture();
+    const pluginKey = "sps.native-node-acceptance";
+    const pluginManifest = { id: pluginKey, apiVersion: 1, version: "1.0.0", displayName: "Native Node acceptance",
+      description: "Isolated workflow-neutral plugin execution fixture", author: "SPS acceptance fixture", categories: ["automation"],
+      capabilities: ["sps.executionGrants.write", "sps.runs.dispatch", "sps.runs.read", "sps.runs.cancel"],
+      entrypoints: { worker: "worker.cjs" },
+      sps: { contractVersion: "2.0", primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe", "runs.cancel"] } };
+    if (withNativePluginNode || withNativePluginSource) {
+      pluginFixture = await createWorkspaceE2eFixture();
+      await writeFile(path.join(pluginFixture.directory, "worker.cjs"), "module.exports = {};\n");
+      await writeFile(path.join(pluginFixture.directory, "manifest.json"), `${JSON.stringify(pluginManifest, null, 2)}\n`);
+      await db.insert(plugins).values({ id: randomUUID(), pluginKey, packageName: "@sps/native-node-acceptance",
+        packagePath: pluginFixture.directory, version: pluginManifest.version, apiVersion: 1,
+        categories: pluginManifest.categories, manifestJson: pluginManifest, status: "ready" });
+    }
     const context = { identityIssuer: "https://workspace.example.test", subject: "fixture-member", hostId,
       deviceKeyId: key.deviceKeyId, serverSpkiSha256: binding.serverSpkiSha256, issuerSpkiSha256: binding.issuerSpkiSha256 };
     const target = { v: 1, kind: "sps.native.member-host-target", context,
@@ -311,6 +333,7 @@ export function NativeCount({data, refresh}) {
     const getAuthority = () => ({ identityIssuer: context.identityIssuer, subject: context.subject,
       userDataDirectory: "isolated-native-node-profile", vaultDirectory: "isolated-native-node-vault", generation: 1n });
     const { executeSpsNodeCommand, cancelSpsNodeCommand } = await import("../../desktop-node/src/command-runner.mjs");
+    const { decryptSpsWorkspaceSourceCredential } = await import("../../desktop-node/src/host-project-share.mjs");
     let nodeState = { v: 1, entries: [] };
     const memberNode = createSpsNativeNodeController({ getAuthority, getState: () => nodeState,
       saveState: async (value, { beforeCommit } = {}) => { beforeCommit?.(); nodeState = value; },
@@ -352,9 +375,40 @@ export function NativeCount({data, refresh}) {
         },
       }),
       execute: options => executeSpsNodeCommand({ ...options,
-        resolveInvocation: async () => ({ executable: process.execPath,
-          args: ["-e", "process.stdout.write('SPS_NATIVE_NODE_CANARY_OK\\n'); process.stderr.write('canary-stderr\\n')"] }),
-        resolveWorkspace: async () => nativeNodeWorkspaceFixture.directory,
+        resolveInvocation: async (_command, args) => ({ executable: process.execPath,
+          args: ["-e", args?.includes("--hold")
+            ? `process.stderr.write('${withNativePluginSource ? "SPS_PLUGIN_SOURCE_HOLD_STARTED" : "SPS_PLUGIN_NODE_HOLD_STARTED"}\\n'); setInterval(() => {}, 1000)`
+            : `process.stdout.write('${withNativePluginNode ? "SPS_PLUGIN_NODE_CANARY_OK" : withNativePluginSource ? "SPS_PLUGIN_SOURCE_CANARY_OK" : "SPS_NATIVE_NODE_CANARY_OK"}\\n'); process.stderr.write('canary-stderr\\n')`] }),
+        resolveWorkspace: async () => {
+          assert.equal(withNativePluginSource, false, "A Source-backed run must use the opened fixture mapping.");
+          return nativeNodeWorkspaceFixture.directory;
+        },
+        openWorkspaceSourceRoute: async (descriptor, transportPrivateKeyPem, openOptions) => {
+          if (!withNativePluginSource) { assert.equal(descriptor, null); return null; }
+          nativeNodeStage = "source-route-validate-and-decrypt";
+          assert.ok(descriptor, "A Source-backed run must claim its signed Core route.");
+          const expected = sourceExpectations.get(descriptor.sourceId);
+          assert.ok(expected, "Core returned an unregistered fixture Source route.");
+          assert.equal(descriptor.kind, "sps_workspace_source");
+          assert.equal(descriptor.sharePath, expected.sharePath);
+          assert.equal(openOptions.expectedSharePath, expected.sharePath);
+          const credential = decryptSpsWorkspaceSourceCredential(descriptor, transportPrivateKeyPem,
+            openOptions.expectedSharePath);
+          assert.ok(credential.sharePath === expected.credential.sharePath
+            && credential.username === expected.credential.username
+            && credential.password === expected.credential.password, "Decrypted Source credential mismatch.");
+          sourceRouteEvidence.push({ sourceId: descriptor.sourceId, sharePath: descriptor.sharePath,
+            expectedSharePath: openOptions.expectedSharePath });
+          nativeNodeStage = "source-route-open-fixture-mapping";
+          let closed = false, closing;
+          return Object.freeze({ sharePath: credential.sharePath, workspacePath: nativeNodeWorkspaceFixture.directory,
+            close() {
+              if (!closing) closing = Promise.resolve().then(() => {
+                if (!closed) { closed = true; sourceMappingCloseCount += 1; }
+              });
+              return closing;
+            } });
+        },
       }),
       cancelCommand: (commandId, ownership) => cancelSpsNodeCommand(commandId,
         "Isolated Native Node acceptance is cleaning up its owned command.", { ownership }),
@@ -369,49 +423,233 @@ export function NativeCount({data, refresh}) {
       const agentId = randomUUID(), runner = (await db.select().from(spsNodeRunnerProfiles))
         .find(row => row.nodeId === nativeNode.id && row.runnerKey === "native-canary");
       assert.ok(runner);
-      await db.insert(agents).values({ id: agentId, companyId, name: "Native canary Agent", adapterType: "sps_agy_local",
-        adapterConfig: {}, runtimeConfig: {}, permissions: {}, status: "idle" });
-      await db.insert(spsAgentNodeBindings).values({ companyId, agentId, nodeId: nativeNode.id, assignedByUserId: "fixture-host" });
-      await db.insert(spsNodeAgentGrants).values({ companyId, nodeId: nativeNode.id, agentId, grantedByUserId: "fixture-host" });
-      await db.insert(spsNodeAgentRunnerGrants).values({ companyId, nodeId: nativeNode.id, runnerProfileId: runner.id,
-        agentId, grantedByUserId: "fixture-host" });
-      const commandId = randomUUID();
-      await db.insert(spsNodeCommands).values({ id: commandId, companyId, nodeId: nativeNode.id, agentId,
-        runnerProfileId: runner.id, command: "agy", args: [], env: {}, status: "queued",
-        workspaceAccess: null, timeoutMs: 30_000, heartbeatRunId: null, projectId: null });
-      await new Promise(resolve => setTimeout(resolve, 750));
-      const pendingCommand = (await db.select().from(spsNodeCommands)).find(row => row.id === commandId);
-      assert.equal(pendingCommand?.status, "queued", "A pending Node must not claim its command.");
-      // This isolated fixture applies the same explicit Owner approval and
-      // Agent/Runner grants that the existing authenticated admin flow records.
-      await db.update(spsNodes).set({ status: "active", approvedAt: new Date(), approvedByUserId: "fixture-owner" });
-      const deadline = Date.now() + 45_000;
-      let completed;
-      while (Date.now() < deadline) {
-        completed = (await db.select().from(spsNodeCommands)).find(row => row.id === commandId);
-        if (completed?.status === "succeeded" || completed?.status === "failed") break;
-        await new Promise(resolve => setTimeout(resolve, 250));
+      let commandId;
+      let primaryPluginRunId, primaryPluginGrantId;
+      if (withNativePluginNode) {
+        const subjectKey = "acceptance:successful-canary";
+        primaryPluginGrantId = randomUUID(); primaryPluginRunId = randomUUID();
+        await db.insert(spsPluginExecutionGrants).values({ id: primaryPluginGrantId, companyId, pluginKey, subjectKey,
+          nodeId: nativeNode.id, runnerProfileId: runner.id, workspaceSourceId: null, status: "active", revokedAt: null });
+        await db.insert(spsPluginNodeRuns).values({ id: primaryPluginRunId, companyId, pluginKey, subjectKey,
+          executionGrantId: primaryPluginGrantId, nodeId: nativeNode.id, runnerProfileId: runner.id,
+          workspaceSourceId: null, command: "agy", args: ["--success"], env: {}, timeoutMs: 30_000, status: "queued" });
+      } else if (withNativePluginSource) {
+        sourceAPath = "\\\\sps-fixture.invalid\\NativeSourceA";
+        sourceBPath = "\\\\sps-fixture.invalid\\NativeSourceB";
+        changedSourceAPath = "\\\\sps-fixture.invalid\\NativeSourceAChanged";
+        sourceA = await db.insert(spsWorkspaceSources).values({ companyId, displayName: "Native Source A",
+          sharePath: sourceAPath, status: "active", createdByUserId: userId }).returning().then(rows => rows[0]);
+        sourceB = await db.insert(spsWorkspaceSources).values({ companyId, displayName: "Native Source B",
+          sharePath: sourceBPath, status: "active", createdByUserId: userId }).returning().then(rows => rows[0]);
+        nativePluginSourceExpected = { sourceAId: sourceA.id, sourceBId: sourceB.id,
+          sourceAPath, sourceBPath, changedSourceAPath, heldRunId: null, siblingRunId: null };
+        const { spsPluginExecutionService } = await load("server/src/services/sps-plugin-execution.ts");
+        const { eq } = await import(pathToFileURL(path.join(core, "packages/db/node_modules/drizzle-orm/index.js")).href);
+        pluginExecutionService = spsPluginExecutionService(db, pluginKey);
+        await assert.rejects(pluginExecutionService.upsertExecutionGrant({ companyId, subjectKey: "acceptance:source-shared-subject",
+          nodeId: nativeNode.id, runnerProfileId: runner.id, workspaceSourceId: sourceA.id }), /not approved/i);
+        assert.deepEqual(await db.select().from(spsPluginExecutionGrants), []);
+        assert.deepEqual(await db.select().from(spsPluginNodeRuns), []);
+      } else {
+        await db.insert(agents).values({ id: agentId, companyId, name: "Native canary Agent", adapterType: "sps_agy_local",
+          adapterConfig: {}, runtimeConfig: {}, permissions: {}, status: "idle" });
+        await db.insert(spsAgentNodeBindings).values({ companyId, agentId, nodeId: nativeNode.id, assignedByUserId: "fixture-host" });
+        await db.insert(spsNodeAgentGrants).values({ companyId, nodeId: nativeNode.id, agentId, grantedByUserId: "fixture-host" });
+        await db.insert(spsNodeAgentRunnerGrants).values({ companyId, nodeId: nativeNode.id, runnerProfileId: runner.id,
+          agentId, grantedByUserId: "fixture-host" });
+        commandId = randomUUID();
+        await db.insert(spsNodeCommands).values({ id: commandId, companyId, nodeId: nativeNode.id, agentId,
+          runnerProfileId: runner.id, command: "agy", args: [], env: {}, status: "queued",
+          workspaceAccess: null, timeoutMs: 30_000, heartbeatRunId: null, projectId: null });
       }
-      assert.equal(completed?.status, "succeeded", `Native canary command ended ${completed?.status ?? "without a result"}.`);
-      assert.ok(completed.claimedAt instanceof Date && completed.startedAt instanceof Date && completed.finishedAt instanceof Date);
-      assert.equal(completed.exitCode, 0);
-      const events = (await db.select().from(spsNodeCommandEvents)).filter(event => event.commandId === commandId);
-      assert.ok(events.some(event => event.stream === "stdout" && event.body?.includes("SPS_NATIVE_NODE_CANARY_OK")));
-      assert.ok(events.some(event => event.stream === "stderr" && event.body?.includes("canary-stderr")));
+      await new Promise(resolve => setTimeout(resolve, 750));
+      if (withNativePluginNode) {
+        const pendingRun = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === primaryPluginRunId);
+        assert.equal(pendingRun?.status, "queued", "A pending Node must not claim a plugin run.");
+      } else if (withNativePluginSource) {
+        const pendingNode = (await db.select().from(spsNodes)).find(row => row.id === nativeNode.id);
+        assert.equal(pendingNode?.status, "pending", "Source-backed Plugin grants require an Owner-approved Node.");
+        assert.deepEqual(await db.select().from(spsPluginExecutionGrants), []);
+        assert.deepEqual(await db.select().from(spsPluginNodeRuns), []);
+      } else {
+        const pendingCommand = (await db.select().from(spsNodeCommands)).find(row => row.id === commandId);
+        assert.equal(pendingCommand?.status, "queued", "A pending Node must not claim its command.");
+      }
+      // These explicit fixture DB rows model the Owner-approved Node and its
+      // Agent grants, or an installed Plugin's declared and persisted run grant.
+      await db.update(spsNodes).set({ status: "active", approvedAt: new Date(), approvedByUserId: "fixture-owner" });
+      if (withNativePluginNode) {
+        nativeNodeStage = "plugin-run-claim-lease-events-complete";
+        const deadline = Date.now() + 45_000;
+        let completed;
+        while (Date.now() < deadline) {
+          completed = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === primaryPluginRunId);
+          if (completed?.status === "succeeded" || completed?.status === "failed") break;
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        assert.equal(completed?.status, "succeeded", `Native Plugin canary ended ${completed?.status ?? "without a result"}.`);
+        assert.ok(completed.claimedAt instanceof Date && completed.startedAt instanceof Date && completed.finishedAt instanceof Date);
+        assert.equal(completed.exitCode, 0);
+        assert.equal(completed.pluginKey, pluginKey);
+        assert.equal(completed.workspaceSourceId, null);
+        const events = (await db.select().from(spsPluginNodeRunEvents)).filter(event => event.runId === primaryPluginRunId);
+        assert.ok(events.some(event => event.stream === "stdout" && event.body?.includes("SPS_PLUGIN_NODE_CANARY_OK")));
+        assert.ok(events.some(event => event.stream === "stderr" && event.body?.includes("canary-stderr")));
+
+        const revokeSubject = "acceptance:revoked-canary";
+        const revokeGrantId = randomUUID(), revokeRunId = randomUUID();
+        await db.insert(spsPluginExecutionGrants).values({ id: revokeGrantId, companyId, pluginKey, subjectKey: revokeSubject,
+          nodeId: nativeNode.id, runnerProfileId: runner.id, workspaceSourceId: null, status: "active", revokedAt: null });
+        await db.insert(spsPluginNodeRuns).values({ id: revokeRunId, companyId, pluginKey, subjectKey: revokeSubject,
+          executionGrantId: revokeGrantId, nodeId: nativeNode.id, runnerProfileId: runner.id,
+          workspaceSourceId: null, command: "agy", args: ["--hold"], env: {}, timeoutMs: 30_000, status: "queued" });
+        const heldDeadline = Date.now() + 30_000;
+        let heldRun, heldEvents;
+        while (Date.now() < heldDeadline) {
+          heldRun = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === revokeRunId);
+          heldEvents = (await db.select().from(spsPluginNodeRunEvents)).filter(event => event.runId === revokeRunId);
+          if (heldRun?.status === "running" && heldEvents.some(event => event.body?.includes("SPS_PLUGIN_NODE_HOLD_STARTED"))) break;
+          if (heldRun?.status === "failed") break;
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        assert.equal(heldRun?.status, "running", "The revocation scenario must start an owned canary process first.");
+        assert.ok(heldEvents.some(event => event.body?.includes("SPS_PLUGIN_NODE_HOLD_STARTED")));
+        nativeNodeStage = "plugin-run-revocation-cancels-owned-process";
+        await db.update(spsPluginExecutionGrants).set({ status: "revoked", revokedAt: new Date() });
+        const cancelledDeadline = Date.now() + 15_000;
+        let revokedRun;
+        while (Date.now() < cancelledDeadline) {
+          revokedRun = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === revokeRunId);
+          if (revokedRun?.status === "failed" || revokedRun?.status === "cancelled") break;
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        assert.equal(revokedRun?.status, "failed", `Revoked Plugin run ended ${revokedRun?.status ?? "without a result"}.`);
+        assert.ok(revokedRun.finishedAt instanceof Date);
+        assert.match(revokedRun.error ?? "", /revoked/i);
+        const revokedEvents = (await db.select().from(spsPluginNodeRunEvents)).filter(event => event.runId === revokeRunId);
+        assert.ok(revokedEvents.some(event => event.body?.includes("SPS_PLUGIN_NODE_HOLD_STARTED")));
+        const storedGrants = await db.select().from(spsPluginExecutionGrants);
+        assert.equal(storedGrants.length, 2);
+        assert.ok(storedGrants.every(grant => grant.status === "revoked" && grant.revokedAt instanceof Date));
+        console.log("native_plugin_node_acceptance:registered,zero-agents,pending-denied,approved,granted,claimed,leased,events,completed,revoked,cancelled");
+      } else if (withNativePluginSource) {
+        nativeNodeStage = "source-node-grants-and-signed-route";
+        const { eq } = await import(pathToFileURL(path.join(core, "packages/db/node_modules/drizzle-orm/index.js")).href);
+        const nodeIdentity = JSON.parse(Buffer.from(nodeState.entries[0].encryptedIdentity, "base64").toString("utf8")).identity;
+        const publicKeyDigest = pem => createHash("sha256")
+          .update(createPublicKey(pem).export({ type: "spki", format: "der" })).digest("hex");
+        assert.equal(publicKeyDigest(nodeIdentity.transportPublicKeyPem), publicKeyDigest(nativeNode.transportPublicKey));
+        const credentialFor = sharePath => ({ version: 1, sharePath, username: "fixture-node-user",
+          password: randomBytes(24).toString("base64url") });
+        const grantNodeSource = async source => {
+          const credential = credentialFor(source.sharePath);
+          const credentialEnvelope = publicEncrypt({ key: nodeIdentity.transportPublicKeyPem,
+            padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
+          Buffer.from(JSON.stringify(credential))).toString("base64");
+          sourceExpectations.set(source.id, { sharePath: source.sharePath, credential });
+          await db.insert(spsWorkspaceSourceNodeGrants).values({ companyId, sourceId: source.id, nodeId: nativeNode.id,
+            credentialAlgorithm: "rsa-oaep-sha256", credentialEnvelope, grantedByUserId: userId, revokedAt: null });
+        };
+        await grantNodeSource(sourceA);
+        await grantNodeSource(sourceB);
+        const subjectKey = "acceptance:source-shared-subject";
+        const grantA = await pluginExecutionService.upsertExecutionGrant({ companyId, subjectKey, nodeId: nativeNode.id,
+          runnerProfileId: runner.id, workspaceSourceId: sourceA.id });
+        const grantB = await pluginExecutionService.upsertExecutionGrant({ companyId, subjectKey, nodeId: nativeNode.id,
+          runnerProfileId: runner.id, workspaceSourceId: sourceB.id });
+        const held = await pluginExecutionService.dispatchRun({ companyId, executionGrantId: grantA.id,
+          args: ["--hold"], timeoutMs: 30_000 });
+        const heldRow = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === held.id);
+        assert.equal(heldRow.workspaceSourceId, sourceA.id);
+        assert.equal(heldRow.cwdHint, sourceAPath);
+        nativePluginSourceExpected.heldRunId = held.id;
+        const heldDeadline = Date.now() + 30_000;
+        let heldRun, heldEvents;
+        while (Date.now() < heldDeadline) {
+          heldRun = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === held.id);
+          heldEvents = (await db.select().from(spsPluginNodeRunEvents)).filter(event => event.runId === held.id);
+          if (heldRun?.status === "running" && heldEvents.some(event => event.body?.includes("SPS_PLUGIN_SOURCE_HOLD_STARTED"))) break;
+          if (heldRun?.status === "failed") break;
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        assert.equal(heldRun?.status, "running",
+          `The Source lease scenario must start its owned canary process (status=${heldRun?.status ?? "missing"}; error=${heldRun?.error ?? "none"}).`);
+        assert.ok(heldEvents.some(event => event.body?.includes("SPS_PLUGIN_SOURCE_HOLD_STARTED")));
+        const sibling = await pluginExecutionService.dispatchRun({ companyId, executionGrantId: grantB.id,
+          args: ["--success"], timeoutMs: 30_000 });
+        const siblingRow = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === sibling.id);
+        assert.equal(siblingRow.workspaceSourceId, sourceB.id);
+        assert.equal(siblingRow.cwdHint, sourceBPath);
+        nativePluginSourceExpected.siblingRunId = sibling.id;
+        nativeNodeStage = "source-path-change-lease-cancels-canary";
+        await db.update(spsWorkspaceSources).set({ sharePath: changedSourceAPath }).where(eq(spsWorkspaceSources.id, sourceA.id));
+        const failureDeadline = Date.now() + 15_000;
+        let failedRun;
+        while (Date.now() < failureDeadline) {
+          failedRun = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === held.id);
+          if (failedRun?.status === "failed") break;
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        assert.equal(failedRun?.status, "failed", `Changed Source path left run ${failedRun?.status ?? "without a result"}.`);
+        assert.ok(failedRun.finishedAt instanceof Date);
+        assert.equal(typeof failedRun.error, "string");
+        assert.match(failedRun.error, /source|access|route/i);
+        const closeDeadline = Date.now() + 5_000;
+        while (sourceMappingCloseCount < 1 && Date.now() < closeDeadline) await new Promise(resolve => setTimeout(resolve, 50));
+        assert.ok(sourceMappingCloseCount >= 1, "Revoked Source lease must close the owned fixture mapping.");
+        const siblingDeadline = Date.now() + 30_000;
+        let siblingAfterFailure, siblingEvents;
+        while (Date.now() < siblingDeadline) {
+          siblingAfterFailure = (await db.select().from(spsPluginNodeRuns)).find(row => row.id === sibling.id);
+          siblingEvents = (await db.select().from(spsPluginNodeRunEvents)).filter(event => event.runId === sibling.id);
+          if (siblingAfterFailure?.status === "succeeded" || siblingAfterFailure?.status === "failed") break;
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        assert.ok(["queued", "succeeded"].includes(siblingAfterFailure?.status),
+          `A same-subject run for another Source must remain independently authorized (status=${siblingAfterFailure?.status ?? "missing"}; errorPresent=${typeof siblingAfterFailure?.error === "string"}).`);
+        nativePluginSourceExpected.siblingStatus = siblingAfterFailure.status;
+        if (siblingAfterFailure.status === "succeeded") {
+          assert.equal(siblingAfterFailure.exitCode, 0);
+          assert.ok(siblingAfterFailure.finishedAt instanceof Date);
+          assert.ok(siblingEvents.some(event => event.body?.includes("SPS_PLUGIN_SOURCE_CANARY_OK")));
+          assert.deepEqual(sourceRouteEvidence, [
+            { sourceId: sourceA.id, sharePath: sourceAPath, expectedSharePath: sourceAPath },
+            { sourceId: sourceB.id, sharePath: sourceBPath, expectedSharePath: sourceBPath },
+          ]);
+          const siblingCloseDeadline = Date.now() + 5_000;
+          while (sourceMappingCloseCount < 2 && Date.now() < siblingCloseDeadline) await new Promise(resolve => setTimeout(resolve, 50));
+          assert.equal(sourceMappingCloseCount, 2, "Each started Source run must close its owned fixture mapping once.");
+        } else {
+          assert.deepEqual(sourceRouteEvidence, [{ sourceId: sourceA.id, sharePath: sourceAPath, expectedSharePath: sourceAPath }]);
+          assert.equal(sourceMappingCloseCount, 1, "The started Source run must close its owned fixture mapping once.");
+        }
+        const sourceGrants = await db.select().from(spsPluginExecutionGrants);
+        assert.equal(sourceGrants.length, 2);
+        assert.ok(sourceGrants.every(grant => grant.status === "active"));
+        console.log("native_plugin_source_acceptance:registered,pending-denied,approved,source-granted,execution-granted,cwd-bound,signed-route,rsa-decrypted,path-change-lease,canary-cancelled,sibling-preserved");
+      } else {
+        const deadline = Date.now() + 45_000;
+        let completed;
+        while (Date.now() < deadline) {
+          completed = (await db.select().from(spsNodeCommands)).find(row => row.id === commandId);
+          if (completed?.status === "succeeded" || completed?.status === "failed") break;
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        assert.equal(completed?.status, "succeeded", `Native canary command ended ${completed?.status ?? "without a result"}.`);
+        assert.ok(completed.claimedAt instanceof Date && completed.startedAt instanceof Date && completed.finishedAt instanceof Date);
+        assert.equal(completed.exitCode, 0);
+        const events = (await db.select().from(spsNodeCommandEvents)).filter(event => event.commandId === commandId);
+        assert.ok(events.some(event => event.stream === "stdout" && event.body?.includes("SPS_NATIVE_NODE_CANARY_OK")));
+        assert.ok(events.some(event => event.stream === "stderr" && event.body?.includes("canary-stderr")));
+      }
       nativeNodeStage = "foreign-workspace-denial";
       await assert.rejects(memberNode.connect({ hostId, workspaceId: randomUUID() }));
       assert.equal((await db.select().from(spsNodes)).length, 1, "A foreign workspace must not register a Node.");
       nativeNodeStage = "revoked-node-denial";
       await db.update(spsNodes).set({ status: "revoked" });
-      const revokeDeadline = Date.now() + 10_000;
-      let status;
-      do {
-        status = memberNode.status({ hostId, workspaceId: companyId });
-        if (status.error) break;
-        await new Promise(resolve => setTimeout(resolve, 100));
-      } while (Date.now() < revokeDeadline);
-      assert.equal(status.error, true, "A revoked Node must leave its local command loop unavailable.");
-      console.log("native_node_acceptance:registered,approved,granted,claimed,executed,completed");
+      await assert.rejects(memberNode.connect({ hostId, workspaceId: companyId }),
+        /Native Node is unavailable/i, "A revoked Node must not reconnect its saved identity.");
+      if (withNativeNode) console.log("native_node_acceptance:registered,approved,granted,claimed,executed,completed");
     } catch (error) {
       console.error(`native_node_failure_stage:${nativeNodeStage}`);
       throw error;
@@ -482,7 +720,66 @@ export function NativeCount({data, refresh}) {
   }
   assert.equal((await read(discovery)).status, 403);
   assert.equal((await read(`${root}/workspace-shell`)).status, 403);
-  if (withNativeNode) {
+  if (withNativePluginSource) {
+    const expected = nativePluginSourceExpected;
+    assert.ok(expected?.heldRunId && expected?.siblingRunId);
+    const remainingNodes = await db.select().from(spsNodes);
+    const remainingAgents = await db.select().from(agents);
+    const remainingPlugins = await db.select().from(plugins);
+    const remainingSources = await db.select().from(spsWorkspaceSources);
+    const remainingNodeGrants = await db.select().from(spsWorkspaceSourceNodeGrants);
+    const remainingExecutionGrants = await db.select().from(spsPluginExecutionGrants);
+    const remainingRuns = await db.select().from(spsPluginNodeRuns);
+    assert.equal(remainingNodes.length, 1);
+    assert.equal(remainingNodes[0].companyId, companyId);
+    assert.equal(remainingNodes[0].ownerUserId, userId);
+    assert.equal(remainingNodes[0].status, "revoked");
+    assert.deepEqual(remainingAgents, []);
+    assert.equal(remainingPlugins.length, 1);
+    assert.equal(remainingPlugins[0].pluginKey, "sps.native-node-acceptance");
+    assert.equal(remainingPlugins[0].status, "ready");
+    assert.equal(remainingSources.length, 2);
+    assert.equal(remainingSources.find(source => source.id === expected.sourceAId)?.sharePath, expected.changedSourceAPath);
+    assert.equal(remainingSources.find(source => source.id === expected.sourceBId)?.sharePath, expected.sourceBPath);
+    assert.equal(remainingNodeGrants.length, 2);
+    assert.ok(remainingNodeGrants.every(grant => grant.revokedAt === null && grant.credentialAlgorithm === "rsa-oaep-sha256"));
+    assert.equal(remainingExecutionGrants.length, 2);
+    assert.ok(remainingExecutionGrants.every(grant => grant.status === "active"));
+    assert.deepEqual(new Set(remainingExecutionGrants.map(grant => grant.workspaceSourceId)), new Set([expected.sourceAId, expected.sourceBId]));
+    assert.equal(remainingRuns.length, 2);
+    const failedSourceRun = remainingRuns.find(run => run.id === expected.heldRunId);
+    const siblingSourceRun = remainingRuns.find(run => run.id === expected.siblingRunId);
+    assert.equal(failedSourceRun?.status, "failed");
+    assert.equal(failedSourceRun?.workspaceSourceId, expected.sourceAId);
+    assert.equal(failedSourceRun?.cwdHint, expected.sourceAPath);
+    assert.equal(siblingSourceRun?.status, expected.siblingStatus);
+    assert.equal(siblingSourceRun?.workspaceSourceId, expected.sourceBId);
+    assert.equal(siblingSourceRun?.cwdHint, expected.sourceBPath);
+    assert.equal(failedSourceRun?.subjectKey, siblingSourceRun?.subjectKey);
+    if (siblingSourceRun?.status === "succeeded") {
+      assert.equal(siblingSourceRun.exitCode, 0);
+      assert.ok(siblingSourceRun.finishedAt instanceof Date);
+    }
+  } else if (withNativePluginNode) {
+    const remainingNodes = await db.select().from(spsNodes);
+    const remainingAgents = await db.select().from(agents);
+    const remainingPlugins = await db.select().from(plugins);
+    const remainingGrants = await db.select().from(spsPluginExecutionGrants);
+    const remainingRuns = await db.select().from(spsPluginNodeRuns);
+    assert.equal(remainingNodes.length, 1);
+    assert.equal(remainingNodes[0].companyId, companyId);
+    assert.equal(remainingNodes[0].ownerUserId, userId);
+    assert.equal(remainingNodes[0].status, "revoked");
+    assert.deepEqual(remainingAgents, []);
+    assert.equal(remainingPlugins.length, 1);
+    assert.equal(remainingPlugins[0].pluginKey, "sps.native-node-acceptance");
+    assert.equal(remainingPlugins[0].status, "ready");
+    assert.equal(remainingGrants.length, 2);
+    assert.ok(remainingGrants.every(grant => grant.status === "revoked" && grant.workspaceSourceId === null));
+    assert.equal(remainingRuns.length, 2);
+    assert.ok(remainingRuns.some(run => run.status === "succeeded" && run.workspaceSourceId === null));
+    assert.ok(remainingRuns.some(run => run.status === "failed" && run.workspaceSourceId === null));
+  } else if (withNativeNode) {
     const remainingNodes = await db.select().from(spsNodes);
     const remainingAgents = await db.select().from(agents);
     assert.equal(remainingNodes.length, 1);
@@ -533,6 +830,10 @@ finally {
 }
 console.log(withNativePlugin
   ? "Native Plugin UI integration passed: actual Electron isolated Plugin renderer, declared React export and CSS through exact fresh mTLS/Main/private Core channel, owned worker data/action and real DB Plugin state persistence, wrong-peer denial, account/parent cleanup and natural Main/Core/DB exit. Identity exchange is substituted; not signed installation or physical two-PC LAN qualification."
+  : withNativePluginSource
+  ? "Native Plugin Source integration passed: a real Core Source row, per-Node RSA-sealed credential grant, and same-subject Source-scoped Plugin execution grants/runs. Signed Node source-route returned the sealed route, the desktop-node RSA decryptor validated the credential and exact cwdHint, and an owned temp fixture mapping replaced OS/SMB mounting. Changing the active Source path ended the lease and canceled the canary process while preserving its same-subject sibling run. Fixture Owner approval, credential, and mapping are synthetic; no provider exchange, Windows drive map, SMB or physical-LAN qualification."
+  : withNativePluginNode
+  ? "Native Plugin Node integration passed: actual fresh mTLS, owned child IPC, private Core HTTP/DB Node registration and heartbeat; a DB-registered plugin manifest declares SPS execution capabilities, and a persisted execution grant queues a neutral run with no Agent and no Workspace Source. Pending claim denied; explicit fixture Owner approval permits claim, lease, stdout/stderr events, and successful completion from an owned canary process in an owned temp workspace. Revoking the active execution grant cancels a second owned canary process and records failure; foreign workspace and revoked Node are denied. No plugin UI, provider auth, real identity exchange, OS key protection, SMB, or physical-LAN qualification."
   : withNativeNode
   ? "Native Node integration passed: actual fresh mTLS, owned child IPC, private Core HTTP/DB registration and heartbeat, pending-command denial, explicit fixture Owner approval/Agent/Runner grants, claimed command lease/output events/success completion from an owned canary process in an owned temp workspace, foreign-workspace and revoked-Node denial, and natural process/database cleanup. Identity exchange and canary resolver are fixture-only; approval is a fixture DB row, not UI automation. No Electron, DPAPI, provider auth, SMB or physical-LAN qualification."
   : withHostRenewal

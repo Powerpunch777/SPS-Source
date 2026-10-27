@@ -210,7 +210,15 @@ export function createSpsNativeNodeController({ getAuthority, getState, saveStat
       const key = nativeNodeScopeKey(scope);
       const existing = launches.get(key);
       if (existing && !existing.closed && !existing.failed
-        && accountFields.every(field => existing.account[field] === captured[field])) return publicStatus(existing);
+        && accountFields.every(field => existing.account[field] === captured[field])) {
+        // Member approval does not establish current Node execution authority.
+        // Revalidate the saved Node rather than returning its cached state.
+        launch = existing;
+        await heartbeat(existing);
+        assertRequester();
+        if (existing.running && existing.state !== "active") throw fail();
+        return publicStatus(existing);
+      }
       if (existing) await close(existing);
       if (launches.size >= 4) throw fail();
       const saved = normalizeSpsNativeNodeState(getState()).entries.find(entry => nativeNodeScopeKey(entry) === key);

@@ -218,6 +218,18 @@ jobs:
         timeout-minutes: 5
         run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-channel.mjs --isolated-native-workspace-channel
 
+      - name: Verify signed Native Node execution and revocation
+        timeout-minutes: 5
+        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-channel.mjs --isolated-native-workspace-channel --with-native-node
+
+      - name: Verify Native Plugin execution without Agents
+        timeout-minutes: 5
+        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-channel.mjs --isolated-native-workspace-channel --with-native-plugin-node
+
+      - name: Verify signed Native Source routes and scoped lease revocation
+        timeout-minutes: 5
+        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-channel.mjs --isolated-native-workspace-channel --with-native-plugin-source
+
   room-plugin:
     name: SPS Room workplane
     runs-on: ubuntu-latest

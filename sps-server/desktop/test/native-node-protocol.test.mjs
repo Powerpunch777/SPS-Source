@@ -82,3 +82,12 @@ test("parses only bounded canonical success envelopes with an exact data field",
   assert.equal(NATIVE_NODE_MAX_REQUEST, 512 * 1024);
   assert.equal(NATIVE_NODE_MAX_RESPONSE, 1024 * 1024);
 });
+
+test("Node results preserve valid Unicode data while rejecting malformed UTF-8 and a leading BOM", () => {
+  const parse = body => parseSpsNativeNodeResponse({ statusCode: 200, body,
+    rawHeaders: ["content-type", "application/json", "cache-control", "no-store", "content-length", String(body.length)] });
+  const result = { data: { displayName: "작업 \uFEFF \uFFFD", output: "café 東京\u0000" } };
+  assert.deepEqual(parse(Buffer.from(JSON.stringify(result))), result);
+  assert.throws(() => parse(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"data":null}')])));
+  assert.throws(() => parse(Buffer.concat([Buffer.from('{"data":"'), Buffer.from([0xc3, 0x28]), Buffer.from('"}')])));
+});

@@ -119,11 +119,13 @@ function Decode-SpsUtf8([string]$Value) {
 $sharePath = Decode-SpsUtf8 ([string]$inputData.sharePath)
 if ([string]$inputData.action -eq 'remove') {
   $localPath = Decode-SpsUtf8 ([string]$inputData.localPath)
-  if ($localPath) {
-    Remove-SmbMapping -LocalPath $localPath -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
-  } else {
-    Remove-SmbMapping -RemotePath $sharePath -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
-  }
+  if ($localPath -notmatch '^[A-Za-z]:$') { throw 'SPS Source cleanup requires its owned local drive.' }
+  $current = @(Get-SmbMapping -ErrorAction Stop | Where-Object { ([string]$_.LocalPath) -ieq $localPath })
+  if ($current.Count -eq 0) { exit 0 }
+  if ($current.Count -ne 1 -or ([string]$current[0].RemotePath) -ine $sharePath) { throw 'SPS Source mapping changed; preserving it.' }
+  Remove-SmbMapping -LocalPath $localPath -Force -UpdateProfile -ErrorAction Stop | Out-Null
+  $remaining = @(Get-SmbMapping -ErrorAction Stop | Where-Object { ([string]$_.LocalPath) -ieq $localPath })
+  if ($remaining.Count -ne 0) { throw 'SPS Source mapping cleanup has not been confirmed.' }
   exit 0
 }
 $username = Decode-SpsUtf8 ([string]$inputData.username)
@@ -231,21 +233,27 @@ export async function openSpsWorkspaceSourceRoute(workspaceAccess, transportPriv
     options.expectedSharePath ?? null,
   );
   const runNetUse = options.runNetUse ?? runWindowsNetUse;
-  // `*` keeps the password out of the process argument list. It is sent only
-  // over net.exe's stdin and is never copied into the Agent CLI environment.
+  // `*` keeps the password out of the process argument list. The private
+  // PowerShell helper receives it through stdin, never the Agent environment.
   const mapping = await runNetUse(["use", credential.sharePath, `/user:${credential.username}`, "*"], credential.password);
   const workspacePath = typeof mapping?.localPath === "string" ? mapping.localPath.trim() : "";
   if (!/^[A-Za-z]:\\$/.test(workspacePath)) {
     throw new Error("Windows did not provide a local drive for the SPS Host Source.");
   }
   let closed = false;
+  let closing = null;
   return {
     sharePath: credential.sharePath,
     workspacePath,
-    async close() {
-      if (closed) return;
-      closed = true;
-      await runNetUse(["use", credential.sharePath, `/local:${workspacePath.slice(0, 2)}`, "/delete", "/y"]).catch(() => undefined);
+    close() {
+      if (closed) return Promise.resolve();
+      if (closing) return closing;
+      const operation = Promise.resolve().then(() => runNetUse([
+        "use", credential.sharePath, `/local:${workspacePath.slice(0, 2)}`, "/delete", "/y",
+      ])).then(() => { closed = true; });
+      closing = operation;
+      void operation.then(() => { closing = null; }, () => { closing = null; });
+      return operation;
     },
   };
 }

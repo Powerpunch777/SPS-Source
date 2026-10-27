@@ -388,8 +388,11 @@ test("a status refresh clears previously displayed member Workspace names and ID
   const row = element(ctx, "native-registrations-list").children[0];
   row.children[1].children[4].dispatch("click"); await settle();
   assert.equal(workspaceCalls, 1);
-  assert.equal(row.children[2].children.length, 2);
+  assert.equal(row.children[2].children.length, 5);
   assert.equal(row.children[2].children[0].textContent, `Private Team Name · ${workspaceId}`);
+  assert.deepEqual(row.children[2].children.slice(1).map(child => child.textContent), [
+    "Open Workspace", "Node status", "Connect Node", "Disconnect Node",
+  ]);
   element(ctx, "retry-status").dispatch("click"); await settle();
   assert.equal(element(ctx, "native-registrations-list").children.length, 0);
   assert.equal(row.children[2].children.length, 0);

@@ -276,13 +276,14 @@ async function findWindowsCommandCandidates(command) {
   });
 }
 
-async function withCommandPreflightTimeout(action) {
+async function withCommandPreflightTimeout(action, onTimeout = () => {}) {
   let timeout = null;
   try {
     return await Promise.race([
       action(),
       new Promise((_, reject) => {
         timeout = setTimeout(() => {
+          onTimeout();
           reject(new Error("SPS Desktop timed out while preparing this local command. Check the configured workspace and local CLI installation."));
         }, COMMAND_PREFLIGHT_TIMEOUT_MS);
       }),
@@ -420,6 +421,24 @@ function terminateProcessTree(child) {
   return operation;
 }
 
+async function closeOwnedSource(run) {
+  if (run.sourceOpening) throw new Error("SPS Host Source preparation has not finished; cleanup is still pending.");
+  if (run.sourceClosing) return run.sourceClosing;
+  const session = run.sourceSession;
+  if (!session) return;
+  const closing = Promise.resolve().then(() => session.close()).then(() => {
+    if (run.sourceSession === session) run.sourceSession = null;
+  });
+  run.sourceClosing = closing;
+  try { await closing; }
+  finally { if (run.sourceClosing === closing) run.sourceClosing = null; }
+}
+
+function releaseCompletedCommand(id, run) {
+  if (run.settled && !run.sourceOpening && !run.sourceSession && !processScopeAlive(run.child)
+    && activeCommands.get(id) === run) activeCommands.delete(id);
+}
+
 export async function cancelSpsNodeCommands(reason = "SPS Desktop stopped this local command.") {
   commandCancellationGeneration += 1;
   lastCommandCancellationReason = reason;
@@ -427,9 +446,8 @@ export async function cancelSpsNodeCommands(reason = "SPS Desktop stopped this l
   await Promise.all(active.map(async (run) => {
     run.cancellationError ??= reason;
     await terminateProcessTree(run.child);
-    if (run.settled && !processScopeAlive(run.child)) {
-      for (const [id, current] of activeCommands) if (current === run) activeCommands.delete(id);
-    }
+    await closeOwnedSource(run);
+    for (const [id, current] of activeCommands) if (current === run) releaseCompletedCommand(id, run);
   }));
   return active.length;
 }
@@ -440,7 +458,8 @@ export async function cancelSpsNodeCommand(commandId, reason = "SPS Desktop stop
   if (!run || ownership !== undefined && run.ownership !== ownership) return false;
   run.cancellationError ??= reason;
   await terminateProcessTree(run.child);
-  if (run.settled && !processScopeAlive(run.child) && activeCommands.get(commandId) === run) activeCommands.delete(commandId);
+  await closeOwnedSource(run);
+  releaseCompletedCommand(commandId, run);
   return true;
 }
 
@@ -502,8 +521,9 @@ export async function executeSpsNodeCommand({
   let leaseCancellationError = null;
   let lastLeaseConfirmedAt = Date.now();
   let hostProjectShareSession = null;
+  let sourceCleanup = null;
   let normalCompletionPayload = null;
-  const activeRun = { child: null, cancellationError: null, ownership };
+  const activeRun = { child: null, cancellationError: null, ownership, sourceOpening: false, sourceSession: null };
   activeCommands.set(command.id, activeRun);
   try {
     const prepared = await withCommandPreflightTimeout(async () => {
@@ -523,11 +543,25 @@ export async function executeSpsNodeCommand({
           sessionCookie,
         })
         : command.workspaceAccess ?? null;
-      hostProjectShareSession = await openWorkspaceSourceRoute(
-        workspaceAccess,
-        identity?.transportPrivateKeyPem ?? null,
-        { expectedSharePath: command.cwdHint ?? null },
-      );
+      throwIfCommandCancelled(activeRun, cancellationGeneration);
+      activeRun.sourceOpening = true;
+      try {
+        hostProjectShareSession = await openWorkspaceSourceRoute(
+          workspaceAccess,
+          identity?.transportPrivateKeyPem ?? null,
+          { expectedSharePath: command.cwdHint ?? null },
+        );
+        activeRun.sourceSession = hostProjectShareSession;
+      } finally {
+        activeRun.sourceOpening = false;
+        // A bounded preflight can finish before a slow mapping operation. Keep
+        // its ownership record until that operation settles and is cleaned.
+        if (activeRun.settled) {
+          await closeOwnedSource(activeRun);
+          releaseCompletedCommand(command.id, activeRun);
+        }
+      }
+      throwIfCommandCancelled(activeRun, cancellationGeneration);
       const workspace = hostProjectShareSession?.workspacePath
         ? path.resolve(hostProjectShareSession.workspacePath)
         : await resolveWorkspace(command, profile);
@@ -557,8 +591,12 @@ export async function executeSpsNodeCommand({
       lastLeaseConfirmedAt = Date.now();
       throwIfCommandCancelled(activeRun, cancellationGeneration);
       return { environment, invocation, workspace };
-    });
+    }, () => { activeRun.cancellationError ??= "SPS Desktop Source/command preparation timed out."; });
     const { environment, invocation, workspace } = prepared;
+    // Promise.race/preflight resolution yields before this continuation. Fence
+    // once more at the synchronous spawn boundary so cancellation cannot close
+    // a Source and then let a prepared command start on the next microtask.
+    throwIfCommandCancelled(activeRun, cancellationGeneration);
     const result = await new Promise((resolve, reject) => {
       let settled = false;
       let timedOut = false;
@@ -645,6 +683,10 @@ export async function executeSpsNodeCommand({
     if (leaseCancellationError || activeRun.cancellationError || result.timedOut) await terminateProcessTree(child);
     await processTerminations.get(child);
     leaseCancellationError ??= activeRun.cancellationError;
+    // Local resource cleanup must not wait for output/completion delivery to an
+    // unreachable or revoked Host after the owned process has exited.
+    sourceCleanup = closeOwnedSource(activeRun);
+    void sourceCleanup.catch(() => {});
     await outputQueue;
     const completion = {
       status: result.exitCode === 0 && !result.timedOut && !leaseCancellationError ? "succeeded" : "failed",
@@ -675,6 +717,10 @@ export async function executeSpsNodeCommand({
       if (termination) await termination;
       else if (child.exitCode === null && child.signalCode === null) await terminateProcessTree(child);
     }
+    if (!sourceCleanup && !activeRun.sourceOpening) {
+      sourceCleanup = closeOwnedSource(activeRun);
+      void sourceCleanup.catch(() => {});
+    }
     await outputQueue.catch(() => undefined);
     const fallbackCompletionPayload = normalCompletionPayload ?? {
       hubUrl,
@@ -694,8 +740,8 @@ export async function executeSpsNodeCommand({
     await completeCommand(fallbackCompletionPayload).catch(() => undefined);
     throw error;
   } finally {
-    await hostProjectShareSession?.close().catch(() => undefined);
     activeRun.settled = true;
-    if (!processScopeAlive(activeRun.child) && activeCommands.get(command.id) === activeRun) activeCommands.delete(command.id);
+    try { await (sourceCleanup ?? closeOwnedSource(activeRun)); }
+    finally { releaseCompletedCommand(command.id, activeRun); }
   }
 }

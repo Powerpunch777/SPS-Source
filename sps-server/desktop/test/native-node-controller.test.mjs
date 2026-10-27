@@ -132,6 +132,22 @@ test("a saved Node identity cannot be replaced if idempotent registration return
   await f.controller.dispose();
 });
 
+test("reconnecting an existing launch checks Node authority even while its Member device remains approved", async () => {
+  let revoked = false;
+  const f = fixture({ beforeInvoke: request => {
+    if (request.operation === "heartbeat" && revoked) throw new Error("Node revoked by Host");
+  } });
+  try {
+    await f.controller.connect(selection);
+    revoked = true;
+    await assert.rejects(f.controller.connect(selection), /Native Node is unavailable/);
+    assert.equal(f.requests.filter(request => request.operation === "heartbeat").length, 2);
+    assert.equal(f.requests.filter(request => request.operation === "register").length, 1);
+    assert.equal(f.identityCreations, 1);
+    assert.equal(f.controller.status(selection).state, "off");
+  } finally { await f.controller.dispose(); }
+});
+
 test("account invalidation cancels only its exact currently owned command before waiting for its runner", async () => {
   const execution = deferred();
   const executionStarted = deferred();
