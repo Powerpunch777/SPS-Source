@@ -364,7 +364,10 @@ public static class RestrictedE2eRunner
             throw new InvalidOperationException("Desktop launch mode is restricted to Windows CI");
         foreach (string script in new[] { "sync-local-desktop-node.mjs", "sync-local-plugin-sdk.mjs" })
         {
-            int code = RunNode(node, directory, script);
+            // The normal build stage prepares these copies and native helpers.
+            // A restricted acceptance child verifies them without recompiling
+            // into the checkout or mutating installed dependency snapshots.
+            int code = RunNode(node, directory, script, "--check");
             if (code != 0) return code;
         }
         if (mode == "runtime-discovery") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--runtime-discovery", OwnedJobCleanupArgument);

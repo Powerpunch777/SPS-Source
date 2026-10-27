@@ -121,4 +121,13 @@ Neither failed local preparation produced a qualified package. The next clean
 preparation must include these rebuilt artifacts; unpacked/verifier/actual
 packaged restart acceptance and new-head CI remain required.
 
+The Sourcee41d4e71 Windows CI later failed before No-AI smoke because the
+restricted E2E child invoked dependency synchronization that unconditionally
+recompiled the helper into the checkout (csc CS0016 Access denied). The exact
+file ACL/lock condition was not captured. Restricted execution now runs both
+synchronizers with --check. Normal preparation still compiles/synchronizes them;
+the restricted child still rejects stale copies and retains the same token and
+owned-job cleanup rules. This CI-harness change is outside packaged app/runtime
+inputs and does not require changing the production launch privilege boundary.
+
 OpenAI Codex coordinator and GPT-6 Luna high agents, as requested.
