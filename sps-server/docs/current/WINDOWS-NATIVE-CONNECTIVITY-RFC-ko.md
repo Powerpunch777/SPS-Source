@@ -126,7 +126,9 @@ TLS 1.3의 검증된 라이브러리와 서버 신원 검증이 전제다. D1은
 D7은 서버/Member 인증서 90일, 별도 issuer 365일 및 만료 전 기존 키·검증된 현재 신원을
 사용하는 갱신 정책의 승인이다. 2026-10-27 후속 구현은 Member의 명시적 같은 키 갱신을
 마지막 30일(짧은 수명은 1/3)에 연결했다. Host 서버 인증서 갱신과 issuer 회전, 만료 후 재신뢰는
-미완료다. [갱신 검토](../reviews/NATIVE-MEMBER-RENEWAL-2026-10-27.md)가 현재 범위를 기록한다.
+별도 작업이었다. 후속 [Host 갱신 검토](../reviews/NATIVE-HOST-RENEWAL-2026-10-27.md)는 같은 키
+서버 갱신·명시적 재시작·Member target 전환을 연결하고 실제 Electron/DPAPI 통합을 검증했다.
+issuer 회전과 만료 후 재신뢰는 미완료다. [Member 갱신 검토](../reviews/NATIVE-MEMBER-RENEWAL-2026-10-27.md)도 따른다.
 아래는 이전 검증 이력이다. Core Settings source E2E 7개 모드는 로컬 Electron 43.7.7에서 통과했으나 잠긴 43.8.3의
 로컬 DPAPI 검증은 아니다. exact Source HEAD `425000cb1c44bf583d9d655632057440c06f90f7`의
 기존 `Verify SPS` run `40181306002`와 `40181309808`은 각각 18개 job 중 16개 성공, 2개 실패했다.

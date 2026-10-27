@@ -169,6 +169,8 @@ function isNativeConnectivity(value) {
   }
   if (Object.hasOwn(value, "serverNotAfter") && !isEpochMilliseconds(value.serverNotAfter)) return false;
   if (Object.hasOwn(value, "memberIssuerNotAfter") && !isEpochMilliseconds(value.memberIssuerNotAfter)) return false;
+  if (Object.hasOwn(value, "serverRenewalAvailableAt") && value.serverRenewalAvailableAt !== null
+    && !isEpochMilliseconds(value.serverRenewalAvailableAt)) return false;
   if (value.canPrepare !== (value.state === "not_prepared")) return false;
   const hasCertificate = ["identity_prepared", "identity_not_current"].includes(value.state);
   if (hasCertificate && (!Object.hasOwn(value, "serverSpkiSha256") || !isEpochMilliseconds(value.serverNotAfter)
@@ -205,6 +207,14 @@ function syncControls() {
   const busy = statusLoading || nativeDevicesLoading || nativeInvitationsLoading || pending.size > 0 || quitPending;
   const listenerReady = currentStatus?.canManageHost === true && nativeConnectivity?.state === "identity_prepared";
   const listenerActive = nativeListenerStatus(currentStatus?.nativeListener)?.state === "listening";
+  const hostMaintenance = currentStatus?.canManageHost === true
+    && ["identity_prepared", "identity_not_current", "recovery_required"].includes(nativeConnectivity?.state);
+  byId("native-identity-maintenance").hidden = !hostMaintenance;
+  byId("renew-native-identity").disabled = busy || !hostMaintenance || listenerActive
+    || nativeConnectivity?.state !== "identity_prepared"
+    || !isEpochMilliseconds(nativeConnectivity?.serverRenewalAvailableAt)
+    || Date.now() < nativeConnectivity.serverRenewalAvailableAt;
+  byId("repair-native-identity-publication").disabled = busy || !hostMaintenance || listenerActive;
   const listenerPort = Number(byId("native-listener-port").value);
   byId("native-listener-form").hidden = !listenerReady && !listenerActive;
   byId("start-native-listener").disabled = busy || !listenerReady || listenerActive || !byId("native-listener-address").value.trim()
@@ -649,6 +659,16 @@ nativeDevicesRefreshButton.addEventListener("click", () => void loadNativeDevice
 nativeInvitationsRefreshButton.addEventListener("click", () => void loadNativeInvitations());
 nativeAddressInput.addEventListener("input", () => syncControls());
 nativePrepareButton.addEventListener("click", () => void prepareNativeIdentity());
+byId("renew-native-identity").addEventListener("click", () => {
+  if (byId("renew-native-identity").disabled) return;
+  void runAction("native-host-certificate", () => window.spsCoreSettings.renewNativeIdentity(),
+    "Host certificate request completed. Check its expiry before starting Native listening.");
+});
+byId("repair-native-identity-publication").addEventListener("click", () => {
+  if (byId("repair-native-identity-publication").disabled) return;
+  void runAction("native-host-certificate", () => window.spsCoreSettings.repairNativeIdentityPublication(),
+    "Host certificate save check completed. Review the Host status before starting Native listening.");
+});
 quitDesktopButton.addEventListener("click", () => void quitDesktop());
 byId("native-member-invitation").addEventListener("input", syncControls);
 byId("native-member-name").addEventListener("input", syncControls);
@@ -927,8 +947,8 @@ async function repairNativeRegistration(hostId) {
     const value = await window.spsCoreSettings.repairNativeMemberStorage({ hostId });
     if (value?.cancelled === true) { byId("native-member-result").textContent = "Local recovery cancelled."; return; }
     const result = exactDataRecord(value, ["hostId", "recovered"]);
-    if (!result || result.hostId !== hostId || !Array.isArray(result.recovered) || result.recovered.length > 4
-      || result.recovered.some(kind => !["pending", "issued", "target", "renewal"].includes(kind))) throw new Error("Invalid recovery response");
+    if (!result || result.hostId !== hostId || !Array.isArray(result.recovered) || result.recovered.length > 5
+      || result.recovered.some(kind => !["pending", "issued", "target", "renewal", "server-certificate"].includes(kind))) throw new Error("Invalid recovery response");
     byId("native-member-result").textContent = result.recovered.length
       ? "Local recovery completed using the original credentials. Check registration to contact the Host."
       : "No interrupted credential write was found. Existing credentials were kept.";

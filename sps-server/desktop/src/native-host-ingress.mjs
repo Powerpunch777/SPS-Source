@@ -1,11 +1,15 @@
 import { constants as cryptoConstants, createHash, X509Certificate } from "node:crypto";
 import { createServer as createHttpsServer } from "node:https";
+import { createSecureContext } from "node:tls";
 import { isIP } from "node:net";
 import { TextDecoder } from "node:util";
-import { requireCurrentSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
+import { requireCurrentSpsNativeHostIdentity, validateSpsNativeServerCertificate,
+  validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
+import { nativeServerCertificateServername, parseNativeServerCertificateServername } from "./native-server-certificate-selection.mjs";
 
 const ROUTES = Object.freeze({
   "/sps-native/v1/identity": { operation: "identity", peer: false, credential: null, body: null },
+  "/sps-native/v1/server-certificate": { operation: "server-certificate", peer: false, credential: null, body: null },
   "/sps-native/v1/session/exchange": { operation: "session.exchange", peer: false, credential: "accessToken", body: null },
   "/sps-native/v1/enrollment/issue": { operation: "enrollment.issue", peer: false, credential: "sessionCookie", body: "issue" },
   "/sps-native/v1/enrollment/complete": { operation: "enrollment.complete", peer: true, credential: "sessionCookie", body: "complete" },
@@ -212,11 +216,12 @@ function canonicalAddress(value) {
   return value.toLowerCase();
 }
 
-export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatch, dispatchWorkspace, limits: inputLimits } = {}) {
+export function createSpsNativeHostIngress({ getIdentity, getServerCertificates, assertCurrent, dispatch, dispatchWorkspace, limits: inputLimits } = {}) {
   if (typeof getIdentity !== "function" || typeof assertCurrent !== "function" || typeof dispatch !== "function") {
     throw new TypeError("Invalid Native Host ingress dependencies.");
   }
   if (dispatchWorkspace !== undefined && typeof dispatchWorkspace !== "function") throw new TypeError("Invalid Native Workspace dispatcher.");
+  if (getServerCertificates !== undefined && typeof getServerCertificates !== "function") throw new TypeError("Invalid Native server certificate source.");
   const limits = validateLimits(inputLimits);
   let server = null;
   let disposed = false;
@@ -224,6 +229,7 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
   let sockets = new Set();
   let activeOperations = new Map();
   let identitySnapshot = null;
+  let certificateContexts = new Map();
 
   function currentIdentity() {
     const value = getIdentity();
@@ -250,6 +256,35 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       || current.issuerThumbprint !== expected.issuerThumbprint
       || current.identity.server.privateKeyPem !== expected.identity.server.privateKeyPem) throw fail(503);
     return current;
+  }
+
+  function serverCertificateHistory(snapshot) {
+    const supplied = typeof getServerCertificates === "function"
+      ? getServerCertificates(snapshot.identity) : [snapshot.identity.server.certificatePem];
+    if (!Array.isArray(supplied) || supplied.length < 1 || supplied.length > 257
+      || supplied.some(value => typeof value !== "string" || !value.length || value.length > 16_384)
+      || supplied.at(-1) !== snapshot.identity.server.certificatePem) throw fail(503);
+    const entries = supplied.map(pem => {
+      const certificate = new X509Certificate(pem);
+      if (!certificate.publicKey.export({ type: "spki", format: "der" }).equals(snapshot.certificate.publicKey.export({ type: "spki", format: "der" }))) throw fail(503);
+      return Object.freeze({ pem, certificate, raw: certificate.raw });
+    });
+    for (let index = 1; index < entries.length; index++) {
+      validateSpsNativeServerCertificateTransition({ hostId: snapshot.identity.hostId,
+        predecessorCertificatePem: entries[index - 1].pem, certificatePem: entries[index].pem });
+    }
+    validateSpsNativeServerCertificate(supplied.at(-1), snapshot.identity.hostId, Date.now());
+    if (!entries.at(-1).raw.equals(snapshot.certificate.raw)) throw fail(503);
+    return Object.freeze(entries);
+  }
+
+  function selectedServerCertificate(socket) {
+    const local = socket.getX509Certificate?.();
+    if (!local?.raw?.length || local.raw.length > 4096) throw fail(401);
+    const selected = identitySnapshot.serverCertificates.find(entry => entry.raw.equals(local.raw));
+    if (!selected || Date.now() < Date.parse(selected.certificate.validFrom)
+      || Date.now() >= Date.parse(selected.certificate.validTo)) throw fail(401);
+    return selected;
   }
 
   function respondHttpError(response, statusCode) {
@@ -316,6 +351,20 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       const body = workspacePatch ? parseBody(Buffer.concat(pieces, received), "inboxState")
         : parseBody(Buffer.concat(pieces, received), route.body);
       const expected = assertIdentityCurrent(identitySnapshot);
+      const selectedLeaf = selectedServerCertificate(socket);
+      if (route.operation === "server-certificate") {
+        const latest = expected.certificate;
+        const now = Date.now();
+        if (!latest.raw.equals(identitySnapshot.serverCertificates.at(-1).raw)
+          || now < Date.parse(latest.validFrom) || now >= Date.parse(latest.validTo)) throw fail(503);
+        const responseValue = Object.freeze({ hostId: expected.identity.hostId,
+          predecessorCertificateSha256: createHash("sha256").update(selectedLeaf.raw).digest("hex"),
+          serverCertificate: latest.raw.toString("base64url"), issuerSpkiSha256: expected.issuerSpkiSha256 });
+        assertIdentityCurrent(expected);
+        if (!selectedServerCertificate(socket).raw.equals(selectedLeaf.raw)) throw fail(503);
+        writeJson(response, 200, responseValue);
+        return;
+      }
       const transport = Object.freeze({ tlsVersion: "TLSv1.3", sessionReused: false,
         remoteAddress: typeof socket.remoteAddress === "string" && socket.remoteAddress.length <= 128 ? socket.remoteAddress : null,
         ...(peerPresent ? { peerCertificateDer: peer.raw.toString("base64url") } : {}) });
@@ -400,18 +449,35 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       identitySnapshot = currentIdentity();
       const certificate = identitySnapshot.certificate;
       if (!certificate.checkIP(address)) throw new Error("Native Host ingress certificate does not cover the selected bind address.");
+      identitySnapshot.serverCertificates = serverCertificateHistory(identitySnapshot);
+      certificateContexts = new Map(identitySnapshot.serverCertificates.map(entry => [
+        nativeServerCertificateServername(entry.pem), createSecureContext({ cert: entry.pem,
+          key: identitySnapshot.identity.server.privateKeyPem, ca: identitySnapshot.identity.memberIssuer.certificatePem }),
+      ]));
       const instance = createHttpsServer({ cert: identitySnapshot.identity.server.certificatePem,
         key: identitySnapshot.identity.server.privateKeyPem,
         ca: identitySnapshot.identity.memberIssuer.certificatePem,
         requestCert: true, rejectUnauthorized: false, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
         secureOptions: cryptoConstants.SSL_OP_NO_TICKET,
         handshakeTimeout: limits.handshakeTimeoutMs, sessionTimeout: 0, maxHeaderSize: MAX_HEADERS_BYTES,
+        SNICallback(servername, callback) {
+          try {
+            const alias = parseNativeServerCertificateServername(servername);
+            if (!alias) { callback(null, certificateContexts.get(nativeServerCertificateServername(identitySnapshot.identity.server.certificatePem))); return; }
+            if (!alias.valid) throw new Error("invalid reserved SNI");
+            const entry = identitySnapshot.serverCertificates.find(value => createHash("sha256").update(value.raw).digest("hex") === alias.certificateSha256);
+            if (!entry || Date.now() < Date.parse(entry.certificate.validFrom) || Date.now() >= Date.parse(entry.certificate.validTo)) throw new Error("unknown or expired SNI");
+            assertIdentityCurrent(identitySnapshot);
+            callback(null, certificateContexts.get(servername));
+          } catch { callback(new Error("Native Host certificate selection failed.")); }
+        },
         allowHalfOpen: false }, handle);
       const failClosed = () => {
         if (server !== instance) return;
         server = null;
         state = "failed";
         identitySnapshot = null;
+        certificateContexts.clear();
         for (const active of activeOperations.values()) active.controller.abort();
         for (const socket of sockets) socket.destroy();
         try { instance.close(() => {}); } catch {}
@@ -465,6 +531,7 @@ export function createSpsNativeHostIngress({ getIdentity, assertCurrent, dispatc
       for (const socket of sockets) socket.destroy();
       await new Promise(resolve => instance.close(() => resolve()));
       identitySnapshot = null;
+      certificateContexts.clear();
       if (!disposed && state === "stopping") state = "disabled";
     },
     async dispose() {

@@ -74,6 +74,14 @@ const coreSettingsApi = Object.freeze({
     }
     return ipcRenderer.invoke("desktop:core-settings-prepare-native-identity", { serverAddress: input.serverAddress });
   },
+  renewNativeIdentity: (...args) => {
+    if (args.length !== 0) return Promise.reject(new TypeError("renewNativeIdentity accepts no arguments."));
+    return ipcRenderer.invoke("desktop:core-settings-renew-native-identity");
+  },
+  repairNativeIdentityPublication: (...args) => {
+    if (args.length !== 0) return Promise.reject(new TypeError("repairNativeIdentityPublication accepts no arguments."));
+    return ipcRenderer.invoke("desktop:core-settings-repair-native-identity-publication");
+  },
   listNativeDevices: () => ipcRenderer.invoke("desktop:core-settings-list-native-devices"),
   listNativeInvitations: () => ipcRenderer.invoke("desktop:core-settings-list-native-invitations"),
   revokeNativeInvitation: input => {

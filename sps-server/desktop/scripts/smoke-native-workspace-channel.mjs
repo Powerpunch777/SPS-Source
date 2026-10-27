@@ -8,7 +8,8 @@ import { pathToFileURL } from "node:url";
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 
 const withWindow = process.argv[3] === "--with-native-window";
-const withRenewal = process.argv[3] === "--with-native-renewal";
+const withHostRenewal = process.argv[3] === "--with-native-host-renewal";
+const withRenewal = process.argv[3] === "--with-native-renewal" || withHostRenewal;
 const withNativeWindow = withWindow || withRenewal;
 if (![3, 4].includes(process.argv.length) || process.argv[2] !== "--isolated-native-workspace-channel"
   || process.argv.length === 4 && (!withNativeWindow || process.platform !== "win32")) {
@@ -32,6 +33,7 @@ const { spsMemberDeviceService } = await load("server/src/services/sps-member-de
 assert.equal((await getEmbeddedPostgresTestSupport()).supported, true);
 const database = await startEmbeddedPostgresTestDatabase("sps-native-workspace-channel-");
 let db, child, parent, ingress, signerChannel, parentIngress, failure, childShutdownStage = "not-started";
+let applyHostRenewal;
 
 async function runWindow(configuration) {
   const fixture = await createWorkspaceE2eFixture();
@@ -55,6 +57,13 @@ async function runWindow(configuration) {
       if (message?.kind === "sps.test.native-workspace-window.configure-ready" && electron.connected) {
         electron.send({ kind: "sps.test.native-workspace-window.configure", ...configuration });
       }
+      if (withHostRenewal && message?.kind === "sps.test.native-host-renewal.publish" && electron.connected) {
+        void applyHostRenewal(message).then(() => {
+          if (electron.connected) electron.send({ kind: "sps.test.native-host-renewal.ready" });
+        }, () => {
+          if (electron.connected) electron.send({ kind: "sps.test.native-host-renewal.failed" });
+        });
+      }
     });
     const code = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Joined Native Workspace window timed out.")), 180_000);
@@ -67,6 +76,8 @@ async function runWindow(configuration) {
       actualElectron: true, fixtureBackend: false, actualDpapi: true, wrongPeerDenied: true,
       ...(withRenewal ? { renewalReplay: true, renewalPublished: true, originalIssuedBytesPreserved: true,
         renewedEnrollmentReconciled: true } : {}),
+      ...(withHostRenewal ? { hostRenewalPublished: true, originalHostBytesPreserved: true,
+        targetCertificateRefreshed: true, originalTargetBytesPreserved: true } : {}),
       ownerBridge: false, serviceWorkers: 0 });
   } finally {
     if (electron && !mainClosed && electron.exitCode === null && electron.signalCode === null) {
@@ -82,7 +93,7 @@ try {
   db = createDb(database.connectionString);
   const now = Math.floor(Date.now() / 1000) * 1000;
   const hostId = randomUUID(), companyId = randomUUID(), userId = randomUUID();
-  const host = await createSpsNativeHostIdentity({ hostId, hostnames: ["127.0.0.1"],
+  let host = await createSpsNativeHostIdentity({ hostId, hostnames: ["127.0.0.1"],
     notBefore: now - (withRenewal ? 80 : 0) * 86_400_000,
     notAfter: now + (withRenewal ? 10 : 1 / 24) * 86_400_000,
     issuerNotAfter: now + (withRenewal ? 285 : 2 / 24) * 86_400_000 });
@@ -175,7 +186,9 @@ try {
   });
   assert.equal(parent.inspect().ready, true);
   assert.equal(Object.hasOwn(parent.inspect(), "port"), false);
-  ingress = createSpsNativeHostIngress({ getIdentity: () => host, assertCurrent() { assert.equal(child.connected, true); },
+  let serverCertificates = [host.server.certificatePem];
+  const ingressDependencies = { getIdentity: () => host, getServerCertificates: () => serverCertificates,
+    assertCurrent() { assert.equal(child.connected, true); },
     async dispatch(operation, input, options) {
       // Only the Identity-provider exchange is substituted. The returned token
       // is a real existing Core DB session and grants no device or membership.
@@ -187,8 +200,19 @@ try {
       assert.equal(withRenewal, true);
       return await parentIngress.dispatch(operation, input, options);
     },
-    dispatchWorkspace: (input, options) => parent.read(input, options) });
+    dispatchWorkspace: (input, options) => parent.read(input, options) };
+  ingress = createSpsNativeHostIngress(ingressDependencies);
   const { port } = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  applyHostRenewal = async message => {
+    assert.equal(message.identity.hostId, host.hostId);
+    assert.equal(message.identity.server.privateKeyPem, host.server.privateKeyPem);
+    assert.deepEqual(message.identity.memberIssuer, host.memberIssuer);
+    assert.deepEqual(message.certificates, [host.server.certificatePem, message.identity.server.certificatePem]);
+    await ingress.dispose();
+    host = message.identity; serverCertificates = message.certificates;
+    ingress = createSpsNativeHostIngress(ingressDependencies);
+    await ingress.start({ bindAddress: "127.0.0.1", port });
+  };
   const read = (target, options = {}) => new Promise((resolve, reject) => {
     const request = httpsRequest({ hostname: "127.0.0.1", port, path: target, method: "GET", agent: false,
       ca: host.server.certificatePem, cert: options.noCertificate ? undefined : issued.certificatePem,
@@ -239,7 +263,8 @@ try {
       notBefore: now - 1000, notAfter: now + 3_600_000, issuerNotAfter: now + 7_200_000 });
     const untrustedContext = { ...context, serverSpkiSha256: pin(unrelated.server.certificatePem),
       issuerSpkiSha256: pin(unrelated.memberIssuer.certificatePem) };
-    await runWindow({ workspaceId: companyId, renewal: withRenewal, deviceId: device.id, context, keyRequest: key,
+    await runWindow({ workspaceId: companyId, renewal: withRenewal, hostRenewal: withHostRenewal,
+      ...(withHostRenewal ? { hostIdentity: host } : {}), deviceId: device.id, context, keyRequest: key,
       untrustedContext, untrustedTarget: { v: 1, kind: "sps.native.member-host-target", context: untrustedContext,
         origin: `https://127.0.0.1:${port}`, serverCertificatePem: unrelated.server.certificatePem },
       target: { v: 1, kind: "sps.native.member-host-target", context,
@@ -319,7 +344,9 @@ finally {
   try { await database.cleanup(); } catch (error) { errors.push(error); }
   if (errors.length) throw new AggregateError([...(failure ? [failure] : []), ...errors], "Native Workspace integration cleanup failed.");
 }
-console.log(withRenewal
+console.log(withHostRenewal
+  ? "Native Host and Member renewal integration passed: actual Windows DPAPI Host publication, explicit listener restart retaining exact old leaf selection, protected Member target refresh, same keys/issuer/original files, real Core renewal/reconciliation and Workspace Inbox operations, independent revocation denial and natural process/database cleanup. Identity exchange is substituted; no issuer rotation or expired-trust recovery qualification."
+  : withRenewal
   ? "Native Member renewal integration passed: actual Main signer and Core parent ingress, TLS old-certificate replay, one immutable Core renewal row, Windows DPAPI append-only publication, renewed-certificate Workspace reads and revoked-parent denial. Identity-provider exchange is substituted; no issuer/server-leaf rotation or expired recovery qualification."
   : withWindow
   ? "Joined Native Workspace integration passed: actual Electron/bundled SPA/preload, Windows DPAPI retained credentials, fresh mTLS, owned Core child/private HTTP, real DB session/device/membership, persisted Inbox read/archive/restore and natural Main/Core/database cleanup. Identity-provider token exchange is substituted; not installed startup, WebSockets, Plugin UI or physical LAN qualification."

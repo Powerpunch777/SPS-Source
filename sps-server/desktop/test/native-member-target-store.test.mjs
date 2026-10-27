@@ -5,7 +5,7 @@ import { symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test, { before } from "node:test";
-import { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
+import { createSpsNativeHostIdentity, inspectSpsNativeHostIdentity, renewSpsNativeHostServerCertificate } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeMemberKeyRequest } from "../src/native-member-certificates.mjs";
 import { sameNativeMemberFileIdentity } from "../src/native-member-file-identity.mjs";
 import {
@@ -193,6 +193,20 @@ test("target reads return null without creating storage, and target creation nev
   await assert.rejects(lstat(targetPath(fixture)), { code: "ENOENT" });
 }));
 
+test("an orphan server-certificate directory is retained as present and blocks target recreation", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  const historyDirectory = path.join(storeDirectory(fixture), `${scopeSlot()}.server-certificates`);
+  await mkdir(historyDirectory);
+  await rm(pendingPath(fixture));
+  assert.deepEqual(await store.inspectPresence(), { state: "present" });
+  await assert.rejects(store.readTarget(), storeError("CORRUPT"));
+  await assert.rejects(fixture.reader().read(), storeError("CORRUPT"));
+  await store.create(keyRequest);
+  await assert.rejects(store.createTarget(target), storeError("ALREADY_EXISTS"));
+  assert.deepEqual(await readdir(historyDirectory), []);
+}));
+
 test("creates the separate same-scope target slot and cold-restarts from its four-field reader", async () => withFixture(async fixture => {
   const store = fixture.store();
   await store.create(keyRequest);
@@ -279,6 +293,52 @@ test("createTarget is create-only and preserves the original encrypted bytes", a
   await assert.rejects(store.createTarget({ ...target, origin: "https://127.0.0.1:43101" }), storeError("ALREADY_EXISTS"));
   assert.deepEqual(await readFile(savedTarget), before);
   assert.deepEqual(await store.readTarget(), target);
+}));
+
+test("publishes same-key Host certificate successors as append-only target lineage with cold reads and replay", async () => withFixture(async fixture => {
+  const store = fixture.store();
+  await store.create(keyRequest);
+  await store.createTarget(target);
+  const savedTarget = targetPath(fixture), baseBytes = await readFile(savedTarget);
+  const predecessorCertificate = new X509Certificate(target.serverCertificatePem);
+  const predecessorCertificateSha256 = createHash("sha256").update(predecessorCertificate.raw).digest("hex");
+  const renewalNow = NOW + 65 * 86_400_000;
+  const actualNow = Date.now;
+  Date.now = () => renewalNow;
+  try {
+    const renewedIdentity = await renewSpsNativeHostServerCertificate({ identity: hostIdentity, now: renewalNow });
+    const successor = new X509Certificate(renewedIdentity.server.certificatePem);
+    const response = Object.freeze({ hostId: HOST, predecessorCertificateSha256,
+      serverCertificate: successor.raw.toString("base64url"), issuerSpkiSha256: context.issuerSpkiSha256 });
+    const historyDirectory = path.join(storeDirectory(fixture), `${scopeSlot()}.server-certificates`);
+
+    await assert.rejects(store.publishServerCertificate(response, { beforeCommit() { throw new Error("account changed"); } }),
+      storeError("FAILED"));
+    assert.deepEqual(await readdir(historyDirectory), []);
+    assert.deepEqual(await readFile(savedTarget), baseBytes);
+    await assert.rejects(store.publishServerCertificate({ ...response, serverCertificate:
+      new X509Certificate(otherHostIdentity.server.certificatePem).raw.toString("base64url") }), storeError("CORRUPT"));
+    assert.deepEqual(await readdir(historyDirectory), []);
+
+    const published = await store.publishServerCertificate(response);
+    assert.equal(published.serverCertificatePem, renewedIdentity.server.certificatePem);
+    assert.deepEqual(await readFile(savedTarget), baseBytes);
+    assert.deepEqual(await readdir(historyDirectory), [`${predecessorCertificateSha256}.json`]);
+    assert.deepEqual(await fixture.reader().read(), published);
+    assert.deepEqual(await store.publishServerCertificate(response), published);
+    assert.deepEqual(await readFile(savedTarget), baseBytes);
+
+    const edgePath = path.join(historyDirectory, `${predecessorCertificateSha256}.json`);
+    const alias = path.join(historyDirectory, `.pending-${randomUUID()}.tmp`);
+    await link(edgePath, alias);
+    await assert.rejects(fixture.reader().read(), storeError("CORRUPT"));
+    assert.equal(await store.recoverInterruptedPublication(`server-certificate:${predecessorCertificateSha256}`, { beforeCommit() {} }), true);
+    assert.equal((await lstat(edgePath)).nlink, 1);
+    assert.deepEqual(await fixture.reader().read(), published);
+    assert.deepEqual(await store.readTarget(), published);
+  } finally {
+    Date.now = actualNow;
+  }
 }));
 
 test("synchronous beforeCommit aborts target creation without replacing existing bytes", async () => withFixture(async fixture => {

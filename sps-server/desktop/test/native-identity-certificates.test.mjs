@@ -7,7 +7,8 @@ import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { probeSpsNativeServerTls, verifySpsNativeInvitationCertificate } from "../src/native-connection-tls.mjs";
 import {
   createSpsNativeHostIdentity, inspectSpsNativeHostIdentity,
-  requireCurrentSpsNativeHostIdentity, validateSpsNativeHostIdentity,
+  renewSpsNativeHostServerCertificate, requireCurrentSpsNativeHostIdentity,
+  validateSpsNativeHostIdentity, validateSpsNativeServerCertificateTransition,
 } from "../src/native-identity-certificates.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
@@ -93,6 +94,35 @@ test("the approved lifetime policy composes with certificate creation without ch
   const status = inspectSpsNativeHostIdentity(created, START);
   assert.equal(status.serverNotAfter - status.serverNotBefore, 90 * 86_400_000);
   assert.equal(status.memberIssuerNotAfter - status.memberIssuerNotBefore, 365 * 86_400_000);
+});
+
+test("Host server renewal is explicit, same-key, same-SAN, pre-expiry, and keeps the issuer unchanged", async () => {
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const saved = await createSpsNativeHostIdentity({ hostId: HOST, hostnames: ["localhost", "127.0.0.1"],
+    notBefore: now - 60_000, notAfter: now + 90 * 86_400_000, issuerNotAfter: now + 365 * 86_400_000 });
+  const renewalNow = new Date(now + 80 * 86_400_000);
+  const renewed = await renewSpsNativeHostServerCertificate({ identity: saved, now: renewalNow.getTime() });
+  const before = new X509Certificate(saved.server.certificatePem), after = new X509Certificate(renewed.server.certificatePem);
+  assert.equal(renewed.hostId, saved.hostId);
+  assert.equal(renewed.server.privateKeyPem, saved.server.privateKeyPem);
+  assert.deepEqual(renewed.memberIssuer, saved.memberIssuer);
+  assert.equal(after.verify(after.publicKey), true);
+  assert.deepEqual(after.subjectAltName, before.subjectAltName);
+  assert.equal(Date.parse(after.validFrom), Math.floor(renewalNow.getTime() / 1000) * 1000);
+  assert.ok(Date.parse(after.validTo) > Date.parse(before.validTo));
+  assert.equal(validateSpsNativeServerCertificateTransition({ hostId: HOST,
+    predecessorCertificatePem: saved.server.certificatePem, certificatePem: renewed.server.certificatePem }).raw.equals(after.raw), true);
+  await assert.rejects(renewSpsNativeHostServerCertificate({ identity: saved, now }), { code: "native_identity_renewal_not_due" });
+  await assert.rejects(renewSpsNativeHostServerCertificate({ identity: saved, now: Date.parse(before.validTo) }), { code: "native_identity_not_current" });
+});
+
+test("server transition rejects changed key, SAN, Host, overlapping expiry and oversized lifetime", () => {
+  const predecessor = identity.server.certificatePem;
+  for (const input of [
+    { hostId: HOST, predecessorCertificatePem: predecessor, certificatePem: other.server.certificatePem },
+    { hostId: "22222222-2222-4222-8222-222222222222", predecessorCertificatePem: predecessor, certificatePem: predecessor },
+    { hostId: HOST, predecessorCertificatePem: predecessor, certificatePem: predecessor },
+  ]) assert.throws(() => validateSpsNativeServerCertificateTransition(input), { code: "native_identity_invalid" });
 });
 
 test("status is a frozen public projection, not connection or approval readiness", () => {

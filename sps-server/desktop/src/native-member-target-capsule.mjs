@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { isIP } from "node:net";
 import {
   nativeCertificateRecord as record,
@@ -8,6 +8,7 @@ import {
 import { validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
 import { validateSpsNativeServerCertificate } from "./native-identity-certificates.mjs";
 import { normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
+import { validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
 
 const KIND = "sps.native.member-host-target-capsule";
 const INNER_KIND = "sps.native.member-host-target";
@@ -25,6 +26,7 @@ const ERRORS = Object.freeze({
   invalid: ["ERR_SPS_NATIVE_MEMBER_TARGET_CAPSULE_INVALID", "The Native Member target capsule is invalid or does not match the expected context."],
 });
 const failure = type => Object.assign(new Error(ERRORS[type][1]), { code: ERRORS[type][0] });
+const SHA256 = /^[0-9a-f]{64}$/;
 
 function optionalOptions(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)
@@ -94,6 +96,61 @@ export function validateSpsNativeMemberHostTarget(input, expectedContextInput, n
   }
 }
 
+/** Validates a closed successor response against the currently pinned target. */
+export function validateSpsNativeMemberServerCertificateResponse(input, predecessorInput, now = Date.now()) {
+  try {
+    const response = record(input, ["hostId", "predecessorCertificateSha256", "serverCertificate", "issuerSpkiSha256"]);
+    // Predecessors in an authenticated lineage can be expired while a later leaf is
+    // current. The store supplies only DPAPI-authenticated targets from that chain.
+    const predecessor = validateHistoricalTarget(predecessorInput, predecessorInput?.context);
+    const context = predecessor.context;
+    if (response.hostId !== context.hostId || response.issuerSpkiSha256 !== context.issuerSpkiSha256
+      || typeof response.predecessorCertificateSha256 !== "string" || !SHA256.test(response.predecessorCertificateSha256)
+      || typeof response.serverCertificate !== "string" || response.serverCertificate.length < 1
+      || response.serverCertificate.length > 5462 || !/^[A-Za-z0-9_-]+$/.test(response.serverCertificate)) throw new Error("response");
+    const predecessorCertificate = new X509Certificate(predecessor.serverCertificatePem);
+    const predecessorSha256 = createHash("sha256").update(predecessorCertificate.raw).digest("hex");
+    if (response.predecessorCertificateSha256 !== predecessorSha256) throw new Error("predecessor");
+    const der = Buffer.from(response.serverCertificate, "base64url");
+    if (!der.length || der.length > 4096 || der.toString("base64url") !== response.serverCertificate) throw new Error("der");
+    const successorCertificate = new X509Certificate(der);
+    if (!successorCertificate.raw.equals(der)) throw new Error("der");
+    let target;
+    if (der.equals(predecessorCertificate.raw)) target = predecessor;
+    else {
+      const checked = validateSpsNativeServerCertificateTransition({ hostId: context.hostId,
+        predecessorCertificatePem: predecessor.serverCertificatePem, certificatePem: successorCertificate.toString() });
+      if (!checked.raw.equals(der)) throw new Error("transition");
+      target = validateSpsNativeMemberHostTarget({ ...predecessor, serverCertificatePem: successorCertificate.toString() }, context, now);
+    }
+    return Object.freeze({ response: Object.freeze({
+      hostId: response.hostId,
+      predecessorCertificateSha256: response.predecessorCertificateSha256,
+      serverCertificate: response.serverCertificate,
+      issuerSpkiSha256: response.issuerSpkiSha256,
+    }), target });
+  } catch {
+    throw Object.assign(new Error("The Native Member Host certificate response is invalid."), {
+      code: "ERR_SPS_NATIVE_MEMBER_SERVER_CERTIFICATE_INVALID",
+    });
+  }
+}
+
+function validateHistoricalTarget(input, expectedContextInput) {
+  const value = record(input, TARGET_KEYS);
+  if (value.v !== 1 || value.kind !== INNER_KIND) throw new Error("kind");
+  const expectedContext = validateSpsNativeMemberPendingContext(expectedContextInput);
+  const context = validateSpsNativeMemberPendingContext(value.context);
+  if (JSON.stringify(context) !== JSON.stringify(expectedContext) || typeof value.serverCertificatePem !== "string"
+    || Buffer.byteLength(value.serverCertificatePem, "utf8") > MAX_PEM_BYTES) throw new Error("context");
+  const origin = canonicalOrigin(value.origin);
+  const der = decodePem(value.serverCertificatePem, "CERTIFICATE");
+  const certificate = new X509Certificate(der);
+  if (!certificate.raw.equals(der)) throw new Error("der");
+  return Object.freeze({ v: 1, kind: INNER_KIND, context, origin: value.origin,
+    serverCertificatePem: value.serverCertificatePem });
+}
+
 function canonicalOuter(serialized) {
   if (typeof serialized !== "string" || Buffer.byteLength(serialized, "utf8") > MAX_FILE_BYTES) throw new Error("size");
   const value = record(JSON.parse(serialized), OUTER_KEYS);
@@ -111,12 +168,13 @@ function decodeCiphertext(encoded) {
   return bytes;
 }
 
-function canonicalInner(plaintext) {
+function canonicalInner(plaintext, historical = false) {
   if (typeof plaintext !== "string" || Buffer.byteLength(plaintext, "utf8") > MAX_PLAINTEXT_BYTES) throw new Error("size");
   const value = record(JSON.parse(plaintext), INNER_KEYS);
   if (value.v !== 1 || value.kind !== INNER_KIND) throw new Error("inner");
   const context = validateSpsNativeMemberPendingContext(value.context);
-  const target = validateSpsNativeMemberHostTarget(value.target, context);
+  const target = historical ? validateHistoricalTarget(value.target, context)
+    : validateSpsNativeMemberHostTarget(value.target, context);
   const canonical = JSON.stringify({ v: 1, kind: INNER_KIND, context, target });
   if (canonical !== plaintext) throw new Error("canonical");
   return { context, target };
@@ -165,14 +223,21 @@ export function createSpsNativeMemberTargetCapsule(options) {
       } catch { throw failure("invalid"); }
     },
     async open(serialized, expectedScopeInput) {
+      return await open(serialized, expectedScopeInput, false);
+    },
+    async openHistorical(serialized, expectedScopeInput) {
+      return await open(serialized, expectedScopeInput, true);
+    },
+  });
+
+  async function open(serialized, expectedScopeInput, historical) {
       try {
         const trustedScope = expectedScope(expectedScopeInput);
         const encrypted = decodeCiphertext(canonicalOuter(serialized));
         const plaintext = decrypt.call(config.safeStorage, encrypted);
-        const parsed = canonicalInner(plaintext);
+        const parsed = canonicalInner(plaintext, historical);
         if (JSON.stringify(scopeForContext(parsed.context)) !== JSON.stringify(trustedScope)) throw new Error("scope");
         return parsed.target;
       } catch { throw failure("invalid"); }
-    },
-  });
+  }
 }

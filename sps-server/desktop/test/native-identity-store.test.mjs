@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash, X509Certificate } from "node:crypto";
 import { mkdirSync, promises as nodeFs, rmdirSync } from "node:fs";
 import { lstat, link, mkdir, mkdtemp, readFile, readdir, realpath, rm, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
+import { createSpsNativeHostIdentity, renewSpsNativeHostServerCertificate } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeHostIdentityStore } from "../src/native-identity-store.mjs";
 
 const validIdentity = Object.freeze({
@@ -239,6 +239,18 @@ test("a completely missing Vault without credentials is absent and inspection cr
   assert.deepEqual(presence, { state: "absent" });
   assert.equal(Object.isFrozen(presence), true);
   await assert.rejects(readdir(path.join(paths.userDataDirectory, "native-connectivity")), { code: "ENOENT" });
+});
+
+test("an orphan Host renewal directory is present and blocks identity creation", async t => {
+  const paths = await fixture(t);
+  const store = storeFor(paths);
+  const file = await slotFile(paths.userDataDirectory, paths.vaultDirectory);
+  const renewalDirectory = `${file.slice(0, -5)}.renewals`;
+  await mkdir(renewalDirectory, { recursive: true });
+  assert.deepEqual(await store.inspectPresence(), { state: "present" });
+  await assert.rejects(store.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
+  await assert.rejects(store.create(validIdentity), { code: "ERR_SPS_NATIVE_IDENTITY_ALREADY_EXISTS" });
+  assert.equal(await readdir(renewalDirectory).then(names => names.length), 0);
 });
 
 test("inspectPresence rejects non-directory ancestors and invalid credential directories with static errors", async t => {
@@ -655,4 +667,41 @@ test("a Vault replaced during decryption fails before read returns an identity",
     assert.equal(Object.hasOwn(error, "cause"), false);
     return true;
   });
+});
+
+test("Host renewal appends encrypted history, preserves the v2 base file, and explicitly repairs a linked publication", async t => {
+  const paths = await fixture(t);
+  const safeStorage = makeSafeStorage();
+  const store = createSpsNativeHostIdentityStore({ ...paths, safeStorage, platform: "win32" });
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const identity = await createSpsNativeHostIdentity({ hostId: validIdentity.hostId, hostnames: ["localhost", "127.0.0.1"],
+    notBefore: now - 70 * 86_400_000, notAfter: now + 20 * 86_400_000, issuerNotAfter: now + 365 * 86_400_000 });
+  await store.create(identity);
+  const baseFile = await slotFile(paths.userDataDirectory, paths.vaultDirectory);
+  const baseBytes = await readFile(baseFile);
+  const baseStat = await lstat(baseFile, { bigint: true });
+  const renewed = await renewSpsNativeHostServerCertificate({ identity, now });
+  const published = await store.publishServerRenewal(renewed, { beforeCommit() {} });
+  assert.equal(published.server.certificatePem, renewed.server.certificatePem);
+  assert.equal(published.server.privateKeyPem, identity.server.privateKeyPem);
+  assert.deepEqual(published.memberIssuer, identity.memberIssuer);
+  assert.deepEqual(await readFile(baseFile), baseBytes);
+  const afterBaseStat = await lstat(baseFile, { bigint: true });
+  assert.equal(afterBaseStat.ino, baseStat.ino);
+  assert.deepEqual(await store.readServerCertificates(), [identity.server.certificatePem, renewed.server.certificatePem]);
+  assert.equal((await store.publishServerRenewal(renewed, { beforeCommit() {} })).server.certificatePem, renewed.server.certificatePem);
+  const renewalDirectory = `${baseFile.slice(0, -5)}.renewals`;
+  const entry = (await readdir(renewalDirectory))[0];
+  const companion = path.join(renewalDirectory, entry);
+  const alias = path.join(renewalDirectory, `.host-renewal-${randomUUID()}.tmp`);
+  await link(companion, alias);
+  await assert.rejects(store.read(), { code: "ERR_SPS_NATIVE_IDENTITY_STORE_CORRUPT" });
+  await assert.rejects(store.recoverInterruptedServerRenewal({ beforeCommit() { throw new Error("cancel"); } }),
+    { code: "ERR_SPS_NATIVE_IDENTITY_STORE_FAILED" });
+  assert.equal((await lstat(alias)).nlink, 2);
+  assert.deepEqual(await store.recoverInterruptedServerRenewal({ beforeCommit() {} }), { recovered: true });
+  assert.deepEqual(await store.read(), renewed);
+  assert.deepEqual(await store.readServerCertificates(), [identity.server.certificatePem, renewed.server.certificatePem]);
+  assert.deepEqual(await readFile(baseFile), baseBytes);
+  assert.equal(new X509Certificate(renewed.server.certificatePem).verify(new X509Certificate(renewed.server.certificatePem).publicKey), true);
 });

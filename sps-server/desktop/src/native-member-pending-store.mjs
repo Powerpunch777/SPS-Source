@@ -5,7 +5,9 @@ import { nativeCertificateRecord as record } from "./native-certificate-primitiv
 import { createSpsNativeMemberPendingCapsule, validateSpsNativeMemberPendingContext } from "./native-member-pending-capsule.mjs";
 import { createSpsNativeMemberIssuedCapsule } from "./native-member-issued-capsule.mjs";
 import { createSpsNativeMemberRenewalCapsule, validateSpsNativeMemberRenewalResponse } from "./native-member-renewal-capsule.mjs";
-import { createSpsNativeMemberTargetCapsule, validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
+import { createSpsNativeMemberTargetCapsule, validateSpsNativeMemberHostTarget,
+  validateSpsNativeMemberServerCertificateResponse } from "./native-member-target-capsule.mjs";
+import { validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
 import { normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
 import { sameNativeMemberFileIdentity } from "./native-member-file-identity.mjs";
 
@@ -207,11 +209,15 @@ function createStore(options, targetReader, mode = "full") {
     const nativeRoot = await childDirectory(root, "native-connectivity", create);
     const parentFolder = nativeRoot && await childDirectory(nativeRoot, "member-pending", create);
     const renewal = typeof kind === "string" && /^renewal:[0-9a-f]{64}$/.test(kind);
+    const serverCertificate = typeof kind === "string" && /^server-certificate:[0-9a-f]{64}$/.test(kind);
     const renewalDirectory = renewal || kind === "renewals";
-    if (!renewalDirectory && !["pending", "issued", "target"].includes(kind)) throw fail("OPTIONS");
-    const folder = parentFolder && (renewalDirectory ? await childDirectory(parentFolder, `${slot}.renewals`, create) : parentFolder);
-    const suffix = kind === "issued" ? ".issued" : kind === "target" ? ".target" : kind === "renewals" ? ".directory" : "";
-    const filename = renewal ? `${kind.slice(8)}.json` : `${slot}${suffix}.json`;
+    const serverCertificateDirectory = serverCertificate || kind === "server-certificates";
+    if (!renewalDirectory && !serverCertificateDirectory && !["pending", "issued", "target"].includes(kind)) throw fail("OPTIONS");
+    const folder = parentFolder && (renewalDirectory ? await childDirectory(parentFolder, `${slot}.renewals`, create)
+      : serverCertificateDirectory ? await childDirectory(parentFolder, `${slot}.server-certificates`, create) : parentFolder);
+    const suffix = kind === "issued" ? ".issued" : kind === "target" ? ".target"
+      : kind === "renewals" ? ".directory" : kind === "server-certificates" ? ".directory" : "";
+    const filename = renewal ? `${kind.slice(8)}.json` : serverCertificate ? `${kind.slice(19)}.json` : `${slot}${suffix}.json`;
     return folder ? { root, folder, parentFolder, kind, file: path.join(folder, filename),
       rootIdentity: await directoryIdentity(root), parentFolderIdentity: await directoryIdentity(parentFolder),
       folderIdentity: await directoryIdentity(folder) } : null;
@@ -357,13 +363,52 @@ function createStore(options, targetReader, mode = "full") {
   async function readTargetMetadata() {
     const target = await paths(false, "target");
     if (!target) return null;
-    const stat = await slotStat(target.file);
-    if (!stat) { await recheck(target); return null; }
+    const stat = await slotStat(target.file, false);
+    if (!stat) {
+      await recheck(target);
+      const orphanHistory = await paths(false, "server-certificates");
+      if (orphanHistory) throw fail("CORRUPT");
+      return null;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_BYTES) throw fail("CORRUPT");
     const bytes = await boundedRead(target.file, stat);
-    const result = await targetCapsule.open(bytes, scope);
+    const base = await targetCapsule.openHistorical(bytes, scope);
     await recheck(target);
     if (!sameFile(stat, await slotStat(target.file))) throw fail("CORRUPT");
-    return { value: validateSpsNativeMemberHostTarget(result, result.context), target, stat, bytes };
+    const historyPath = await paths(false, "server-certificates");
+    let value = base;
+    const entries = historyPath ? await boundedDirectoryNames(historyPath.folder, 257) : [];
+    const certificateFiles = entries.filter(name => /^[0-9a-f]{64}\.json$/.test(name));
+    if (certificateFiles.length > 256 || entries.some(name => !/^[0-9a-f]{64}\.json$/.test(name) && !TEMPORARY_ALIAS.test(name))) throw fail("CORRUPT");
+    const visited = new Set();
+    const loaded = [];
+    let edges = 0;
+    while (historyPath) {
+      const predecessor = certificateHash(value.serverCertificatePem);
+      if (visited.has(predecessor)) throw fail("CORRUPT");
+      visited.add(predecessor);
+      const name = `${predecessor}.json`;
+      if (!certificateFiles.includes(name)) break;
+      if (++edges > 256) throw fail("CORRUPT");
+      const file = path.join(historyPath.folder, name);
+      const childStat = await slotStat(file);
+      const childRaw = await boundedRead(file, childStat);
+      const next = await targetCapsule.openHistorical(childRaw, scope);
+      if (JSON.stringify(next.context) !== JSON.stringify(base.context) || next.origin !== base.origin) throw fail("CORRUPT");
+      const transition = validateSpsNativeServerCertificateTransition({ hostId: base.context.hostId,
+        predecessorCertificatePem: value.serverCertificatePem, certificatePem: next.serverCertificatePem });
+      const nextSha = certificateHash(next.serverCertificatePem);
+      if (nextSha === predecessor || !transition.raw.equals(new X509Certificate(next.serverCertificatePem).raw)) throw fail("CORRUPT");
+      loaded.push({ file, stat: childStat, bytes: childRaw, predecessorValue: value, value: next });
+      value = next;
+      await recheck(historyPath);
+      if (!sameFile(childStat, await slotStat(file)) || await boundedRead(file, childStat) !== childRaw) throw fail("CORRUPT");
+    }
+    if (loaded.length !== certificateFiles.length) throw fail("CORRUPT");
+    const latest = validateSpsNativeMemberHostTarget(value, base.context);
+    await recheck(target);
+    if (historyPath) await recheck(historyPath);
+    return { value: latest, target, stat, bytes, historyPath, historyNames: entries, loaded };
   }
   async function readScopeBoundContext(kind) {
     const target = await paths(false, kind);
@@ -392,8 +437,7 @@ function createStore(options, targetReader, mode = "full") {
     let retainedContext;
     try {
       if (kind === "target") {
-        const value = await targetCapsule.open(raw, scope);
-        validateSpsNativeMemberHostTarget(value, value.context);
+        const value = await targetCapsule.openHistorical(raw, scope);
         retainedContext = validateSpsNativeMemberPendingContext(value.context);
       } else retainedContext = await capsule.openContext(raw, scope);
     } catch { throw fail("CORRUPT"); }
@@ -416,10 +460,24 @@ function createStore(options, targetReader, mode = "full") {
     const stat = await slotStat(expected.target.file);
     if (!stat || !sameFile(stat, expected.stat)
       || await boundedRead(expected.target.file, stat) !== expected.bytes) throw fail("CORRUPT");
+    const currentHistory = await paths(false, "server-certificates");
+    if (!!currentHistory !== !!expected.historyPath) throw fail("CORRUPT");
+    if (expected.historyPath) {
+      if (!sameDirectory(currentHistory.folderIdentity, expected.historyPath.folderIdentity)
+        || currentHistory.folder !== expected.historyPath.folder) throw fail("CORRUPT");
+      await recheck(expected.historyPath);
+      const names = await boundedDirectoryNames(expected.historyPath.folder, 257);
+      if (JSON.stringify(names) !== JSON.stringify(expected.historyNames)) throw fail("CORRUPT");
+      for (const entry of expected.loaded) {
+        const current = await slotStat(entry.file);
+        if (!current || !sameFile(entry.stat, current) || await boundedRead(entry.file, current) !== entry.bytes) throw fail("CORRUPT");
+      }
+      await recheck(expected.historyPath);
+    }
     await recheck(expected.target);
   }
   async function recoverPublication(kind, authorize) {
-    if (!['pending', 'issued', 'target'].includes(kind) && !(typeof kind === "string" && /^renewal:[0-9a-f]{64}$/.test(kind))) throw fail("OPTIONS");
+    if (!['pending', 'issued', 'target'].includes(kind) && !(typeof kind === "string" && (/^renewal:[0-9a-f]{64}$/.test(kind) || /^server-certificate:[0-9a-f]{64}$/.test(kind)))) throw fail("OPTIONS");
     const target = await paths(false, kind);
     if (!target) return false;
     let final;
@@ -430,7 +488,8 @@ function createStore(options, targetReader, mode = "full") {
     if (final.nlink !== 2n) throw fail("CORRUPT");
 
     // The link count proves there is exactly one other directory entry for this inode.
-    const alias = await findTemporaryAlias(target.folder, final, kind.startsWith("renewal:") ? 257 : null);
+    const alias = await findTemporaryAlias(target.folder, final,
+      kind.startsWith("renewal:") || kind.startsWith("server-certificate:") ? 257 : null);
     await recheck(target);
     let raw = await boundedReadExact(target.file, final);
 
@@ -449,8 +508,51 @@ function createStore(options, targetReader, mode = "full") {
         validateSpsNativeMemberHostTarget(opened, context);
         await recheckPending(pending);
       } else {
-        const opened = await renewalCapsule.openHistorical(raw, context, pending.key);
-        if (opened.response.predecessorCertificateSha256 !== kind.slice(8)) throw fail("CORRUPT");
+        if (kind.startsWith("renewal:")) {
+          const opened = await renewalCapsule.openHistorical(raw, context, pending.key);
+          if (opened.response.predecessorCertificateSha256 !== kind.slice(8)) throw fail("CORRUPT");
+        } else {
+          const predecessorSha = kind.slice("server-certificate:".length);
+          const basePath = await paths(false, "target"), baseStat = basePath && await slotStat(basePath.file);
+          if (!basePath || !baseStat) throw fail("CORRUPT");
+          const baseRaw = await boundedRead(basePath.file, baseStat);
+          const base = await targetCapsule.openHistorical(baseRaw, scope);
+          const history = await paths(false, "server-certificates");
+          if (!history || history.folder !== target.folder) throw fail("CORRUPT");
+          const names = await boundedDirectoryNames(history.folder, 257);
+          const files = names.filter(name => /^[0-9a-f]{64}\.json$/.test(name));
+          if (files.length > 256 || names.some(name => !/^[0-9a-f]{64}\.json$/.test(name) && !TEMPORARY_ALIAS.test(name))) throw fail("CORRUPT");
+          const visited = new Set(), linked = new Set();
+          let predecessorTarget = base;
+          for (let count = 0; count < 256; count++) {
+            const predecessorHash = certificateHash(predecessorTarget.serverCertificatePem);
+            if (predecessorHash === predecessorSha) break;
+            if (visited.has(predecessorHash)) throw fail("CORRUPT");
+            visited.add(predecessorHash);
+            const name = `${predecessorHash}.json`;
+            if (!files.includes(name) || name === path.basename(target.file)) throw fail("CORRUPT");
+            const childFile = path.join(history.folder, name), childStat = await slotStat(childFile);
+            const childRaw = await boundedRead(childFile, childStat);
+            const child = await targetCapsule.openHistorical(childRaw, scope);
+            const transition = validateSpsNativeServerCertificateTransition({ hostId: context.hostId,
+              predecessorCertificatePem: predecessorTarget.serverCertificatePem, certificatePem: child.serverCertificatePem });
+            if (!transition.raw.equals(new X509Certificate(child.serverCertificatePem).raw)
+              || child.origin !== base.origin || JSON.stringify(child.context) !== JSON.stringify(base.context)) throw fail("CORRUPT");
+            linked.add(name); predecessorTarget = child;
+          }
+          if (certificateHash(predecessorTarget.serverCertificatePem) !== predecessorSha
+            || files.some(name => name !== path.basename(target.file) && !linked.has(name))) throw fail("CORRUPT");
+          const opened = await targetCapsule.openHistorical(raw, scope);
+          const transition = validateSpsNativeServerCertificateTransition({ hostId: context.hostId,
+            predecessorCertificatePem: predecessorTarget.serverCertificatePem, certificatePem: opened.serverCertificatePem });
+          if (!transition.raw.equals(new X509Certificate(opened.serverCertificatePem).raw)) throw fail("CORRUPT");
+          const checked = validateSpsNativeMemberServerCertificateResponse({ hostId: context.hostId,
+            predecessorCertificateSha256: predecessorSha,
+            serverCertificate: new X509Certificate(opened.serverCertificatePem).raw.toString("base64url"),
+            issuerSpkiSha256: context.issuerSpkiSha256 }, predecessorTarget);
+          if (checked.target.serverCertificatePem !== opened.serverCertificatePem) throw fail("CORRUPT");
+          await recheck(basePath); await recheck(history);
+        }
         await recheckPending(pending);
       }
     } catch { throw fail("CORRUPT"); }
@@ -494,11 +596,23 @@ function createStore(options, targetReader, mode = "full") {
         const current = await readIssuedChain();
         if (!current || certificateHash(current.credential.certificatePem) !== kind.slice(8)) throw fail("CORRUPT");
       }
+      if (kind.startsWith("server-certificate:")) {
+        const current = await readTargetMetadata();
+        if (!current || certificateHash(current.value.serverCertificatePem) !== kind.slice("server-certificate:".length)) throw fail("CORRUPT");
+      }
+      if (kind === "target") {
+        const history = await paths(false, "server-certificates");
+        if (history) throw fail("ALREADY_EXISTS");
+      }
       const stat = await fs.lstat(temporary);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !sameFile(stat, owned)) throw fail("FAILED");
       if (await slotStat(target.file, false)) throw fail("ALREADY_EXISTS");
       if (pending) await recheckPending(pending);
       if (kind === "target") validateSpsNativeMemberHostTarget(validated, context);
+      if (kind.startsWith("server-certificate:")) {
+        const current = await readTargetMetadata();
+        if (!current || certificateHash(current.value.serverCertificatePem) !== kind.slice("server-certificate:".length)) throw fail("CORRUPT");
+      }
       authorize();
       try { await fs.link(temporary, target.file); } catch (error) {
         if (error?.code === "EEXIST") throw fail("ALREADY_EXISTS");
@@ -569,6 +683,22 @@ function createStore(options, targetReader, mode = "full") {
             await recheck(renewalPath);
           }
           if (recoveredRenewal) recovered.push("renewal");
+          const serverCertificatePath = await paths(false, "server-certificates");
+          let recoveredServerCertificate = false;
+          if (serverCertificatePath) {
+            const names = await boundedDirectoryNames(serverCertificatePath.folder, 257);
+            const certificateNames = names.filter(name => /^[0-9a-f]{64}\.json$/.test(name));
+            if (certificateNames.length > 256 || names.some(name => !/^[0-9a-f]{64}\.json$/.test(name) && !TEMPORARY_ALIAS.test(name))) throw fail("CORRUPT");
+            for (const name of certificateNames) {
+              const hash = name.slice(0, 64), file = path.join(serverCertificatePath.folder, name);
+              const stat = await slotStat(file, false);
+              if (stat?.nlink === 2 && await fullStore.recoverInterruptedPublication(`server-certificate:${hash}`, { beforeCommit: authorize })) {
+                recoveredServerCertificate = true;
+              }
+            }
+            await recheck(serverCertificatePath);
+          }
+          if (recoveredServerCertificate) recovered.push("server-certificate");
           return Object.freeze({ recovered: Object.freeze(recovered) });
         } catch (error) { throw fail(internalFailures.get(error) ?? "FAILED"); }
       });
@@ -591,7 +721,8 @@ function createStore(options, targetReader, mode = "full") {
       return serialize(async () => {
         try {
           const target = await paths();
-          return Object.freeze({ state: target && await slotStat(target.file, false) ? "present" : "absent" });
+          const history = await paths(false, "server-certificates");
+          return Object.freeze({ state: target && await slotStat(target.file, false) || history ? "present" : "absent" });
         } catch { throw fail("FAILED"); }
       });
     },
@@ -728,6 +859,66 @@ function createStore(options, targetReader, mode = "full") {
           await recheckTarget(result);
           return validateSpsNativeMemberHostTarget(result.value, context);
         } catch { throw fail("CORRUPT"); }
+      });
+    },
+    publishServerCertificate(response, input = {}) {
+      const authorize = commitGuard(input);
+      return serialize(async () => {
+        try {
+          const exactResponse = record(response, ["hostId", "predecessorCertificateSha256", "serverCertificate", "issuerSpkiSha256"]);
+          const current = await readTargetMetadata();
+          const pending = await readPending();
+          if (!current || !pending) throw fail("CORRUPT");
+          const suppliedHash = exactResponse.predecessorCertificateSha256;
+          const predecessorEntry = current.loaded.find(entry => certificateHash(entry.predecessorValue.serverCertificatePem) === suppliedHash);
+          const predecessorTarget = predecessorEntry?.predecessorValue
+            ?? (certificateHash(current.value.serverCertificatePem) === suppliedHash ? current.value : null);
+          if (predecessorTarget) {
+            if (predecessorEntry) {
+              if (exactResponse.hostId !== context.hostId || exactResponse.issuerSpkiSha256 !== context.issuerSpkiSha256
+                || exactResponse.predecessorCertificateSha256 !== suppliedHash
+                || typeof exactResponse.serverCertificate !== "string" || exactResponse.serverCertificate.length < 1
+                || exactResponse.serverCertificate.length > 5462 || !/^[A-Za-z0-9_-]+$/.test(exactResponse.serverCertificate)) throw fail("CORRUPT");
+              const replayDer = Buffer.from(exactResponse.serverCertificate, "base64url");
+              const storedDer = new X509Certificate(predecessorEntry.value.serverCertificatePem).raw;
+              if (!replayDer.length || replayDer.length > 4096 || replayDer.toString("base64url") !== exactResponse.serverCertificate
+                || !replayDer.equals(storedDer)) throw fail("CORRUPT");
+              authorize(); await recheckPending(pending); await recheckTarget(current);
+              return current.value;
+            }
+            const checked = validateSpsNativeMemberServerCertificateResponse(exactResponse, predecessorTarget);
+            const successorHash = certificateHash(checked.target.serverCertificatePem);
+            if (successorHash === suppliedHash) {
+              authorize(); await recheckPending(pending); await recheckTarget(current);
+              return current.value;
+            }
+            if (certificateHash(current.value.serverCertificatePem) !== suppliedHash) throw fail("CORRUPT");
+            const kind = `server-certificate:${suppliedHash}`;
+            try {
+              await createOnly(kind, async () => {
+                const latest = await readTargetMetadata();
+                if (!latest || certificateHash(latest.value.serverCertificatePem) !== suppliedHash) throw fail("CORRUPT");
+                const encrypted = await targetCapsule.seal({ context, target: checked.target });
+                const validated = await targetCapsule.open(encrypted, scope);
+                return { encrypted, validated, pending };
+              }, authorize);
+            } catch (error) {
+              if (internalFailures.get(error) !== "ALREADY_EXISTS") throw error;
+              const latest = await readTargetMetadata();
+              const edge = latest?.loaded.find(entry => certificateHash(entry.predecessorValue.serverCertificatePem) === suppliedHash);
+              if (!edge || edge.value.serverCertificatePem !== checked.target.serverCertificatePem) throw error;
+              authorize(); await recheckPending(pending); await recheckTarget(latest);
+            }
+            const latest = await readTargetMetadata();
+            if (!latest) throw fail("CORRUPT");
+            await recheckPending(pending); await recheckTarget(latest);
+            return latest.value;
+          }
+          throw fail("CORRUPT");
+        } catch (error) {
+          if (internalFailures.has(error)) throw fail(internalFailures.get(error));
+          throw fail("CORRUPT");
+        }
       });
     },
     createTarget(target, input = {}) {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createServer as createTcpServer } from "node:net";
-import { createServer as createTlsServer } from "node:tls";
+import { createSecureContext, createServer as createTlsServer } from "node:tls";
 import test, { after, before } from "node:test";
 import { X509Certificate } from "node:crypto";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { probeSpsNativeServerTls, verifySpsNativeInvitationCertificate } from "../src/native-connection-tls.mjs";
+import { nativeServerCertificateServername } from "../src/native-server-certificate-selection.mjs";
 import { createNativeTlsFixture } from "./helpers/native-tls-fixtures.mjs";
 
 const fixtures = [];
@@ -44,9 +45,13 @@ function invite(fixture = valid, origin = "https://127.0.0.1:31311", fields = {}
 
 async function listener(t, fixture = valid, { silent = false, version = "TLSv1.3" } = {}) {
   const sockets = new Set();
-  const stats = { connections: 0, applicationBytes: 0 };
+  const stats = { connections: 0, applicationBytes: 0, servernames: [] };
   const server = silent ? createTcpServer() : createTlsServer({
     key: fixture.keyPem, cert: fixture.certPem, minVersion: version, maxVersion: version,
+    SNICallback(servername, callback) {
+      stats.servernames.push(servername);
+      callback(null, createSecureContext({ key: fixture.keyPem, cert: fixture.certPem }));
+    },
   }, socket => socket.on("data", bytes => { stats.applicationBytes += bytes.length; }));
   server.on("tlsClientError", () => {});
   server.on("connection", socket => {
@@ -131,6 +136,7 @@ test("authenticates the exact pinned TLS 1.3 peer and sends no application bytes
   assert.equal(Object.hasOwn(result, "authorized"), false);
   assert.equal(target.stats.connections, 1);
   assert.equal(target.stats.applicationBytes, 0);
+  assert.deepEqual(target.stats.servernames, [nativeServerCertificateServername(valid.certPem)]);
 });
 
 test("rejects a different actual server certificate without a fallback or credential exchange", async t => {

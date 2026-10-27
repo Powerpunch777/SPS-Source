@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { createHash, X509Certificate } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { createServer as createNetServer } from "node:net";
-import { connect as tlsConnect } from "node:tls";
+import { checkServerIdentity, connect as tlsConnect } from "node:tls";
 import test, { before, after } from "node:test";
 import { createSpsNativeHostIngress } from "../src/native-host-ingress.mjs";
-import { createSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
+import { createSpsNativeHostIdentity, renewSpsNativeHostServerCertificate } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate } from "../src/native-member-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
-  createSpsNativeEnrollmentRecoveryClient } from "../src/native-enrollment-client.mjs";
+  createSpsNativeEnrollmentRecoveryClient, createSpsNativeServerCertificateClient } from "../src/native-enrollment-client.mjs";
+import { nativeServerCertificateServername } from "../src/native-server-certificate-selection.mjs";
 
 const HOST_ID = "11111111-1111-4111-8111-111111111111";
 const DEVICE_KEY_ID = "22222222-2222-4222-8222-222222222222";
@@ -35,10 +36,15 @@ before(async () => {
   });
 });
 
-function post(port, { route, body = "", headers = {}, certificate, key, session = false, workspace = false, method } = {}) {
+function post(port, { route, body = "", headers = {}, certificate, key, session = false, workspace = false, method,
+  ca = identity.server.certificatePem, servername, expectedCertificate } = {}) {
   return new Promise((resolve, reject) => {
     const request = httpsRequest({ hostname: "127.0.0.1", port, path: route, method: method ?? (workspace ? "GET" : "POST"), agent: false,
-      ca: identity.server.certificatePem, cert: certificate, key, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
+      ca, ...(servername ? { servername, checkServerIdentity(_name, peer) {
+        if (checkServerIdentity("127.0.0.1", peer)) return new Error("hostname mismatch");
+        if (expectedCertificate && !peer.raw.equals(new X509Certificate(expectedCertificate).raw)) return new Error("certificate mismatch");
+        return undefined;
+      } } : {}), cert: certificate, key, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
       headers: { ...(method === "PATCH" ? { "Content-Type": "application/json" }
         : !workspace ? { "Content-Type": "application/json; charset=utf-8" } : {}), "Content-Length": String(Buffer.byteLength(body)),
         Connection: "close", ...(session ? { Cookie: `sps_identity_session=${"a".repeat(64)}` } : {}), ...headers } }, response => {
@@ -108,6 +114,61 @@ test("only exact Native paths and closed canonical requests dispatch over fresh 
   assert.equal(calls[2].body.requestPem, memberKey.requestPem);
   assert.equal(calls[2].credential.sessionCookie, `sps_identity_session=${"a".repeat(64)}`);
   assert.equal("peerCertificateDer" in calls[2].transport, false);
+});
+
+test("retained exact leaf SNI returns only public successor metadata from local TLS", async t => {
+  const predecessorIdentity = await createSpsNativeHostIdentity({ hostId: HOST_ID, hostnames: ["127.0.0.1"],
+    notBefore: NOW - 80 * 24 * 60 * 60 * 1000, notAfter: NOW + 10 * 24 * 60 * 60 * 1000,
+    issuerNotAfter: NOW + 300 * 24 * 60 * 60 * 1000 });
+  const renewedIdentity = await renewSpsNativeHostServerCertificate({ identity: predecessorIdentity, now: NOW });
+  const predecessor = new X509Certificate(predecessorIdentity.server.certificatePem);
+  const successor = new X509Certificate(renewedIdentity.server.certificatePem);
+  const dispatched = [];
+  const ingress = createSpsNativeHostIngress({ getIdentity: () => renewedIdentity,
+    getServerCertificates: () => [predecessorIdentity.server.certificatePem, renewedIdentity.server.certificatePem],
+    assertCurrent() {}, dispatch(...args) { dispatched.push(args); assert.fail("public certificate read must remain local"); } });
+  t.after(() => ingress.dispose());
+  const { port } = await ingress.start({ bindAddress: "127.0.0.1", port: 0 });
+  const selectedOldLeaf = await post(port, { route: "/sps-native/v1/server-certificate", ca: predecessorIdentity.server.certificatePem,
+    servername: nativeServerCertificateServername(predecessorIdentity.server.certificatePem), expectedCertificate: predecessorIdentity.server.certificatePem });
+  assert.equal(selectedOldLeaf.statusCode, 200);
+  assert.deepEqual(JSON.parse(selectedOldLeaf.body), { hostId: HOST_ID,
+    predecessorCertificateSha256: createHash("sha256").update(predecessor.raw).digest("hex"),
+    serverCertificate: successor.raw.toString("base64url"),
+    issuerSpkiSha256: createHash("sha256").update(new X509Certificate(renewedIdentity.memberIssuer.certificatePem)
+      .publicKey.export({ type: "spki", format: "der" })).digest("hex") });
+  const context = { identityIssuer: "https://identity.example.test", subject: "fixture-member", hostId: HOST_ID,
+    deviceKeyId: DEVICE_KEY_ID,
+    serverSpkiSha256: createHash("sha256").update(predecessor.publicKey.export({ type: "spki", format: "der" })).digest("hex"),
+    issuerSpkiSha256: createHash("sha256").update(new X509Certificate(predecessorIdentity.memberIssuer.certificatePem)
+      .publicKey.export({ type: "spki", format: "der" })).digest("hex") };
+  const publicClient = createSpsNativeServerCertificateClient({ target: { v: 1, kind: "sps.native.member-host-target", context,
+    origin: `https://127.0.0.1:${port}`, serverCertificatePem: predecessorIdentity.server.certificatePem },
+    context, timeoutMs: 3000, assertCurrent() {} });
+  t.after(() => publicClient.dispose());
+  const clientValue = await publicClient.getServerCertificate();
+  assert.equal(clientValue.predecessorCertificateSha256, createHash("sha256").update(predecessor.raw).digest("hex"));
+  assert.equal(clientValue.serverCertificate, successor.raw.toString("base64url"));
+  const latestDefault = await post(port, { route: "/sps-native/v1/server-certificate", ca: renewedIdentity.server.certificatePem,
+    expectedCertificate: renewedIdentity.server.certificatePem });
+  assert.equal(latestDefault.statusCode, 200);
+  assert.equal(JSON.parse(latestDefault.body).predecessorCertificateSha256, createHash("sha256").update(successor.raw).digest("hex"));
+  const denied = await post(port, { route: "/sps-native/v1/server-certificate", ca: renewedIdentity.server.certificatePem,
+    servername: nativeServerCertificateServername(renewedIdentity.server.certificatePem), headers: { Authorization: "Bearer a.b.c" } });
+  assert.equal(denied.statusCode, 400);
+  assert.deepEqual(dispatched, []);
+  await assert.rejects(post(port, { route: "/sps-native/v1/server-certificate", ca: predecessorIdentity.server.certificatePem,
+    servername: `${"0".repeat(32)}.${"0".repeat(32)}.sps-native.invalid` }));
+});
+
+test("Host history rejects a same-Host replacement key before binding", async () => {
+  const wrongKeyIdentity = await createSpsNativeHostIdentity({ ...HOST_OPTIONS, hostId: HOST_ID });
+  const ingress = createSpsNativeHostIngress({ getIdentity: () => identity,
+    getServerCertificates: () => [identity.server.certificatePem, wrongKeyIdentity.server.certificatePem],
+    assertCurrent() {}, dispatch() {} });
+  await assert.rejects(ingress.start({ bindAddress: "127.0.0.1", port: 0 }));
+  assert.equal(ingress.inspect().state, "disabled");
+  await ingress.dispose();
 });
 
 test("workspace inbox state PATCH requires fresh mTLS, exact route, cookie and canonical bounded JSON", async t => {

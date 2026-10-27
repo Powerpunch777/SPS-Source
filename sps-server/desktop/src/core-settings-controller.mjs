@@ -168,6 +168,10 @@ export function createCoreSettingsController({
   inspectTransfer,
   confirmNativeIdentity,
   prepareNativeIdentity,
+  renewNativeIdentity,
+  repairNativeIdentityPublication,
+  confirmNativeIdentityRenewal,
+  confirmNativeIdentityRepair,
   listNativeDevices,
   approveNativeDevice,
   revokeNativeDevice,
@@ -315,6 +319,29 @@ export function createCoreSettingsController({
       }
       return status();
     }, { writes: true, input: true });
+    for (const [name, callback, confirm] of [
+      ["renew-native-identity", renewNativeIdentity, confirmNativeIdentityRenewal],
+      ["repair-native-identity-publication", repairNativeIdentityPublication, confirmNativeIdentityRepair],
+    ]) bind(name, async (_input, event) => {
+      if (typeof callback !== "function" || typeof confirm !== "function") throw new Error("Native Host certificate maintenance is unavailable.");
+      assertSender(event);
+      await awaitAndAssertSender(event, () => callback({
+        assertRequester: () => assertSender(event),
+        confirm: async preview => {
+          if (name === "renew-native-identity") {
+            const value = exactDataRecord(preview, ["hostId", "serverNotAfter"]);
+            if (!value || !NATIVE_DEVICE_ID.test(value.hostId) || !Number.isSafeInteger(value.serverNotAfter)
+              || value.serverNotAfter <= Date.now()) throw new Error("Invalid Host certificate preview.");
+            preview = value;
+          } else if (preview !== undefined) throw new Error("Unexpected Host repair preview.");
+          await awaitAndAssertSender(event, () => authorizeMutation());
+          const confirmed = await awaitAndAssertSender(event, () => confirm(window, preview));
+          await awaitAndAssertSender(event, () => authorizeMutation());
+          return confirmed === true;
+        },
+      }));
+      return status();
+    }, { writes: true });
     const bindNativeDeviceAction = (name, action, callback) => bind(name, async (input, event) => {
       const validated = validateNativeDeviceInput(input);
       if (typeof callback !== "function" || typeof confirmNativeDeviceAction !== "function") {
@@ -450,9 +477,9 @@ export function createCoreSettingsController({
       }));
       if (exactDataRecord(result, ["cancelled"])?.cancelled === true) return Object.freeze({ cancelled: true });
       const value = exactDataRecord(result, ["hostId", "recovered"]);
-      if (!value || value.hostId !== validated.hostId || !Array.isArray(value.recovered) || value.recovered.length > 4
+      if (!value || value.hostId !== validated.hostId || !Array.isArray(value.recovered) || value.recovered.length > 5
         || new Set(value.recovered).size !== value.recovered.length
-        || value.recovered.some(kind => !["pending", "issued", "target", "renewal"].includes(kind))) throw new Error("Native Member local recovery is unavailable.");
+        || value.recovered.some(kind => !["pending", "issued", "target", "renewal", "server-certificate"].includes(kind))) throw new Error("Native Member local recovery is unavailable.");
       return Object.freeze({ hostId: value.hostId, recovered: Object.freeze([...value.recovered]) });
     }, { writes: true, input: true, authorizeBeforeAction: false });
     bindNativeDeviceAction("approve-native-device", "approve", approveNativeDevice);

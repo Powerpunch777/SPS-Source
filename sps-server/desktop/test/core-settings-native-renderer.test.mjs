@@ -99,6 +99,20 @@ function preparedHost(nativeListener = { state: "off" }) {
     serverSpkiSha256: "a".repeat(64), serverNotAfter: 1_900_000_000_000, memberIssuerNotAfter: 1_950_000_000_000 }), nativeListener });
 }
 
+test("Host certificate renewal requires explicit click, due metadata and stopped listening", async () => {
+  let calls = 0;
+  const due = { ...preparedHost(), nativeConnectivity: { ...preparedHost().nativeConnectivity,
+    serverRenewalAvailableAt: Date.now() - 60_000 } };
+  const ctx = createRenderer({ getStatus: async () => due, api: {
+    renewNativeIdentity: async () => { calls++; return preparedHost(listening); },
+  } });
+  await settle(); assert.equal(calls, 0);
+  assert.equal(element(ctx, "renew-native-identity").disabled, false);
+  element(ctx, "renew-native-identity").dispatch("click"); await settle();
+  assert.equal(calls, 1); assert.equal(element(ctx, "renew-native-identity").disabled, true);
+  element(ctx, "renew-native-identity").dispatch("click"); await settle(); assert.equal(calls, 1);
+});
+
 test("Host registration stays off until an explicit click and renders start and stop results", async () => {
   const calls = [];
   const ctx = createRenderer({ getStatus: async () => preparedHost(), api: {

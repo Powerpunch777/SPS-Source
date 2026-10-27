@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { defaultSpsNativeCertificateValidity } from "./native-connection-policy.mjs";
 import {
   createSpsNativeHostIdentity, inspectSpsNativeHostIdentity, requireCurrentSpsNativeHostIdentity,
+  renewSpsNativeHostServerCertificate,
 } from "./native-identity-certificates.mjs";
 
 const MESSAGES = Object.freeze({
@@ -12,6 +13,8 @@ const MESSAGES = Object.freeze({
   native_identity_recovery_required: "Existing Native credentials require explicit recovery and were not replaced.",
   native_identity_unavailable: "Native identity storage is unavailable. Existing credentials were not replaced.",
   native_identity_restore_blocked: "Native credentials already exist for this Vault. Resolve them before restoring a different Host.",
+  native_identity_listener_active: "Stop Native listening before renewing or repairing the Host certificate.",
+  native_identity_renewal_not_due: "This Host certificate is outside its renewal window or cannot be extended by its current issuer.",
 });
 
 function error(code) { return Object.assign(new Error(MESSAGES[code]), { code }); }
@@ -44,11 +47,16 @@ function authority(value) {
   if (!value || typeof value.ownerSubject !== "string" || !value.ownerSubject
     || typeof value.userDataDirectory !== "string" || !value.userDataDirectory
     || typeof value.vaultDirectory !== "string" || !value.vaultDirectory) throw error("native_identity_host_required");
-  return Object.freeze({ ownerSubject: value.ownerSubject, userDataDirectory: value.userDataDirectory, vaultDirectory: value.vaultDirectory });
+  const generation = value.generation ?? null;
+  if (generation !== null && !(typeof generation === "bigint" ? generation >= 0n
+    : Number.isSafeInteger(generation) && generation >= 0)) throw error("native_identity_host_required");
+  return Object.freeze({ ownerSubject: value.ownerSubject, userDataDirectory: value.userDataDirectory,
+    vaultDirectory: value.vaultDirectory, generation });
 }
 
 function sameAuthority(a, b) {
-  return a.ownerSubject === b.ownerSubject && a.userDataDirectory === b.userDataDirectory && a.vaultDirectory === b.vaultDirectory;
+  return a.ownerSubject === b.ownerSubject && a.userDataDirectory === b.userDataDirectory
+    && a.vaultDirectory === b.vaultDirectory && a.generation === b.generation;
 }
 
 export async function assertSpsNativeHostCredentialsAbsentForRestore(store) {
@@ -70,6 +78,8 @@ export function createSpsNativeIdentityController({
   now = Date.now,
   createIdentity = createSpsNativeHostIdentity,
   createHostId = randomUUID,
+  renewIdentity = renewSpsNativeHostServerCertificate,
+  isListening = () => false,
 }) {
   let preparing = false;
   const capture = () => authority(getAuthority());
@@ -97,14 +107,88 @@ export function createSpsNativeIdentityController({
     return status(details.state, {
       serverSpkiSha256: details.serverSpkiSha256,
       serverNotAfter: details.serverNotAfter, memberIssuerNotAfter: details.memberIssuerNotAfter,
+      serverRenewalAvailableAt: details.state === "identity_prepared" ? details.serverNotAfter
+        - Math.min(30 * 86_400_000, Math.floor((details.serverNotAfter - details.serverNotBefore) / 3)) : null,
     });
   }
 
+  function maintenanceGuard(expected, assertRequester) {
+    recheck(expected, assertRequester);
+    if (isListening() !== false) throw error("native_identity_listener_active");
+  }
+
   return Object.freeze({
+    isMaintaining() { return preparing; },
     async inspect() {
       let expected;
       try { expected = capture(); } catch { return status("host_required"); }
       try { return await inspectOwned(expected); } catch { return status("unavailable"); }
+    },
+
+    async renew({ confirm, assertRequester } = {}) {
+      if (preparing) throw error("native_identity_busy");
+      if (typeof confirm !== "function") throw error("native_identity_unavailable");
+      preparing = true;
+      try {
+        const expected = capture();
+        const check = () => maintenanceGuard(expected, assertRequester);
+        check(); await authenticateHost(); check();
+        const store = getStore(expected);
+        const previous = requireCurrentSpsNativeHostIdentity(await store.read(), now());
+        check();
+        const details = inspectSpsNativeHostIdentity(previous, now());
+        const leaf = new X509Certificate(previous.server.certificatePem);
+        const windowMs = Math.min(30 * 86_400_000,
+          Math.floor((details.serverNotAfter - details.serverNotBefore) / 3));
+        if (details.serverNotAfter - now() > windowMs
+          || Math.min(Math.floor(now() / 1000) * 1000 + 90 * 86_400_000, details.memberIssuerNotAfter) <= details.serverNotAfter) {
+          throw error("native_identity_renewal_not_due");
+        }
+        const confirmed = await confirm(Object.freeze({ hostId: previous.hostId, serverNotAfter: details.serverNotAfter }));
+        check();
+        if (confirmed !== true) return Object.freeze({ cancelled: true });
+        const renewed = await renewIdentity({ identity: previous, now: now() });
+        check();
+        requireCurrentSpsNativeHostIdentity(renewed, now());
+        if (renewed.hostId !== previous.hostId || renewed.server.privateKeyPem !== previous.server.privateKeyPem
+          || renewed.memberIssuer.certificatePem !== previous.memberIssuer.certificatePem
+          || renewed.memberIssuer.privateKeyPem !== previous.memberIssuer.privateKeyPem
+          || !new X509Certificate(renewed.server.certificatePem).publicKey.export({ type: "spki", format: "der" })
+            .equals(leaf.publicKey.export({ type: "spki", format: "der" }))) throw error("native_identity_unavailable");
+        if (typeof store.publishServerRenewal !== "function") throw error("native_identity_unavailable");
+        await store.publishServerRenewal(renewed, { beforeCommit: check });
+        check();
+        const result = await inspectOwned(expected);
+        check();
+        return result;
+      } catch (failure) {
+        if (Object.hasOwn(MESSAGES, failure?.code)) throw error(failure.code);
+        throw error("native_identity_unavailable");
+      } finally { preparing = false; }
+    },
+
+    async repairServerRenewal({ confirm, assertRequester } = {}) {
+      if (preparing) throw error("native_identity_busy");
+      if (typeof confirm !== "function") throw error("native_identity_unavailable");
+      preparing = true;
+      try {
+        const expected = capture();
+        const check = () => maintenanceGuard(expected, assertRequester);
+        check(); await authenticateHost(); check();
+        const confirmed = await confirm();
+        check();
+        if (confirmed !== true) return Object.freeze({ cancelled: true });
+        const store = getStore(expected);
+        if (typeof store.recoverInterruptedServerRenewal !== "function") throw error("native_identity_unavailable");
+        const result = await store.recoverInterruptedServerRenewal({ beforeCommit: check });
+        check();
+        if (!result || Object.keys(result).join(",") !== "recovered"
+          || typeof result.recovered !== "boolean") throw error("native_identity_unavailable");
+        return Object.freeze({ recovered: result.recovered });
+      } catch (failure) {
+        if (Object.hasOwn(MESSAGES, failure?.code)) throw error(failure.code);
+        throw error("native_identity_unavailable");
+      } finally { preparing = false; }
     },
 
     async prepare(input, { assertRequester } = {}) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, X509Certificate } from "node:crypto";
 import test, { before } from "node:test";
-import { createSpsNativeHostIdentity } from "../src/native-identity-certificates.mjs";
+import { createSpsNativeHostIdentity, renewSpsNativeHostServerCertificate } from "../src/native-identity-certificates.mjs";
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate,
   publicSpsNativeMemberEnrollmentRequest } from "../src/native-member-certificates.mjs";
@@ -89,11 +89,65 @@ function fixture(overrides = {}) {
     setCurrent: value => { current = value; }, change: () => { current = { ...current, generation: current.generation + 1n }; },
     setOutcome: value => { outcome = value; }, removeKey: () => { key = null; }, setIndex: value => { index = value; },
     setCredentials: (current, next = null) => { credential = current; nextCredential = next; },
-    setInspection: value => { inspection = value; },
+    setInspection: value => { inspection = value; }, setTarget: value => { target = value; },
     snapshot: () => ({ index, key, issued, target }),
   };
 }
 const enroll = (f, options = {}) => f.controller.enroll({ invitationCode, displayName: "Alice computer" }, { confirm: async () => true, ...options });
+
+test("saved Member refreshes protected Host certificate before sending credentials and rejects late account results", async () => {
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const previous = await createSpsNativeHostIdentity({ hostId: HOST, hostnames: ["127.0.0.1"],
+    notBefore: now - 70 * 86_400_000, notAfter: now + 20 * 86_400_000, issuerNotAfter: now + 295 * 86_400_000 });
+  const renewed = await renewSpsNativeHostServerCertificate({ identity: previous, now });
+  let publications = 0, late = false, credentialCalls = 0, f;
+  f = fixture({ createServerCertificate: ({ target }) => ({
+    async getServerCertificate() {
+      assert.equal(credentialCalls, 0);
+      if (late) f.change();
+      return { hostId: HOST, predecessorCertificateSha256: createHash("sha256")
+        .update(new X509Certificate(target.serverCertificatePem).raw).digest("hex"),
+      serverCertificate: new X509Certificate(renewed.server.certificatePem).raw.toString("base64url"),
+      issuerSpkiSha256: pin(previous.memberIssuer.certificatePem) };
+    }, dispose() {},
+  }), createWorkspace: ({ target }) => {
+    assert.equal(target.serverCertificatePem, renewed.server.certificatePem);
+    return { async exchange() { credentialCalls++; }, async listAvailableWorkspaces() { return []; }, dispose() {} };
+  } });
+  await enroll(f);
+  const saved = { ...f.snapshot().target, context: { ...f.snapshot().target.context,
+    serverSpkiSha256: pin(previous.server.certificatePem), issuerSpkiSha256: pin(previous.memberIssuer.certificatePem) },
+  serverCertificatePem: previous.server.certificatePem };
+  f.setTarget(saved);
+  f.store.publishServerCertificate = async (response, options) => {
+    options.beforeCommit(); publications++;
+    f.setTarget({ ...saved, serverCertificatePem: new X509Certificate(Buffer.from(response.serverCertificate, "base64url")).toString() });
+  };
+  assert.deepEqual(await f.controller.listWorkspaces({ hostId: HOST }), []);
+  assert.equal(publications, 1); assert.equal(credentialCalls, 1);
+  const originalKey = f.snapshot().key;
+  f.setTarget(saved); credentialCalls = 0; late = true;
+  await assert.rejects(f.controller.listWorkspaces({ hostId: HOST }), { code: "native_member_changed" });
+  assert.equal(publications, 1); assert.equal(credentialCalls, 0);
+  assert.equal(f.snapshot().key, originalKey);
+});
+
+test("saved Member retains current trust only for an explicitly unsupported Host metadata route", async () => {
+  let rejectMetadata = false, requested = 0;
+  const f = fixture({ createServerCertificate: () => ({ async getServerCertificate() {
+    requested++;
+    if (rejectMetadata) throw new Error("TLS or protocol failure");
+    return null;
+  }, dispose() {} }) });
+  await enroll(f);
+  const initial = f.snapshot();
+  await f.controller.listWorkspaces({ hostId: HOST });
+  assert.equal(requested, 1); assert.deepEqual(f.snapshot(), initial);
+  rejectMetadata = true; f.calls.length = 0;
+  await assert.rejects(f.controller.listWorkspaces({ hostId: HOST }), { code: "native_member_unavailable" });
+  assert.equal(f.calls.includes("authenticate"), false);
+  assert.deepEqual(f.snapshot(), initial);
+});
 
 test("Inbox state keeps saved credentials, scopes IDs and rejects stale account results", async () => {
   let observed;

@@ -48,6 +48,24 @@ function setup(overrides = {}) {
   return { controller, windows, calls, invoke, event };
 }
 
+test("Host certificate maintenance has no caller selectors and fences confirmation authority", async () => {
+  let confirmed = false, accepted = 0;
+  const ctx = setup({ confirmNativeIdentityRenewal: async () => confirmed,
+    renewNativeIdentity: async options => {
+      options.assertRequester();
+      if (await options.confirm({ hostId: "11111111-1111-4111-8111-111111111111", serverNotAfter: Date.now() + 86_400_000 })) accepted++;
+    }, repairNativeIdentityPublication: async options => { if (await options.confirm()) accepted++; },
+    confirmNativeIdentityRepair: async () => true });
+  await ctx.controller.show();
+  await assert.rejects(ctx.invoke("renew-native-identity", [{ certificate: "forged" }]));
+  await ctx.invoke("renew-native-identity"); assert.equal(accepted, 0);
+  confirmed = true;
+  await ctx.invoke("renew-native-identity"); assert.equal(accepted, 1);
+  await ctx.invoke("repair-native-identity-publication"); assert.equal(accepted, 2);
+  const stale = ctx.event(); ctx.windows[0].webContents.mainFrame = { url: "about:blank" };
+  await assert.rejects(ctx.invoke("renew-native-identity", [], stale)); assert.equal(accepted, 2);
+});
+
 test("Member certificate renewal keeps confirmation and projection bound to the Settings frame", async () => {
   const hostId = "11111111-1111-4111-8111-111111111111";
   const deviceId = "22222222-2222-4222-8222-222222222222";

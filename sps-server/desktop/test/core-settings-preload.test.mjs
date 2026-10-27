@@ -40,6 +40,14 @@ test("certificate metadata and renewal preload accept only a saved Host selector
   ]);
 });
 
+test("Host certificate maintenance exposes fixed no-argument commands only", async () => {
+  const { api, calls } = await loadPreload();
+  for (const action of [api.renewNativeIdentity, api.repairNativeIdentityPublication]) {
+    await assert.rejects(action(undefined)); await assert.rejects(action({ certificate: "forged" })); await action();
+  }
+  assert.deepEqual(calls, [["desktop:core-settings-renew-native-identity"], ["desktop:core-settings-repair-native-identity-publication"]]);
+});
+
 test("Core Settings quit preload accepts no arguments and invokes only its fixed channel", async () => {
   const { api, calls } = await loadPreload();
   let getterRan = false;

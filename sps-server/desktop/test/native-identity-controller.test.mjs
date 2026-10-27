@@ -73,7 +73,8 @@ test("inspection does not create keys, and present status contains only public f
   assert.equal(result.state, "identity_prepared");
   assert.equal(result.canPrepare, false);
   assert.equal(result.lanEnabled, false);
-  assert.deepEqual(Object.keys(result), ["state", "lanEnabled", "canPrepare", "serverSpkiSha256", "serverNotAfter", "memberIssuerNotAfter"]);
+  assert.deepEqual(Object.keys(result), ["state", "lanEnabled", "canPrepare", "serverSpkiSha256", "serverNotAfter", "memberIssuerNotAfter", "serverRenewalAvailableAt"]);
+  assert.equal(result.serverRenewalAvailableAt, NOW + 60 * 86_400_000);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE KEY|certificatePem|ownerSubject|vaultDirectory|hostId/);
   assert.equal(Object.isFrozen(result), true);
 });
@@ -187,4 +188,50 @@ test("fresh restore requires proven absence, not a missing Vault, failed read or
     assert.doesNotMatch(failure.message, /private-path/);
     return true;
   });
+});
+
+test("Host renewal keeps keys, requires listener inactivity and fences confirmation generation", async () => {
+  const previous = await createSpsNativeHostIdentity({ hostId: identity.hostId, hostnames: ["192.168.1.10"],
+    notBefore: NOW - 70 * 86_400_000, notAfter: NOW + 20 * 86_400_000, issuerNotAfter: NOW + 295 * 86_400_000 });
+  let current = previous, listening = false, authority = { ...AUTHORITY, generation: 1n }, publications = 0;
+  const controller = createSpsNativeIdentityController({ getAuthority: () => authority,
+    authenticateHost: async () => {}, isListening: () => listening, now: () => NOW,
+    getStore: () => ({ inspectPresence: async () => ({ state: "present" }), read: async () => current,
+      publishServerRenewal: async (next, options) => { options.beforeCommit(); publications++; current = next; } }) });
+  listening = true;
+  await assert.rejects(controller.renew({ confirm: async () => true }), { code: "native_identity_listener_active" });
+  listening = false;
+  assert.deepEqual(await controller.renew({ confirm: async () => false }), { cancelled: true });
+  assert.equal(publications, 0);
+  await assert.rejects(controller.renew({ confirm: async () => {
+    authority = { ...authority, generation: 2n }; return true;
+  } }), { code: "native_identity_authority_changed" });
+  assert.equal(publications, 0);
+  const result = await controller.renew({ confirm: async preview => {
+    assert.deepEqual(Object.keys(preview), ["hostId", "serverNotAfter"]);
+    assert.equal(controller.isMaintaining(), true); return true;
+  } });
+  assert.equal(result.state, "identity_prepared");
+  assert.equal(publications, 1);
+  assert.equal(current.server.privateKeyPem, previous.server.privateKeyPem);
+  assert.deepEqual(current.memberIssuer, previous.memberIssuer);
+  assert.notEqual(current.server.certificatePem, previous.server.certificatePem);
+  assert.ok(result.serverNotAfter > NOW + 20 * 86_400_000);
+  assert.equal(controller.isMaintaining(), false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE KEY|CERTIFICATE|fixture-owner|vault/);
+});
+
+test("Host publication repair is explicit and guarded without renewing or starting a listener", async () => {
+  let repaired = 0, listening = false;
+  const controller = createSpsNativeIdentityController({ getAuthority: () => AUTHORITY,
+    authenticateHost: async () => {}, isListening: () => listening,
+    getStore: () => ({ recoverInterruptedServerRenewal: async options => {
+      options.beforeCommit(); repaired++; return { recovered: true };
+    } }) });
+  assert.deepEqual(await controller.repairServerRenewal({ confirm: async () => false }), { cancelled: true });
+  assert.equal(repaired, 0);
+  assert.deepEqual(await controller.repairServerRenewal({ confirm: async () => true }), { recovered: true });
+  listening = true;
+  await assert.rejects(controller.repairServerRenewal({ confirm: async () => true }), { code: "native_identity_listener_active" });
+  assert.equal(repaired, 1);
 });

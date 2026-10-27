@@ -16,6 +16,7 @@ import { createNativeDeviceManagementController, nativeHostCoreOwnerUserId } fro
 import { createNativeInvitationManagementController } from "./native-invitation-management-controller.mjs";
 import { createSpsNativeMemberMainSigner } from "./native-member-main-signer.mjs";
 import { createSpsNativeMemberController } from "./native-member-controller.mjs";
+import { createSpsNativeServerCertificateClient } from "./native-enrollment-client.mjs";
 import { createSpsNativeWorkspaceWindowController } from "./native-workspace-window.mjs";
 import { createSpsNativeWorkspaceAssets } from "./native-workspace-assets.mjs";
 import { createSpsNativeHostController } from "./native-host-controller.mjs";
@@ -1340,9 +1341,10 @@ function nativeIdentityStore(context = { userDataDirectory: app.getPath("userDat
 }
 
 function nativeIdentityAuthority() {
-  if (desktopStateUnavailable || ownerVaultOperations.isRestoring() || ownerVaultOperations.isChangingConnection() || !isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) return null;
+  if (isQuitting || desktopStateUnavailable || ownerVaultOperations.isRestoring() || ownerVaultOperations.isChangingConnection() || !isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) return null;
   try { requireSpsOwnerHostOrigin(state.profile.hubUrl); } catch { return null; }
-  return { ownerSubject: currentDesktopAccountSubject(), userDataDirectory: app.getPath("userData"), vaultDirectory: ownerVaultRoot() };
+  return { ownerSubject: currentDesktopAccountSubject(), userDataDirectory: app.getPath("userData"),
+    vaultDirectory: ownerVaultRoot(), generation: ownerVaultOperations.connectionGeneration() };
 }
 
 function nativeMemberAuthority() {
@@ -1377,13 +1379,15 @@ function ensureNativeWorkspaceWindowController() {
 function ensureNativeHostController() {
   if (!nativeHostController) nativeHostController = createSpsNativeHostController({
     getAuthority: () => {
-      const current = isQuitting ? null : nativeIdentityAuthority();
+      const current = isQuitting || nativeIdentityController?.isMaintaining() ? null : nativeIdentityAuthority();
       return current ? { ...current, generation: ownerVaultOperations.connectionGeneration() } : null;
     },
     authenticate: async () => {
       if (!nativeIdentityAuthority() || !await ensureDesktopIdentityAccessToken() || !nativeIdentityAuthority()) throw new Error("The signed-in local Host session is required.");
     },
     getIdentity: context => nativeIdentityStore({ userDataDirectory: context.userDataDirectory, vaultDirectory: context.vaultDirectory }).read(),
+    getServerCertificates: context => nativeIdentityStore({ userDataDirectory: context.userDataDirectory,
+      vaultDirectory: context.vaultDirectory }).readServerCertificates(),
     getCoreIdentity: () => ownerHostApi("/sps/member-devices/status", { ownerBootstrap: true, sessionOnly: true }),
     localAddresses: () => Object.values(os.networkInterfaces()).flatMap(entries => (entries ?? []).filter(entry => !entry.internal).map(entry => entry.address)),
     createIngress: createSpsNativeHostIngress,
@@ -1404,6 +1408,7 @@ function ensureNativeHostController() {
 function ensureNativeMemberController() {
   if (!nativeMemberController) nativeMemberController = createSpsNativeMemberController({
     getAuthority: nativeMemberAuthority,
+    createServerCertificate: createSpsNativeServerCertificateClient,
     getIndex: () => state.nativeMemberKeyIndex,
     saveIndex: async (index, { beforeCommit }) => {
       beforeCommit();
@@ -1434,6 +1439,7 @@ function ensureNativeIdentityController() {
       }
     },
     getStore: nativeIdentityStore,
+    isListening: () => ensureNativeHostController().isActive(),
   });
   return nativeIdentityController;
 }
@@ -4199,6 +4205,26 @@ function ensureCoreSettingsController() {
       return choice.response === 1;
     },
     prepareNativeIdentity: (input, options) => ensureNativeIdentityController().prepare(input, options),
+    renewNativeIdentity: options => ensureNativeIdentityController().renew(options),
+    repairNativeIdentityPublication: options => ensureNativeIdentityController().repairServerRenewal(options),
+    confirmNativeIdentityRenewal: async (parentWindow, preview) => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Renew the Native Host certificate?",
+        message: "Extend the Host certificate using its existing protected key?",
+        detail: `Host: ${preview.hostId}\nCurrent expiry: ${new Date(preview.serverNotAfter).toISOString()}\n\nThe Host address, server key, device issuer and approvals are kept. Native listening must remain stopped. Start it separately after renewal. Members using current SPS can update their saved certificate while the old certificate remains valid.`,
+        buttons: ["Cancel", "Renew certificate"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
+    confirmNativeIdentityRepair: async parentWindow => {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Repair an interrupted Host certificate save?",
+        message: "Check and finish a verified interrupted certificate publication?",
+        detail: "Existing keys and the original Host identity are kept. Only a matching protected publication is completed. Native listening must remain stopped; this does not renew expired trust or start a listener.",
+        buttons: ["Cancel", "Check saved certificate"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
     startNativeHostListener: (input, options) => ensureNativeHostController().start(input, options),
     stopNativeHostListener: () => ensureNativeHostController().stop(),
     copyNativeHostInvitation: options => ensureNativeHostController().copyInvite(options),

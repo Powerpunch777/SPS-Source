@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual, X509Certificate } from "node:crypto";
 import { isIP } from "node:net";
 import { checkServerIdentity, connect } from "node:tls";
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
+import { nativeServerCertificateServername } from "./native-server-certificate-selection.mjs";
 
 const MESSAGES = Object.freeze({
   native_invitation_invalid: "The SPS native invitation is invalid.",
@@ -140,7 +141,7 @@ export async function probeSpsNativeServerTls(code, options = {}) {
       socket = connect({
         host: hostname,
         port,
-        ...(isIP(hostname) ? {} : { servername: hostname }),
+        servername: nativeServerCertificateServername(target.certificatePem),
         ca: target.certificatePem,
         // Trust only the validated invitation leaf on Electron as well as Node.
         // Hostname and exact peer DER checks below remain mandatory.

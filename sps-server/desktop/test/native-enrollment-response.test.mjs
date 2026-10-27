@@ -28,6 +28,33 @@ test("Inbox personal state accepts only explicit boolean updates and closed time
   }
 });
 
+test("public server certificate response is a closed four-field public DTO", () => {
+  const value = { hostId: HOST_ID, predecessorCertificateSha256: "c".repeat(64),
+    serverCertificate: "Y2VydA", issuerSpkiSha256: ISSUER_PIN };
+  const parsed = parseSpsNativeEnrollmentResponse("serverCertificate", response("serverCertificate", value));
+  assert.deepEqual(parsed, value);
+  assert.equal(Object.isFrozen(parsed), true);
+  for (const bad of [
+    { ...value, token: "secret" },
+    { ...value, predecessorCertificateSha256: "C".repeat(64) },
+    { ...value, serverCertificate: "%%%" },
+    { ...value, issuerSpkiSha256: "short" },
+  ]) assert.throws(() => parseSpsNativeEnrollmentResponse("serverCertificate", response("serverCertificate", bad)));
+});
+
+test("public certificate endpoint treats only the exact safe TLS 404 as an unsupported legacy operation", () => {
+  const unsupported = Buffer.from('{"error":"native_enrollment_unavailable"}');
+  assert.equal(parseSpsNativeEnrollmentResponse("serverCertificate", response("serverCertificate", null,
+    { statusCode: 404, body: unsupported })), null);
+  for (const input of [
+    response("serverCertificate", null, { statusCode: 404, body: Buffer.from('{"error":"other"}') }),
+    response("serverCertificate", null, { statusCode: 404, body: Buffer.from('{"error":"native_enrollment_unavailable","token":"x"}') }),
+    response("serverCertificate", null, { statusCode: 404, rawHeaders: ["Content-Length", String(unsupported.length),
+      "Content-Type", "application/json; charset=utf-8", "Cache-Control", "public"], body: unsupported }),
+    response("serverCertificate", null, { statusCode: 503, body: unsupported }),
+  ]) assert.throws(() => parseSpsNativeEnrollmentResponse("serverCertificate", input));
+});
+
 function response(operation, value, options = {}) {
   const body = options.body ?? Buffer.from(JSON.stringify(value), "utf8");
   const headers = options.rawHeaders ?? [

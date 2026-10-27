@@ -15,8 +15,9 @@
 개인 Inbox 상태 변경, 선택적 모델 연결 설정 및 Member의 만료 전 같은 키 갱신을
 연결했다. [Workspace/Inbox 검증](../reviews/NATIVE-INBOX-STATE-2026-10-27.md),
 [모델 설정 검증](../reviews/MODEL-HOST-SETTINGS-2026-10-27.md),
-[Member 갱신 검증](../reviews/NATIVE-MEMBER-RENEWAL-2026-10-27.md)이 각 범위와 한계를 기록한다.
-Native 기본값은 OFF다. Host 서버 인증서 갱신·issuer 회전, 격리된 Plugin 실행 UI,
+[Member 갱신 검증](../reviews/NATIVE-MEMBER-RENEWAL-2026-10-27.md),
+[Host 갱신과 Member target 전환](../reviews/NATIVE-HOST-RENEWAL-2026-10-27.md)이 각 범위와 한계를 기록한다.
+Native 기본값은 OFF다. issuer 회전·만료 후 신뢰 복구, 격리된 Plugin 실행 UI,
 Native Source/Node, 실제 AI 실행, 설치/업데이트/복원과 물리 두 PC 및 보안 게이트는 남아 있다.
 아래는 단계별 이전 구현·검증 이력이며, 전체 플랫폼 완성이나 현재 배포 승인을 의미하지 않는다.
 

@@ -10,21 +10,23 @@ before(async () => {
   identity = await createSpsNativeHostIdentity({ hostId: HOST, hostnames: ["192.168.1.10"],
     notBefore: now - 1000, notAfter: now + 3600000, issuerNotAfter: now + 86400000 });
 });
-function fixture() {
+function fixture({ startGate, stopGate, serverCertificates } = {}) {
   const calls = [];
   const copied = [];
   let generation = 0n, allowed = true, listenerState = "off", storedIdentity = null;
+  let ingressOptions = null;
   const controller = createSpsNativeHostController({
     getAuthority: () => allowed ? { ownerSubject: "fixture-owner", userDataDirectory: "C:/fixture", vaultDirectory: "C:/fixture/vault", generation } : null,
     authenticate: async () => { calls.push("authenticate"); },
     getIdentity: async () => storedIdentity ?? identity,
     getCoreIdentity: async () => ({ hostId: HOST, serverSpkiSha256: inspectSpsNativeHostIdentity(identity).serverSpkiSha256 }),
     localAddresses: () => ["192.168.1.10"],
-    createIngress: options => ({
+    ...(serverCertificates ? { getServerCertificates: async () => { calls.push("read-server-certificates"); return serverCertificates; } } : {}),
+    createIngress: options => { ingressOptions = options; return ({
       inspect() { return { state: listenerState, ...selection }; },
-      async start(input) { calls.push("listen"); options.assertCurrent(); listenerState = "listening"; return { state: "listening", ...input, hostId: HOST }; },
-      async stop() { listenerState = "off"; calls.push("stop"); },
-    }),
+      async start(input) { calls.push("listen"); options.assertCurrent(); if (startGate) await startGate; listenerState = "listening"; return { state: "listening", ...input, hostId: HOST }; },
+      async stop() { if (stopGate) await stopGate; listenerState = "off"; calls.push("stop"); },
+    }); },
     dispatch: async () => {},
     issuePairing: async () => {
       calls.push("issue-invitation");
@@ -34,9 +36,47 @@ function fixture() {
     },
     copyInvitation: code => { copied.push(code); },
   });
-  return { controller, calls, copied, change: () => { generation++; }, signOut: () => { allowed = false; },
+  return { controller, calls, copied, get ingressOptions() { return ingressOptions; }, change: () => { generation++; }, signOut: () => { allowed = false; },
     failListener: () => { listenerState = "failed"; }, replaceIdentity: value => { storedIdentity = value; } };
 }
+
+test("isActive fences identity maintenance throughout pending start and stop", async () => {
+  let releaseStart, releaseStop;
+  const startGate = new Promise(resolve => { releaseStart = resolve; });
+  const stopGate = new Promise(resolve => { releaseStop = resolve; });
+  const f = fixture({ startGate, stopGate });
+  assert.equal(f.controller.isActive(), false);
+  const starting = f.controller.start(selection, { confirm: async () => true });
+  assert.equal(f.controller.isActive(), true);
+  releaseStart();
+  await starting;
+  const stopping = f.controller.stop();
+  assert.equal(f.controller.inspect().state, "off");
+  assert.equal(f.controller.isActive(), true);
+  releaseStop();
+  await stopping;
+  assert.equal(f.controller.isActive(), false);
+  await f.controller.start(selection, { confirm: async () => true });
+  let releaseCopy;
+  const copyGate = new Promise(resolve => { releaseCopy = resolve; });
+  const copying = f.controller.copyInvite({ confirm: () => copyGate });
+  assert.equal(f.controller.isActive(), true);
+  releaseCopy(true);
+  await copying;
+  assert.equal(f.controller.isActive(), true);
+  await f.controller.stop();
+  assert.equal(f.controller.isActive(), false);
+});
+
+test("Host start passes its frozen validated certificate history to ingress", async () => {
+  const history = Object.freeze([identity.server.certificatePem]);
+  const f = fixture({ serverCertificates: history });
+  await f.controller.start(selection, { confirm: async () => true });
+  assert.deepEqual(f.calls, ["authenticate", "read-server-certificates", "listen"]);
+  assert.deepEqual(f.ingressOptions.getServerCertificates(), history);
+  assert.equal(Object.isFrozen(f.ingressOptions.getServerCertificates()), true);
+  await f.controller.stop();
+});
 const selection = { bindAddress: "192.168.1.10", port: 43123 };
 test("Native Host starts off and only a confirmed current Owner opens its selected private interface", async () => {
   const f = fixture(); assert.deepEqual(f.controller.inspect(), { state: "off" });
@@ -51,6 +91,14 @@ test("cancelled opt-in never creates a listener", async () => {
   const f = fixture();
   assert.deepEqual(await f.controller.start(selection, { confirm: async () => false }), { cancelled: true });
   assert.deepEqual(f.calls, ["authenticate"]);
+});
+
+test("Host status stops advertising a listener after its captured certificate expires", async t => {
+  const f = fixture(); await f.controller.start(selection, { confirm: async () => true });
+  const future = Date.now() + 2 * 86_400_000;
+  t.mock.method(Date, "now", () => future);
+  assert.deepEqual(f.controller.inspect(), { state: "off" });
+  await f.controller.stop(); assert.equal(f.calls.at(-1), "stop");
 });
 test("account changes while the confirmation is open deny start", async () => {
   const f = fixture();

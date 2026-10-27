@@ -12,7 +12,7 @@ const MAX_WORKSPACE_JSON_NODES = 10_000;
 const MAX_DER_BYTES = 4096;
 const MAX_BASE64URL_LENGTH = Math.ceil(MAX_DER_BYTES * 4 / 3);
 const EXPECTED_STATUS = Object.freeze({ exchange: 201, issue: 200, complete: 200, reconcile: 200, identity: 200,
-  renewal: 200, workspaces: 200, workspaceBootstrap: 200 });
+  renewal: 200, serverCertificate: 200, workspaces: 200, workspaceBootstrap: 200 });
 const RESPONSE_KEYS = Object.freeze({
   exchange: ["expiresInSeconds"],
   issue: ["enrollmentId", "certificate", "issuerCertificate", "expiresAt"],
@@ -21,6 +21,7 @@ const RESPONSE_KEYS = Object.freeze({
   identity: ["hostId", "serverSpkiSha256", "issuerSpkiSha256", "issuerCertificate"],
   renewal: ["renewalId", "deviceId", "predecessorCertificateSha256", "certificate", "issuerCertificate",
     "certificateNotBefore", "certificateNotAfter"],
+  serverCertificate: ["hostId", "predecessorCertificateSha256", "serverCertificate", "issuerSpkiSha256"],
 });
 const SENSITIVE_HEADERS = new Set([
   "cache-control", "content-encoding", "content-length", "content-type",
@@ -166,6 +167,15 @@ function validateRenewal(value) {
     certificateNotBefore: value.certificateNotBefore, certificateNotAfter: value.certificateNotAfter });
 }
 
+function validateServerCertificate(value) {
+  uuid(value.hostId);
+  if (typeof value.predecessorCertificateSha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.predecessorCertificateSha256)
+    || typeof value.issuerSpkiSha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.issuerSpkiSha256)) reject();
+  return Object.freeze({ hostId: value.hostId,
+    predecessorCertificateSha256: value.predecessorCertificateSha256,
+    serverCertificate: decodeCanonicalBase64Url(value.serverCertificate), issuerSpkiSha256: value.issuerSpkiSha256 });
+}
+
 function validateBody(operation, value, cookie) {
   if (operation === "exchange") {
     if (value.expiresInSeconds !== 604800) reject();
@@ -174,6 +184,7 @@ function validateBody(operation, value, cookie) {
   if (operation === "issue") return validateIssue(value);
   if (operation === "identity") return validateIdentity(value);
   if (operation === "renewal") return validateRenewal(value);
+  if (operation === "serverCertificate") return validateServerCertificate(value);
   if (operation === "complete" || operation === "reconcile") {
     uuid(value.deviceId);
     if (operation === "complete" ? value.status !== "pending"
@@ -387,6 +398,15 @@ export function parseSpsNativeEnrollmentResponse(operation, input) {
   try {
     if (typeof operation !== "string" || !Object.hasOwn(EXPECTED_STATUS, operation)) reject();
     const envelope = record(input, ["statusCode", "rawHeaders", "body"]);
+    if (operation === "serverCertificate" && envelope.statusCode === 404) {
+      const headers = readRawHeaders(envelope.rawHeaders);
+      const body = envelope.body;
+      if (!Buffer.isBuffer(body) || body.length > MAX_BODY_BYTES) reject();
+      validateHeaders(headers, operation, body.length);
+      const failure = parseCanonicalBody(body, ["error"]);
+      if (failure.error !== "native_enrollment_unavailable") reject();
+      return null;
+    }
     if (envelope.statusCode !== EXPECTED_STATUS[operation]) reject();
     const headers = readRawHeaders(envelope.rawHeaders);
     const body = envelope.body;

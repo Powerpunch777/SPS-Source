@@ -1,6 +1,5 @@
 import { createHash, X509Certificate } from "node:crypto";
 import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
 import { checkServerIdentity } from "node:tls";
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { verifySpsNativeInvitationCertificate } from "./native-connection-tls.mjs";
@@ -10,12 +9,15 @@ import { publicSpsNativeMemberEnrollmentRequest } from "./native-member-certific
 import { validateSpsNativeMemberCredential } from "./native-member-credential.mjs";
 import { parseSpsNativeEnrollmentResponse, parseSpsNativeWorkspaceSurfaceResponse,
   parseSpsNativeInboxStateResponse, validateSpsNativeInboxStateInput } from "./native-enrollment-response.mjs";
-import { validateSpsNativeMemberIssuerCertificate } from "./native-identity-certificates.mjs";
+import { validateSpsNativeMemberIssuerCertificate, validateSpsNativeServerCertificate,
+  validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
 import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
+import { nativeServerCertificateServername } from "./native-server-certificate-selection.mjs";
 
 const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/sps-native/v1/session/exchange",
   issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete",
   reconcile: "/sps-native/v1/enrollment/reconcile", renewal: "/sps-native/v1/enrollment/renew", workspaces: "/sps-native/v1/workspaces",
+  serverCertificate: "/sps-native/v1/server-certificate",
   workspaceBootstrap: "/api/companies" });
 const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox"]);
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
@@ -100,6 +102,12 @@ export function createSpsNativeMemberRenewalClient(input) {
   return createClient(input, "renewal");
 }
 
+// Reads only public certificate metadata over the exact retained TLS pin. It
+// creates no session and sends no Member key or credential.
+export function createSpsNativeServerCertificateClient(input) {
+  return createClient(input, "serverCertificate");
+}
+
 // Main-private access using an existing protected target and issued key. It
 // creates no registration and returns only authorized Workspace ID/name DTOs.
 export function createSpsNativeMemberWorkspaceClient(input) {
@@ -108,7 +116,8 @@ export function createSpsNativeMemberWorkspaceClient(input) {
 
 function createClient(input, mode) {
   const bootstrap = mode === "bootstrap", workspace = mode === "workspace", renewal = mode === "renewal",
-    recovery = mode === "recover" || workspace || renewal;
+    serverCertificate = mode === "serverCertificate",
+    recovery = mode === "recover" || workspace || renewal || serverCertificate;
   let options, context, invitation, target, retainedTarget;
   try {
     options = record(input, [recovery ? "target" : "invitationCode", ...(bootstrap ? [] : ["context"]), "timeoutMs", "assertCurrent"]);
@@ -165,7 +174,7 @@ function createClient(input, mode) {
     };
     try {
       guard();
-      if (operation !== "exchange" && operation !== "identity") requireSession();
+      if (operation !== "exchange" && operation !== "identity" && operation !== "serverCertificate") requireSession();
       const result = await action({ guard, signal, deadline });
       guard();
       return result;
@@ -194,7 +203,7 @@ function createClient(input, mode) {
         signal?.removeEventListener("abort", onAbort);
         if (cancelRequest === cancel) cancelRequest = null;
         if (outcome?.error) reject(outcome.error);
-        else if (outcome?.value) resolve(outcome.value);
+        else if (outcome && Object.hasOwn(outcome, "value")) resolve(outcome.value);
         else reject(failure("unavailable"));
       };
       const stop = (error, value) => {
@@ -215,7 +224,7 @@ function createClient(input, mode) {
           // anchor is this validated pinned leaf; exact peer checks still apply.
           ca: target.certificatePem, allowPartialTrustChain: true,
           rejectUnauthorized: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
-          ...(isIP(hostname) ? {} : { servername: hostname }),
+          servername: nativeServerCertificateServername(target.certificatePem),
           ...(credential ? { cert: credential.certificatePem, key: credential.privateKeyPem } : {}),
           checkServerIdentity(_name, peer) {
             try {
@@ -227,7 +236,7 @@ function createClient(input, mode) {
           },
           headers: { ...(operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? {}
             : { "Content-Type": operation === "inboxState" ? "application/json" : "application/json; charset=utf-8" }), "Content-Length": String(bytes.length),
-            Connection: "close", ...(operation === "identity" ? {}
+            Connection: "close", ...(operation === "identity" || operation === "serverCertificate" ? {}
               : operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
         }, response => {
           const chunks = [];
@@ -260,7 +269,7 @@ function createClient(input, mode) {
               guard();
               if (!socket.authorized || socket.getProtocol() !== "TLSv1.3" || socket.isSessionReused()
                 || !socket.getPeerX509Certificate()?.raw.equals(expectedCertificate.raw)) throw new Error();
-              if (operation !== "exchange" && operation !== "identity") requireSession();
+              if (operation !== "exchange" && operation !== "identity" && operation !== "serverCertificate") requireSession();
               // No HTTP headers/body are flushed before this exact handshake.
               request.end(bytes);
             } catch (error) { stop(safeFailure(error)); }
@@ -308,6 +317,31 @@ function createClient(input, mode) {
         operation.guard();
         return Object.freeze({ hostId: invitation.hostId, serverSpkiSha256: target.spkiSha256,
           issuerSpkiSha256: pin, issuerCertificatePem });
+      });
+    },
+    dispose,
+  });
+  if (serverCertificate) return Object.freeze({
+    getServerCertificate(signalInput = {}) {
+      return run("serverCertificate", signalInput, async operation => {
+        const value = await post("serverCertificate", Buffer.alloc(0), null, null, operation);
+        operation.guard();
+        if (value === null) return null;
+        if (value.hostId !== context.hostId || value.issuerSpkiSha256 !== context.issuerSpkiSha256) throw failure("invalid_response");
+        const predecessorPem = retainedTarget.serverCertificatePem;
+        const predecessor = new X509Certificate(predecessorPem);
+        const predecessorHash = createHash("sha256").update(predecessor.raw).digest("hex");
+        if (value.predecessorCertificateSha256 !== predecessorHash) throw failure("invalid_response");
+        const certificatePem = derPem(value.serverCertificate);
+        const next = validateSpsNativeServerCertificate(certificatePem, context.hostId, Date.now());
+        const nextSpki = createHash("sha256").update(next.publicKey.export({ type: "spki", format: "der" })).digest("hex");
+        if (nextSpki !== context.serverSpkiSha256) throw failure("invalid_response");
+        if (!next.raw.equals(predecessor.raw)) {
+          validateSpsNativeServerCertificateTransition({ hostId: context.hostId,
+            predecessorCertificatePem: predecessorPem, certificatePem });
+        }
+        operation.guard();
+        return value;
       });
     },
     dispose,

@@ -9,6 +9,9 @@ import { createSpsNativeWorkspaceAssets } from "../../src/native-workspace-asset
 import { createSpsNativeWorkspaceWindowController } from "../../src/native-workspace-window.mjs";
 import { createSpsNativeMemberController } from "../../src/native-member-controller.mjs";
 import { createSpsNativeMemberWorkspaceClient, createSpsNativeMemberRenewalClient } from "../../src/native-enrollment-client.mjs";
+import { createSpsNativeServerCertificateClient } from "../../src/native-enrollment-client.mjs";
+import { createSpsNativeHostIdentityStore } from "../../src/native-identity-store.mjs";
+import { createSpsNativeIdentityController } from "../../src/native-identity-controller.mjs";
 import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader } from "../../src/native-member-pending-store.mjs";
 
 app.disableHardwareAcceleration();
@@ -87,7 +90,42 @@ try {
       `${createHash("sha256").update(JSON.stringify({ identityIssuer: context.identityIssuer, subject: context.subject,
         hostId: context.hostId, deviceKeyId: context.deviceKeyId })).digest("hex")}.issued.json`);
     const originalIssuedBytes = await readFile(originalIssuedPath);
+    const originalTargetPath = originalIssuedPath.replace(/\.issued\.json$/, ".target.json");
+    const originalTargetBytes = await readFile(originalTargetPath);
     const originalIssued = await saved.readIssued();
+    if (configuration.hostRenewal) {
+      mark("host_certificate_publish");
+      const hostVault = path.join(fixture, "host-vault");
+      await mkdir(hostVault, { recursive: true });
+      const hostStore = createSpsNativeHostIdentityStore({ userDataDirectory: profile, vaultDirectory: hostVault, safeStorage });
+      await hostStore.create(configuration.hostIdentity);
+      const hostFile = path.join(profile, "native-connectivity", "credentials",
+        `host-identity-${createHash("sha256").update((await realpath(hostVault)).toLowerCase()).digest("hex")}.json`);
+      const baseHostBytes = await readFile(hostFile);
+      const hostController = createSpsNativeIdentityController({
+        getAuthority: () => ({ ownerSubject: "fixture-host", userDataDirectory: profile,
+          vaultDirectory: hostVault, generation: 0n }),
+        authenticateHost: async () => {}, getStore: () => hostStore, isListening: () => false,
+      });
+      assert.equal((await hostController.renew({ confirm: async () => true })).state, "identity_prepared");
+      const renewedHost = await hostStore.read();
+      assert.deepEqual(await readFile(hostFile), baseHostBytes);
+      assert.equal(renewedHost.server.privateKeyPem, configuration.hostIdentity.server.privateKeyPem);
+      assert.deepEqual(renewedHost.memberIssuer, configuration.hostIdentity.memberIssuer);
+      const acknowledgement = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { process.removeListener("message", receive); reject(new Error("Host restart timed out")); }, 15_000);
+        function receive(message) {
+          if (!["sps.test.native-host-renewal.ready", "sps.test.native-host-renewal.failed"].includes(message?.kind)) return;
+          clearTimeout(timer); process.removeListener("message", receive);
+          message.kind.endsWith(".ready") ? resolve() : reject(new Error("Host restart failed"));
+        }
+        process.on("message", receive);
+      });
+      process.send({ kind: "sps.test.native-host-renewal.publish", identity: renewedHost,
+        certificates: await hostStore.readServerCertificates() });
+      await acknowledgement;
+      mark("host_certificate_restarted");
+    }
     if (renewal) {
       const raw = createSpsNativeMemberRenewalClient({ target, context, timeoutMs: 15_000, assertCurrent() {} });
       try {
@@ -100,6 +138,7 @@ try {
     mark("protected_store_ready");
     member = createSpsNativeMemberController({
       getAuthority: authority,
+      ...(configuration.hostRenewal ? { createServerCertificate: createSpsNativeServerCertificateClient } : {}),
       getIndex: () => ({ v: 1, entries: [{ identityIssuer: context.identityIssuer, subject: context.subject,
         hostId: context.hostId, deviceKeyId: context.deviceKeyId }] }),
       saveIndex() { throw new Error("The existing credential fixture cannot reenroll"); },
@@ -110,6 +149,8 @@ try {
       getStore: () => {
         const store = createSpsNativeMemberPendingKeyStore(storeOptions);
         return { async read() { mark("protected_key_read"); return store.read(); },
+          async readTarget() { return store.readTarget(); },
+          async publishServerCertificate(response, options) { return store.publishServerCertificate(response, options); },
           async readIssued() { mark("protected_issuance_read"); return store.readIssued(); },
           async inspectIssued() { return store.inspectIssued(); },
           async publishRenewal(response, options) { return store.publishRenewal(response, options); } };
@@ -152,6 +193,16 @@ try {
       assert.equal(new Date(Date.parse(latestLeaf.validTo)).toISOString(), result.certificateNotAfter);
       const reconciled = await member.recover({ hostId: context.hostId });
       assert.deepEqual(reconciled, { hostId: context.hostId, deviceId, status: "approved" });
+    }
+    if (configuration.hostRenewal) {
+      assert.notEqual((await saved.readTarget()).serverCertificatePem, target.serverCertificatePem);
+      assert.deepEqual(await readFile(originalTargetPath), originalTargetBytes);
+      assert.deepEqual(await saved.read(), keyRequest);
+      // Recreate the cold reader to prove selection is durable, not cached in Main.
+      const restored = await createSpsNativeMemberHostTargetReader({ userDataDirectory: profile, vaultDirectory,
+        scope: { identityIssuer: context.identityIssuer, subject: context.subject, hostId: context.hostId,
+          deviceKeyId: context.deviceKeyId }, safeStorage }).read();
+      assert.equal(restored.serverCertificatePem, (await saved.readTarget()).serverCertificatePem);
     }
   }
   mark("window_open");
@@ -222,6 +273,8 @@ try {
     ...(realTransport ? { wrongPeerDenied: true } : {}),
     ...(realTransport && configuration?.renewal ? { renewalReplay: true, renewalPublished: true,
       originalIssuedBytesPreserved: true, renewedEnrollmentReconciled: true } : {}),
+    ...(realTransport && configuration?.hostRenewal ? { hostRenewalPublished: true, originalHostBytesPreserved: true,
+      targetCertificateRefreshed: true, originalTargetBytesPreserved: true } : {}),
     ownerBridge: false, serviceWorkers: 0 }));
 } catch {
   failed = true;

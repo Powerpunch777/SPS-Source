@@ -98,6 +98,12 @@
           <button id="prepare-native-identity" class="button secondary" type="button" disabled>Prepare host identity</button>
         </div>
 
+        <div id="native-identity-maintenance" class="native-form" hidden>
+          <p class="help-text">Stop Native listening before renewing the Host certificate. Renewal uses the existing key during the final 30 days, or the final third of a shorter certificate. Start listening separately afterwards.</p>
+          <button id="renew-native-identity" class="button secondary" type="button" disabled>Renew Host certificate</button>
+          <button id="repair-native-identity-publication" class="button secondary" type="button" disabled>Repair certificate save</button>
+        </div>
+
         <div class="section-heading compact-heading">
           <div>
             <h3>Native devices</h3>

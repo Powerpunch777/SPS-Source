@@ -1,7 +1,8 @@
 import { isIP } from "node:net";
 import { X509Certificate } from "node:crypto";
 import { nativeCertificateRecord as record } from "./native-certificate-primitives.mjs";
-import { requireCurrentSpsNativeHostIdentity, inspectSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
+import { requireCurrentSpsNativeHostIdentity, inspectSpsNativeHostIdentity,
+  validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
 import { createSpsNativeInviteCode } from "./native-connection-invite.mjs";
 
 const error = () => Object.assign(new Error("Native Host connectivity is unavailable. Existing credentials were preserved."), { code: "native_host_unavailable" });
@@ -21,8 +22,9 @@ export function requireSpsNativeHostListenInput(input) {
 // Product orchestration: explicit per-launch opt-in, independent of Plugins and
 // Agents. It never changes Windows Firewall, OS trust or existing Core binds.
 export function createSpsNativeHostController({ getAuthority, authenticate, getIdentity,
-  getCoreIdentity, localAddresses, createIngress, dispatch, dispatchWorkspace, issuePairing, copyInvitation }) {
-  let current = null, busy = false, generation = 0;
+  getCoreIdentity, localAddresses, createIngress, dispatch, dispatchWorkspace, issuePairing, copyInvitation,
+  getServerCertificates }) {
+  let current = null, busy = false, stopping = 0, generation = 0;
   function capture() {
     try {
       const value = record(getAuthority(), AUTHORITY_KEYS);
@@ -39,18 +41,41 @@ export function createSpsNativeHostController({ getAuthority, authenticate, getI
   function assertListening(selected) {
     const state = selected.ingress.inspect();
     if (state?.state !== "listening" || state.bindAddress !== selected.bindAddress || state.port !== selected.port) throw error();
+    for (const encoded of [selected.certificates.server, selected.certificates.issuer]) {
+      const certificate = new X509Certificate(Buffer.from(encoded, "base64url"));
+      if (Date.now() < Date.parse(certificate.validFrom) || Date.now() >= Date.parse(certificate.validTo)) throw error();
+    }
   }
   function certificates(identity) {
     return { server: new X509Certificate(identity.server.certificatePem).raw.toString("base64url"),
       issuer: new X509Certificate(identity.memberIssuer.certificatePem).raw.toString("base64url") };
   }
+  async function serverCertificateHistory(identity, authority) {
+    const currentPem = identity.server.certificatePem;
+    const supplied = typeof getServerCertificates === "function"
+      ? await getServerCertificates(authority) : [currentPem];
+    if (!Array.isArray(supplied) || supplied.length < 1 || supplied.length > 257
+      || supplied.some(value => typeof value !== "string" || !value.length || value.length > 16_384)
+      || supplied.at(-1) !== currentPem) throw error();
+    const history = Object.freeze([...supplied]);
+    for (let index = 1; index < history.length; index++) {
+      validateSpsNativeServerCertificateTransition({ hostId: identity.hostId,
+        predecessorCertificatePem: history[index - 1], certificatePem: history[index] });
+    }
+    return history;
+  }
   async function stop() {
     generation++;
     const previous = current;
     current = null;
-    if (previous) await previous.ingress.stop();
+    if (previous) {
+      stopping++;
+      try { await previous.ingress.stop(); }
+      finally { stopping--; }
+    }
   }
   return Object.freeze({
+    isActive() { return busy || stopping > 0 || current !== null; },
     inspect() {
       if (!current) return Object.freeze({ state: "off" });
       try { guard(current.authority, current.epoch); assertListening(current); }
@@ -71,6 +96,8 @@ export function createSpsNativeHostController({ getAuthority, authenticate, getI
         if (!Array.isArray(addresses) || !addresses.includes(value.bindAddress)) throw error();
         const identity = requireCurrentSpsNativeHostIdentity(await getIdentity(authority));
         check();
+        const serverCertificates = await serverCertificateHistory(identity, authority);
+        check();
         const details = inspectSpsNativeHostIdentity(identity);
         const metadata = await getCoreIdentity();
         check();
@@ -82,7 +109,7 @@ export function createSpsNativeHostController({ getAuthority, authenticate, getI
         if (!localAddresses().includes(value.bindAddress)) throw error();
         // The settings requester authorizes start, but a closed settings window
         // is not an account/Host revocation after successful opt-in.
-        candidate = createIngress({ getIdentity: () => identity,
+        candidate = createIngress({ getIdentity: () => identity, getServerCertificates: () => serverCertificates,
           assertCurrent: () => guard(authority, epoch), dispatch,
           ...(dispatchWorkspace ? { dispatchWorkspace } : {}) });
         const bound = await candidate.start(value);

@@ -6,6 +6,7 @@ import {
   KeyUsageFlags, KeyUsagesExtension, SubjectAlternativeNameExtension,
   SubjectKeyIdentifierExtension, X509Certificate as ParsedCertificate, X509CertificateGenerator,
 } from "@peculiar/x509";
+import { SPS_NATIVE_SERVER_CERT_VALIDITY_DAYS } from "./native-connection-policy.mjs";
 import {
   nativeCertificateRecord as record, nativeCertificateUuid as uuid, nativeCertificateDate as date,
   decodeNativeCertificatePem as pem, encodeNativeCertificatePem as encodePem, nativeCertificatePublicDer as publicDer,
@@ -19,6 +20,7 @@ const MESSAGES = Object.freeze({
   native_identity_invalid_options: "The SPS native identity creation options are invalid.",
   native_identity_generation_failed: "The SPS native Host identity could not be created.",
   native_identity_not_current: "The SPS native Host identity is not currently valid. Explicit recovery is required.",
+  native_identity_renewal_not_due: "The SPS native Host certificate is outside its renewal window.",
 });
 
 function failure(code) {
@@ -166,6 +168,77 @@ export function requireCurrentSpsNativeHostIdentity(input, now = Date.now()) {
   const identity = validateSpsNativeHostIdentity(input);
   if (inspectSpsNativeHostIdentity(identity, now).state !== "identity_prepared") throw failure("native_identity_not_current");
   return identity;
+}
+
+function sanSequence(details) {
+  return details.parsed.getExtension(SubjectAlternativeNameExtension).names.items.map(entry => ({ type: entry.type, value: entry.value }));
+}
+
+// Historical continuity proof for the exact same Host leaf key and name set.
+// This checks X.509 structure/signatures only; callers must separately require a current leaf.
+export function validateSpsNativeServerCertificateTransition(input) {
+  try {
+    const { hostId, predecessorCertificatePem, certificatePem } = record(input,
+      ["hostId", "predecessorCertificatePem", "certificatePem"]);
+    uuid(hostId);
+    const predecessor = checkCertificate(predecessorCertificatePem, hostId, false);
+    const successor = checkCertificate(certificatePem, hostId, false);
+    const predecessorNames = sanSequence(predecessor), successorNames = sanSequence(successor);
+    if (!publicDer(predecessor.certificate.publicKey).equals(publicDer(successor.certificate.publicKey))
+      || JSON.stringify(predecessorNames) !== JSON.stringify(successorNames)
+      || successor.before < predecessor.before || successor.before >= predecessor.after
+      || successor.after <= predecessor.after
+      || successor.after - successor.before > SPS_NATIVE_SERVER_CERT_VALIDITY_DAYS * 86_400_000) throw new Error("transition");
+    return successor.certificate;
+  } catch { throw failure("native_identity_invalid"); }
+}
+
+// Explicit-clock, same-key leaf renewal. The issuer CA and both private keys stay
+// unchanged; callers publish the returned leaf through the append-only store.
+export async function renewSpsNativeHostServerCertificate(input) {
+  let request;
+  try { request = record(input, ["identity", "now"]); }
+  catch { throw failure("native_identity_invalid_options"); }
+  const { identity: savedIdentity, now } = request;
+  let identity, details;
+  try {
+    if (!Number.isSafeInteger(now) || now < 1000) throw new Error("clock");
+    identity = requireCurrentSpsNativeHostIdentity(savedIdentity, now);
+    details = parseIdentity(identity);
+  } catch { throw failure("native_identity_not_current"); }
+  const renewalWindow = Math.min(30 * 86_400_000, Math.floor((details.server.after - details.server.before) / 3));
+  if (details.server.after - now > renewalWindow) throw failure("native_identity_renewal_not_due");
+  try {
+    const notBefore = Math.floor(now / 1000) * 1000;
+    const notAfter = Math.min(notBefore + SPS_NATIVE_SERVER_CERT_VALIDITY_DAYS * 86_400_000, details.issuer.after);
+    if (notBefore >= details.server.after || notAfter <= details.server.after || notAfter <= notBefore) throw new Error("expiry");
+    const privateDer = pem(identity.server.privateKeyPem, "PRIVATE KEY");
+    let privateKey;
+    try { privateKey = await webcrypto.subtle.importKey("pkcs8", privateDer, KEY_ALGORITHM, true, ["sign"]); }
+    finally { privateDer.fill(0); }
+    const publicKey = await webcrypto.subtle.importKey("spki",
+      publicDer(details.server.certificate.publicKey), KEY_ALGORITHM, true, ["verify"]);
+    const serial = randomBytes(20);
+    serial[0] = (serial[0] & 0x7f) | 1;
+    const names = sanSequence(details.server);
+    const extensions = [
+      new BasicConstraintsExtension(false, undefined, true),
+      new KeyUsagesExtension(KeyUsageFlags.digitalSignature, true),
+      await SubjectKeyIdentifierExtension.create(publicKey, false, webcrypto),
+      new ExtendedKeyUsageExtension([ExtendedKeyUsage.serverAuth], true),
+      new SubjectAlternativeNameExtension(names),
+    ];
+    const certificate = await X509CertificateGenerator.createSelfSigned({
+      name: `CN=SPS Native Host ${identity.hostId}`,
+      serialNumber: serial.toString("hex"), notBefore: new Date(notBefore), notAfter: new Date(notAfter),
+      keys: { privateKey, publicKey }, signingAlgorithm: SIGNING_ALGORITHM, extensions,
+    }, webcrypto);
+    const certificatePem = encodePem(certificate.rawData, "CERTIFICATE");
+    validateSpsNativeServerCertificateTransition({ hostId: identity.hostId,
+      predecessorCertificatePem: identity.server.certificatePem, certificatePem });
+    return validateSpsNativeHostIdentity({ ...identity,
+      server: { ...identity.server, certificatePem } });
+  } catch { throw failure("native_identity_generation_failed"); }
 }
 
 async function selfSignedPair(hostId, hostnames, notBefore, notAfter, issuer) {

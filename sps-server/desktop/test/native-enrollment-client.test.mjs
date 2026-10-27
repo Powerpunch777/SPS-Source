@@ -8,7 +8,8 @@ import { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate,
 import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
   createSpsNativeEnrollmentRecoveryClient, createSpsNativeMemberWorkspaceClient,
-  createSpsNativeMemberRenewalClient } from "../src/native-enrollment-client.mjs";
+  createSpsNativeMemberRenewalClient, createSpsNativeServerCertificateClient } from "../src/native-enrollment-client.mjs";
+import { nativeServerCertificateServername } from "../src/native-server-certificate-selection.mjs";
 
 const HOST = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "22222222-2222-4222-8222-222222222222";
@@ -74,9 +75,11 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
         cookie: req.headers.cookie, contentType: req.headers["content-type"], contentLength: req.headers["content-length"],
         body: Buffer.concat(chunks).toString("utf8"),
         protocol: req.socket.getProtocol(), resumed: req.socket.isSessionReused(), authorized: req.socket.authorized,
+        servername: req.socket.servername,
         peer: req.socket.getPeerCertificate().raw };
       requests.push(item); notify();
       const exchange = req.url === "/sps-native/v1/session/exchange";
+      const serverCertificate = req.url === "/sps-native/v1/server-certificate";
       const workspaces = req.url === "/sps-native/v1/workspaces";
       const workspaceBootstrap = req.url === `/api/companies/${DEVICE}/workspace-bootstrap`;
       const workspaceSurfaces = new Map([
@@ -91,6 +94,10 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
       const value = req.url === "/sps-native/v1/identity" ? { hostId: HOST,
         serverSpkiSha256: spki(host.server.certificatePem), issuerSpkiSha256: spki(host.memberIssuer.certificatePem),
         issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url") }
+        : serverCertificate ? { hostId: HOST,
+          predecessorCertificateSha256: createHash("sha256").update(new X509Certificate(host.server.certificatePem).raw).digest("hex"),
+          serverCertificate: new X509Certificate(host.server.certificatePem).raw.toString("base64url"),
+          issuerSpkiSha256: spki(host.memberIssuer.certificatePem) }
         : exchange ? { expiresInSeconds: 604800 }
           : workspaces ? [{ id: DEVICE, name: "Member Workspace" }]
         : workspaceBootstrap ? { v: 1, kind: "sps.native.workspace.bootstrap",
@@ -155,11 +162,60 @@ async function fixture(t, { identity = host, respond, version = "TLSv1.3" } = {}
     t.after(() => result.dispose());
     return result;
   }
+  function serverCertificateClient(overrides = {}) {
+    const result = createSpsNativeServerCertificateClient({ target, context, timeoutMs: 3000,
+      assertCurrent() {}, ...overrides });
+    t.after(() => result.dispose());
+    return result;
+  }
   return { requests, received, issuance, context, code, client, bootstrap, recovery, target,
-    workspaceClient, renewalClient,
+    workspaceClient, renewalClient, serverCertificateClient,
     replaceIdentity(identity) { server.setSecureContext({ key: identity.server.privateKeyPem,
       cert: identity.server.certificatePem, ca: host.memberIssuer.certificatePem }); } };
 }
+
+test("public server certificate client uses retained-leaf alias without credentials or body", async t => {
+  const f = await fixture(t);
+  const value = await f.serverCertificateClient().getServerCertificate();
+  assert.deepEqual(value, { hostId: HOST,
+    predecessorCertificateSha256: createHash("sha256").update(new X509Certificate(host.server.certificatePem).raw).digest("hex"),
+    serverCertificate: new X509Certificate(host.server.certificatePem).raw.toString("base64url"),
+    issuerSpkiSha256: spki(host.memberIssuer.certificatePem) });
+  const request = f.requests.at(-1);
+  assert.equal(request.path, "/sps-native/v1/server-certificate");
+  assert.equal(request.method, "POST");
+  assert.equal(request.contentLength, "0");
+  assert.equal(request.body, "");
+  assert.equal(request.authorization, undefined);
+  assert.equal(request.cookie, undefined);
+  assert.equal(request.authorized, false);
+  assert.equal(request.servername, nativeServerCertificateServername(host.server.certificatePem));
+  assert.equal(Object.keys(value).some(key => /token|cookie|private/i.test(key)), false);
+});
+
+test("public certificate client recognizes only the exact safe legacy 404 as unsupported", async t => {
+  const legacy = await fixture(t, { respond({ send }) { send({ error: "native_enrollment_unavailable" }, 404); } });
+  assert.equal(await legacy.serverCertificateClient().getServerCertificate(), null);
+  const request = legacy.requests.at(-1);
+  assert.equal(request.path, "/sps-native/v1/server-certificate");
+  assert.equal(request.authorization, undefined);
+  assert.equal(request.cookie, undefined);
+  assert.equal(request.contentLength, "0");
+  assert.equal(request.body, "");
+  assert.equal(request.authorized, false);
+
+  for (const [status, value] of [[404, { error: "unexpected" }],
+    [404, { error: "native_enrollment_unavailable", token: "unexpected" }],
+    [503, { error: "native_enrollment_unavailable" }]]) {
+    const incompatible = await fixture(t, { respond({ send }) { send(value, status); } });
+    await assert.rejects(incompatible.serverCertificateClient().getServerCertificate(),
+      { code: "native_enrollment_client_invalid_response" });
+    const sent = incompatible.requests.at(-1);
+    assert.equal(sent.authorization, undefined);
+    assert.equal(sent.cookie, undefined);
+    assert.equal(sent.contentLength, "0");
+  }
+});
 
 test("manual renewal uses only saved same-key CSR, current mTLS and the strict certificate validity DTO", async t => {
   const now = Math.floor(Date.now() / 1000) * 1000;
