@@ -48,6 +48,18 @@ import { createHash } from "node:crypto";
 import { parseLmStudioModels, parseOllamaModels } from "../src/capability-scan.mjs";
 import { sealSpsHostProjectShareCredential } from "../../desktop/src/host-project-share.mjs";
 
+function minimalWindowsChildEnvironment(overrides = {}) {
+  // Windows Node startup needs these OS variables. Keep command fixtures
+  // otherwise isolated from the test runner's complete environment.
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+  const windir = process.env.WINDIR ?? process.env.Windir;
+  return {
+    ...(typeof systemRoot === "string" && systemRoot ? { SYSTEMROOT: systemRoot } : {}),
+    ...(typeof windir === "string" && windir ? { WINDIR: windir } : {}),
+    ...overrides,
+  };
+}
+
 async function startMockHub() {
   const events = [];
   const completions = [];
@@ -533,7 +545,7 @@ test("executes a local Node process and returns streamed output through the sign
         executable: process.execPath,
         args: ["-e", "process.stdout.write('SPS node output\\n')"],
       }),
-      hostEnvironment: { USERPROFILE: homeRoot },
+      hostEnvironment: minimalWindowsChildEnvironment({ USERPROFILE: homeRoot }),
     });
 
     assert.equal(result.exitCode, 0);
@@ -705,7 +717,7 @@ test("injects the local Marketplace MCP runtime into spawn env without allowing 
           "process.stdout.write(JSON.stringify({ node: process.env.SPS_MARKETPLACE_MCP_NODE, entry: process.env.SPS_MARKETPLACE_MCP_ENTRY }))",
         ],
       }),
-      hostEnvironment: {},
+      hostEnvironment: minimalWindowsChildEnvironment(),
     });
 
     assert.equal(result.exitCode, 0);
@@ -745,7 +757,7 @@ test("does not add Marketplace MCP runtime variables to a normal command", async
           "process.stdout.write(JSON.stringify({ node: process.env.SPS_MARKETPLACE_MCP_NODE, entry: process.env.SPS_MARKETPLACE_MCP_ENTRY }))",
         ],
       }),
-      hostEnvironment: {},
+      hostEnvironment: minimalWindowsChildEnvironment(),
     });
 
     assert.equal(result.exitCode, 0);

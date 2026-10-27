@@ -95,4 +95,30 @@ Worker/CLI filesystem/Vault/network isolation remains incomplete. No Marketplace
 policy, Builder structure, security waiver, major migration, OS trust/firewall,
 installed app, customer data, merge, release or npm publication change.
 
+## Follow-up: shipped bundles and Windows Node fixtures
+
+The e41d4e71 local preparation completed its Core build, unchanged UI reuse,
+bundled package checks and runtime deployment, then correctly rejected the clean
+baseline because rebuilding tracked Worker files produced real changes. The
+discovery Worker now includes the already-added capability-bound connectivity
+facade; Room's embedded shared/SDK code includes it and the existing Zod v3 issue
+budget/oversize-collection patch. These are generated artifact synchronization,
+not Marketplace policy or Builder structure changes. The version-based High
+audit remains blocked. The static Room manifest had line-ending-only changes.
+
+Completed parentc155d265 CI40521667784 passed its TLS and packaged Workspace
+steps but failed three Node execution fixtures with child exit134. A bounded
+external stderr diagnostic identified ncrypto::CSPRNG initialization failure.
+An otherwise identical retained-Job probe failed with PATH only and passed with
+SYSTEMROOT/WINDIR also supplied. All three fixtures had intentionally replaced
+the Host environment while omitting those Windows bootstrap keys. Production's
+allowlist already preserves the keys and is unchanged. The fixtures now provide
+only those required Windows keys, keeping their other isolation/USERPROFILE
+overrides. The exact three selected cases passed3/3 (session92612, exit0), logged
+in node134-envfix-2026-10-28.log. No crypto bypass or test skipping was added.
+
+Neither failed local preparation produced a qualified package. The next clean
+preparation must include these rebuilt artifacts; unpacked/verifier/actual
+packaged restart acceptance and new-head CI remain required.
+
 OpenAI Codex coordinator and GPT-6 Luna high agents, as requested.

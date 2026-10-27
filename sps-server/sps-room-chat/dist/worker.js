@@ -9,7 +9,7 @@ function definePlugin(definition) {
   return Object.freeze({ definition });
 }
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
+// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -121,7 +121,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/util.js
+// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -255,7 +255,7 @@ var getParsedType = (data) => {
   }
 };
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/ZodError.js
+// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -373,7 +373,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/locales/en.js
+// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -476,7 +476,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/errors.js
+// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -485,7 +485,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
+// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path: path5, errorMaps, issueData } = params;
   const fullPath = [...path5, ...issueData.path || []];
@@ -512,7 +512,20 @@ var makeIssue = (params) => {
   };
 };
 var EMPTY_PATH = [];
+var MAX_RETAINED_ISSUES = 100;
 function addIssueToContext(ctx, issueData) {
+  const budget = ctx.common.issueBudget;
+  if (!budget) throw new Error("Missing Zod v3 issue budget.");
+  const issueLimit = budget.limit ?? MAX_RETAINED_ISSUES;
+  if (budget.count >= issueLimit - 1) {
+    if (!budget.truncated) {
+      budget.truncated = true;
+      budget.count++;
+      budget.rootIssues.push({ code: "custom", path: [], message: "Too many validation issues; additional issues omitted." });
+    }
+    return;
+  }
+  budget.count++;
   const overrideMap = getErrorMap();
   const issue = makeIssue({
     issueData,
@@ -595,14 +608,15 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/errorUtil.js
+// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
+// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/types.js
+var issueBudgetParam = Symbol("zod.issueBudget");
 var ParseInputLazyPath = class {
   constructor(parent, value, path5, key) {
     this._cachedPath = [];
@@ -715,6 +729,7 @@ var ZodType = class {
     const ctx = {
       common: {
         issues: [],
+        issueBudget: params?.[issueBudgetParam] ?? { count: 0, truncated: false, rootIssues: null },
         async: params?.async ?? false,
         contextualErrorMap: params?.errorMap
       },
@@ -724,6 +739,7 @@ var ZodType = class {
       data,
       parsedType: getParsedType(data)
     };
+    ctx.common.issueBudget.rootIssues = ctx.common.issues;
     const result = this._parseSync({ data, path: ctx.path, parent: ctx });
     return handleResult(ctx, result);
   }
@@ -731,6 +747,7 @@ var ZodType = class {
     const ctx = {
       common: {
         issues: [],
+        issueBudget: { count: 0, truncated: false, rootIssues: null },
         async: !!this["~standard"].async
       },
       path: [],
@@ -739,6 +756,7 @@ var ZodType = class {
       data,
       parsedType: getParsedType(data)
     };
+    ctx.common.issueBudget.rootIssues = ctx.common.issues;
     if (!this["~standard"].async) {
       try {
         const result = this._parseSync({ data, path: [], parent: ctx });
@@ -753,8 +771,10 @@ var ZodType = class {
         }
         ctx.common = {
           issues: [],
+          issueBudget: { count: 0, truncated: false, rootIssues: null },
           async: true
         };
+        ctx.common.issueBudget.rootIssues = ctx.common.issues;
       }
     }
     return this._parseAsync({ data, path: [], parent: ctx }).then((result) => isValid(result) ? {
@@ -773,6 +793,7 @@ var ZodType = class {
     const ctx = {
       common: {
         issues: [],
+        issueBudget: params?.[issueBudgetParam] ?? { count: 0, truncated: false, rootIssues: null },
         contextualErrorMap: params?.errorMap,
         async: true
       },
@@ -782,6 +803,7 @@ var ZodType = class {
       data,
       parsedType: getParsedType(data)
     };
+    ctx.common.issueBudget.rootIssues = ctx.common.issues;
     const maybeAsyncResult = this._parse({ data, path: ctx.path, parent: ctx });
     const result = await (isAsync(maybeAsyncResult) ? maybeAsyncResult : Promise.resolve(maybeAsyncResult));
     return handleResult(ctx, result);
@@ -2304,6 +2326,9 @@ var ZodArray = class _ZodArray extends ZodType {
         status.dirty();
       }
     }
+    if (def.exactLength !== null && ctx.data.length > def.exactLength.value || def.maxLength !== null && ctx.data.length > def.maxLength.value) {
+      return INVALID;
+    }
     if (ctx.common.async) {
       return Promise.all([...ctx.data].map((item, i) => {
         return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
@@ -3240,6 +3265,9 @@ var ZodSet = class _ZodSet extends ZodType {
       }
       return { status: status.value, value: parsedSet };
     }
+    if (def.maxSize !== null && ctx.data.size > def.maxSize.value) {
+      return INVALID;
+    }
     const elements = [...ctx.data.values()].map((item, i) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, i)));
     if (ctx.common.async) {
       return Promise.all(elements).then((elements2) => finalizeSet(elements2));
@@ -3312,11 +3340,12 @@ var ZodFunction = class _ZodFunction extends ZodType {
         }
       });
     }
-    const params = { errorMap: ctx.common.contextualErrorMap };
+    const createParams = () => ({ errorMap: ctx.common.contextualErrorMap, [issueBudgetParam]: { count: 0, truncated: false, rootIssues: null, limit: 99 } });
     const fn = ctx.data;
     if (this._def.returns instanceof ZodPromise) {
       const me = this;
       return OK(async function(...args) {
+        const params = createParams();
         const error = new ZodError([]);
         const parsedArgs = await me._def.args.parseAsync(args, params).catch((e) => {
           error.addIssue(makeArgsIssue(args, e));
@@ -3332,6 +3361,7 @@ var ZodFunction = class _ZodFunction extends ZodType {
     } else {
       const me = this;
       return OK(function(...args) {
+        const params = createParams();
         const parsedArgs = me._def.args.safeParse(args, params);
         if (!parsedArgs.success) {
           throw new ZodError([makeArgsIssue(args, parsedArgs.error)]);
@@ -4521,6 +4551,7 @@ var PLUGIN_CAPABILITIES = [
   "sps.workspaceSources.read",
   "sps.runtimes.read",
   "sps.models.read",
+  "sps.connectivity.read",
   "sps.models.submit",
   "sps.models.cancel",
   "sps.executionGrants.read",
@@ -10566,6 +10597,12 @@ var adapterRegistryEntrySchema = external_exports.object({
 }).strict();
 var adapterRegistrySchema = external_exports.array(adapterRegistryEntrySchema);
 
+// ../../external/sps-core/packages/shared/src/sps-workspace-execution.ts
+var spsWorkspaceExecutionActionSchema = external_exports.object({
+  action: external_exports.enum(["pause", "stop", "resume"]),
+  expectedRevision: external_exports.number().int().min(0).max(2147483646)
+}).strict();
+
 // ../../external/sps-core/packages/plugins/sdk/dist/platform-client.js
 function scopeForSession(session, organizationId) {
   return normalizeAgentPlatformScope({
@@ -10941,6 +10978,7 @@ function startWorkerRpcHost(options) {
     const spsTransport = Object.freeze({
       request(operation, input) {
         switch (operation) {
+          case "sps.connectivity.current":
           case "sps.executions.list":
           case "sps.executions.get":
           case "sps.executions.summarize":
@@ -10967,6 +11005,13 @@ function startWorkerRpcHost(options) {
       }
     });
     const sps = {
+      connectivity: {
+        async current(...args) {
+          if (args.length)
+            throw new TypeError("Connectivity current accepts no arguments");
+          return callHost("sps.connectivity.current", {});
+        }
+      },
       models: {
         async list(companyId) {
           return callHost("sps.models.list", { companyId });

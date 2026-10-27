@@ -14,6 +14,7 @@ var SPS_PLATFORM_CAPABILITIES = Object.freeze([
   "agent.sessions.read",
   "agent.sessions.cancel",
   "sps.executions.read",
+  "sps.connectivity.read",
   "sps.models.read",
   "sps.models.submit",
   "sps.models.cancel"
@@ -194,6 +195,7 @@ var HOST_OPERATIONS = [
   "agents.sessions.sendMessage",
   "sps.artifacts.list",
   "sps.artifacts.publish",
+  "sps.connectivity.current",
   "sps.executionGrants.list",
   "sps.executionGrants.revoke",
   "sps.executionGrants.upsert",
@@ -220,6 +222,7 @@ var SPS_RUNTIME_OPERATIONS = Object.freeze([
   "sps.executions.list",
   "sps.executions.get",
   "sps.executions.summarize",
+  "sps.connectivity.current",
   "sps.models.list",
   "sps.models.submit",
   "sps.models.get",
@@ -258,6 +261,9 @@ var MODEL_OPERATION_CAPABILITIES = Object.freeze({
   "sps.models.submit": "sps.models.submit",
   "sps.models.get": "sps.models.read",
   "sps.models.cancel": "sps.models.cancel"
+});
+var CONNECTIVITY_OPERATION_CAPABILITIES = Object.freeze({
+  "sps.connectivity.current": "sps.connectivity.read"
 });
 var PLATFORM_HOST_OPERATIONS = /* @__PURE__ */ new Set([
   "state.get",
@@ -476,6 +482,26 @@ function runSpsWorker(plugin2, options = {}) {
           return Promise.reject(new Error("SPS model access must match the authenticated invocation company."));
         }
         return callHost(operation, normalizedInput);
+      }
+      const connectivityCapability = CONNECTIVITY_OPERATION_CAPABILITIES[operation];
+      if (connectivityCapability) {
+        if (!definition.handlers.platform?.capabilities.includes(connectivityCapability)) {
+          return Promise.reject(new Error(`Undeclared SPS Platform capability: ${connectivityCapability}.`));
+        }
+        if (lifecycleState !== "ready") {
+          return Promise.reject(new Error("SPS connectivity access requires an authenticated invocation company."));
+        }
+        const invocation = invocationStorage.getStore();
+        if (!invocation || typeof invocation.scope?.companyId !== "string") {
+          return Promise.reject(new Error("SPS connectivity access requires an authenticated invocation company."));
+        }
+        try {
+          exactPlainDataRecord(inputValue, "connectivity current input", []);
+          normalizeModelUuid(invocation.scope.companyId, "authenticated invocation company");
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+        return callHost(operation, {});
       }
       if (EXECUTION_READ_OPERATIONS.has(operation)) {
         const requestedCompanyId = isRecord(inputValue) ? inputValue.companyId : void 0;
