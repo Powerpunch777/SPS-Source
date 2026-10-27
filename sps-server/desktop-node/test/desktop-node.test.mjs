@@ -12,6 +12,7 @@ import {
   buildSignedRequestMessage,
   assertSpsNodeCommandRuntime,
   buildSpsNodeRuntimeEnvironment,
+  cancelSpsNodeCommand,
   cancelSpsNodeCommands,
   checkSpsNodeCommandLease,
   checkSpsPluginNodeRunLease,
@@ -769,6 +770,7 @@ test("does not add Marketplace MCP runtime variables to a normal command", async
 
 test("cancels a running local command when this Desktop Node disconnects", async () => {
   const hub = await startMockHub();
+  let executionOutcome;
   try {
     const execution = executeSpsNodeCommand({
       command: {
@@ -788,16 +790,33 @@ test("cancels a running local command when this Desktop Node disconnects", async
       profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
       resolveInvocation: async () => ({
         executable: process.execPath,
-        args: ["-e", "setTimeout(() => process.exit(0), 30000)"],
+        args: ["-e", "process.stdout.write('SPS_NODE_CANCEL_READY\\n'); setTimeout(() => process.exit(0), 30000)"],
       }),
     });
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    executionOutcome = execution.then(
+      (result) => ({ result }),
+      (error) => ({ error }),
+    );
+    const readinessDeadline = Date.now() + 15_000;
+    while (!hub.events.map((event) => event.body?.body ?? "").join("").includes("SPS_NODE_CANCEL_READY")) {
+      const settled = await Promise.race([
+        executionOutcome,
+        new Promise((resolve) => setTimeout(() => resolve(null), 25)),
+      ]);
+      if (settled?.error) throw settled.error;
+      if (settled?.result) throw new Error("Local command completed before its running marker was observed.");
+      if (Date.now() >= readinessDeadline) throw new Error("Timed out waiting for the local command running marker.");
+    }
     assert.equal(await cancelSpsNodeCommands("Desktop disconnected"), 1);
-    const result = await execution;
+    const settled = await executionOutcome;
+    if (settled.error) throw settled.error;
+    const result = settled.result;
     assert.notEqual(result.exitCode, 0);
     assert.equal(hub.completions[0]?.body.status, "failed");
     assert.equal(hub.completions[0]?.body.error, "Desktop disconnected");
   } finally {
+    await cancelSpsNodeCommand("command-cancel", "Clean up Desktop disconnect test").catch(() => undefined);
+    if (executionOutcome) await executionOutcome;
     await hub.close();
   }
 });

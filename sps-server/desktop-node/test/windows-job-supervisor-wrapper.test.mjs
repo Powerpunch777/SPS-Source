@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { PassThrough } from "node:stream";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { spawnWindowsJobSupervisor } from "../src/windows-job-supervisor.mjs";
+
+beforeEach((context) => {
+  const keepEventLoopAlive = setInterval(() => {}, 1000);
+  context.after(() => clearInterval(keepEventLoopAlive));
+});
 
 class FakeSocket extends EventEmitter {
   destroyed = false;

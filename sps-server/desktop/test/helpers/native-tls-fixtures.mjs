@@ -65,11 +65,46 @@ async function invokeOpenSsl(binary, args, cwd) {
 }
 
 async function resolveOpenSsl() {
-  const candidates = process.platform === 'win32'
-    ? ['openssl', WINDOWS_OPENSSL]
-    : ['openssl'];
+  const candidates = ['openssl'];
+  if (process.platform === 'win32') {
+    // Git for Windows carries its own MSYS/MinGW tools, but their location
+    // differs between runner images. Derive only the two known OpenSSL
+    // locations from Git's bounded, shell-free --exec-path response.
+    try {
+      const { stdout } = await execFileAsync('git', ['--exec-path'], {
+        windowsHide: true,
+        encoding: 'utf8',
+        timeout: OPENSSL_VERSION_TIMEOUT_MS,
+        maxBuffer: 4096,
+      });
+      const gitExecPath = stdout.trim();
+      if (path.isAbsolute(gitExecPath)
+        && path.basename(gitExecPath).toLowerCase() === 'git-core'
+        && path.basename(path.dirname(gitExecPath)).toLowerCase() === 'libexec') {
+        const mingwRoot = path.resolve(gitExecPath, '..', '..');
+        if (path.basename(mingwRoot).toLowerCase() === 'mingw64') {
+          const gitRoot = path.dirname(mingwRoot);
+          candidates.push(
+            path.join(mingwRoot, 'bin', 'openssl.exe'),
+            path.join(gitRoot, 'usr', 'bin', 'openssl.exe'),
+          );
+        }
+      }
+    } catch {
+      // Fall back to the known standard Git for Windows locations below.
+    }
+    candidates.push(
+      'C:/Program Files/Git/mingw64/bin/openssl.exe',
+      WINDOWS_OPENSSL,
+    );
+  }
 
-  for (const candidate of candidates) {
+  const uniqueCandidates = [...new Map(candidates.map(candidate => [
+    process.platform === 'win32' ? path.resolve(candidate).toLowerCase() : candidate,
+    candidate,
+  ])).values()];
+
+  for (const candidate of uniqueCandidates) {
     try {
       const { stdout } = await execFileAsync(candidate, ['version'], {
         windowsHide: true,
