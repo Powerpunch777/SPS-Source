@@ -17,6 +17,11 @@ const withNativePluginSource = process.argv[3] === "--with-native-plugin-source"
 const withNativeNodeIntegration = withNativeNode || withNativePluginNode || withNativePluginSource;
 const withRenewal = process.argv[3] === "--with-native-renewal" || withHostRenewal;
 const withNativeWindow = withWindow || withRenewal || withNativePlugin || withNativeExecutionControl;
+const nativeWorkspaceStartupStages = new Set(["configuration_received", "import_db", "import_identity_auth", "import_workspace_channel",
+  "import_parent_enrollment", "import_parent_ingress", "import_node_runtime", "database_connect", "identity_create",
+  "node_runtime_create", "import_plugin_worker_manager", "import_plugin_host_handlers", "import_plugin_state_store",
+  "import_native_plugin_runtime", "plugin_state_create", "plugin_worker_start", "plugin_runtime_create",
+  "workspace_channel_create", "enrollment_create", "parent_ingress_create", "wait_workspace_channel_ready"]);
 if (![3, 4].includes(process.argv.length) || process.argv[2] !== "--isolated-native-workspace-channel"
   || process.argv.length === 4 && (!withNativeWindow && !withNativeNodeIntegration || withNativeWindow && process.platform !== "win32")) {
   throw new Error("Use the explicit isolated Native Workspace channel command.");
@@ -241,14 +246,25 @@ export function NativeCount({data, refresh}) {
     parentIngress = createSpsNativeParentIngressClient(child, { isCurrent: current });
   }
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error("Isolated Native Workspace child readiness timed out.")), withNativePlugin || withNativeNodeIntegration ? 90_000 : 45_000);
-    const onFailure = () => finish(new Error("Isolated Native Workspace child failed."));
+    let lastStage = "waiting_for_configuration";
+    const timer = setTimeout(() => finish(new Error(`Isolated Native Workspace child readiness timed out at ${lastStage}.`)),
+      withNativePlugin || withNativeNodeIntegration ? 90_000 : 45_000);
+    const onFailure = () => finish(new Error(`Isolated Native Workspace child failed at ${lastStage}.`));
     const onMessage = message => {
-      if (message?.kind === "sps.test.native-workspace.configure-ready") child.send({ kind: "sps.test.native-workspace.configure", binding,
-        connectionString: database.connectionString, identityIssuer: "https://workspace.example.test", renewal: withRenewal,
-        ...(withNativePlugin ? { nativePlugin: pluginConfiguration } : {}), ...(withNativeNodeIntegration ? { nativeNode: true } : {}) }, error => { if (error) onFailure(); });
+      if (message?.kind === "sps.test.native-workspace.configure-ready") {
+        lastStage = "configuration_sent";
+        child.send({ kind: "sps.test.native-workspace.configure", binding,
+          connectionString: database.connectionString, identityIssuer: "https://workspace.example.test", renewal: withRenewal,
+          ...(withNativePlugin ? { nativePlugin: pluginConfiguration } : {}), ...(withNativeNodeIntegration ? { nativeNode: true } : {}) },
+        error => { if (error) onFailure(); });
+      }
+      else if (message?.kind === "sps.test.native-workspace.startup-progress"
+        && nativeWorkspaceStartupStages.has(message.stage)) lastStage = message.stage;
       else if (message?.kind === "sps.test.native-workspace.ready") finish();
-      else if (message?.kind === "sps.test.native-workspace.failure") onFailure();
+      else if (message?.kind === "sps.test.native-workspace.failure") {
+        if (nativeWorkspaceStartupStages.has(message.stage)) lastStage = message.stage;
+        finish(new Error(`Isolated Native Workspace child failed at ${lastStage}.`));
+      }
     };
     function finish(error) {
       clearTimeout(timer); child.removeListener("message", onMessage); child.removeListener("error", onFailure); child.removeListener("exit", onFailure);

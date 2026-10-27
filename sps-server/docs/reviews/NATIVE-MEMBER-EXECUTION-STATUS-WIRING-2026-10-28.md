@@ -34,9 +34,18 @@ its request. No capability, Identity exchange, certificate or authorization
 bypass was added. The existing mock Identity token exchange remains explicitly
 substituted; the new smoke is not physical two-PC or installed-product evidence.
 
-At this documentation point the joined run is active, not passed. Root session
-91369 and task-local native-member-execution-status-joined-2026-10-28.log retain
-its exact result. Run from external/sps-core:
+The first joined run, root session91369, exited1 before UI assertions at the
+existing45s Core-child readiness deadline. Natural child shutdown also timed out
+at its existing20s deadline, so the exact owned child required failure cleanup.
+The aggregate did not report a separate DB cleanup error; this is still failed
+acceptance, not graceful cleanup evidence. The log is
+native-member-execution-status-joined-2026-10-28.log. No retry or deadline increase
+was used. The child now reports fixed startup phase enums before imports, DB and
+channel setup; the parent accepts only those enums and includes the last phase
+in readiness failures. Raw errors, output, paths and credentials remain omitted.
+The diagnostics have syntax/diff checks, not a new runtime pass.
+
+Run from external/sps-core:
 
 ```powershell
 pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-channel.mjs --isolated-native-workspace-channel --with-native-execution-control
