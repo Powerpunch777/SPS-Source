@@ -19,6 +19,9 @@
 [Host 갱신과 Member target 전환](../reviews/NATIVE-HOST-RENEWAL-2026-10-27.md)이 각 범위와 한계를 기록한다.
 Native 기본값은 OFF다. issuer 회전·만료 후 신뢰 복구, 격리된 Plugin 실행 UI,
 Native Source/Node, 실제 AI 실행, 설치/업데이트/복원과 물리 두 PC 및 보안 게이트는 남아 있다.
+후속 [Native Plugin 실행 기반](../reviews/NATIVE-PLUGIN-EXECUTION-FOUNDATION-2026-10-27.md)은
+기존 앱 작업자와 비공개 고정 호출을 연결하고 호출별 현재 권한·취소·결과 전달 경계를 추가한다.
+실제 Plugin 화면·공개 TLS/자산 중계·SDK 이벤트 연결은 다음 단계이며 아직 사용할 수 없다.
 아래는 단계별 이전 구현·검증 이력이며, 전체 플랫폼 완성이나 현재 배포 승인을 의미하지 않는다.
 
 최신 local 관리 increment: 준비된 Host의 직접 소유 Core 자식에 Owner 세션 결속

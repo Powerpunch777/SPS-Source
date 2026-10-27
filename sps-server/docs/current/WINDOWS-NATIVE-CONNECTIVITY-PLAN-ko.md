@@ -16,6 +16,12 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+[Native Plugin 실행 기반](../reviews/NATIVE-PLUGIN-EXECUTION-FOUNDATION-2026-10-27.md)은
+실제 앱 작업자를 재사용하는 비공개 Core adapter와 호출별 권한 재검사, 제한된 data/action
+계약 및 재사용 UI 로더를 추가한다. Plugin 전용 격리 창·공개 TLS/자산 중계·이벤트 연결은
+미완료이며, Native Workspace에서 Plugin 코드를 실행하는 사용자 기능은 아직 제공하지 않는다.
+이 단계는 전체 검사 없이 변경 경계에 한정해 검증한다.
+
 2026-10-27 후속 구현은 승인된 Member의 **만료 전 같은 키 인증서 갱신**을 연결한다.
 Core Settings에서 인증서 상세를 조회하고 명시적으로 갱신하면, 현재 로그인 세션과 실제
 mTLS 인증서로 동일한 승인 기기를 확인한다. 기본 90일 인증서의 마지막 30일에만 가능하며

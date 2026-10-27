@@ -8,6 +8,7 @@ const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const COOKIE = `sps_identity_session=${"a".repeat(64)}`;
 const KEY = Buffer.alloc(32, 0x5a);
 const CERTIFICATE = Buffer.from([0x30, 0x00]);
+const PLUGIN_TARGET = "/sps-native/v1/plugin-runtime";
 
 function fixture(options = {}) {
   let current = true;
@@ -74,11 +75,30 @@ test("signs the closed ordered request payload with a fresh nonce and exact SHA-
   assert.notEqual(parsed.fields[5], decode(second).fields[5]);
 });
 
+test("signs POST only for the fixed private Plugin runtime route and its exact body", t => {
+  const { signer } = fixture();
+  t.after(() => signer.dispose());
+  const body = Buffer.from('{"pluginId":"33333333-3333-4333-8333-333333333333","surface":"widget","surfaceId":"health","operation":"data","key":"load-health","params":{}}');
+  const proof = decode(signer.signWorkspaceRequest(request({ method: "POST", target: PLUGIN_TARGET,
+    body, contentType: "application/json" })));
+  assert.equal(proof.fields[2], WORKSPACE_ID);
+  assert.equal(proof.fields[3], "POST");
+  assert.equal(proof.fields[4], PLUGIN_TARGET);
+  assert.equal(proof.fields[7], createHash("sha256").update(body).digest("hex"));
+  assert.equal(proof.fields[9], "application/json");
+  assert.equal(proof.signature, createHmac("sha256", KEY).update(proof.canonical).digest("base64url"));
+});
+
 test("rejects unapproved methods, malformed targets, bodies, cookies and TLS certificate inputs", t => {
   const { signer } = fixture();
   t.after(() => signer.dispose());
   const invalid = [
     { method: "POST" },
+    { target: PLUGIN_TARGET },
+    { method: "POST", target: PLUGIN_TARGET, body: Buffer.alloc(0), contentType: "application/json" },
+    { method: "POST", target: PLUGIN_TARGET, body: Buffer.from("{}"), contentType: "" },
+    { method: "POST", target: PLUGIN_TARGET, workspaceId: null, body: Buffer.from("{}"), contentType: "application/json" },
+    { method: "POST", target: `${PLUGIN_TARGET}?other=1`, body: Buffer.from("{}"), contentType: "application/json" },
     { method: "DELETE" },
     { workspaceId: null },
     { workspaceId: null, target: "/sps-native/v1/workspaces", method: "PUT" },

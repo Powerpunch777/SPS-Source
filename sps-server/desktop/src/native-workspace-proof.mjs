@@ -4,8 +4,9 @@ import { nativeCertificateRecord as record, nativeCertificateUuid as uuid } from
 const HEADER = "X-SPS-Native-Workspace-Proof";
 const COOKIE = /^sps_identity_session=[A-Za-z0-9_-]{64}$/;
 const CONTENT_TYPES = new Set(["", "application/json"]);
-const METHODS = new Set(["GET", "PUT", "PATCH"]);
+const METHODS = new Set(["GET", "PUT", "PATCH", "POST"]);
 const DISCOVERY_TARGET = "/sps-native/v1/workspaces";
+const PLUGIN_RUNTIME_TARGET = "/sps-native/v1/plugin-runtime";
 const MAX_TARGET_BYTES = 2048;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CERTIFICATE_BYTES = 4096;
@@ -44,6 +45,10 @@ function requestFields(input) {
   if (!METHODS.has(value.method)) throw new Error();
   const target = proofTarget(value.target);
   if (!Buffer.isBuffer(value.body) || value.body.length > MAX_BODY_BYTES) throw new Error();
+  if (value.method === "POST") {
+    if (value.workspaceId === null || target !== PLUGIN_RUNTIME_TARGET || value.body.length === 0
+      || value.contentType !== "application/json") throw new Error();
+  } else if (target === PLUGIN_RUNTIME_TARGET) throw new Error();
   if (typeof value.cookie !== "string" || !COOKIE.test(value.cookie)) throw new Error();
   if (typeof value.contentType !== "string" || !CONTENT_TYPES.has(value.contentType)) throw new Error();
   if (!Buffer.isBuffer(value.peerCertificateDer) || value.peerCertificateDer.length === 0

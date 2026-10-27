@@ -8,11 +8,14 @@ const RESPONSE = "sps.native.workspace.bootstrap.response";
 const READY = "sps.native.workspace.bootstrap.ready";
 const CLOSE = "sps.native.workspace.bootstrap.close";
 const MAX_RESPONSE_BYTES = 256 * 1024;
+const MAX_PLUGIN_REQUEST_BYTES = 64 * 1024;
 const unavailable = () => Object.assign(new Error("The owned Native Workspace channel is unavailable."), { code: "native_workspace_unavailable" });
 const pin = value => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 const WORKSPACE_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:workspace-bootstrap|workspace-shell(?:\/providers)?|workspace-dashboard|workspace-inbox(?:\?archived=(?:true|false))?)$/;
 const DISCOVERY_TARGET = "/sps-native/v1/workspaces";
+const PLUGIN_RUNTIME_TARGET = "/sps-native/v1/plugin-runtime";
 const INBOX_PATCH_TARGET = /^\/api\/companies\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/workspace-inbox\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/;
+const PLUGIN_REQUEST_FIELDS = ["pluginId", "surface", "surfaceId", "operation", "key", "params"];
 
 function identity(value) {
   const keys = ["hostId", "serverSpkiSha256", "issuerSpkiSha256",
@@ -68,6 +71,33 @@ function inboxStateBody(value) {
     || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value")
     || typeof descriptors[key].value !== "boolean")) throw unavailable();
   if (JSON.stringify(parsed) !== text) throw unavailable();
+  return Buffer.from(value);
+}
+
+function pluginRuntimeBody(value) {
+  if (!Buffer.isBuffer(value) || value.length < 1 || value.length > MAX_PLUGIN_REQUEST_BYTES) throw unavailable();
+  let text;
+  let parsed;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(value);
+    // JSON parse plus exact stringify below rejects BOMs and noncanonical JSON;
+    // Unicode replacement/BOM characters remain valid inside plugin params.
+    parsed = JSON.parse(text);
+  } catch { throw unavailable(); }
+  let request;
+  try { request = record(parsed, ["pluginId", "surface", "surfaceId", "operation", "key", "params"]); }
+  catch { throw unavailable(); }
+  if (JSON.stringify(Reflect.ownKeys(parsed)) !== JSON.stringify(PLUGIN_REQUEST_FIELDS)
+    || JSON.stringify(parsed) !== text) throw unavailable();
+  try { uuid(request.pluginId); } catch { throw unavailable(); }
+  if ((request.surface !== "shell" && request.surface !== "widget")
+    || (request.operation !== "data" && request.operation !== "action")
+    || typeof request.surfaceId !== "string" || request.surfaceId.length < 1 || request.surfaceId.length > 200
+    || /[\u0000-\u001f\u007f]/.test(request.surfaceId)
+    || typeof request.key !== "string" || request.key.length < 1 || request.key.length > 200
+    || /[\u0000-\u001f\u007f]/.test(request.key)) throw unavailable();
+  if (!request.params || typeof request.params !== "object" || Array.isArray(request.params)
+    || Object.getPrototypeOf(request.params) !== Object.prototype) throw unavailable();
   return Buffer.from(value);
 }
 
@@ -226,21 +256,28 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
         if (!proofSigner || port === null || !binding || signal !== undefined && !(signal instanceof AbortSignal)
           || typeof assertCurrent !== "function" || signal?.aborted || activeReads >= 4) throw unavailable();
         if (!input || typeof input !== "object" || Array.isArray(input)) throw unavailable();
-        const patchRequest = Object.hasOwn(input, "method") || Object.hasOwn(input, "body");
-        const request = record(input, patchRequest
+        const mutationRequest = Object.hasOwn(input, "method") || Object.hasOwn(input, "body");
+        const request = record(input, mutationRequest
           ? ["workspaceId", "target", "cookie", "peerCertificateDer", "method", "body"]
           : ["workspaceId", "target", "cookie", "peerCertificateDer"]);
         const discovery = request.workspaceId === null && request.target === DISCOVERY_TARGET;
         if (!discovery) uuid(request.workspaceId);
         if (typeof request.target !== "string" || typeof request.cookie !== "string"
           || !Buffer.isBuffer(request.peerCertificateDer)) throw unavailable();
+        const postRequest = mutationRequest && request.method === "POST";
+        const patchRequest = mutationRequest && request.method === "PATCH";
         const snapshot = Object.freeze({ workspaceId: request.workspaceId, target: request.target,
           cookie: request.cookie, peerCertificateDer: Buffer.from(request.peerCertificateDer),
-          ...(patchRequest ? { method: request.method, body: inboxStateBody(request.body) } : {}) });
-        if (patchRequest && (snapshot.method !== "PATCH" || discovery)) throw unavailable();
+          ...(mutationRequest ? { method: request.method,
+            body: postRequest ? pluginRuntimeBody(request.body) : patchRequest ? inboxStateBody(request.body) : (() => { throw unavailable(); })() } : {}) });
+        if (mutationRequest && (discovery || postRequest && snapshot.target !== PLUGIN_RUNTIME_TARGET
+          || patchRequest && snapshot.target === PLUGIN_RUNTIME_TARGET)) throw unavailable();
         const patchRoute = patchRequest ? INBOX_PATCH_TARGET.exec(snapshot.target) : null;
         const route = discovery ? null : WORKSPACE_TARGET.exec(snapshot.target);
-        if (patchRequest ? (!patchRoute || patchRoute[1] !== snapshot.workspaceId)
+        if (postRequest) {
+          if (snapshot.workspaceId === null || snapshot.target !== PLUGIN_RUNTIME_TARGET) throw unavailable();
+          uuid(snapshot.workspaceId);
+        } else if (patchRequest ? (!patchRoute || patchRoute[1] !== snapshot.workspaceId)
           : (!discovery && (!route || route[1] !== snapshot.workspaceId))) throw unavailable();
         activeReads += 1;
         counted = true;
@@ -263,16 +300,16 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
         check();
         if (current.hostId !== binding.hostId || current.serverSpkiSha256 !== binding.serverSpkiSha256
           || current.issuerSpkiSha256 !== binding.issuerSpkiSha256) throw unavailable();
-        const body = patchRequest ? snapshot.body : Buffer.alloc(0);
-        const method = patchRequest ? "PATCH" : "GET";
-        const requestContentType = patchRequest ? "application/json" : "";
+        const body = mutationRequest ? snapshot.body : Buffer.alloc(0);
+        const method = mutationRequest ? snapshot.method : "GET";
+        const requestContentType = mutationRequest ? "application/json" : "";
         const proof = proofSigner.signWorkspaceRequest({ workspaceId: snapshot.workspaceId, method,
           target: snapshot.target, body, cookie: snapshot.cookie, contentType: requestContentType, peerCertificateDer: snapshot.peerCertificateDer });
         const headers = { cookie: snapshot.cookie, "x-sps-native-workspace-proof": proof,
-          "content-length": String(body.length), connection: "close", ...(patchRequest ? { "content-type": requestContentType } : {}) };
+          "content-length": String(body.length), connection: "close", ...(mutationRequest ? { "content-type": requestContentType } : {}) };
         check();
         const response = await fetchImpl(new URL(snapshot.target, `http://127.0.0.1:${port}`).href, {
-          method, headers, body: patchRequest ? body : undefined, redirect: "manual", cache: "no-store", signal: controller.signal,
+          method, headers, body: mutationRequest ? body : undefined, redirect: "manual", cache: "no-store", signal: controller.signal,
         });
         check();
         const contentType = response.headers?.get?.("content-type") ?? "";
