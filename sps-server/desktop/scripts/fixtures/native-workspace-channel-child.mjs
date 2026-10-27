@@ -12,7 +12,7 @@ const configuration = await new Promise(resolve => {
 assert.equal(configuration?.kind, "sps.test.native-workspace.configure");
 const core = path.resolve(import.meta.dirname, "../../../../external/sps-core");
 const load = relative => import(pathToFileURL(path.join(core, relative)).href);
-let db, channel, enrollment, ingress, workerManager, pluginRuntime, stopping = false, stopPromise;
+let db, channel, enrollment, ingress, workerManager, pluginRuntime, nodeRuntime, stopping = false, stopPromise;
 function stop() {
   if (!stopPromise) stopPromise = (async () => {
     stopping = true;
@@ -25,6 +25,7 @@ function stop() {
       ["ingress", () => ingress?.dispose()],
       ["enrollment", () => enrollment?.dispose()],
       ["workspace", () => channel?.dispose()],
+      ["node-runtime", () => nodeRuntime?.dispose()],
       ["plugins", async () => { pluginRuntime?.dispose(); await workerManager?.shutdown(); }],
     ]) {
       try { await dispose(); } catch (error) { errors.push(error); }
@@ -50,12 +51,14 @@ try {
   const { createSpsNativeWorkspaceChannel } = await load("server/src/services/sps-native-workspace-channel.ts");
   const { createSpsNativeParentEnrollmentService } = await load("server/src/services/sps-native-parent-enrollment.ts");
   const { createSpsNativeParentIngress } = await load("server/src/services/sps-native-parent-ingress.ts");
+  const { createSpsNativeNodeRuntime } = await load("server/src/services/sps-native-node-runtime.ts");
   db = createDb(configuration.connectionString);
   const identity = createSpsIdentityAuth(db, {
     authIdentityEnabled: true, authIdentityIssuer: "https://workspace.example.test",
     authIdentityAudience: "sps-core", authIdentityJwksUrl: "https://workspace.example.test/.well-known/jwks.json",
     authPublicBaseUrl: "https://workspace.example.test",
   });
+  if (configuration.nativeNode) nodeRuntime = createSpsNativeNodeRuntime(db);
   if (configuration.nativePlugin) {
     const { createPluginWorkerManager } = await load("server/src/services/plugin-worker-manager.ts");
     const { createHostClientHandlers } = await load("packages/plugins/sdk/src/host-client-factory.ts");
@@ -76,6 +79,7 @@ try {
     pluginRuntime = createSpsNativePluginRuntime(db, workerManager, { localPluginDir: fixture.packageRoot });
   }
   channel = createSpsNativeWorkspaceChannel({ db, identity, ...configuration.binding,
+    getNodeRuntime: () => nodeRuntime,
     getPluginRuntime: () => pluginRuntime,
     assertCurrent() { assert.equal(stopping, false); assert.equal(process.connected, true); },
   });

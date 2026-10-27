@@ -181,8 +181,9 @@ test("migrates v11 public Member key metadata without changing accounts, Node ke
       profile: { hubUrl: "https://host.example.test", connectionKind: "remote", authMode: "sps-identity" } };
     await fs.writeFile(file, JSON.stringify(legacy));
     const state = await loadState(root, { strictVersion: true });
-    assert.equal(state.version, 12);
+    assert.equal(state.version, 13);
     assert.deepEqual(state.nativeMemberKeyIndex, { v: 1, entries: [] });
+    assert.deepEqual(state.nativeNodes, { v: 1, entries: [] });
     for (const field of ["desktopDeviceId", "nodeId", "identity", "encryptedDesktopAccount", "profile"]) {
       assert.deepEqual(state[field], legacy[field]);
     }
@@ -218,6 +219,16 @@ test("migrates v11 public Member key metadata without changing accounts, Node ke
     assert.equal(current.birthtimeNs, identity.birthtimeNs);
     await fs.rm(root, { recursive: true });
   }
+});
+
+test("rejects corrupt Native Node metadata without rewriting the persisted state", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const file = path.join(root, "sps-desktop-state.json");
+  const raw = JSON.stringify({ ...emptyState(), nativeNodes: { v: 1, entries: [], secret: "unexpected" } });
+  await fs.writeFile(file, raw);
+  await assert.rejects(loadState(root, { strictVersion: true }));
+  await assert.rejects(loadState(root));
+  assert.equal(await fs.readFile(file, "utf8"), raw);
 });
 
 test("strict startup rejects parseable damage to ownership and account routing", async () => {
@@ -315,7 +326,7 @@ test("adds private team access fields without discarding a v1 Desktop profile", 
       nodeId: "node-1",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 12);
+    assert.equal(state.version, 13);
     assert.equal(state.profile.hubUrl, "https://app.example.test");
     assert.equal(state.nodeId, "node-1");
     assert.equal(state.teamAccess, null);
@@ -415,7 +426,7 @@ test("retires legacy per-machine Google OAuth credentials during migration", asy
       encryptedDesktopGoogleClientSecret: "legacy-secret",
     }), "utf8");
     const state = await loadState(root);
-    assert.equal(state.version, 12);
+    assert.equal(state.version, 13);
     assert.equal(state.desktopGoogleClientId, undefined);
     assert.equal(state.encryptedDesktopGoogleClientSecret, undefined);
   } finally {

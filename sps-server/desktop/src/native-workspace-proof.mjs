@@ -7,8 +7,10 @@ const CONTENT_TYPES = new Set(["", "application/json"]);
 const METHODS = new Set(["GET", "PUT", "PATCH", "POST"]);
 const DISCOVERY_TARGET = "/sps-native/v1/workspaces";
 const PLUGIN_RUNTIME_TARGET = "/sps-native/v1/plugin-runtime";
+const NODE_RUNTIME_TARGET = "/sps-native/v1/node-runtime";
 const MAX_TARGET_BYTES = 2048;
-const MAX_BODY_BYTES = 64 * 1024;
+const MAX_PLUGIN_BODY_BYTES = 64 * 1024;
+const MAX_NODE_BODY_BYTES = 512 * 1024;
 const MAX_CERTIFICATE_BYTES = 4096;
 const MAX_HEADER_BYTES = 8192;
 const ERROR = "SPS Native Workspace request signing is unavailable.";
@@ -44,11 +46,12 @@ function requestFields(input) {
   }
   if (!METHODS.has(value.method)) throw new Error();
   const target = proofTarget(value.target);
-  if (!Buffer.isBuffer(value.body) || value.body.length > MAX_BODY_BYTES) throw new Error();
+  const maximumBody = target === NODE_RUNTIME_TARGET ? MAX_NODE_BODY_BYTES : MAX_PLUGIN_BODY_BYTES;
+  if (!Buffer.isBuffer(value.body) || value.body.length > maximumBody) throw new Error();
   if (value.method === "POST") {
-    if (value.workspaceId === null || target !== PLUGIN_RUNTIME_TARGET || value.body.length === 0
+    if (value.workspaceId === null || ![PLUGIN_RUNTIME_TARGET, NODE_RUNTIME_TARGET].includes(target) || value.body.length === 0
       || value.contentType !== "application/json") throw new Error();
-  } else if (target === PLUGIN_RUNTIME_TARGET) throw new Error();
+  } else if (target === PLUGIN_RUNTIME_TARGET || target === NODE_RUNTIME_TARGET) throw new Error();
   if (typeof value.cookie !== "string" || !COOKIE.test(value.cookie)) throw new Error();
   if (typeof value.contentType !== "string" || !CONTENT_TYPES.has(value.contentType)) throw new Error();
   if (!Buffer.isBuffer(value.peerCertificateDer) || value.peerCertificateDer.length === 0

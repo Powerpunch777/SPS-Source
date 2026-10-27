@@ -42,6 +42,37 @@ test("Native Plugin client sends only fixed scoped POST over fresh mTLS and vali
   assert.equal(f.requests.length, before);
 });
 
+test("Native Node client uses its fixed target, current Member mTLS, and 1 MiB response envelope", async t => {
+  const result = { accepted: true, detail: "x".repeat(200 * 1024) };
+  const f = await fixture(t, { respond({ item, send, value }) {
+    send(item.path === "/sps-native/v1/node-runtime" ? { data: result } : value);
+  } });
+  const client = f.workspaceClient();
+  await client.exchange(TOKEN);
+  const request = { operation: "command-event", nodeId: "55555555-5555-4555-8555-555555555555",
+    resourceId: "66666666-6666-4666-8666-666666666666", payload: {
+      timestamp: "2026-10-27T04:00:00.000Z", nonce: "A".repeat(43), signature: "B".repeat(86),
+      sequence: 1, stream: "stdout", body: "x".repeat(96 * 1024),
+    } };
+  assert.deepEqual(await client.invokeNode({ workspaceId: DEVICE, request, keyRequest, issuance: f.issuance }), { data: result });
+  const observed = f.requests.at(-1);
+  assert.equal(observed.path, "/sps-native/v1/node-runtime");
+  assert.equal(observed.nativeWorkspace, DEVICE);
+  assert.equal(observed.contentType, "application/json");
+  assert.equal(observed.body, JSON.stringify(request));
+  assert.equal(String(Buffer.byteLength(observed.body)), observed.contentLength);
+  assert.equal(observed.cookie, COOKIE);
+  assert.equal(observed.authorization, undefined);
+  assert.equal(observed.authorized, true);
+  assert.equal(observed.resumed, false);
+  const before = f.requests.length;
+  await assert.rejects(client.invokeNode({ workspaceId: DEVICE,
+    request: { ...request, target: "https://outside.invalid" }, keyRequest, issuance: f.issuance }));
+  await assert.rejects(client.invokeNode({ workspaceId: DEVICE, request: { ...request,
+    payload: { ...request.payload, body: "x".repeat(512 * 1024) } }, keyRequest, issuance: f.issuance }));
+  assert.equal(f.requests.length, before);
+});
+
 test("Inbox state uses the exact PATCH body with saved mTLS credentials", async t => {
   const value = { readAt: "2026-10-27T00:00:00.000Z", archivedAt: null };
   const f = await fixture(t, { respond({ item, send, value: fallback }) {

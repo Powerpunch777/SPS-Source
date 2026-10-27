@@ -15,12 +15,15 @@ import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsul
 import { nativeServerCertificateServername } from "./native-server-certificate-selection.mjs";
 import { requireSpsNativePluginRequest, parseSpsNativePluginResponse, NATIVE_PLUGIN_TARGET,
   NATIVE_PLUGIN_MAX_RESPONSE } from "./native-plugin-protocol.mjs";
+import { requireSpsNativeNodeRequest, parseSpsNativeNodeResponse, NATIVE_NODE_TARGET,
+  NATIVE_NODE_MAX_REQUEST, NATIVE_NODE_MAX_RESPONSE } from "./native-node-protocol.mjs";
 
 const PATHS = Object.freeze({ identity: "/sps-native/v1/identity", exchange: "/sps-native/v1/session/exchange",
   issue: "/sps-native/v1/enrollment/issue", complete: "/sps-native/v1/enrollment/complete",
   reconcile: "/sps-native/v1/enrollment/reconcile", renewal: "/sps-native/v1/enrollment/renew", workspaces: "/sps-native/v1/workspaces",
   serverCertificate: "/sps-native/v1/server-certificate",
   pluginRuntime: NATIVE_PLUGIN_TARGET,
+  nodeRuntime: NATIVE_NODE_TARGET,
   workspaceBootstrap: "/api/companies" });
 const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox"]);
 const MESSAGES = Object.freeze({ invalid_options: "Native enrollment client options are invalid.",
@@ -191,7 +194,9 @@ function createClient(input, mode) {
 
   function post(operation, bytes, auth, credential, { guard, signal, deadline, workspaceId, surface, archived, itemId, pluginRequest }) {
     guard();
-    if (!Buffer.isBuffer(bytes) || bytes.length > (operation === "pluginRuntime" ? 64 * 1024 : 8192)) throw failure("invalid_options");
+    const maximumRequest = operation === "pluginRuntime" ? 64 * 1024
+      : operation === "nodeRuntime" ? NATIVE_NODE_MAX_REQUEST : 8192;
+    if (!Buffer.isBuffer(bytes) || bytes.length > maximumRequest) throw failure("invalid_options");
     const path = operation === "workspaceBootstrap"
       ? `${PATHS.workspaceBootstrap}/${workspaceId}/workspace-bootstrap`
       : operation === "workspaceSurface" ? workspaceSurfacePath(workspaceId, surface, archived)
@@ -238,8 +243,9 @@ function createClient(input, mode) {
             } catch { return failure("unavailable"); }
           },
           headers: { ...(operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? {}
-            : { "Content-Type": operation === "inboxState" || operation === "pluginRuntime" ? "application/json" : "application/json; charset=utf-8" }),
-            ...(operation === "pluginRuntime" ? { "X-SPS-Native-Workspace": workspaceId } : {}), "Content-Length": String(bytes.length),
+            : { "Content-Type": operation === "inboxState" || operation === "pluginRuntime" || operation === "nodeRuntime"
+              ? "application/json" : "application/json; charset=utf-8" }),
+          ...(operation === "pluginRuntime" || operation === "nodeRuntime" ? { "X-SPS-Native-Workspace": workspaceId } : {}), "Content-Length": String(bytes.length),
             Connection: "close", ...(operation === "identity" || operation === "serverCertificate" ? {}
               : operation === "exchange" ? { Authorization: `Bearer ${auth}` } : { Cookie: auth }) },
         }, response => {
@@ -248,7 +254,8 @@ function createClient(input, mode) {
           response.on("error", () => stop(failure("unavailable")));
           response.once("aborted", () => stop(failure("invalid_response")));
           response.on("data", chunk => {
-            const maximum = operation === "pluginRuntime" ? pluginRequest?.operation === "asset" ? NATIVE_PLUGIN_MAX_RESPONSE : 256 * 1024
+            const maximum = operation === "nodeRuntime" ? NATIVE_NODE_MAX_RESPONSE
+              : operation === "pluginRuntime" ? pluginRequest?.operation === "asset" ? NATIVE_PLUGIN_MAX_RESPONSE : 256 * 1024
               : operation === "workspaces" || operation === "workspaceBootstrap" || operation === "workspaceSurface" ? 256 * 1024 : 16_384;
             if (!Buffer.isBuffer(chunk) || size + chunk.length > maximum) { stop(failure("invalid_response")); return; }
             size += chunk.length; chunks.push(chunk);
@@ -259,7 +266,8 @@ function createClient(input, mode) {
               guard();
               if (!response.complete) throw new Error();
               const envelope = { statusCode: response.statusCode, rawHeaders: response.rawHeaders, body: Buffer.concat(chunks, size) };
-              const value = operation === "pluginRuntime" ? parseSpsNativePluginResponse(envelope, pluginRequest)
+              const value = operation === "nodeRuntime" ? parseSpsNativeNodeResponse(envelope)
+                : operation === "pluginRuntime" ? parseSpsNativePluginResponse(envelope, pluginRequest)
                 : operation === "inboxState" ? parseSpsNativeInboxStateResponse(envelope) : operation === "workspaceSurface"
                 ? parseSpsNativeWorkspaceSurfaceResponse(surface, workspaceId, envelope)
                 : parseSpsNativeEnrollmentResponse(operation, envelope);
@@ -367,6 +375,21 @@ function createClient(input, mode) {
   }
   if (workspace) return Object.freeze({
     exchange,
+    async invokeNode(input, signalInput = {}) {
+      const value = record(input, ["workspaceId", "request", "keyRequest", "issuance"]);
+      const workspaceId = uuid(value.workspaceId);
+      const nodeRequest = requireSpsNativeNodeRequest(value.request);
+      return run("nodeRuntime", signalInput, async operation => {
+        const { key } = await checkedKey(value.keyRequest, operation.guard);
+        const { credential } = await checkedIssuance(value.issuance, key, operation.guard);
+        const bytes = Buffer.from(JSON.stringify(nodeRequest), "utf8");
+        if (bytes.length > NATIVE_NODE_MAX_REQUEST) throw failure("invalid_options");
+        const result = await post("nodeRuntime", bytes, cookie, credential,
+          { ...operation, workspaceId });
+        operation.guard();
+        return result;
+      });
+    },
     async invokePlugin(input, signalInput = {}) {
       const value = record(input, ["workspaceId", "request", "keyRequest", "issuance"]);
       const workspaceId = uuid(value.workspaceId);

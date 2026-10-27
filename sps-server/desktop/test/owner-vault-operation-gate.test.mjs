@@ -4,6 +4,37 @@ import { createSpsOwnerVaultOperationGate } from "../src/owner-vault-operation-g
 
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; }
 
+test("Native work is fenced immediately and must finish cleanup before account or restore effects", async () => {
+  for (const operation of ["changeConnection", "restore"]) {
+    const hold = deferred(), calls = [];
+    const gate = createSpsOwnerVaultOperationGate({ onInvalidation: async () => {
+      calls.push("invalidate"); await hold.promise; calls.push("stopped");
+    } });
+    const work = gate[operation](() => { calls.push("effect"); });
+    assert.equal(gate.connectionGeneration(), 1n);
+    assert.deepEqual(calls, ["invalidate"]);
+    await assert.rejects(gate.restore(() => {}), /already in progress/);
+    hold.resolve(); await work;
+    assert.deepEqual(calls, ["invalidate", "stopped", "effect"]);
+  }
+});
+
+test("unconfirmed Native termination blocks account and restore mutations and allows explicit cleanup retry", async () => {
+  let fail = true, effects = 0;
+  const gate = createSpsOwnerVaultOperationGate({ onInvalidation: async () => {
+    if (fail) throw new Error("cleanup unconfirmed");
+  } });
+  for (const operation of ["changeConnection", "restore"]) {
+    await assert.rejects(gate[operation](() => { effects++; }), /cleanup unconfirmed/);
+    assert.equal(effects, 0);
+  }
+  assert.equal(gate.isRestoring(), false);
+  assert.equal(gate.isChangingConnection(), false);
+  fail = false;
+  await gate.changeConnection(() => { effects++; });
+  assert.equal(effects, 1);
+});
+
 test("an in-flight Host start excludes restore until it really settles", async () => {
   const gate = createSpsOwnerVaultOperationGate();
   const hold = deferred();

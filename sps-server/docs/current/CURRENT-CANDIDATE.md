@@ -8,7 +8,7 @@
 | --- | --- |
 | Status | `development-candidate` |
 | SPS Desktop | `0.4.137` |
-| SPS Core | [`5d36f34797a9da14e699d73a306a5023afb59573`](https://github.com/Powerpunch777/SPS-Core/commit/5d36f34797a9da14e699d73a306a5023afb59573) |
+| SPS Core | [`74de85829057a11783fd640d9ddefc37909cfa91`](https://github.com/Powerpunch777/SPS-Core/commit/74de85829057a11783fd640d9ddefc37909cfa91) |
 | Plugin SDK | `@sonparkserver/plugin-sdk@0.11.0` ([`607b48a4edaed1db7132a01719431ffce5852964`](https://github.com/Powerpunch777/sps-plugin-sdk/commit/607b48a4edaed1db7132a01719431ffce5852964)) |
 | Extension profiles | `1.0`, `2.0` |
 | Plugin API | `1` |

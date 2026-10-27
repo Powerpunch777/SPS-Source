@@ -61,6 +61,10 @@ test("recovery launch and unreadable connection settings never enter automatic H
   assert.match(persist, /if \(hasPendingLegacyDesktopOwnerAdoption\(state\)\) return;/);
   assert.match(main, /async function startDesktopAccountSignIn\(\) \{\s*if \(desktopStateUnavailable\) throw/);
   assert.match(main, /async function connectNode\(\) \{\s*if \(desktopStateUnavailable\) throw/);
+  const accountStatus = section("function sendDesktopAccountStatus() {", "function openSpsExternalUrl(");
+  assert.match(accountStatus, /if \(!backgroundStartupDeferred && nativeMemberAuthority\(\) && state\.nativeNodes\?\.entries\?\.some\(entry => entry\.enabled\)\)\s*\{\s*void ensureNativeNodeController\(\)\.resume\(\)\.catch\(\(\) => \{\}\);/);
+  assert.match(main, /connectNativeNode: \(input, options\) => ensureNativeNodeController\(\)\.connect\(input, options\)/,
+    "recovery-mode suppression must not disable an explicit user connect action");
 });
 
 test("recovery mode reaches Core and suppresses default-memory startup while disabled", () => {
@@ -99,6 +103,13 @@ test("Core Settings and tray use one deferred normal quit without a force-stop o
   assert.match(main, /requestQuit: requestDesktopQuit,/);
   assert.match(main, /label: "Quit SPS Desktop", click: requestDesktopQuit/);
   assert.doesNotMatch(declaration, /app\.exit|\.kill\(|taskkill|assertRegistryOwner|currentDesktopAccount|startOwnerHost/);
-  const quit = section('app.on("before-quit"', "});", main.indexOf('app.on("before-quit"'));
-  assert.match(quit, /stopDesktopRuntimeGracefully/);
+  const drain = section("const drainDesktopRuntime = createSpsDesktopRuntimeDrain(", "async function stopDesktopRuntimeGracefully()");
+  assert.match(drain, /stopIngress: \(\) => nativeHostController\?\.stop\(\)/);
+  assert.match(drain, /stopUpdates: \(\) => desktopUpdateController\.stop\(\)/);
+  assert.match(drain, /name: "Owner Host", stop: \(\) => ownerHostManager\?\.stop\(\{ force: false \}\)/);
+  const quitWiring = section("const desktopQuitCoordinator = createSpsDesktopQuitCoordinator(", 'app.on("will-quit"');
+  assert.match(quitWiring, /drain: \(\) => \{\s*nativeMemberController\?\.dispose\(\);\s*return stopDesktopRuntimeGracefully\(\);/);
+  assert.match(quitWiring, /isInstalling: \(\) => desktopUpdateController\.isInstalling\(\)/);
+  assert.match(quitWiring, /showFailure: async \(\) =>/);
+  assert.match(quitWiring, /app\.on\("before-quit", event => \{ void desktopQuitCoordinator\.handle\(event\); \}\);/);
 });

@@ -11,6 +11,7 @@ const IDENTITY = Object.freeze({ hostId: HOST, serverSpkiSha256: "a".repeat(64),
   issuerSpkiSha256: "b".repeat(64), issuerCertificate: "AQID" });
 const TARGET = `/api/companies/${WORKSPACE}/workspace-shell`;
 const PLUGIN_TARGET = "/sps-native/v1/plugin-runtime";
+const NODE_TARGET = "/sps-native/v1/node-runtime";
 const input = () => ({ workspaceId: WORKSPACE, target: TARGET,
   cookie: `sps_identity_session=${"c".repeat(64)}`, peerCertificateDer: Buffer.from([1, 2, 3]) });
 const pluginRuntimeRequest = (overrides = {}) => ({ ...input(), target: PLUGIN_TARGET, method: "POST",
@@ -147,6 +148,36 @@ test("read signs the closed Plugin runtime POST body, Workspace, and fixed targe
   tamperedFields[7] = createHash("sha256").update(mutatedBody).digest("hex");
   assert.notEqual(signature, createHmac("sha256", Buffer.from(bootstrap.key, "base64url"))
     .update(Buffer.from(JSON.stringify(tamperedFields))).digest("base64url"));
+});
+
+test("read signs the fixed Native Node body with its independent 512 KiB limit", async t => {
+  let observed;
+  const body = Buffer.from(JSON.stringify({ operation: "availability", nodeId: ID, resourceId: null,
+    payload: { timestamp: "2026-10-27T04:00:00.000Z", nonce: "A".repeat(43), signature: "B".repeat(86),
+      report: "x".repeat(96 * 1024) } }));
+  const f = fixture({ fetchImpl: async (url, options) => {
+    observed = { url, options };
+    return response({ data: { accepted: true } });
+  } });
+  t.after(() => f.channel.dispose());
+  const bootstrap = await f.bootstrap(); f.ready(); await tick();
+  const result = await f.channel.read({ ...input(), target: NODE_TARGET, method: "POST", body });
+  assert.deepEqual(result, { data: { accepted: true } });
+  assert.equal(observed.url, `http://127.0.0.1:43210${NODE_TARGET}`);
+  assert.equal(observed.options.method, "POST");
+  assert.deepEqual(Buffer.from(observed.options.body), body);
+  assert.equal(observed.options.headers["content-type"], "application/json");
+  assert.equal(observed.options.headers["content-length"], String(body.length));
+  const [payload, signature] = observed.options.headers["x-sps-native-workspace-proof"].split(".");
+  const fields = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  assert.equal(fields[2], WORKSPACE);
+  assert.equal(fields[3], "POST");
+  assert.equal(fields[4], NODE_TARGET);
+  assert.equal(fields[7], createHash("sha256").update(body).digest("hex"));
+  assert.equal(signature, createHmac("sha256", Buffer.from(bootstrap.key, "base64url"))
+    .update(Buffer.from(JSON.stringify(fields))).digest("base64url"));
+  await assert.rejects(f.channel.read({ ...input(), target: NODE_TARGET, method: "POST",
+    body: Buffer.alloc(512 * 1024 + 1) }));
 });
 
 test("Plugin runtime POST preserves valid Unicode params", async t => {

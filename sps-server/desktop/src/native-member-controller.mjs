@@ -12,6 +12,7 @@ import { inspectSpsNativeMemberCredential } from "./native-member-credential.mjs
 import { validateSpsNativeMemberHostTarget } from "./native-member-target-capsule.mjs";
 import { validateSpsNativeServerCertificateTransition } from "./native-identity-certificates.mjs";
 import { requireSpsNativePluginRequest } from "./native-plugin-protocol.mjs";
+import { requireSpsNativeNodeRequest } from "./native-node-protocol.mjs";
 import { validateSpsNativeWorkspaceBootstrap, validateSpsNativeWorkspaceSurface,
   validateSpsNativeInboxStateInput, validateSpsNativeInboxState } from "./native-enrollment-response.mjs";
 
@@ -534,6 +535,27 @@ export function createSpsNativeMemberController({ getAuthority, getIndex, saveIn
           keyRequest: key, issuance: stored.issuance }, options?.signal ? { signal: options.signal } : undefined);
         check();
         return result;
+      });
+    },
+    async invokeNode(input, options = {}) {
+      const value = record(input, ["hostId", "workspaceId", "request"]);
+      const selected = requireSpsNativeMemberWorkspaceBootstrapInput({ hostId: value.hostId, workspaceId: value.workspaceId });
+      const request = requireSpsNativeNodeRequest(value.request);
+      return runPlugin(options, async (expected, check, use) => {
+        const scope = indexFor(expected).entries.find(entry => entry.identityIssuer === expected.identityIssuer
+          && entry.subject === expected.subject && entry.hostId === selected.hostId);
+        if (!scope) throw failure("recovery_required");
+        const target = await readSavedTarget(expected, scope, check, use, options); check();
+        if (!target) throw failure("recovery_required");
+        const store = getStore({ ...expected, context: target.context });
+        const key = await store.read(); check();
+        const stored = await store.readIssued(); check();
+        if (!key || !stored?.issuance) throw failure("recovery_required");
+        const client = use(createWorkspace({ target, context: target.context, timeoutMs, assertCurrent: check }));
+        await exchange(client, check, options?.signal);
+        const result = await client.invokeNode({ workspaceId: selected.workspaceId, request,
+          keyRequest: key, issuance: stored.issuance }, options?.signal ? { signal: options.signal } : undefined);
+        check(); return Object.freeze({ data: result.data, origin: target.origin });
       });
     },
     repair(input, options = {}) {

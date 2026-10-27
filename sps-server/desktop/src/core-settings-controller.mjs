@@ -182,6 +182,9 @@ export function createCoreSettingsController({
   listNativeRegistrations,
   listNativeMemberWorkspaces,
   openNativeMemberWorkspace,
+  nativeNodeStatus,
+  connectNativeNode,
+  disconnectNativeNode,
   enrollNativeMember,
   recoverNativeMember,
   inspectNativeMemberCertificate,
@@ -394,6 +397,20 @@ export function createCoreSettingsController({
       if (exactDataRecord(result, ["opened"])?.opened !== true) throw new Error("Native Workspace opening is unavailable.");
       return Object.freeze({ opened: true });
     }, { writes: true, input: true, authorizeBeforeAction: false });
+    for (const [name, callback] of [["native-node-status", nativeNodeStatus], ["connect-native-node", connectNativeNode],
+      ["disconnect-native-node", disconnectNativeNode]]) {
+      bind(name, async (input, event) => {
+        const selected = requireSpsNativeMemberWorkspaceBootstrapInput(input);
+        if (typeof callback !== "function") throw new Error("Native Node management is unavailable.");
+        const result = await awaitAndAssertSender(event, () => callback(selected, { assertRequester: () => assertSender(event) }));
+        if (exactDataRecord(result, ["cancelled"])?.cancelled === true) return { cancelled: true };
+        const value = exactDataRecord(result, ["nodeId", "state", "activeRun", "error"]);
+        if (!value || value.nodeId !== null && (typeof value.nodeId !== "string" || !NATIVE_DEVICE_ID.test(value.nodeId))
+          || !["off", "pending", "active", "unavailable"].includes(value.state)
+          || typeof value.activeRun !== "boolean" || typeof value.error !== "boolean") throw new Error("Native Node management is unavailable.");
+        return value;
+      }, { writes: true, input: true, authorizeBeforeAction: false });
+    }
     bind("start-native-host-listener", async (input, event) => {
       const validated = requireSpsNativeHostListenInput(input);
       if (typeof startNativeHostListener !== "function" || typeof confirmNativeHostListener !== "function") throw new Error("Native Host connectivity is unavailable.");
@@ -549,5 +566,5 @@ export function createCoreSettingsController({
   }
 
   const hideMenuBar = () => window?.setMenuBarVisibility?.(false);
-  return { show, registerIpc, registerShortcut, dispose, getStatus: status, hideMenuBar };
+  return { show, registerIpc, registerShortcut, dispose, getStatus: status, getWindow: () => window, hideMenuBar };
 }

@@ -162,6 +162,44 @@ test("Native Member Workspace discovery is explicit, guarded, and returns only e
   assert.equal(queried, 1);
 });
 
+test("Native Node Settings callbacks accept only the selected workspace and stay bound to the live frame", async () => {
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const workspaceId = "22222222-2222-4222-8222-222222222222";
+  const nodeId = "33333333-3333-4333-8333-333333333333";
+  const status = { nodeId, state: "active", activeRun: false, error: false };
+  let accepted = 0, started, release;
+  const startedPromise = new Promise(resolve => { started = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const ctx = setup({ authorizeMutation() { throw new Error("Native Member needs no local Host ownership"); },
+    nativeNodeStatus: async (selected, options) => {
+      assert.deepEqual(selected, { hostId, workspaceId }); options.assertRequester(); return status;
+    },
+    connectNativeNode: async (selected, options) => {
+      assert.deepEqual(selected, { hostId, workspaceId }); options.assertRequester(); started();
+      await gate; options.assertRequester(); accepted++; return status;
+    },
+    disconnectNativeNode: async (selected, options) => {
+      assert.deepEqual(selected, { hostId, workspaceId }); options.assertRequester();
+      return { nodeId: null, state: "off", activeRun: false, error: false };
+    },
+  });
+  await ctx.controller.show();
+  assert.deepEqual(await ctx.invoke("native-node-status", [{ hostId, workspaceId }]), status);
+  await assert.rejects(ctx.invoke("connect-native-node", [{ hostId, workspaceId, nodeId }]));
+  assert.equal(accepted, 0);
+  const originalFrame = ctx.windows[0].webContents.mainFrame;
+  const stale = ctx.event();
+  const pending = ctx.invoke("connect-native-node", [{ hostId, workspaceId }], stale);
+  await startedPromise;
+  ctx.windows[0].webContents.mainFrame = { url: "about:blank" };
+  release();
+  await assert.rejects(pending);
+  assert.equal(accepted, 0);
+  ctx.windows[0].webContents.mainFrame = originalFrame;
+  assert.deepEqual(await ctx.invoke("disconnect-native-node", [{ hostId, workspaceId }]),
+    { nodeId: null, state: "off", activeRun: false, error: false });
+});
+
 test("Native Workspace opening uses exact selectors and current requesting frame without Host ownership", async () => {
   const hostId = "11111111-1111-4111-8111-111111111111";
   const workspaceId = "22222222-2222-4222-8222-222222222222";

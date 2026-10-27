@@ -10,10 +10,11 @@ import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 const withWindow = process.argv[3] === "--with-native-window";
 const withHostRenewal = process.argv[3] === "--with-native-host-renewal";
 const withNativePlugin = process.argv[3] === "--with-native-plugin";
+const withNativeNode = process.argv[3] === "--with-native-node";
 const withRenewal = process.argv[3] === "--with-native-renewal" || withHostRenewal;
 const withNativeWindow = withWindow || withRenewal || withNativePlugin;
 if (![3, 4].includes(process.argv.length) || process.argv[2] !== "--isolated-native-workspace-channel"
-  || process.argv.length === 4 && (!withNativeWindow || process.platform !== "win32")) {
+  || process.argv.length === 4 && (!withNativeWindow && !withNativeNode || withNativeWindow && process.platform !== "win32")) {
   throw new Error("Use the explicit isolated Native Workspace channel command.");
 }
 const { createSpsNativeHostIdentity } = await import("../src/native-identity-certificates.mjs");
@@ -21,6 +22,11 @@ const { createSpsNativeMemberKeyRequest, issueSpsNativeMemberCertificate } = awa
 const { createSpsNativeHostIngress } = await import("../src/native-host-ingress.mjs");
 const { attachSpsNativeWorkspaceParentChannel } = await import("../src/native-workspace-parent-channel.mjs");
 const { createSpsNativeMemberMainSigner } = await import("../src/native-member-main-signer.mjs");
+const { createSpsNativeMemberController } = await import("../src/native-member-controller.mjs");
+const { createSpsNativeNodeController } = await import("../src/native-node-controller.mjs");
+const { createSpsNativeMemberWorkspaceClient } = await import("../src/native-enrollment-client.mjs");
+const { normalizeSpsNativeMemberKeyIndex } = await import("../src/native-member-key-index.mjs");
+const { normalizeSpsNativeNodeState } = await import("../src/native-node-state.mjs");
 const { attachSpsNativeMemberSignerChannel } = await import("../src/native-member-signer-channel.mjs");
 const { createSpsNativeParentIngressClient } = await import("../src/native-parent-ingress-client.mjs");
 const { parseSpsNativeEnrollmentResponse } = await import("../src/native-enrollment-response.mjs");
@@ -28,6 +34,7 @@ const core = path.resolve(import.meta.dirname, "../../../external/sps-core");
 const load = relative => import(pathToFileURL(path.join(core, relative)).href);
 const { createDb, getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase,
   authUsers, authSessions, companies, companyMemberships, agents, plugins, spsNodes, spsMemberDevices,
+  spsNodeRunnerProfiles, spsNodeAgentGrants, spsNodeAgentRunnerGrants, spsAgentNodeBindings, spsNodeCommands, spsNodeCommandEvents,
   spsPluginInboxItems, spsPluginInboxUserStates, spsMemberDeviceRenewalCertificates, pluginState, pluginCompanySettings,
   spsNativePairings, spsNativePairingEvents, spsNativeEnrollments } = await load("packages/db/src/index.ts");
 const { spsMemberDeviceService } = await load("server/src/services/sps-member-devices.ts");
@@ -207,12 +214,12 @@ export function NativeCount({data, refresh}) {
     parentIngress = createSpsNativeParentIngressClient(child, { isCurrent: current });
   }
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error("Isolated Native Workspace child readiness timed out.")), withNativePlugin ? 90_000 : 45_000);
+    const timer = setTimeout(() => finish(new Error("Isolated Native Workspace child readiness timed out.")), withNativePlugin || withNativeNode ? 90_000 : 45_000);
     const onFailure = () => finish(new Error("Isolated Native Workspace child failed."));
     const onMessage = message => {
       if (message?.kind === "sps.test.native-workspace.configure-ready") child.send({ kind: "sps.test.native-workspace.configure", binding,
         connectionString: database.connectionString, identityIssuer: "https://workspace.example.test", renewal: withRenewal,
-        ...(withNativePlugin ? { nativePlugin: pluginConfiguration } : {}) }, error => { if (error) onFailure(); });
+        ...(withNativePlugin ? { nativePlugin: pluginConfiguration } : {}), ...(withNativeNode ? { nativeNode: true } : {}) }, error => { if (error) onFailure(); });
       else if (message?.kind === "sps.test.native-workspace.ready") finish();
       else if (message?.kind === "sps.test.native-workspace.failure") onFailure();
     };
@@ -231,7 +238,7 @@ export function NativeCount({data, refresh}) {
       // Only the Identity-provider exchange is substituted. The returned token
       // is a real existing Core DB session and grants no device or membership.
       if (operation === "session.exchange") {
-        assert.equal(withNativeWindow, true);
+        assert.equal(withNativeWindow || withNativeNode, true);
         assert.equal(input.credential.accessToken, "fixture.header.signature");
         return { token: secret, expiresInSeconds: 604800 };
       }
@@ -291,6 +298,127 @@ export function NativeCount({data, refresh}) {
   assert.equal((await read(`${root}/workspace-shell`, { cookie: `sps_identity_session=${"x".repeat(64)}` })).status, 403);
   assert.equal((await read(`/api/companies/${randomUUID()}/workspace-shell`)).status, 403);
   assert.equal((await read("/api/companies")).status, 404);
+  if (withNativeNode) {
+    let nativeNodeStage = "setup";
+    const nativeNodeWorkspaceFixture = await createWorkspaceE2eFixture();
+    const context = { identityIssuer: "https://workspace.example.test", subject: "fixture-member", hostId,
+      deviceKeyId: key.deviceKeyId, serverSpkiSha256: binding.serverSpkiSha256, issuerSpkiSha256: binding.issuerSpkiSha256 };
+    const target = { v: 1, kind: "sps.native.member-host-target", context,
+      origin: `https://127.0.0.1:${port}`, serverCertificatePem: host.server.certificatePem };
+    const issuance = { enrollmentId, certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
+      issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url"),
+      expiresAt: new Date(now + 3_600_000).toISOString() };
+    const getAuthority = () => ({ identityIssuer: context.identityIssuer, subject: context.subject,
+      userDataDirectory: "isolated-native-node-profile", vaultDirectory: "isolated-native-node-vault", generation: 1n });
+    const { executeSpsNodeCommand, cancelSpsNodeCommand } = await import("../../desktop-node/src/command-runner.mjs");
+    let nodeState = { v: 1, entries: [] };
+    const memberNode = createSpsNativeNodeController({ getAuthority, getState: () => nodeState,
+      saveState: async (value, { beforeCommit } = {}) => { beforeCommit?.(); nodeState = value; },
+      encrypt: value => Buffer.from(value).toString("base64"),
+      decrypt: value => Buffer.from(value, "base64").toString(), confirm: async () => true,
+      pollMs: 250, appVersion: "0.4.137",
+      scanCapabilities: async () => [{ kind: "agy_cli", label: "Isolated canary runtime" }],
+      scanRunners: async () => [{ runnerKey: "native-canary", kind: "agy_cli", label: "Native canary",
+        credentialStatus: "unknown", availability: { status: "available", source: "node_probe", observedAt: new Date().toISOString() } }],
+      getMember: () => ({
+        async recover() {
+          nativeNodeStage = "recover-approved-device";
+          const current = await db.select().from(spsMemberDevices);
+          const storedDevice = current.find(row => row.id === device.id);
+          const result = { deviceId: device.id, status: storedDevice?.status === "approved" ? "approved" : "revoked" };
+          nativeNodeStage = `recover-${result.status}`;
+          return result;
+        },
+        async invokeNode(input, options = {}) {
+          const current = () => { if (options.signal?.aborted) throw new Error("Native Node scenario cancelled."); };
+          const client = createSpsNativeMemberWorkspaceClient({ target, context, timeoutMs: 30_000, assertCurrent: current });
+          try {
+            nativeNodeStage = "tls-session-exchange";
+            await client.exchange("fixture.header.signature", options.signal ? { signal: options.signal } : {});
+            nativeNodeStage = "tls-node-runtime-request";
+            let result;
+            try {
+              result = await client.invokeNode({ workspaceId: input.workspaceId, request: input.request,
+                keyRequest: key, issuance }, options.signal ? { signal: options.signal } : {});
+            } catch (error) {
+              const code = typeof error?.code === "string" && /^native_enrollment_client_[a-z_]+$/.test(error.code)
+                ? error.code : "unclassified";
+              console.error(`native_node_transport_error:${code}`);
+              throw error;
+            }
+            nativeNodeStage = "tls-node-runtime-response";
+            return { data: result.data, origin: target.origin };
+          } finally { client.dispose(); }
+        },
+      }),
+      execute: options => executeSpsNodeCommand({ ...options,
+        resolveInvocation: async () => ({ executable: process.execPath,
+          args: ["-e", "process.stdout.write('SPS_NATIVE_NODE_CANARY_OK\\n'); process.stderr.write('canary-stderr\\n')"] }),
+        resolveWorkspace: async () => nativeNodeWorkspaceFixture.directory,
+      }),
+      cancelCommand: (commandId, ownership) => cancelSpsNodeCommand(commandId,
+        "Isolated Native Node acceptance is cleaning up its owned command.", { ownership }),
+    });
+    try {
+      nativeNodeStage = "controller-connect";
+      const connected = await memberNode.connect({ hostId, workspaceId: companyId });
+      nativeNodeStage = "registered-and-heartbeated";
+      assert.equal(connected.state, "pending");
+      const nativeNode = (await db.select().from(spsNodes)).find(row => row.id === connected.nodeId);
+      assert.ok(nativeNode);
+      const agentId = randomUUID(), runner = (await db.select().from(spsNodeRunnerProfiles))
+        .find(row => row.nodeId === nativeNode.id && row.runnerKey === "native-canary");
+      assert.ok(runner);
+      await db.insert(agents).values({ id: agentId, companyId, name: "Native canary Agent", adapterType: "sps_agy_local",
+        adapterConfig: {}, runtimeConfig: {}, permissions: {}, status: "idle" });
+      await db.insert(spsAgentNodeBindings).values({ companyId, agentId, nodeId: nativeNode.id, assignedByUserId: "fixture-host" });
+      await db.insert(spsNodeAgentGrants).values({ companyId, nodeId: nativeNode.id, agentId, grantedByUserId: "fixture-host" });
+      await db.insert(spsNodeAgentRunnerGrants).values({ companyId, nodeId: nativeNode.id, runnerProfileId: runner.id,
+        agentId, grantedByUserId: "fixture-host" });
+      const commandId = randomUUID();
+      await db.insert(spsNodeCommands).values({ id: commandId, companyId, nodeId: nativeNode.id, agentId,
+        runnerProfileId: runner.id, command: "agy", args: [], env: {}, status: "queued",
+        workspaceAccess: null, timeoutMs: 30_000, heartbeatRunId: null, projectId: null });
+      await new Promise(resolve => setTimeout(resolve, 750));
+      const pendingCommand = (await db.select().from(spsNodeCommands)).find(row => row.id === commandId);
+      assert.equal(pendingCommand?.status, "queued", "A pending Node must not claim its command.");
+      // This isolated fixture applies the same explicit Owner approval and
+      // Agent/Runner grants that the existing authenticated admin flow records.
+      await db.update(spsNodes).set({ status: "active", approvedAt: new Date(), approvedByUserId: "fixture-owner" });
+      const deadline = Date.now() + 45_000;
+      let completed;
+      while (Date.now() < deadline) {
+        completed = (await db.select().from(spsNodeCommands)).find(row => row.id === commandId);
+        if (completed?.status === "succeeded" || completed?.status === "failed") break;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      assert.equal(completed?.status, "succeeded", `Native canary command ended ${completed?.status ?? "without a result"}.`);
+      assert.ok(completed.claimedAt instanceof Date && completed.startedAt instanceof Date && completed.finishedAt instanceof Date);
+      assert.equal(completed.exitCode, 0);
+      const events = (await db.select().from(spsNodeCommandEvents)).filter(event => event.commandId === commandId);
+      assert.ok(events.some(event => event.stream === "stdout" && event.body?.includes("SPS_NATIVE_NODE_CANARY_OK")));
+      assert.ok(events.some(event => event.stream === "stderr" && event.body?.includes("canary-stderr")));
+      nativeNodeStage = "foreign-workspace-denial";
+      await assert.rejects(memberNode.connect({ hostId, workspaceId: randomUUID() }));
+      assert.equal((await db.select().from(spsNodes)).length, 1, "A foreign workspace must not register a Node.");
+      nativeNodeStage = "revoked-node-denial";
+      await db.update(spsNodes).set({ status: "revoked" });
+      const revokeDeadline = Date.now() + 10_000;
+      let status;
+      do {
+        status = memberNode.status({ hostId, workspaceId: companyId });
+        if (status.error) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } while (Date.now() < revokeDeadline);
+      assert.equal(status.error, true, "A revoked Node must leave its local command loop unavailable.");
+      console.log("native_node_acceptance:registered,approved,granted,claimed,executed,completed");
+    } catch (error) {
+      console.error(`native_node_failure_stage:${nativeNodeStage}`);
+      throw error;
+    } finally {
+      try { await memberNode.dispose(); } finally { await nativeNodeWorkspaceFixture.remove(); }
+    }
+  }
   if (withNativeWindow) {
     const itemId = randomUUID();
     await db.insert(spsPluginInboxItems).values({ id: itemId, companyId,
@@ -354,7 +482,20 @@ export function NativeCount({data, refresh}) {
   }
   assert.equal((await read(discovery)).status, 403);
   assert.equal((await read(`${root}/workspace-shell`)).status, 403);
-  for (const table of [agents, spsNodes, ...(withNativePlugin ? [] : [plugins])]) assert.deepEqual(await db.select().from(table), []);
+  if (withNativeNode) {
+    const remainingNodes = await db.select().from(spsNodes);
+    const remainingAgents = await db.select().from(agents);
+    assert.equal(remainingNodes.length, 1);
+    assert.equal(remainingNodes[0].companyId, companyId);
+    assert.equal(remainingNodes[0].ownerUserId, userId);
+    assert.equal(remainingNodes[0].status, "revoked");
+    assert.equal(remainingAgents.length, 1);
+    assert.equal(remainingAgents[0].companyId, companyId);
+    assert.equal(remainingAgents[0].name, "Native canary Agent");
+    assert.deepEqual(await db.select().from(plugins), []);
+  } else {
+    for (const table of [agents, spsNodes, ...(withNativePlugin ? [] : [plugins])]) assert.deepEqual(await db.select().from(table), []);
+  }
 } catch (error) { failure = error; throw error; }
 finally {
   const errors = [];
@@ -392,6 +533,8 @@ finally {
 }
 console.log(withNativePlugin
   ? "Native Plugin UI integration passed: actual Electron isolated Plugin renderer, declared React export and CSS through exact fresh mTLS/Main/private Core channel, owned worker data/action and real DB Plugin state persistence, wrong-peer denial, account/parent cleanup and natural Main/Core/DB exit. Identity exchange is substituted; not signed installation or physical two-PC LAN qualification."
+  : withNativeNode
+  ? "Native Node integration passed: actual fresh mTLS, owned child IPC, private Core HTTP/DB registration and heartbeat, pending-command denial, explicit fixture Owner approval/Agent/Runner grants, claimed command lease/output events/success completion from an owned canary process in an owned temp workspace, foreign-workspace and revoked-Node denial, and natural process/database cleanup. Identity exchange and canary resolver are fixture-only; approval is a fixture DB row, not UI automation. No Electron, DPAPI, provider auth, SMB or physical-LAN qualification."
   : withHostRenewal
   ? "Native Host and Member renewal integration passed: actual Windows DPAPI Host publication, explicit listener restart retaining exact old leaf selection, protected Member target refresh, same keys/issuer/original files, real Core renewal/reconciliation and Workspace Inbox operations, independent revocation denial and natural process/database cleanup. Identity exchange is substituted; no issuer rotation or expired-trust recovery qualification."
   : withRenewal

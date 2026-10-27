@@ -13,7 +13,7 @@ export function createSpsOwnerVaultOperationGate({ onInvalidation = () => {} } =
       if (restoring !== null) throw new Error("Wait for the SPS Host restore to finish before changing accounts or servers.");
       connectionChanges++;
       generation++;
-      try { onInvalidation(); return await action(); } finally { connectionChanges--; }
+      try { await onInvalidation(); return await action(); } finally { connectionChanges--; }
     },
     async start(action, { restorePermit } = {}) {
       if (restoring !== null && restorePermit !== restoring) {
@@ -29,7 +29,7 @@ export function createSpsOwnerVaultOperationGate({ onInvalidation = () => {} } =
       const permit = Symbol("SPS Host restore activation");
       generation++;
       restoring = permit;
-      try { onInvalidation(); return await action(permit); } finally { restoring = null; }
+      try { await onInvalidation(); return await action(permit); } finally { restoring = null; }
     },
   });
 }

@@ -357,13 +357,32 @@ test("marks Desktop-owned Core mutations with their exact trusted origin", async
   );
 });
 
-test("shuts down the Owner Host gracefully before quitting Desktop", async () => {
+test("normal quit and updater handoff use the shared runtime drain", async () => {
   const main = await readFile(mainPath, "utf8");
 
-  assert.match(main, /async function stopDesktopRuntimeGracefully\(\) \{[\s\S]*?ownerHostManager\?\.stop\(\{ force: false \}\)/);
-  assert.match(main, /app\.on\("before-quit", \(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?shutdownComplete = true;[\s\S]*?app\.quit\(\);/);
-  assert.match(main, /desktopUpdateController\.stop\(\);/);
-  assert.match(main, /createSpsDesktopUpdateController\(\{[\s\S]*?stopDesktopRuntimeGracefully,[\s\S]*?setQuitting:[\s\S]*?setShutdownComplete:/);
+  const drainStart = main.indexOf("const drainDesktopRuntime = createSpsDesktopRuntimeDrain(");
+  const drainEnd = main.indexOf("async function stopDesktopRuntimeGracefully()", drainStart);
+  assert.notEqual(drainStart, -1);
+  assert.notEqual(drainEnd, -1);
+  const drainWiring = main.slice(drainStart, drainEnd);
+  assert.match(drainWiring, /stopUpdates: \(\) => desktopUpdateController\.stop\(\)/);
+  assert.match(drainWiring, /name: "Owner Host", stop: \(\) => ownerHostManager\?\.stop\(\{ force: false \}\)/);
+  assert.match(main.slice(drainEnd), /async function stopDesktopRuntimeGracefully\(\) \{\s*isQuitting = true;\s*await drainDesktopRuntime\(\);/);
+
+  const updateStart = main.indexOf("const desktopUpdateController = createSpsDesktopUpdateController(");
+  const updateEnd = main.indexOf("let ownerHostManager = null;", updateStart);
+  assert.notEqual(updateStart, -1);
+  assert.notEqual(updateEnd, -1);
+  assert.match(main.slice(updateStart, updateEnd), /stopDesktopRuntimeGracefully,/);
+
+  const quitStart = main.indexOf("const desktopQuitCoordinator = createSpsDesktopQuitCoordinator(");
+  const quitEnd = main.indexOf('app.on("will-quit"', quitStart);
+  assert.notEqual(quitStart, -1);
+  assert.notEqual(quitEnd, -1);
+  const quitWiring = main.slice(quitStart, quitEnd);
+  assert.match(quitWiring, /return stopDesktopRuntimeGracefully\(\);/);
+  assert.match(quitWiring, /app\.on\("before-quit", event => \{ void desktopQuitCoordinator\.handle\(event\); \}\);/);
+  assert.doesNotMatch(quitWiring, /app\.exit|taskkill|process\.kill/);
 });
 
 test("exposes developer context navigation only through the Host Workspace and review bridges", async () => {

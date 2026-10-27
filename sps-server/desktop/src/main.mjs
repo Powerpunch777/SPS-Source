@@ -28,6 +28,7 @@ import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.m
 import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
 import {
   cancelSpsNodeCommands,
+  cancelSpsNodeCommand,
   createNodeIdentity,
   createNodeTransportIdentity,
   claimSpsNodeCommand,
@@ -85,6 +86,7 @@ import {
 import { createSpsDesktopUpdateController } from "./desktop-update-controller.mjs";
 import { createSpsDesktopRuntimeDrain } from "./desktop-runtime-drain.mjs";
 import { createSpsDesktopQuitCoordinator } from "./desktop-quit-coordinator.mjs";
+import { createSpsNativeNodeController } from "./native-node-controller.mjs";
 import { createSpsDesktopAccountController } from "./desktop-account-controller.mjs";
 import { spsRequestError, spsRequestTimeoutSignal } from "./desktop-request.mjs";
 import {
@@ -274,6 +276,7 @@ let nativeIdentityController = null;
 let nativeDeviceManagementController = null;
 let nativeInvitationManagementController = null;
 let nativeMemberController = null;
+let nativeNodeController = null;
 let nativeWorkspaceWindowController = null;
 let nativePluginWindowController = null;
 let nativeHostController = null;
@@ -284,8 +287,10 @@ const ownerVaultOperations = createSpsOwnerVaultOperationGate({
     ownerHostManager?.invalidateNativeSigner();
     nativeMemberController?.dispose();
     nativeMemberController = null;
+    const nodeCleanup = nativeNodeController?.invalidate();
     void nativeWorkspaceWindowController?.invalidate().catch(() => {});
     void nativePluginWindowController?.invalidate().catch(() => {});
+    return nodeCleanup;
   },
 });
 let ownerHostRecoveryPluginsDisabled = null;
@@ -666,6 +671,9 @@ async function adoptLegacyOwnerHostIfNeeded() {
 }
 
 function sendDesktopAccountStatus() {
+  if (!backgroundStartupDeferred && nativeMemberAuthority() && state.nativeNodes?.entries?.some(entry => entry.enabled)) {
+    void ensureNativeNodeController().resume().catch(() => {});
+  }
   createApplicationMenu();
   refreshTrayMenu();
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -679,7 +687,11 @@ function openSpsExternalUrl(value) {
 async function startDesktopAccountSignIn() {
   if (desktopStateUnavailable) throw new Error("Repair SPS Desktop connection settings before signing in.");
   if (ownerVaultOperations.isRestoring()) throw new Error("Wait for the SPS Host restore to finish before changing accounts.");
-  return ownerVaultOperations.changeConnection(() => desktopAccountController.signIn());
+  const result = await ownerVaultOperations.changeConnection(() => desktopAccountController.signIn());
+  // The account callback can fire while connection-change authority is fenced.
+  // Resume enabled Native Nodes only after that gate has finished changing.
+  sendDesktopAccountStatus();
+  return result;
 }
 
 async function signOutDesktopAccount() {
@@ -1464,6 +1476,30 @@ function ensureNativeMemberController() {
     authenticate: ensureDesktopIdentityAccessToken,
   });
   return nativeMemberController;
+}
+
+function ensureNativeNodeController() {
+  if (!nativeNodeController) nativeNodeController = createSpsNativeNodeController({
+    getAuthority: nativeMemberAuthority,
+    getState: () => state.nativeNodes,
+    saveState: async (value, { beforeCommit }) => {
+      beforeCommit(); state.nativeNodes = value;
+      await persistState({ rememberActiveConnection: false, beforeCommit }); beforeCommit();
+    },
+    encrypt, decrypt, getMember: ensureNativeMemberController,
+    displayName: "SPS Native Node", appVersion: app.getVersion(),
+    cancelCommand: (commandId, ownership) => cancelSpsNodeCommand(commandId, "The Native Node connection stopped.", { ownership }),
+    confirm: async ({ hostId, workspaceId }) => {
+      const choice = await dialog.showMessageBox(coreSettingsController?.getWindow?.() ?? mainWindow ?? undefined, {
+        type: "question", title: "Connect this computer as a Native Node?",
+        message: "Allow this computer to receive work approved by this Host?",
+        detail: `Host: ${hostId}\nWorkspace: ${workspaceId}\n\nA separate protected Node key will be saved. Host approval and runtime/Source grants are still required. The connection can resume after restarting SPS; disconnect here to stop it.`,
+        buttons: ["Cancel", "Connect Node"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
+  });
+  return nativeNodeController;
 }
 
 function ensureNativeIdentityController() {
@@ -4285,6 +4321,9 @@ function ensureCoreSettingsController() {
     listNativeRegistrations: () => ensureNativeMemberController().list(),
     openNativeMemberWorkspace: (input, options) => ensureNativeWorkspaceWindowController().open(input, options),
     listNativeMemberWorkspaces: (input, options) => ensureNativeMemberController().listWorkspaces(input, options),
+    nativeNodeStatus: input => ensureNativeNodeController().status(input),
+    connectNativeNode: (input, options) => ensureNativeNodeController().connect(input, options),
+    disconnectNativeNode: input => ensureNativeNodeController().disconnect(input),
     enrollNativeMember: (input, options) => ensureNativeMemberController().enroll(input, options),
     recoverNativeMember: (input, options) => ensureNativeMemberController().recover(input, options),
     inspectNativeMemberCertificate: (input, options) => ensureNativeMemberController().inspectCertificate(input, options),
@@ -5670,6 +5709,7 @@ const drainDesktopRuntime = createSpsDesktopRuntimeDrain({
     return [
       { name: "Native Workspace", stop: () => nativeWorkspaceWindowController?.dispose() },
       { name: "Native Plugin", stop: () => nativePluginWindowController?.dispose() },
+      { name: "Native Node", stop: () => nativeNodeController?.dispose() },
       { name: "Memory", stop: () => defaultMemoryManager?.stop({ force: false }) },
       { name: "Owner Host", stop: () => ownerHostManager?.stop({ force: false }) },
       { name: "Plugin preview", stop: () => preview?.manager?.stop({ force: false }),

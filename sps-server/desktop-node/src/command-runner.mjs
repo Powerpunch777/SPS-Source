@@ -369,6 +369,9 @@ export async function resolveSpsNodeInvocation(command, args, options = {}) {
 const processTerminations = new WeakMap();
 function processScopeAlive(child) {
   if (!child?.pid) return false;
+  // A terminal Windows child no longer owns its PID. It may already have been
+  // reused while output/completion delivery is still awaiting the Host.
+  if (process.platform === "win32" && (child.exitCode !== null || child.signalCode !== null)) return false;
   try { process.kill(process.platform === "win32" ? child.pid : -child.pid, 0); return true; }
   catch (error) { return error.code !== "ESRCH"; }
 }
@@ -404,6 +407,7 @@ async function terminateProcessTreeInternal(child) {
 }
 function terminateProcessTree(child) {
   if (!child?.pid) return Promise.resolve();
+  if (process.platform === "win32" && !processScopeAlive(child)) return Promise.resolve();
   const pending = processTerminations.get(child);
   if (pending) return pending;
   const operation = terminateProcessTreeInternal(child).then(async () => {
@@ -423,8 +427,21 @@ export async function cancelSpsNodeCommands(reason = "SPS Desktop stopped this l
   await Promise.all(active.map(async (run) => {
     run.cancellationError ??= reason;
     await terminateProcessTree(run.child);
+    if (run.settled && !processScopeAlive(run.child)) {
+      for (const [id, current] of activeCommands) if (current === run) activeCommands.delete(id);
+    }
   }));
   return active.length;
+}
+
+/** Cancel only the invocation owned by this lifecycle controller. */
+export async function cancelSpsNodeCommand(commandId, reason = "SPS Desktop stopped this local command.", { ownership } = {}) {
+  const run = activeCommands.get(commandId);
+  if (!run || ownership !== undefined && run.ownership !== ownership) return false;
+  run.cancellationError ??= reason;
+  await terminateProcessTree(run.child);
+  if (run.settled && !processScopeAlive(run.child) && activeCommands.get(commandId) === run) activeCommands.delete(commandId);
+  return true;
 }
 
 export async function executeSpsNodeCommand({
@@ -444,6 +461,7 @@ export async function executeSpsNodeCommand({
   completeCommand = completeSpsNodeCommand,
   hostEnvironment = process.env,
   marketplaceMcpRuntime = null,
+  ownership,
 }) {
   assertSpsNodeCommandRuntime(command);
   const timeoutMs = resolveSpsNodeCommandTimeoutMs(command);
@@ -485,7 +503,7 @@ export async function executeSpsNodeCommand({
   let lastLeaseConfirmedAt = Date.now();
   let hostProjectShareSession = null;
   let normalCompletionPayload = null;
-  const activeRun = { child: null, cancellationError: null };
+  const activeRun = { child: null, cancellationError: null, ownership };
   activeCommands.set(command.id, activeRun);
   try {
     const prepared = await withCommandPreflightTimeout(async () => {
@@ -677,6 +695,7 @@ export async function executeSpsNodeCommand({
     throw error;
   } finally {
     await hostProjectShareSession?.close().catch(() => undefined);
-    if (activeCommands.get(command.id) === activeRun) activeCommands.delete(command.id);
+    activeRun.settled = true;
+    if (!processScopeAlive(activeRun.child) && activeCommands.get(command.id) === activeRun) activeCommands.delete(command.id);
   }
 }

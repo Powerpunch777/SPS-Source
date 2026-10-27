@@ -45,6 +45,14 @@ function nativeMemberInput(input, keys) {
   return value;
 }
 
+function nativeNodeAction(action, input) {
+  try {
+    const value = nativeMemberInput(input, ["hostId", "workspaceId"]);
+    if (!nativeDeviceIdPattern.test(value.hostId) || !nativeDeviceIdPattern.test(value.workspaceId)) throw new TypeError("A saved Host and Workspace are required.");
+    return ipcRenderer.invoke(`desktop:core-settings-${action}`, value);
+  } catch (error) { return Promise.reject(error); }
+}
+
 const coreSettingsApi = Object.freeze({
   getStatus: () => ipcRenderer.invoke("desktop:core-settings-get-status"),
   setPluginsDisabled: (input) => {
@@ -103,6 +111,9 @@ const coreSettingsApi = Object.freeze({
   stopNativeHostListener: () => ipcRenderer.invoke("desktop:core-settings-stop-native-host-listener"),
   copyNativeHostInvitation: () => ipcRenderer.invoke("desktop:core-settings-copy-native-host-invitation"),
   listNativeRegistrations: () => ipcRenderer.invoke("desktop:core-settings-list-native-registrations"),
+  nativeNodeStatus: input => nativeNodeAction("native-node-status", input),
+  connectNativeNode: input => nativeNodeAction("connect-native-node", input),
+  disconnectNativeNode: input => nativeNodeAction("disconnect-native-node", input),
   openNativeMemberWorkspace: input => {
     let value;
     try {

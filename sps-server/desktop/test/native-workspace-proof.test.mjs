@@ -9,6 +9,7 @@ const COOKIE = `sps_identity_session=${"a".repeat(64)}`;
 const KEY = Buffer.alloc(32, 0x5a);
 const CERTIFICATE = Buffer.from([0x30, 0x00]);
 const PLUGIN_TARGET = "/sps-native/v1/plugin-runtime";
+const NODE_TARGET = "/sps-native/v1/node-runtime";
 
 function fixture(options = {}) {
   let current = true;
@@ -87,6 +88,21 @@ test("signs POST only for the fixed private Plugin runtime route and its exact b
   assert.equal(proof.fields[7], createHash("sha256").update(body).digest("hex"));
   assert.equal(proof.fields[9], "application/json");
   assert.equal(proof.signature, createHmac("sha256", KEY).update(proof.canonical).digest("base64url"));
+});
+
+test("signs Native Node only for its separate fixed target and 512 KiB body allowance", t => {
+  const { signer } = fixture();
+  t.after(() => signer.dispose());
+  const body = Buffer.from(JSON.stringify({ operation: "availability", nodeId: "33333333-3333-4333-8333-333333333333",
+    resourceId: null, payload: { timestamp: "2026-10-27T04:00:00.000Z", nonce: "A".repeat(43),
+      signature: "B".repeat(86), report: "x".repeat(80 * 1024) } }));
+  const proof = decode(signer.signWorkspaceRequest(request({ method: "POST", target: NODE_TARGET,
+    body, contentType: "application/json" })));
+  assert.equal(proof.fields[4], NODE_TARGET);
+  assert.equal(proof.fields[7], createHash("sha256").update(body).digest("hex"));
+  assert.throws(() => signer.signWorkspaceRequest(request({ method: "POST", target: NODE_TARGET,
+    body: Buffer.alloc(512 * 1024 + 1), contentType: "application/json" })),
+  { code: "native_workspace_proof_unavailable" });
 });
 
 test("rejects unapproved methods, malformed targets, bodies, cookies and TLS certificate inputs", t => {

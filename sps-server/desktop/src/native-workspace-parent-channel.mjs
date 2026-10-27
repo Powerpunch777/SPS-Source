@@ -3,6 +3,8 @@ import { TextDecoder } from "node:util";
 import { createSpsNativeWorkspaceRequestSigner } from "./native-workspace-proof.mjs";
 import { nativeCertificateRecord as record, nativeCertificateUuid as uuid } from "./native-certificate-primitives.mjs";
 import { requireSpsNativePluginRequest, NATIVE_PLUGIN_MAX_RESPONSE } from "./native-plugin-protocol.mjs";
+import { requireSpsNativeNodeRequest, NATIVE_NODE_TARGET, NATIVE_NODE_MAX_REQUEST, NATIVE_NODE_MAX_RESPONSE }
+  from "./native-node-protocol.mjs";
 
 const REQUEST = "sps.native.workspace.bootstrap.request";
 const RESPONSE = "sps.native.workspace.bootstrap.response";
@@ -101,6 +103,22 @@ function pluginRuntimeBody(value) {
     || /[\u0000-\u001f\u007f]/.test(request.key)) throw unavailable();
   if (!request.params || typeof request.params !== "object" || Array.isArray(request.params)
     || Object.getPrototypeOf(request.params) !== Object.prototype) throw unavailable();
+  return Buffer.from(value);
+}
+
+function nodeRuntimeBody(value) {
+  if (!Buffer.isBuffer(value) || value.length < 1 || value.length > NATIVE_NODE_MAX_REQUEST) throw unavailable();
+  let text;
+  let parsed;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(value);
+    parsed = JSON.parse(text);
+  } catch { throw unavailable(); }
+  let request;
+  try { request = requireSpsNativeNodeRequest(parsed); }
+  catch { throw unavailable(); }
+  if (JSON.stringify(parsed) !== text || JSON.stringify(Reflect.ownKeys(parsed))
+    !== JSON.stringify(["operation", "nodeId", "resourceId", "payload"])) throw unavailable();
   return Buffer.from(value);
 }
 
@@ -272,13 +290,14 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
         const snapshot = Object.freeze({ workspaceId: request.workspaceId, target: request.target,
           cookie: request.cookie, peerCertificateDer: Buffer.from(request.peerCertificateDer),
           ...(mutationRequest ? { method: request.method,
-            body: postRequest ? pluginRuntimeBody(request.body) : patchRequest ? inboxStateBody(request.body) : (() => { throw unavailable(); })() } : {}) });
-        if (mutationRequest && (discovery || postRequest && snapshot.target !== PLUGIN_RUNTIME_TARGET
-          || patchRequest && snapshot.target === PLUGIN_RUNTIME_TARGET)) throw unavailable();
+            body: postRequest ? request.target === NATIVE_NODE_TARGET ? nodeRuntimeBody(request.body) : pluginRuntimeBody(request.body)
+              : patchRequest ? inboxStateBody(request.body) : (() => { throw unavailable(); })() } : {}) });
+        if (mutationRequest && (discovery || postRequest && ![PLUGIN_RUNTIME_TARGET, NATIVE_NODE_TARGET].includes(snapshot.target)
+          || patchRequest && [PLUGIN_RUNTIME_TARGET, NATIVE_NODE_TARGET].includes(snapshot.target))) throw unavailable();
         const patchRoute = patchRequest ? INBOX_PATCH_TARGET.exec(snapshot.target) : null;
         const route = discovery ? null : WORKSPACE_TARGET.exec(snapshot.target);
         if (postRequest) {
-          if (snapshot.workspaceId === null || snapshot.target !== PLUGIN_RUNTIME_TARGET) throw unavailable();
+          if (snapshot.workspaceId === null || ![PLUGIN_RUNTIME_TARGET, NATIVE_NODE_TARGET].includes(snapshot.target)) throw unavailable();
           uuid(snapshot.workspaceId);
         } else if (patchRequest ? (!patchRoute || patchRoute[1] !== snapshot.workspaceId)
           : (!discovery && (!route || route[1] !== snapshot.workspaceId))) throw unavailable();
@@ -317,8 +336,9 @@ export function attachSpsNativeWorkspaceParentChannel(child, {
         check();
         const contentType = response.headers?.get?.("content-type") ?? "";
         if (!/^application\/json(?:\s*;|$)/i.test(contentType)) throw unavailable();
-        const payload = await boundedJson(response, postRequest && JSON.parse(snapshot.body.toString("utf8")).operation === "asset"
-          ? NATIVE_PLUGIN_MAX_RESPONSE : MAX_RESPONSE_BYTES);
+        const postPayload = postRequest ? JSON.parse(snapshot.body.toString("utf8")) : null;
+        const payload = await boundedJson(response, postRequest && snapshot.target === NATIVE_NODE_TARGET ? NATIVE_NODE_MAX_RESPONSE
+          : postRequest && postPayload.operation === "asset" ? NATIVE_PLUGIN_MAX_RESPONSE : MAX_RESPONSE_BYTES);
         check();
         const confirmed = identity(await inspectBinding({ signal: controller.signal }));
         check();

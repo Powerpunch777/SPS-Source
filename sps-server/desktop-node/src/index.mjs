@@ -3,6 +3,7 @@ export {
   assertSpsNodeCommandRuntime,
   buildSpsNodeRuntimeEnvironment,
   cancelSpsNodeCommands,
+  cancelSpsNodeCommand,
   executeSpsNodeCommand,
   resolveSpsNodeExecutable,
   resolveSpsNodeInvocation,

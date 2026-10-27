@@ -103,3 +103,28 @@ test("Native Workspace open preload passes only canonical Host and Workspace IDs
   assert.equal(calls[0][0], "desktop:core-settings-open-native-member-workspace");
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0][1])), { hostId, workspaceId });
 });
+
+test("Native Node Settings preload exposes only safe Host and Workspace selectors", async () => {
+  const { api, calls } = await loadPreload();
+  const hostId = "11111111-1111-4111-8111-111111111111";
+  const workspaceId = "22222222-2222-4222-8222-222222222222";
+  let getterRan = false;
+  const hostile = Object.defineProperty({ hostId }, "workspaceId", {
+    enumerable: true, get() { getterRan = true; throw new Error("secret selector getter"); },
+  });
+  for (const action of [api.nativeNodeStatus, api.connectNativeNode, api.disconnectNativeNode]) {
+    await assert.rejects(action(hostile));
+    await assert.rejects(action({ hostId, workspaceId, nodeId: "caller-selected" }));
+    await assert.rejects(action({ hostId: "../host", workspaceId }));
+  }
+  assert.equal(getterRan, false);
+  assert.deepEqual(calls, []);
+  await api.nativeNodeStatus({ hostId, workspaceId });
+  await api.connectNativeNode({ hostId, workspaceId });
+  await api.disconnectNativeNode({ hostId, workspaceId });
+  assert.deepEqual(calls.map(row => [row[0], JSON.parse(JSON.stringify(row[1]))]), [
+    ["desktop:core-settings-native-node-status", { hostId, workspaceId }],
+    ["desktop:core-settings-connect-native-node", { hostId, workspaceId }],
+    ["desktop:core-settings-disconnect-native-node", { hostId, workspaceId }],
+  ]);
+});

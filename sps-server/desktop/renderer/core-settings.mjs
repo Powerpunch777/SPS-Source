@@ -855,6 +855,13 @@ async function showNativeMemberWorkspaces(hostId, resultRegion) {
       open.addEventListener("click", () => void openNativeMemberWorkspace(hostId, value.id));
       nativeWorkspaceButtons.push(open);
       resultRegion.append(open);
+      for (const [action, label] of [["nativeNodeStatus", "Node status"], ["connectNativeNode", "Connect Node"],
+        ["disconnectNativeNode", "Disconnect Node"]]) {
+        const button = document.createElement("button");
+        button.type = "button"; button.className = "button secondary"; button.textContent = label;
+        nativeWorkspaceButtons.push(button); resultRegion.append(button);
+        button.addEventListener("click", () => void manageNativeNode(action, hostId, value.id));
+      }
     }
   } catch {
     if (request === nativeRegistrationRequest) resultRegion.textContent = "Saved Workspaces are unavailable. Check the connection and retry.";
@@ -878,6 +885,26 @@ async function openNativeMemberWorkspace(hostId, workspaceId) {
     byId("native-member-result").textContent = "Workspace opened in its own window.";
   } catch {
     if (request === nativeRegistrationRequest) byId("native-member-result").textContent = "Workspace could not be opened. Check the Host connection and retry.";
+  } finally { pending.delete(key); syncControls(); }
+}
+
+async function manageNativeNode(action, hostId, workspaceId) {
+  if (pending.size || statusLoading || quitPending || currentStatus?.canManageNativeMember !== true) return;
+  const request = nativeRegistrationRequest, key = "native-node-management";
+  pending.add(key); syncControls();
+  try {
+    const result = await window.spsCoreSettings[action]({ hostId, workspaceId });
+    if (request !== nativeRegistrationRequest) return;
+    if (result?.cancelled === true) return;
+    const value = exactDataRecord(result, ["nodeId", "state", "activeRun", "error"]);
+    if (!value || !["off", "pending", "active", "unavailable"].includes(value.state)) throw new Error();
+    byId("native-member-result").textContent = value.state === "pending"
+      ? "Node registered. Ask the Host to approve this Node and grant the required runtime and Source access."
+      : value.state === "active" ? `Node connected.${value.activeRun ? " Approved work is running." : " Waiting for approved work."}`
+        : value.state === "off" ? "Node disconnected. Its protected keys were kept for reconnecting."
+          : "Node connection is unavailable. Reconnect explicitly after checking the Host and current grants.";
+  } catch {
+    if (request === nativeRegistrationRequest) byId("native-member-result").textContent = "The Node operation could not complete. Existing protected keys were preserved.";
   } finally { pending.delete(key); syncControls(); }
 }
 
