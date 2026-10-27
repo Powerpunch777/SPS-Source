@@ -41,6 +41,17 @@ The complete result and runtime constraint are recorded in
    types/constants, `external/sps-core/doc/plugins/PLUGIN_SPEC.md`, and the
    public SDK types/docs.
 
+   Compatibility detail from the current implementation: the V1 manifest
+   schema uses a Zod object and an enum array for `capabilities`. An unknown
+   optional profile property can be stripped by an older parser, while an
+   unknown required capability is rejected by the canonical loader before
+   worker start. An opt-in profile therefore needs an explicit compatibility
+   marker understood by the new validator, with marker/profile pairing checked
+   in both directions. The marker must not itself grant filesystem rights or
+   a new host RPC. Existing V1 plugins without the opt-in keep their current
+   contract; upgrade approval must include the new request. Validate older-host
+   rejection as well as the new profile before exposing protected execution.
+
 3. **Persist immutable, scoped policy.** Bind each resolved grant to the
    installed Plugin, Host, Workspace, execution profile, and immutable policy
    generation. The generation identifies the exact roots and rights used by an
@@ -81,6 +92,13 @@ The complete result and runtime constraint are recorded in
    global, while protected execution state and process lifecycle are scoped.
    Candidate touchpoints include `plugin-worker-manager.ts`, `plugin-loader.ts`,
    lifecycle routing, and the SDK host-client/protocol/RPC context.
+
+   The persistent binding must also cover `startupLocks`, auto-restart,
+   subscriptions and notification/disposer closures. Current per-RPC
+   `companyId` metadata is derived from dispatch parameters and cannot replace
+   a host-owned immutable worker binding. Notifications and host jobs without
+   an explicit Workspace cannot guess one for protected routing; they need a
+   scoped contract or an explicit unsupported result.
 
 7. **Keep migration, install, and recovery explicit.** Existing trusted
    same-user execution is a temporary lane selected explicitly for a Plugin and

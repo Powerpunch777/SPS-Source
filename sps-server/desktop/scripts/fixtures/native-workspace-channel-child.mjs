@@ -1,5 +1,6 @@
 // Isolated actual Core factory composition. Never reads a Desktop profile.
 import assert from "node:assert/strict";
+import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -92,11 +93,30 @@ try {
     const { createSpsNativePluginRuntime } = await load("server/src/services/sps-native-plugin-runtime.ts");
     reportStartupStage("plugin_state_create");
     const fixture = configuration.nativePlugin;
+    let workerEntrypoint = path.resolve(import.meta.dirname, "native-plugin-state-worker.cjs");
+    if (fixture.publicSdk === true) {
+      if (typeof fixture.packageRoot !== "string" || !path.isAbsolute(fixture.packageRoot)
+        || typeof fixture.workerEntrypoint !== "string" || !path.isAbsolute(fixture.workerEntrypoint)
+        || path.resolve(fixture.packageRoot) !== fixture.packageRoot
+        || path.resolve(fixture.workerEntrypoint) !== fixture.workerEntrypoint) throw new Error("Invalid public SDK fixture worker path.");
+      const relative = path.relative(fixture.packageRoot, fixture.workerEntrypoint);
+      if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        throw new Error("Public SDK fixture worker must stay inside its package root.");
+      }
+      const [rootRealPath, workerRealPath, rootStat, workerStat] = await Promise.all([
+        realpath(fixture.packageRoot), realpath(fixture.workerEntrypoint), lstat(fixture.packageRoot), lstat(fixture.workerEntrypoint),
+      ]);
+      if (rootRealPath !== fixture.packageRoot || workerRealPath !== fixture.workerEntrypoint
+        || rootStat.isSymbolicLink() || !rootStat.isDirectory() || workerStat.isSymbolicLink() || !workerStat.isFile()) {
+        throw new Error("Public SDK fixture worker path is not a canonical plain file.");
+      }
+      workerEntrypoint = fixture.workerEntrypoint;
+    }
     const state = pluginStateStore(db);
     workerManager = createPluginWorkerManager();
     reportStartupStage("plugin_worker_start");
     await workerManager.startWorker(fixture.pluginId, {
-      entrypointPath: path.resolve(import.meta.dirname, "native-plugin-state-worker.cjs"), manifest: fixture.manifest,
+      entrypointPath: workerEntrypoint, manifest: fixture.manifest,
       config: {}, instanceInfo: { instanceId: "native-plugin-fixture", hostVersion: "0.4.137" }, apiVersion: 1,
       autoRestart: false, hostHandlers: createHostClientHandlers({ pluginId: fixture.pluginId,
         capabilities: fixture.manifest.capabilities, services: { state: {

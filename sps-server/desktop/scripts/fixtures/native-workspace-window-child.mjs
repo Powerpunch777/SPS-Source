@@ -36,10 +36,50 @@ const publicBootstrap = { v: 1, kind: "sps.native.workspace.bootstrap",
   workspace: { id: workspaceId, name: "Native Window Fixture", issuePrefix: "NATIVE" }, member: { userId: "member" },
   capabilities: ["workspace.shell.read", "workspace.dashboard.read", "workspace.inbox.read"] };
 let generation = 0n, controller, pluginController, member, configuration, failed = false, stage = "startup";
+let withNativePluginSdk = false;
+let sdkUiStage = null;
+let sdkUiObservation = { snapshotElementExists: false, state: "unknown" };
+const sdkFailureCodes = new Set(["ERR_ASSERTION", "SPS_NATIVE_SDK_WIDGET_TIMEOUT", "SPS_NATIVE_PLUGIN_DEACTIVATION_TIMEOUT",
+  "native_enrollment_client_invalid_options", "native_enrollment_client_unavailable",
+  "native_enrollment_client_invalid_response", "native_enrollment_client_busy",
+  "native_enrollment_client_session_required", "native_enrollment_client_cancelled",
+  "native_enrollment_client_timeout", "native_enrollment_client_disposed"]);
 const authority = () => ({ identityIssuer: configuration?.context.identityIssuer ?? "https://identity.example.test",
   subject: configuration?.context.subject ?? "member", userDataDirectory: profile,
   vaultDirectory: path.join(fixture, configuration ? "member-vault" : "unused-vault"), generation });
 const mark = value => { stage = value; process.stdout.write(`native_window_stage:${value}\n`); };
+const markSdkUi = value => {
+  if (!withNativePluginSdk) return;
+  sdkUiStage = value;
+  process.stdout.write(`native_window_sdk_ui_stage:${value}\n`);
+};
+async function observeSdkUi(window) {
+  if (!withNativePluginSdk || !window || window.isDestroyed()) return sdkUiObservation;
+  try {
+    sdkUiObservation = await window.webContents.executeJavaScript(`(() => {
+      const element = document.querySelector('#native-connectivity-snapshot');
+      if (!element) return {snapshotElementExists: false, state: 'unknown'};
+      try {
+        const value = JSON.parse(element.textContent);
+        const state = ['verified', 'unavailable', 'unknown'].includes(value?.state) ? value.state : 'unknown';
+        return {snapshotElementExists: true, state};
+      } catch { return {snapshotElementExists: true, state: 'unknown'}; }
+    })()`);
+  } catch { sdkUiObservation = { snapshotElementExists: false, state: "unknown" }; }
+  return sdkUiObservation;
+}
+async function untilSdkUiVerified(window) {
+  markSdkUi("sdk_widget_wait");
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    assert.equal(window.isDestroyed(), false);
+    const observation = await observeSdkUi(window);
+    if (observation.snapshotElementExists && observation.state === "verified") return;
+    await pause(100);
+  }
+  throw Object.assign(new Error("Native connectivity widget did not render a verified snapshot."),
+    { code: "SPS_NATIVE_SDK_WIDGET_TIMEOUT" });
+}
 function hiddenWindow(options) {
   const window = new BrowserWindow({ ...options, show: false,
     webPreferences: { ...options.webPreferences, offscreen: true } });
@@ -237,6 +277,7 @@ try {
   }
   mark("window_open");
   const withNativePlugin = realTransport && configuration?.withNativePlugin === true;
+  withNativePluginSdk = withNativePlugin && configuration?.withNativePluginSdk === true;
   const loadedPluginAssets = new Set();
   if (withNativePlugin) {
     assert.ok(configuration.pluginId);
@@ -333,8 +374,21 @@ try {
     await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Open Plugin view').click()");
     mark("plugin_window_open");
     pluginWindow = await untilWindowCount(2, window);
-    await untilText(pluginWindow, "Native plugin count: 0");
+    if (withNativePluginSdk) await untilSdkUiVerified(pluginWindow);
+    else await untilText(pluginWindow, "Native plugin count: 0");
     assert.equal(await pluginWindow.webContents.executeJavaScript("typeof window.spsNativePlugin?.getData"), "function");
+    if (withNativePluginSdk) {
+      const snapshot = await pluginWindow.webContents.executeJavaScript(
+        "JSON.parse(document.querySelector('#native-connectivity-snapshot').textContent)");
+      assert.deepEqual(Object.keys(snapshot).sort(), ["authorization", "evidence", "hostId", "observedAt", "state", "transport", "workspaceId"]);
+      assert.deepEqual({ ...snapshot, observedAt: undefined }, {
+        state: "verified", transport: "native_tls", hostId: configuration.hostId,
+        workspaceId: configuration.workspaceId, authorization: "authorized", evidence: "authenticated_request", observedAt: undefined,
+      });
+      assert.match(snapshot.observedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      assert.equal(new Date(snapshot.observedAt).toISOString(), snapshot.observedAt);
+      markSdkUi("sdk_snapshot_validated");
+    }
     const pluginBootstrap = await pluginWindow.webContents.executeJavaScript("window.spsNativePlugin.bootstrap()");
     assert.equal(pluginBootstrap.descriptor.pluginId, configuration.pluginId);
     assert.equal(pluginBootstrap.descriptor.surfaceId, configuration.pluginSurfaceId);
@@ -345,13 +399,21 @@ try {
     assert.equal(await pluginWindow.webContents.executeJavaScript("typeof window.ipcRenderer"), "undefined");
     assert.equal(await pluginWindow.webContents.executeJavaScript("typeof process"), "undefined");
     assert.equal(await pluginWindow.webContents.executeJavaScript("navigator.serviceWorker.getRegistrations().then(rows => rows.length)"), 0);
-    await pluginWindow.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Increment Native count').click()");
-    await untilText(pluginWindow, "Native plugin count: 1");
-    const assetDeadline = Date.now() + 5000;
-    while (!loadedPluginAssets.has("dot.svg") && Date.now() < assetDeadline) await pause(100);
-    for (const relative of ["index.js", "counter-view.js", "index.css", "dot.svg"]) assert.equal(loadedPluginAssets.has(relative), true);
+    if (withNativePluginSdk) markSdkUi("sdk_isolation_validated");
+    if (withNativePluginSdk) {
+      const assetDeadline = Date.now() + 5000;
+      while (!loadedPluginAssets.has("connectivity-view.js") && Date.now() < assetDeadline) await pause(100);
+      for (const relative of ["index.js", "connectivity-view.js"]) assert.equal(loadedPluginAssets.has(relative), true);
+    } else {
+      await pluginWindow.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Increment Native count').click()");
+      await untilText(pluginWindow, "Native plugin count: 1");
+      const assetDeadline = Date.now() + 5000;
+      while (!loadedPluginAssets.has("dot.svg") && Date.now() < assetDeadline) await pause(100);
+      for (const relative of ["index.js", "counter-view.js", "index.css", "dot.svg"]) assert.equal(loadedPluginAssets.has(relative), true);
+    }
     const deactivated = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { process.removeListener("message", receive); reject(new Error("Plugin deactivation timed out")); }, 15_000);
+      const timer = setTimeout(() => { process.removeListener("message", receive);
+        reject(Object.assign(new Error("Plugin deactivation timed out"), { code: "SPS_NATIVE_PLUGIN_DEACTIVATION_TIMEOUT" })); }, 15_000);
       function receive(message) {
         if (!["sps.test.native-plugin.deactivated", "sps.test.native-plugin.deactivation-failed"].includes(message?.kind)) return;
         clearTimeout(timer); process.removeListener("message", receive);
@@ -359,10 +421,17 @@ try {
       }
       process.on("message", receive);
     });
+    markSdkUi("sdk_deactivation_requested");
     process.send({ kind: "sps.test.native-plugin.deactivate" });
     await deactivated;
-    assert.equal(await pluginWindow.webContents.executeJavaScript("window.spsNativePlugin.performAction('fixture.increment', {}).then(() => false, () => true)"), true);
-    assert.equal(await pluginWindow.webContents.executeJavaScript("fetch('/plugin/index.js').then(response => response.status !== 200)"), true);
+    assert.equal(await pluginWindow.webContents.executeJavaScript(withNativePluginSdk
+      ? "window.spsNativePlugin.getData('fixture.connectivity', {}).then(() => false, error => ['The Native Plugin window is unavailable. Check the connection and retry.', \"Error invoking remote method 'desktop:native-plugin-data': Error: The Native Plugin window is unavailable. Check the connection and retry.\"].includes(error.message))"
+      : "window.spsNativePlugin.performAction('fixture.increment', {}).then(() => false, () => true)"), true);
+    if (withNativePluginSdk) markSdkUi("sdk_data_denied");
+    assert.equal(await pluginWindow.webContents.executeJavaScript(withNativePluginSdk
+      ? "fetch('/plugin/index.js').then(response => response.status === 404)"
+      : "fetch('/plugin/index.js').then(response => response.status !== 200)"), true);
+    if (withNativePluginSdk) markSdkUi("sdk_assets_denied");
     mark("plugin_deactivation_denied");
   } else await until(window, "document.body.innerText.includes('No dashboard content is available.')");
   mark("inbox_render");
@@ -412,11 +481,14 @@ try {
       originalIssuedBytesPreserved: true, renewedEnrollmentReconciled: true } : {}),
     ...(realTransport && configuration?.hostRenewal ? { hostRenewalPublished: true, originalHostBytesPreserved: true,
       targetCertificateRefreshed: true, originalTargetBytesPreserved: true } : {}),
-    ...(withNativePlugin ? { pluginUi: true, pluginAction: true, pluginIsolated: true, pluginDeactivationDenied: true } : {}),
+    ...(withNativePluginSdk ? { pluginUi: true, pluginSdkConnectivity: true, pluginIsolated: true, pluginDeactivationDenied: true }
+      : withNativePlugin ? { pluginUi: true, pluginAction: true, pluginIsolated: true, pluginDeactivationDenied: true } : {}),
     ownerBridge: false, serviceWorkers: 0 }));
-} catch {
+} catch (error) {
   failed = true;
-  await writeFile(path.join(fixture, "result.json"), JSON.stringify({ ok: false, stage })).catch(() => {});
+  const sdkFailureCategory = sdkFailureCodes.has(error?.code) ? error.code : "other";
+  await writeFile(path.join(fixture, "result.json"), JSON.stringify({ ok: false, stage,
+    ...(withNativePluginSdk ? { sdkUiStage, sdkUiObservation, sdkFailureCategory } : {}) })).catch(() => {});
   console.error("Native Workspace isolated renderer verification failed.");
 } finally {
   try { await controller?.dispose(); } catch { failed = true; }

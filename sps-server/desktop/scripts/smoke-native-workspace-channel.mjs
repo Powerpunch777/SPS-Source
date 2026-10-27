@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { constants, createHash, createPublicKey, publicEncrypt, randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { fork, spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,19 +11,26 @@ const withWindow = process.argv[3] === "--with-native-window";
 const withNativeExecutionControl = process.argv[3] === "--with-native-execution-control";
 const withHostRenewal = process.argv[3] === "--with-native-host-renewal";
 const withNativePlugin = process.argv[3] === "--with-native-plugin";
+const withNativePluginSdk = process.argv[3] === "--with-native-plugin-sdk";
+const withNativePluginIntegration = withNativePlugin || withNativePluginSdk;
 const withNativeNode = process.argv[3] === "--with-native-node";
 const withNativePluginNode = process.argv[3] === "--with-native-plugin-node";
 const withNativePluginSource = process.argv[3] === "--with-native-plugin-source";
 const withNativeNodeIntegration = withNativeNode || withNativePluginNode || withNativePluginSource;
 const withRenewal = process.argv[3] === "--with-native-renewal" || withHostRenewal;
-const withNativeWindow = withWindow || withRenewal || withNativePlugin || withNativeExecutionControl;
+const withNativeWindow = withWindow || withRenewal || withNativePlugin || withNativePluginSdk || withNativeExecutionControl;
 const nativeWorkspaceStartupStages = new Set(["configuration_received", "import_db", "import_identity_auth", "import_workspace_channel",
   "import_parent_enrollment", "import_parent_ingress", "import_node_runtime", "database_connect", "identity_create",
   "node_runtime_create", "import_plugin_worker_manager", "import_plugin_host_handlers", "import_plugin_state_store",
   "import_native_plugin_runtime", "plugin_state_create", "plugin_worker_start", "plugin_runtime_create",
   "workspace_channel_create", "enrollment_create", "parent_ingress_create", "wait_workspace_channel_ready"]);
+const nativePluginSdkFailureCodes = new Set(["ERR_ASSERTION", "native_enrollment_client_invalid_options",
+  "native_enrollment_client_unavailable", "native_enrollment_client_invalid_response", "native_enrollment_client_busy",
+  "native_enrollment_client_session_required", "native_enrollment_client_cancelled", "native_enrollment_client_timeout",
+  "native_enrollment_client_disposed"]);
 if (![3, 4].includes(process.argv.length) || process.argv[2] !== "--isolated-native-workspace-channel"
-  || process.argv.length === 4 && (!withNativeWindow && !withNativeNodeIntegration || withNativeWindow && process.platform !== "win32")) {
+  || process.argv.length === 4 && (!withNativeWindow && !withNativeNodeIntegration && !withNativePluginSdk
+    || withNativeWindow && process.platform !== "win32")) {
   throw new Error("Use the explicit isolated Native Workspace channel command.");
 }
 const { createSpsNativeHostIdentity } = await import("../src/native-identity-certificates.mjs");
@@ -52,9 +59,22 @@ const { spsMemberDeviceService } = await load("server/src/services/sps-member-de
 const { spsWorkspaceExecutionControlService } = await load("server/src/services/sps-workspace-execution-control.ts");
 assert.equal((await getEmbeddedPostgresTestSupport()).supported, true);
 const database = await startEmbeddedPostgresTestDatabase("sps-native-workspace-channel-");
-let db, child, parent, ingress, signerChannel, parentIngress, failure, childShutdownStage = "not-started";
+let db, child, parent, ingress, signerChannel, parentIngress, failure, nativePluginSdkClient,
+  nativePluginSdkRequest, nativePluginSdkInput, nativePluginSdkStage = null, childShutdownStage = "not-started";
 let applyHostRenewal, nativePluginSourceExpected = null;
 let pluginFixture, pluginConfiguration;
+
+function assertPublicConnectivitySnapshot(result, hostId, workspaceId) {
+  const snapshot = result?.data;
+  assert.deepEqual(Object.keys(snapshot ?? {}).sort(), ["authorization", "evidence", "hostId", "observedAt", "state", "transport", "workspaceId"]);
+  assert.deepEqual({ ...snapshot, observedAt: undefined }, {
+    state: "verified", transport: "native_tls", hostId, workspaceId,
+    authorization: "authorized", evidence: "authenticated_request", observedAt: undefined,
+  });
+  assert.match(snapshot.observedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.equal(new Date(snapshot.observedAt).toISOString(), snapshot.observedAt);
+  return snapshot;
+}
 
 async function runWindow(configuration) {
   const { revokeNativeMemberDevice, ...windowConfiguration } = configuration;
@@ -72,7 +92,7 @@ async function runWindow(configuration) {
     electron.stdout.on("data", chunk => {
       output = `${output}${chunk}`.slice(-2048);
       const lines = output.split("\n"); output = lines.pop();
-      for (const line of lines) if (/^native_window_stage:[a-z_]+$/.test(line.trim())) process.stdout.write(`${line.trim()}\n`);
+      for (const line of lines) if (/^native_window_(?:stage|sdk_ui_stage):[a-z_]+$/.test(line.trim())) process.stdout.write(`${line.trim()}\n`);
     });
     electron.stderr.resume();
     electron.on("message", message => {
@@ -94,7 +114,7 @@ async function runWindow(configuration) {
           if (electron.connected) electron.send({ kind: "sps.test.native-host-renewal.failed" });
         });
       }
-      if (withNativePlugin && message?.kind === "sps.test.native-plugin.deactivate" && electron.connected) {
+      if (withNativePluginIntegration && message?.kind === "sps.test.native-plugin.deactivate" && electron.connected) {
         void db.insert(pluginCompanySettings).values({ pluginId: pluginConfiguration.pluginId,
           companyId: configuration.workspaceId, enabled: false, settingsJson: {} }).then(() => {
           if (electron.connected) electron.send({ kind: "sps.test.native-plugin.deactivated" });
@@ -116,12 +136,29 @@ async function runWindow(configuration) {
       "native_enrollment_client_invalid_response", "native_enrollment_client_busy", "native_enrollment_client_session_required",
       "native_enrollment_client_cancelled", "native_enrollment_client_timeout", "native_enrollment_client_disposed", "shutdown"]);
     const failureStage = safeStages.has(result?.stage) ? result.stage : "unknown";
-    assert.equal(code, 0, `Joined Native Workspace window failed at ${failureStage}.`);
+    const safeSdkUiStages = new Set(["sdk_widget_wait", "sdk_snapshot_validated", "sdk_isolation_validated",
+      "sdk_deactivation_requested", "sdk_data_denied", "sdk_assets_denied"]);
+    const safeSdkFailureCategories = new Set(["ERR_ASSERTION", "SPS_NATIVE_SDK_WIDGET_TIMEOUT", "SPS_NATIVE_PLUGIN_DEACTIVATION_TIMEOUT",
+      "native_enrollment_client_invalid_options", "native_enrollment_client_unavailable",
+      "native_enrollment_client_invalid_response", "native_enrollment_client_busy",
+      "native_enrollment_client_session_required", "native_enrollment_client_cancelled",
+      "native_enrollment_client_timeout", "native_enrollment_client_disposed", "other"]);
+    const sdkUiStage = safeSdkUiStages.has(result?.sdkUiStage) ? result.sdkUiStage : "unknown";
+    const sdkUiObservation = result?.sdkUiObservation
+      && typeof result.sdkUiObservation.snapshotElementExists === "boolean"
+      && ["verified", "unavailable", "unknown"].includes(result.sdkUiObservation.state)
+      ? result.sdkUiObservation : { snapshotElementExists: false, state: "unknown" };
+    const sdkFailureCategory = safeSdkFailureCategories.has(result?.sdkFailureCategory) ? result.sdkFailureCategory : "unknown";
+    const sdkFailureDetail = withNativePluginSdk
+      ? ` SDK UI stage ${sdkUiStage}; snapshot ${sdkUiObservation.snapshotElementExists ? "present" : "absent"}; state ${sdkUiObservation.state}; category ${sdkFailureCategory}.`
+      : "";
+    assert.equal(code, 0, `Joined Native Workspace window failed at ${failureStage}.${sdkFailureDetail}`);
     assert.deepEqual(result, { ok: true, views: ["workspace", "dashboard", "inbox"],
       actualElectron: true, fixtureBackend: false, actualDpapi: true, wrongPeerDenied: true,
       ...(withNativeExecutionControl ? { executionControl: true, stoppedReadOnly: true,
         revokedStatusDenied: true, revokedRefreshCleared: true } : {}),
-      ...(withNativePlugin ? { pluginUi: true, pluginAction: true, pluginIsolated: true, pluginDeactivationDenied: true } : {}),
+      ...(withNativePluginSdk ? { pluginUi: true, pluginSdkConnectivity: true, pluginIsolated: true, pluginDeactivationDenied: true }
+        : withNativePlugin ? { pluginUi: true, pluginAction: true, pluginIsolated: true, pluginDeactivationDenied: true } : {}),
       ...(withRenewal ? { renewalReplay: true, renewalPublished: true, originalIssuedBytesPreserved: true,
         renewedEnrollmentReconciled: true } : {}),
       ...(withHostRenewal ? { hostRenewalPublished: true, originalHostBytesPreserved: true,
@@ -163,12 +200,53 @@ try {
   await db.insert(companies).values({ id: companyId, name: "Native Channel Fixture", issuePrefix });
   await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: userId,
     status: "active", membershipRole: "member" });
-  if (withNativePlugin) {
+  if (withNativePluginIntegration) {
     pluginFixture = await createWorkspaceE2eFixture();
     const packageRoot = pluginFixture.directory, pluginId = randomUUID();
-    await mkdir(path.join(packageRoot, "dist", "ui"), { recursive: true });
-    await writeFile(path.join(packageRoot, "dist", "ui", "index.js"), "export { NativeCount } from './counter-view.js';\n");
-    await writeFile(path.join(packageRoot, "dist", "ui", "counter-view.js"), `
+    let manifest;
+    if (withNativePluginSdk) {
+      manifest = { id: "sps.native-connectivity-sdk-fixture", apiVersion: 1, version: "1.0.0",
+        displayName: "Native connectivity SDK fixture", description: "Public SDK Native connectivity acceptance",
+        author: "SPS acceptance fixture", categories: ["ui"],
+        capabilities: ["ui.dashboard.contribute", "sps.connectivity.read"],
+        entrypoints: { worker: "worker.mjs", ui: "dist/ui" }, ui: { dashboardWidgets: [{
+          id: "native-connectivity", displayName: "Native connectivity", exportName: "NativeConnectivity",
+          sizes: ["medium"], defaultSize: "medium", defaultOrder: 0, dataAction: "fixture.connectivity",
+        }] } };
+      await mkdir(path.join(packageRoot, "dist", "ui"), { recursive: true });
+      await writeFile(path.join(packageRoot, "dist", "ui", "index.js"), "export { NativeConnectivity } from './connectivity-view.js';\n");
+      await writeFile(path.join(packageRoot, "dist", "ui", "connectivity-view.js"), `
+import { createElement as h } from 'react';
+export function NativeConnectivity({data}) {
+  return h('section', null,
+    h('p', null, 'Native connectivity: ' + (data?.state ?? 'unavailable')),
+    h('pre', {id: 'native-connectivity-snapshot'}, JSON.stringify(data ?? null)));
+}
+`);
+      const sdkSource = path.resolve(import.meta.dirname, "../../../external/sps-plugin-sdk");
+      const sdkTarget = path.join(packageRoot, "node_modules", "@sonparkserver", "plugin-sdk");
+      for (const relative of ["package.json", "worker/index.mjs", "runtime/index.mjs", "runtime/host-support.mjs",
+        "platform/index.mjs", "profile/extension-profile-v2.mjs"]) {
+        const destination = path.join(sdkTarget, relative);
+        await mkdir(path.dirname(destination), { recursive: true });
+        await copyFile(path.join(sdkSource, relative), destination);
+      }
+      await copyFile(path.resolve(import.meta.dirname, "fixtures/native-plugin-public-sdk-worker.mjs"),
+        path.join(packageRoot, "worker.mjs"));
+      nativePluginSdkRequest = { pluginId, surface: "widget", surfaceId: "native-connectivity",
+        operation: "data", key: "fixture.connectivity", params: {} };
+      pluginConfiguration = { pluginId, manifest, packageRoot, workerEntrypoint: path.join(packageRoot, "worker.mjs"), publicSdk: true };
+    } else {
+      manifest = { id: "sps.native-ui-fixture", apiVersion: 1, version: "1.0.0", displayName: "Native Plugin fixture",
+        description: "Owned isolated Native UI acceptance", author: "SPS", categories: ["ui"],
+        capabilities: ["ui.dashboard.contribute", "plugin.state.read", "plugin.state.write"],
+        entrypoints: { worker: "worker.cjs", ui: "dist/ui" }, ui: { dashboardWidgets: [{
+          id: "native-count", displayName: "Native count", exportName: "NativeCount", sizes: ["medium"],
+          defaultSize: "medium", defaultOrder: 0, dataAction: "fixture.count",
+        }] } };
+      await mkdir(path.join(packageRoot, "dist", "ui"), { recursive: true });
+      await writeFile(path.join(packageRoot, "dist", "ui", "index.js"), "export { NativeCount } from './counter-view.js';\n");
+      await writeFile(path.join(packageRoot, "dist", "ui", "counter-view.js"), `
 import { createElement as h } from 'react';
 import { usePluginAction } from '@sonparkserver/plugin-sdk/ui/bridge';
 export function NativeCount({data, refresh}) {
@@ -177,19 +255,13 @@ export function NativeCount({data, refresh}) {
     h('button', {onClick: async () => { await increment({}); refresh(); }}, 'Increment Native count'));
 }
 `);
-    await writeFile(path.join(packageRoot, "dist", "ui", "index.css"), "section { padding: 12px; } section::before { content: ''; display: block; width: 8px; height: 8px; background-image: url('./dot.svg'); }");
-    await writeFile(path.join(packageRoot, "dist", "ui", "dot.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="green"/></svg>');
-    const manifest = { id: "sps.native-ui-fixture", apiVersion: 1, version: "1.0.0", displayName: "Native Plugin fixture",
-      description: "Owned isolated Native UI acceptance", author: "SPS", categories: ["ui"],
-      capabilities: ["ui.dashboard.contribute", "plugin.state.read", "plugin.state.write"],
-      entrypoints: { worker: "worker.cjs", ui: "dist/ui" }, ui: { dashboardWidgets: [{
-        id: "native-count", displayName: "Native count", exportName: "NativeCount", sizes: ["medium"],
-        defaultSize: "medium", defaultOrder: 0, dataAction: "fixture.count",
-      }] } };
+      await writeFile(path.join(packageRoot, "dist", "ui", "index.css"), "section { padding: 12px; } section::before { content: ''; display: block; width: 8px; height: 8px; background-image: url('./dot.svg'); }");
+      await writeFile(path.join(packageRoot, "dist", "ui", "dot.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="green"/></svg>');
+    }
     await db.insert(plugins).values({ id: pluginId, pluginKey: manifest.id, packageName: "@sps/native-ui-fixture",
       packagePath: packageRoot, version: manifest.version, apiVersion: 1, categories: manifest.categories,
       manifestJson: manifest, status: "ready" });
-    pluginConfiguration = { pluginId, manifest, packageRoot };
+    pluginConfiguration ??= { pluginId, manifest, packageRoot };
   }
   const devices = spsMemberDeviceService(db, hostId);
   const device = await devices.request({ companyId, userId, displayName: "Native Member", certificate:
@@ -248,14 +320,14 @@ export function NativeCount({data, refresh}) {
   await new Promise((resolve, reject) => {
     let lastStage = "waiting_for_configuration";
     const timer = setTimeout(() => finish(new Error(`Isolated Native Workspace child readiness timed out at ${lastStage}.`)),
-      withNativePlugin || withNativeNodeIntegration ? 90_000 : 45_000);
+      withNativePluginIntegration || withNativeNodeIntegration ? 90_000 : 45_000);
     const onFailure = () => finish(new Error(`Isolated Native Workspace child failed at ${lastStage}.`));
     const onMessage = message => {
       if (message?.kind === "sps.test.native-workspace.configure-ready") {
         lastStage = "configuration_sent";
         child.send({ kind: "sps.test.native-workspace.configure", binding,
           connectionString: database.connectionString, identityIssuer: "https://workspace.example.test", renewal: withRenewal,
-          ...(withNativePlugin ? { nativePlugin: pluginConfiguration } : {}), ...(withNativeNodeIntegration ? { nativeNode: true } : {}) },
+          ...(withNativePluginIntegration ? { nativePlugin: pluginConfiguration } : {}), ...(withNativeNodeIntegration ? { nativeNode: true } : {}) },
         error => { if (error) onFailure(); });
       }
       else if (message?.kind === "sps.test.native-workspace.startup-progress"
@@ -281,7 +353,7 @@ export function NativeCount({data, refresh}) {
       // Only the Identity-provider exchange is substituted. The returned token
       // is a real existing Core DB session and grants no device or membership.
       if (operation === "session.exchange") {
-        assert.equal(withNativeWindow || withNativeNodeIntegration, true);
+        assert.equal(withNativeWindow || withNativeNodeIntegration || withNativePluginSdk, true);
         assert.equal(input.credential.accessToken, "fixture.header.signature");
         return { token: secret, expiresInSeconds: 604800 };
       }
@@ -334,7 +406,7 @@ export function NativeCount({data, refresh}) {
   assert.equal((await read(`${discovery}?all=true`)).status, 404);
   assert.deepEqual(await read(`${root}/workspace-shell/providers`), { status: 200, body: [] });
   assert.equal((await read(`${root}/workspace-shell`)).body.mode, "neutral");
-  if (withNativePlugin) assert.equal((await read(`${root}/workspace-dashboard`)).body.widgets.length, 1);
+  if (withNativePluginIntegration) assert.equal((await read(`${root}/workspace-dashboard`)).body.widgets.length, 1);
   else assert.deepEqual(await read(`${root}/workspace-dashboard`), { status: 200, body: { widgets: [] } });
   assert.deepEqual(await read(`${root}/workspace-inbox?archived=true`), { status: 200, body: { items: [] } });
   assert.notEqual((await read(`${root}/workspace-shell`, { noCertificate: true })).status, 200);
@@ -773,10 +845,36 @@ export function NativeCount({data, refresh}) {
       executionControlStopped = await executionControl.transition(companyId, "stop", userId, current.revision);
       assert.equal(executionControlStopped.state, "stopped");
     }
+    if (withNativePluginSdk) {
+      const target = { v: 1, kind: "sps.native.member-host-target", context,
+        origin: `https://127.0.0.1:${port}`, serverCertificatePem: host.server.certificatePem };
+      const issuance = { enrollmentId, certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
+        issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url"),
+        expiresAt: new Date(now + (1 / 24) * 86_400_000).toISOString() };
+      nativePluginSdkClient = createSpsNativeMemberWorkspaceClient({ target, context, timeoutMs: 30_000, assertCurrent() {} });
+      nativePluginSdkInput = { workspaceId: companyId, request: nativePluginSdkRequest, keyRequest: key, issuance };
+      nativePluginSdkStage = "public_sdk_core_invocation";
+      try {
+        await nativePluginSdkClient.exchange("fixture.header.signature");
+        assertPublicConnectivitySnapshot(await nativePluginSdkClient.invokePlugin(nativePluginSdkInput), hostId, companyId);
+      } catch (error) {
+        const category = nativePluginSdkFailureCodes.has(error?.code) ? error.code : "other";
+        nativePluginSdkStage = `public_sdk_core_failed_${category}`;
+        process.stdout.write(`native_public_sdk_stage:${nativePluginSdkStage}\n`);
+        throw error;
+      }
+      nativePluginSdkStage = "public_sdk_core_verified";
+      process.stdout.write(`native_public_sdk_stage:${nativePluginSdkStage}\n`);
+      assert.deepEqual(await db.select().from(agents), []);
+      assert.deepEqual(await db.select().from(spsNodes), []);
+    }
     await runWindow({ workspaceId: companyId, renewal: withRenewal, hostRenewal: withHostRenewal,
       ...(withNativeExecutionControl ? { nativeExecutionControl: true,
         revokeNativeMemberDevice: async () => devices.revoke(device.id, "fixture-host") } : {}),
-      ...(withNativePlugin ? { withNativePlugin: true, pluginId: pluginConfiguration.pluginId, pluginSurfaceId: "native-count" } : {}),
+      ...(withNativePluginIntegration ? { withNativePlugin: true,
+        ...(withNativePluginSdk ? { withNativePluginSdk: true, hostId } : {}),
+        pluginId: pluginConfiguration.pluginId,
+        pluginSurfaceId: withNativePluginSdk ? "native-connectivity" : "native-count" } : {}),
       ...(withHostRenewal ? { hostIdentity: host } : {}), deviceId: device.id, context, keyRequest: key,
       untrustedContext, untrustedTarget: { v: 1, kind: "sps.native.member-host-target", context: untrustedContext,
         origin: `https://127.0.0.1:${port}`, serverCertificatePem: unrelated.server.certificatePem },
@@ -785,6 +883,19 @@ export function NativeCount({data, refresh}) {
       issuance: { enrollmentId, certificate: new X509Certificate(issued.certificatePem).raw.toString("base64url"),
         issuerCertificate: new X509Certificate(host.memberIssuer.certificatePem).raw.toString("base64url"),
         expiresAt: (withRenewal ? historicalExpiry : new Date(now + (1 / 24) * 86_400_000)).toISOString() } });
+    if (withNativePluginSdk) {
+      const settings = await db.select().from(pluginCompanySettings);
+      assert.equal(settings.length, 1);
+      assert.equal(settings[0].pluginId, pluginConfiguration.pluginId);
+      assert.equal(settings[0].companyId, companyId);
+      assert.equal(settings[0].enabled, false, "The Electron SDK view should verify Plugin deactivation.");
+      await db.update(pluginCompanySettings).set({ enabled: true, settingsJson: {} });
+      // The prepared session stays valid; Plugin policy is rechecked per request.
+      assertPublicConnectivitySnapshot(await nativePluginSdkClient.invokePlugin(nativePluginSdkInput), hostId, companyId);
+      nativePluginSdkStage = "public_sdk_core_reverified_after_deactivation";
+      assert.deepEqual(await db.select().from(agents), []);
+      assert.deepEqual(await db.select().from(spsNodes), []);
+    }
     const states = await db.select().from(spsPluginInboxUserStates);
     if (withNativePlugin) {
       const persisted = await db.select().from(pluginState);
@@ -818,8 +929,18 @@ export function NativeCount({data, refresh}) {
     assert.deepEqual(await read(discovery), { status: 200, body: [] });
     assert.equal((await read(`${root}/workspace-bootstrap`)).status, 403);
     assert.equal((await read(`${root}/workspace-shell`)).status, 403);
-    // Isolate parent revocation from the membership denial already checked above.
-    if (withRenewal) await db.update(companyMemberships).set({ status: "active" });
+    if (withNativePluginSdk) {
+      await assert.rejects(nativePluginSdkClient.invokePlugin(nativePluginSdkInput), {
+        code: "native_enrollment_client_invalid_response",
+      });
+      await db.update(companyMemberships).set({ status: "active" });
+      // A denied request clears this client's session; reauthenticate after restoring membership.
+      await nativePluginSdkClient.exchange("fixture.header.signature");
+      assertPublicConnectivitySnapshot(await nativePluginSdkClient.invokePlugin(nativePluginSdkInput), hostId, companyId);
+    } else if (withRenewal) {
+      // Isolate parent revocation from the membership denial already checked above.
+      await db.update(companyMemberships).set({ status: "active" });
+    }
     await devices.revoke(device.id, "fixture-host");
     if (withRenewal) {
       for (const certificateSha256 of [device.certificateSha256, renewalRows[0].certificateSha256]) {
@@ -828,6 +949,10 @@ export function NativeCount({data, refresh}) {
     }
     assert.equal((await read(discovery)).status, 403);
     assert.equal((await read(`${root}/workspace-shell`)).status, 403);
+    // Membership is active in SDK mode here, so this denial isolates device revocation.
+    if (withNativePluginSdk) await assert.rejects(nativePluginSdkClient.invokePlugin(nativePluginSdkInput), {
+      code: "native_enrollment_client_invalid_response",
+    });
   }
   if (withNativeExecutionControl) {
     assert.equal((await read(discovery)).status, 403);
@@ -905,7 +1030,7 @@ export function NativeCount({data, refresh}) {
     assert.equal(remainingAgents[0].name, "Native canary Agent");
     assert.deepEqual(await db.select().from(plugins), []);
   } else {
-    for (const table of [agents, spsNodes, ...(withNativePlugin ? [] : [plugins])]) assert.deepEqual(await db.select().from(table), []);
+    for (const table of [agents, spsNodes, ...(withNativePluginIntegration ? [] : [plugins])]) assert.deepEqual(await db.select().from(table), []);
   }
 } catch (error) { failure = error; throw error; }
 finally {
@@ -937,12 +1062,15 @@ finally {
     }
   }
   try { signerChannel?.dispose(); } catch (error) { errors.push(error); }
+  try { nativePluginSdkClient?.dispose(); } catch (error) { errors.push(error); }
   try { await db?.$client.end({ timeout: 5 }); } catch (error) { errors.push(error); }
   try { await database.cleanup(); } catch (error) { errors.push(error); }
   try { await pluginFixture?.remove(); } catch (error) { errors.push(error); }
   if (errors.length) throw new AggregateError([...(failure ? [failure] : []), ...errors], "Native Workspace integration cleanup failed.");
 }
-console.log(withNativePlugin
+console.log(withNativePluginSdk
+  ? "Native public SDK connectivity integration passed: actual packaged public Worker/Runtime SDK, exact dashboard plus connectivity-read capabilities, real Core DB Workspace device/session, enrolled Member mTLS and signed Native proof, and actual Core provider returned a verified current Host/Workspace snapshot with only public DTO fields; revoked device access denied. Identity-provider token exchange is substituted; not physical two-PC/LAN qualification."
+  : withNativePlugin
   ? "Native Plugin UI integration passed: actual Electron isolated Plugin renderer, declared React export and CSS through exact fresh mTLS/Main/private Core channel, owned worker data/action and real DB Plugin state persistence, wrong-peer denial, account/parent cleanup and natural Main/Core/DB exit. Identity exchange is substituted; not signed installation or physical two-PC LAN qualification."
   : withNativePluginSource
   ? "Native Plugin Source integration passed: a real Core Source row, per-Node RSA-sealed credential grant, and same-subject Source-scoped Plugin execution grants/runs. Signed Node source-route returned the sealed route, the desktop-node RSA decryptor validated the credential and exact cwdHint, and an owned temp fixture mapping replaced OS/SMB mounting. Changing the active Source path ended the lease and canceled the canary process while preserving its same-subject sibling run. Fixture Owner approval, credential, and mapping are synthetic; no provider exchange, Windows drive map, SMB or physical-LAN qualification."
