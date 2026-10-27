@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +6,7 @@ import { materializeSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime
 import { verifyPackagedZodRuntime } from "./verify-packaged-zod-runtime.mjs";
 import { spawnWindowsJobSupervisor } from "../../desktop-node/src/windows-job-supervisor.mjs";
 import { prepareWindowsHostJob } from "../../desktop-node/src/windows-host-job.mjs";
+import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -80,20 +81,39 @@ console.log("Verified the packaged Windows Job Object supervisor with the bundle
 
 const hostGatePath = path.join(desktopRoot, "dist", "win-unpacked", "resources", "sps-owner-host-job", "owner-host-job-gate.mjs");
 await access(hostGatePath);
-const hostJob = await prepareWindowsHostJob({ helperPath: supervisorPath, gateModulePath: hostGatePath });
+const workerFixture = await createWorkspaceE2eFixture();
+const workerPath = path.join(workerFixture.directory, "packaged-host-job-worker.mjs");
+let hostJob;
+try {
+await workerFixture.assertCurrent();
+await writeFile(workerPath, `
+  import { parentPort } from 'node:worker_threads';
+  const privateEnvironmentNames = Object.keys(process.env).filter(key => key.toUpperCase().startsWith('SPS_OWNER_HOST_JOB_'));
+  const ownGatePreloadPresent = process.execArgv.some((value, index, args) =>
+    value === '--import' && args[index + 1]?.includes('owner-host-job-gate.mjs'))
+    || process.execArgv.some(value => value.startsWith('--import=') && value.includes('owner-host-job-gate.mjs'));
+  parentPort.postMessage({
+    kind: 'sps.packaged.host-job.worker-ack',
+    privateEnvironmentNames,
+    ownGatePreloadPresent,
+  });
+`, { encoding: "utf8", flag: "wx" });
+hostJob = await prepareWindowsHostJob({ helperPath: supervisorPath, gateModulePath: hostGatePath });
 let hostProbe;
 try {
   hostProbe = hostJob.spawn(path.join(runtimeRoot, "bin", "node.exe"), ["-e", `
     const fs = require('node:fs');
     const { spawn } = require('node:child_process');
     const { Worker } = require('node:worker_threads');
-    if (Object.keys(process.env).some(key => key.startsWith('SPS_OWNER_HOST_JOB_'))
-      || process.execArgv.some(value => value.includes('owner-host-job-gate.mjs'))) process.exit(71);
+    if (Object.keys(process.env).some(key => key.toUpperCase().startsWith('SPS_OWNER_HOST_JOB_'))
+      || process.execArgv.some((value, index, args) =>
+        value === '--import' && args[index + 1]?.includes('owner-host-job-gate.mjs')
+        || value.startsWith('--import=') && value.includes('owner-host-job-gate.mjs'))) process.exit(71);
     process.on('message', message => {
       if (message?.kind !== 'sps.packaged.host-job.ping') return process.exit(72);
       const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
       descendant.unref();
-      const worker = new Worker("require('node:worker_threads').parentPort.postMessage('ok')", { eval: true });
+      const worker = new Worker(${JSON.stringify(workerPath)});
       worker.once('message', value => process.send({ kind: 'sps.packaged.host-job.pong', worker: value }));
     });
     let shutdown = '';
@@ -111,11 +131,16 @@ try {
     env: { SYSTEMROOT: process.env.SYSTEMROOT ?? "C:\\Windows", WINDIR: process.env.WINDIR ?? "C:\\Windows" },
   });
   hostProbe.stdout.resume(); hostProbe.stderr.resume();
+  const hostProbeClosed = new Promise(resolve => hostProbe.once("close", (code, signal) => resolve({ code, signal })));
   let timer;
   const pong = new Promise((resolve, reject) => {
     timer = setTimeout(() => reject(new Error("Packaged Owner Host IPC verification timed out.")), 15_000);
     hostProbe.once("message", message => {
-      if (message?.kind === "sps.packaged.host-job.pong" && message.worker === "ok") resolve();
+      if (message?.kind === "sps.packaged.host-job.pong"
+        && message.worker?.kind === "sps.packaged.host-job.worker-ack"
+        && Array.isArray(message.worker.privateEnvironmentNames)
+        && message.worker.privateEnvironmentNames.length === 0
+        && message.worker.ownGatePreloadPresent === false) resolve();
       else reject(new Error("Packaged Owner Host IPC verification returned an invalid result."));
     });
     hostProbe.once("error", () => reject(new Error("Packaged Owner Host probe could not start.")));
@@ -131,9 +156,28 @@ try {
   if (hostExit.type !== "exit" || hostExit.activeProcesses !== 0 || hostExit.code !== 0) {
     throw new Error("The packaged Owner Host did not confirm its owned process tree exit.");
   }
+  let closeTimer;
+  let closeInfo;
+  try {
+    closeInfo = await Promise.race([
+      hostProbeClosed,
+      new Promise((_, reject) => { closeTimer = setTimeout(() => reject(new Error("Packaged Owner Host process close was not confirmed.")), 15_000); }),
+    ]);
+  } finally { clearTimeout(closeTimer); }
+  if (closeInfo.code !== 0 || closeInfo.signal !== null) {
+    throw new Error("The packaged Owner Host process did not close cleanly after Job Object confirmation.");
+  }
 } finally {
   await hostJob.dispose();
+  hostJob = undefined;
 }
+} catch (error) {
+  // Preparation may throw a retained handle before assigning hostJob. Preserve
+  // its fixture too when cleanup has not been confirmed.
+  if (!hostJob && !error?.ownedHostJob) await workerFixture.remove();
+  throw error;
+}
+await workerFixture.remove();
 console.log("Verified packaged Owner Host job admission, Node IPC, worker preload isolation and private shutdown pipe.");
 
 const packagedZod = await verifyPackagedZodRuntime(runtimeRoot);

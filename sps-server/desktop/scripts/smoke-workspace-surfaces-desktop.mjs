@@ -45,8 +45,8 @@ if (!packagedBinary && !sourceElectron) {
 await access(packagedBinary || sourceElectron);
 if (noAiChecklist && !sourceElectron) throw new Error("The No-AI reference fixture is source-only acceptance, not packaged release evidence.");
 if (nativeManagement && (!sourceElectron || packagedBinary || noAiChecklist)) throw new Error("Prepared Native management is a separate source-only acceptance mode.");
-if (executionControlOnly && (!sourceElectron || packagedBinary || noAiChecklist || nativeManagement)) {
-  throw new Error("Workspace execution control is a separate source-only acceptance mode.");
+if (executionControlOnly && (Boolean(packagedBinary) === Boolean(sourceElectron) || noAiChecklist || nativeManagement)) {
+  throw new Error("Workspace execution control requires exactly one Desktop binary and cannot combine with another acceptance mode.");
 }
 
 function delay(milliseconds) {
@@ -687,7 +687,7 @@ try {
     (target) => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""),
     "the authenticated SPS Workspace BrowserWindow",
     hostReadyTimeoutMs,
-    sourceElectron ? () => setupCdp.evaluate("(async () => { const s = await window.spsDesktop.getStatus(); return { state: s.ownerHost.state, lastError: s.ownerHost.lastError }; })()", true) : null,
+    sourceElectron || executionControlOnly ? () => setupCdp.evaluate("(async () => { const s = await window.spsDesktop.getStatus(); return { state: s.ownerHost.state, lastError: s.ownerHost.lastError }; })()", true) : null,
   );
   workspaceCdp = await openCdp(workspaceTarget);
   await waitForPage(workspaceCdp, (page) => page.workspaceEntry === "empty" || page.body.includes("Workspace") || page.body.includes("Dashboard"), "the Workspace Core UI", 90_000);
@@ -796,7 +796,8 @@ try {
 
   if (executionControlOnly) {
     failurePhase = "workspace_execution_control";
-    console.log("[execution-control] actual source Desktop opened its isolated Core Workspace.");
+    const executionControlBinary = packagedBinary ? "packaged" : "source";
+    console.log(`[execution-control] actual ${executionControlBinary} Desktop opened its isolated Core Workspace.`);
     const ownerProcessTree = await setupCdp.evaluate("(async () => (await window.spsDesktop.getStatus()).ownerHost.processTree)()", true);
     assert.equal(ownerProcessTree, "windows_job", "The actual Windows Host must use retained process-tree ownership.");
     console.log("[execution-control] actual Owner Host reports retained Windows Job Object ownership.");
@@ -866,7 +867,7 @@ try {
     assert.equal(resumed.epoch, stopped.epoch);
     assert.equal((await api(workspaceCdp, `/api/companies/${other.id}/execution-control`)).state, "running");
     assert.equal((await api(workspaceCdp, `/api/companies/${company.id}/agents`)).length, 0);
-    console.log("[execution-control] actual source Electron/Core baseline Host settings: pause, stop, stale revision denial, separate Workspace, persisted stop across Main/Core restart, and resume passed; zero Agents, no provider.");
+    console.log(`[execution-control] actual ${executionControlBinary} Electron/Core baseline Host settings: pause, stop, stale revision denial, separate Workspace, persisted stop across Main/Core restart, and resume passed; zero Agents, no provider.`);
   } else if (nativeManagement) {
     // Seed only this stopped temporary Host, not a production IPC or an automated
     // approval of the real security confirmation. Main must read it independently.

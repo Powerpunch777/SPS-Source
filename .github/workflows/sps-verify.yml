@@ -444,6 +444,10 @@ jobs:
         working-directory: sps-server/desktop
         run: npx electron-builder --win dir --publish never
 
+      - name: Verify packaged Owner Host runtime and Windows Job supervisor
+        working-directory: sps-server/desktop
+        run: npm run verify:packaged-owner-host-runtime
+
       - name: Add E2E update provider configuration
         working-directory: sps-server/desktop
         shell: pwsh
@@ -456,6 +460,16 @@ jobs:
           channel: latest
           updaterCacheDirName: '@spsdesktop-updater'
           "@ | Set-Content -LiteralPath 'dist/win-unpacked/resources/app-update.yml' -Encoding utf8NoBOM
+
+      - name: Verify packaged Workspace execution control across Desktop restart
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+          SPS_DESKTOP_E2E_SOURCE: "0"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode execution-control
 
       - name: Run packaged Desktop workspace surfaces E2E
         timeout-minutes: 20

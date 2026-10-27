@@ -222,7 +222,7 @@ test("Desktop execution modes are unavailable outside Windows CI", { skip: proce
 
 test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
-  for (const mode of ["runtime-discovery", "native-management", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle"]) {
+  for (const mode of ["runtime-discovery", "native-management", "execution-control", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle"]) {
     assert.match(workflow, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
   }
   const source = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");

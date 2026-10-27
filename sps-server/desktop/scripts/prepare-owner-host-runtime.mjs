@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, chmod, cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { writeSpsReleaseBaseline } from "./release-baseline.mjs";
 import { createSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
@@ -550,6 +551,22 @@ async function verifyBundledSpsPluginManifest(pluginRoot, packageManifest, expec
   };
 }
 
+async function assertBundledSpsPluginBuildDependencies() {
+  // Fail before compiling Core/UI when a bundled package has not been installed.
+  // Resolving its declared build tools does not run or replace plugin checks.
+  for (const pluginName of SPS_BUNDLED_OWNER_HOST_PLUGINS) {
+    const manifestPath = path.join(spsServerRoot, pluginName, "package.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const requirePlugin = createRequire(manifestPath);
+    for (const dependency of Object.keys(manifest.devDependencies ?? {})) {
+      try { requirePlugin.resolve(dependency); }
+      catch {
+        throw new Error(`Bundled SPS plugin build dependency ${dependency} is missing. Run npm ci in ${pluginName} before preparing the Desktop runtime.`);
+      }
+    }
+  }
+}
+
 async function rebuildBundledSpsPlugins() {
   const npm = await resolveNpmInvocation();
   const supportMatrix = JSON.parse(await readFile(path.join(spsServerRoot, "release", "support-matrix.json"), "utf8"));
@@ -681,6 +698,7 @@ await requireFile(
   path.join(coreRoot, "node_modules"),
   "SPS Core dependencies are missing. Run pnpm install in external/sps-core first.",
 );
+await assertBundledSpsPluginBuildDependencies();
 await buildOwnerHostCoreArtifacts();
 const rebuiltBundledPlugins = await rebuildBundledSpsPlugins();
 
