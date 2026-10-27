@@ -8,6 +8,7 @@ import { createNodeIdentity } from "../src/identity.mjs";
 import { openSpsWorkspaceSourceRoute } from "../src/host-project-share.mjs";
 import { executeSpsNodeCommand, cancelSpsNodeCommand } from "../src/command-runner.mjs";
 import { sealSpsHostProjectShareCredential } from "../../desktop/src/host-project-share.mjs";
+import { createOwnedProcessTerminator } from "../src/owned-process-termination.mjs";
 
 function deferred() {
   let resolve, reject;
@@ -42,6 +43,45 @@ test("failed Source mapping cleanup is retained, concurrent close joins, and exp
 
 const command = id => ({ id, command: "agy", runtimeKind: "agy_cli", args: [], env: {}, timeoutMs: 10000 });
 const canary = async () => ({ executable: process.execPath, args: ["-e", "process.exit(0)"] });
+
+test("an unconfirmed tree termination retains Source ownership after its direct child exits", { timeout: 15000 }, async () => {
+  const id = randomUUID(), ownership = Symbol("unconfirmed-termination"), completions = [];
+  let leaseChecks = 0, sourceCloses = 0, ownedChild, stopped;
+  const processTermination = createOwnedProcessTerminator({
+    platform: "win32",
+    terminateWindowsChild: async child => {
+      ownedChild = child;
+      stopped = new Promise(resolve => child.once("close", resolve));
+      // Model taskkill failing after its fallback stops only the direct child.
+      // This fixture owns this exact canary and never signals a supplied PID.
+      child.kill();
+      throw new Error("fixture tree termination was not confirmed");
+    },
+  });
+  const options = { command: command(id), ownership, processTermination,
+    hubUrl: "https://fixture.example", nodeId: "fixture", profile: {},
+    resolveInvocation: async () => ({ executable: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"] }),
+    checkCommandLease: async () => ({ active: ++leaseChecks === 1 }),
+    appendCommandEvent: async () => {}, completeCommand: async value => { completions.push(value); },
+    openWorkspaceSourceRoute: async () => ({ workspacePath: process.cwd(), close: async () => { sourceCloses++; } }),
+  };
+  try {
+    await assert.rejects(executeSpsNodeCommand(options), /Local command termination failed/);
+    assert.ok(ownedChild, "the failure belongs to the exact spawned canary");
+    await stopped;
+    assert.equal(processTermination.isAlive(ownedChild), false);
+    assert.equal(processTermination.hasUnconfirmedTermination(ownedChild), true);
+    assert.equal(sourceCloses, 0, "direct-child exit does not authorize unmapping the Source");
+    assert.deepEqual(completions, [], "Core receives no false execution completion");
+    await assert.rejects(executeSpsNodeCommand(options), /duplicate active command ID/);
+    assert.equal(await cancelSpsNodeCommand(id, "Wrong lifecycle", { ownership: Symbol("other") }), false);
+    await assert.rejects(cancelSpsNodeCommand(id, "Retry retained cleanup", { ownership }), /Local command termination failed/);
+    assert.equal(sourceCloses, 0);
+  } finally {
+    if (ownedChild && ownedChild.exitCode === null && ownedChild.signalCode === null) ownedChild.kill();
+    await stopped;
+  }
+});
 
 test("Source cleanup does not wait for a terminal process's pending Host completion response", { timeout: 15000 }, async () => {
   const id = randomUUID(), ownership = Symbol("pending-host-response"), closing = deferred(), response = deferred(), completing = deferred();

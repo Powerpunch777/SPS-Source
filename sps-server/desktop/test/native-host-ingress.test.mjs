@@ -133,15 +133,22 @@ test("Native Node ingress admits only bounded fixed POST with fresh mTLS and a s
   assert.equal(calls[0].body.toString(), body);
   assert.equal(calls[0].cookie, `sps_identity_session=${"a".repeat(64)}`);
   assert.deepEqual(calls[0].peerCertificateDer, new X509Certificate(memberCertificate.certificatePem).raw);
+  const missingCertificate = await post(port, { ...input, certificate: undefined, key: undefined })
+    .then(response => ({ response }), error => ({ error }));
+  if (missingCertificate.response) assert.equal(missingCertificate.response.statusCode, 401);
+  else assert.equal(missingCertificate.error?.code, "ECONNRESET");
+  assert.equal(calls.length, 1);
+  const smallEnvelope = JSON.parse(body);
+  smallEnvelope.payload.body = "x";
+  const smallInput = { ...input, body: JSON.stringify(smallEnvelope) };
   for (const denied of [
-    { ...input, certificate: undefined, key: undefined },
-    { ...input, session: false },
-    { ...input, route: "/sps-native/v1/node-runtime?extra=1" },
-    { ...input, body: JSON.stringify({ ...JSON.parse(body), method: "POST" }) },
-    { ...input, headers: { "Content-Type": "application/json" } },
-    { ...input, headers: { "Content-Type": "application/json", Origin: "https://evil.invalid",
-      "X-SPS-Native-Workspace": DEVICE_KEY_ID } },
-  ]) assert.notEqual((await post(port, denied)).statusCode, 200);
+    { request: { ...smallInput, session: false }, expectedStatus: 400 },
+    { request: { ...smallInput, route: "/sps-native/v1/node-runtime?extra=1" }, expectedStatus: 404 },
+    { request: { ...smallInput, body: JSON.stringify({ ...smallEnvelope, method: "POST" }) }, expectedStatus: 400 },
+    { request: { ...smallInput, headers: { "Content-Type": "application/json" } }, expectedStatus: 400 },
+    { request: { ...smallInput, headers: { "Content-Type": "application/json", Origin: "https://evil.invalid",
+      "X-SPS-Native-Workspace": DEVICE_KEY_ID } }, expectedStatus: 400 },
+  ]) assert.equal((await post(port, denied.request)).statusCode, denied.expectedStatus);
   const oversized = await post(port, { ...input, body: JSON.stringify({ operation: "availability", nodeId,
     resourceId: null, payload: { timestamp: "2026-10-27T04:00:00.000Z", nonce: "A".repeat(43),
       signature: "B".repeat(86), report: "x".repeat(512 * 1024) } }) });

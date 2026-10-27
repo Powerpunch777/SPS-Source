@@ -307,6 +307,9 @@ export function NativeCount({data, refresh}) {
     let nativeNodeStage = "setup";
     const sourceExpectations = new Map(), sourceRouteEvidence = [];
     let sourceMappingCloseCount = 0;
+    const sourceDiagnostics = { routeOpened: false, closeRequested: false, closeCompleted: false,
+      pathChanged: false, leaseRunFailed: false, runnerSettled: false, canaryStarted: false, canaryTerminal: false, canaryExitCode: null,
+      canarySignal: null, runnerErrorClass: null, lastNodeOperation: null };
     let sourceA, sourceB, sourceAPath, sourceBPath, changedSourceAPath, pluginExecutionService;
     const nativeNodeWorkspaceFixture = await createWorkspaceE2eFixture();
     const pluginKey = "sps.native-node-acceptance";
@@ -355,7 +358,11 @@ export function NativeCount({data, refresh}) {
         async invokeNode(input, options = {}) {
           const current = () => { if (options.signal?.aborted) throw new Error("Native Node scenario cancelled."); };
           const client = createSpsNativeMemberWorkspaceClient({ target, context, timeoutMs: 30_000, assertCurrent: current });
+          const allowedOperations = new Set(["register", "heartbeat", "availability", "claim-command", "claim-plugin-run",
+            "source-route", "command-lease", "command-event", "command-complete", "plugin-lease", "plugin-event", "plugin-complete"]);
+          const operation = input.request?.operation;
           try {
+            if (allowedOperations.has(operation)) sourceDiagnostics.lastNodeOperation = { operation, outcome: "pending" };
             nativeNodeStage = "tls-session-exchange";
             await client.exchange("fixture.header.signature", options.signal ? { signal: options.signal } : {});
             nativeNodeStage = "tls-node-runtime-request";
@@ -370,11 +377,24 @@ export function NativeCount({data, refresh}) {
               throw error;
             }
             nativeNodeStage = "tls-node-runtime-response";
+            if (allowedOperations.has(operation)) {
+              sourceDiagnostics.lastNodeOperation = { operation, outcome: "returned",
+                responseStatus: ["pending", "active", "approved", "revoked", "failed", "running", "succeeded", "claimed", "queued", "cancelling"]
+                  .includes(result.data?.status) ? result.data.status : null,
+                leaseActive: typeof result.data?.active === "boolean" ? result.data.active : null };
+            }
             return { data: result.data, origin: target.origin };
+          } catch (error) {
+            if (allowedOperations.has(operation)) sourceDiagnostics.lastNodeOperation = { operation,
+              outcome: "rejected", errorCode: typeof error?.code === "string"
+                && /^native_enrollment_client_[a-z_]+$/.test(error.code) ? error.code : "unclassified" };
+            throw error;
           } finally { client.dispose(); }
         },
       }),
-      execute: options => executeSpsNodeCommand({ ...options,
+      execute: async options => {
+        try {
+          const result = await executeSpsNodeCommand({ ...options,
         resolveInvocation: async (_command, args) => ({ executable: process.execPath,
           args: ["-e", args?.includes("--hold")
             ? `process.stderr.write('${withNativePluginSource ? "SPS_PLUGIN_SOURCE_HOLD_STARTED" : "SPS_PLUGIN_NODE_HOLD_STARTED"}\\n'); setInterval(() => {}, 1000)`
@@ -382,6 +402,12 @@ export function NativeCount({data, refresh}) {
         resolveWorkspace: async () => {
           assert.equal(withNativePluginSource, false, "A Source-backed run must use the opened fixture mapping.");
           return nativeNodeWorkspaceFixture.directory;
+        },
+        appendCommandEvent: async event => {
+          if (event?.stream === "stderr" && ["SPS_PLUGIN_SOURCE_HOLD_STARTED", "SPS_PLUGIN_NODE_HOLD_STARTED"].some(marker => event.body?.includes(marker))) {
+            sourceDiagnostics.canaryStarted = true;
+          }
+          return options.appendCommandEvent(event);
         },
         openWorkspaceSourceRoute: async (descriptor, transportPrivateKeyPem, openOptions) => {
           if (!withNativePluginSource) { assert.equal(descriptor, null); return null; }
@@ -399,17 +425,32 @@ export function NativeCount({data, refresh}) {
             && credential.password === expected.credential.password, "Decrypted Source credential mismatch.");
           sourceRouteEvidence.push({ sourceId: descriptor.sourceId, sharePath: descriptor.sharePath,
             expectedSharePath: openOptions.expectedSharePath });
+          sourceDiagnostics.routeOpened = true;
           nativeNodeStage = "source-route-open-fixture-mapping";
           let closed = false, closing;
           return Object.freeze({ sharePath: credential.sharePath, workspacePath: nativeNodeWorkspaceFixture.directory,
             close() {
+              sourceDiagnostics.closeRequested = true;
               if (!closing) closing = Promise.resolve().then(() => {
-                if (!closed) { closed = true; sourceMappingCloseCount += 1; }
+                if (!closed) { closed = true; sourceMappingCloseCount += 1; sourceDiagnostics.closeCompleted = true; }
               });
               return closing;
             } });
         },
-      }),
+          });
+          sourceDiagnostics.runnerSettled = true;
+          sourceDiagnostics.canaryTerminal = true;
+          sourceDiagnostics.canaryExitCode = Number.isInteger(result?.exitCode) ? result.exitCode : null;
+          sourceDiagnostics.canarySignal = [null, "SIGTERM", "SIGKILL", "SIGINT", "SIGBREAK"].includes(result?.signal)
+            ? result.signal : "other";
+          return result;
+        } catch (error) {
+          sourceDiagnostics.runnerSettled = true;
+          sourceDiagnostics.runnerErrorClass = error instanceof Error && /^[A-Za-z]+Error$/.test(error.name)
+            ? error.name : "unclassified";
+          throw error;
+        }
+      },
       cancelCommand: (commandId, ownership) => cancelSpsNodeCommand(commandId,
         "Isolated Native Node acceptance is cleaning up its owned command.", { ownership }),
     });
@@ -573,7 +614,7 @@ export function NativeCount({data, refresh}) {
           await new Promise(resolve => setTimeout(resolve, 150));
         }
         assert.equal(heldRun?.status, "running",
-          `The Source lease scenario must start its owned canary process (status=${heldRun?.status ?? "missing"}; error=${heldRun?.error ?? "none"}).`);
+          `The Source lease scenario must start its owned canary process (status=${heldRun?.status ?? "missing"}; errorPresent=${typeof heldRun?.error === "string"}).`);
         assert.ok(heldEvents.some(event => event.body?.includes("SPS_PLUGIN_SOURCE_HOLD_STARTED")));
         const sibling = await pluginExecutionService.dispatchRun({ companyId, executionGrantId: grantB.id,
           args: ["--success"], timeoutMs: 30_000 });
@@ -583,6 +624,7 @@ export function NativeCount({data, refresh}) {
         nativePluginSourceExpected.siblingRunId = sibling.id;
         nativeNodeStage = "source-path-change-lease-cancels-canary";
         await db.update(spsWorkspaceSources).set({ sharePath: changedSourceAPath }).where(eq(spsWorkspaceSources.id, sourceA.id));
+        sourceDiagnostics.pathChanged = true;
         const failureDeadline = Date.now() + 15_000;
         let failedRun;
         while (Date.now() < failureDeadline) {
@@ -594,8 +636,23 @@ export function NativeCount({data, refresh}) {
         assert.ok(failedRun.finishedAt instanceof Date);
         assert.equal(typeof failedRun.error, "string");
         assert.match(failedRun.error, /source|access|route/i);
+        sourceDiagnostics.leaseRunFailed = true;
         const closeDeadline = Date.now() + 5_000;
         while (sourceMappingCloseCount < 1 && Date.now() < closeDeadline) await new Promise(resolve => setTimeout(resolve, 50));
+        if (sourceMappingCloseCount < 1) {
+          const controller = memberNode.status({ hostId, workspaceId: companyId });
+          console.error(`native_source_diagnostics:${JSON.stringify({ stage: nativeNodeStage,
+            failedRunStatus: failedRun.status, leaseErrorPresent: Boolean(failedRun.error),
+            routeOpened: sourceDiagnostics.routeOpened, mappingCloseRequested: sourceDiagnostics.closeRequested,
+            mappingCloseCompleted: sourceDiagnostics.closeCompleted, mappingCloseCount: sourceMappingCloseCount,
+            pathChanged: sourceDiagnostics.pathChanged, leaseRunFailed: sourceDiagnostics.leaseRunFailed,
+            canaryStarted: sourceDiagnostics.canaryStarted, canaryTerminal: sourceDiagnostics.canaryTerminal,
+            canaryExitCode: sourceDiagnostics.canaryExitCode, canarySignal: sourceDiagnostics.canarySignal,
+            runnerSettled: sourceDiagnostics.runnerSettled, runnerErrorClass: sourceDiagnostics.runnerErrorClass,
+            lastNodeOperation: sourceDiagnostics.lastNodeOperation,
+            controllerState: { state: ["off", "pending", "active", "unavailable"].includes(controller.state) ? controller.state : "other",
+              activeRun: controller.activeRun === true, error: controller.error === true } })}`);
+        }
         assert.ok(sourceMappingCloseCount >= 1, "Revoked Source lease must close the owned fixture mapping.");
         const siblingDeadline = Date.now() + 30_000;
         let siblingAfterFailure, siblingEvents;

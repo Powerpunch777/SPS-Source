@@ -9,6 +9,7 @@ import {
 } from "./hub-client.mjs";
 import { openSpsWorkspaceSourceRoute } from "./host-project-share.mjs";
 import { createSpsNodeUsageCollector } from "./usage-collector.mjs";
+import { createOwnedProcessTerminator } from "./owned-process-termination.mjs";
 
 const OUTPUT_CHUNK_LIMIT = 48 * 1024;
 const COMMAND_LEASE_CHECK_INTERVAL_MS = 2_000;
@@ -367,62 +368,13 @@ export async function resolveSpsNodeInvocation(command, args, options = {}) {
   };
 }
 
-const processTerminations = new WeakMap();
-function processScopeAlive(child) {
-  if (!child?.pid) return false;
-  // A terminal Windows child no longer owns its PID. It may already have been
-  // reused while output/completion delivery is still awaiting the Host.
-  if (process.platform === "win32" && (child.exitCode !== null || child.signalCode !== null)) return false;
-  try { process.kill(process.platform === "win32" ? child.pid : -child.pid, 0); return true; }
-  catch (error) { return error.code !== "ESRCH"; }
-}
-async function terminateProcessTreeInternal(child) {
-  if (!child?.pid) return;
-  if (process.platform === "win32") {
-    await new Promise((resolve, reject) => {
-      const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-      const fallback = () => {
-        if (child.exitCode == null) child.kill();
-        reject(new Error("Windows process-tree termination has not been confirmed."));
-      };
-      killer.once("error", fallback);
-      killer.once("close", (code) => {
-        if (code !== 0) {
-          fallback();
-          return;
-        }
-        resolve();
-      });
-    });
-    return;
-  }
-  try { process.kill(-child.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }
-  const deadline = Date.now() + 1500;
-  while (processScopeAlive(child) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30));
-  if (processScopeAlive(child)) {
-    try { process.kill(-child.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
-  }
-}
-function terminateProcessTree(child) {
-  if (!child?.pid) return Promise.resolve();
-  if (process.platform === "win32" && !processScopeAlive(child)) return Promise.resolve();
-  const pending = processTerminations.get(child);
-  if (pending) return pending;
-  const operation = terminateProcessTreeInternal(child).then(async () => {
-    const deadline = Date.now() + 2000;
-    while (processScopeAlive(child) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30));
-    if (processScopeAlive(child)) throw new Error("Local command termination has not been confirmed.");
-  });
-  processTerminations.set(child, operation);
-  void operation.catch(() => { if (processTerminations.get(child) === operation) processTerminations.delete(child); });
-  return operation;
-}
+const defaultProcessTermination = createOwnedProcessTerminator();
 
 async function closeOwnedSource(run) {
   if (run.sourceOpening) throw new Error("SPS Host Source preparation has not finished; cleanup is still pending.");
+  if (run.processTermination.isAlive(run.child) || run.processTermination.hasUnconfirmedTermination(run.child)) {
+    throw new Error("Local command termination has not been confirmed.");
+  }
   if (run.sourceClosing) return run.sourceClosing;
   const session = run.sourceSession;
   if (!session) return;
@@ -435,7 +387,8 @@ async function closeOwnedSource(run) {
 }
 
 function releaseCompletedCommand(id, run) {
-  if (run.settled && !run.sourceOpening && !run.sourceSession && !processScopeAlive(run.child)
+  if (run.settled && !run.sourceOpening && !run.sourceSession && !run.processTermination.isAlive(run.child)
+    && !run.processTermination.hasUnconfirmedTermination(run.child)
     && activeCommands.get(id) === run) activeCommands.delete(id);
 }
 
@@ -445,7 +398,7 @@ export async function cancelSpsNodeCommands(reason = "SPS Desktop stopped this l
   const active = [...activeCommands.values()];
   await Promise.all(active.map(async (run) => {
     run.cancellationError ??= reason;
-    await terminateProcessTree(run.child);
+    await run.processTermination.terminate(run.child);
     await closeOwnedSource(run);
     for (const [id, current] of activeCommands) if (current === run) releaseCompletedCommand(id, run);
   }));
@@ -457,7 +410,7 @@ export async function cancelSpsNodeCommand(commandId, reason = "SPS Desktop stop
   const run = activeCommands.get(commandId);
   if (!run || ownership !== undefined && run.ownership !== ownership) return false;
   run.cancellationError ??= reason;
-  await terminateProcessTree(run.child);
+  await run.processTermination.terminate(run.child);
   await closeOwnedSource(run);
   releaseCompletedCommand(commandId, run);
   return true;
@@ -481,7 +434,11 @@ export async function executeSpsNodeCommand({
   hostEnvironment = process.env,
   marketplaceMcpRuntime = null,
   ownership,
+  processTermination = defaultProcessTermination,
 }) {
+  const processScopeAlive = child => processTermination.isAlive(child);
+  const terminateProcessTree = child => processTermination.terminate(child);
+  const processTerminationUnconfirmed = child => processTermination.hasUnconfirmedTermination(child);
   assertSpsNodeCommandRuntime(command);
   const timeoutMs = resolveSpsNodeCommandTimeoutMs(command);
   if (typeof command.id !== "string" || command.id.trim().length === 0) {
@@ -523,7 +480,7 @@ export async function executeSpsNodeCommand({
   let hostProjectShareSession = null;
   let sourceCleanup = null;
   let normalCompletionPayload = null;
-  const activeRun = { child: null, cancellationError: null, ownership, sourceOpening: false, sourceSession: null };
+  const activeRun = { child: null, cancellationError: null, ownership, processTermination, sourceOpening: false, sourceSession: null };
   activeCommands.set(command.id, activeRun);
   try {
     const prepared = await withCommandPreflightTimeout(async () => {
@@ -616,7 +573,7 @@ export async function executeSpsNodeCommand({
       activeRun.child = child;
       if (cancellationGeneration !== commandCancellationGeneration) {
         activeRun.cancellationError = lastCommandCancellationReason;
-        void terminateProcessTree(child).catch(() => child?.kill());
+        void terminateProcessTree(child).catch(error => settle(reject, error));
       }
       child.stdout.on("data", (chunk) => {
         usageCollector.push(chunk);
@@ -637,35 +594,43 @@ export async function executeSpsNodeCommand({
             await terminateProcessTree(child);
             return;
           }
-          const lease = await checkCommandLease({
-            hubUrl,
-            nodeId,
-            identity,
-            accessToken,
-            sessionCookie,
-            commandId: command.id,
-          });
+          let lease;
+          try {
+            lease = await checkCommandLease({
+              hubUrl,
+              nodeId,
+              identity,
+              accessToken,
+              sessionCookie,
+              commandId: command.id,
+            });
+          } catch {
+            if (Date.now() - lastLeaseConfirmedAt < COMMAND_LEASE_MAX_UNAVAILABLE_MS) return;
+            leaseCancellationError = "SPS Desktop lost contact with the Hub for 60 seconds and stopped this local command.";
+            await terminateProcessTree(child);
+            return;
+          }
           if (!lease?.active) {
             leaseCancellationError = lease?.error || "SPS Hub cancelled this local command.";
             await terminateProcessTree(child);
+          } else if (activeRun.cancellationError) {
+            await terminateProcessTree(child);
           } else {
             lastLeaseConfirmedAt = Date.now();
-          }
-        } catch {
-          if (Date.now() - lastLeaseConfirmedAt >= COMMAND_LEASE_MAX_UNAVAILABLE_MS) {
-            leaseCancellationError = "SPS Desktop lost contact with the Hub for 60 seconds and stopped this local command.";
-            await terminateProcessTree(child);
           }
         } finally {
           leaseCheckInFlight = false;
         }
       };
-      leaseTimer = setInterval(() => { void checkLease(); }, COMMAND_LEASE_CHECK_INTERVAL_MS);
+      const dispatchLeaseCheck = () => {
+        void checkLease().catch(error => settle(reject, error));
+      };
+      leaseTimer = setInterval(dispatchLeaseCheck, COMMAND_LEASE_CHECK_INTERVAL_MS);
       if (activeRun.cancellationError) {
         leaseCancellationError = activeRun.cancellationError;
-        void terminateProcessTree(child).catch(() => child?.kill());
+        void terminateProcessTree(child).catch(error => settle(reject, error));
       }
-      void checkLease();
+      dispatchLeaseCheck();
       if (typeof command.stdin === "string" && command.stdin.length > 0) child.stdin.end(command.stdin);
       else child.stdin.end();
       if (timeoutMs > 0) {
@@ -673,7 +638,7 @@ export async function executeSpsNodeCommand({
           timedOut = true;
           // Wait for the process tree to close before reporting completion.
           // Codex and other CLIs can spawn children that continue writing.
-          void terminateProcessTree(child).catch(() => child?.kill());
+          void terminateProcessTree(child).catch(error => settle(reject, error));
         }, timeoutMs);
       }
     });
@@ -681,7 +646,8 @@ export async function executeSpsNodeCommand({
     if (leaseTimer) clearInterval(leaseTimer);
     if (process.platform !== "win32" && processScopeAlive(child)) await terminateProcessTree(child);
     if (leaseCancellationError || activeRun.cancellationError || result.timedOut) await terminateProcessTree(child);
-    await processTerminations.get(child);
+    await processTermination.pending(child);
+    if (processTerminationUnconfirmed(child)) throw new Error("Local command termination has not been confirmed.");
     leaseCancellationError ??= activeRun.cancellationError;
     // Local resource cleanup must not wait for output/completion delivery to an
     // unreachable or revoked Host after the owned process has exited.
@@ -713,10 +679,11 @@ export async function executeSpsNodeCommand({
     // A failed kill is not a completion acknowledgement. Keep Core pending
     // rather than reporting that a still-live process has finished.
     if (child?.pid) {
-      const termination = processTerminations.get(child);
+      const termination = processTermination.pending(child);
       if (termination) await termination;
       else if (child.exitCode === null && child.signalCode === null) await terminateProcessTree(child);
     }
+    if (processScopeAlive(child) || processTerminationUnconfirmed(child)) throw new Error("Local command termination has not been confirmed.");
     if (!sourceCleanup && !activeRun.sourceOpening) {
       sourceCleanup = closeOwnedSource(activeRun);
       void sourceCleanup.catch(() => {});
@@ -741,7 +708,11 @@ export async function executeSpsNodeCommand({
     throw error;
   } finally {
     activeRun.settled = true;
-    try { await (sourceCleanup ?? closeOwnedSource(activeRun)); }
+    try {
+      if (!processScopeAlive(activeRun.child) && !processTerminationUnconfirmed(activeRun.child)) {
+        await (sourceCleanup ?? closeOwnedSource(activeRun));
+      }
+    }
     finally { releaseCompletedCommand(command.id, activeRun); }
   }
 }

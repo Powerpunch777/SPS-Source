@@ -25,3 +25,9 @@ It deliberately does not provide:
 - A replacement for SPS Desktop's Electron secure-storage and account/device-auth flow.
 
 SPS Desktop supplies OS-backed secure storage, the invitation/login UI, and a constrained IPC boundary. Its connection check is read-only: it sends no login token, Node key, or local capability data. The Node core stays dependency-free so its cryptographic protocol can be tested independently.
+
+Owned command cancellation waits for process termination before releasing a
+Source or reporting completion. Windows taskkill has a bounded helper deadline;
+failure remains recorded even if fallback stops the direct child. A terminal
+Windows PID is never killed again to retry an unconfirmed tree termination.
+See [termination evidence and limits](../docs/reviews/NATIVE-TERMINATION-AND-DIAGNOSTICS-2026-10-27.md).
