@@ -60,6 +60,23 @@ async function until(window, expression) {
 async function untilText(window, text) {
   return until(window, `document.body.innerText.includes(${JSON.stringify(text)})`);
 }
+async function waitForParentMemberRevocation() {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(new Error("Member revocation acknowledgement timed out.")), 30_000);
+    function onMessage(message) {
+      if (message?.kind === "sps.test.native-workspace-window.member-device-revoked") finish();
+      else if (message?.kind === "sps.test.native-workspace-window.member-device-revoke-failed") {
+        finish(new Error("Member device revocation failed."));
+      }
+    }
+    function finish(error) {
+      clearTimeout(timer);
+      process.removeListener("message", onMessage);
+      if (error) reject(error); else resolve();
+    }
+    process.on("message", onMessage);
+  });
+}
 async function untilWindowCount(count, parent) {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
@@ -280,9 +297,28 @@ try {
   controller.registerIpc(ipcMain);
   await controller.open({ hostId: configuration?.context.hostId ?? "11111111-1111-4111-8111-111111111111", workspaceId });
   const window = windows[0];
+  let executionControlRead = false;
   mark("workspace_render");
   await until(window, "document.querySelector('[data-sps-workspace-entry=empty]') !== null");
   assert.equal(await window.webContents.executeJavaScript(`document.body.innerText.includes(${JSON.stringify(realTransport ? "Native Channel Fixture" : "Native Window Fixture")})`), true);
+  if (realTransport && configuration?.nativeExecutionControl === true) {
+    mark("execution_status_read");
+    await untilText(window, "State: stopped");
+    const status = await window.webContents.executeJavaScript(
+      "window.spsNativeWorkspace.readSurface({surface: 'executionControl'})");
+    assert.equal(status.state, "stopped");
+    assert.equal(status.canControl, false);
+    assert.deepEqual(Object.keys(status).sort(), ["canControl", "epoch", "pending", "revision", "state", "updatedAt"].sort());
+    assert.equal(status.epoch, "1");
+    assert.equal(status.revision, 1);
+    assert.equal(typeof status.updatedAt, "string");
+    assert.equal(new Date(status.updatedAt).toISOString(), status.updatedAt);
+    assert.deepEqual(status.pending, { agents: 0, jobs: 0, models: 0, commands: 0, plugins: 0 });
+    const actionLabels = await window.webContents.executeJavaScript(
+      "[...document.querySelectorAll('button')].map(button => button.textContent.trim()).filter(label => /^(pause|stop|resume)$/i.test(label))");
+    assert.deepEqual(actionLabels, []);
+    executionControlRead = true;
+  }
   assert.equal(await window.webContents.executeJavaScript("typeof window.spsDesktopWorkspace"), "undefined");
   assert.equal(await window.webContents.executeJavaScript("typeof window.spsCoreSettings"), "undefined");
   assert.equal(await window.webContents.executeJavaScript("typeof window.spsNativeWorkspace.getBootstrap"), "function");
@@ -342,7 +378,23 @@ try {
     await window.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(button => button.textContent === 'Restore').click()");
     await until(window, "[...document.querySelectorAll('button')].some(button => button.textContent === 'Archive')");
   } else await until(window, "document.body.innerText.includes('No inbox items.')");
-  assert.deepEqual([...new Set(reads)], ["shell", "dashboard", "inbox"]);
+  if (executionControlRead) {
+    const revocationAcknowledgement = waitForParentMemberRevocation();
+    process.send({ kind: "sps.test.native-workspace-window.execution-status-rendered" });
+    mark("execution_status_revocation");
+    await revocationAcknowledgement;
+    const denied = await window.webContents.executeJavaScript(
+      "window.spsNativeWorkspace.readSurface({surface: 'executionControl'}).then(() => false, () => true)");
+    assert.equal(denied, true, "Revoked Member device must lose execution-status reads.");
+    mark("execution_status_refresh");
+    await window.webContents.executeJavaScript(
+      "[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Refresh').click()");
+    await untilText(window, "Workspace could not be loaded.");
+    const staleStatusRetained = await window.webContents.executeJavaScript(
+      `document.body.innerText.includes('State: stopped') || document.querySelector(${JSON.stringify('[aria-label="Workspace execution status"]')}) !== null`);
+    assert.equal(staleStatusRetained, false, "A revoked Member refresh must clear previously read status.");
+  }
+  assert.deepEqual([...new Set(reads)].sort(), ["shell", "dashboard", "inbox", "executionControl"].sort());
   mark("shutdown");
   generation++;
   await controller.invalidate();
@@ -354,6 +406,8 @@ try {
   await writeFile(path.join(fixture, "result.json"), JSON.stringify({ ok: true, views: ["workspace", "dashboard", "inbox"],
     actualElectron: true, fixtureBackend: !realTransport, actualDpapi: realTransport,
     ...(realTransport ? { wrongPeerDenied: true } : {}),
+    ...(realTransport && configuration?.nativeExecutionControl === true ? { executionControl: true, stoppedReadOnly: true,
+      revokedStatusDenied: true, revokedRefreshCleared: true } : {}),
     ...(realTransport && configuration?.renewal ? { renewalReplay: true, renewalPublished: true,
       originalIssuedBytesPreserved: true, renewedEnrollmentReconciled: true } : {}),
     ...(realTransport && configuration?.hostRenewal ? { hostRenewalPublished: true, originalHostBytesPreserved: true,

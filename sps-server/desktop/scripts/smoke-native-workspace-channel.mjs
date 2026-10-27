@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 
 const withWindow = process.argv[3] === "--with-native-window";
+const withNativeExecutionControl = process.argv[3] === "--with-native-execution-control";
 const withHostRenewal = process.argv[3] === "--with-native-host-renewal";
 const withNativePlugin = process.argv[3] === "--with-native-plugin";
 const withNativeNode = process.argv[3] === "--with-native-node";
@@ -15,7 +16,7 @@ const withNativePluginNode = process.argv[3] === "--with-native-plugin-node";
 const withNativePluginSource = process.argv[3] === "--with-native-plugin-source";
 const withNativeNodeIntegration = withNativeNode || withNativePluginNode || withNativePluginSource;
 const withRenewal = process.argv[3] === "--with-native-renewal" || withHostRenewal;
-const withNativeWindow = withWindow || withRenewal || withNativePlugin;
+const withNativeWindow = withWindow || withRenewal || withNativePlugin || withNativeExecutionControl;
 if (![3, 4].includes(process.argv.length) || process.argv[2] !== "--isolated-native-workspace-channel"
   || process.argv.length === 4 && (!withNativeWindow && !withNativeNodeIntegration || withNativeWindow && process.platform !== "win32")) {
   throw new Error("Use the explicit isolated Native Workspace channel command.");
@@ -43,6 +44,7 @@ const { createDb, getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatab
   spsPluginInboxItems, spsPluginInboxUserStates, spsMemberDeviceRenewalCertificates, pluginState, pluginCompanySettings,
   spsNativePairings, spsNativePairingEvents, spsNativeEnrollments } = await load("packages/db/src/index.ts");
 const { spsMemberDeviceService } = await load("server/src/services/sps-member-devices.ts");
+const { spsWorkspaceExecutionControlService } = await load("server/src/services/sps-workspace-execution-control.ts");
 assert.equal((await getEmbeddedPostgresTestSupport()).supported, true);
 const database = await startEmbeddedPostgresTestDatabase("sps-native-workspace-channel-");
 let db, child, parent, ingress, signerChannel, parentIngress, failure, childShutdownStage = "not-started";
@@ -50,6 +52,7 @@ let applyHostRenewal, nativePluginSourceExpected = null;
 let pluginFixture, pluginConfiguration;
 
 async function runWindow(configuration) {
+  const { revokeNativeMemberDevice, ...windowConfiguration } = configuration;
   const fixture = await createWorkspaceE2eFixture();
   let electron, mainClosed = false;
   try {
@@ -69,7 +72,15 @@ async function runWindow(configuration) {
     electron.stderr.resume();
     electron.on("message", message => {
       if (message?.kind === "sps.test.native-workspace-window.configure-ready" && electron.connected) {
-        electron.send({ kind: "sps.test.native-workspace-window.configure", ...configuration });
+        electron.send({ kind: "sps.test.native-workspace-window.configure", ...windowConfiguration });
+      }
+      if (withNativeExecutionControl && message?.kind === "sps.test.native-workspace-window.execution-status-rendered"
+        && electron.connected) {
+        void Promise.resolve().then(() => revokeNativeMemberDevice()).then(() => {
+          if (electron.connected) electron.send({ kind: "sps.test.native-workspace-window.member-device-revoked" });
+        }, () => {
+          if (electron.connected) electron.send({ kind: "sps.test.native-workspace-window.member-device-revoke-failed" });
+        });
       }
       if (withHostRenewal && message?.kind === "sps.test.native-host-renewal.publish" && electron.connected) {
         void applyHostRenewal(message).then(() => {
@@ -91,9 +102,20 @@ async function runWindow(configuration) {
       electron.once("close", code => { clearTimeout(timer); mainClosed = true; resolve(code); });
     });
     const result = JSON.parse(await readFile(path.join(fixture.directory, "result.json"), "utf8"));
-    assert.equal(code, 0, `Joined Native Workspace window failed at ${result.stage ?? "unknown"}.`);
+    const safeStages = new Set(["awaiting_app", "protected_store", "host_certificate_publish", "host_certificate_restarted",
+      "protected_store_ready", "protected_target_read", "protected_key_read", "protected_issuance_read", "window_open",
+      "asset_start", "asset_ready", "workspace_render", "browser_isolation", "dashboard_render", "plugin_window_open",
+      "plugin_deactivation_denied", "inbox_render", "execution_status_read", "execution_status_revocation",
+      "execution_status_refresh", "client_exchange", "client_get_workspace_bootstrap", "client_read_workspace_surface",
+      "client_update_inbox_state", "native_enrollment_client_invalid_options", "native_enrollment_client_unavailable",
+      "native_enrollment_client_invalid_response", "native_enrollment_client_busy", "native_enrollment_client_session_required",
+      "native_enrollment_client_cancelled", "native_enrollment_client_timeout", "native_enrollment_client_disposed", "shutdown"]);
+    const failureStage = safeStages.has(result?.stage) ? result.stage : "unknown";
+    assert.equal(code, 0, `Joined Native Workspace window failed at ${failureStage}.`);
     assert.deepEqual(result, { ok: true, views: ["workspace", "dashboard", "inbox"],
       actualElectron: true, fixtureBackend: false, actualDpapi: true, wrongPeerDenied: true,
+      ...(withNativeExecutionControl ? { executionControl: true, stoppedReadOnly: true,
+        revokedStatusDenied: true, revokedRefreshCleared: true } : {}),
       ...(withNativePlugin ? { pluginUi: true, pluginAction: true, pluginIsolated: true, pluginDeactivationDenied: true } : {}),
       ...(withRenewal ? { renewalReplay: true, renewalPublished: true, originalIssuedBytesPreserved: true,
         renewedEnrollmentReconciled: true } : {}),
@@ -725,7 +747,19 @@ export function NativeCount({data, refresh}) {
       notBefore: now - 1000, notAfter: now + 3_600_000, issuerNotAfter: now + 7_200_000 });
     const untrustedContext = { ...context, serverSpkiSha256: pin(unrelated.server.certificatePem),
       issuerSpkiSha256: pin(unrelated.memberIssuer.certificatePem) };
+    let executionControlStopped = null;
+    if (withNativeExecutionControl) {
+      assert.deepEqual(await db.select().from(agents), [], "Native Member status must not require an Agent.");
+      assert.deepEqual(await db.select().from(plugins), [], "Native Member status must not require a Plugin.");
+      const executionControl = spsWorkspaceExecutionControlService(db);
+      const current = await executionControl.get(companyId);
+      assert.equal(current.state, "running");
+      executionControlStopped = await executionControl.transition(companyId, "stop", userId, current.revision);
+      assert.equal(executionControlStopped.state, "stopped");
+    }
     await runWindow({ workspaceId: companyId, renewal: withRenewal, hostRenewal: withHostRenewal,
+      ...(withNativeExecutionControl ? { nativeExecutionControl: true,
+        revokeNativeMemberDevice: async () => devices.revoke(device.id, "fixture-host") } : {}),
       ...(withNativePlugin ? { withNativePlugin: true, pluginId: pluginConfiguration.pluginId, pluginSurfaceId: "native-count" } : {}),
       ...(withHostRenewal ? { hostIdentity: host } : {}), deviceId: device.id, context, keyRequest: key,
       untrustedContext, untrustedTarget: { v: 1, kind: "sps.native.member-host-target", context: untrustedContext,
@@ -763,20 +797,27 @@ export function NativeCount({data, refresh}) {
     assert.equal(baseAfter.certificate, baseDevice.certificate);
     await devices.authorize({ companyId, userId, certificateSha256: renewalRows[0].certificateSha256 });
   }
-  await db.update(companyMemberships).set({ status: "suspended" });
-  assert.deepEqual(await read(discovery), { status: 200, body: [] });
-  assert.equal((await read(`${root}/workspace-bootstrap`)).status, 403);
-  assert.equal((await read(`${root}/workspace-shell`)).status, 403);
-  // Isolate parent revocation from the membership denial already checked above.
-  if (withRenewal) await db.update(companyMemberships).set({ status: "active" });
-  await devices.revoke(device.id, "fixture-host");
-  if (withRenewal) {
-    for (const certificateSha256 of [device.certificateSha256, renewalRows[0].certificateSha256]) {
-      await assert.rejects(devices.authorize({ companyId, userId, certificateSha256 }), { code: "not_authorized" });
+  if (!withNativeExecutionControl) {
+    await db.update(companyMemberships).set({ status: "suspended" });
+    assert.deepEqual(await read(discovery), { status: 200, body: [] });
+    assert.equal((await read(`${root}/workspace-bootstrap`)).status, 403);
+    assert.equal((await read(`${root}/workspace-shell`)).status, 403);
+    // Isolate parent revocation from the membership denial already checked above.
+    if (withRenewal) await db.update(companyMemberships).set({ status: "active" });
+    await devices.revoke(device.id, "fixture-host");
+    if (withRenewal) {
+      for (const certificateSha256 of [device.certificateSha256, renewalRows[0].certificateSha256]) {
+        await assert.rejects(devices.authorize({ companyId, userId, certificateSha256 }), { code: "not_authorized" });
+      }
     }
+    assert.equal((await read(discovery)).status, 403);
+    assert.equal((await read(`${root}/workspace-shell`)).status, 403);
   }
-  assert.equal((await read(discovery)).status, 403);
-  assert.equal((await read(`${root}/workspace-shell`)).status, 403);
+  if (withNativeExecutionControl) {
+    assert.equal((await read(discovery)).status, 403);
+    assert.equal((await read(`${root}/workspace-shell`)).status, 403);
+    assert.equal((await read(`${root}/execution-control`)).status, 403);
+  }
   if (withNativePluginSource) {
     const expected = nativePluginSourceExpected;
     assert.ok(expected?.heldRunId && expected?.siblingRunId);
@@ -897,6 +938,8 @@ console.log(withNativePlugin
   ? "Native Host and Member renewal integration passed: actual Windows DPAPI Host publication, explicit listener restart retaining exact old leaf selection, protected Member target refresh, same keys/issuer/original files, real Core renewal/reconciliation and Workspace Inbox operations, independent revocation denial and natural process/database cleanup. Identity exchange is substituted; no issuer rotation or expired-trust recovery qualification."
   : withRenewal
   ? "Native Member renewal integration passed: actual Main signer and Core parent ingress, TLS old-certificate replay, one immutable Core renewal row, Windows DPAPI append-only publication, renewed-certificate Workspace reads and revoked-parent denial. Identity-provider exchange is substituted; no issuer/server-leaf rotation or expired recovery qualification."
+  : withNativeExecutionControl
+  ? "Native Member execution-status integration passed: actual Electron/bundled SPA/preload, Windows DPAPI credentials, fresh mTLS, Core DB stopped state with canControl false, no execution actions, current device-revocation denial and refreshed UI clearing stale status. Identity-provider token exchange is substituted; not physical two-PC/LAN qualification."
   : withWindow
   ? "Joined Native Workspace integration passed: actual Electron/bundled SPA/preload, Windows DPAPI retained credentials, fresh mTLS, owned Core child/private HTTP, real DB session/device/membership, persisted Inbox read/archive/restore and natural Main/Core/database cleanup. Identity-provider token exchange is substituted; not installed startup, WebSockets, Plugin UI or physical LAN qualification."
   : "Native Workspace channel integration passed: actual fresh mTLS, owned child IPC bootstrap, private HTTP, real Core Identity/device/membership and surface services; unauthorized and revoked devices denied, no Agents/Plugins/Nodes, natural process/database cleanup. Source/loopback only; not DPAPI, full SPA, WebSockets, physical LAN or installed startup qualification.");

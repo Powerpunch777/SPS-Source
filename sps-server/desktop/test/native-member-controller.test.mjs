@@ -373,6 +373,27 @@ test("Workspace surface reads use saved credentials, exact selectors, safe DTO c
   ]) assert.throws(() => f.controller.readWorkspaceSurface(input), { code: "native_member_invalid" });
 });
 
+test("Native Member execution-control read uses the fixed read-only surface", async () => {
+  const workspaceId = "55555555-5555-4555-8555-555555555555";
+  const calls = [];
+  const status = { state: "stopped", epoch: "1", revision: 1, updatedAt: null,
+    pending: { agents: 0, jobs: 0, models: 0, commands: 0, plugins: 0 }, canControl: false };
+  const f = fixture({ createWorkspace: () => ({
+    async exchange() {},
+    async readWorkspaceSurface(input) { calls.push(input); return status; },
+    dispose() {},
+  }) });
+  await enroll(f);
+  const result = await f.controller.readWorkspaceSurface({ hostId: HOST, workspaceId, surface: "executionControl" });
+  assert.deepEqual(calls, [{ workspaceId, surface: "executionControl", keyRequest: f.snapshot().key,
+    issuance: f.snapshot().issued }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), status);
+  for (const input of [
+    { hostId: HOST, workspaceId, surface: "executionControl", archived: false },
+    { hostId: HOST, workspaceId, surface: "executionControl", url: "https://attacker.invalid" },
+  ]) assert.throws(() => f.controller.readWorkspaceSurface(input), { code: "native_member_invalid" });
+});
+
 test("Main composition orders stable index, protected key/target, issuance persistence before completion", async () => {
   const f = fixture();
   assert.deepEqual(await enroll(f), { hostId: HOST, deviceId: DEVICE, status: "pending" });

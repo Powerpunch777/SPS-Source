@@ -28,7 +28,7 @@ const MESSAGES = Object.freeze({
 });
 const failure = kind => Object.assign(new Error(MESSAGES[kind]), { code: `native_member_${kind}` });
 const KEYS = ["identityIssuer", "subject", "userDataDirectory", "vaultDirectory", "generation"];
-const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox"]);
+const WORKSPACE_SURFACES = new Set(["shell", "providers", "dashboard", "inbox", "executionControl"]);
 
 function authority(input) {
   const value = record(input, KEYS);

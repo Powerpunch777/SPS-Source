@@ -7,6 +7,13 @@ import test from "node:test";
 import { prepareWindowsHostJob } from "../src/windows-host-job.mjs";
 import { removeOwnerHostJobGatePreload } from "../../desktop/src/owner-host-job-gate.mjs";
 
+test.beforeEach(context => {
+  // Fake sockets and helper children do not keep Node alive like their real OS handles do.
+  // Keep this test's event loop alive while production unref'd deadlines drive fake cleanup.
+  const eventLoopKeeper = setInterval(() => {}, 60_000);
+  context.after(() => clearInterval(eventLoopKeeper));
+});
+
 class FakeSocket extends EventEmitter {
   destroyed = false;
   writes = [];
