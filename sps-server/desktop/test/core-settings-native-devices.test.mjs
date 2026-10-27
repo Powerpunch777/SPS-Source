@@ -14,8 +14,9 @@ const invitationId = "223e4567-e89b-42d3-a456-426614174000";
 const unavailableInvitations = { state: "unavailable", invitations: [] };
 
 function invitation(overrides = {}) {
-  return { id: invitationId, status: "pending", createdAt: "2026-10-26T00:00:00.000Z",
-    expiresAt: "2026-10-27T00:00:00.000Z", failedAttempts: 1, maxAttempts: 5,
+  const now = Date.now();
+  return { id: invitationId, status: "pending", createdAt: new Date(now - 60_000).toISOString(),
+    expiresAt: new Date(now + 60 * 60_000).toISOString(), failedAttempts: 1, maxAttempts: 5,
     target: "any_verified_user", ...overrides };
 }
 
@@ -123,9 +124,7 @@ test("missing list callback fails closed and foreign settings frames cannot list
 
 test("Native invitation list is authorized, strictly projected, bounded, and rechecks its Settings sender", async () => {
   let release;
-  const valid = { state: "available", invitations: [{ id: invitationId, status: "pending",
-    createdAt: "2026-10-26T00:00:00.000Z", expiresAt: "2026-10-27T00:00:00.000Z",
-    failedAttempts: 1, maxAttempts: 5, target: "any_verified_user" }] };
+  const valid = { state: "available", invitations: [invitation()] };
   const delayed = setup({ listNativeInvitations: async () => new Promise(resolve => { release = resolve; }) });
   await delayed.controller.show();
   const pending = delayed.invoke("list-native-invitations");
@@ -159,6 +158,7 @@ test("Native invitation revoke requires current Owner authorization, exact pendi
   let confirmed;
   let revoked = 0;
   let authorized = true;
+  const pendingInvitation = invitation();
   const ctx = setup({
     authorizeMutation: async () => { ctx.calls.push("authorize"); if (!authorized) throw new Error("Owner session ended"); },
     confirmNativeInvitationRevoke: async (parent, value) => {
@@ -167,22 +167,18 @@ test("Native invitation revoke requires current Owner authorization, exact pendi
     },
     revokeNativeInvitation: async (input, options) => {
       assert.deepEqual(input, { invitationId });
-      const target = { ...invitation(), pairingSecret: undefined };
+      const target = { ...pendingInvitation, pairingSecret: undefined };
       delete target.pairingSecret;
       delete target.issuedByUserId;
       delete target.consumedByUserId;
       delete target.consumedDeviceSnapshotId;
       if (await options.confirm(target)) revoked++;
-      return { state: "available", invitations: [{ id: invitationId, status: "revoked",
-        createdAt: "2026-10-26T00:00:00.000Z", expiresAt: "2026-10-27T00:00:00.000Z",
-        failedAttempts: 1, maxAttempts: 5, target: "any_verified_user" }] };
+      return { state: "available", invitations: [{ ...pendingInvitation, status: "revoked" }] };
     },
   });
   await ctx.controller.show();
   const result = await ctx.invoke("revoke-native-invitation", [{ invitationId }]);
-  assert.deepEqual(confirmed, { parent: true, value: { id: invitationId, status: "pending",
-    createdAt: "2026-10-26T00:00:00.000Z", expiresAt: "2026-10-27T00:00:00.000Z",
-    failedAttempts: 1, maxAttempts: 5, target: "any_verified_user" } });
+  assert.deepEqual(confirmed, { parent: true, value: pendingInvitation });
   assert.equal(revoked, 1);
   assert.deepEqual(result.invitations[0].status, "revoked");
 
@@ -392,6 +388,14 @@ function createRenderer(api) {
 
 async function settle() { await new Promise(resolve => setImmediate(resolve)); }
 
+async function waitFor(predicate, message) {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if (predicate()) return;
+    await settle();
+  }
+  assert.fail(message);
+}
+
 function allElements(root) {
   return [root, ...root.children.flatMap(allElements)];
 }
@@ -550,12 +554,14 @@ test("Host invitation UI loads only on explicit refresh, renders pending-only re
       return { state: "available", invitations: [invitation({ status: "revoked" })] };
     },
   });
-  await new Promise(resolve => setImmediate(resolve));
+  await waitFor(() => ctx.elements.get("refresh-native-invitations").disabled === false,
+    "Host invitation controls should become available after the initial Host status load");
   assert.equal(listCalls, 0, "invitation reads must never run on renderer startup");
   const refresh = ctx.elements.get("refresh-native-invitations");
   assert.equal(refresh.disabled, false);
   refresh.dispatch("click");
-  await new Promise(resolve => setImmediate(resolve));
+  await waitFor(() => listCalls === 1 && ctx.elements.get("native-invitations-list").children.length === 2,
+    "explicit invitation refresh should render its bounded snapshot");
   assert.equal(listCalls, 1);
   const list = ctx.elements.get("native-invitations-list");
   assert.equal(list.children.length, 2);
@@ -565,25 +571,34 @@ test("Host invitation UI loads only on explicit refresh, renders pending-only re
   assert.equal(allElements(list.children[1]).some(node => node.tagName === "button"), false);
 
   pendingRow.find(node => node.tagName === "button").dispatch("click");
-  await new Promise(resolve => setImmediate(resolve));
+  await waitFor(() => ctx.elements.get("native-invitations-list").children.length === 1
+    && allElements(ctx.elements.get("native-invitations-list").children[0]).some(node => node.textContent === "Revoked"),
+  "successful invitation revoke should repaint the current snapshot");
   assert.deepEqual(JSON.parse(JSON.stringify(revokeCalls)), [{ invitationId: id }]);
   assert.equal(allElements(list.children[0]).find(node => node.tagName === "h3").textContent, "Revoked");
 
   owner = false;
   ctx.window.dispatch("focus");
-  await new Promise(resolve => setImmediate(resolve));
+  await waitFor(() => refresh.disabled === true
+    && ctx.elements.get("status-region").attributes.get("aria-busy") === "false",
+  "Host controls should retire after Owner status is refreshed");
   assert.equal(listCalls, 1);
   assert.equal(list.children.length, 0);
   assert.equal(refresh.disabled, true);
 });
 
 test("Host invitation UI rejects a malformed or secret-bearing Core snapshot", async () => {
-  const ctx = createRenderer({ listNativeInvitations: async () => ({ state: "available", invitations: [
-    invitation({ pairingSecret: "secret" }),
-  ] }) });
-  await new Promise(resolve => setImmediate(resolve));
+  const ctx = createRenderer({
+    getStatus: async () => ({ host: {}, recovery: {}, canManageHost: true }),
+    listNativeInvitations: async () => ({ state: "available", invitations: [
+      invitation({ pairingSecret: "secret" }),
+    ] }),
+  });
+  await waitFor(() => ctx.elements.get("refresh-native-invitations").disabled === false,
+    "Owner invitation control should enable after status loads");
   ctx.elements.get("refresh-native-invitations").dispatch("click");
-  await new Promise(resolve => setImmediate(resolve));
+  await waitFor(() => ctx.elements.get("native-invitations-error").hidden === false,
+    "malformed invitation snapshots should fail closed");
   assert.equal(ctx.elements.get("native-invitations-error").hidden, false);
   assert.equal(ctx.elements.get("native-invitations-list").children.length, 0);
 });
@@ -595,22 +610,26 @@ test("Host invitation revoke cannot repaint retired rows after Settings regains 
     listNativeInvitations: async () => ({ state: "available", invitations: [invitation()] }),
     revokeNativeInvitation: () => new Promise(resolve => { release = resolve; }),
   });
-  await settle();
+  await waitFor(() => view.elements.get("refresh-native-invitations").disabled === false,
+    "Owner invitation control should enable after initial status load");
   view.elements.get("refresh-native-invitations").dispatch("click");
-  await settle();
+  await waitFor(() => view.elements.get("native-invitations-list").children.length === 1,
+    "invitation list should render before revoke");
   const list = view.elements.get("native-invitations-list");
   allElements(list).find(item => item.tagName === "button").dispatch("click");
-  await settle();
+  await waitFor(() => typeof release === "function", "revoke request should start");
   owner = false;
   view.window.dispatch("focus");
-  await settle();
+  await waitFor(() => list.children.length === 0, "focus should immediately retire prior invitation rows");
   release({ state: "available", invitations: [invitation({ status: "revoked" })] });
-  await settle();
+  await waitFor(() => view.elements.get("refresh-native-invitations").disabled === false,
+    "late revoke response should finish before the next Host status refresh");
   assert.equal(list.children.length, 0);
   assert.notEqual(view.elements.get("action-notice").textContent, "Host invitation list updated.");
   // Status loading is serialized behind the mutation; the next refresh can
   // observe the changed Owner after the late mutation result was discarded.
   view.window.dispatch("focus");
-  await settle();
-  assert.equal(view.elements.get("refresh-native-invitations").disabled, true);
+  await waitFor(() => view.elements.get("refresh-native-invitations").disabled === true
+    && view.elements.get("status-region").attributes.get("aria-busy") === "false",
+    "refreshed status should remove invitation controls after Owner loss");
 });

@@ -52,9 +52,21 @@ test("full Linux Core verification also runs the actual Desktop transport integr
   assert.doesNotMatch(job, /continue-on-error|\|\| true/);
 });
 
-test("the Native enrollment client is not imported by Main, preloads or renderer startup", async () => {
-  for (const relative of ["../src/main.mjs", "../src/core-settings-preload.cjs", "../renderer/core-settings.mjs"]) {
-    const source = await readFile(new URL(relative, import.meta.url), "utf8");
-    assert.doesNotMatch(source, /native-enrollment-client|createSpsNativeEnrollmentClient/);
+test("Main wires Native enrollment through the scoped Member controller without exposing the raw client", async () => {
+  const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
+  const controller = await readFile(new URL("../src/native-member-controller.mjs", import.meta.url), "utf8");
+  const preload = await readFile(new URL("../src/core-settings-preload.cjs", import.meta.url), "utf8");
+  const renderer = await readFile(new URL("../renderer/core-settings.mjs", import.meta.url), "utf8");
+
+  assert.match(main, /import \{ createSpsNativeServerCertificateClient \} from "\.\/native-enrollment-client\.mjs"/);
+  assert.match(main, /createSpsNativeMemberController\(\{[\s\S]{0,500}createServerCertificate: createSpsNativeServerCertificateClient/);
+  assert.match(controller, /createSpsNativeEnrollmentClient/);
+  assert.match(main, /enrollNativeMember: \(input, options\) => ensureNativeMemberController\(\)\.enroll\(input, options\)/);
+  assert.match(preload, /enrollNativeMember/);
+  assert.match(renderer, /window\.spsCoreSettings\.enrollNativeMember/);
+  for (const source of [main, preload, renderer]) {
+    assert.doesNotMatch(source, /createSpsNativeEnrollmentClient/);
   }
+  assert.doesNotMatch(preload, /native-enrollment-client/);
+  assert.doesNotMatch(renderer, /native-enrollment-client/);
 });

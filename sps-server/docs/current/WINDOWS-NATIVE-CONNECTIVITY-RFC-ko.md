@@ -2,9 +2,15 @@
 
 작성일: 2026-10-25, 상태 갱신: 2026-10-27. **D1~D3·D7 정책 승인 / 등록·Workspace·Member 갱신 소스 연결 / Native 기본 OFF, 제품 검증 진행 중**.
 [계획과 결정 목록](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 Stage 0 산출물이다.
-개념 이름 전체가 현재 export·endpoint를 뜻하지 않는다. 일부 Core 기기 관리 계약은
-소스 기반으로 구현됐고, 신뢰된 Host 전용 Core Settings의 명시 확인 인증서 준비 경로만 연결됐다.
-실제 Native LAN ingress는 연결되지 않았고 LAN은 사용할 수 없다.
+개념 이름 전체가 현재 export·endpoint를 뜻하지 않는다. 현재 소스 통합 범위는
+[연결 계획의 현재 체크포인트](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)를 따른다.
+현재 후속 소스에는 명시적 opt-in Native ingress와 등록·Workspace·인증서 갱신 경로가 연결됐다.
+초기 단계의 미연결 설명은 아래 구현 이력이며, 현재 제품 지원이나 물리 LAN 검증을 뜻하지 않는다.
+공개 SDK의 첫 연결 조회와 그 한계는 [SDK 후속 검토](../reviews/NATIVE-CONNECTIVITY-SDK-2026-10-27.md)를 따른다.
+
+## 초기 설계·구현 이력
+
+아래 미연결 설명은 각 단계 당시의 범위다. 현재 상태를 이 이력으로 대체하지 않는다.
 
 [후속 등록 HTTP 경계](../reviews/NATIVE-ENROLLMENT-HTTP-BOUNDARY-2026-10-26.md)는
 엄격한 TLS/쿠키 세션·크기·시간·동시성 입력을 기존 등록 service와 조합한다. 전용
@@ -17,7 +23,7 @@
 조회·세션/Host 핀 결속·Plugin startup 차단·일반 renderer 거부를 구분해 기록한다.
 보안 확인창을 통한 identity 준비나 실제 등록 기기의 승인/철회·LAN 전송 검증은 아니다.
 
-## 현재 소스 기반
+## 초기 단계의 소스 기반
 
 - Host 고정 기기 registry와 공개 인증서/상태 DTO, pending 등록, 로컬 Host의 승인·철회,
   redacted 감사 이벤트를 추가했다. Host ID는 신뢰된 생성자 설정이며 요청 값이 아니다.

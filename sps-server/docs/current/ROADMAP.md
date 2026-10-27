@@ -22,6 +22,9 @@ Native Source/Node, 실제 AI 실행, 설치/업데이트/복원과 물리 두 P
 후속 [Native Plugin 실행 기반](../reviews/NATIVE-PLUGIN-EXECUTION-FOUNDATION-2026-10-27.md)은
 기존 앱 작업자와 비공개 고정 호출을 연결하고 호출별 현재 권한·취소·결과 전달 경계를 추가한다.
 실제 Plugin 화면·공개 TLS/자산 중계·SDK 이벤트 연결은 다음 단계이며 아직 사용할 수 없다.
+후속 [공개 Native 연결 SDK](../reviews/NATIVE-CONNECTIVITY-SDK-2026-10-27.md)는
+현재 호출의 검증된 연결 근거만 읽는 `connectivity.current()`와 전용 read capability를 추가한다.
+전체 Host 목록·연결 생성·이벤트 구독·실행 권한을 제공하는 API는 아니며 아직 미출시 소스다.
 아래는 단계별 이전 구현·검증 이력이며, 전체 플랫폼 완성이나 현재 배포 승인을 의미하지 않는다.
 
 최신 local 관리 increment: 준비된 Host의 직접 소유 Core 자식에 Owner 세션 결속

@@ -16,6 +16,11 @@ mTLS 검증 helper와 선택적 WS guard를 추가했다. 앱 join/Native TLS li
 
 ## 현재 체크포인트
 
+[공개 Native 연결 SDK 후속](../reviews/NATIVE-CONNECTIVITY-SDK-2026-10-27.md)은
+현재 Workspace 호출의 연결 근거를 읽는 `connectivity.current()`와 전용 read capability를
+추가한다. Core가 실제 Native 권한에서 정보를 만들고 SDK는 닫힌 DTO를 검사한다. 전체 Host
+목록·연결 생성·실시간 구독은 미구현이며, 이 조회가 Node·AI 실행 권한을 부여하지 않는다.
+
 [Native Plugin 실행 기반](../reviews/NATIVE-PLUGIN-EXECUTION-FOUNDATION-2026-10-27.md)은
 실제 앱 작업자를 재사용하는 비공개 Core adapter와 호출별 권한 재검사, 제한된 data/action
 계약 및 재사용 UI 로더를 추가한다. Plugin 전용 격리 창·공개 TLS/자산 중계·이벤트 연결은
