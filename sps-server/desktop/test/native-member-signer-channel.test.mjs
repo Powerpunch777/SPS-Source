@@ -59,6 +59,33 @@ test("cancelled and disconnected operations cannot publish and busy work retains
   assert.equal(next.replies.length, 0); assert.equal(next.disposed(), 1);
 });
 
+test("disposing an owned Host signer revokes signing but can preserve IPC for process close accounting", async () => {
+  let release;
+  let observedSignal;
+  const held = new Promise(resolve => { release = resolve; });
+  const value = setup({ disconnectOnDispose: false }, {
+    sign: async (_payload, { signal }) => {
+      observedSignal = signal;
+      await held;
+      return { certificate: "MAA", requestSha256: "c".repeat(64) };
+    },
+  });
+  value.child.emit("message", request(randomUUID(), "sign", {}));
+  await flush();
+  assert.ok(observedSignal);
+  value.channel.dispose();
+  assert.equal(observedSignal.aborted, true);
+  assert.equal(value.disposed(), 1);
+  assert.equal(value.child.connected, true);
+  assert.equal(value.child.listenerCount("message"), 0);
+
+  value.child.emit("message", request());
+  release();
+  await flush();
+  assert.equal(value.replies.length, 0);
+  assert.equal(value.child.connected, true);
+});
+
 test("request budget exhaustion and process disconnect invalidate the channel", async () => {
   const value = setup({ maxRequests: 1 }); value.child.emit("message", request()); await flush();
   value.child.emit("message", request()); await flush(); assert.equal(value.disposed(), 1);

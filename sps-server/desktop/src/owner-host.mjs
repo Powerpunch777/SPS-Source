@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn as spawnChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { prepareWindowsHostJob } from "@sps/desktop-node";
 import { attachSpsNativeMemberSignerChannel } from "./native-member-signer-channel.mjs";
 import { createSpsNativeParentIngressClient } from "./native-parent-ingress-client.mjs";
 import { attachSpsNativeWorkspaceParentChannel } from "./native-workspace-parent-channel.mjs";
@@ -23,6 +24,23 @@ function hostDiagnostics(value) {
 
 function childHasExited(child) {
   return Boolean(child && (child.exitCode != null || child.signalCode != null));
+}
+
+function hasOwnedHostJob(child) {
+  return typeof child?.terminateOwnedJob === "function" && typeof child?.waitForOwnedJobTermination === "function";
+}
+
+function reportOwnerHostEvent(environment, event) {
+  if (environment?.SPS_DESKTOP_E2E === "1" && typeof event === "string" && /^[a-z-]{1,64}$/.test(event)) {
+    console.log(`[owner-host-job] ${event}`);
+  }
+}
+
+function ownerHostGateModulePath() {
+  const modulePath = fileURLToPath(import.meta.url);
+  return modulePath.split(path.sep).some(part => part.toLowerCase() === "app.asar") && process.resourcesPath
+    ? path.join(process.resourcesPath, "sps-owner-host-job", "owner-host-job-gate.mjs")
+    : fileURLToPath(new URL("./owner-host-job-gate.mjs", import.meta.url));
 }
 
 function waitForChildExit(child, timeoutMs) {
@@ -357,6 +375,11 @@ export function createSpsOwnerHostManager({
   exitConfirmationMs = 5_000,
   createNativeSigner = null,
   onNativeInvalidation = () => {},
+  prepareOwnedJob = process.platform === "win32" && spawn === spawnChildProcess
+    ? () => prepareWindowsHostJob({ gateModulePath: ownerHostGateModulePath() }, {
+      onEvent: event => reportOwnerHostEvent(baseEnvironment, event),
+    })
+    : null,
 } = {}) {
   if (!url) throw new Error("SPS Owner Host URL is required.");
   if (!Number.isSafeInteger(exitConfirmationMs) || exitConfirmationMs < 1 || exitConfirmationMs > 30_000) {
@@ -371,9 +394,20 @@ export function createSpsOwnerHostManager({
   let lifecycleGeneration = 0;
   let startPromise = null;
   let startPromiseGeneration = null;
+  let jobPreparation = null;
+  let preparedJob = null;
   const stopsInFlight = new Set();
 
   async function inspect() {
+    if (ownedChild && (childHasExited(ownedChild) || ownedChild.hasUnconfirmedOwnedJobTermination?.())) {
+      return { state: "stopping", owned: true, url, health: null, startedAt,
+        processTree: hasOwnedHostJob(ownedChild) ? "windows_job" : "child_only",
+        lastError: lastError ?? "SPS Owner Host process-tree termination has not been confirmed." };
+    }
+    if (!ownedChild && (jobPreparation || preparedJob)) {
+      return { state: preparedJob?.hasUnconfirmedOwnedJobTermination?.() ? "stopping" : "starting",
+        owned: true, url, health: null, startedAt, lastError };
+    }
     const health = await healthAt(url, fetchImpl);
     if (health) {
       // A slow first boot can outlive the bounded start loop. Once the Host
@@ -383,6 +417,7 @@ export function createSpsOwnerHostManager({
       return {
         state: ownedChild ? "running" : "running-existing",
         owned: Boolean(ownedChild),
+        processTree: ownedChild ? hasOwnedHostJob(ownedChild) ? "windows_job" : "child_only" : null,
         url,
         health,
         startedAt,
@@ -390,7 +425,8 @@ export function createSpsOwnerHostManager({
       };
     }
     if (ownedChild && !childHasExited(ownedChild)) {
-      return { state: "starting", owned: true, url, health: null, startedAt, lastError };
+      return { state: "starting", owned: true, url, health: null, startedAt, lastError,
+        processTree: hasOwnedHostJob(ownedChild) ? "windows_job" : "child_only" };
     }
     return { state: "stopped", owned: false, url, health: null, startedAt: null, lastError };
   }
@@ -408,7 +444,19 @@ export function createSpsOwnerHostManager({
 
     try {
       if (generation !== lifecycleGeneration) return inspect();
-      const child = spawn(runtime.command, runtime.args, {
+      let job = null;
+      if (prepareOwnedJob) {
+        const preparing = Promise.resolve().then(() => prepareOwnedJob());
+        jobPreparation = preparing;
+        try { job = preparedJob = await preparing; }
+        finally { if (jobPreparation === preparing) jobPreparation = null; }
+        if (generation !== lifecycleGeneration) {
+          await job.dispose();
+          if (preparedJob === job) preparedJob = null;
+          return inspect();
+        }
+      }
+      const spawnOptions = {
         cwd: runtime.cwd,
         // The stop-only pipe survives Native signer IPC revocation. Neither
         // descriptor grants Native signing unless its own channel is attached.
@@ -420,16 +468,35 @@ export function createSpsOwnerHostManager({
           PAPERCLIP_TELEMETRY_DISABLED: "1",
           SPS_DESKTOP_OWNED_SHUTDOWN_PIPE: "1",
         },
-      });
+      };
+      let child;
+      try { child = job ? job.spawn(runtime.command, runtime.args, spawnOptions) : spawn(runtime.command, runtime.args, spawnOptions); }
+      catch (error) {
+        if (job) { await job.dispose(); if (preparedJob === job) preparedJob = null; }
+        throw error;
+      }
       child.stdio?.[4]?.on?.("error", () => {});
+      child.stdio?.[4]?.on?.("error", () => reportOwnerHostEvent(baseEnvironment, "stop-pipe-error"));
+      child.stdio?.[4]?.once?.("close", () => reportOwnerHostEvent(baseEnvironment, "stop-pipe-close"));
+      child.stdout?.once?.("close", () => reportOwnerHostEvent(baseEnvironment, "stdout-close"));
+      child.stderr?.once?.("close", () => reportOwnerHostEvent(baseEnvironment, "stderr-close"));
+      child.once("disconnect", () => reportOwnerHostEvent(baseEnvironment, "core-ipc-disconnect"));
+      child.once("close", () => reportOwnerHostEvent(baseEnvironment, "core-close"));
       ownedChild = child;
+      if (preparedJob === job) preparedJob = null;
       let childChannel = null;
       let childWorkspace = null;
       if (createNativeSigner) {
         let signer;
         try {
           signer = createNativeSigner();
-          childChannel = attachSpsNativeMemberSignerChannel(child, signer, { isCurrent: () => ownedChild === child });
+          childChannel = attachSpsNativeMemberSignerChannel(child, signer, {
+            isCurrent: () => ownedChild === child,
+            // Revoke Native authority immediately, but let the admitted Core's
+            // IPC reach EOF. Parent disconnect skips Node's IPC close accounting
+            // and can prevent the real ChildProcess.close used by the job join.
+            disconnectOnDispose: !hasOwnedHostJob(child),
+          });
           nativeChannel = childChannel;
           nativeIngress = createSpsNativeParentIngressClient(child, { isCurrent: () => ownedChild === child });
           const childEnvironment = runtime.environment ?? {};
@@ -473,7 +540,18 @@ export function createSpsOwnerHostManager({
         lastError = asMessage(error);
       });
       child.once("exit", (code) => {
+        reportOwnerHostEvent(baseEnvironment, "core-exit");
         if (ownedChild !== child) return;
+        // fd4 is an independent, duplex parent-owned stop pipe. After the
+        // actual Core has exited, its unused parent read side must also close
+        // before Node can emit ChildProcess.close. Preserve output drainage and
+        // the separate retained-job acknowledgement rather than skipping them.
+        child.stdio?.[4]?.destroy?.();
+        child.stdout?.resume?.();
+        child.stderr?.resume?.();
+        if (!hasOwnedHostJob(child)) {
+          try { if (child.connected) child.disconnect(); } catch { /* Core is already terminal. */ }
+        }
         childChannel?.dispose();
         nativeIngress?.dispose();
         nativeIngress = null;
@@ -485,10 +563,26 @@ export function createSpsOwnerHostManager({
           const details = hostDiagnostics(childOutput);
           lastError = `SPS Owner Host exited with code ${code}.${details ? ` ${details}` : ""}`;
         }
-        ownedChild = null;
-        startedAt = null;
+        if (hasOwnedHostJob(child)) {
+          // Keep the exact child and job while descendants or their confirmation
+          // remain outstanding. A leader exit must not permit a replacement Host.
+          void child.waitForOwnedJobTermination().then(() => {
+            if (ownedChild === child) { ownedChild = null; startedAt = null; }
+          }).catch(() => {
+            if (ownedChild === child) lastError = "SPS Owner Host process-tree termination has not been confirmed.";
+          });
+        } else { ownedChild = null; startedAt = null; }
       });
+      if (child.supervisorReady) {
+        try { await child.supervisorReady; }
+        catch {
+          lastError = "SPS Owner Host could not enter its owned process environment.";
+          await child.terminateOwnedJob().catch(() => {});
+          return inspect();
+        }
+      }
     } catch (error) {
+      if (error?.code === "owner_host_job_preparation_unconfirmed" && error.ownedHostJob) preparedJob = error.ownedHostJob;
       lastError = asMessage(error);
       return inspect();
     }
@@ -536,23 +630,67 @@ export function createSpsOwnerHostManager({
   }
 
   async function stopOwned({ force = false } = {}) {
+    reportOwnerHostEvent(baseEnvironment, "stop-begin");
     invalidateNativeSigner();
+    reportOwnerHostEvent(baseEnvironment, "native-invalidated");
+    const preparing = jobPreparation;
+    if (preparing) {
+      try { await preparing; } catch { /* The startup path records its failure. */ }
+    }
+    if (!ownedChild && preparedJob) {
+      const job = preparedJob;
+      try { await job.dispose(); }
+      catch {
+        lastError = "SPS Owner Host process environment cleanup has not been confirmed.";
+        throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
+      }
+      if (preparedJob === job) preparedJob = null;
+    }
     const child = ownedChild;
+    const terminateOwnedTree = async () => {
+      if (!hasOwnedHostJob(child)) return terminateTree(child.pid);
+      try {
+        reportOwnerHostEvent(baseEnvironment, "force-job-requested");
+        await child.terminateOwnedJob();
+        reportOwnerHostEvent(baseEnvironment, "force-job-confirmed");
+      }
+      catch {
+        lastError = "SPS Owner Host process-tree termination has not been confirmed.";
+        throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
+      }
+    };
     if (child && !childHasExited(child)) {
       if (force) {
-        await terminateTree(child.pid);
+        await terminateOwnedTree();
       } else {
         const shutdownPipe = child.stdio?.[4];
         if (process.platform === "win32" && shutdownPipe && !shutdownPipe.destroyed && !shutdownPipe.writableEnded) {
-          try { shutdownPipe.end("sps.owner-host.shutdown/v1\n"); } catch {}
+          try {
+            shutdownPipe.end("sps.owner-host.shutdown/v1\n");
+            reportOwnerHostEvent(baseEnvironment, "stop-pipe-ended");
+          } catch { reportOwnerHostEvent(baseEnvironment, "stop-pipe-write-failed"); }
         } else if (process.platform === "win32" && child.connected === true && typeof child.send === "function") {
           try { child.send({ v: 1, kind: "sps.owner-host.shutdown" }, () => {}); } catch {}
         } else child.kill("SIGINT");
         await waitForChildExit(child, 12_000);
-        if (!childHasExited(child)) await terminateTree(child.pid);
+        reportOwnerHostEvent(baseEnvironment, "grace-period-finished");
+        if (!childHasExited(child)) {
+          await terminateOwnedTree();
+        }
       }
       if (!await waitForChildExit(child, exitConfirmationMs)) {
         lastError = "SPS Owner Host process did not exit after termination was requested.";
+        throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
+      }
+    }
+    if (child && hasOwnedHostJob(child)) {
+      try {
+        reportOwnerHostEvent(baseEnvironment, "job-confirmation-pending");
+        await child.waitForOwnedJobTermination();
+        reportOwnerHostEvent(baseEnvironment, "job-confirmed");
+      }
+      catch {
+        lastError = "SPS Owner Host process-tree termination has not been confirmed.";
         throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
       }
     }

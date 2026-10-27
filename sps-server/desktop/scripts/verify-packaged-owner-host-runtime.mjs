@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { materializeSpsOwnerHostRuntimePackage } from "../src/owner-host-runtime-package.mjs";
 import { verifyPackagedZodRuntime } from "./verify-packaged-zod-runtime.mjs";
 import { spawnWindowsJobSupervisor } from "../../desktop-node/src/windows-job-supervisor.mjs";
+import { prepareWindowsHostJob } from "../../desktop-node/src/windows-host-job.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -76,6 +77,64 @@ if (supervisedExit.type !== "exit" || supervisedExit.activeProcesses !== 0 || su
   throw new Error("The packaged Windows command supervisor did not confirm a clean owned process tree.");
 }
 console.log("Verified the packaged Windows Job Object supervisor with the bundled Node runtime.");
+
+const hostGatePath = path.join(desktopRoot, "dist", "win-unpacked", "resources", "sps-owner-host-job", "owner-host-job-gate.mjs");
+await access(hostGatePath);
+const hostJob = await prepareWindowsHostJob({ helperPath: supervisorPath, gateModulePath: hostGatePath });
+let hostProbe;
+try {
+  hostProbe = hostJob.spawn(path.join(runtimeRoot, "bin", "node.exe"), ["-e", `
+    const fs = require('node:fs');
+    const { spawn } = require('node:child_process');
+    const { Worker } = require('node:worker_threads');
+    if (Object.keys(process.env).some(key => key.startsWith('SPS_OWNER_HOST_JOB_'))
+      || process.execArgv.some(value => value.includes('owner-host-job-gate.mjs'))) process.exit(71);
+    process.on('message', message => {
+      if (message?.kind !== 'sps.packaged.host-job.ping') return process.exit(72);
+      const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      descendant.unref();
+      const worker = new Worker("require('node:worker_threads').parentPort.postMessage('ok')", { eval: true });
+      worker.once('message', value => process.send({ kind: 'sps.packaged.host-job.pong', worker: value }));
+    });
+    let shutdown = '';
+    const stop = fs.createReadStream(null, { fd: 4, autoClose: true });
+    stop.setEncoding('utf8');
+    stop.on('data', chunk => { shutdown += chunk; });
+    stop.once('end', () => {
+      if (shutdown !== 'sps.owner-host.shutdown/v1\\n') return process.exit(73);
+      process.disconnect();
+      process.exit(0);
+    });
+  `], {
+    cwd: runtimeRoot, windowsHide: true, shell: false,
+    stdio: ["ignore", "pipe", "pipe", "ipc", "pipe"],
+    env: { SYSTEMROOT: process.env.SYSTEMROOT ?? "C:\\Windows", WINDIR: process.env.WINDIR ?? "C:\\Windows" },
+  });
+  hostProbe.stdout.resume(); hostProbe.stderr.resume();
+  let timer;
+  const pong = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("Packaged Owner Host IPC verification timed out.")), 15_000);
+    hostProbe.once("message", message => {
+      if (message?.kind === "sps.packaged.host-job.pong" && message.worker === "ok") resolve();
+      else reject(new Error("Packaged Owner Host IPC verification returned an invalid result."));
+    });
+    hostProbe.once("error", () => reject(new Error("Packaged Owner Host probe could not start.")));
+  });
+  void pong.catch(() => {});
+  try {
+    await hostProbe.supervisorReady;
+    hostProbe.send({ kind: "sps.packaged.host-job.ping" });
+    await pong;
+  } finally { clearTimeout(timer); }
+  hostProbe.stdio[4].end("sps.owner-host.shutdown/v1\n");
+  const hostExit = await hostProbe.waitForOwnedJobTermination();
+  if (hostExit.type !== "exit" || hostExit.activeProcesses !== 0 || hostExit.code !== 0) {
+    throw new Error("The packaged Owner Host did not confirm its owned process tree exit.");
+  }
+} finally {
+  await hostJob.dispose();
+}
+console.log("Verified packaged Owner Host job admission, Node IPC, worker preload isolation and private shutdown pipe.");
 
 const packagedZod = await verifyPackagedZodRuntime(runtimeRoot);
 console.log(`Verified packaged Core Zod ${packagedZod.version} issue budget (${packagedZod.issueLimit} records).`);

@@ -15,13 +15,15 @@ function publicResult(operation, input) {
 
 // Parent-child IPC only. No socket listener, Owner proof, path, key or token is
 // accepted from the child. Closed channels cannot reattach to a running Host.
-export function attachSpsNativeMemberSignerChannel(child, signer, { isCurrent, timeoutMs = 10_000, maxRequests = 256, maxPending = 2 } = {}) {
+export function attachSpsNativeMemberSignerChannel(child, signer, { isCurrent, timeoutMs = 10_000, maxRequests = 256,
+  maxPending = 2, disconnectOnDispose = true } = {}) {
   if (!child || typeof child.on !== "function" || typeof child.send !== "function" || typeof child.removeListener !== "function"
     || typeof child.disconnect !== "function"
     || !signer || typeof signer.inspect !== "function" || typeof signer.sign !== "function" || typeof signer.dispose !== "function"
     || typeof isCurrent !== "function" || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30_000
     || !Number.isSafeInteger(maxRequests) || maxRequests < 1 || maxRequests > 256
-    || !Number.isSafeInteger(maxPending) || maxPending < 1 || maxPending > 2) throw new TypeError("Invalid Native signing channel.");
+    || !Number.isSafeInteger(maxPending) || maxPending < 1 || maxPending > 2
+    || typeof disconnectOnDispose !== "boolean") throw new TypeError("Invalid Native signing channel.");
   const seen = new Set();
   const pending = new Map();
   let closed = false;
@@ -37,9 +39,12 @@ export function attachSpsNativeMemberSignerChannel(child, signer, { isCurrent, t
     child.removeListener("error", dispose);
     for (const entry of pending.values()) { clearTimeout(entry.timer); entry.cancelled = true; entry.controller.abort(); }
     try { signer.dispose(); } catch { /* No alternate signing route or raw error. */ }
-    // Closing parent IPC fences Native authority without killing the Host.
-    // Owned-process shutdown retains its separate, stop-only pipe.
-    try { if (child.connected) child.disconnect(); } catch { /* Already unavailable. */ }
+    // Authority is already revoked above. A job-owned Host leaves the transport
+    // open for natural Core EOF so Node can account for ChildProcess.close;
+    // other callers retain physical disconnect and the separate stop-only pipe.
+    if (disconnectOnDispose) {
+      try { if (child.connected) child.disconnect(); } catch { /* Already unavailable. */ }
+    }
   }
   function send(id, result, failed = false) {
     if (!alive()) { dispose(); return; }

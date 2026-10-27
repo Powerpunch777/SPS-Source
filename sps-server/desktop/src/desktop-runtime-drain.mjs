@@ -4,32 +4,58 @@ export function createSpsDesktopRuntimeDrain({ stopIngress, stopScheduling, canc
   stopUpdates, getManagers, trace = () => {} }) {
   let inFlight = null;
 
+  const managerTraceIds = new Map([
+    ["Native Workspace", "native_workspace"],
+    ["Native Plugin", "native_plugin"],
+    ["Native Node", "native_node"],
+    ["Memory", "memory"],
+    ["Owner Host", "owner_host"],
+    ["Plugin preview", "plugin_preview"],
+  ]);
+  const managerLabels = new Map([...managerTraceIds].map(([label, id]) => [id, label]));
+  const emit = stage => {
+    try { trace(stage); } catch { /* Diagnostics cannot interrupt cleanup. */ }
+  };
+
   async function perform() {
     const failures = [];
-    async function attempt(label, action) {
-      try { await action(); }
-      catch { failures.push(new Error(label)); }
+    async function attempt(label, stage, action) {
+      emit(`${stage}_start`);
+      try {
+        await action();
+        emit(`${stage}_done`);
+      } catch {
+        emit(`${stage}_failed`);
+        failures.push(new Error(label));
+      }
     }
-    await attempt("Native listener cleanup did not finish.", stopIngress);
-    trace("stop_scheduling_start");
-    await attempt("Node scheduling did not stop.", stopScheduling);
-    trace("stop_scheduling_done");
-    trace("cancel_commands_start");
-    await attempt("Node command cleanup did not finish.", cancelCommands);
-    trace("cancel_commands_done");
-    await attempt("Update scheduling did not stop.", stopUpdates);
-    trace("stop_managers_start");
+    await attempt("Native listener cleanup did not finish.", "stop_ingress", stopIngress);
+    await attempt("Node scheduling did not stop.", "stop_scheduling", stopScheduling);
+    await attempt("Node command cleanup did not finish.", "cancel_commands", cancelCommands);
+    await attempt("Update scheduling did not stop.", "stop_updates", stopUpdates);
+    emit("stop_managers_start");
     const managers = getManagers();
     const settled = await Promise.allSettled(managers.map(async manager => {
-      await manager.stop();
-      manager.onStopped?.();
+      const id = managerTraceIds.get(manager.name);
+      if (id) emit(`manager_${id}_start`);
+      try {
+        await manager.stop();
+        manager.onStopped?.();
+        if (id) emit(`manager_${id}_done`);
+      } catch (error) {
+        if (id) emit(`manager_${id}_failed`);
+        throw error;
+      }
     }));
     for (let index = 0; index < settled.length; index++) {
       if (settled[index].status === "rejected") {
-        failures.push(new Error(`${managers[index].name} cleanup did not finish.`));
+        const id = managerTraceIds.get(managers[index].name);
+        failures.push(new Error(id
+          ? `${managerLabels.get(id)} cleanup did not finish.`
+          : "Runtime manager cleanup did not finish."));
       }
     }
-    trace("stop_managers_done");
+    emit("stop_managers_done");
     if (failures.length) throw new AggregateError(failures, "SPS Desktop cleanup did not finish.");
   }
 

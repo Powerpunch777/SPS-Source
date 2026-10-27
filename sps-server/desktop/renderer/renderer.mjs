@@ -161,12 +161,15 @@ function renderWorkspace(status) {
   $("#workspace-eyebrow").textContent = local ? "THIS COMPUTER'S SPS SERVER" : "SPS SERVER";
   if (local && !ready) {
     const starting = status?.ownerHost?.state === "starting";
-    $("#workspace-title").textContent = starting ? "SPS Server를 시작하는 중" : "SPS Server가 중지되었습니다";
+    const stopping = status?.ownerHost?.state === "stopping";
+    $("#workspace-title").textContent = stopping ? "SPS Server 종료를 확인하는 중"
+      : starting ? "SPS Server를 시작하는 중" : "SPS Server가 중지되었습니다";
     $("#workspace-detail").textContent = status?.ownerHost?.lastError
-      ?? (starting ? "서버가 준비되면 Workspace를 자동으로 엽니다."
+      ?? (stopping ? "이전 서버의 실행환경 정리가 확인되면 다시 시작할 수 있습니다."
+        : starting ? "서버가 준비되면 Workspace를 자동으로 엽니다."
         : status?.teamAccess?.enabled ? "앱을 다시 실행한 뒤 상태를 확인하세요. 저장된 서버 데이터는 유지됩니다."
           : "서버를 다시 시작할 수 있습니다. 저장된 서버 데이터는 유지됩니다.");
-    show(retryHost, !starting && !status?.teamAccess?.enabled);
+    show(retryHost, !starting && !stopping && !status?.teamAccess?.enabled);
     show(refreshServer, true);
     show(openWorkspace, false);
     show(complete, false);

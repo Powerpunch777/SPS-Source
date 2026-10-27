@@ -317,6 +317,11 @@ const DESKTOP_SHUTDOWN_TRACE_STAGES = new Set([
   "stop_scheduling_start", "stop_scheduling_done", "cancel_commands_start", "cancel_commands_done",
   "stop_managers_start", "stop_managers_done", "drain_failed", "drain_complete", "retry_app_quit",
   "will_quit", "quit",
+  "stop_ingress_start", "stop_ingress_done", "stop_ingress_failed",
+  "stop_scheduling_failed", "cancel_commands_failed",
+  "stop_updates_start", "stop_updates_done", "stop_updates_failed",
+  ...["native_workspace", "native_plugin", "native_node", "memory", "owner_host", "plugin_preview"]
+    .flatMap(manager => ["start", "done", "failed"].map(result => `manager_${manager}_${result}`)),
 ]);
 function traceDesktopShutdown(stage) {
   if (process.env.SPS_DESKTOP_E2E_SHUTDOWN_TRACE === "1" && DESKTOP_SHUTDOWN_TRACE_STAGES.has(stage)) {
@@ -2027,7 +2032,7 @@ async function bootstrapOwnerHost() {
   } catch (error) {
     ownerHostStatus = {
       ...ownerHostStatus,
-      state: "stopped",
+      state: ownerHostStatus.state === "stopping" ? "stopping" : "stopped",
       lastError: error instanceof Error ? error.message : "SPS Owner Host could not start.",
     };
   } finally {
@@ -4390,7 +4395,7 @@ async function startHostFromCoreSettings() {
   try {
     await startOwnerHost({ activate: false });
   } catch (error) {
-    ownerHostStatus = { ...ownerHostStatus, state: "stopped", lastError: error instanceof Error ? error.message : "SPS Host could not start." };
+    ownerHostStatus = { ...ownerHostStatus, state: ownerHostStatus.state === "stopping" ? "stopping" : "stopped", lastError: error instanceof Error ? error.message : "SPS Host could not start." };
     throw error;
   } finally {
     sendDesktopAccountStatus();
@@ -4674,6 +4679,7 @@ function publicStatus() {
     nodeConnection: state.nodeId ? { ...nodeRuntimeStatus } : null,
     ownerHost: {
       state: ownerHostStatus.state,
+      processTree: ownerHostStatus.processTree ?? null,
       url: ownerHostStatus.url,
       startedAt: ownerHostStatus.startedAt,
       lastError: ownerHostStatus.lastError,

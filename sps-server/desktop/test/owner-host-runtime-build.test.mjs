@@ -58,6 +58,9 @@ test("ships one verified Owner Host runtime archive instead of expanded runtime 
   }, {
     from: "../desktop-node/native/windows-job-supervisor/bin/SpsWindowsJobSupervisor.exe",
     to: "sps-windows-job-supervisor/SpsWindowsJobSupervisor.exe",
+  }, {
+    from: "src/owner-host-job-gate.mjs",
+    to: "sps-owner-host-job/owner-host-job-gate.mjs",
   }]);
   assert.doesNotMatch(JSON.stringify(packageManifest.build.extraResources), /"\.owner-host-runtime"/);
   assert.match(verifierScript, /materializeSpsOwnerHostRuntimePackage/);

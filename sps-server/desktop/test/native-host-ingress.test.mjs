@@ -36,7 +36,7 @@ before(async () => {
   });
 });
 
-function post(port, { route, body = "", headers = {}, certificate, key, session = false, workspace = false, method,
+function post(port, { route, body = "", headers = {}, certificate, key, session = false, workspace = false, method, phase,
   ca = identity.server.certificatePem, servername, expectedCertificate } = {}) {
   return new Promise((resolve, reject) => {
     const request = httpsRequest({ hostname: "127.0.0.1", port, path: route, method: method ?? (workspace ? "GET" : "POST"), agent: false,
@@ -53,7 +53,12 @@ function post(port, { route, body = "", headers = {}, certificate, key, session 
       response.once("end", () => resolve({ statusCode: response.statusCode, headers: response.headers,
         body: Buffer.concat(chunks).toString("utf8") }));
     });
-    request.once("error", reject);
+    request.once("error", error => {
+      if (!phase) { reject(error); return; }
+      const diagnostic = new Error(`${phase}: ${error.message}`, { cause: error });
+      diagnostic.code = error.code;
+      reject(diagnostic);
+    });
     request.end(body);
   });
 }
@@ -123,7 +128,7 @@ test("Native Node ingress admits only bounded fixed POST with fresh mTLS and a s
   const input = { route: "/sps-native/v1/node-runtime", workspace: true, method: "POST", body, session: true,
     certificate: memberCertificate.certificatePem, key: memberKey.privateKeyPem,
     headers: { "Content-Type": "application/json", "X-SPS-Native-Workspace": DEVICE_KEY_ID } };
-  const success = await post(port, input);
+  const success = await post(port, { ...input, phase: "authenticated-large-request" });
   assert.equal(success.statusCode, 200, `${success.body}; calls=${calls.length}`);
   assert.deepEqual(JSON.parse(success.body), { data: { accepted: true, size: Buffer.byteLength(body) } });
   assert.equal(calls.length, 1);
@@ -133,7 +138,7 @@ test("Native Node ingress admits only bounded fixed POST with fresh mTLS and a s
   assert.equal(calls[0].body.toString(), body);
   assert.equal(calls[0].cookie, `sps_identity_session=${"a".repeat(64)}`);
   assert.deepEqual(calls[0].peerCertificateDer, new X509Certificate(memberCertificate.certificatePem).raw);
-  const missingCertificate = await post(port, { ...input, certificate: undefined, key: undefined })
+  const missingCertificate = await post(port, { ...input, certificate: undefined, key: undefined, phase: "missing-certificate" })
     .then(response => ({ response }), error => ({ error }));
   if (missingCertificate.response) assert.equal(missingCertificate.response.statusCode, 401);
   else assert.equal(missingCertificate.error?.code, "ECONNRESET");
@@ -148,8 +153,8 @@ test("Native Node ingress admits only bounded fixed POST with fresh mTLS and a s
     { request: { ...smallInput, headers: { "Content-Type": "application/json" } }, expectedStatus: 400 },
     { request: { ...smallInput, headers: { "Content-Type": "application/json", Origin: "https://evil.invalid",
       "X-SPS-Native-Workspace": DEVICE_KEY_ID } }, expectedStatus: 400 },
-  ]) assert.equal((await post(port, denied.request)).statusCode, denied.expectedStatus);
-  const oversized = await post(port, { ...input, body: JSON.stringify({ operation: "availability", nodeId,
+  ]) assert.equal((await post(port, { ...denied.request, phase: `denied-${denied.expectedStatus}` })).statusCode, denied.expectedStatus);
+  const oversized = await post(port, { ...input, phase: "oversized-authenticated-request", body: JSON.stringify({ operation: "availability", nodeId,
     resourceId: null, payload: { timestamp: "2026-10-27T04:00:00.000Z", nonce: "A".repeat(43),
       signature: "B".repeat(86), report: "x".repeat(512 * 1024) } }) });
   assert.equal(oversized.statusCode, 413);

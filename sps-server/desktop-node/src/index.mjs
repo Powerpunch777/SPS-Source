@@ -13,6 +13,7 @@ export {
   isSpsHostSharedWorkspacePath,
 } from "./command-runner.mjs";
 export { createNodeIdentity, createNodeTransportIdentity, createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
+export { prepareWindowsHostJob } from "./windows-host-job.mjs";
 export {
   decryptSpsHostProjectShareCredential,
   decryptSpsWorkspaceSourceCredential,

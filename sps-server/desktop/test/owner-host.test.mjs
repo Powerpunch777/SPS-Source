@@ -49,6 +49,146 @@ function fakeChild(onKill = () => {}) {
   return child;
 }
 
+test("retains an owned Host job after leader exit until all descendants are confirmed", async () => {
+  const terminal = deferred();
+  let healthy = false, spawnCalls = 0, stopFinished = false;
+  const child = fakeChild();
+  const stopPipe = child.stdio[4];
+  stopPipe.destroy = () => { stopPipe.destroyed = true; };
+  child.supervisorReady = Promise.resolve();
+  child.waitForOwnedJobTermination = () => terminal.promise;
+  child.hasUnconfirmedOwnedJobTermination = () => false;
+  child.terminateOwnedJob = () => terminal.promise;
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", delay: async () => {},
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    prepareOwnedJob: async () => ({ spawn: (_command, _args, options) => {
+      assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe", "ipc", "pipe"]);
+      spawnCalls++; healthy = true; return child;
+    }, dispose: async () => {} }),
+    terminateTree: async () => { throw new Error("must not use a PID tree lookup"); },
+  });
+  assert.equal((await manager.start()).state, "running");
+  manager.invalidateNativeSigner();
+  assert.equal(stopPipe.destroyed, false, "Native invalidation must preserve the independent stop pipe");
+  healthy = false; child.exitCode = 0; child.emit("exit", 0);
+  assert.equal(stopPipe.destroyed, true, "the terminal Core no longer needs the parent's stop-pipe endpoint");
+  assert.equal((await manager.inspect()).state, "stopping");
+  assert.equal((await manager.start()).owned, true);
+  assert.equal(spawnCalls, 1, "a terminal leader with pending descendants cannot be replaced");
+  const stopping = manager.stop().then(value => { stopFinished = true; return value; });
+  await Promise.resolve();
+  assert.equal(stopFinished, false);
+  terminal.resolve({ type: "exit", code: 0, activeProcesses: 0 });
+  assert.equal((await stopping).state, "stopped");
+});
+
+test("owned Host job revokes signing without closing IPC before the real Core exit", { skip: process.platform !== "win32" }, async () => {
+  let healthy = false, disposed = 0, signCalls = 0, disconnects = 0;
+  const child = fakeChild();
+  child.disconnect = () => { disconnects++; child.connected = false; child.emit("disconnect"); };
+  const terminal = deferred();
+  child.supervisorReady = Promise.resolve();
+  child.waitForOwnedJobTermination = () => terminal.promise;
+  child.terminateOwnedJob = () => terminal.promise;
+  child.stdio[4].end = () => {
+    assert.equal(child.connected, true);
+    healthy = false;
+    child.exitCode = 0;
+    child.emit("exit", 0);
+    assert.equal(disconnects, 0, "Core EOF must account for its IPC close");
+    terminal.resolve();
+  };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", delay: async () => {},
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    prepareOwnedJob: async () => ({ spawn: () => { healthy = true; return child; }, dispose: async () => {} }),
+    createNativeSigner: () => ({ inspect: async () => ({}), sign: async () => { signCalls++; return {}; }, dispose: () => { disposed++; } }),
+  });
+  await manager.start();
+  manager.invalidateNativeSigner();
+  assert.equal(disposed, 1);
+  assert.equal(child.connected, true);
+  assert.equal(child.listenerCount("message"), 0);
+  child.emit("message", { v: 1, kind: "sps.native.signer.request", id: "11111111-1111-4111-8111-111111111111", operation: "sign", payload: {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(signCalls, 0);
+  await assert.rejects(manager.dispatchNativeIngress("invalid", {}), /unavailable/);
+  assert.equal((await manager.stop()).state, "stopped");
+  assert.equal(disconnects, 0);
+});
+
+test("a lost owned Host job acknowledgement stays retained after leader exit", async () => {
+  let healthy = false, failed = false, spawnCalls = 0;
+  const child = fakeChild();
+  child.supervisorReady = Promise.resolve();
+  child.waitForOwnedJobTermination = async () => { throw new Error("fixture missing job acknowledgement"); };
+  child.hasUnconfirmedOwnedJobTermination = () => failed;
+  child.terminateOwnedJob = async () => { throw new Error("fixture unconfirmed"); };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", delay: async () => {},
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    prepareOwnedJob: async () => ({ spawn: () => { spawnCalls++; healthy = true; return child; }, dispose: async () => {} }),
+    terminateTree: async () => { throw new Error("must not use a terminal PID"); },
+  });
+  await manager.start();
+  healthy = false; failed = true; child.exitCode = 1; child.emit("exit", 1);
+  await assert.rejects(manager.stop({ force: true }), { code: "owner_host_stop_unconfirmed" });
+  assert.deepEqual({ state: (await manager.inspect()).state, owned: (await manager.inspect()).owned }, { state: "stopping", owned: true });
+  assert.equal((await manager.start()).state, "stopping");
+  assert.equal(spawnCalls, 1);
+});
+
+test("stop joins owned Host job admission preparation and prevents a late Core spawn", async () => {
+  const preparing = deferred(), preparationStarted = deferred(), disposed = deferred();
+  let spawned = 0, disposalCalls = 0, disposal;
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => ({ ok: false }),
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    prepareOwnedJob: () => { preparationStarted.resolve(); return preparing.promise; },
+  });
+  const starting = manager.start();
+  await preparationStarted.promise;
+  const stopping = manager.stop();
+  preparing.resolve({
+    spawn: () => { spawned++; return fakeChild(); },
+    dispose: () => disposal ??= (() => { disposalCalls++; return disposed.promise; })(),
+  });
+  await Promise.resolve(); await Promise.resolve();
+  disposed.resolve();
+  await Promise.all([starting, stopping]);
+  assert.equal(spawned, 0);
+  assert.equal(disposalCalls, 1);
+  assert.equal((await manager.inspect()).state, "stopped");
+});
+
+test("an unconfirmed owned Host job preparation retains its cleanup handle and blocks replacement", async () => {
+  let preparations = 0, cleanups = 0;
+  const ownedHostJob = {
+    hasUnconfirmedOwnedJobTermination: () => true,
+    dispose: async () => { cleanups++; throw new Error("fixture helper close is unconfirmed"); },
+  };
+  const manager = createSpsOwnerHostManager({
+    url: "http://127.0.0.1:31310", fetchImpl: async () => ({ ok: false }),
+    resolveRuntime: async () => ({ command: "node", args: ["host.mjs"] }),
+    prepareOwnedJob: async () => {
+      preparations++;
+      throw Object.assign(new Error("Host preparation cleanup has not been confirmed."), {
+        code: "owner_host_job_preparation_unconfirmed", ownedHostJob,
+      });
+    },
+  });
+  assert.equal((await manager.start()).state, "stopping");
+  assert.equal((await manager.start()).owned, true);
+  assert.equal(preparations, 1);
+  await assert.rejects(manager.stop(), { code: "owner_host_stop_unconfirmed" });
+  assert.equal(cleanups, 1);
+  assert.equal((await manager.inspect()).state, "stopping");
+});
+
 test("Native Workspace parent channel attaches only to a prepared owned Core child", async t => {
   for (const [environment, expectedListeners] of [
     [{}, 2],

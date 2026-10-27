@@ -291,9 +291,10 @@ async function listTargets(port) {
   return await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2_000) }).then((response) => response.json());
 }
 
-async function waitForTarget(port, child, predicate, description, timeoutMs = 120_000) {
+async function waitForTarget(port, child, predicate, description, timeoutMs = 120_000, inspectStartup = null) {
   const expiresAt = Date.now() + timeoutMs;
   let lastTargets = [];
+  let nextStartupCheck = 0;
   while (Date.now() < expiresAt) {
     if (child.exitCode !== null) throw new Error(`SPS Desktop exited before ${description} (exit ${child.exitCode}).`);
     try {
@@ -302,6 +303,13 @@ async function waitForTarget(port, child, predicate, description, timeoutMs = 12
       if (match) return match;
     } catch {
       // Electron has not published CDP targets yet.
+    }
+    if (inspectStartup && Date.now() >= nextStartupCheck) {
+      nextStartupCheck = Date.now() + 2_000;
+      const startup = await inspectStartup();
+      if (["stopped", "stopping"].includes(startup?.state) && typeof startup.lastError === "string" && startup.lastError) {
+        throw new Error(`The isolated Host failed before ${description}: ${startup.lastError.slice(0, 2000)}`);
+      }
     }
     await delay(300);
   }
@@ -679,6 +687,7 @@ try {
     (target) => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""),
     "the authenticated SPS Workspace BrowserWindow",
     hostReadyTimeoutMs,
+    sourceElectron ? () => setupCdp.evaluate("(async () => { const s = await window.spsDesktop.getStatus(); return { state: s.ownerHost.state, lastError: s.ownerHost.lastError }; })()", true) : null,
   );
   workspaceCdp = await openCdp(workspaceTarget);
   await waitForPage(workspaceCdp, (page) => page.workspaceEntry === "empty" || page.body.includes("Workspace") || page.body.includes("Dashboard"), "the Workspace Core UI", 90_000);
@@ -788,6 +797,9 @@ try {
   if (executionControlOnly) {
     failurePhase = "workspace_execution_control";
     console.log("[execution-control] actual source Desktop opened its isolated Core Workspace.");
+    const ownerProcessTree = await setupCdp.evaluate("(async () => (await window.spsDesktop.getStatus()).ownerHost.processTree)()", true);
+    assert.equal(ownerProcessTree, "windows_job", "The actual Windows Host must use retained process-tree ownership.");
+    console.log("[execution-control] actual Owner Host reports retained Windows Job Object ownership.");
     const controlPath = `/api/companies/${company.id}/execution-control`;
     const agentsBefore = await api(workspaceCdp, `/api/companies/${company.id}/agents`);
     assert.equal(agentsBefore.length, 0, "Execution controls must not require an Agent.");

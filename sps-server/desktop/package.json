@@ -91,6 +91,10 @@
       {
         "from": "../desktop-node/native/windows-job-supervisor/bin/SpsWindowsJobSupervisor.exe",
         "to": "sps-windows-job-supervisor/SpsWindowsJobSupervisor.exe"
+      },
+      {
+        "from": "src/owner-host-job-gate.mjs",
+        "to": "sps-owner-host-job/owner-host-job-gate.mjs"
       }
     ],
     "icon": "assets/sps-logo.png",
