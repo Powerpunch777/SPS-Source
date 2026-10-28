@@ -180,6 +180,10 @@ Core 완료 전 남은 필수 작업:
 
 ## 후순위와 호환성
 
+후속 Runner 출력 결과 보존·연결 소유권 보완과 집중 검사, 영속 completion receipt의
+미완료 경계는 [Runner 결과와 연결 소유권 보완](RUNNER-RESULT-OWNERSHIP-2026-10-28.md)에
+기록했다. 연결 timeout을 실제 종료 확인으로 대체하지 않는다.
+
 공개 Marketplace는 제품에서 제거한다. 전용 Builder 신규 요구는 별도 핸드오프까지
 보류한다. AppContainer 연구는 보존하고 완전한 비신뢰 코드 OS 격리는 1차 완료
 조건에서 제외한다. Native 추가 개발은 보류하고 Tailscale/SSH 방향을 유지한다.

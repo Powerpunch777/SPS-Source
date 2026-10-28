@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { executeSpsNodeCommand } from "../src/command-runner.mjs";
+import { cancelSpsNodeCommand, executeSpsNodeCommand } from "../src/command-runner.mjs";
 
 const usageLine = `${JSON.stringify({
   type: "result",
@@ -16,6 +17,11 @@ const usageLine = `${JSON.stringify({
     },
   },
 })}\n`;
+
+function isProcessAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch { return false; }
+}
 
 async function runClaudeCommand(commandOverrides = {}) {
   const events = [];
@@ -116,5 +122,66 @@ test("retries the cached normal completion payload after a lost response without
     assert.equal(await fs.readFile(invocationMarker, "utf8"), "run\n");
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("preserves the process result when output upload fails before child exit", { timeout: 10_000 }, async () => {
+  const id = randomUUID();
+  const ownership = Symbol("output failure test");
+  let outputPosted;
+  const outputStarted = new Promise(resolve => { outputPosted = resolve; });
+  const completions = [];
+  const unhandledRejections = [];
+  const onUnhandledRejection = reason => unhandledRejections.push(reason);
+  let childPid = null;
+  let execution;
+  process.on("unhandledRejection", onUnhandledRejection);
+  try {
+    execution = executeSpsNodeCommand({
+      command: {
+        id,
+        command: "claude",
+        runtimeKind: "claude_cli",
+        args: [],
+        env: {},
+        stdin: null,
+        lastEventSeq: 0,
+      },
+      hubUrl: "https://sps.example.test",
+      nodeId: "node-1",
+      ownership,
+      profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
+      resolveWorkspace: async () => process.cwd(),
+      resolveInvocation: async () => ({
+        executable: process.execPath,
+        args: ["-e", "process.stdout.write(JSON.stringify({pid: process.pid}) + '\\n'); setTimeout(() => process.exit(0), 750);"],
+      }),
+      checkCommandLease: async () => ({ active: true, status: "running" }),
+      appendCommandEvent: async input => {
+        childPid = JSON.parse(input.body).pid;
+        outputPosted();
+        throw new Error("output POST failed");
+      },
+      completeCommand: async input => { completions.push(input); },
+    });
+    void execution.catch(() => undefined);
+
+    await outputStarted;
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(completions.length, 0, "completion waits until process exit is confirmed");
+    assert.ok(isProcessAlive(childPid), "child remains alive after output upload failure");
+    assert.deepEqual(unhandledRejections, [], "output tail has an immediate rejection observer");
+
+    await assert.rejects(execution, /output POST failed/);
+    assert.equal(completions.length, 1);
+    assert.equal(completions[0].completion.status, "succeeded");
+    assert.equal(completions[0].completion.exitCode, 0);
+    assert.equal(isProcessAlive(childPid), false);
+    assert.deepEqual(unhandledRejections, []);
+  } finally {
+    try { await cancelSpsNodeCommand(id, "Output failure fixture cleanup", { ownership }); }
+    catch { /* The assertion result is primary; command ownership still prevents unrelated cancellation. */ }
+    await execution?.catch(() => {});
+    process.off("unhandledRejection", onUnhandledRejection);
   }
 });

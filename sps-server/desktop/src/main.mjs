@@ -52,6 +52,7 @@ import {
 } from "@sps/desktop-node";
 import {
   claimNextSpsNodeWork,
+  createSpsNodeCommandPollGate,
   executionTransportForSpsNodeWork,
 } from "./node-command-poller.mjs";
 import {
@@ -300,7 +301,7 @@ let pendingAuth = null;
 let desktopAccountController = null;
 let heartbeatTimer = null;
 let commandPollTimer = null;
-let commandPollInFlight = false;
+const commandPollGate = createSpsNodeCommandPollGate();
 let pendingJoin = null;
 let pendingJoinError = null;
 let rendererReadyForJoinLinks = false;
@@ -3965,7 +3966,7 @@ function stopNodeScheduling() {
 function stopCommandPolling() {
   if (commandPollTimer) clearInterval(commandPollTimer);
   commandPollTimer = null;
-  commandPollInFlight = false;
+  commandPollGate.stop();
 }
 
 async function applyNodeStatus(value, { persist = true } = {}) {
@@ -3987,9 +3988,11 @@ function nodeWasRevoked(error) {
     && error.message === "This SPS Node has been revoked";
 }
 
-async function clearRemovedMemberConnection() {
+async function clearRemovedMemberConnection({ stillCurrent = () => true } = {}) {
   stopNodeScheduling();
+  const stoppedPollGeneration = commandPollGate.currentGeneration();
   await cancelSpsNodeCommands("SPS Host removed this computer's Member access, so its local command stopped.");
+  if (!stillCurrent() || !commandPollGate.isGeneration(stoppedPollGeneration)) return false;
   state.identity = null;
   state.nodeId = null;
   state.nodeStatus = "revoked";
@@ -3999,7 +4002,9 @@ async function clearRemovedMemberConnection() {
   nodeRuntimeStatus.commandPollError = "Ask the SPS Host for a new Desktop invitation to reconnect.";
   closeWorkspaceWindow();
   await persistState();
+  if (!commandPollGate.isGeneration(stoppedPollGeneration)) return false;
   await openSetup();
+  return true;
 }
 
 function workspaceHubUrl() {
@@ -4913,36 +4918,67 @@ function scheduleHeartbeat({ immediate = true } = {}) {
 }
 
 async function pollNodeCommands() {
-  if (commandPollInFlight || !canRunSpsNodeCommands(state.nodeStatus) || !state.nodeId || !state.profile || !state.identity) return;
-  commandPollInFlight = true;
+  const profileSnapshot = state.profile ? structuredClone(state.profile) : null;
+  const profileFingerprint = state.profile ? JSON.stringify(state.profile) : null;
+  const identityFingerprint = state.identity ? JSON.stringify(state.identity) : null;
+  const nodeId = state.nodeId;
+  const accountSubject = currentDesktopAccountSubject();
+  const isSameConnection = () => Boolean(
+    nodeId
+    && profileSnapshot
+    && identityFingerprint
+    && state.nodeId === nodeId
+    && state.profile
+    && JSON.stringify(state.profile) === profileFingerprint
+    && state.identity
+    && JSON.stringify(state.identity) === identityFingerprint
+    && currentDesktopAccountSubject() === accountSubject,
+  );
+  const isEligible = () => canRunSpsNodeCommands(state.nodeStatus) && isSameConnection();
+  const ticket = commandPollGate.begin(isEligible);
+  if (!ticket) return;
+  const assertCurrent = () => {
+    if (!commandPollGate.isCurrent(ticket, isEligible)) {
+      throw new Error("SPS Desktop Node command poll is no longer current.");
+    }
+  };
   let claimedCommand = false;
   try {
-    const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
+    assertCurrent();
+    const identity = currentIdentity();
+    if (!identity) throw new Error("SPS Desktop Node identity is unavailable.");
+    assertCurrent();
+    const access = await requireSpsCoreRequestAccess(profileSnapshot.hubUrl, profileSnapshot);
+    assertCurrent();
     const nextWork = await claimNextSpsNodeWork({
+      assertCurrent,
       claimAgentCommand: async () => await claimSpsNodeCommand({
-        hubUrl: state.profile.hubUrl,
-        nodeId: state.nodeId,
-        identity: currentIdentity(),
+        hubUrl: profileSnapshot.hubUrl,
+        nodeId,
+        identity,
         ...access,
       }),
       claimPluginRun: async () => await claimSpsPluginNodeRun({
-        hubUrl: state.profile.hubUrl,
-        nodeId: state.nodeId,
-        identity: currentIdentity(),
+        hubUrl: profileSnapshot.hubUrl,
+        nodeId,
+        identity,
         ...access,
       }),
     });
+    assertCurrent();
     nodeRuntimeStatus.lastCommandPollAt = new Date().toISOString();
     nodeRuntimeStatus.commandPollError = null;
     if (!nextWork) return;
     claimedCommand = true;
+    assertCurrent();
     await executeSpsNodeCommand({
       command: nextWork.command,
-      hubUrl: state.profile.hubUrl,
-      nodeId: state.nodeId,
-      identity: currentIdentity(),
+      hubUrl: profileSnapshot.hubUrl,
+      nodeId,
+      identity,
       ...access,
-      profile: state.profile,
+      profile: profileSnapshot,
+      assertCurrent,
       ...executionTransportForSpsNodeWork(nextWork.kind, {
         appendCommandEvent: appendSpsPluginNodeRunEvent,
         checkCommandLease: checkSpsPluginNodeRunLease,
@@ -4950,21 +4986,23 @@ async function pollNodeCommands() {
       }),
     });
   } catch (error) {
+    if (!commandPollGate.isCurrent(ticket, isEligible)) return;
     if (isSpsTechnicalMemberAccessRemoved(error)) {
-      await clearRemovedMemberConnection();
+      await clearRemovedMemberConnection({ stillCurrent: isSameConnection });
       return;
     }
     nodeRuntimeStatus.commandPollError = claimedCommand
       ? safeNodeCommandFailure(error)
       : "Could not poll the SPS team Host for commands. Check the team address, network, and Desktop sign-in.";
   } finally {
-    commandPollInFlight = false;
+    commandPollGate.finish(ticket);
   }
 }
 
 function scheduleCommandPolling() {
   if (!canRunSpsNodeCommands(state.nodeStatus)) return;
   if (commandPollTimer) clearInterval(commandPollTimer);
+  commandPollGate.stop();
   commandPollTimer = setInterval(() => {
     void pollNodeCommands();
   }, 2_000);

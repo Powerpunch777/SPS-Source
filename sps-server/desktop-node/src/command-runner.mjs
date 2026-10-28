@@ -279,6 +279,7 @@ async function withCommandPreflightTimeout(action, onTimeout = () => {}) {
 }
 
 function throwIfCommandCancelled(activeRun, cancellationGeneration) {
+  activeRun.assertCurrent();
   if (cancellationGeneration !== commandCancellationGeneration || activeRun.cancellationError) {
     throw new Error(activeRun.cancellationError ?? lastCommandCancellationReason);
   }
@@ -422,6 +423,7 @@ export async function executeSpsNodeCommand({
   appendCommandEvent = appendSpsNodeCommandEvent,
   completeCommand = completeSpsNodeCommand,
   hostEnvironment = process.env,
+  assertCurrent = () => {},
   ownership,
   processTermination = defaultProcessTermination,
   spawnCommand = spawnOwnedCommand,
@@ -457,6 +459,10 @@ export async function executeSpsNodeCommand({
         stream,
         body,
       }));
+      // Observe each tail immediately so a failed upload while the child is
+      // still alive cannot become an unhandled rejection. Keep the original
+      // chain rejected so delivery failure is still reported after exit.
+      void outputQueue.catch(() => undefined);
     }
   };
 
@@ -470,7 +476,7 @@ export async function executeSpsNodeCommand({
   let hostProjectShareSession = null;
   let sourceCleanup = null;
   let normalCompletionPayload = null;
-  const activeRun = { child: null, cancellationError: null, ownership, processTermination, sourceOpening: false, sourceSession: null };
+  const activeRun = { child: null, cancellationError: null, assertCurrent, ownership, processTermination, sourceOpening: false, sourceSession: null };
   activeCommands.set(command.id, activeRun);
   try {
     if (command.env?.SPS_MARKETPLACE_MCP_REQUIRED === "1") {
@@ -588,6 +594,13 @@ export async function executeSpsNodeCommand({
             await terminateProcessTree(child);
             return;
           }
+          try {
+            throwIfCommandCancelled(activeRun, cancellationGeneration);
+          } catch {
+            leaseCancellationError = "SPS Desktop connection is no longer active.";
+            await terminateProcessTree(child);
+            return;
+          }
           let lease;
           try {
             lease = await checkCommandLease({
@@ -599,8 +612,21 @@ export async function executeSpsNodeCommand({
               commandId: command.id,
             });
           } catch {
+            try { throwIfCommandCancelled(activeRun, cancellationGeneration); }
+            catch {
+              leaseCancellationError = "SPS Desktop connection is no longer active.";
+              await terminateProcessTree(child);
+              return;
+            }
             if (Date.now() - lastLeaseConfirmedAt < COMMAND_LEASE_MAX_UNAVAILABLE_MS) return;
             leaseCancellationError = "SPS Desktop lost contact with the Hub for 60 seconds and stopped this local command.";
+            await terminateProcessTree(child);
+            return;
+          }
+          try {
+            throwIfCommandCancelled(activeRun, cancellationGeneration);
+          } catch {
+            leaseCancellationError = "SPS Desktop connection is no longer active.";
             await terminateProcessTree(child);
             return;
           }
@@ -652,7 +678,6 @@ export async function executeSpsNodeCommand({
     // unreachable or revoked Host after the owned process has exited.
     sourceCleanup = closeOwnedSource(activeRun);
     void sourceCleanup.catch(() => {});
-    await outputQueue;
     const completion = {
       status: result.exitCode === 0 && !result.timedOut && !leaseCancellationError ? "succeeded" : "failed",
       exitCode: result.exitCode,
@@ -670,6 +695,10 @@ export async function executeSpsNodeCommand({
       commandId: command.id,
       completion,
     };
+    // Cache the process-derived result before waiting for output delivery. If
+    // the output POST fails, the catch path must report this same completion
+    // rather than inventing a process failure.
+    await outputQueue;
     await completeCommand(normalCompletionPayload);
     return { ...result, workspace, elapsedMs: Date.now() - startedAt };
   } catch (error) {
