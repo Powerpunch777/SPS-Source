@@ -5,7 +5,7 @@
 공개 Marketplace·Builder 신규 개발·완전한 비신뢰 OS 격리를 필수 조건에서
 분리했지만 실제 Core 결함과 검사 실패를 완료로 바꾸지 않는다.
 
-현재 통합 Core 소스: `1ae22bd261e3f201d21432e981904e911b8abe76`.
+현재 통합 Core 소스: `a922e43e3b57911e71f05ffa9910c8ee790dcc59`.
 아래 기록의 각 후보 revision과 당시 검증 결과는 서로 구분한다.
 Desktop `0.4.137` development-candidate와 SDK
 `61a929f6c783f78e5af603682de1543c7e24abc0`(미출시 `0.11.0`)는 유지한다.
@@ -201,6 +201,19 @@ packaged Host Plugin lifecycle의 기존 도구 opt-in 누락과 종료 허위 �
 동시 완료 재전송 뒤 이전 활성 상태를 반환하던 Core 결함과 집중 검증은
 [Runner 완료 재전송 검토](RUNNER-COMPLETION-RETRY-2026-10-28.md)에 기록했다.
 이 응답 수정은 영속 receipt·claim 인계·원격 프로세스 복구 완료를 의미하지 않는다.
+2026-10-29의 후속 수정은 [Plugin 생명주기 종료 확인](PLUGIN-LIFECYCLE-CLOSURE-2026-10-29.md)과
+[미실행 Node claim 반환](UNSTARTED-NODE-CLAIMS-2026-10-29.md)에 기록했다.
+Plugin별 자손과 전체 Host Job의 소유권 차이는
+[프로세스 소유권 점검](PLUGIN-PROCESS-OWNERSHIP-2026-10-29.md)을 따른다.
+
+이전 Source `a5254ba` / Core `2417d613` PR `40706191315`의 Windows Desktop
+job `122878850805`가 성공으로 종료했다. 기존 도구 opt-in과 강화한 종료 판정이
+있는 후보에서 packaged 생명주기까지 통과한 증거다. 전체 run의 별도 보안 실패는
+유지한다. Source `a8d05b3` / Core `1ae22bd2` push `40709197724`의 Desktop
+`122889503154`는 마지막 확인에서 packaged Host lifecycle, PR `40709215188`의
+`122889566169`는 packaged Preview가 진행 중이었다. 서로 다른 후보와 이번 Core
+`a922e43e` 변경의 검사 결과를 구분한다. 이번 선택 검사는 Core 31개·Desktop 26개,
+새 후보 문서 4개 통과이며 실제 전체 CI/배포 완료 선언이 아니다.
 
 Source `a5254ba` / Core `1ae22bd2` / Desktop `0.4.137`의 현재 full-graph
 의존성 감사를 별도로 실행했다. 유효한 audit 응답 4건 중 High 1건(Zod `1243066`),

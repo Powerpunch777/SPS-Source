@@ -33,6 +33,7 @@ import {
   createNodeTransportIdentity,
   claimSpsNodeCommand,
   claimSpsPluginNodeRun,
+  completeSpsNodeCommand,
   appendSpsPluginNodeRunEvent,
   checkSpsPluginNodeRunLease,
   completeSpsPluginNodeRun,
@@ -5535,6 +5536,8 @@ async function pollNodeCommands() {
     }
   };
   let claimedCommand = false;
+  let capturedClaim = null;
+  let executionAttempted = false;
   try {
     assertCurrent();
     const identity = currentIdentity();
@@ -5542,20 +5545,35 @@ async function pollNodeCommands() {
     assertCurrent();
     const access = await requireSpsCoreRequestAccess(profileSnapshot.hubUrl, profileSnapshot);
     assertCurrent();
+    const captureClaim = (kind, command) => {
+      if (command && typeof command.id === "string" && command.id.trim().length > 0) {
+        capturedClaim = Object.freeze({
+          kind,
+          commandId: command.id,
+          context: Object.freeze({
+            hubUrl: profileSnapshot.hubUrl,
+            nodeId,
+            identity: structuredClone(identity),
+            access: Object.freeze({ ...access }),
+          }),
+        });
+      }
+      return command;
+    };
     const nextWork = await claimNextSpsNodeWork({
       assertCurrent,
-      claimAgentCommand: async () => await claimSpsNodeCommand({
+      claimAgentCommand: async () => captureClaim("agent-command", await claimSpsNodeCommand({
         hubUrl: profileSnapshot.hubUrl,
         nodeId,
         identity,
         ...access,
-      }),
-      claimPluginRun: async () => await claimSpsPluginNodeRun({
+      })),
+      claimPluginRun: async () => captureClaim("plugin-run", await claimSpsPluginNodeRun({
         hubUrl: profileSnapshot.hubUrl,
         nodeId,
         identity,
         ...access,
-      }),
+      })),
     });
     assertCurrent();
     nodeRuntimeStatus.lastCommandPollAt = new Date().toISOString();
@@ -5563,6 +5581,7 @@ async function pollNodeCommands() {
     if (!nextWork) return;
     claimedCommand = true;
     assertCurrent();
+    executionAttempted = true;
     await executeSpsNodeCommand({
       command: nextWork.command,
       hubUrl: profileSnapshot.hubUrl,
@@ -5578,6 +5597,29 @@ async function pollNodeCommands() {
       }),
     });
   } catch (error) {
+    if (capturedClaim && !executionAttempted) {
+      const completionFunction = capturedClaim.kind === "plugin-run"
+        ? completeSpsPluginNodeRun
+        : completeSpsNodeCommand;
+      try {
+        await completionFunction({
+          hubUrl: capturedClaim.context.hubUrl,
+          nodeId: capturedClaim.context.nodeId,
+          identity: capturedClaim.context.identity,
+          ...capturedClaim.context.access,
+          commandId: capturedClaim.commandId,
+          completion: {
+            status: "failed",
+            exitCode: null,
+            signal: null,
+            timedOut: false,
+            error: "Desktop did not start this command because the local Node poll changed before execution.",
+          },
+        });
+      } catch {
+        // A failed completion request leaves Core's claim pending; never replay it.
+      }
+    }
     if (!commandPollGate.isCurrent(ticket, isEligible)) return;
     if (isSpsTechnicalMemberAccessRemoved(error)) {
       await clearRemovedMemberConnection({ stillCurrent: isSameConnection });
