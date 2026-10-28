@@ -111,7 +111,21 @@ test("prepared Native management exercises the real Main/Core route without a co
   }
   assert.match(script, /temporaryDataRemoved = await attempt/);
   assert.match(script, /const fixture = await createWorkspaceE2eFixture\(\);\s*const userDataDirectory = fixture\.directory/);
-  assert.match(script, /boundedCleanup\(fixture\.remove\(\), "temporary data", 20_000\)/);
+  assert.match(script, /boundedCleanup\(fixture\.remove\(progress => \{[\s\S]*?\}\), "temporary data", 20_000\)/);
+  const fixtureSource = await readFile(new URL("../scripts/workspace-e2e-fixture.mjs", import.meta.url), "utf8");
+  const removeStart = fixtureSource.indexOf("async function remove(onProgress)");
+  const removeEnd = fixtureSource.indexOf("return Object.freeze({ directory, assertCurrent, remove });", removeStart);
+  assert.ok(removeStart >= 0 && removeEnd > removeStart);
+  const removeImplementation = fixtureSource.slice(removeStart, removeEnd);
+  assert.match(removeImplementation, /await assertCurrent\(\);[\s\S]*?await rm\(directory, \{ recursive: true, maxRetries: 0 \}\)/);
+  const progressStart = fixtureSource.indexOf("function reportRemoveProgress");
+  const progressEnd = fixtureSource.indexOf("function safeRemoveErrorCode", progressStart);
+  assert.ok(progressStart >= 0 && progressEnd > progressStart);
+  const progressReporter = fixtureSource.slice(progressStart, progressEnd);
+  assert.match(progressReporter, /Object\.freeze\(\{\s*phase,\s*attempt,\s*elapsedMs:/);
+  assert.doesNotMatch(progressReporter, /directory|path|message|stack/);
+  assert.match(fixtureSource, /const REMOVE_PROGRESS_PHASES = new Set\(\[/);
+  assert.match(fixtureSource, /new Set\(\["EPERM", "EBUSY", "ENOTEMPTY", "EACCES"\]\)/);
   assert.match(script, /code: "ERR_WORKSPACE_E2E_CLEANUP_TIMEOUT"/);
   assert.match(script, /workspaceE2eCleanupFailureReason\(stage, error\)/);
   const cleanupContract = await readFile(new URL("../scripts/workspace-e2e-cleanup-contract.mjs", import.meta.url), "utf8");

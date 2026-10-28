@@ -87,7 +87,7 @@ E2E·물리 두 컴퓨터·실제 설치/업데이트/복원 검증. AppContaine
 ## 최신 이전 CI와 미해결 항목
 
 이 increment 이전 Source `bd34fd31ea121c8a661a56a8a9390a5668d5e8fd`의
-자동 push `40653530788`은 실패했다. 전체 Linux 타입 검사·빌드와 8개 Linux
+자동 push `40653530788`은 실패했다. 전체 Linux 타입 검사·빌드와 9개 Linux
 test shard는 통과했다. 이전 권한 경계 시간 초과가 있었던 serialized 3/4도 통과했다.
 새 increment의 전체 CI 통과 증거로 재사용하지 않는다.
 
@@ -97,10 +97,20 @@ child 3/3 종료·orderly 3·outputEnded 6·outputFailed 0, ownedJobEmpty를 확
 원인이라는 증거는 없으며 진단 추가를 결함 수정이나 새 E2E 통과로 표시하지 않는다.
 
 같은 조합의 PR 실행 `40653539310`도 최종 확인했다. Windows Desktop/Node
-`122699044676`, Linux 전체 타입·빌드와 8개 test shard, Identity 22/24/26,
+`122699044676`, Linux 전체 타입·빌드와 9개 test shard, Identity 22/24/26,
 Plugin Kit/Registry·bundled plugins·Room은 통과했다. 전체 실행은 보안
 gate `122699044357` 때문에 실패했다. push의 임시 정리 실패와 PR의 Windows
 통과를 모두 보존하며 안정적인 정리나 이번 새 조합 통과로 확대하지 않는다.
+
+후속 Source `cb7e25f` 자동 push `40671170664`도 최종 확인했다. Core
+`2b1a7365`의 전체 Linux 타입·빌드와 9개 Linux shard는 모두 통과했다.
+Windows job `122758010606`은 실제 Desktop E2E 전 Node 검사에서 기존 정적
+assertion 1개가 새 `fixture.remove(progress => ...)` 형태를 인정하지 못해 실패했다.
+기대식을 새 콜백 형태로 맞추고 20초 bound·identity 선검사·재시도 설정·안전한
+진단 필드·확인 우회 없음 검사를 유지했다. 해당 파일의 선택 Node 검사 4개가
+통과했다. 전체 Windows 재실행이나 임시 정리 문제 해결 증거는 아니다.
+보안 gate `122758011536` 실패도 유지한다. Linux shard 수는 실제 job 목록의
+serialized 4개·server 3개·workspaces 2개, 총 9개이며 이전의 8개 표기를 바로잡았다.
 
 보안 gate에는 승인 예외가 없는 Zod High `1243066`이 남아 있다. 기존 major 전환
 보류·보안 기준은 유지하며 실패를 제거하거나 승인한 것으로 처리하지 않는다.
