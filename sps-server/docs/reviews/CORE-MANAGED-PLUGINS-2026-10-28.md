@@ -5,7 +5,7 @@
 공개 Marketplace·Builder 신규 개발·완전한 비신뢰 OS 격리를 필수 조건에서
 분리했지만 실제 Core 결함과 검사 실패를 완료로 바꾸지 않는다.
 
-현재 통합 Core 소스: `296feed754f723f30ae10b1f2a889aca4dd943ae`.
+현재 통합 Core 소스: `9c5bf8b35cba5a7b970c90abee569e6ffdbb2e72`.
 아래 기록의 각 후보 revision과 당시 검증 결과는 서로 구분한다.
 Desktop `0.4.137` development-candidate와 SDK
 `61a929f6c783f78e5af603682de1543c7e24abc0`(미출시 `0.11.0`)는 유지한다.
@@ -242,3 +242,27 @@ gate를 유지한다. 보안 완료 또는 출시 가능으로 표시하지 않�
 종료 확인을 약화하지 않는다. SDK/Runner 및 기존 Builder 호환성을 유지한다.
 DB migration·고객 데이터 삭제·인증정보 이동·설치 앱 변경·release/npm 배포는
 이번 increment에 포함하지 않는다.
+
+## 최신 Windows 실행기 준비·Core 강제 종료 확인
+
+Core `9c5bf8b3`는 TEMP/TMP의 junction·짧은 경로 별칭을 먼저 실제 경로로 확인해
+실행기 전용 폴더를 만든다. 기존 경로·파일 identity 검사는 유지한다. 준비 오류에는
+고정 단계와 허용 오류 코드만 포함해 민감한 경로·컴파일 출력·원본 cause가 노출되지
+않으면서 실패 단계를 확인할 수 있게 했다.
+
+실제 Core manager fixture만 강제로 종료하고 별도 읽기 전용 Windows 프로세스
+핸들 observer로 Core·helper·Worker·stdio-ignore 자손 모두의 종료를 확인했다.
+observer 준비 뒤에도 Core/Worker health와 helper 생존·자손 heartbeat를 재확인한다.
+다른 외곽 Job이나 임의 PID 종료로 성공을 만들지 않는다. 선택 7개 파일 26개 통과,
+제품 manager/adapter/JS/C# 입력 hash 동일, cached 서버 타입 exit 0·TS hash 동일,
+compatibility boundary·fixture 구문·diff 검사 통과다. 이전 선택 검사와 합산하지 않는다.
+
+이전 Source `f495cdd` / Core `296feed7`의 push `40730393656` Desktop
+`122964815388`과 PR `40730405126` Desktop `122964856806`은 모두 No-AI
+Workspace E2E의 Plugin 설치에서 준비 오류 400으로 실패했다. 단순 compiler 부재나
+TMP 문제가 원인이라고 확정할 로그는 없다. 이번 보완을 그 CI 실패의 해결로
+표시하지 않으며 새 후보의 실제 CI 확인이 필요하다.
+[상세 구현·증거·한계](PLUGIN-WINDOWS-PROCESS-TREES-2026-10-29.md)를 따른다.
+전체 로컬 suite·배포 build·실제 설치·물리 컴퓨터 검사는 재실행하지 않았다.
+보안 gate, 영속 Runner 완료 receipt·claim 복구, package crash journal·cache 회수,
+실제 다중 Runner·공유/UAC·데이터 보존 설치/업데이트/복원 검증은 남아 있다.

@@ -85,11 +85,57 @@ dist에 복사하는지 추가 확인한다. 제품 script가 누락 자산을 �
 앞선 결과에 합산하지 않는다. 실제 `.cs`·`.mjs`·선언·README의 동일 bytes 복사와
 기존 지침을 확인한 결과이며 아직 새 후보의 packaged E2E 통과 증거는 아니다.
 
+## Core 강제 종료와 임시 경로 보완
+
+Windows의 TEMP/TMP가 junction 또는 짧은 경로 별칭이면 기존 실행기 준비는
+생성한 폴더의 실제 경로와 별칭 루트를 비교해 거절할 수 있었다. 이제 임시 루트를
+먼저 realpath로 확인하고 일반 디렉터리인지 검사한 뒤 전용 폴더를 만든다.
+기존 자식 경로 경계와 dev/ino/birthtimeNs 확인은 유지한다.
+
+새 실제 검사는 Core fixture만 정확한 ChildProcess로 강제 종료한다. 별도 외곽
+Job으로 프로세스를 정리하지 않는다. 독립된 읽기 전용 C# observer가 Core·helper·
+Worker·stdio-ignore Node 자손의 Windows 핸들을 먼저 열고 생성 시각과 실행 상태를
+확인한다. 그 뒤 nonce IPC로 Core의 helper 생존과 Worker health를 재확인하고,
+동일 자손 heartbeat 연결이 살아 있는 상태에서 Core만 종료한다. observer는 네
+핸들 모두의 종료와 실제 exit code를 확인한다. PID 검색·PID 인수·Worker PID
+강제 종료는 사용하지 않는다. 검사 전용 TEMP/TMP junction을 사용하므로 실제
+compiler 준비·실행·종료가 별칭 루트에서도 동작함을 함께 확인한다.
+
+임시 파일 삭제는 모든 프로세스 종료 확인 뒤 원래 root/target의 경로·파일 identity와
+junction 경계를 다시 확인한 경우에만 한다. 확인 실패 시 해당 검사 경로를 보존한다.
+초기 fixture의 잘못된 cwd로 tsx를 찾지 못한 실행은 통과 근거에서 제외한다.
+
+Source `f495cdd` / Core `296feed7`의 PR `40730405126`, Desktop
+`122964856806`은 자산 준비를 통과한 뒤 No-AI Workspace E2E의 Plugin 설치에서
+`Windows plugin worker process ownership could not be prepared.`로 실패했다.
+그 실행의 Core/Main 종료와 owned Job empty는 정상 확인됐지만 Plugin 설치 성공은
+아니다. 같은 job에서 동일 고정 경로의 csc로 다른 supervisor를 컴파일했고 준비된
+Core 자산 검사도 통과했다. 기존 오류는 내부 단계를 숨기므로 이 실패의 원인을
+TEMP/TMP, compiler 또는 자산 누락 중 하나로 확정할 수 없다. 임시 루트 보완을
+해당 CI 실패의 확인된 해결로 표시하지 않는다.
+
+같은 Source push `40730393656`, Desktop `122964815388`도 동일 단계와 동일
+설치 400으로 종료했다. 두 실행의 실패를 별개로 보존하며 새 후보를 통과로
+간주하지 않는다. 원인 확인을 위해 기존 오류 prefix와 응답 형식을 유지하면서
+`compiler_access`, `source_access`, `temp_root`, `helper_directory`, `compile`,
+`output_validate` 중 고정 단계와 허용된 오류 코드만 추가했다. 원래 오류·cause·
+명령·파일 경로·환경·stdout/stderr는 전달하지 않는다. 준비 함수의 fault injection은
+기존 internal adapter 경계에 한정하며 Plugin SDK 계약을 추가하지 않는다.
+
+최종 선택 실행은 7개 파일 **26개 모두 통과**했다(약 61초). 새 실제 Core 강제
+종료 검사와 기존 실제 두 Workspace 자손 검사, 준비 실패/출력 비노출 6개,
+adapter·미확인 종료·기존 shutdown/stream 검사를 함께 실행했다. 제품
+manager/adapter/JS/C# hash가 전후 동일했다. 앞선 개별 실행과 겹치므로 합산하지
+않는다. 관찰용 C# helper는 종료 권한 없이 알려진 정확한 프로세스만 열었다.
+후속 cached 서버 타입 검사도 exit 0이며 제품 TS 입력 hash가 동일했다.
+compatibility boundary·두 fixture의 JS 구문·diff 검사도 통과했다. 전체 로컬 suite와
+배포 build·Electron·실제 설치·물리 컴퓨터 검사는 재실행하지 않았다.
+
 ## 아직 확인하지 않은 범위
 
 같은 OS 사용자 Worker가 Windows Job에 속하는 것은 OS 보안 샌드박스가 아니다.
 파일·네트워크·Secret 격리 보장을 확대하지 않는다. POSIX 자손 소유권, 실제
-packaged Owner Host 안의 nested Job·독립 설치 환경, 강제 Core/Desktop 손실의
+packaged Owner Host 안의 nested Job·독립 설치 환경, 강제 Desktop 손실의
 새 per-worker 경로 수용과 helper cache 정리는 추가 확인이 필요하다. 기존 전체
 Host Job과 제어 연결 손실 검사는 별도 증거이며 이번 선택 검사에 합산하지 않는다.
 
