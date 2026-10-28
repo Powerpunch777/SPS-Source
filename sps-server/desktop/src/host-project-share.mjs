@@ -109,9 +109,25 @@ function Write-SpsHostShareResult([bool]$Ok, [string]$Reason = '') {
   $payload = [pscustomobject]@{ ok = $Ok; reason = $Reason } | ConvertTo-Json -Compress
   [System.IO.File]::WriteAllText($resultPath, $payload, [System.Text.UTF8Encoding]::new($false))
 }
+function Get-SpsOptionalShare([string]$Name) {
+  $matches = @(Get-SmbShare -ErrorAction Stop | Where-Object { $_.Name -ieq $Name })
+  if ($matches.Count -gt 1) { throw 'Windows returned an ambiguous SPS project share.' }
+  if ($matches.Count -eq 0) { return $null }
+  return $matches[0]
+}
+function Get-SpsOptionalLocalUser([string]$Name) {
+  $matches = @(Get-LocalUser -ErrorAction Stop | Where-Object { $_.Name -ieq $Name })
+  if ($matches.Count -gt 1) { throw 'Windows returned an ambiguous SPS project-share account.' }
+  if ($matches.Count -eq 0) { return $null }
+  return $matches[0]
+}
 trap {
-  $reason = [string]$_.Exception.Message
-  if ([string]::IsNullOrWhiteSpace($reason)) { $reason = 'The elevated Windows share worker failed without a diagnostic message.' }
+  $reason = switch ($action) {
+    'grant' { 'Windows could not grant the SPS project-share account access.' }
+    'revoke' { 'Windows could not confirm removal of SPS project source access.' }
+    'remove' { 'Windows could not remove the SPS project share.' }
+    default { 'The elevated Windows share worker could not complete the request.' }
+  }
   Write-SpsHostShareResult $false $reason
   exit 1
 }
@@ -148,29 +164,52 @@ if ($action -eq 'grant') {
   exit 0
 }
 if ($action -eq 'revoke') {
-  $share = Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue
+  $share = Get-SpsOptionalShare $shareName
   if ($null -ne $share) {
-    Revoke-SmbShareAccess -Name $shareName -AccountName $qualifiedAccount -Force -ErrorAction SilentlyContinue | Out-Null
+    if ([System.IO.Path]::GetFullPath([string]$share.Path) -ne $sourcePath) {
+      throw 'An existing Windows share has the SPS share name but points to a different folder.'
+    }
+    $shareAccess = @(Get-SmbShareAccess -Name $shareName -ErrorAction Stop | Where-Object {
+      $_.AccountName -ieq $qualifiedAccount -and $_.AccessControlType -eq 'Allow'
+    })
+    if ($shareAccess.Count -gt 0) {
+      Revoke-SmbShareAccess -Name $shareName -AccountName $qualifiedAccount -Force -ErrorAction Stop | Out-Null
+      $remainingShareAccess = @(Get-SmbShareAccess -Name $shareName -ErrorAction Stop | Where-Object {
+        $_.AccountName -ieq $qualifiedAccount -and $_.AccessControlType -eq 'Allow'
+      })
+      if ($remainingShareAccess.Count -gt 0) { throw 'Windows could not confirm removal of the SPS project-share permission.' }
+    }
   }
-  & icacls.exe $sourcePath /remove:g $qualifiedAccount /t /c | Out-Null
-  Remove-LocalUser -Name $accountName -ErrorAction SilentlyContinue
+  $localUser = Get-SpsOptionalLocalUser $accountName
+  if ($null -ne $localUser) {
+    & icacls.exe $sourcePath /remove:g "*$($localUser.SID.Value)" /t /c /q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Windows could not remove the SPS project-share account from every source-file ACL.' }
+    Remove-LocalUser -Name $accountName -ErrorAction Stop
+  }
+  if ($null -ne (Get-SpsOptionalLocalUser $accountName)) { throw 'Windows could not confirm removal of the SPS project-share account.' }
   Write-SpsHostShareResult $true ''
   [pscustomobject]@{ action = 'revoke'; shareName = $shareName; accountName = $accountName } | ConvertTo-Json -Compress
   exit 0
 }
 if ($action -eq 'remove') {
-  $share = Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue
+  $share = Get-SpsOptionalShare $shareName
   if ($null -ne $share) {
     if ([System.IO.Path]::GetFullPath([string]$share.Path) -ne $sourcePath) {
       throw 'An existing Windows share has the SPS share name but points to a different folder.'
     }
-    Remove-SmbShare -Name $shareName -Force
+    Remove-SmbShare -Name $shareName -Force -ErrorAction Stop
+    if ($null -ne (Get-SpsOptionalShare $shareName)) { throw 'Windows could not confirm removal of the SPS project share.' }
   }
   if (-not [string]::IsNullOrWhiteSpace($accountName)) {
-    if (Test-Path -LiteralPath $sourcePath -PathType Container) {
-      & icacls.exe $sourcePath /remove:g $qualifiedAccount /t /c | Out-Null
+    $localUser = Get-SpsOptionalLocalUser $accountName
+    if ($null -ne $localUser) {
+      if (Test-Path -LiteralPath $sourcePath -PathType Container) {
+        & icacls.exe $sourcePath /remove:g "*$($localUser.SID.Value)" /t /c /q | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Windows could not remove the SPS project-share account from every source-file ACL.' }
+      }
+      Remove-LocalUser -Name $accountName -ErrorAction Stop
     }
-    Remove-LocalUser -Name $accountName -ErrorAction SilentlyContinue
+    if ($null -ne (Get-SpsOptionalLocalUser $accountName)) { throw 'Windows could not confirm removal of the SPS project-share account.' }
   }
   Write-SpsHostShareResult $true ''
   [pscustomobject]@{ action = 'remove'; shareName = $shareName; accountName = $accountName } | ConvertTo-Json -Compress
@@ -239,7 +278,7 @@ export async function updateSpsHostProjectShareWindowsAccess(input, options = {}
   try {
     const elevatedScript = [
       "$ErrorActionPreference = 'Stop'",
-      `try { $result = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','${escapePowerShellSingleQuoted(workerPath)}','-ConfigPath','${escapePowerShellSingleQuoted(configPath)}') } catch { if ($_.Exception.HResult -eq -2147023673) { [Console]::Error.WriteLine('SPS elevation was cancelled.'); exit 1223 }; throw }`,
+      `try { $result = Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','${escapePowerShellSingleQuoted(workerPath)}','-ConfigPath','${escapePowerShellSingleQuoted(configPath)}') } catch { if ($_.Exception.HResult -eq -2147023673) { [Console]::Error.WriteLine('SPS elevation was cancelled.'); exit 1223 }; throw }`,
       "exit $result.ExitCode",
     ].join("; ");
     const run = options.runPowerShell ?? runPowerShell;

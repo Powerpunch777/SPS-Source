@@ -117,8 +117,12 @@ test("lets a signed-in Node owner map local task folders before opening Workspac
   assert.match(main, /let setupMode = opensCoreSettingsOnLaunch;/);
   assert.match(main, /ipcMain\.handle\("desktop:save-default-workspace"/);
   assert.match(main, /ipcMain\.handle\("desktop:manage-host-project-source"/);
-  const refreshProjects = main.slice(main.indexOf("async function refreshProjects() {"), main.indexOf("function stopNodeScheduling()"));
-  assert.match(refreshProjects, /const scope = captureWorkspaceReadScope\(\);/);
+  const refreshStart = main.indexOf("async function refreshProjects(");
+  const refreshEnd = main.indexOf("function stopNodeScheduling()", refreshStart);
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart);
+  const refreshProjects = main.slice(refreshStart, refreshEnd);
+  assert.match(refreshProjects, /async function refreshProjects\(capturedScope = null\)/);
+  assert.match(refreshProjects, /const scope = capturedScope \?\? captureWorkspaceReadScope\(\);/);
   assert.match(refreshProjects, /const companyId = scope\.profile\?\.companyId\s*\|\|\s*scope\.teamAccess\?\.companyId\s*\|\|\s*ownerHostCompanies\[0\]\?\.id/);
   assert.match(refreshProjects, /ownerHostApi\(`\/companies\/\$\{encodeURIComponent\(companyId\)\}\/projects`, \{ assertCurrent \}\)/);
   assert.match(refreshProjects, /if \(companyId && scope\.profile && !scope\.profile\.companyId\)[\s\S]*?state\.profile\.companyId = companyId;[\s\S]*?scope\.refreshProfileAfterOwnedMutation\(\);/);

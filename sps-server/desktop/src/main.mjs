@@ -92,6 +92,7 @@ import { createSpsDesktopRuntimeDrain } from "./desktop-runtime-drain.mjs";
 import { createSpsDesktopQuitCoordinator } from "./desktop-quit-coordinator.mjs";
 import { createSpsNativeNodeController } from "./native-node-controller.mjs";
 import { createSpsDesktopAccountController } from "./desktop-account-controller.mjs";
+import { createSpsHostShareMutationCoordinator, SpsHostShareReconciliationRequiredError } from "./host-share-mutation.mjs";
 import { spsRequestError, spsRequestTimeoutSignal } from "./desktop-request.mjs";
 import {
   createSpsDesktopAccessToken,
@@ -320,6 +321,7 @@ let desktopQuitRequested = false;
 const DESKTOP_SHUTDOWN_TRACE_STAGES = new Set([
   "quit_request_received", "quit_scheduled", "before_quit_start", "before_quit_complete",
   "stop_scheduling_start", "stop_scheduling_done", "cancel_commands_start", "cancel_commands_done",
+  "stop_host_shares_start", "stop_host_shares_done", "stop_host_shares_failed",
   "stop_managers_start", "stop_managers_done", "drain_failed", "drain_complete", "retry_app_quit",
   "will_quit", "quit",
   "stop_ingress_start", "stop_ingress_done", "stop_ingress_failed",
@@ -385,6 +387,7 @@ let ownerHostCompaniesResolvedGeneration = 0;
 let identityTeamContextRequestGeneration = 0;
 let workspaceProjectsRequestGeneration = 0;
 let desktopAuthPollRequestGeneration = 0;
+const hostShareMutationCoordinator = createSpsHostShareMutationCoordinator();
 let pluginRuntimeStatus = {
   state: "checking",
   command: null,
@@ -622,6 +625,88 @@ function captureWorkspaceReadScope(profile = state.profile) {
   });
 }
 
+function captureHostShareMutation({ kind, sourceId, requireTeam = false, requireSourcePath = false, scope: capturedScope = null }) {
+  const scope = capturedScope ?? captureWorkspaceReadScope();
+  const normalizedId = String(sourceId ?? "").trim();
+  if (!normalizedId) throw new Error("Workspace Source ID is required.");
+  const companyId = hostWorkspaceSourceCompanyId();
+  const teamHostname = String(state.teamAccess?.hostname ?? "").trim();
+  let sourcePath = kind === "workspace-source"
+    ? currentHostWorkspaceSources().find(source => source.id === normalizedId)?.sourcePath ?? ""
+    : (requireSourcePath ? ownerHostProjectSourcePath(normalizedId) : "");
+  if (requireSourcePath && !sourcePath) throw new Error("Choose this SPS Host source folder before changing source access.");
+  let secretFingerprint = null;
+  let fingerprintBound = false;
+
+  const assertOwner = () => {
+    scope.assertCurrent();
+    if ((requireTeam && (!isTeamAccessEnabled() || String(state.teamAccess?.hostname ?? "").trim() !== teamHostname))
+      || hostWorkspaceSourceCompanyId() !== companyId) {
+      throw new Error("SPS Host share authority changed while the operation was pending.");
+    }
+    if (kind === "workspace-source") assertHostWorkspaceSourceAccess();
+    else if (requireTeam) assertHostProjectSourceManager();
+    else assertOwnerHostProjectSourceAccess();
+    const currentPath = kind === "workspace-source"
+      ? currentHostWorkspaceSources().find(source => source.id === normalizedId)?.sourcePath ?? ""
+      : (requireSourcePath ? ownerHostProjectSourcePath(normalizedId) : "");
+    if ((requireSourcePath || kind === "workspace-source") && currentPath !== sourcePath) {
+      throw new Error("The selected SPS Host source changed while the operation was pending.");
+    }
+    if (fingerprintBound && (state.encryptedHostProjectShareSecrets ?? null) !== secretFingerprint) {
+      throw new Error("SPS Host share credentials changed while the operation was pending.");
+    }
+  };
+  return Object.freeze({
+    scope,
+    kind,
+    sourceId: normalizedId,
+    companyId,
+    teamHostname,
+    sourcePath,
+    async run(action) {
+      // Capture original intent before queueing; after acquiring the queue,
+      // bind the latest secret written by a preceding operation under this
+      // same still-current Owner context.
+      assertOwner();
+      return await hostShareMutationCoordinator.run(assertOwner, async () => {
+        assertOwner();
+        secretFingerprint = state.encryptedHostProjectShareSecrets ?? null;
+        fingerprintBound = true;
+        const result = await action({
+          assertCurrent: assertOwner,
+          bindSourcePath: value => {
+            assertOwner();
+            sourcePath = String(value ?? "");
+          },
+          async saveSecrets(value) {
+            assertOwner();
+            const encrypted = encrypt(JSON.stringify({ version: 1, projects: value.projects ?? {} }));
+            // This synchronous owner-checked binding is the only permitted
+            // transition of the encrypted secret fingerprint within a queued
+            // operation; persistence remains guarded across its await.
+            secretFingerprint = encrypted;
+            state.encryptedHostProjectShareSecrets = encrypted;
+            try {
+              await persistState({ beforeCommit: assertOwner });
+              assertOwner();
+            } catch (error) {
+              throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: false, coreMayHaveChanged: false });
+            }
+          },
+          scope,
+          companyId,
+          sourceId: normalizedId,
+          sourcePath,
+          teamHostname,
+        });
+        assertOwner();
+        return result;
+      });
+    },
+  });
+}
+
 async function refreshSpsIdentityTeamContext(capturedScope = null) {
   if (!isSpsIdentityRemoteProfile() || !state.profile) return null;
   const scope = capturedScope ?? captureWorkspaceReadScope();
@@ -838,9 +923,21 @@ function currentHostProjectShareSecrets() {
   }
 }
 
-async function saveHostProjectShareSecrets(value) {
-  state.encryptedHostProjectShareSecrets = encrypt(JSON.stringify({ version: 1, projects: value.projects ?? {} }));
-  await persistState();
+function assertHostShareCredentialNotReusedBySibling(secrets, sourceId, credential) {
+  const username = typeof credential?.username === "string" ? credential.username : "";
+  if (!username) return;
+  const normalizedUsername = username.toLowerCase();
+  const reused = Object.entries(secrets.projects ?? {}).some(([otherId, record]) => otherId !== sourceId
+    && Object.values(record?.grants ?? {}).some(grant => String(grant?.username ?? "").toLowerCase() === normalizedUsername));
+  if (reused) throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: false, coreMayHaveChanged: false });
+}
+
+function assertHostShareRecordMatchesSource(record, sourcePath, sharePath) {
+  const existingPath = typeof record?.sourcePath === "string" ? record.sourcePath : "";
+  const samePath = existingPath && path.resolve(existingPath).toLowerCase() === path.resolve(sourcePath).toLowerCase();
+  if (!samePath || String(record?.sharePath ?? "").toLowerCase() !== String(sharePath).toLowerCase()) {
+    throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: false, coreMayHaveChanged: false });
+  }
 }
 
 function assertOwnerHostProjectSourceAccess() {
@@ -865,11 +962,14 @@ function hostWorkspaceSourceCompanyId() {
   return companyId;
 }
 
-async function loadCoreHostWorkspaceSources() {
+async function loadCoreHostWorkspaceSources({ assertCurrent = () => {} } = {}) {
+  assertCurrent();
   const companyId = hostWorkspaceSourceCompanyId();
   const value = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
     ownerBootstrap: true,
+    assertCurrent,
   });
+  assertCurrent();
   if (!value || typeof value !== "object" || !Array.isArray(value.sources)) {
     throw new Error("SPS Owner Host returned an invalid Workspace Source list.");
   }
@@ -880,12 +980,26 @@ async function loadCoreHostWorkspaceSources() {
   };
 }
 
-async function synchronizeHostWorkspaceSources() {
+async function synchronizeHostWorkspaceSources(mutation = null) {
+  const scope = mutation?.scope ?? captureWorkspaceReadScope();
+  const assertCurrent = mutation?.assertCurrent ?? scope.assertCurrent;
+  assertCurrent();
   const localSources = currentHostWorkspaceSources();
-  const { companyId, sources: coreSources, nodes } = await loadCoreHostWorkspaceSources();
+  const companyId = hostWorkspaceSourceCompanyId();
+  const value = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
+    ownerBootstrap: true,
+    assertCurrent,
+  });
+  assertCurrent();
+  if (!value || typeof value !== "object" || !Array.isArray(value.sources)) {
+    throw new Error("SPS Owner Host returned an invalid Workspace Source list.");
+  }
+  const coreSources = value.sources;
+  const nodes = Array.isArray(value.nodes) ? value.nodes : [];
   const knownCoreSources = [...coreSources];
   const usedCoreIds = new Set();
   let changed = false;
+  let coreMayHaveChanged = false;
   const nextSources = [];
 
   for (const localSource of localSources) {
@@ -897,11 +1011,18 @@ async function synchronizeHostWorkspaceSources() {
       )) ?? null;
     }
     if (!coreSource) {
-      coreSource = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
-        method: "POST",
-        ownerBootstrap: true,
-        body: { displayName: localSource.name },
-      });
+      coreMayHaveChanged = true;
+      try {
+        coreSource = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
+          method: "POST",
+          ownerBootstrap: true,
+          body: { displayName: localSource.name },
+          assertCurrent,
+        });
+        assertCurrent();
+      } catch {
+        throw new SpsHostShareReconciliationRequiredError({ coreMayHaveChanged: true });
+      }
       knownCoreSources.push(coreSource);
     }
     usedCoreIds.add(coreSource.id);
@@ -932,7 +1053,10 @@ async function synchronizeHostWorkspaceSources() {
 
   if (changed) {
     state.profile.workspaceSources = nextSources;
-    await persistState();
+    scope.refreshProfileAfterOwnedMutation();
+    try { await persistState({ beforeCommit: assertCurrent }); }
+    catch { throw new SpsHostShareReconciliationRequiredError({ coreMayHaveChanged }); }
+    assertCurrent();
   }
   return {
     sources: nextSources.map((source) => {
@@ -959,80 +1083,126 @@ async function synchronizeHostWorkspaceSources() {
   };
 }
 
-async function listHostWorkspaceSources() {
+async function listHostWorkspaceSources(capturedScope = null) {
   assertHostWorkspaceSourceAccess();
-  return await synchronizeHostWorkspaceSources();
+  const mutation = captureHostShareMutation({ kind: "workspace-source", sourceId: "__workspace_source_sync__", scope: capturedScope });
+  return await mutation.run(context => synchronizeHostWorkspaceSources(context));
 }
 
 async function chooseHostWorkspaceSource() {
   assertHostWorkspaceSourceAccess();
+  const mutation = captureHostShareMutation({ kind: "workspace-source", sourceId: "__new_workspace_source__" });
   const selection = await dialog.showOpenDialog(workspaceWindow ?? mainWindow ?? undefined, {
     title: "Choose a source folder on this SPS Host",
     properties: ["openDirectory", "createDirectory"],
   });
+  mutation.scope.assertCurrent();
   if (selection.canceled || !selection.filePaths[0]) return await listHostWorkspaceSources();
   const sourcePath = await requireSpsWorkspaceDirectory(selection.filePaths[0]);
-  const companyId = hostWorkspaceSourceCompanyId();
-  const created = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
-    method: "POST",
-    ownerBootstrap: true,
-    body: { displayName: path.basename(sourcePath) || "Source" },
+  mutation.scope.assertCurrent();
+  await mutation.run(async ({ assertCurrent, scope, companyId }) => {
+    let coreChanged = false;
+    try {
+      coreChanged = true;
+      const created = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources`, {
+        method: "POST",
+        ownerBootstrap: true,
+        body: { displayName: path.basename(sourcePath) || "Source" },
+        assertCurrent,
+      });
+      assertCurrent();
+      if (!created?.id || !created?.displayName) throw new Error("SPS Owner Host did not create a Workspace Source handle.");
+      state.profile.workspaceSources = addSpsWorkspaceSource(currentHostWorkspaceSources(), {
+        id: String(created.id), name: String(created.displayName), sourcePath,
+      });
+      scope.refreshProfileAfterOwnedMutation();
+      await persistState({ beforeCommit: assertCurrent });
+      assertCurrent();
+    } catch {
+      if (coreChanged) throw new SpsHostShareReconciliationRequiredError({ coreMayHaveChanged: true });
+      throw new Error("SPS Host Workspace Source could not be created.");
+    }
   });
-  if (!created?.id || !created?.displayName) {
-    throw new Error("SPS Owner Host did not create a Workspace Source handle.");
-  }
-  const source = {
-    id: String(created.id),
-    name: String(created.displayName),
-    sourcePath,
-  };
-  state.profile.workspaceSources = addSpsWorkspaceSource(currentHostWorkspaceSources(), source);
-  await persistState();
+  mutation.scope.assertCurrent();
   return await listHostWorkspaceSources();
 }
 
 async function renameHostWorkspaceSource(sourceId, name) {
   assertHostWorkspaceSourceAccess();
-  const companyId = hostWorkspaceSourceCompanyId();
-  const updated = await ownerHostApi(
-    `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(String(sourceId ?? ""))}`,
-    { method: "PATCH", ownerBootstrap: true, body: { displayName: name } },
-  );
-  state.profile.workspaceSources = renameSpsWorkspaceSource(
-    currentHostWorkspaceSources(),
-    sourceId,
-    String(updated?.displayName ?? name),
-  );
-  await persistState();
+  const mutation = captureHostShareMutation({ kind: "workspace-source", sourceId });
+  await mutation.run(async ({ assertCurrent, scope, companyId, sourceId: id }) => {
+    let coreChanged = false;
+    try {
+      coreChanged = true;
+      const updated = await ownerHostApi(
+        `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(id)}`,
+        { method: "PATCH", ownerBootstrap: true, body: { displayName: name }, assertCurrent },
+      );
+      assertCurrent();
+      state.profile.workspaceSources = renameSpsWorkspaceSource(
+        currentHostWorkspaceSources(), id, String(updated?.displayName ?? name),
+      );
+      scope.refreshProfileAfterOwnedMutation();
+      await persistState({ beforeCommit: assertCurrent });
+      assertCurrent();
+    } catch {
+      if (coreChanged) throw new SpsHostShareReconciliationRequiredError({ coreMayHaveChanged: true });
+      throw new Error("SPS Host Workspace Source could not be renamed.");
+    }
+  });
+  mutation.scope.assertCurrent();
   return await listHostWorkspaceSources();
 }
 
 async function removeHostWorkspaceSource(sourceId) {
   assertHostWorkspaceSourceAccess();
-  const normalizedSourceId = String(sourceId ?? "");
-  const secrets = currentHostProjectShareSecrets();
-  const protectedRecord = secrets.projects[normalizedSourceId];
-  if (protectedRecord && Object.keys(protectedRecord.grants ?? {}).length > 0) {
-    throw new Error("Revoke every Member Node before removing this Workspace Source.");
-  }
-  if (protectedRecord?.shareName && protectedRecord?.sourcePath) {
-    await updateSpsHostProjectShareWindowsAccess({
-      sourcePath: protectedRecord.sourcePath,
-      shareName: protectedRecord.shareName,
-      accountName: "",
-      password: "",
-      action: "remove",
-    }, { temporaryRoot: app.getPath("temp") });
-    delete secrets.projects[normalizedSourceId];
-    await saveHostProjectShareSecrets(secrets);
-  }
-  const companyId = hostWorkspaceSourceCompanyId();
-  await ownerHostApi(
-    `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(normalizedSourceId)}`,
-    { method: "DELETE", ownerBootstrap: true },
-  );
-  state.profile.workspaceSources = removeSpsWorkspaceSource(currentHostWorkspaceSources(), sourceId);
-  await persistState();
+  const mutation = captureHostShareMutation({ kind: "workspace-source", sourceId });
+  await mutation.run(async ({ assertCurrent, scope, companyId, sourceId: id, bindSourcePath, saveSecrets }) => {
+    const secrets = currentHostProjectShareSecrets();
+    const protectedRecord = secrets.projects[id];
+    if (protectedRecord && Object.keys(protectedRecord.grants ?? {}).length > 0) {
+      throw new Error("Revoke every Member Node before removing this Workspace Source.");
+    }
+    if (protectedRecord) assertHostShareCredentialNotReusedBySibling(secrets, id, Object.values(protectedRecord.grants ?? {})[0]);
+    let localChanged = false;
+    let coreChanged = false;
+    try {
+      if (protectedRecord?.shareName && protectedRecord?.sourcePath) {
+        assertCurrent();
+        localChanged = true;
+        await updateSpsHostProjectShareWindowsAccess({
+          sourcePath: protectedRecord.sourcePath,
+          shareName: protectedRecord.shareName,
+          accountName: "",
+          password: "",
+          action: "remove",
+        }, { temporaryRoot: app.getPath("temp") });
+        assertCurrent();
+      }
+      coreChanged = true;
+      await ownerHostApi(
+        `/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(id)}`,
+        { method: "DELETE", ownerBootstrap: true, assertCurrent },
+      );
+      assertCurrent();
+      if (protectedRecord) {
+        delete secrets.projects[id];
+        await saveSecrets(secrets);
+      }
+      bindSourcePath("");
+      state.profile.workspaceSources = removeSpsWorkspaceSource(currentHostWorkspaceSources(), id);
+      scope.refreshProfileAfterOwnedMutation();
+      await persistState({ beforeCommit: assertCurrent });
+      assertCurrent();
+    } catch {
+      if (localChanged || coreChanged) throw new SpsHostShareReconciliationRequiredError({
+        localAccessMayHaveChanged: localChanged,
+        coreMayHaveChanged: coreChanged,
+      });
+      throw new Error("SPS Host Workspace Source could not be removed.");
+    }
+  });
+  mutation.scope.assertCurrent();
   return await listHostWorkspaceSources();
 }
 
@@ -1052,146 +1222,128 @@ function hostWorkspaceSourcePath(sourceId) {
   return source.sourcePath;
 }
 
-async function workspaceSourceStatus(sourceId) {
+async function workspaceSourceStatus(sourceId, { assertCurrent = () => {} } = {}) {
+  assertCurrent();
   assertHostWorkspaceSourceManager();
   const normalizedId = String(sourceId ?? "").trim();
   if (!normalizedId) throw new Error("Workspace Source ID is required.");
-  const snapshot = await loadCoreHostWorkspaceSources();
+  const snapshot = await loadCoreHostWorkspaceSources({ assertCurrent });
+  assertCurrent();
   const source = snapshot.sources.find((candidate) => candidate?.id === normalizedId) ?? null;
   if (!source) throw new Error("This Workspace Source is no longer available on the SPS Host.");
   return { companyId: snapshot.companyId, source, nodes: snapshot.nodes };
 }
 
-async function grantHostWorkspaceSourceToNode(sourceId, nodeId) {
-  const sourcePath = hostWorkspaceSourcePath(sourceId);
-  const status = await workspaceSourceStatus(sourceId);
-  const target = status.nodes.find((node) => node?.id === nodeId) ?? null;
-  if (!target || target.status !== "active" || !target.keyVerifiedAt || !target.transportPublicKey) {
-    throw new Error("Choose an active Member Node with a verified transport key before granting Workspace Source access.");
-  }
-  const secrets = currentHostProjectShareSecrets();
-  const existing = secrets.projects[sourceId] && typeof secrets.projects[sourceId] === "object"
-    ? secrets.projects[sourceId]
-    : null;
-  const shareName = existing?.shareName ?? spsHostProjectShareName(sourceId);
-  const sharePath = spsHostProjectSharePath(state.teamAccess.hostname, shareName);
-  const grants = existing?.grants && typeof existing.grants === "object" ? { ...existing.grants } : {};
-  const credential = grants[nodeId] && typeof grants[nodeId] === "object"
-    ? grants[nodeId]
-    : createSpsHostProjectShareCredential(nodeId, undefined, sourceId);
-  await updateSpsHostProjectShareWindowsAccess({
-    sourcePath,
-    shareName,
-    accountName: credential.username,
-    password: credential.password,
-    action: "grant",
-  }, { temporaryRoot: app.getPath("temp") });
-  secrets.projects[sourceId] = {
-    shareName,
-    sharePath,
-    sourcePath,
-    grants: { ...grants, [nodeId]: credential },
-  };
-  await saveHostProjectShareSecrets(secrets);
-  try {
-    await ownerHostApi(
-      `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}`,
-      { method: "PATCH", ownerBootstrap: true, body: { sharePath } },
-    );
-    const envelope = sealSpsHostProjectShareCredential({
-      sharePath,
-      hostAccountName: process.env.COMPUTERNAME?.trim() || os.hostname(),
-      transportPublicKey: target.transportPublicKey,
-      username: credential.username,
-      password: credential.password,
-    });
-    await ownerHostApi(
-      `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}/nodes/${encodeURIComponent(nodeId)}`,
-      {
-        method: "PUT",
-        ownerBootstrap: true,
-        body: { credentialAlgorithm: SPS_HOST_SHARE_CREDENTIAL_ALGORITHM, credentialEnvelope: envelope },
-      },
-    );
-  } catch (error) {
-    const cleanupErrors = [];
-    await updateSpsHostProjectShareWindowsAccess({
-      sourcePath,
-      shareName,
-      accountName: credential.username,
-      password: credential.password,
-      action: "revoke",
-    }, { temporaryRoot: app.getPath("temp") }).catch((cleanupError) => cleanupErrors.push(cleanupError));
-    if (Object.keys(grants).length === 0) {
+async function grantHostWorkspaceSourceToNode(sourceId, nodeId, capturedScope = null) {
+  const mutation = captureHostShareMutation({ kind: "workspace-source", sourceId, requireTeam: true, requireSourcePath: true, scope: capturedScope });
+  return await mutation.run(async ({ assertCurrent, companyId, sourceId: id, sourcePath, teamHostname, saveSecrets }) => {
+    const status = await workspaceSourceStatus(id, { assertCurrent });
+    const target = status.nodes.find(node => node?.id === nodeId) ?? null;
+    if (!target || target.status !== "active" || !target.keyVerifiedAt || !target.transportPublicKey) {
+      throw new Error("Choose an active Member Node with a verified transport key before granting Workspace Source access.");
+    }
+    const secrets = currentHostProjectShareSecrets();
+    const existing = secrets.projects[id] && typeof secrets.projects[id] === "object" ? secrets.projects[id] : null;
+    const shareName = existing?.shareName ?? spsHostProjectShareName(id);
+    const sharePath = spsHostProjectSharePath(teamHostname, shareName);
+    if (existing) assertHostShareRecordMatchesSource(existing, sourcePath, sharePath);
+    if (status.source.sharePath && String(status.source.sharePath).toLowerCase() !== sharePath.toLowerCase()) {
+      throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: false, coreMayHaveChanged: false });
+    }
+    const grants = existing?.grants && typeof existing.grants === "object" ? { ...existing.grants } : {};
+    const credential = grants[nodeId] && typeof grants[nodeId] === "object"
+      ? grants[nodeId]
+      : createSpsHostProjectShareCredential(nodeId, undefined, id);
+    assertHostShareCredentialNotReusedBySibling(secrets, id, credential);
+    secrets.projects[id] = { shareName, sharePath, sourcePath, grants: { ...grants, [nodeId]: credential } };
+    // Preserve the encrypted credential before touching the Windows ACL.
+    await saveSecrets(secrets);
+    let localMayHaveChanged = false;
+    let coreMayHaveChanged = false;
+    try {
+      assertCurrent();
+      localMayHaveChanged = true;
       await updateSpsHostProjectShareWindowsAccess({
-        sourcePath,
-        shareName,
-        accountName: "",
-        password: "",
-        action: "remove",
-      }, { temporaryRoot: app.getPath("temp") }).catch((cleanupError) => cleanupErrors.push(cleanupError));
-      await ownerHostApi(
-        `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}`,
-        { method: "PATCH", ownerBootstrap: true, body: { sharePath: null } },
-      ).catch((cleanupError) => cleanupErrors.push(cleanupError));
+        sourcePath, shareName, accountName: credential.username, password: credential.password, action: "grant",
+      }, { temporaryRoot: app.getPath("temp") });
+      assertCurrent();
+      coreMayHaveChanged = true;
+      await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(id)}`,
+        { method: "PATCH", ownerBootstrap: true, body: { sharePath }, assertCurrent });
+      assertCurrent();
+      const envelope = sealSpsHostProjectShareCredential({
+        sharePath,
+        hostAccountName: process.env.COMPUTERNAME?.trim() || os.hostname(),
+        transportPublicKey: target.transportPublicKey,
+        username: credential.username,
+        password: credential.password,
+      });
+      await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(id)}/nodes/${encodeURIComponent(nodeId)}`,
+        { method: "PUT", ownerBootstrap: true, body: { credentialAlgorithm: SPS_HOST_SHARE_CREDENTIAL_ALGORITHM, credentialEnvelope: envelope }, assertCurrent });
+      assertCurrent();
+    } catch {
+      throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: localMayHaveChanged, coreMayHaveChanged });
     }
-    if (existing) secrets.projects[sourceId] = existing;
-    else delete secrets.projects[sourceId];
-    await saveHostProjectShareSecrets(secrets).catch((cleanupError) => cleanupErrors.push(cleanupError));
-    if (cleanupErrors.length > 0) {
-      throw new Error(`${error instanceof Error ? error.message : String(error)} SPS could not fully roll back the failed Workspace Source grant: ${cleanupErrors.map((cleanupError) => cleanupError instanceof Error ? cleanupError.message : String(cleanupError)).join("; ")}`);
-    }
-    throw error;
-  }
-  return { node: { id: target.id, displayName: target.displayName }, sharePath };
+    return { node: { id: target.id, displayName: target.displayName }, sharePath };
+  });
 }
 
-async function revokeHostWorkspaceSourceFromNode(sourceId, nodeId) {
-  const sourcePath = hostWorkspaceSourcePath(sourceId);
-  const status = await workspaceSourceStatus(sourceId);
-  const secrets = currentHostProjectShareSecrets();
-  const record = secrets.projects[sourceId];
-  const credential = record?.grants?.[nodeId] ?? null;
-  if (!credential?.username) {
-    throw new Error("This Host no longer has the local credential required to revoke the Workspace Source safely. Remove the stale SPS share account manually before regranting.");
-  }
-  await updateSpsHostProjectShareWindowsAccess({
-    sourcePath,
-    shareName: record.shareName,
-    accountName: credential.username,
-    password: credential.password ?? "",
-    action: "revoke",
-  }, { temporaryRoot: app.getPath("temp") });
-  // Remove the local Windows credential first. If the Core request fails,
-  // direct SMB access is already closed and a later retry can reconcile it.
-  await ownerHostApi(
-    `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}/nodes/${encodeURIComponent(nodeId)}`,
-    { method: "DELETE", ownerBootstrap: true },
-  );
-  const nextGrants = { ...record.grants };
-  delete nextGrants[nodeId];
-  if (Object.keys(nextGrants).length === 0) {
-    await updateSpsHostProjectShareWindowsAccess({
-      sourcePath,
-      shareName: record.shareName,
-      accountName: "",
-      password: "",
-      action: "remove",
-    }, { temporaryRoot: app.getPath("temp") });
-    await ownerHostApi(
-      `/companies/${encodeURIComponent(status.companyId)}/sps-workspace-sources/${encodeURIComponent(sourceId)}`,
-      { method: "PATCH", ownerBootstrap: true, body: { sharePath: null } },
-    );
-    delete secrets.projects[sourceId];
-  } else {
-    secrets.projects[sourceId] = { ...record, grants: nextGrants };
-  }
-  await saveHostProjectShareSecrets(secrets);
-  return { nodeId, revoked: true };
+async function revokeHostWorkspaceSourceFromNode(sourceId, nodeId, capturedScope = null) {
+  const mutation = captureHostShareMutation({ kind: "workspace-source", sourceId, requireTeam: true, requireSourcePath: true, scope: capturedScope });
+  return await mutation.run(async ({ assertCurrent, companyId, sourceId: id, sourcePath, teamHostname, saveSecrets }) => {
+    const status = await workspaceSourceStatus(id, { assertCurrent });
+    const secrets = currentHostProjectShareSecrets();
+    const record = secrets.projects[id];
+    const credential = record?.grants?.[nodeId] ?? null;
+    if (!credential?.username) throw new Error("This Host no longer has the local credential required to revoke Workspace Source access safely.");
+    const expectedSharePath = spsHostProjectSharePath(teamHostname, record.shareName);
+    if (String(status.source.sharePath ?? "").toLowerCase() !== expectedSharePath.toLowerCase()) {
+      throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: false, coreMayHaveChanged: false });
+    }
+    assertHostShareRecordMatchesSource(record, sourcePath, expectedSharePath);
+    assertHostShareCredentialNotReusedBySibling(secrets, id, credential);
+    const nextGrants = { ...record.grants };
+    delete nextGrants[nodeId];
+    let localMayHaveChanged = false;
+    let coreMayHaveChanged = false;
+    try {
+      assertCurrent();
+      localMayHaveChanged = true;
+      await updateSpsHostProjectShareWindowsAccess({
+        sourcePath, shareName: record.shareName, accountName: credential.username,
+        password: credential.password ?? "", action: "revoke",
+      }, { temporaryRoot: app.getPath("temp") });
+      assertCurrent();
+      coreMayHaveChanged = true;
+      await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(id)}/nodes/${encodeURIComponent(nodeId)}`,
+        { method: "DELETE", ownerBootstrap: true, assertCurrent });
+      assertCurrent();
+      if (Object.keys(nextGrants).length === 0) {
+        localMayHaveChanged = true;
+        await updateSpsHostProjectShareWindowsAccess({
+          sourcePath, shareName: record.shareName, accountName: "", password: "", action: "remove",
+        }, { temporaryRoot: app.getPath("temp") });
+        assertCurrent();
+        coreMayHaveChanged = true;
+        await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/sps-workspace-sources/${encodeURIComponent(id)}`,
+          { method: "PATCH", ownerBootstrap: true, body: { sharePath: null }, assertCurrent });
+        delete secrets.projects[id];
+      } else {
+        secrets.projects[id] = { ...record, grants: nextGrants };
+      }
+      await saveSecrets(secrets);
+      assertCurrent();
+    } catch {
+      throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: localMayHaveChanged, coreMayHaveChanged });
+    }
+    return { nodeId, revoked: true };
+  });
 }
 
 async function showHostWorkspaceSourceManager(sourceId) {
-  const snapshot = await listHostWorkspaceSources();
+  const mutationScope = captureWorkspaceReadScope();
+  const snapshot = await listHostWorkspaceSources(mutationScope);
+  mutationScope.assertCurrent();
   const source = snapshot.sources.find((candidate) => candidate.id === sourceId) ?? null;
   if (!source) throw new Error("This Workspace Source is no longer available on the SPS Host.");
   const members = source.memberNodes.filter((node) => node.status === "active" && node.keyVerified).slice(0, 8);
@@ -1216,11 +1368,12 @@ async function showHostWorkspaceSourceManager(sourceId) {
     buttons,
     cancelId: buttons.length - 1,
   });
+  mutationScope.assertCurrent();
   const target = members[choice.response] ?? null;
   if (!target) return null;
   const result = target.sourceAccess === "granted"
-    ? await revokeHostWorkspaceSourceFromNode(sourceId, target.id)
-    : await grantHostWorkspaceSourceToNode(sourceId, target.id);
+    ? await revokeHostWorkspaceSourceFromNode(sourceId, target.id, mutationScope)
+    : await grantHostWorkspaceSourceToNode(sourceId, target.id, mutationScope);
   await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
     type: "info",
     title: "Workspace Source access updated",
@@ -1265,154 +1418,189 @@ function assertHostProjectSourceCanChange(projectId) {
 
 async function listHostProjectSourcesForWorkspace() {
   assertOwnerHostProjectSourceAccess();
-  await refreshProjects();
-  const mappings = state.profile?.projectWorkspaces ?? {};
-  return {
-    privateTeamAccessEnabled: isTeamAccessEnabled(),
-    projects: state.projects.map((project) => ({
-      id: project.id,
-      name: project.name,
-      sourcePath: typeof mappings[project.id] === "string" ? mappings[project.id] : "",
-    })),
-  };
+  const scope = captureWorkspaceReadScope();
+  const mutation = captureHostShareMutation({ kind: "project-source", sourceId: "__project_source_list__", scope });
+  return await mutation.run(async ({ assertCurrent }) => {
+    await refreshProjects(scope);
+    assertCurrent();
+    const mappings = state.profile?.projectWorkspaces ?? {};
+    return {
+      privateTeamAccessEnabled: isTeamAccessEnabled(),
+      projects: state.projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        sourcePath: typeof mappings[project.id] === "string" ? mappings[project.id] : "",
+      })),
+    };
+  });
 }
 
 async function chooseHostProjectSourceForWorkspace(projectId) {
   assertOwnerHostProjectSourceAccess();
   const normalizedId = normalizedProjectId(projectId);
-  await refreshProjects();
-  if (!state.projects.some((project) => project.id === normalizedId)) {
-    throw new Error("This SPS project is no longer available to the Owner Host.");
-  }
-  assertHostProjectSourceCanChange(normalizedId);
-  const selection = await dialog.showOpenDialog(workspaceWindow ?? mainWindow ?? undefined, {
-    title: "Choose source folder on this Owner Host",
-    properties: ["openDirectory", "createDirectory"],
+  const mutation = captureHostShareMutation({ kind: "project-source", sourceId: normalizedId });
+  await mutation.run(async ({ assertCurrent, scope }) => {
+    await refreshProjects(scope);
+    assertCurrent();
+    if (!state.projects.some((project) => project.id === normalizedId)) {
+      throw new Error("This SPS project is no longer available to the Owner Host.");
+    }
+    assertHostProjectSourceCanChange(normalizedId);
+    const selection = await dialog.showOpenDialog(workspaceWindow ?? mainWindow ?? undefined, {
+      title: "Choose source folder on this Owner Host",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    assertCurrent();
+    if (selection.canceled || !selection.filePaths[0]) return;
+    const workspacePath = await requireSpsWorkspaceDirectory(selection.filePaths[0]);
+    assertCurrent();
+    state.profile.projectWorkspaces = {
+      ...(state.profile?.projectWorkspaces ?? {}),
+      [normalizedId]: workspacePath,
+    };
+    scope.refreshProfileAfterOwnedMutation();
+    await persistState({ beforeCommit: assertCurrent });
+    assertCurrent();
   });
-  if (selection.canceled || !selection.filePaths[0]) return await listHostProjectSourcesForWorkspace();
-  const workspacePath = await requireSpsWorkspaceDirectory(selection.filePaths[0]);
-  state.profile.projectWorkspaces = {
-    ...(state.profile?.projectWorkspaces ?? {}),
-    [normalizedId]: workspacePath,
-  };
-  await persistState();
+  mutation.scope.assertCurrent();
   return await listHostProjectSourcesForWorkspace();
 }
 
 async function clearHostProjectSourceForWorkspace(projectId) {
   assertOwnerHostProjectSourceAccess();
   const normalizedId = normalizedProjectId(projectId);
-  assertHostProjectSourceCanChange(normalizedId);
-  const projectWorkspaces = { ...(state.profile?.projectWorkspaces ?? {}) };
-  delete projectWorkspaces[normalizedId];
-  state.profile.projectWorkspaces = projectWorkspaces;
-  await persistState();
+  const mutation = captureHostShareMutation({ kind: "project-source", sourceId: normalizedId });
+  await mutation.run(async ({ assertCurrent, scope }) => {
+    assertHostProjectSourceCanChange(normalizedId);
+    const projectWorkspaces = { ...(state.profile?.projectWorkspaces ?? {}) };
+    delete projectWorkspaces[normalizedId];
+    state.profile.projectWorkspaces = projectWorkspaces;
+    scope.refreshProfileAfterOwnedMutation();
+    await persistState({ beforeCommit: assertCurrent });
+    assertCurrent();
+  });
+  mutation.scope.assertCurrent();
   return await listHostProjectSourcesForWorkspace();
 }
 
-async function getHostProjectShareStatus(projectId) {
+async function getHostProjectShareStatus(projectId, { assertCurrent = () => {} } = {}) {
+  assertCurrent();
   assertHostProjectSourceManager();
   const value = await ownerHostApi(`/projects/${encodeURIComponent(projectId)}/sps-host-share`, {
     ownerBootstrap: true,
+    assertCurrent,
   });
+  assertCurrent();
   if (!value || typeof value !== "object" || !Array.isArray(value.nodes)) {
     throw new Error("SPS Owner Host returned an invalid project source access status.");
   }
   return value;
 }
 
-async function grantHostProjectSourceToNode(projectId, nodeId) {
-  assertHostProjectSourceManager();
-  const sourcePath = ownerHostProjectSourcePath(projectId);
-  const status = await getHostProjectShareStatus(projectId);
-  const target = status.nodes.find((node) => node?.id === nodeId) ?? null;
-  if (!target || target.status !== "active" || !target.keyVerifiedAt || !target.transportPublicKey) {
-    throw new Error("Choose an active SPS Member Node with a current transport key before granting project source access.");
-  }
-  const secrets = currentHostProjectShareSecrets();
-  const existing = secrets.projects[projectId] && typeof secrets.projects[projectId] === "object"
-    ? secrets.projects[projectId]
-    : null;
-  const shareName = existing?.shareName ?? spsHostProjectShareName(projectId);
-  const sharePath = spsHostProjectSharePath(state.teamAccess.hostname, shareName);
-  if (status.share?.sharePath && String(status.share.sharePath).toLowerCase() !== sharePath.toLowerCase()) {
-    throw new Error("This project is already linked to another SPS Host share. Reconfigure it from the original Owner Host before granting more access.");
-  }
-  const grants = existing?.grants && typeof existing.grants === "object" ? { ...existing.grants } : {};
-  const credential = grants[nodeId] && typeof grants[nodeId] === "object"
-    ? grants[nodeId]
-    : createSpsHostProjectShareCredential(nodeId);
-  await updateSpsHostProjectShareWindowsAccess({
-    sourcePath,
-    shareName,
-    accountName: credential.username,
-    password: credential.password,
-    action: "grant",
-  }, { temporaryRoot: app.getPath("temp") });
-  secrets.projects[projectId] = {
-    shareName,
-    sharePath,
-    sourcePath,
-    grants: { ...grants, [nodeId]: credential },
-  };
-  // Persist the local credential before contacting Core. If the network call
-  // fails, the Owner can safely retry without creating an orphaned password.
-  await saveHostProjectShareSecrets(secrets);
-  if (!status.share) {
-    await ownerHostApi(`/projects/${encodeURIComponent(projectId)}/sps-host-share`, {
-      method: "PUT",
-      ownerBootstrap: true,
-      body: { sharePath },
-    });
-  }
-  const envelope = sealSpsHostProjectShareCredential({
-    sharePath,
-    hostAccountName: process.env.COMPUTERNAME?.trim() || os.hostname(),
-    transportPublicKey: target.transportPublicKey,
-    username: credential.username,
-    password: credential.password,
+async function grantHostProjectSourceToNode(projectId, nodeId, capturedScope = null) {
+  const mutation = captureHostShareMutation({ kind: "project-source", sourceId: projectId, requireTeam: true, requireSourcePath: true, scope: capturedScope });
+  return await mutation.run(async ({ assertCurrent, companyId, sourceId: id, sourcePath, teamHostname, saveSecrets }) => {
+    const status = await getHostProjectShareStatus(id, { assertCurrent });
+    const target = status.nodes.find(node => node?.id === nodeId) ?? null;
+    if (!target || target.status !== "active" || !target.keyVerifiedAt || !target.transportPublicKey) {
+      throw new Error("Choose an active SPS Member Node with a current transport key before granting project source access.");
+    }
+    const secrets = currentHostProjectShareSecrets();
+    const existing = secrets.projects[id] && typeof secrets.projects[id] === "object" ? secrets.projects[id] : null;
+    const shareName = existing?.shareName ?? spsHostProjectShareName(id);
+    const sharePath = spsHostProjectSharePath(teamHostname, shareName);
+    if (existing) assertHostShareRecordMatchesSource(existing, sourcePath, sharePath);
+    if (status.share?.sharePath && String(status.share.sharePath).toLowerCase() !== sharePath.toLowerCase()) {
+      throw new Error("This project is already linked to another SPS Host share. Reconfigure it from the original Owner Host before granting more access.");
+    }
+    const grants = existing?.grants && typeof existing.grants === "object" ? { ...existing.grants } : {};
+    const credential = grants[nodeId] && typeof grants[nodeId] === "object"
+      ? grants[nodeId]
+      : createSpsHostProjectShareCredential(nodeId, undefined, id);
+    assertHostShareCredentialNotReusedBySibling(secrets, id, credential);
+    secrets.projects[id] = { shareName, sharePath, sourcePath, grants: { ...grants, [nodeId]: credential } };
+    await saveSecrets(secrets);
+    let localMayHaveChanged = false;
+    let coreMayHaveChanged = false;
+    try {
+      assertCurrent();
+      localMayHaveChanged = true;
+      await updateSpsHostProjectShareWindowsAccess({
+        sourcePath, shareName, accountName: credential.username, password: credential.password, action: "grant",
+      }, { temporaryRoot: app.getPath("temp") });
+      assertCurrent();
+      if (!status.share) {
+        coreMayHaveChanged = true;
+        await ownerHostApi(`/projects/${encodeURIComponent(id)}/sps-host-share`, {
+          method: "PUT", ownerBootstrap: true, body: { sharePath }, assertCurrent,
+        });
+        assertCurrent();
+      }
+      const envelope = sealSpsHostProjectShareCredential({
+        sharePath,
+        hostAccountName: process.env.COMPUTERNAME?.trim() || os.hostname(),
+        transportPublicKey: target.transportPublicKey,
+        username: credential.username,
+        password: credential.password,
+      });
+      coreMayHaveChanged = true;
+      await ownerHostApi(`/projects/${encodeURIComponent(id)}/sps-host-share/nodes/${encodeURIComponent(nodeId)}`, {
+        method: "PUT", ownerBootstrap: true,
+        body: { credentialAlgorithm: SPS_HOST_SHARE_CREDENTIAL_ALGORITHM, credentialEnvelope: envelope }, assertCurrent,
+      });
+      assertCurrent();
+    } catch {
+      throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: localMayHaveChanged, coreMayHaveChanged });
+    }
+    return { node: { id: target.id, displayName: target.displayName }, sharePath };
   });
-  await ownerHostApi(`/projects/${encodeURIComponent(projectId)}/sps-host-share/nodes/${encodeURIComponent(nodeId)}`, {
-    method: "PUT",
-    ownerBootstrap: true,
-    body: { credentialAlgorithm: SPS_HOST_SHARE_CREDENTIAL_ALGORITHM, credentialEnvelope: envelope },
-  });
-  return { node: { id: target.id, displayName: target.displayName }, sharePath };
 }
 
-async function revokeHostProjectSourceFromNode(projectId, nodeId) {
-  assertHostProjectSourceManager();
-  const sourcePath = ownerHostProjectSourcePath(projectId);
-  const status = await getHostProjectShareStatus(projectId);
-  if (!status.share) throw new Error("This project does not have an SPS Host source share.");
-  // Revoke in Core first. A queued or running Agent then loses its lease even
-  // if Windows needs a moment to close the SMB account locally.
-  await ownerHostApi(`/projects/${encodeURIComponent(projectId)}/sps-host-share/nodes/${encodeURIComponent(nodeId)}`, {
-    method: "DELETE",
-    ownerBootstrap: true,
+async function revokeHostProjectSourceFromNode(projectId, nodeId, capturedScope = null) {
+  const mutation = captureHostShareMutation({ kind: "project-source", sourceId: projectId, requireTeam: true, requireSourcePath: true, scope: capturedScope });
+  return await mutation.run(async ({ assertCurrent, sourceId: id, sourcePath, teamHostname, saveSecrets }) => {
+    const status = await getHostProjectShareStatus(id, { assertCurrent });
+    if (!status.share) throw new Error("This project does not have an SPS Host source share.");
+    const secrets = currentHostProjectShareSecrets();
+    const record = secrets.projects[id];
+    const credential = record?.grants?.[nodeId] ?? null;
+    if (!credential?.username) throw new Error("SPS Host no longer has the local credential required to revoke project source access safely.");
+    const expectedSharePath = spsHostProjectSharePath(teamHostname, record.shareName);
+    if (String(status.share.sharePath ?? "").toLowerCase() !== expectedSharePath.toLowerCase()) {
+      throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: false, coreMayHaveChanged: false });
+    }
+    assertHostShareRecordMatchesSource(record, sourcePath, expectedSharePath);
+    assertHostShareCredentialNotReusedBySibling(secrets, id, credential);
+    let coreMayHaveChanged = false;
+    let localMayHaveChanged = false;
+    try {
+      assertCurrent();
+      coreMayHaveChanged = true;
+      await ownerHostApi(`/projects/${encodeURIComponent(id)}/sps-host-share/nodes/${encodeURIComponent(nodeId)}`, {
+        method: "DELETE", ownerBootstrap: true, assertCurrent,
+      });
+      assertCurrent();
+      localMayHaveChanged = true;
+      await updateSpsHostProjectShareWindowsAccess({
+        sourcePath, shareName: record.shareName, accountName: credential.username,
+        password: credential.password ?? "", action: "revoke",
+      }, { temporaryRoot: app.getPath("temp") });
+      assertCurrent();
+      const nextGrants = { ...record.grants };
+      delete nextGrants[nodeId];
+      secrets.projects[id] = { ...record, grants: nextGrants };
+      await saveSecrets(secrets);
+      assertCurrent();
+    } catch {
+      throw new SpsHostShareReconciliationRequiredError({ localAccessMayHaveChanged: localMayHaveChanged, coreMayHaveChanged });
+    }
+    return { nodeId, revoked: true };
   });
-  const secrets = currentHostProjectShareSecrets();
-  const record = secrets.projects[projectId];
-  const credential = record?.grants?.[nodeId] ?? null;
-  if (!credential?.username) {
-    throw new Error("SPS revoked the Node in Core, but this Owner Host no longer has its local Windows share credential. Disable that local SPS share account manually before regranting.");
-  }
-  await updateSpsHostProjectShareWindowsAccess({
-    sourcePath,
-    shareName: record.shareName,
-    accountName: credential.username,
-    password: credential.password ?? "",
-    action: "revoke",
-  }, { temporaryRoot: app.getPath("temp") });
-  const nextGrants = { ...record.grants };
-  delete nextGrants[nodeId];
-  secrets.projects[projectId] = { ...record, grants: nextGrants };
-  await saveHostProjectShareSecrets(secrets);
-  return { nodeId, revoked: true };
 }
 
 async function showHostProjectSourceManager(projectId) {
-  const status = await getHostProjectShareStatus(projectId);
+  const mutationScope = captureWorkspaceReadScope();
+  const status = await getHostProjectShareStatus(projectId, { assertCurrent: mutationScope.assertCurrent });
   const memberState = classifyHostProjectSourceMembers(status.nodes, {
     ownerNodeId: state.nodeId,
     ownerDisplayName: state.profile?.displayName,
@@ -1439,11 +1627,12 @@ async function showHostProjectSourceManager(projectId) {
     buttons,
     cancelId: buttons.length - 1,
   });
+  mutationScope.assertCurrent();
   const target = members[choice.response] ?? null;
   if (!target) return null;
   const result = target.sourceAccess === "granted"
-    ? await revokeHostProjectSourceFromNode(projectId, target.id)
-    : await grantHostProjectSourceToNode(projectId, target.id);
+    ? await revokeHostProjectSourceFromNode(projectId, target.id, mutationScope)
+    : await grantHostProjectSourceToNode(projectId, target.id, mutationScope);
   await dialog.showMessageBox(workspaceWindow ?? mainWindow ?? undefined, {
     type: "info",
     title: "Project source access updated",
@@ -4049,8 +4238,8 @@ function staleWorkspaceReadError() {
   return new Error("This Workspace read was superseded by a newer connection request.");
 }
 
-async function refreshProjects() {
-  const scope = captureWorkspaceReadScope();
+async function refreshProjects(capturedScope = null) {
+  const scope = capturedScope ?? captureWorkspaceReadScope();
   const requestGeneration = ++workspaceProjectsRequestGeneration;
   let ownerCompaniesGeneration = ownerHostCompaniesRequestGeneration;
   const isCurrent = () => scope.isCurrent() && requestGeneration === workspaceProjectsRequestGeneration;
@@ -5767,30 +5956,50 @@ function registerIpc() {
   ipcMain.handle("desktop:save-default-workspace", async (_event, input) => {
     if (!isOwnerHostProfile()) throw new Error("Only the Owner Host can choose SPS project folders");
     if (!state.profile) throw new Error("Save an SPS team connection before choosing a local workspace folder");
-    state.profile.defaultWorkspacePath = await requireSpsWorkspaceDirectory(input?.workspacePath) ?? "";
-    await persistState();
+    const scope = captureWorkspaceReadScope();
+    await hostShareMutationCoordinator.run(() => {
+      scope.assertCurrent();
+      assertOwnerHostProjectSourceAccess();
+    }, async () => {
+      const workspacePath = await requireSpsWorkspaceDirectory(input?.workspacePath) ?? "";
+      scope.assertCurrent();
+      state.profile.defaultWorkspacePath = workspacePath;
+      scope.refreshProfileAfterOwnedMutation();
+      await persistState({ beforeCommit: scope.assertCurrent });
+      scope.assertCurrent();
+    });
+    scope.assertCurrent();
     return publicStatus();
   });
   ipcMain.handle("desktop:save-project-workspace", async (_event, input) => {
     if (!isOwnerHostProfile()) throw new Error("Only the Owner Host can choose SPS project folders");
     if (!state.profile) throw new Error("Save an SPS team connection before mapping a project workspace");
     const projectId = normalizedProjectId(input?.projectId);
-    const workspacePath = await requireSpsWorkspaceDirectory(input.workspacePath);
-    const currentPath = state.profile.projectWorkspaces?.[projectId] ?? "";
-    if (currentPath !== workspacePath) assertHostProjectSourceCanChange(projectId);
-    const projectWorkspaces = { ...(state.profile.projectWorkspaces ?? {}) };
-    if (workspacePath) projectWorkspaces[projectId] = workspacePath;
-    else delete projectWorkspaces[projectId];
-    state.profile.projectWorkspaces = projectWorkspaces;
-    await persistState();
+    const mutation = captureHostShareMutation({ kind: "project-source", sourceId: projectId });
+    await mutation.run(async ({ assertCurrent, scope }) => {
+      const workspacePath = await requireSpsWorkspaceDirectory(input.workspacePath);
+      assertCurrent();
+      const currentPath = state.profile.projectWorkspaces?.[projectId] ?? "";
+      if (currentPath !== workspacePath) assertHostProjectSourceCanChange(projectId);
+      const projectWorkspaces = { ...(state.profile.projectWorkspaces ?? {}) };
+      if (workspacePath) projectWorkspaces[projectId] = workspacePath;
+      else delete projectWorkspaces[projectId];
+      state.profile.projectWorkspaces = projectWorkspaces;
+      scope.refreshProfileAfterOwnedMutation();
+      await persistState({ beforeCommit: assertCurrent });
+      assertCurrent();
+    });
+    mutation.scope.assertCurrent();
     return publicStatus();
   });
   ipcMain.handle("desktop:choose-project-workspace", async () => {
     if (!isOwnerHostProfile()) throw new Error("Only the Owner Host can choose SPS project folders");
+    const scope = captureWorkspaceReadScope();
     const selection = await dialog.showOpenDialog(mainWindow ?? undefined, {
       title: "Choose local SPS project folder",
       properties: ["openDirectory", "createDirectory"],
     });
+    scope.assertCurrent();
     return selection.canceled ? null : selection.filePaths[0] ?? null;
   });
   ipcMain.handle("desktop:manage-host-project-source", async (_event, input) => {
@@ -6140,6 +6349,7 @@ app.on("activate", () => {
 const drainDesktopRuntime = createSpsDesktopRuntimeDrain({
   stopIngress: () => nativeHostController?.stop(),
   stopScheduling: stopNodeScheduling,
+  stopHostShares: () => hostShareMutationCoordinator.closeAndDrain(),
   cancelCommands: () => cancelSpsNodeCommands("SPS Desktop is closing, so its local command stopped."),
   stopUpdates: () => desktopUpdateController.stop(),
   trace: traceDesktopShutdown,

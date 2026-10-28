@@ -95,6 +95,7 @@ test("runs the Windows Host share worker through UAC without exposing its passwo
     assert.equal(calls.length, 1);
     assert.equal(JSON.stringify(calls[0]).includes(password), false);
     assert.match(calls[0].join(" "), /SPS elevation was cancelled/);
+    assert.match(calls[0].join(" "), /Start-Process[^\n]*-Verb RunAs -WindowStyle Hidden/);
     const tempEntries = await fs.readdir(temporaryRoot);
     assert.deepEqual(tempEntries, ["source"]);
   } finally {
@@ -121,6 +122,96 @@ test("can remove a stale Host share after its source folder is gone", async () =
     assert.equal(result.action, "remove");
     assert.equal(calls.length, 1);
     assert.deepEqual(await fs.readdir(temporaryRoot), []);
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("revoke only reports success after exact share access, ACL command, and local-user cleanup checks", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-host-share-revoke-test-"));
+  const sourcePath = path.join(temporaryRoot, "source");
+  await fs.mkdir(sourcePath);
+  let workerSource = "";
+  try {
+    await updateSpsHostProjectShareWindowsAccess({
+      sourcePath,
+      shareName: "SPS_project",
+      accountName: "spsws_node123",
+      password: "",
+      action: "revoke",
+    }, {
+      platform: "win32",
+      temporaryRoot,
+      random: () => Buffer.alloc(16, 5),
+      runPowerShell: async (args) => {
+        const elevatedScript = args.at(-1);
+        const paths = elevatedScript.match(/'-File','([^']+)','-ConfigPath','([^']+)'/);
+        assert.ok(paths, "the injected runner should receive the generated worker and config paths");
+        workerSource = await fs.readFile(paths[1], "utf8");
+        const config = JSON.parse(await fs.readFile(paths[2], "utf8"));
+        await fs.writeFile(config.resultPath, JSON.stringify({ ok: true, reason: "" }));
+      },
+    });
+
+    const revokeBranch = workerSource.slice(workerSource.indexOf("if ($action -eq 'revoke')"), workerSource.indexOf("if ($action -eq 'remove')"));
+    assert.match(workerSource, /function Get-SpsOptionalShare\(\[string\]\$Name\) \{\s*\$matches = @\(Get-SmbShare -ErrorAction Stop \| Where-Object \{ \$_\.Name -ieq \$Name \}\)/);
+    assert.match(workerSource, /function Get-SpsOptionalLocalUser\(\[string\]\$Name\) \{\s*\$matches = @\(Get-LocalUser -ErrorAction Stop \| Where-Object \{ \$_\.Name -ieq \$Name \}\)/);
+    assert.doesNotMatch(workerSource.slice(workerSource.indexOf("function Get-SpsOptionalShare"), workerSource.indexOf("trap {")), /SilentlyContinue/);
+    assert.match(workerSource, /trap \{\s*\$reason = switch \(\$action\)/);
+    assert.doesNotMatch(workerSource, /\[string\]\$_.Exception.Message/);
+    assert.match(revokeBranch, /Get-SpsOptionalShare \$shareName/);
+    assert.match(revokeBranch, /GetFullPath\(\[string\]\$share\.Path\) -ne \$sourcePath/);
+    assert.match(revokeBranch, /Get-SmbShareAccess -Name \$shareName -ErrorAction Stop/);
+    assert.match(revokeBranch, /Revoke-SmbShareAccess -Name \$shareName -AccountName \$qualifiedAccount -Force -ErrorAction Stop/);
+    assert.match(revokeBranch, /remainingShareAccess\.Count -gt 0/);
+    assert.match(revokeBranch, /icacls\.exe \$sourcePath \/remove:g "\*\$\(\$localUser\.SID\.Value\)" \/t \/c \/q/);
+    assert.match(revokeBranch, /\$LASTEXITCODE -ne 0/);
+    assert.match(revokeBranch, /Remove-LocalUser -Name \$accountName -ErrorAction Stop/);
+    assert.match(revokeBranch, /Get-SpsOptionalLocalUser \$accountName\)\) \{ throw/);
+    assert.doesNotMatch(revokeBranch, /SilentlyContinue/);
+    assert.match(revokeBranch, /Write-SpsHostShareResult \$true/);
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("remove confirms share and account closure and checks ACL command failures", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sps-host-share-remove-contract-test-"));
+  const sourcePath = path.join(temporaryRoot, "source");
+  await fs.mkdir(sourcePath);
+  let workerSource = "";
+  try {
+    await updateSpsHostProjectShareWindowsAccess({
+      sourcePath,
+      shareName: "SPS_project",
+      accountName: "spsws_node123",
+      password: "",
+      action: "remove",
+    }, {
+      platform: "win32",
+      temporaryRoot,
+      random: () => Buffer.alloc(16, 6),
+      runPowerShell: async (args) => {
+        const paths = args.at(-1).match(/'-File','([^']+)','-ConfigPath','([^']+)'/);
+        assert.ok(paths, "the injected runner should receive the generated worker and config paths");
+        workerSource = await fs.readFile(paths[1], "utf8");
+        const config = JSON.parse(await fs.readFile(paths[2], "utf8"));
+        await fs.writeFile(config.resultPath, JSON.stringify({ ok: true, reason: "" }));
+      },
+    });
+
+    const removeBranch = workerSource.slice(workerSource.indexOf("if ($action -eq 'remove')"), workerSource.indexOf("throw 'Invalid SPS Host project share action.'"));
+    assert.match(removeBranch, /Get-SpsOptionalShare \$shareName/);
+    assert.match(removeBranch, /GetFullPath\(\[string\]\$share\.Path\) -ne \$sourcePath/);
+    assert.match(removeBranch, /Remove-SmbShare -Name \$shareName -Force -ErrorAction Stop/);
+    assert.match(removeBranch, /if \(\$null -ne \(Get-SpsOptionalShare \$shareName\)\) \{ throw/);
+    assert.match(removeBranch, /Get-SpsOptionalLocalUser \$accountName/);
+    assert.match(removeBranch, /icacls\.exe \$sourcePath \/remove:g "\*\$\(\$localUser\.SID\.Value\)" \/t \/c \/q/);
+    assert.match(removeBranch, /\$LASTEXITCODE -ne 0/);
+    assert.match(removeBranch, /Remove-LocalUser -Name \$accountName -ErrorAction Stop/);
+    assert.match(removeBranch, /Get-SpsOptionalLocalUser \$accountName\)\) \{ throw/);
+    assert.doesNotMatch(removeBranch, /SilentlyContinue/);
+    assert.match(removeBranch, /Write-SpsHostShareResult \$true/);
   } finally {
     await fs.rm(temporaryRoot, { recursive: true, force: true });
   }

@@ -191,6 +191,9 @@ Core의 출력 없는 legacy 명령 자동 재배정 제거와 실제 임시 DB 
 미완료 claim의 복구·실제 원격 종료 확인은 여전히 별도 필수 작업이다.
 Desktop 목록 조회의 수명과 기존 contract 검사 보완은
 [Workspace 목록 조회 검토](WORKSPACE-READ-LIFETIME-2026-10-28.md)에 기록했다.
+공유 권한 부여·해제, 폴더 관리와 종료 합류의 후속 보완은
+[Host 공유 권한 변경 검토](HOST-SHARE-MUTATION-LIFETIME-2026-10-28.md)에 기록한다.
+실제 Windows 공유 철회·열린 파일 세션·비정상 종료 복구는 별도 수용 대상으로 유지한다.
 
 공개 Marketplace는 제품에서 제거한다. 전용 Builder 신규 요구는 별도 핸드오프까지
 보류한다. AppContainer 연구는 보존하고 완전한 비신뢰 코드 OS 격리는 1차 완료

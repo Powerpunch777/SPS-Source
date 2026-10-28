@@ -123,3 +123,47 @@ test("a failing diagnostic callback cannot interrupt runtime cleanup", async () 
   await value.drain();
   assert.deepEqual(calls, ["ingress", "host"]);
 });
+
+test("closes Host share admission immediately and joins changes before stopping Core", async () => {
+  const shares = deferred();
+  const otherCleanup = deferred();
+  const calls = [];
+  const { drain } = fixture({
+    stopHostShares: () => { calls.push("shares-closed"); return shares.promise; },
+    stopIngress: async () => { calls.push("ingress"); },
+    cancelCommands: async () => { calls.push("commands"); otherCleanup.resolve(); },
+    getManagers: () => [{ name: "Owner Host", stop: async () => { calls.push("core"); } }],
+  });
+  const work = drain();
+  try {
+    await otherCleanup.promise;
+    assert.deepEqual(calls, ["shares-closed", "ingress", "commands"]);
+    assert.equal(calls.includes("core"), false);
+    shares.resolve();
+    await work;
+    assert.deepEqual(calls, ["shares-closed", "ingress", "commands", "core"]);
+  } finally {
+    shares.resolve();
+    await work;
+  }
+});
+
+test("unconfirmed Host share cleanup still joins other resources and reports a fixed failure", async () => {
+  const shares = deferred();
+  let coreStopped = false;
+  const traces = [];
+  const { drain } = fixture({
+    stopHostShares: async () => { await shares.promise; throw new Error("private share path and credential"); },
+    trace: value => traces.push(value),
+    getManagers: () => [{ name: "Owner Host", stop: async () => { coreStopped = true; } }],
+  });
+  const outcome = drain().then(() => assert.fail("must reject"), error => error);
+  shares.resolve();
+  const error = await outcome;
+  assert.ok(error instanceof AggregateError);
+  assert.equal(coreStopped, true);
+  assert.deepEqual(error.errors.map(item => item.message), ["Host share cleanup did not finish."]);
+  assert.doesNotMatch(JSON.stringify(error.errors.map(item => item.message)), /private|credential/);
+  assert.ok(traces.includes("stop_host_shares_failed"));
+  assert.equal(traces.includes("stop_host_shares_done"), false);
+});
