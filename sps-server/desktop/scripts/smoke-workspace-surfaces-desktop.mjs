@@ -645,6 +645,7 @@ try {
     assert.notEqual(debugPort, previousDebugPort, "A restarted Desktop needs a fresh debugging endpoint");
   }
 
+  nativeManagementStage = "initial_setup_target";
   const setupTarget = await waitForTarget(
     debugPort,
     child,
@@ -652,12 +653,15 @@ try {
     "the SPS Desktop setup window",
   );
   setupCdp = await openCdp(setupTarget);
+  nativeManagementStage = "initial_setup_ui";
   await waitForPage(setupCdp, (page) => page.body.includes("SPS"), "the SPS setup content");
   await waitForEnabled(setupCdp, "#start-sps-account", "SPS sign-in readiness");
+  nativeManagementStage = "identity_authorization";
   await click(setupCdp, "#start-sps-account", "SPS sign-in");
   await followCapturedIdentityAuthorization(mockIdentity, identityUrl);
   console.log("[no-ai] mock Identity authorization followed the real loopback state/PKCE callback without starting a system browser");
   await waitForPage(setupCdp, () => issued.length > 0, "the mock Identity authorization callback", 30_000);
+  nativeManagementStage = "post_signin_host_choice";
   await waitForPage(setupCdp, (page) => page.body.includes("Create") || page.body.includes("Server"), "the post-sign-in Host choice", 45_000);
   if (screenshotPath && sourceElectron && !executionControlOnly) {
     const directory = path.dirname(screenshotPath);
@@ -679,8 +683,10 @@ try {
     }
     await setupCdp.command("Emulation.clearDeviceMetricsOverride");
   }
+  nativeManagementStage = "host_creation";
   await click(setupCdp, "#create-owner-server", "Create SPS Server");
 
+  nativeManagementStage = "host_startup";
   const workspaceTarget = await waitForTarget(
     debugPort,
     child,
@@ -690,15 +696,18 @@ try {
     sourceElectron || executionControlOnly ? () => setupCdp.evaluate("(async () => { const s = await window.spsDesktop.getStatus(); return { state: s.ownerHost.state, lastError: s.ownerHost.lastError }; })()", true) : null,
   );
   workspaceCdp = await openCdp(workspaceTarget);
+  nativeManagementStage = "workspace_ui_startup";
   await waitForPage(workspaceCdp, (page) => page.workspaceEntry === "empty" || page.body.includes("Workspace") || page.body.includes("Dashboard"), "the Workspace Core UI", 90_000);
   await workspaceCdp.evaluate(`localStorage.setItem("sps.theme", "light")`);
 
+  nativeManagementStage = "workspace_company_api";
   const companies = await api(workspaceCdp, "/api/companies");
   const company = Array.isArray(companies) ? companies[0] : null;
   assert.ok(company?.id && company?.issuePrefix, `The isolated Host did not create a Workspace: ${JSON.stringify(companies)}`);
   const companyPrefix = company.issuePrefix;
 
   if (sourceElectron && !executionControlOnly) {
+    nativeManagementStage = "d2_fixture_setup";
     const clearedShell = await api(workspaceCdp, `/api/companies/${company.id}/workspace-shell`, {
       method: "PUT",
       body: { pluginId: null },
@@ -723,17 +732,20 @@ try {
     assert.ok(Array.isArray(agentsBeforeEntry), `Agent state was not an array: ${JSON.stringify(agentsBeforeEntry)}`);
     assert.equal(agentsBeforeEntry.length, 0, "The empty Workspace entry must start without Agents.");
 
+    nativeManagementStage = "d2_root_navigation";
     await workspaceCdp.evaluate(d2RequestMonitorStartExpression);
     const rootPath = `/${companyPrefix}`;
     await workspaceCdp.evaluate(`(() => {
       history.pushState({}, "", ${JSON.stringify(rootPath)});
       dispatchEvent(new PopStateEvent("popstate"));
     })()`);
+    nativeManagementStage = "d2_empty_entry_wait";
     const emptyEntry = await waitForPage(
       workspaceCdp,
       (page) => page.workspaceEntry === "empty",
       "the independent empty Workspace entry",
     );
+    nativeManagementStage = "d2_empty_entry_assertions";
     const emptyEntryRequests = await workspaceCdp.evaluate(d2RequestMonitorStopExpression);
     assert.equal(new URL(emptyEntry.route).pathname.replace(/\/$/, ""), rootPath.replace(/\/$/, ""), `Empty entry redirected away from the Workspace root: ${emptyEntry.route}`);
     const emptyEntryDom = await workspaceCdp.evaluate(`(() => ({
@@ -769,7 +781,9 @@ try {
     }
     await workspaceCdp.command("Emulation.clearDeviceMetricsOverride");
 
+    nativeManagementStage = "d2_manager_navigation";
     await click(workspaceCdp, 'a[href$="/company/settings/instance/plugins"]', "Open Manage plugins from the empty Workspace entry");
+    nativeManagementStage = "d2_manager_ui";
     const manager = await waitForPage(
       workspaceCdp,
       (page) => new URL(page.route).pathname.endsWith("/company/settings/instance/plugins")
@@ -780,17 +794,21 @@ try {
     );
     assert.equal(manager.legacyLayout, true, "Plugin management must retain the legacy Layout, sidebar, and breadcrumbs.");
 
+    nativeManagementStage = "d2_return_navigation";
     await workspaceCdp.evaluate(d2RequestMonitorStartExpression);
     await workspaceCdp.evaluate(`(() => {
       history.pushState({}, "", ${JSON.stringify(rootPath)});
       dispatchEvent(new PopStateEvent("popstate"));
     })()`);
+    nativeManagementStage = "d2_return_entry_wait";
     const returnedEntry = await waitForPage(workspaceCdp, (page) => page.workspaceEntry === "empty", "return to the empty Workspace entry");
+    nativeManagementStage = "d2_final_invariants";
     const returnRequests = await workspaceCdp.evaluate(d2RequestMonitorStopExpression);
     assert.deepEqual(legacyWorkspaceDataRequests(returnRequests), [], `Returning to the empty entry fetched legacy Agent or Dashboard data: ${JSON.stringify(returnRequests)}`);
     assert.equal(new URL(returnedEntry.route).pathname.replace(/\/$/, ""), rootPath.replace(/\/$/, ""));
     const agentsAfterEntry = await api(workspaceCdp, `/api/companies/${company.id}/agents`);
     assert.equal(agentsAfterEntry.length, 0, "Opening and leaving the empty entry must not synthesize an Agent.");
+    nativeManagementStage = "d2_complete";
     console.log("D2 neutral entry E2E: zero Agents/default activations, independent root, legacy Plugin Manager link, and 620/1000px fit.");
   }
 
@@ -871,6 +889,7 @@ try {
   } else if (nativeManagement) {
     // Seed only this stopped temporary Host, not a production IPC or an automated
     // approval of the real security confirmation. Main must read it independently.
+    nativeManagementStage = "pre_fixture_shutdown";
     await closeDesktopForRestart();
     nativeManagementStage = "fixture_prepare";
     let prepared;
@@ -1486,7 +1505,16 @@ try {
 } catch (error) {
   acceptanceFailure = error;
   if (nativeManagement) {
-    const safeSnapshot = setupCdp ? await setupCdp.evaluate(`(async () => {
+    const settingsTargetStages = new Set([
+      "settings_identity_view", "settings_status", "host_start_click", "host_workspace_target",
+      "host_workspace_ready", "host_agents_check", "authority_checks", "device_read",
+      "invitation_read", "shutdown",
+    ]);
+    const settingsPhaseStages = new Set([
+      "settings_launch", "settings_target", ...settingsTargetStages,
+    ]);
+    const settingsTargetAvailable = settingsTargetStages.has(nativeManagementStage) && Boolean(setupCdp);
+    const safeSnapshot = settingsTargetAvailable ? await setupCdp.evaluate(`(async () => {
       const api = window.spsCoreSettings;
       const status = typeof api?.getStatus === 'function' ? await api.getStatus() : null;
       const native = status?.nativeConnectivity;
@@ -1496,7 +1524,14 @@ try {
         nativeState: knownStates.includes(native?.state) ? native.state : 'other',
         hasPin: /^[0-9a-f]{64}$/.test(native?.serverSpkiSha256 ?? ''),
         pluginsDisabled: status?.recovery?.pluginsDisabled === true };
-    })()`, true).catch(() => null) : null;
+    })()`, true).catch(() => ({ settingsTargetAvailable: true, snapshotRead: false })) : settingsPhaseStages.has(nativeManagementStage) ? {
+      settingsNotStarted: false,
+      settingsTargetAvailable: false,
+    } : {
+      settingsNotStarted: true,
+      setupTargetAvailable: Boolean(setupCdp),
+      workspaceTargetAvailable: Boolean(workspaceCdp),
+    };
     const failureSha256 = createHash("sha256").update(errorText(error)).digest("hex");
     acceptanceFailure = new Error(`Prepared Native Host source E2E failed (stage=${nativeManagementStage}, failureSha256=${failureSha256}, snapshot=${JSON.stringify(safeSnapshot)}).`);
     throw acceptanceFailure;

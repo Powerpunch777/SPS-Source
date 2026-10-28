@@ -101,3 +101,27 @@ Settings API/준비된 identity 표식이 false였으나 원문 예외는 hash�
 
 `d2aa382` push `40680643345`는 마지막 확인에서 진행 중이고 Linux 전체 타입·빌드와
 9개 shard는 통과했다. 이번 미포함 Node/계정 변경의 CI 증거로 재사용하지 않는다.
+
+## 후속 E2E fixture 수정과 진단
+
+preview 코드 대조 결과 Builder는 기본 설치 OFF인데 packaged preview fixture는
+명시적 opt-in 없이 7개 도구를 요구했다. 그 fixture의 Desktop 자식에만
+`SPS_ENABLE_PLUGIN_DISCOVERY=true`를 추가했다. board 사용자의 도구 목록은 설치된
+provider를 직접 조회하므로 별도의 Workspace 활성화는 이 assertion의 전제가 아니다.
+제품 기본값과 기존 7개 도구·이후 UI/실행 검사는 유지한다. 원문 assertion 값은
+로그에 없으므로 코드상의 충돌 확인과 실제 실패 원문 확인을 구분한다.
+
+prepared Native source 실패의 기존 `bootstrap` label은 공통 로그인·Host 생성·
+Workspace/D2 검사와 pre-fixture 종료까지 포함했다. 당시 로그는 D2 완료 표식이나
+Native 전용 단계 전에 끝났고, Settings snapshot은 아직 일반 setup 페이지를 읽었다.
+따라서 false 값은 Settings 시작 결함의 증거가 아니다. 해당 실행에는 업로드된
+artifact도 없었다.
+
+공통 시작/D2 세부 단계에 고정 label을 추가하고, 실제 Settings target 단계에만
+Settings snapshot을 읽도록 수정했다. 그 전에는 `settingsNotStarted`와 target
+존재 여부만 반환한다. 원문 메시지·사용자 콘텐츠·키·경로는 출력하지 않는다.
+이는 다음 실패를 구분하기 위한 진단이며 기존 bootstrap 결함 해결 증거가 아니다.
+
+root의 해당 harness 정적 검사 2개 파일 6개와 두 script 구문 검사가 통과했다.
+실제 E2E·CI를 수동 재실행하지 않았다. 임시 데이터 `rm` timeout은 계속 원인/완료가
+미확인이고, 기존 소유권 검사·재시도·20초 bound 및 자원 정리 실패 판정을 유지한다.

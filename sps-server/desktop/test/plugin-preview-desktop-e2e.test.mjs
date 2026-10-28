@@ -25,6 +25,7 @@ test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence con
   assert.match(harness, /PREVIEW_CANDIDATE_FAILED/);
   assert.match(harness, /SPS_DESKTOP_E2E_BINARY/);
   assert.match(harness, /SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS/);
+  assert.match(harness, /SPS_ENABLE_PLUGIN_DISCOVERY:\s*"true"/);
   assert.match(harness, /parseE2eHostReadyTimeout/);
   assert.match(harness, /sourceElectron/);
   assert.match(harness, /mockIdentity/);

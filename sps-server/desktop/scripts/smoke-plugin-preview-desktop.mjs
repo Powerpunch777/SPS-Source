@@ -483,7 +483,15 @@ try {
   step(`launching ${packagedBinary ? "packaged" : "source"} Desktop`, "desktop_launch");
   child = spawn(binary, [`--user-data-dir=${userData}`, `--remote-debugging-port=${debugPort}`, "--remote-allow-origins=*", ...(packagedBinary ? [] : ["."])], {
     cwd: packagedBinary ? path.dirname(binary) : desktopRoot,
-    env: { ...process.env, SPS_IDENTITY_URL: identityState.origin, SPS_DESKTOP_E2E: "1", SPS_DESKTOP_E2E_USER_DATA_DIR: userData, SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1", SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1" },
+    env: {
+      ...process.env,
+      SPS_IDENTITY_URL: identityState.origin,
+      SPS_ENABLE_PLUGIN_DISCOVERY: "true",
+      SPS_DESKTOP_E2E: "1",
+      SPS_DESKTOP_E2E_USER_DATA_DIR: userData,
+      SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
+      SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   // Drain child pipes without redistributing untrusted raw output on failure.

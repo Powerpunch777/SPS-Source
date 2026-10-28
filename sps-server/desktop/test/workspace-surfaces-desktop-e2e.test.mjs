@@ -96,16 +96,27 @@ test("prepared Native management exercises the real Main/Core route without a co
   assert.match(script, /let debugPort = await findAvailablePort\(\)/);
   assert.match(script, /const previousDebugPort = debugPort/);
   assert.match(script, /assert\.notEqual\(debugPort, previousDebugPort/);
+  for (const stage of ["initial_setup_target", "identity_authorization", "post_signin_host_choice",
+    "host_creation", "host_startup", "workspace_ui_startup", "workspace_company_api",
+    "d2_fixture_setup", "d2_root_navigation", "d2_empty_entry_wait", "d2_empty_entry_assertions",
+    "d2_manager_navigation", "d2_manager_ui", "d2_return_navigation", "d2_return_entry_wait",
+    "d2_final_invariants", "d2_complete",
+    "pre_fixture_shutdown", "fixture_prepare", "settings_launch", "settings_target"]) {
+    assert.ok(script.includes(`nativeManagementStage = "${stage}"`), `Missing fixed Native bootstrap diagnostic stage: ${stage}`);
+  }
   const canonical = script.replace(/\r\n/g, "\n");
   for (const checkout of [canonical, canonical.replace(/\n/g, "\r\n")]) {
     const normalized = checkout.replace(/\r\n/g, "\n");
-    const start = normalized.indexOf('if (nativeManagement) {\n    const safeSnapshot');
+    const start = normalized.indexOf('if (nativeManagement) {', normalized.indexOf('} catch (error) {'));
     const end = normalized.indexOf('  const diagnostics = [];', start);
     assert.ok(start >= 0 && end > start);
     const sanitizedFailure = normalized.slice(start, end);
     assert.match(sanitizedFailure, /stage=\$\{nativeManagementStage\}, failureSha256=\$\{failureSha256\}/);
     assert.match(sanitizedFailure, /knownStates\.includes\(native\?\.state\) \? native\.state : 'other'/);
     assert.match(sanitizedFailure, /canManageHost: status\?\.canManageHost === true/);
+    assert.match(sanitizedFailure, /settingsNotStarted: true/);
+    assert.match(sanitizedFailure, /settingsTargetAvailable = settingsTargetStages\.has\(nativeManagementStage\) && Boolean\(setupCdp\)/);
+    assert.match(sanitizedFailure, /settingsTargetAvailable \? await setupCdp\.evaluate/);
     assert.doesNotMatch(sanitizedFailure, /JSON\.stringify\((?:status|native|error|document|appOutput)\)/);
     assert.doesNotMatch(sanitizedFailure, /appOutput|describePage|console\.log|errorText\(error\)\}\n/);
   }
