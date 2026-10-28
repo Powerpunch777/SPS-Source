@@ -59,10 +59,16 @@ const { spsMemberDeviceService } = await load("server/src/services/sps-member-de
 const { spsWorkspaceExecutionControlService } = await load("server/src/services/sps-workspace-execution-control.ts");
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const safeEmbeddedPostgresReason = typeof embeddedPostgresSupport.reason === "string"
-  && /^embedded Postgres (?:prepare|initdb|postgres_start|create_database|migrations) failed \((?:process_exited_before_ready|initdb_failed|permission_denied|port_in_use|binary_unavailable|root_user_unsupported|database_unavailable|other)\)$/.test(embeddedPostgresSupport.reason)
+  && /^embedded Postgres (?:prepare|initdb|postgres_start|create_database|migrations) failed \((?:process_exited_before_ready|process_signaled_before_ready|initdb_failed|permission_denied|port_in_use|binary_unavailable|root_user_unsupported|database_unavailable|other)\)$/.test(embeddedPostgresSupport.reason)
   ? embeddedPostgresSupport.reason
   : "embedded Postgres support probe unavailable";
-assert.equal(embeddedPostgresSupport.supported, true, safeEmbeddedPostgresReason);
+const startupTermination = embeddedPostgresSupport.startupTermination;
+const safeStartupTermination = startupTermination?.kind === "exit"
+  && Number.isSafeInteger(startupTermination.code) && startupTermination.code >= -2_147_483_648
+  && startupTermination.code <= 4_294_967_295
+  ? `; child_exit=${startupTermination.code}`
+  : startupTermination?.kind === "signal" ? "; child_signaled" : "";
+assert.equal(embeddedPostgresSupport.supported, true, `${safeEmbeddedPostgresReason}${safeStartupTermination}`);
 const database = await startEmbeddedPostgresTestDatabase("sps-native-workspace-channel-");
 let db, child, parent, ingress, signerChannel, parentIngress, failure, nativePluginSdkClient,
   nativePluginSdkRequest, nativePluginSdkInput, nativePluginSdkStage = null, childShutdownStage = "not-started";
