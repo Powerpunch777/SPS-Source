@@ -13,6 +13,10 @@
 구현 상태와 테스트 증거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
 [Core/Plugin 진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)으로 분리한다.
 
+Workspace 전용 Plugin은 논리적 권한과 별도 프로세스를 구현했으나 OS 샌드박스는
+미완료다. 기존 Host Plugin에는 자동 적용하지 않는다. 최신 범위와 로컬 Desktop
+진행 메시지·종료 검증은 [Workspace 격리 상태](../reviews/WORKSPACE-ISOLATION-STATUS-2026-10-28.md)를 따른다.
+
 2026-10-27 현재 Core·Desktop은 Native 등록/복구, 승인된 Workspace 탐색과 격리 창,
 개인 Inbox 상태 변경, 선택적 모델 연결 설정 및 Member의 만료 전 같은 키 갱신을
 연결했다. [Workspace/Inbox 검증](../reviews/NATIVE-INBOX-STATE-2026-10-27.md),

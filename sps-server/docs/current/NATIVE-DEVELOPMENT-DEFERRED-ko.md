@@ -61,9 +61,10 @@ Windows job `122671084543`에서는 임시 PostgreSQL 시작 단계와 앞선 De
 원인은 Workspace 전용 worker의 Host 호출 context에서
 `readNativeConnectivity` 전달이 누락된 코드 경로로 확인했다. 보류 전에 로컬에서
 수정했고 실제 공개 SDK/worker를 이용한 선택 검사 1개가 통과했다. 권한 철회 중
-늦게 도착한 연결 응답도 차단하는 경우를 포함한다. 이 수정은 보류 결정 당시
-진행 중인 로컬 변경에 포함되어 있으며, 새 커밋에서 Windows 전체 검증을 마친
-것으로 표시하지 않는다. 기존 Native 코드와 수정 내용을 폐기하거나 되돌리지 않는다.
+늦게 도착한 연결 응답도 차단하는 경우를 포함한다. 보류 결정 당시의 로컬 수정은
+이후 Core `c84922be6bd6f47e053088e52fe96dcda1bfedb6`에 로컬 진행 메시지 보완과
+함께 보존했다. 새 커밋에서 Windows 전체 검증을 마친 것으로 표시하지 않는다.
+기존 Native 코드와 수정 내용을 폐기하거나 되돌리지 않는다.
 
 Core의 새 Workspace 설정 migration0173 검증은 같은 push CI의 server1/3
 job `122671085018`에서 실행됐다. `sps-native-plugin-runtime.test.ts` 16개가
