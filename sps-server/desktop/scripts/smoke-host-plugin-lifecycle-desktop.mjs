@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { createE2eIdentityAuthorization } from "./e2e-identity-authorization.mjs";
 import { resolveIsolatedE2eManagedCodexHomeRelative } from "./e2e-managed-codex-home.mjs";
+import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
+import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE, previewE2eCleanupDisposition } from "./preview-e2e-cleanup-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -19,6 +21,7 @@ const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const liveAgent = process.argv.includes("--live-agent");
+const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
 const deterministicAcp = path.join(desktopRoot, "scripts", "fixtures", "deterministic-acp.mjs");
 const deterministicAgentCommand = `"${process.execPath}" "${deterministicAcp}"`;
 const syntheticOpenAiApiKey = "sk-test-sps-e2e-not-valid-for-provider";
@@ -64,6 +67,40 @@ async function removeRetry(target) {
     catch { await delay(300); }
   }
   throw new Error(`Could not remove ${target}`);
+}
+
+async function removeOwnedTemporaryRoot(target) {
+  const expectedParent = path.resolve(os.tmpdir());
+  const absoluteTarget = path.resolve(target);
+  if (!path.isAbsolute(target) || path.dirname(absoluteTarget) !== expectedParent
+    || absoluteTarget !== temporaryRoot || !path.basename(absoluteTarget).startsWith("sps-host-plugin-lifecycle-e2e-")) {
+    throw new Error("Host plugin lifecycle temporary-data cleanup target failed its ownership check.");
+  }
+  const metadata = await lstat(absoluteTarget, { bigint: true });
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error("Host plugin lifecycle temporary-data cleanup target is not an owned directory.");
+  }
+  const resolvedTarget = await realpath(absoluteTarget);
+  if (resolvedTarget !== temporaryRootCanonical || path.dirname(resolvedTarget) !== await realpath(expectedParent)) {
+    throw new Error("Host plugin lifecycle temporary-data cleanup target escaped its temporary root.");
+  }
+  if (metadata.dev !== temporaryRootIdentity.dev || metadata.ino !== temporaryRootIdentity.ino
+    || metadata.birthtimeNs !== temporaryRootIdentity.birthtimeNs) {
+    throw new Error("Host plugin lifecycle temporary-data cleanup target no longer has its original identity.");
+  }
+  await removeRetry(resolvedTarget);
+}
+
+async function cleanupTimeout(promise, label, milliseconds = 15_000) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} cleanup timed out after ${milliseconds}ms.`)), milliseconds); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function mockIdentity() {
@@ -261,9 +298,13 @@ async function maybeApproveCapabilityUpdate(cdp, pluginId, pluginName) {
 const identity = mockIdentity();
 const debugPort = await freePort();
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "sps-host-plugin-lifecycle-e2e-"));
+const temporaryRootIdentity = await lstat(temporaryRoot, { bigint: true });
+const temporaryRootCanonical = await realpath(temporaryRoot);
 const userData = path.join(temporaryRoot, "user-data");
 const syntheticCodexHome = liveAgent ? null : path.join(temporaryRoot, "synthetic-codex-home");
 let child; let setup; let workspace; let registry; let output = ""; let company = null; let succeeded = false;
+let acceptanceFailure = null;
+let cleanupDisposition = null;
 
 try {
   if (syntheticCodexHome) {
@@ -276,7 +317,15 @@ try {
   const binary = packagedBinary || sourceElectron;
   child = spawn(binary, [`--user-data-dir=${userData}`, `--remote-debugging-port=${debugPort}`, "--remote-allow-origins=*", ...(packagedBinary ? [] : ["."])], {
     cwd: packagedBinary ? path.dirname(binary) : desktopRoot,
-    env: { ...(syntheticCodexHome ? isolatedDeterministicEnvironment(syntheticCodexHome) : process.env), SPS_IDENTITY_URL: identityState.origin, SPS_DESKTOP_E2E: "1", SPS_DESKTOP_E2E_USER_DATA_DIR: userData, SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1", SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1" },
+    env: {
+      ...(syntheticCodexHome ? isolatedDeterministicEnvironment(syntheticCodexHome) : process.env),
+      SPS_IDENTITY_URL: identityState.origin,
+      SPS_ENABLE_PLUGIN_DISCOVERY: "true",
+      SPS_DESKTOP_E2E: "1",
+      SPS_DESKTOP_E2E_USER_DATA_DIR: userData,
+      SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
+      SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY: "1",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const capture = (chunk) => { output = `${output}${chunk}`.slice(-20000); };
@@ -404,8 +453,10 @@ try {
   assert.deepEqual(productionAfter.filter((record) => record.id !== candidateId), lifecycleBeforeWorkspaceActions.filter((record) => record.id !== candidateId), "Builder flow changed an unrelated lifecycle record.");
   assert.match(managerPage.text, /Plugins|Extensions/);
   succeeded = true;
-  console.log(JSON.stringify({ ok: true, lifecycle: ["install", "enable", "disable", "re-enable", "uninstall-cancel", "uninstall-confirm"] }, null, 2));
+  console.log(JSON.stringify({ functionalAssertionsPassed: true, cleanupQualification: "pending",
+    lifecycle: ["install", "enable", "disable", "re-enable", "uninstall-cancel", "uninstall-confirm"] }, null, 2));
 } catch (error) {
+  acceptanceFailure = error;
   const diagnostics = [];
   for (const [label, cdp] of [["setup", setup], ["workspace", workspace], ["registry", registry]]) {
     if (!cdp) continue;
@@ -434,19 +485,55 @@ try {
     const { writeFile } = await import("node:fs/promises");
     await writeFile(diagnosticsPath, `${textOf(error)}\n${diagnostics.join("\n")}\n`, "utf8").catch(() => undefined);
   }
-  throw new Error(`${textOf(error)}\n${diagnostics.join("\n")}`);
+  acceptanceFailure = new Error(`${textOf(error)}\n${diagnostics.join("\n")}`, { cause: error });
+  throw acceptanceFailure;
 } finally {
-  const cdp = workspace ?? setup;
-  if (cdp && child?.exitCode === null) { await cdp.command("Browser.close").catch(() => undefined); await Promise.race([once(child, "exit").catch(() => undefined), delay(20000)]); }
-  await registry?.close().catch(() => undefined);
-  await workspace?.close().catch(() => undefined);
-  await setup?.close().catch(() => undefined);
-  await stopTree(child);
-  await identity.close().catch(() => undefined);
+  const cdp = workspace ?? setup ?? registry;
+  const desktopStopped = await shutdownPreviewE2eDesktop({
+    child,
+    requestBrowserClose: cdp ? () => cdp.command("Browser.close") : undefined,
+    forceStop: stopTree,
+  });
+  console.log(`[host-plugin-lifecycle-e2e] Desktop exit confirmed=${desktopStopped.exitConfirmed}, graceful=${desktopStopped.graceful}`);
+
+  const cdpSessions = [registry, workspace, setup].filter(Boolean);
+  const cdpCloseResults = await Promise.allSettled(cdpSessions.map((session) => cleanupTimeout(
+    Promise.resolve().then(() => session.close()), "CDP session",
+  )));
+  const cdpClosed = cdpCloseResults.every((result) => result.status === "fulfilled");
+  if (!cdpClosed) console.warn("Host plugin lifecycle E2E could not confirm closure of every CDP session.");
+
+  const identityClosed = await cleanupTimeout(Promise.resolve().then(() => identity.close()), "mock Identity server")
+    .then(() => true)
+    .catch(() => false);
+  if (!identityClosed) console.warn("Host plugin lifecycle E2E could not confirm mock Identity shutdown.");
+
+  let dataRemoved = false;
   if (!succeeded && process.env.SPS_DESKTOP_E2E_KEEP_FAILED === "1") {
-    console.error(`Preserved failed E2E data: ${temporaryRoot}`);
+    console.error("Host plugin lifecycle E2E failed; isolated data was retained for inspection.");
   } else {
-    await removeRetry(userData).catch(() => undefined);
-    await removeRetry(temporaryRoot).catch(() => undefined);
+    dataRemoved = await cleanupTimeout(removeOwnedTemporaryRoot(temporaryRoot), "temporary data", 20_000)
+      .then(() => true)
+      .catch(() => false);
+    if (!dataRemoved) console.warn("Host plugin lifecycle E2E could not confirm temporary-data cleanup.");
   }
+
+  try {
+    cleanupDisposition = previewE2eCleanupDisposition({
+      delegated: true,
+      desktopExitConfirmed: desktopStopped.exitConfirmed,
+      desktopGraceful: desktopStopped.graceful,
+      postgresCleanupConfirmed: null,
+      temporaryDataRemoved: dataRemoved && cdpClosed && identityClosed,
+    });
+  } catch {
+    throw new Error("Host plugin lifecycle cleanup is incomplete; the test cannot be accepted.", { cause: acceptanceFailure });
+  }
+  console.log(ownedJobCleanupPending
+    ? "Host plugin lifecycle local cleanup confirmed; owning Job exit qualification is pending."
+    : "Host plugin lifecycle local cleanup confirmed; standalone process ownership is unverified.");
 }
+
+if (!cleanupDisposition) throw new Error("Host plugin lifecycle cleanup was not qualified.", { cause: acceptanceFailure });
+await new Promise((resolve) => process.stdout.write("[host-plugin-lifecycle-e2e] evidence flushed\n", resolve));
+process.exit(OWNED_JOB_CLEANUP_PENDING_EXIT_CODE);

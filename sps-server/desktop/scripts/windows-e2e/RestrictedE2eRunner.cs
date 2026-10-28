@@ -273,7 +273,7 @@ public static class RestrictedE2eRunner
     }
     static bool OwnedJobGateMode(string value)
     {
-        return value == "plugin-preview" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
+        return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "workspace-pending"
@@ -392,7 +392,7 @@ public static class RestrictedE2eRunner
         if (mode == "execution-control") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--execution-control", OwnedJobCleanupArgument);
         if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs", OwnedJobCleanupArgument);
-        return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs");
+        return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs", OwnedJobCleanupArgument);
     }
     static bool CheckPrivileges()
     {

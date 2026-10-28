@@ -194,6 +194,9 @@ Desktop 목록 조회의 수명과 기존 contract 검사 보완은
 공유 권한 부여·해제, 폴더 관리와 종료 합류의 후속 보완은
 [Host 공유 권한 변경 검토](HOST-SHARE-MUTATION-LIFETIME-2026-10-28.md)에 기록한다.
 실제 Windows 공유 철회·열린 파일 세션·비정상 종료 복구는 별도 수용 대상으로 유지한다.
+packaged Host Plugin lifecycle의 기존 도구 opt-in 누락과 종료 허위 성공 경계는
+[생명주기 CI 검토](HOST-LIFECYCLE-CI-2026-10-28.md)에 기록했다. 기능 assertion과
+실제 프로세스·데이터 정리 합격을 구분하며, 수정 후보의 실제 E2E는 별도 확인한다.
 
 공개 Marketplace는 제품에서 제거한다. 전용 Builder 신규 요구는 별도 핸드오프까지
 보류한다. AppContainer 연구는 보존하고 완전한 비신뢰 코드 OS 격리는 1차 완료

@@ -239,6 +239,11 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
     assert.match(source, new RegExp(`value == "${mode}"`));
   }
   assert.match(source, /if \(mode == "plugin-preview"\) return RunNode\(node, directory, "smoke-plugin-preview-desktop\.mjs", OwnedJobCleanupArgument\);/);
+  assert.match(source, /return RunNode\(node, directory, "smoke-host-plugin-lifecycle-desktop\.mjs", OwnedJobCleanupArgument\);/);
+  const gateStart = source.indexOf("    static bool OwnedJobGateMode(");
+  const gateEnd = source.indexOf("    static int OwnedJobWaitMilliseconds(", gateStart);
+  assert.ok(gateStart >= 0 && gateEnd > gateStart);
+  assert.match(source.slice(gateStart, gateEnd), /value == "host-plugin-lifecycle"/);
   assert.match(source, /WaitForNaturalJobEmpty\(job, OwnedJobWaitMilliseconds\(mode\)\)/);
   assert.match(source, /const int OwnedProcessDiagnosticLimit = 256;/);
   assert.match(source, /QueryInformationJobObject\(job, 3, buffer/);
