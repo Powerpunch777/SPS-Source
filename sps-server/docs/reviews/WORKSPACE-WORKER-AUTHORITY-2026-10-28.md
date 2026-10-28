@@ -17,6 +17,15 @@ an admitted call. Denial uses the existing `INVOCATION_SCOPE_DENIED` and reports
 `not_dispatched`. The binding remains Host-only, never a public SDK parameter.
 Existing callers without a binding retain their current behavior.
 
+An additional Host API gate correction rejects `invalidInvocationScope` before
+classifying Workspace selectors. Previously the no-selector early return let a
+context already marked invalid reach `config.get`, `secrets.resolve` or dynamic
+tool registration. It now denies that context before invoking those services,
+including handlers with no Workspace selector. Genuine absent-context legacy
+Host calls and valid Workspace calls retain their capability checks. The Native
+manager's guarded-prefix rejection already remains in place; this closes the
+general SDK Host-factory gate rather than replacing that manager guard.
+
 The worker's open-stream bookkeeping previously used only the channel name.
 Opening the same channel in Workspaces A/B, then closing A, erased B's record;
 when the process exited, B's client missed its terminal close. The manager now
@@ -48,6 +57,42 @@ invocation authorization checks are unchanged.
 Only related Worker tests and package typechecks are used here. No whole local
 suite, new PostgreSQL/Electron run, CI rerun, security waiver or installed product
 change is implied.
+
+## Additional focused Host API result
+
+The changed Host factory, model Host client and connectivity files passed52/52
+fixture-free cases (run52185,22.24s). The SDK package typecheck46849 exited0.
+The new regression checks invalid config/secret/tool calls have no delegate
+effects, then checks legitimate legacy and Workspace calls still succeed.
+The public SDK repository has no duplicate Host-factory implementation and was
+not changed by this correction. No actual DB or Electron run was added.
+
+An additional selected manager/Host-adapter regression passed1/1, with5
+unselected cases skipped (run37027). It uses a fake child NDJSON transport and
+the actual emitted SDK package import, not an OS subprocess: an unknown legacy
+invocation cannot read config/secrets or register tools, while a genuine Host
+config read succeeds. The first adapter run98349 failed because it read the
+older emitted SDK and received a result rather than an error. The SDK was then
+rebuilt successfully (71396); the assertion also now uses the named protocol
+constant rather than a duplicated numeric code. The final selected pass and
+earlier52-case source pass are separate results, not a full manager suite.
+
+## Remaining process ownership integration
+
+Current workers and startup locks remain keyed only by Plugin ID. The loader
+builds one Host-service set and reads one global config row per Plugin. Complete
+Workspace execution isolation requires one ownership identity across process
+creation, fresh Host handlers, config/secret resolution, call routing, notifications
+and stop/disposal. Merely adding a Workspace key to the manager would leave
+legacy loader/tool/lifecycle callers on the shared process or strand owned workers.
+
+Do not copy arbitrary Host config/credentials into every Workspace worker or
+reinterpret saved Workspace settings as a new configuration contract. Preserve
+the explicit legacy Host lane while introducing the complete scoped factory.
+Acceptance must prove separate worker globals, wrong-Workspace Host-call denial,
+scoped configuration/secret policy and stop-A/B-survives with confirmed child
+closure and no fallback to the Host worker. These remain unfinished; the Host
+API gate correction does not claim process or OS isolation.
 
 ## CI transport and database observations
 

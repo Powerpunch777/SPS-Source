@@ -125,3 +125,52 @@ typecheck initially found a nullable getter closure; passing the captured
 optional getter fixes that without weakening types. Final DB typecheck47768
 exited0 with no diagnostics. No actual PG repeat was added after the diagnostic
 refinement; the observed startup and shutdown causes remain unresolved.
+
+## Later exact-head CI observation
+
+Sourceb8d197ffa1cafdef76babf4260de670bd79e1b99 with Core9e0516a1 was
+observed in both automatic CI runs: push40626693162 and PR40626697872,
+both completed failure. Windows jobs122613194383 and122613212155 failed
+the Native public SDK step at `postgres_start`,
+`process_exited_before_ready`, `child_exit=1`, before SDK/Electron assertions.
+The sanitized logs contain no concrete PostgreSQL cause. The installed
+embedded-postgres18.1.0-beta.16 forwards stderr chunks to onLog, then rejects
+start without an error value on child close; its close listener is attached
+synchronously. No missed-close race, DLL, port or permission cause was proven.
+Compatibility also remains blocked by the existing unwaived Zod High.
+
+No manual CI rerun or actual local PostgreSQL retry was started for this
+observation. A separate Host API invalid-invocation correction passed52
+fixture-free SDK cases and the SDK package typecheck; it does not resolve this
+database startup failure or establish per-Workspace process isolation.
+
+## Bounded SQLSTATE observation for a future startup failure
+
+The test fixture now supplies `-c log_error_verbosity=verbose` through the
+installed package's existing `postgresFlags` option. PostgreSQL18 documents that
+[verbose errors include SQLSTATE](https://www.postgresql.org/docs/18/runtime-config-logging.html#GUC-LOG-ERROR-VERBOSITY).
+This changes test fixtures only, not installed Host database configuration.
+
+The observer inspects at most a16384-character chunk suffix, carries at most512
+characters across chunks and retains only one of19 fixed startup-related
+[PostgreSQL18 error codes](https://www.postgresql.org/docs/18/errcodes-appendix.html)
+after a FATAL/PANIC header. It resets immediately before postgres_start. A failed
+start snapshots its code before cleanup; successful probes, other stages and
+unknown/malformed codes expose none. The shared failure formatter preserves the
+existing stage/category, bounded child_exit and child_signaled markers and generic
+fallback; the Native support assertion now consumes that formatter. No raw
+message, path, credential or arbitrary five-character value is emitted.
+
+The existing actual-fixture error templates gain only an optional allowlisted
+SQLSTATE suffix. Probe cleanup aggregate errors still use their legacy safe
+reason, so a probe whose cleanup also fails can omit the code. A pre-Postgres
+loader exit, unknown code or oversized/truncated header can also stay generic.
+An observed code is diagnostic evidence, not proof of the full startup cause.
+
+The final fixture-free cleanup/diagnostic file passed31/31 and DB package
+typecheck exited0. Parser/formatter cases cover split chunks, bounds, malformed
+and unknown codes, stale metadata on success, other stages and fixed-output
+privacy. Native smoke syntax passed. There was no actual PostgreSQL retry,
+deadline increase, stop-mode change, failure skip, manual CI rerun or adoption of
+retained fixtures. The previously observed Windows failure remains unresolved
+until the new diagnostics are exercised by the actual failing environment.

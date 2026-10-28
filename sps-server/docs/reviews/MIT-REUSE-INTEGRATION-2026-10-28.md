@@ -5,8 +5,9 @@ Owner Host. It does not qualify the product for release or establish plugin
 isolation.
 
 Core commits: policy fence872b60c5, Identity verifier3036f15f, migration tooling
-9e0516a1. The candidate pins full Core revision
-`9e0516a129ae765d6dff0b62c2ec05967d5cacaa`; Desktop remains0.4.137
+9e0516a1. At this MIT reuse checkpoint the candidate pinned Core revision
+`9e0516a129ae765d6dff0b62c2ec05967d5cacaa`; the latest tuple is in
+the generated `CURRENT-CANDIDATE.md`. Desktop remains0.4.137
 development-candidate, Native opt-in and Tailscale supported. The public SDK
 pin and version are unchanged by this increment.
 

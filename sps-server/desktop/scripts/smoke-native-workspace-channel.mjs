@@ -49,6 +49,7 @@ const { parseSpsNativeEnrollmentResponse } = await import("../src/native-enrollm
 const core = path.resolve(import.meta.dirname, "../../../external/sps-core");
 const load = relative => import(pathToFileURL(path.join(core, relative)).href);
 const { createDb, getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase,
+  formatEmbeddedPostgresTestSupportFailure,
   authUsers, authSessions, companies, companyMemberships, agents, plugins, spsNodes, spsMemberDevices,
   spsNodeRunnerProfiles, spsNodeAgentGrants, spsNodeAgentRunnerGrants, spsAgentNodeBindings, spsNodeCommands, spsNodeCommandEvents,
   spsPluginExecutionGrants, spsPluginNodeRuns, spsPluginNodeRunEvents,
@@ -58,17 +59,7 @@ const { createDb, getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatab
 const { spsMemberDeviceService } = await load("server/src/services/sps-member-devices.ts");
 const { spsWorkspaceExecutionControlService } = await load("server/src/services/sps-workspace-execution-control.ts");
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
-const safeEmbeddedPostgresReason = typeof embeddedPostgresSupport.reason === "string"
-  && /^embedded Postgres (?:prepare|initdb|postgres_start|create_database|migrations) failed \((?:process_exited_before_ready|process_signaled_before_ready|initdb_failed|permission_denied|port_in_use|binary_unavailable|root_user_unsupported|database_unavailable|other)\)$/.test(embeddedPostgresSupport.reason)
-  ? embeddedPostgresSupport.reason
-  : "embedded Postgres support probe unavailable";
-const startupTermination = embeddedPostgresSupport.startupTermination;
-const safeStartupTermination = startupTermination?.kind === "exit"
-  && Number.isSafeInteger(startupTermination.code) && startupTermination.code >= -2_147_483_648
-  && startupTermination.code <= 4_294_967_295
-  ? `; child_exit=${startupTermination.code}`
-  : startupTermination?.kind === "signal" ? "; child_signaled" : "";
-assert.equal(embeddedPostgresSupport.supported, true, `${safeEmbeddedPostgresReason}${safeStartupTermination}`);
+assert.equal(embeddedPostgresSupport.supported, true, formatEmbeddedPostgresTestSupportFailure(embeddedPostgresSupport));
 const database = await startEmbeddedPostgresTestDatabase("sps-native-workspace-channel-");
 let db, child, parent, ingress, signerChannel, parentIngress, failure, nativePluginSdkClient,
   nativePluginSdkRequest, nativePluginSdkInput, nativePluginSdkStage = null, childShutdownStage = "not-started";
