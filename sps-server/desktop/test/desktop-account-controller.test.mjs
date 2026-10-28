@@ -17,6 +17,25 @@ function accountValue(overrides = {}) {
   });
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function activeAccountState(overrides = {}) {
+  return {
+    encryptedDesktopAccount: accountValue({
+      accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      ...overrides,
+    }),
+    desktopAccountLastAttempt: null,
+    companies: [],
+    projects: [],
+    profile: null,
+  };
+}
+
 function createHarness(overrides = {}) {
   const state = overrides.state ?? {
     encryptedDesktopAccount: null,
@@ -40,7 +59,15 @@ function createHarness(overrides = {}) {
         cookies: {
           get: async () => cookies,
           set: async (value) => { calls.cookieSets.push(value); },
-          remove: async (...value) => { calls.cookieRemovals.push(value); },
+          remove: async (...value) => {
+            calls.cookieRemovals.push(value);
+            const target = new URL(value[0]);
+            for (let index = cookies.length - 1; index >= 0; index -= 1) {
+              const cookie = cookies[index];
+              if (String(cookie.domain ?? "").replace(/^\./, "") === target.hostname
+                && (cookie.path ?? "/") === (target.pathname || "/")) cookies.splice(index, 1);
+            }
+          },
         },
       },
     },
@@ -130,6 +157,17 @@ test("coalesces concurrent token refreshes and persists the rotated account", as
   assert.deepEqual(await Promise.all([first, second]), ["access-new", "access-new"]);
   assert.equal(JSON.parse(state.encryptedDesktopAccount).refreshToken, "refresh-new");
   assert.equal(calls.persisted.length, 1);
+});
+
+test("exposes a private session epoch that ignores token rotation and advances on sign-out", async () => {
+  const { controller } = createHarness({ state: { ...activeAccountState(), encryptedDesktopAccount: accountValue() } });
+  const initialEpoch = controller.currentSessionEpoch();
+  assert.equal(typeof initialEpoch, "number");
+  assert.equal(Object.hasOwn(controller.getStatus(), "currentSessionEpoch"), false);
+  assert.equal(await controller.ensureAccessToken(), "access-new");
+  assert.equal(controller.currentSessionEpoch(), initialEpoch);
+  await controller.signOut();
+  assert.equal(controller.currentSessionEpoch(), initialEpoch + 1);
 });
 
 test("adopts a token rotation completed by another Desktop process", async () => {
@@ -384,6 +422,333 @@ test("adds the Desktop access header only for the local Owner Host session", asy
   }
 });
 
+test("does not post an invite when its session response arrives after the account changed", async () => {
+  const state = activeAccountState();
+  const sessionRequestStarted = deferred();
+  const releaseSessionResponse = deferred();
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    requests.push(String(url));
+    sessionRequestStarted.resolve();
+    await releaseSessionResponse.promise;
+    return new Response(null, {
+      status: 200,
+      headers: { "set-cookie": "sps_identity_session=stale-session; Path=/; HttpOnly" },
+    });
+  };
+  try {
+    const { controller, calls } = createHarness({
+      state,
+      dependencies: {
+        startIdentitySignIn: async () => ({
+          result: Promise.resolve(JSON.parse(accountValue({ subject: "account-2", accessToken: "access-new-account" }))),
+          cancel() {},
+        }),
+      },
+    });
+    const acceptance = controller.acceptIdentityInvite("https://host.example.test", "SPS2-code");
+    const rejected = assert.rejects(acceptance, /account changed while accepting the invitation/);
+    await sessionRequestStarted.promise;
+    await controller.signIn();
+    await flushAccountWork(controller);
+    releaseSessionResponse.resolve();
+    await rejected;
+    assert.equal(requests.length, 1);
+    assert.match(requests[0], /\/api\/sps-identity\/session$/);
+    assert.deepEqual(calls.cookieSets, []);
+    assert.equal(JSON.parse(state.encryptedDesktopAccount).subject, "account-2");
+  } finally {
+    releaseSessionResponse.resolve();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not return a late invite result to a replacement account", async () => {
+  const state = activeAccountState();
+  const inviteRequestStarted = deferred();
+  const releaseInviteResponse = deferred();
+  let inviteRequests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/sps-identity/session")) {
+      return new Response(null, {
+        status: 200,
+        headers: { "set-cookie": "sps_identity_session=session-old; Path=/; HttpOnly" },
+      });
+    }
+    inviteRequests += 1;
+    inviteRequestStarted.resolve();
+    await releaseInviteResponse.promise;
+    return new Response(JSON.stringify({ status: "approved", account: "account-1" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const { controller } = createHarness({
+      state,
+      dependencies: {
+        startIdentitySignIn: async () => ({
+          result: Promise.resolve(JSON.parse(accountValue({ subject: "account-2", accessToken: "access-new-account" }))),
+          cancel() {},
+        }),
+      },
+    });
+    const acceptance = controller.acceptIdentityInvite("https://host.example.test", "SPS2-code");
+    const rejected = assert.rejects(acceptance, /account changed while accepting the invitation/);
+    await inviteRequestStarted.promise;
+    await controller.signIn();
+    await flushAccountWork(controller);
+    releaseInviteResponse.resolve();
+    await rejected;
+    assert.equal(inviteRequests, 1, "an already-started server acceptance is not retried");
+    assert.equal(JSON.parse(state.encryptedDesktopAccount).subject, "account-2");
+  } finally {
+    releaseInviteResponse.resolve();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("serializes a stale cookie set, removes only its exact value, then preserves the new account cookie", async () => {
+  const state = activeAccountState();
+  const firstSetStarted = deferred();
+  const releaseFirstSet = deferred();
+  const secondSetStarted = deferred();
+  const cookieWrites = [];
+  const cookieRemovals = [];
+  let currentCookies = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => new Response(null, {
+    status: 200,
+    headers: { "set-cookie": `sps_identity_session=${options.headers.authorization.includes("access-new-account") ? "session-new" : "session-old"}; Path=/; HttpOnly` },
+  });
+  try {
+    const { controller } = createHarness({
+      state,
+      dependencies: {
+        startIdentitySignIn: async () => ({
+          result: Promise.resolve(JSON.parse(accountValue({
+            subject: "account-2",
+            name: "Second User",
+            accessToken: "access-new-account",
+            refreshToken: "refresh-new-account",
+            accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          }))),
+          cancel() {},
+        }),
+        session: { defaultSession: { cookies: {
+          get: async ({ url } = {}) => url
+            ? currentCookies.filter((cookie) => new URL(url).hostname === cookie.domain)
+            : [...currentCookies],
+          set: async (input) => {
+            cookieWrites.push(input);
+            if (input.value === "session-old") {
+              firstSetStarted.resolve();
+              await releaseFirstSet.promise;
+            } else if (input.value === "session-new") secondSetStarted.resolve();
+            const origin = new URL(input.url);
+            currentCookies = [{ domain: origin.hostname, path: "/", secure: origin.protocol === "https:", value: input.value }];
+          },
+          remove: async (url, name) => {
+            cookieRemovals.push([url, name]);
+            currentCookies = currentCookies.filter((cookie) => cookie.value !== "session-old");
+          },
+        } } },
+      },
+    });
+    const oldSession = controller.establishCoreSession("https://host.example.test");
+    const oldSessionRejected = assert.rejects(oldSession, /account changed while establishing the server session/);
+    await firstSetStarted.promise;
+
+    const staleSignOut = controller.signOut();
+    await controller.signIn();
+    await flushAccountWork(controller);
+    assert.equal(JSON.parse(state.encryptedDesktopAccount).subject, "account-2");
+    const newSession = controller.establishCoreSession("https://host.example.test");
+    const newSessionResolved = assert.doesNotReject(newSession);
+
+    releaseFirstSet.resolve();
+    await oldSessionRejected;
+    await staleSignOut;
+    await secondSetStarted.promise;
+    await newSessionResolved;
+    assert.deepEqual(cookieWrites.map((cookie) => cookie.value), ["session-old", "session-new"]);
+    assert.deepEqual(cookieRemovals, [["https://host.example.test", "sps_identity_session"]]);
+    assert.deepEqual(currentCookies.map((cookie) => cookie.value), ["session-new"]);
+    assert.equal(controller.getStatus().signedIn, true);
+  } finally {
+    releaseFirstSet.resolve();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("reports unconfirmed stale-cookie cleanup and still queues the replacement account cookie", async () => {
+  const state = activeAccountState();
+  const firstSetStarted = deferred();
+  const releaseFirstSet = deferred();
+  const secondSetStarted = deferred();
+  let currentCookies = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => new Response(null, {
+    status: 200,
+    headers: { "set-cookie": `sps_identity_session=${options.headers.authorization.includes("access-new-account") ? "session-new" : "session-old"}; Path=/; HttpOnly` },
+  });
+  try {
+    const { controller } = createHarness({
+      state,
+      dependencies: {
+        startIdentitySignIn: async () => ({
+          result: Promise.resolve(JSON.parse(accountValue({
+            subject: "account-2",
+            accessToken: "access-new-account",
+            refreshToken: "refresh-new-account",
+            accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          }))),
+          cancel() {},
+        }),
+        session: { defaultSession: { cookies: {
+          get: async ({ url } = {}) => url
+            ? currentCookies.filter((cookie) => new URL(url).hostname === cookie.domain)
+            : [...currentCookies],
+          set: async (input) => {
+            if (input.value === "session-old") {
+              firstSetStarted.resolve();
+              await releaseFirstSet.promise;
+            } else if (input.value === "session-new") secondSetStarted.resolve();
+            const origin = new URL(input.url);
+            currentCookies = [{ domain: origin.hostname, path: "/", secure: true, value: input.value }];
+          },
+          remove: async () => { throw new Error("simulated cookie removal failure"); },
+        } } },
+      },
+    });
+    const oldSession = controller.establishCoreSession("https://host.example.test");
+    const oldSessionRejected = assert.rejects(oldSession, /could not clear a stale server session cookie/);
+    await firstSetStarted.promise;
+    const staleSignOut = controller.signOut();
+    await controller.signIn();
+    await flushAccountWork(controller);
+    const newSession = controller.establishCoreSession("https://host.example.test");
+    const newSessionResolved = assert.doesNotReject(newSession);
+
+    releaseFirstSet.resolve();
+    await oldSessionRejected;
+    await staleSignOut;
+    await secondSetStarted.promise;
+    await newSessionResolved;
+    assert.deepEqual(currentCookies.map((cookie) => cookie.value), ["session-new"]);
+    assert.equal(controller.getStatus().signedIn, true);
+  } finally {
+    releaseFirstSet.resolve();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not remove a new session when old sign-out cookie enumeration finishes late", async () => {
+  const state = activeAccountState();
+  const cookieReadStarted = deferred();
+  const releaseCookieRead = deferred();
+  const cookieRemovals = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, {
+    status: 200,
+    headers: { "set-cookie": "sps_identity_session=session-new; Path=/; HttpOnly" },
+  });
+  try {
+    const { controller } = createHarness({
+      state,
+      cookies: [{ domain: "host.example.test", path: "/", secure: true, value: "session-old" }],
+      dependencies: {
+        startIdentitySignIn: async () => ({
+          result: Promise.resolve(JSON.parse(accountValue({ subject: "account-2", accessToken: "access-new-account" }))),
+          cancel() {},
+        }),
+        session: { defaultSession: { cookies: {
+          get: async () => {
+            cookieReadStarted.resolve();
+            await releaseCookieRead.promise;
+            return [{ domain: "host.example.test", path: "/", secure: true, value: "session-old" }];
+          },
+          set: async () => {},
+          remove: async (...args) => { cookieRemovals.push(args); },
+        } } },
+      },
+    });
+    const oldSignOut = controller.signOut();
+    await cookieReadStarted.promise;
+    await controller.signIn();
+    await flushAccountWork(controller);
+    releaseCookieRead.resolve();
+    await oldSignOut;
+    assert.deepEqual(cookieRemovals, []);
+    assert.equal(JSON.parse(state.encryptedDesktopAccount).subject, "account-2");
+    await assert.doesNotReject(controller.establishCoreSession("https://host.example.test"));
+  } finally {
+    releaseCookieRead.resolve();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a delayed revoke from an old sign-out cannot disconnect or clear a new sign-in", async () => {
+  const state = { ...activeAccountState(), profile: { connectionKind: "remote", hubUrl: "https://host.example.test" } };
+  const revokeStarted = deferred();
+  const releaseRevoke = deferred();
+  const events = [];
+  const { controller } = createHarness({
+    state,
+    dependencies: {
+      revokeIdentity: async () => { revokeStarted.resolve(); await releaseRevoke.promise; },
+      disconnectCurrentNode: async () => { events.push("disconnect"); },
+      clearActiveConnectionState: () => events.push("clear-active"),
+      startIdentitySignIn: async () => ({
+        result: Promise.resolve(JSON.parse(accountValue({ subject: "account-2", accessToken: "access-new-account" }))),
+        cancel() {},
+      }),
+    },
+  });
+  const oldSignOut = controller.signOut();
+  await revokeStarted.promise;
+  await controller.signIn();
+  await flushAccountWork(controller);
+  releaseRevoke.resolve();
+  await oldSignOut;
+  assert.equal(JSON.parse(state.encryptedDesktopAccount).subject, "account-2");
+  assert.deepEqual(events, []);
+});
+
+test("a delayed old-node disconnect cannot clear the replacement account", async () => {
+  const state = { ...activeAccountState(), profile: { connectionKind: "remote", hubUrl: "https://host.example.test" } };
+  const disconnectStarted = deferred();
+  const releaseDisconnect = deferred();
+  const events = [];
+  const { controller } = createHarness({
+    state,
+    dependencies: {
+      disconnectCurrentNode: async ({ assertCurrent }) => {
+        assertCurrent();
+        disconnectStarted.resolve();
+        await releaseDisconnect.promise;
+        assertCurrent();
+        return { disconnected: true };
+      },
+      clearActiveConnectionState: () => events.push("clear-active"),
+      startIdentitySignIn: async () => ({
+        result: Promise.resolve(JSON.parse(accountValue({ subject: "account-2", accessToken: "access-new-account" }))),
+        cancel() {},
+      }),
+    },
+  });
+  const oldSignOut = controller.signOut();
+  await disconnectStarted.promise;
+  await controller.signIn();
+  await flushAccountWork(controller);
+  releaseDisconnect.resolve();
+  await oldSignOut;
+  assert.equal(JSON.parse(state.encryptedDesktopAccount).subject, "account-2");
+  assert.deepEqual(events, []);
+});
+
 test("finishes sign-in, reports legacy Host adoption errors, and resumes a pending invite", async () => {
   const pendingJoin = { code: "SPS2-code", hub: "https://host.example.test" };
   const events = [];
@@ -429,7 +794,7 @@ test("sign-out revokes the account, disconnects the Node, and clears SPS session
   const events = [];
   const { controller, calls } = createHarness({
     state,
-    cookies: [{ domain: "host.example.test", path: "/", secure: true }],
+    cookies: [{ domain: "host.example.test", path: "/", secure: true, value: "existing-session" }],
     dependencies: {
       revokeIdentity: async () => events.push("revoke"),
       disconnectCurrentNode: async () => {
@@ -447,6 +812,7 @@ test("sign-out revokes the account, disconnects the Node, and clears SPS session
   assert.equal(state.encryptedDesktopAccount, null);
   assert.deepEqual(result.nodeDisconnect, { disconnected: true });
   assert.deepEqual(events, ["revoke", "disconnect", "remember", "clear-active", "show", "setup"]);
-  assert.deepEqual(calls.persisted.at(-1), { rememberActiveConnection: false });
+  assert.equal(calls.persisted.at(-1).rememberActiveConnection, false);
+  assert.equal(typeof calls.persisted.at(-1).beforeCommit, "function");
   assert.deepEqual(calls.cookieRemovals, [["https://host.example.test/", "sps_identity_session"]]);
 });

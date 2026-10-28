@@ -121,6 +121,6 @@ test("Desktop poll wiring snapshots ownership and suppresses stale status/finall
   assert.match(main, /const ticket = commandPollGate\.begin\(isEligible\)/);
   assert.match(main, /if \(!commandPollGate\.isCurrent\(ticket, isEligible\)\) return/);
   assert.match(main, /commandPollGate\.finish\(ticket\)/);
-  assert.match(main, /async function clearRemovedMemberConnection\(\{ stillCurrent = \(\) => true \} = \{\}\)[\s\S]*?const stoppedPollGeneration = commandPollGate\.currentGeneration\(\)[\s\S]*?await cancelSpsNodeCommands\([\s\S]*?!commandPollGate\.isGeneration\(stoppedPollGeneration\)[\s\S]*?await persistState\(\)[\s\S]*?!commandPollGate\.isGeneration\(stoppedPollGeneration\)/);
+  assert.match(main, /async function clearRemovedMemberConnection\(\{ stillCurrent = \(\) => true \} = \{\}\)[\s\S]*?const stoppedPollGeneration = commandPollGate\.currentGeneration\(\)[\s\S]*?await cancelSpsNodeCommands\([\s\S]*?cleanupIsCurrent\(\)[\s\S]*?sessionEpoch: currentDesktopSessionEpoch\(\)[\s\S]*?beforeCommit: \(\) => \{[\s\S]*?currentDesktopSessionEpoch\(\) !== expected\.sessionEpoch[\s\S]*?cleanupOwnerIsCurrent\(\)/);
   assert.match(main, /profile: profileSnapshot,[\s\S]*?assertCurrent,/);
 });

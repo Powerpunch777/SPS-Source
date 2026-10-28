@@ -56,6 +56,10 @@ import {
   executionTransportForSpsNodeWork,
 } from "./node-command-poller.mjs";
 import {
+  createSpsNodeConnectionLifetime,
+  runSpsNodeConnectionSteps,
+} from "./node-connection-lifecycle.mjs";
+import {
   buildInviteUrl,
   createSpsRoutedInviteCode,
   findSpsJoinUriArg,
@@ -302,6 +306,7 @@ let desktopAccountController = null;
 let heartbeatTimer = null;
 let commandPollTimer = null;
 const commandPollGate = createSpsNodeCommandPollGate();
+const nodeConnectionLifetime = createSpsNodeConnectionLifetime();
 let pendingJoin = null;
 let pendingJoinError = null;
 let rendererReadyForJoinLinks = false;
@@ -475,21 +480,26 @@ function currentIdentity() {
   };
 }
 
-async function ensureIdentity() {
+async function ensureIdentity(assertCurrent = () => {}) {
+  assertCurrent();
   const identity = currentIdentity();
   if (identity?.transportPublicKeyPem && identity.transportPrivateKeyPem) return identity;
   if (identity) {
     const transport = createNodeTransportIdentity();
+    assertCurrent();
     state.identity = {
       ...state.identity,
       transportAlgorithm: transport.transportAlgorithm,
       transportPublicKeyPem: transport.transportPublicKeyPem,
       encryptedTransportPrivateKey: encrypt(transport.transportPrivateKeyPem),
     };
-    await persistState();
+    assertCurrent();
+    await persistState({ beforeCommit: assertCurrent });
+    assertCurrent();
     return currentIdentity();
   }
   const created = createNodeIdentity();
+  assertCurrent();
   state.identity = {
     publicKeyPem: created.publicKeyPem,
     encryptedPrivateKey: encrypt(created.privateKeyPem),
@@ -497,7 +507,9 @@ async function ensureIdentity() {
     transportPublicKeyPem: created.transportPublicKeyPem,
     encryptedTransportPrivateKey: encrypt(created.transportPrivateKeyPem),
   };
-  await persistState();
+  assertCurrent();
+  await persistState({ beforeCommit: assertCurrent });
+  assertCurrent();
   return created;
 }
 
@@ -511,6 +523,10 @@ function currentDesktopAccount() {
 
 function currentDesktopAccountSubject() {
   return currentDesktopAccount()?.subject ?? null;
+}
+
+function currentDesktopSessionEpoch() {
+  return desktopAccountController?.currentSessionEpoch?.() ?? 0;
 }
 
 async function ensureDesktopIdentityAccessToken() {
@@ -3957,10 +3973,80 @@ async function refreshProjects() {
 }
 
 function stopNodeScheduling() {
+  nodeConnectionLifetime.stop();
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
   stopCommandPolling();
   resetNodeRuntimeStatus();
+}
+
+function beginNodeConnectionLifetime() {
+  stopNodeScheduling();
+  return nodeConnectionLifetime.begin();
+}
+
+function captureNodeConnectionContext(ticket, { identityBound = true } = {}) {
+  let profileSnapshot = state.profile ? structuredClone(state.profile) : null;
+  let profileFingerprint = profileSnapshot ? JSON.stringify(profileSnapshot) : null;
+  let expectedNodeId = state.nodeId;
+  let expectedIdentityFingerprint = state.identity ? JSON.stringify(state.identity) : null;
+  let checkIdentity = identityBound;
+  const accountSubject = currentDesktopAccountSubject();
+  const sessionEpoch = currentDesktopSessionEpoch();
+  const assertGeneration = () => nodeConnectionLifetime.assertCurrent(ticket);
+  const assertBinding = () => {
+    if (currentDesktopAccountSubject() !== accountSubject
+      || currentDesktopSessionEpoch() !== sessionEpoch
+      || state.nodeId !== expectedNodeId
+      || (state.profile ? JSON.stringify(state.profile) : null) !== profileFingerprint) {
+      throw new Error("SPS Desktop Node connection changed while an operation was in progress.");
+    }
+  };
+  const assertOwnerCurrent = () => {
+    assertGeneration();
+    if (currentDesktopAccountSubject() !== accountSubject
+      || currentDesktopSessionEpoch() !== sessionEpoch) {
+      throw new Error("SPS Desktop account changed while a Node operation was in progress.");
+    }
+  };
+  const assertCurrent = () => {
+    assertOwnerCurrent();
+    assertBinding();
+    if (checkIdentity && (!state.identity || JSON.stringify(state.identity) !== expectedIdentityFingerprint)) {
+      throw new Error("SPS Desktop Node connection changed while an operation was in progress.");
+    }
+  };
+  const isCurrent = () => {
+    try { assertCurrent(); return true; }
+    catch { return false; }
+  };
+  return Object.freeze({
+    ticket,
+    accountSubject,
+    get profile() { return profileSnapshot; },
+    get nodeId() { return expectedNodeId; },
+    assertCurrent,
+    assertOwnerCurrent,
+    isCurrent,
+    assertGeneration,
+    bindIdentity() {
+      assertGeneration();
+      assertBinding();
+      if (!state.identity) throw new Error("SPS Desktop Node identity is unavailable.");
+      expectedIdentityFingerprint = JSON.stringify(state.identity);
+      checkIdentity = true;
+    },
+    bindNodeId(value) {
+      assertCurrent();
+      expectedNodeId = value;
+    },
+    refreshProfile() {
+      assertGeneration();
+      if (!state.profile) throw new Error("SPS Desktop Node profile is unavailable.");
+      profileSnapshot = structuredClone(state.profile);
+      profileFingerprint = JSON.stringify(profileSnapshot);
+    },
+  });
 }
 
 function stopCommandPolling() {
@@ -3969,7 +4055,7 @@ function stopCommandPolling() {
   commandPollGate.stop();
 }
 
-async function applyNodeStatus(value, { persist = true } = {}) {
+async function applyNodeStatus(value, { persist = true, beforeCommit = () => {} } = {}) {
   const status = normalizeSpsNodeStatus(value);
   const changed = state.nodeStatus !== status;
   state.nodeStatus = status;
@@ -3978,7 +4064,7 @@ async function applyNodeStatus(value, { persist = true } = {}) {
   } else {
     stopCommandPolling();
   }
-  if (persist && changed) await persistState();
+  if (persist && changed) await persistState({ beforeCommit });
   return status;
 }
 
@@ -3989,10 +4075,26 @@ function nodeWasRevoked(error) {
 }
 
 async function clearRemovedMemberConnection({ stillCurrent = () => true } = {}) {
+  if (!stillCurrent()) return false;
   stopNodeScheduling();
+  const cleanupTicket = nodeConnectionLifetime.begin();
   const stoppedPollGeneration = commandPollGate.currentGeneration();
+  const expected = {
+    profile: state.profile ? JSON.stringify(state.profile) : null,
+    identity: state.identity ? JSON.stringify(state.identity) : null,
+    nodeId: state.nodeId,
+    accountSubject: currentDesktopAccountSubject(),
+    sessionEpoch: currentDesktopSessionEpoch(),
+  };
+  const cleanupOwnerIsCurrent = () => nodeConnectionLifetime.isCurrent(cleanupTicket)
+    && currentDesktopAccountSubject() === expected.accountSubject
+    && currentDesktopSessionEpoch() === expected.sessionEpoch;
+  const cleanupIsCurrent = () => cleanupOwnerIsCurrent()
+    && state.nodeId === expected.nodeId
+    && (state.profile ? JSON.stringify(state.profile) : null) === expected.profile
+    && (state.identity ? JSON.stringify(state.identity) : null) === expected.identity;
   await cancelSpsNodeCommands("SPS Host removed this computer's Member access, so its local command stopped.");
-  if (!stillCurrent() || !commandPollGate.isGeneration(stoppedPollGeneration)) return false;
+  if (!cleanupIsCurrent() || !commandPollGate.isGeneration(stoppedPollGeneration)) return false;
   state.identity = null;
   state.nodeId = null;
   state.nodeStatus = "revoked";
@@ -4001,10 +4103,51 @@ async function clearRemovedMemberConnection({ stillCurrent = () => true } = {}) 
   nodeRuntimeStatus.heartbeatError = "The SPS Host removed this computer's access. The team connection has been cleared.";
   nodeRuntimeStatus.commandPollError = "Ask the SPS Host for a new Desktop invitation to reconnect.";
   closeWorkspaceWindow();
-  await persistState();
-  if (!commandPollGate.isGeneration(stoppedPollGeneration)) return false;
+  await persistState({ beforeCommit: () => {
+    nodeConnectionLifetime.assertCurrent(cleanupTicket);
+    if (currentDesktopAccountSubject() !== expected.accountSubject
+      || currentDesktopSessionEpoch() !== expected.sessionEpoch) {
+      throw new Error("SPS Desktop Node connection changed while cleanup was in progress.");
+    }
+  } });
+  if (!cleanupOwnerIsCurrent() || !commandPollGate.isGeneration(stoppedPollGeneration)) return false;
   await openSetup();
   return true;
+}
+
+async function retireRevokedNodeConnection({ stillCurrent = () => true } = {}) {
+  if (!stillCurrent()) return false;
+  stopNodeScheduling();
+  const cleanupTicket = nodeConnectionLifetime.begin();
+  const expected = {
+    profile: state.profile ? JSON.stringify(state.profile) : null,
+    identity: state.identity ? JSON.stringify(state.identity) : null,
+    nodeId: state.nodeId,
+    accountSubject: currentDesktopAccountSubject(),
+    sessionEpoch: currentDesktopSessionEpoch(),
+  };
+  const cleanupOwnerIsCurrent = () => nodeConnectionLifetime.isCurrent(cleanupTicket)
+    && currentDesktopAccountSubject() === expected.accountSubject
+    && currentDesktopSessionEpoch() === expected.sessionEpoch;
+  const cleanupIsCurrent = () => cleanupOwnerIsCurrent()
+    && state.nodeId === expected.nodeId
+    && (state.profile ? JSON.stringify(state.profile) : null) === expected.profile
+    && (state.identity ? JSON.stringify(state.identity) : null) === expected.identity;
+  await cancelSpsNodeCommands("An Owner revoked this SPS Desktop Node, so its local command stopped.");
+  if (!cleanupIsCurrent()) return false;
+  state.identity = null;
+  state.nodeId = null;
+  state.nodeStatus = "revoked";
+  nodeRuntimeStatus.heartbeatError = "This computer's SPS Node approval was revoked by the Owner. Command execution has stopped.";
+  nodeRuntimeStatus.commandPollError = "Reconnect this computer to create a new Node key, then ask an Owner to approve it.";
+  await persistState({ beforeCommit: () => {
+    nodeConnectionLifetime.assertCurrent(cleanupTicket);
+    if (currentDesktopAccountSubject() !== expected.accountSubject
+      || currentDesktopSessionEpoch() !== expected.sessionEpoch) {
+      throw new Error("SPS Desktop Node connection changed while cleanup was in progress.");
+    }
+  } });
+  return cleanupOwnerIsCurrent();
 }
 
 function workspaceHubUrl() {
@@ -4767,50 +4910,85 @@ function initializeDesktopAccountController() {
   });
 }
 
-async function connectNode() {
+async function connectNode(connectionTicket = null, suppliedContext = null) {
   if (desktopStateUnavailable) throw new Error("Repair SPS Desktop connection settings before connecting this Node.");
   if (isOwnerHostProfile()) {
     throw new Error("Owner Host mode is ready for local work. Enable remote Node grants after authenticated network setup is configured.");
   }
   if (!state.profile) throw new Error("Save an SPS team connection first");
   if (!state.profile.companyId) throw new Error("Choose an SPS company before registering this computer");
-  const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
-  const displayName = resolveSpsNodeDisplayName({
-    configuredName: state.profile.displayName,
-    hostname: os.hostname(),
-  });
-  if (state.profile.displayName !== displayName) {
-    state.profile.displayName = displayName;
-    await persistState();
-  }
-  const identity = await ensureIdentity();
+  const ticket = connectionTicket ?? beginNodeConnectionLifetime();
+  const context = suppliedContext ?? captureNodeConnectionContext(ticket, { identityBound: false });
+  let access, displayName, identity, capabilities, runners, node, verified;
   resetNodeRuntimeStatus();
-  const capabilities = await scanLocalCapabilities();
-  const runners = await scanLocalRunnerProfiles();
-  const node = await registerSpsNode({
-    hubUrl: state.profile.hubUrl,
-    companyId: state.profile.companyId,
-    identity,
-    displayName,
-    platform: process.platform,
-    appVersion: app.getVersion(),
-    capabilities,
-    runners,
-    transportPublicKey: identity.transportPublicKeyPem,
-    ...access,
-  });
-  const verified = await sendSpsNodeHeartbeat({
-    hubUrl: state.profile.hubUrl,
-    nodeId: node.id,
-    identity,
-    ...access,
-  });
+  await runSpsNodeConnectionSteps(context.assertCurrent, [
+    async () => {
+      access = await requireSpsCoreRequestAccess(context.profile.hubUrl, context.profile);
+      return access;
+    },
+    async () => {
+      displayName = resolveSpsNodeDisplayName({
+        configuredName: context.profile.displayName,
+        hostname: os.hostname(),
+      });
+      if (state.profile.displayName !== displayName) {
+        context.assertCurrent();
+        state.profile.displayName = displayName;
+        context.refreshProfile();
+        await persistState({ beforeCommit: context.assertCurrent });
+      }
+      return displayName;
+    },
+    async () => {
+      identity = await ensureIdentity(context.assertCurrent);
+      context.bindIdentity();
+      return identity;
+    },
+    async () => {
+      capabilities = await scanLocalCapabilities();
+      return capabilities;
+    },
+    async () => {
+      runners = await scanLocalRunnerProfiles();
+      return runners;
+    },
+    async () => {
+      node = await registerSpsNode({
+        hubUrl: context.profile.hubUrl,
+        companyId: context.profile.companyId,
+        identity,
+        displayName,
+        platform: process.platform,
+        appVersion: app.getVersion(),
+        capabilities,
+        runners,
+        transportPublicKey: identity.transportPublicKeyPem,
+        ...access,
+      });
+      return node;
+    },
+    async () => {
+      verified = await sendSpsNodeHeartbeat({
+        hubUrl: context.profile.hubUrl,
+        nodeId: node.id,
+        identity,
+        ...access,
+      });
+      return verified;
+    },
+  ]);
+  context.assertCurrent();
+  // Bind the new id while the captured old id is still present in state.
+  // bindNodeId verifies that old binding before advancing the context.
+  context.bindNodeId(node.id);
   state.nodeId = node.id;
   state.transportKeyPublishedAt = new Date().toISOString();
   await applyNodeStatus(verified.status ?? node.status, { persist: false });
+  context.assertCurrent();
   nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
-  await persistState();
-  scheduleHeartbeat({ immediate: false });
+  await persistState({ beforeCommit: context.assertCurrent });
+  context.assertCurrent();
+  scheduleHeartbeat({ immediate: false, ticket });
   return { node, verified, capabilities, runners };
 }
 
@@ -4832,9 +5010,12 @@ async function ensureJoinedDesktopNode() {
     return null;
   }
 
+  const ticket = beginNodeConnectionLifetime();
+  const context = captureNodeConnectionContext(ticket, { identityBound: false });
   try {
-    return await connectNode();
+    return await connectNode(ticket, context);
   } catch (error) {
+    if (!context.isCurrent()) return null;
     // A transient Hub or local CLI scan failure must not block a teammate from
     // opening the shared Workspace. Registration is retried on the next start.
     nodeRuntimeStatus.heartbeatError = error instanceof Error
@@ -4844,86 +5025,136 @@ async function ensureJoinedDesktopNode() {
   }
 }
 
-async function disconnectCurrentNode() {
+async function disconnectCurrentNode({ assertCurrent: assertOwnerCurrent = () => {} } = {}) {
+  assertOwnerCurrent();
+  const ticket = beginNodeConnectionLifetime();
+  const context = captureNodeConnectionContext(ticket, { identityBound: Boolean(state.identity) });
+  const assertCurrent = () => { assertOwnerCurrent(); context.assertCurrent(); };
   const nodeId = state.nodeId;
-  const hubUrl = state.profile?.hubUrl;
+  const profileSnapshot = context.profile;
+  const hubUrl = profileSnapshot?.hubUrl;
   let remoteDisconnected = false;
   let remoteError = null;
+  const result = () => ({ nodeId, remoteDisconnected, remoteError });
 
-  stopNodeScheduling();
-  await cancelSpsNodeCommands("This SPS Desktop Node was disconnected, so its local command stopped.");
+  try {
+    await runSpsNodeConnectionSteps(assertCurrent, [
+      () => cancelSpsNodeCommands("This SPS Desktop Node was disconnected, so its local command stopped."),
+    ]);
+  } catch (error) {
+    if (!nodeConnectionLifetime.isCurrent(ticket) || !context.isCurrent() || !ownerIsCurrent()) return result();
+    throw error;
+  }
   if (nodeId && hubUrl) {
     try {
-      const access = await requireSpsCoreRequestAccess(hubUrl);
-      await disconnectSpsNode({ hubUrl, nodeId, ...access });
-      remoteDisconnected = true;
+      let access;
+      await runSpsNodeConnectionSteps(assertCurrent, [
+        async () => { access = await requireSpsCoreRequestAccess(hubUrl, profileSnapshot); return access; },
+        async () => { await disconnectSpsNode({ hubUrl, nodeId, ...access }); remoteDisconnected = true; },
+      ]);
     } catch (error) {
+      if (!nodeConnectionLifetime.isCurrent(ticket) || !ownerIsCurrent()) return result();
       remoteError = error instanceof Error ? error.message : "Could not disconnect this computer from the SPS team Host.";
     }
   } else if (nodeId) {
     remoteError = "This computer could not contact the SPS team Host to disconnect. An owner must revoke it from Company settings > Nodes.";
   }
 
+  try { assertCurrent(); }
+  catch { return result(); }
   state.identity = null;
   state.nodeId = null;
   state.nodeStatus = null;
   resetNodeRuntimeStatus();
   closeWorkspaceWindow();
-  await persistState();
-  return { nodeId, remoteDisconnected, remoteError };
+  try {
+    await persistState({ beforeCommit: () => {
+      assertOwnerCurrent();
+      context.assertOwnerCurrent();
+    } });
+  } catch (error) {
+    if (!nodeConnectionLifetime.isCurrent(ticket) || !ownerIsCurrent()) return result();
+    throw error;
+  }
+  if (!ownerIsCurrent()) return result();
+  return result();
+
+  function ownerIsCurrent() {
+    try { assertOwnerCurrent(); context.assertOwnerCurrent(); return true; }
+    catch { return false; }
+  }
 }
 
-async function sendNodeHeartbeat() {
+async function sendNodeHeartbeat(ticket = nodeConnectionLifetime.current()) {
+  if (!ticket || !state.nodeId || !state.profile || !state.identity) return null;
+  const context = captureNodeConnectionContext(ticket);
+  let identity, access, node;
   try {
-    if (!state.nodeId || !state.profile || !state.identity) return null;
-    const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
-    const node = await sendSpsNodeHeartbeat({
-      hubUrl: state.profile.hubUrl,
-      nodeId: state.nodeId,
-      identity: currentIdentity(),
-      ...access,
-    });
+    context.assertCurrent();
+    identity = currentIdentity();
+    if (!identity) return null;
+    await runSpsNodeConnectionSteps(context.assertCurrent, [
+      async () => {
+        access = await requireSpsCoreRequestAccess(context.profile.hubUrl, context.profile);
+        return access;
+      },
+      async () => {
+        node = await sendSpsNodeHeartbeat({
+          hubUrl: context.profile.hubUrl,
+          nodeId: context.nodeId,
+          identity,
+          ...access,
+        });
+        return node;
+      },
+    ]);
+    context.assertCurrent();
     nodeRuntimeStatus.lastHeartbeatAt = new Date().toISOString();
     nodeRuntimeStatus.heartbeatError = null;
-    await applyNodeStatus(node.status);
+    await applyNodeStatus(node.status, { beforeCommit: context.assertCurrent });
+    context.assertCurrent();
     return node;
   } catch (error) {
+    if (!context.isCurrent()) return null;
     if (isSpsTechnicalMemberAccessRemoved(error)) {
-      await clearRemovedMemberConnection();
+      await clearRemovedMemberConnection({ stillCurrent: context.isCurrent });
       return null;
     }
     if (nodeWasRevoked(error)) {
       // Revocation retires this computer's old signing key. A later
       // connection creates a fresh pending Node for owner approval.
-      stopNodeScheduling();
-      await cancelSpsNodeCommands("An Owner revoked this SPS Desktop Node, so its local command stopped.");
-      state.identity = null;
-      state.nodeId = null;
-      state.nodeStatus = "revoked";
-      nodeRuntimeStatus.heartbeatError = "This computer's SPS Node approval was revoked by the Owner. Command execution has stopped.";
-      nodeRuntimeStatus.commandPollError = "Reconnect this computer to create a new Node key, then ask an Owner to approve it.";
-      await persistState();
+      await retireRevokedNodeConnection({ stillCurrent: context.isCurrent });
       return null;
     }
-    nodeRuntimeStatus.heartbeatError = "Could not contact the SPS team Host. Check the team address, network, and Desktop sign-in.";
+    if (context.isCurrent()) {
+      nodeRuntimeStatus.heartbeatError = "Could not contact the SPS team Host. Check the team address, network, and Desktop sign-in.";
+    }
     return null;
   }
 }
 
-function scheduleHeartbeat({ immediate = true } = {}) {
+function scheduleHeartbeat({ immediate = true, ticket = null } = {}) {
   if (desktopStateUnavailable) return;
+  const connectionTicket = ticket ?? nodeConnectionLifetime.current()
+    ?? (state.nodeId && state.profile && state.identity ? nodeConnectionLifetime.begin() : null);
+  if (!connectionTicket) return;
   if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(() => { void sendNodeHeartbeat(); }, 60_000);
-  if (immediate) void sendNodeHeartbeat();
+  heartbeatTimer = setInterval(() => { void sendNodeHeartbeat(connectionTicket); }, 60_000);
+  if (immediate) void sendNodeHeartbeat(connectionTicket);
 }
 
 async function pollNodeCommands() {
+  const connectionTicket = nodeConnectionLifetime.current();
   const profileSnapshot = state.profile ? structuredClone(state.profile) : null;
   const profileFingerprint = state.profile ? JSON.stringify(state.profile) : null;
   const identityFingerprint = state.identity ? JSON.stringify(state.identity) : null;
   const nodeId = state.nodeId;
   const accountSubject = currentDesktopAccountSubject();
+  const sessionEpoch = currentDesktopSessionEpoch();
   const isSameConnection = () => Boolean(
+    nodeConnectionLifetime.isCurrent(connectionTicket)
+    && connectionTicket
+    &&
     nodeId
     && profileSnapshot
     && identityFingerprint
@@ -4932,7 +5163,8 @@ async function pollNodeCommands() {
     && JSON.stringify(state.profile) === profileFingerprint
     && state.identity
     && JSON.stringify(state.identity) === identityFingerprint
-    && currentDesktopAccountSubject() === accountSubject,
+    && currentDesktopAccountSubject() === accountSubject
+    && currentDesktopSessionEpoch() === sessionEpoch,
   );
   const isEligible = () => canRunSpsNodeCommands(state.nodeStatus) && isSameConnection();
   const ticket = commandPollGate.begin(isEligible);

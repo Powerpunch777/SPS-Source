@@ -3,6 +3,13 @@ import { spsRequestError, spsRequestTimeoutSignal } from "./desktop-request.mjs"
 const ACCOUNT_REFRESH_SKEW_MS = 2 * 60 * 1000;
 const ACCOUNT_SESSION_COOKIE = "sps_identity_session";
 
+class StaleAccountSessionError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StaleAccountSessionError";
+  }
+}
+
 function safeAccountError(error) {
   const message = error instanceof Error ? error.message.trim() : String(error ?? "").trim();
   return (message || "SPS sign-in could not finish.").slice(0, 360);
@@ -84,6 +91,7 @@ export function createSpsDesktopAccountController({
   let refreshPromise = null;
   let pendingSignIn = null;
   let accountError = null;
+  let cookieMutationQueue = Promise.resolve();
   // Fences asynchronous Identity work when the local account lifecycle moves
   // on, including sign-out/sign-in back to the same account (an ABA change).
   let accountSessionEpoch = 0;
@@ -94,6 +102,24 @@ export function createSpsDesktopAccountController({
 
   function currentAccountSubject() {
     return currentAccount()?.subject ?? null;
+  }
+
+  function sameAccountSession(left, right) {
+    if (!left || !right) return left === right;
+    return Boolean(left && right
+      && left.subject === right.subject
+      && left.deviceId === right.deviceId
+      && (left.identityUrl || configuredIdentityUrl()) === (right.identityUrl || configuredIdentityUrl()));
+  }
+
+  function assertAccountSessionCurrent(epoch, account, message = "The SPS account changed during this operation.") {
+    if (epoch !== accountSessionEpoch || !sameAccountSession(currentAccount(), account)) throw new StaleAccountSessionError(message);
+  }
+
+  function enqueueCookieMutation(action) {
+    const operation = cookieMutationQueue.then(action);
+    cookieMutationQueue = operation.catch(() => undefined);
+    return operation;
   }
 
   function recordAttempt(status, error = null) {
@@ -214,7 +240,11 @@ export function createSpsDesktopAccountController({
   }
 
   async function establishCoreSession(hubOrigin) {
+    const epoch = accountSessionEpoch;
+    const account = currentAccount();
+    const assertCurrent = () => assertAccountSessionCurrent(epoch, account, "The SPS account changed while establishing the server session.");
     const accessToken = await ensureAccessToken();
+    assertCurrent();
     if (!accessToken) return null;
     const headers = {
       authorization: `Bearer ${accessToken}`,
@@ -236,56 +266,146 @@ export function createSpsDesktopAccountController({
         signal: spsRequestTimeoutSignal(requestTimeoutMs),
       });
     } catch (error) {
+      assertCurrent();
       throw spsRequestError(error, "SPS sign-in session timed out. Sign in again and retry.");
     }
+    assertCurrent();
     if (response.status === 404) return null;
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
+      assertCurrent();
       throw new Error(payload?.error || "SPS Server could not accept the SPS Identity session.");
     }
     const token = readSetCookieValue(response, ACCOUNT_SESSION_COOKIE);
     if (!token) throw new Error("SPS Server did not create a secure SPS Identity session.");
     const target = new URL(hubOrigin);
-    await session.defaultSession.cookies.set({
-      url: target.origin,
-      name: ACCOUNT_SESSION_COOKIE,
-      value: token,
-      httpOnly: true,
-      secure: target.protocol === "https:",
-      sameSite: "lax",
-      expirationDate: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+    return enqueueCookieMutation(async () => {
+      assertCurrent();
+      const cookieUrl = target.origin;
+      try {
+        await session.defaultSession.cookies.set({
+          url: cookieUrl,
+          name: ACCOUNT_SESSION_COOKIE,
+          value: token,
+          httpOnly: true,
+          secure: target.protocol === "https:",
+          sameSite: "lax",
+          expirationDate: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+        });
+      } catch (error) {
+        try { assertCurrent(); }
+        catch (staleError) {
+          await removeOwnedSessionCookie(cookieUrl, token);
+          throw staleError;
+        }
+        throw error;
+      }
+      try { assertCurrent(); }
+      catch (error) {
+        // Cookie writes are not cancellable. Remove only this exact value at
+        // its origin before a queued newer account session can be written.
+        await removeOwnedSessionCookie(cookieUrl, token);
+        throw error;
+      }
+      return token;
     });
-    return token;
   }
 
-  async function clearCoreSessions() {
-    const cookies = await session.defaultSession.cookies.get({ name: ACCOUNT_SESSION_COOKIE });
-    await Promise.all(cookies.map(async (cookie) => {
-      const hostname = String(cookie.domain ?? "").replace(/^\./, "");
-      if (!hostname) return;
-      const protocol = cookie.secure ? "https:" : "http:";
-      const pathname = String(cookie.path ?? "/").startsWith("/") ? cookie.path : `/${cookie.path}`;
-      await session.defaultSession.cookies.remove(`${protocol}//${hostname}${pathname}`, ACCOUNT_SESSION_COOKIE).catch(() => undefined);
-    }));
+  async function removeOwnedSessionCookie(url, value) {
+    const cookies = await session.defaultSession.cookies.get({ url, name: ACCOUNT_SESSION_COOKIE });
+    const target = new URL(url);
+    const ownsCookie = (cookie) => cookie.value === value
+      && String(cookie.domain ?? "").replace(/^\./, "") === target.hostname
+      && cookie.path === "/"
+      && Boolean(cookie.secure) === (target.protocol === "https:");
+    if (!cookies.some(ownsCookie)) return;
+    try {
+      await session.defaultSession.cookies.remove(url, ACCOUNT_SESSION_COOKIE);
+    } catch {
+      throw new Error("SPS Desktop could not clear a stale server session cookie.");
+    }
+    const remaining = await session.defaultSession.cookies.get({ url, name: ACCOUNT_SESSION_COOKIE });
+    if (remaining.some(ownsCookie)) throw new Error("SPS Desktop could not clear a stale server session cookie.");
+  }
+
+  async function clearCoreSessions({ assertCurrent: assertCurrentInput } = {}) {
+    const epoch = accountSessionEpoch;
+    const account = currentAccount();
+    const assertCurrent = () => {
+      assertAccountSessionCurrent(epoch, account, "The SPS account changed while clearing server sessions.");
+      assertCurrentInput?.();
+    };
+    return enqueueCookieMutation(async () => {
+      assertCurrent();
+      const cookies = await session.defaultSession.cookies.get({ name: ACCOUNT_SESSION_COOKIE });
+      assertCurrent();
+      for (const cookie of cookies) {
+        assertCurrent();
+        const hostname = String(cookie.domain ?? "").replace(/^\./, "");
+        if (!hostname) continue;
+        const protocol = cookie.secure ? "https:" : "http:";
+        const pathname = String(cookie.path ?? "/").startsWith("/") ? cookie.path : `/${cookie.path}`;
+        const url = `${protocol}//${hostname}${pathname}`;
+        if (typeof cookie.value !== "string") continue;
+        const currentCookies = await session.defaultSession.cookies.get({ url, name: ACCOUNT_SESSION_COOKIE });
+        assertCurrent();
+        const ownsCookie = (current) => current.value === cookie.value
+          && String(current.domain ?? "").replace(/^\./, "") === hostname
+          && current.path === cookie.path
+          && Boolean(current.secure) === Boolean(cookie.secure);
+        if (!currentCookies.some(ownsCookie)) continue;
+        try {
+          await session.defaultSession.cookies.remove(url, ACCOUNT_SESSION_COOKIE);
+        } catch {
+          throw new Error("SPS Desktop could not clear a server session cookie.");
+        }
+        const remaining = await session.defaultSession.cookies.get({ url, name: ACCOUNT_SESSION_COOKIE });
+        if (remaining.some(ownsCookie)) throw new Error("SPS Desktop could not clear a server session cookie.");
+        assertCurrent();
+      }
+    });
   }
 
   async function acceptIdentityInvite(hubUrl, inviteToken) {
-    const sessionCookie = await establishCoreSession(hubUrl);
+    const epoch = accountSessionEpoch;
+    const account = currentAccount();
+    const assertCurrent = () => assertAccountSessionCurrent(
+      epoch,
+      account,
+      "The SPS account changed while accepting the invitation.",
+    );
+    let sessionCookie;
+    try {
+      sessionCookie = await establishCoreSession(hubUrl);
+    } catch (error) {
+      assertCurrent();
+      throw error;
+    }
+    assertCurrent();
     if (!sessionCookie) return null;
     const normalizedInviteToken = normalizeInviteToken(inviteToken);
     if (!normalizedInviteToken) throw new Error("Enter a valid SPS invitation code.");
     const origin = requireHubOrigin(hubUrl);
-    const response = await fetch(new URL(`/api/invites/${encodeURIComponent(normalizedInviteToken)}/accept`, `${hubUrl}/`), {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        origin,
-        cookie: `${ACCOUNT_SESSION_COOKIE}=${encodeURIComponent(sessionCookie)}`,
-      },
-      body: JSON.stringify({ requestType: "human" }),
-    });
+    let response;
+    try {
+      assertCurrent();
+      response = await fetch(new URL(`/api/invites/${encodeURIComponent(normalizedInviteToken)}/accept`, `${hubUrl}/`), {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          origin,
+          cookie: `${ACCOUNT_SESSION_COOKIE}=${encodeURIComponent(sessionCookie)}`,
+        },
+        body: JSON.stringify({ requestType: "human" }),
+      });
+    } catch (error) {
+      assertCurrent();
+      throw error;
+    }
+    assertCurrent();
     const payload = await response.json().catch(() => null);
+    assertCurrent();
     if (!response.ok) throw new Error(payload?.error || "SPS Server could not accept this team invitation.");
     return payload;
   }
@@ -366,29 +486,59 @@ export function createSpsDesktopAccountController({
   }
 
   async function signOut() {
-    accountSessionEpoch += 1;
+    const epoch = ++accountSessionEpoch;
+    const assertCurrent = () => {
+      if (epoch !== accountSessionEpoch) throw new Error("The SPS account changed during sign-out.");
+    };
+    const isStale = () => epoch !== accountSessionEpoch;
     const signIn = pendingSignIn;
     pendingSignIn = null;
     signIn?.cancel();
     accountError = null;
     const account = currentAccount();
     if (account?.refreshToken) {
-      await revokeIdentity({
-        identityUrl: account.identityUrl || configuredIdentityUrl(),
-        refreshToken: account.refreshToken,
-      });
+      try {
+        await revokeIdentity({
+          identityUrl: account.identityUrl || configuredIdentityUrl(),
+          refreshToken: account.refreshToken,
+        });
+      } catch (error) {
+        if (isStale()) return publicStatus();
+        throw error;
+      }
     }
+    if (isStale()) return publicStatus();
     let nodeDisconnect = null;
     if (account && state.profile) {
-      nodeDisconnect = await disconnectCurrentNode();
+      try {
+        nodeDisconnect = await disconnectCurrentNode({ assertCurrent });
+      } catch (error) {
+        if (error instanceof StaleAccountSessionError || isStale()) return publicStatus();
+        throw error;
+      }
+      if (isStale()) return publicStatus();
       rememberCurrentAccountConnection();
     }
-    await clearCoreSessions();
+    try {
+      await clearCoreSessions({ assertCurrent });
+    } catch (error) {
+      if (error instanceof StaleAccountSessionError) return { ...publicStatus(), nodeDisconnect };
+      throw error;
+    }
+    if (isStale()) return { ...publicStatus(), nodeDisconnect };
     clearActiveConnectionState();
     state.encryptedDesktopAccount = null;
-    await persistState({ rememberActiveConnection: false });
+    try {
+      await persistState({ rememberActiveConnection: false, beforeCommit: assertCurrent });
+    } catch (error) {
+      if (error instanceof StaleAccountSessionError) return { ...publicStatus(), nodeDisconnect };
+      throw error;
+    }
+    if (isStale()) return { ...publicStatus(), nodeDisconnect };
     await showMainWindow();
+    if (isStale()) return { ...publicStatus(), nodeDisconnect };
     await openSetup();
+    if (isStale()) return { ...publicStatus(), nodeDisconnect };
     notifyStatus();
     return { ...publicStatus(), nodeDisconnect };
   }
@@ -398,6 +548,7 @@ export function createSpsDesktopAccountController({
     acceptIdentityInvite,
     currentAccount,
     currentAccountSubject,
+    currentSessionEpoch: () => accountSessionEpoch,
     ensureAccessToken,
     establishCoreSession,
     getStatus: status,
