@@ -11,6 +11,7 @@ import { createSpsNativeInviteCode } from "../src/native-connection-invite.mjs";
 import { createSpsNativeEnrollmentBootstrap, createSpsNativeEnrollmentClient,
   createSpsNativeEnrollmentRecoveryClient, createSpsNativeServerCertificateClient } from "../src/native-enrollment-client.mjs";
 import { nativeServerCertificateServername } from "../src/native-server-certificate-selection.mjs";
+import { NATIVE_NODE_MAX_REQUEST } from "../src/native-node-protocol.mjs";
 
 const HOST_ID = "11111111-1111-4111-8111-111111111111";
 const DEVICE_KEY_ID = "22222222-2222-4222-8222-222222222222";
@@ -154,11 +155,20 @@ test("Native Node ingress admits only bounded fixed POST with fresh mTLS and a s
     { request: { ...smallInput, headers: { "Content-Type": "application/json", Origin: "https://evil.invalid",
       "X-SPS-Native-Workspace": DEVICE_KEY_ID } }, expectedStatus: 400 },
   ]) assert.equal((await post(port, { ...denied.request, phase: `denied-${denied.expectedStatus}` })).statusCode, denied.expectedStatus);
-  const oversized = await post(port, { ...input, phase: "oversized-authenticated-request", body: JSON.stringify({ operation: "availability", nodeId,
-    resourceId: null, payload: { timestamp: "2026-10-27T04:00:00.000Z", nonce: "A".repeat(43),
-      signature: "B".repeat(86), report: "x".repeat(512 * 1024) } }) });
-  assert.equal(oversized.statusCode, 413);
+  const oversizedHeader = await post(port, { ...smallInput, phase: "oversized-authenticated-content-length",
+    headers: { ...smallInput.headers, "Content-Length": String(NATIVE_NODE_MAX_REQUEST + 1) } });
+  assert.equal(oversizedHeader.statusCode, 413);
   assert.equal(calls.length, 1);
+  const oversizedBody = await post(port, { ...input, phase: "oversized-authenticated-request", body: JSON.stringify({ operation: "availability", nodeId,
+    resourceId: null, payload: { timestamp: "2026-10-27T04:00:00.000Z", nonce: "A".repeat(43),
+      signature: "B".repeat(86), report: "x".repeat(512 * 1024) } }) }).then(response => ({ response }), error => ({ error }));
+  if (oversizedBody.response) assert.equal(oversizedBody.response.statusCode, 413);
+  else assert.equal(oversizedBody.error?.code, "ECONNRESET");
+  assert.equal(calls.length, 1);
+  const afterOversized = await post(port, { ...smallInput, phase: "valid-request-after-oversized" });
+  assert.equal(afterOversized.statusCode, 200);
+  assert.deepEqual(JSON.parse(afterOversized.body), { data: { accepted: true, size: Buffer.byteLength(smallInput.body) } });
+  assert.equal(calls.length, 2);
 });
 
 test("only exact Native paths and closed canonical requests dispatch over fresh TLS", async t => {
