@@ -433,8 +433,9 @@ jobs:
 
       - name: Verify Native public SDK connectivity with enrolled Member TLS and Electron
         timeout-minutes: 20
-        working-directory: external/sps-core
-        run: pnpm --filter @paperclipai/db exec tsx ../../../../sps-server/desktop/scripts/smoke-native-workspace-channel.mjs --isolated-native-workspace-channel --with-native-plugin-sdk
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode native-plugin-sdk
 
       - name: Verify Workspace execution control across Desktop restart
         timeout-minutes: 20

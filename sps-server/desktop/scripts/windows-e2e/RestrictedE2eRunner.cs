@@ -268,12 +268,12 @@ public static class RestrictedE2eRunner
         return value == "probe" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
             || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
-            || value == "runtime-discovery" || value == "native-management" || value == "execution-control" || value == "workspace-surfaces"
+            || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle";
     }
     static bool OwnedJobGateMode(string value)
     {
-        return value == "plugin-preview" || value == "runtime-discovery" || value == "native-management" || value == "execution-control" || value == "workspace-surfaces"
+        return value == "plugin-preview" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "workspace-pending"
@@ -307,11 +307,15 @@ public static class RestrictedE2eRunner
     }
     static int RunNode(string node, string directory, string script, params string[] args)
     {
+        return RunNodeFile(node, directory, Path.Combine(directory, "scripts", script), args);
+    }
+    static int RunNodeFile(string node, string workingDirectory, string entrypoint, params string[] args)
+    {
         stage = "child_script";
-        var arguments = new StringBuilder(Quote(Path.Combine(directory, "scripts", script)));
+        var arguments = new StringBuilder(Quote(entrypoint));
         foreach (string arg in args) arguments.Append(' ').Append(Quote(arg));
         var start = new ProcessStartInfo(node, arguments.ToString());
-        start.WorkingDirectory = directory; start.UseShellExecute = false; start.CreateNoWindow = true;
+        start.WorkingDirectory = workingDirectory; start.UseShellExecute = false; start.CreateNoWindow = true;
         start.RedirectStandardInput = true; start.RedirectStandardOutput = true; start.RedirectStandardError = true;
         start.StandardOutputEncoding = Encoding.UTF8; start.StandardErrorEncoding = Encoding.UTF8;
         start.EnvironmentVariables.Remove("NODE_OPTIONS");
@@ -324,6 +328,18 @@ public static class RestrictedE2eRunner
             process.Start(); process.StandardInput.Close(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
             process.WaitForExit(); return process.ExitCode;
         }
+    }
+    static int RunNativePluginSdk(string node, string desktopDirectory)
+    {
+        string repositoryDirectory = Path.GetFullPath(Path.Combine(desktopDirectory, "..", ".."));
+        string coreDirectory = Path.Combine(repositoryDirectory, "external", "sps-core");
+        string tsx = Path.Combine(coreDirectory, "packages", "db", "node_modules", "tsx", "dist", "cli.mjs");
+        string smoke = Path.Combine(desktopDirectory, "scripts", "smoke-native-workspace-channel.mjs");
+        if (!File.Exists(tsx) || !File.Exists(smoke)) throw new FileNotFoundException("Native SDK smoke entrypoint is unavailable.");
+        int code = RunNodeFile(node, coreDirectory, tsx, smoke, "--isolated-native-workspace-channel", "--with-native-plugin-sdk");
+        // Require the owning helper to observe the entire restricted process job
+        // naturally empty after the smoke itself confirms Electron close.
+        return code == 0 ? unchecked((int)OwnedJobCleanupPendingExitCode) : code;
     }
     static int Child(string mode, string node, string directory)
     {
@@ -372,6 +388,7 @@ public static class RestrictedE2eRunner
         }
         if (mode == "runtime-discovery") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--runtime-discovery", OwnedJobCleanupArgument);
         if (mode == "native-management") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--native-management", OwnedJobCleanupArgument);
+        if (mode == "native-plugin-sdk") return RunNativePluginSdk(node, directory);
         if (mode == "execution-control") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--execution-control", OwnedJobCleanupArgument);
         if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs", OwnedJobCleanupArgument);

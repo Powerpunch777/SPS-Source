@@ -38,7 +38,12 @@ function stop() {
       ["enrollment", () => enrollment?.dispose()],
       ["workspace", () => channel?.dispose()],
       ["node-runtime", () => nodeRuntime?.dispose()],
-      ["plugins", async () => { pluginRuntime?.dispose(); await workerManager?.shutdown(); }],
+      ["plugins", async () => {
+        pluginRuntime?.dispose();
+        const results = await Promise.allSettled([pluginRuntime?.shutdownWorkspaceWorkers(), workerManager?.shutdown()]);
+        const failed = results.filter(result => result.status === "rejected");
+        if (failed.length) throw new AggregateError(failed.map(result => result.reason), "Native Plugin workers did not confirm shutdown.");
+      }],
     ]) {
       try { await dispose(); } catch (error) { errors.push(error); }
       mark(stage);
@@ -125,7 +130,14 @@ try {
         } } }),
     });
     reportStartupStage("plugin_runtime_create");
-    pluginRuntime = createSpsNativePluginRuntime(db, workerManager, { localPluginDir: fixture.packageRoot });
+    pluginRuntime = createSpsNativePluginRuntime(db, workerManager, {
+      localPluginDir: fixture.packageRoot,
+      workspaceBuildServices: () => ({ state: {
+        get: params => state.get(fixture.pluginId, params.scopeKind, params.stateKey, { scopeId: params.scopeId }),
+        set: params => state.set(fixture.pluginId, params),
+        delete: params => state.delete(fixture.pluginId, params),
+      }, dispose() {} }),
+    });
   }
   reportStartupStage("workspace_channel_create");
   channel = createSpsNativeWorkspaceChannel({ db, identity, ...configuration.binding,

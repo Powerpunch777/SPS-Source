@@ -222,7 +222,7 @@ test("Desktop execution modes are unavailable outside Windows CI", { skip: proce
 
 test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
-  for (const mode of ["runtime-discovery", "native-management", "execution-control", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle"]) {
+  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle"]) {
     assert.match(workflow, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
   }
   const source = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
@@ -301,6 +301,10 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   assert.match(source, /value == "native-management"/);
   assert.match(source, /if \(mode == "runtime-discovery"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", "--runtime-discovery", OwnedJobCleanupArgument\);/);
   assert.match(source, /if \(mode == "native-management"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", "--native-management", OwnedJobCleanupArgument\);/);
+  assert.match(source, /if \(mode == "native-plugin-sdk"\) return RunNativePluginSdk\(node, directory\);/);
+  assert.match(source, /string tsx = Path\.Combine\(coreDirectory, "packages", "db", "node_modules", "tsx", "dist", "cli\.mjs"\);/);
+  assert.match(source, /"--isolated-native-workspace-channel", "--with-native-plugin-sdk"/);
+  assert.match(source, /return code == 0 \? unchecked\(\(int\)OwnedJobCleanupPendingExitCode\) : code;/);
   assert.match(source, /if \(mode == "workspace-surfaces"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", OwnedJobCleanupArgument\);/);
   assert.match(source, /start\.UseShellExecute = false;/);
   assert.doesNotMatch(source.slice(0, processClassifierStart) + source.slice(processDiagnosticsEnd), /(?:powershell|cmd\.exe)/i);

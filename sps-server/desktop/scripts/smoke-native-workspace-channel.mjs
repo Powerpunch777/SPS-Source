@@ -211,7 +211,9 @@ try {
         displayName: "Native connectivity SDK fixture", description: "Public SDK Native connectivity acceptance",
         author: "SPS acceptance fixture", categories: ["ui"],
         capabilities: ["ui.dashboard.contribute", "sps.connectivity.read"],
-        entrypoints: { worker: "worker.mjs", ui: "dist/ui" }, ui: { dashboardWidgets: [{
+        entrypoints: { worker: "worker.mjs", workspaceWorker: "workspace-worker.mjs", ui: "dist/ui" },
+        workspaceConfigSchema: { type: "object", properties: {}, additionalProperties: false },
+        ui: { dashboardWidgets: [{
           id: "native-connectivity", displayName: "Native connectivity", exportName: "NativeConnectivity",
           sizes: ["medium"], defaultSize: "medium", defaultOrder: 0, dataAction: "fixture.connectivity",
         }] } };
@@ -235,6 +237,8 @@ export function NativeConnectivity({data}) {
       }
       await copyFile(path.resolve(import.meta.dirname, "fixtures/native-plugin-public-sdk-worker.mjs"),
         path.join(packageRoot, "worker.mjs"));
+      await copyFile(path.resolve(import.meta.dirname, "fixtures/native-plugin-public-sdk-worker.mjs"),
+        path.join(packageRoot, "workspace-worker.mjs"));
       nativePluginSdkRequest = { pluginId, surface: "widget", surfaceId: "native-connectivity",
         operation: "data", key: "fixture.connectivity", params: {} };
       pluginConfiguration = { pluginId, manifest, packageRoot, workerEntrypoint: path.join(packageRoot, "worker.mjs"), publicSdk: true };
