@@ -64,6 +64,35 @@ Windows Job 6개는 별도 선택 실행이며 Electron/패키지 lifecycle 수�
 미확인이다. 기존 UI 확인·승인과 삭제 재시도를 보존하고 기존 Workspace/Preview의
 20초 정리 제한은 변경하지 않았다. lifecycle에도 같은 20초 대기 한계를 적용한다.
 이번 후보 revision의 실제 CI 결과는 별도로 확인해야 한다.
+후속 Source `a5254ba` push `40706166873`은 Desktop 8단계의 TLS 테스트 setup에서
+OpenSSL을 찾거나 실행하지 못해 실패했다(1395개 중 1381 통과·12 hook 실패·2 skip).
+따라서 이 후보의 실제 packaged lifecycle은 실행되지 않았다. PATH·Git 위치의
+모든 probe 실패를 helper가 같은 오류로 바꾸므로 실행 파일 부재·실행 실패·제한
+시간 초과 중 어느 경우인지는 현재 로그만으로 확정하지 않는다. 별도의 CI 환경
+선행 조건 보완 대상으로 유지하며 테스트를 skip하거나 Native 보류로 제외하지 않는다.
+
+같은 Source의 PR `40706191315`는 Desktop `122878850805`의 해당 단계를 통과하고
+뒤 실제 E2E에 진입했다. 따라서 지속적인 파일 미설치로 단정하지 않는다. 실패한
+정확한 runner image `win25-vs2026/20261021.278`의
+[공식 설치 스크립트](https://github.com/actions/runner-images/blob/win25-vs2026/20261021.278/images/windows/scripts/build/Install-OpenSSL.ps1)는
+`Program Files/OpenSSL/bin`에 실행 파일을 설치하고 PATH에 추가한다. 기존 resolver가
+Git 위치만 명시적으로 보완했던 것에 이 공식 경로 fallback을 추가한다. 전체 Desktop
+검사 전에 같은 resolver를 한 번 실행하고, probe의 고정 출처·성공/실패 범주와
+시간만 출력해 실행 불가·시간 초과·잘못된 version 결과를 구분할 근거를 남긴다.
+5초 probe·인증서 생성 제한과 TLS 검사·승인·fixture 격리는 유지한다. 설치/다운로드는
+추가하지 않는다. 이 보완을 기존 불규칙 실패의 해결 증거로 선행 선언하지 않는다.
+
+resolver 주입 검사 2개와 기존 실제 TLS 검사 12개를 선택해 **14개 모두 통과**했다.
+임시 인증서·loopback TLS를 사용하는 기존 1.3 pinning·잘못된 인증서·날짜/SAN·
+1.2 downgrade 거절·timeout·취소 검사를 유지했다. 새 resolver 검사는 PATH/Git
+실패 뒤 공식 이미지 경로 선택과 잘못된 version·시간 초과 등 고정 진단, callback
+실패 무시를 검사한다. 새 파일은 기본 `test/*.test.mjs`에 포함되는 위치에 둔다.
+실행은 약 4.7초였고 OS trust store·firewall·Native 제품 기능은 변경하지 않았다.
+
+workflow YAML을 파싱해 Desktop working directory와 전체 테스트 전 preflight
+배치를 확인하고, 동일 preflight 문장도 로컬에서 실행해 Git fallback 성공을
+확인했다. 이 로컬 결과는 실패 runner의 원인 확인이나 해당 후보 CI 통과를
+대신하지 않는다.
 공유 권한 변경의 검증은 [별도 기록](HOST-SHARE-MUTATION-LIFETIME-2026-10-28.md)을
 따른다. 실제 설치/업데이트/복원, 비정상 종료 자손·패키지 복구와 보안 gate는
 완료되지 않았다.

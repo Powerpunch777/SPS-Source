@@ -9,6 +9,7 @@ import { isIP } from 'node:net';
 const execFileAsync = promisify(execFile);
 const TEMP_PREFIX = 'sps-native-tls-';
 const WINDOWS_OPENSSL = 'C:/Program Files/Git/usr/bin/openssl.exe';
+const WINDOWS_OFFICIAL_OPENSSL = 'C:/Program Files/OpenSSL/bin/openssl.exe';
 const OPENSSL_VERSION_TIMEOUT_MS = 5_000;
 const OPENSSL_COMMAND_TIMEOUT_MS = 10_000;
 const OPENSSL_MAX_BUFFER_BYTES = 1024 * 1024;
@@ -64,64 +65,100 @@ async function invokeOpenSsl(binary, args, cwd) {
   }
 }
 
-async function resolveOpenSsl() {
-  const candidates = ['openssl'];
-  if (process.platform === 'win32') {
+function probeOutcome(error) {
+  if (error?.code === 'ENOENT' || error?.code === 'ENOTFOUND') return 'unavailable';
+  if (error?.code === 'ETIMEDOUT' || error?.killed === true) return 'timeout';
+  return 'other';
+}
+
+function emitProbe(onProbe, sourceLabel, outcome, elapsedMs) {
+  if (typeof onProbe !== 'function') return;
+  const boundedElapsedMs = Math.max(0, Math.min(OPENSSL_VERSION_TIMEOUT_MS, Math.floor(elapsedMs)));
+  try {
+    Promise.resolve(onProbe(Object.freeze({ sourceLabel, outcome, elapsedMs: boundedElapsedMs }))).catch(() => {});
+  } catch {
+    // Diagnostics must never change resolver behavior.
+  }
+}
+
+export async function resolveOpenSsl({ exec = execFileAsync, platform = process.platform, onProbe } = {}) {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const probeResults = [];
+  const reportProbe = (sourceLabel, outcome, startedAt) => {
+    const elapsedMs = Date.now() - startedAt;
+    const boundedElapsedMs = Math.max(0, Math.min(OPENSSL_VERSION_TIMEOUT_MS, Math.floor(elapsedMs)));
+    probeResults.push(`${sourceLabel}:${outcome}`);
+    emitProbe(onProbe, sourceLabel, outcome, boundedElapsedMs);
+  };
+  const candidates = [{ binary: 'openssl', sourceLabel: 'path' }];
+  if (platform === 'win32') {
     // Git for Windows carries its own MSYS/MinGW tools, but their location
     // differs between runner images. Derive only the two known OpenSSL
     // locations from Git's bounded, shell-free --exec-path response.
+    const startedAt = Date.now();
     try {
-      const { stdout } = await execFileAsync('git', ['--exec-path'], {
+      const { stdout } = await exec('git', ['--exec-path'], {
         windowsHide: true,
         encoding: 'utf8',
         timeout: OPENSSL_VERSION_TIMEOUT_MS,
         maxBuffer: 4096,
       });
       const gitExecPath = stdout.trim();
-      if (path.isAbsolute(gitExecPath)
-        && path.basename(gitExecPath).toLowerCase() === 'git-core'
-        && path.basename(path.dirname(gitExecPath)).toLowerCase() === 'libexec') {
-        const mingwRoot = path.resolve(gitExecPath, '..', '..');
-        if (path.basename(mingwRoot).toLowerCase() === 'mingw64') {
-          const gitRoot = path.dirname(mingwRoot);
+      if (pathApi.isAbsolute(gitExecPath)
+        && pathApi.basename(gitExecPath).toLowerCase() === 'git-core'
+        && pathApi.basename(pathApi.dirname(gitExecPath)).toLowerCase() === 'libexec') {
+        const mingwRoot = pathApi.resolve(gitExecPath, '..', '..');
+        if (pathApi.basename(mingwRoot).toLowerCase() === 'mingw64') {
+          const gitRoot = pathApi.dirname(mingwRoot);
           candidates.push(
-            path.join(mingwRoot, 'bin', 'openssl.exe'),
-            path.join(gitRoot, 'usr', 'bin', 'openssl.exe'),
+            { binary: pathApi.join(mingwRoot, 'bin', 'openssl.exe'), sourceLabel: 'git-mingw' },
+            { binary: pathApi.join(gitRoot, 'usr', 'bin', 'openssl.exe'), sourceLabel: 'git-usr' },
           );
         }
       }
-    } catch {
+      reportProbe('git-exec-path', 'ok', startedAt);
+    } catch (error) {
+      reportProbe('git-exec-path', probeOutcome(error), startedAt);
       // Fall back to the known standard Git for Windows locations below.
     }
     candidates.push(
-      'C:/Program Files/Git/mingw64/bin/openssl.exe',
-      WINDOWS_OPENSSL,
+      { binary: 'C:/Program Files/Git/mingw64/bin/openssl.exe', sourceLabel: 'git-standard-mingw' },
+      { binary: WINDOWS_OPENSSL, sourceLabel: 'git-standard-usr' },
+      { binary: WINDOWS_OFFICIAL_OPENSSL, sourceLabel: 'official-image' },
     );
   }
 
-  const uniqueCandidates = [...new Map(candidates.map(candidate => [
-    process.platform === 'win32' ? path.resolve(candidate).toLowerCase() : candidate,
-    candidate,
-  ])).values()];
+  const uniqueCandidates = [...new Map(candidates.map(candidate => {
+    const key = platform === 'win32'
+      ? pathApi.resolve(candidate.binary).toLowerCase()
+      : candidate.binary;
+    return [key, candidate];
+  })).values()];
 
-  for (const candidate of uniqueCandidates) {
+  for (const { binary, sourceLabel } of uniqueCandidates) {
+    const startedAt = Date.now();
     try {
-      const { stdout } = await execFileAsync(candidate, ['version'], {
+      const { stdout } = await exec(binary, ['version'], {
         windowsHide: true,
         encoding: 'utf8',
         timeout: OPENSSL_VERSION_TIMEOUT_MS,
         maxBuffer: OPENSSL_MAX_BUFFER_BYTES,
       });
-      if (/^OpenSSL\s/i.test(stdout)) return candidate;
-    } catch {
+      if (/^OpenSSL\s/i.test(stdout)) {
+        reportProbe(sourceLabel, 'ok', startedAt);
+        return binary;
+      }
+      reportProbe(sourceLabel, 'invalid-version', startedAt);
+    } catch (error) {
+      reportProbe(sourceLabel, probeOutcome(error), startedAt);
       // Try the next supported executable location.
     }
   }
 
-  const locationHint = process.platform === 'win32'
-    ? ` on PATH or at ${WINDOWS_OPENSSL}`
-    : ' on PATH';
-  throw new Error(`OpenSSL is required to create native TLS test fixtures; install it${locationHint}.`);
+  const summary = probeResults.slice(0, 8).join(',');
+  throw new Error(
+    `OpenSSL is required to create native TLS test fixtures; install it on PATH or use a supported Windows image. Probe results: ${summary}.`,
+  );
 }
 
 function pathsEqual(left, right) {

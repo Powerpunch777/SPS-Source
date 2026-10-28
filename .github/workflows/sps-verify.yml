@@ -377,6 +377,11 @@ jobs:
         working-directory: sps-server/desktop
         run: npm ci
 
+      - name: Verify OpenSSL fixture prerequisite
+        working-directory: sps-server/desktop
+        run: |
+          node --input-type=module -e "import { resolveOpenSsl } from './test/helpers/native-tls-fixtures.mjs'; await resolveOpenSsl({ onProbe: (probe) => console.log(JSON.stringify({ fixtureOpenSslProbe: probe })) });"
+
       - name: Test SPS Desktop invite and update flow
         working-directory: sps-server/desktop
         run: npm test

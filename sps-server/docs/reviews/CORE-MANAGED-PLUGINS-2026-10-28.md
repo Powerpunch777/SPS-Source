@@ -5,7 +5,8 @@
 공개 Marketplace·Builder 신규 개발·완전한 비신뢰 OS 격리를 필수 조건에서
 분리했지만 실제 Core 결함과 검사 실패를 완료로 바꾸지 않는다.
 
-Core 소스: `2b1a7365da7f931f3d163b1ac0e28c60b48af656`.
+현재 통합 Core 소스: `1ae22bd261e3f201d21432e981904e911b8abe76`.
+아래 기록의 각 후보 revision과 당시 검증 결과는 서로 구분한다.
 Desktop `0.4.137` development-candidate와 SDK
 `61a929f6c783f78e5af603682de1543c7e24abc0`(미출시 `0.11.0`)는 유지한다.
 gitlink·support matrix·생성된 CURRENT-CANDIDATE를 함께 맞췄으며 문서 생성/검사와
@@ -197,6 +198,18 @@ Desktop 목록 조회의 수명과 기존 contract 검사 보완은
 packaged Host Plugin lifecycle의 기존 도구 opt-in 누락과 종료 허위 성공 경계는
 [생명주기 CI 검토](HOST-LIFECYCLE-CI-2026-10-28.md)에 기록했다. 기능 assertion과
 실제 프로세스·데이터 정리 합격을 구분하며, 수정 후보의 실제 E2E는 별도 확인한다.
+동시 완료 재전송 뒤 이전 활성 상태를 반환하던 Core 결함과 집중 검증은
+[Runner 완료 재전송 검토](RUNNER-COMPLETION-RETRY-2026-10-28.md)에 기록했다.
+이 응답 수정은 영속 receipt·claim 인계·원격 프로세스 복구 완료를 의미하지 않는다.
+
+Source `a5254ba` / Core `1ae22bd2` / Desktop `0.4.137`의 현재 full-graph
+의존성 감사를 별도로 실행했다. 유효한 audit 응답 4건 중 High 1건(Zod `1243066`),
+Low 3건(`@tootallnate/once` `1119438`, `katex` `1241206`, `deepmerge` `1243505`)이며
+gate exit 1이다. production 실패 뒤 CI에서 생략되는 full scope를 확인한 것이며
+새 예외·의존성 설치·업그레이드는 하지 않았다. GitHub push의 기본 branch
+Dependabot 알림 수는 다른 대상이므로 이 후보의 audit 수와 혼동하지 않는다.
+현재 로컬 Zod 완화는 완전한 해결이 아니며 기존 major 전환 보류와 미승인 High
+gate를 유지한다. 보안 완료 또는 출시 가능으로 표시하지 않는다.
 
 공개 Marketplace는 제품에서 제거한다. 전용 Builder 신규 요구는 별도 핸드오프까지
 보류한다. AppContainer 연구는 보존하고 완전한 비신뢰 코드 OS 격리는 1차 완료
