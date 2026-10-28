@@ -68,6 +68,23 @@ Core server build는 `native-runtime`을 dist에 복사한다. Desktop 준비·�
 Promise 합류, 초기화 중 중지·shutdown, 초기화 실패 후 무재시도, reusable stopAll,
 Workspace stream 분리/오류 경로를 새 실행기와 확인했다. 전체 suite는 실행하지 않았다.
 
+## 후속 CI fixture 회귀
+
+Source `eae978a`의 push `40729389751` Desktop `122961253672`는 전체 Desktop
+단위 검사에서 기존 Agent 자산 복사 fixture 1개가 실패했다. 실제 Core 복사 script는
+이제 `native-runtime`도 요구하지만 fixture는 onboarding/built-ins만 준비해 ENOENT가
+발생했다. 해당 job이 끝났어도 전체 run은 진행 중이므로 job 로그 endpoint로 원인을
+확인했다. PR `40729401287` Desktop `122961296982`도 같은 단계에서 실패로 끝났다.
+이 후보에서는 실제 packaged E2E 단계가 실행되지 않았다.
+
+원래 default/CEO 지침·built-in 복사와 소유 임시 경로 검사를 유지하면서 실제 Core의
+native-runtime 파일을 fixture에 추가하고, 실행한 원본 copy script가 동일 bytes를
+dist에 복사하는지 추가 확인한다. 제품 script가 누락 자산을 무시하거나 테스트를
+건너뛰도록 바꾸지 않는다. 수정 후 Agent 자산 복사와 기존 패키지 계약 2개 파일
+**12개 모두 통과**했고 diff 검사도 통과했다. runtime build 검사 11개와 겹치므로
+앞선 결과에 합산하지 않는다. 실제 `.cs`·`.mjs`·선언·README의 동일 bytes 복사와
+기존 지침을 확인한 결과이며 아직 새 후보의 packaged E2E 통과 증거는 아니다.
+
 ## 아직 확인하지 않은 범위
 
 같은 OS 사용자 Worker가 Windows Job에 속하는 것은 OS 보안 샌드박스가 아니다.

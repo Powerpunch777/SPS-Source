@@ -115,6 +115,26 @@ test("Core build asset copying makes packaged default and CEO instructions loada
     await mkdir(path.dirname(builtInFixture), { recursive: true });
     await writeFile(builtInFixture, builtInContents, "utf8");
 
+    const nativeRuntimeRoot = path.join(CORE_SERVER_ROOT, "src", "native-runtime");
+    const nativeRuntimeFiles = [
+      "windows-job-supervisor/README.md",
+      "windows-job-supervisor/WindowsJobSupervisor.cs",
+      "windows-job-supervisor/supervisor.d.mts",
+      "windows-job-supervisor/supervisor.mjs",
+    ];
+    const expectedNativeRuntimeAssets = new Map();
+    for (const relativePath of nativeRuntimeFiles) {
+      const source = path.join(nativeRuntimeRoot, relativePath);
+      const sourceInfo = await lstat(source);
+      assert.ok(sourceInfo.isFile() && !sourceInfo.isSymbolicLink(),
+        `Expected a real Core native runtime asset: ${relativePath}`);
+      const destination = path.join(fixtureSourceRoot, "native-runtime", relativePath);
+      await mkdir(path.dirname(destination), { recursive: true });
+      const sourceBytes = await readFile(source);
+      await writeFile(destination, sourceBytes);
+      expectedNativeRuntimeAssets.set(relativePath, sourceBytes);
+    }
+
     const coreCopyScript = path.join(CORE_SERVER_ROOT, "scripts", "copy-build-assets.mjs");
     const copyScriptBytes = await readFile(coreCopyScript);
     await mkdir(path.dirname(fixtureScript), { recursive: true });
@@ -136,6 +156,13 @@ test("Core build asset copying makes packaged default and CEO instructions loada
     assert.deepEqual(await loadDefaultAgentInstructionsBundle("ceo"), expectedBundles.ceo);
     assert.equal(await readFile(path.join(fixtureDistRoot, "built-ins", "fixture-agent.json"), "utf8"),
       builtInContents);
+    for (const [relativePath, expectedBytes] of expectedNativeRuntimeAssets) {
+      assert.deepEqual(
+        await readFile(path.join(fixtureDistRoot, "native-runtime", relativePath)),
+        expectedBytes,
+        `Expected packaged native runtime asset bytes to match Core source: ${relativePath}`,
+      );
+    }
   } finally {
     if (canonicalRoot) {
       await removeOwnedTempTree({ root, canonicalRoot, canonicalParent, identity });
