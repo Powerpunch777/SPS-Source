@@ -117,7 +117,12 @@ test("lets a signed-in Node owner map local task folders before opening Workspac
   assert.match(main, /let setupMode = opensCoreSettingsOnLaunch;/);
   assert.match(main, /ipcMain\.handle\("desktop:save-default-workspace"/);
   assert.match(main, /ipcMain\.handle\("desktop:manage-host-project-source"/);
-  assert.match(main, /ownerHostApi\(`\/companies\/\$\{encodeURIComponent\(companyId\)\}\/projects`\)/);
+  const refreshProjects = main.slice(main.indexOf("async function refreshProjects() {"), main.indexOf("function stopNodeScheduling()"));
+  assert.match(refreshProjects, /const scope = captureWorkspaceReadScope\(\);/);
+  assert.match(refreshProjects, /const companyId = scope\.profile\?\.companyId\s*\|\|\s*scope\.teamAccess\?\.companyId\s*\|\|\s*ownerHostCompanies\[0\]\?\.id/);
+  assert.match(refreshProjects, /ownerHostApi\(`\/companies\/\$\{encodeURIComponent\(companyId\)\}\/projects`, \{ assertCurrent \}\)/);
+  assert.match(refreshProjects, /if \(companyId && scope\.profile && !scope\.profile\.companyId\)[\s\S]*?state\.profile\.companyId = companyId;[\s\S]*?scope\.refreshProfileAfterOwnedMutation\(\);/);
+  assert.match(refreshProjects, /state\.projects = projects;[\s\S]*?persistCurrent\(\)/);
   assert.match(main, /state\.teamAccess\?\.companyId/);
   assert.match(main, /async function openSetup\(\) \{[\s\S]*?await refreshProjects\(\)\.catch\(\(\) => \{\}\);/);
   assert.match(main, /setupMode,/);
@@ -247,7 +252,7 @@ test("notifies the renderer when SPS Identity Desktop sign-in state changes", as
 
   assert.match(main, /createSpsDesktopAccountController\(\{[\s\S]*?onStatusChanged: sendDesktopAccountStatus/);
   assert.match(accountController, /async function startSignIn\(\)[\s\S]*?recordAttempt\("succeeded"\)[\s\S]*?notifyStatus\(\);/);
-  assert.match(accountController, /async function signOut\(\)[\s\S]*?await disconnectCurrentNode\(\)[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?persistState\(\{ rememberActiveConnection: false \}\)[\s\S]*?notifyStatus\(\);/);
+  assert.match(accountController, /async function signOut\(\)[\s\S]*?await disconnectCurrentNode\(\{ assertCurrent \}\)[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?persistState\(\{ rememberActiveConnection: false, beforeCommit: assertCurrent \}\)[\s\S]*?notifyStatus\(\);/);
 });
 
 test("resumes a pending legacy Owner Host adoption after Desktop restarts", async () => {
@@ -277,7 +282,7 @@ test("returns an expired Member refresh token to the SPS sign-in screen without 
 
   assert.match(
     accountController,
-    /async function ensureAccessToken\(\)[\s\S]*?isExpiredRefreshToken\(error\)[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?recordAttempt\("failed", "SPS sign-in expired\. Sign in again to continue\."\)[\s\S]*?persistState\(\{ rememberActiveConnection: false \}\)/,
+    /async function ensureAccessToken\(\)[\s\S]*?isExpiredRefreshToken\(error\)[\s\S]*?state\.encryptedDesktopAccount = null;[\s\S]*?recordAttempt\("failed", "SPS sign-in expired\. Sign in again to continue\."\);[\s\S]*?persistState\(\{ rememberActiveConnection: false, beforeCommit: \(\) => \{[\s\S]*?expiryEpoch !== accountSessionEpoch \|\| currentAccount\(\)[\s\S]*?\} \}\)/,
   );
 });
 
@@ -333,7 +338,7 @@ test("refreshes Member Node metadata when reopening Workspace", async () => {
   const main = await readFile(mainPath, "utf8");
 
   assert.match(main, /import \{[\s\S]*?shouldRefreshJoinedDesktopNode,[\s\S]*?\} from "\.\/node-activation\.mjs";/);
-  assert.match(main, /async function ensureJoinedDesktopNode\(\)[\s\S]*?shouldRefreshJoinedDesktopNode\([\s\S]*?return await connectNode\(\)/);
+  assert.match(main, /async function ensureJoinedDesktopNode\(\)[\s\S]*?shouldRefreshJoinedDesktopNode\([\s\S]*?const ticket = beginNodeConnectionLifetime\(\);[\s\S]*?const context = captureNodeConnectionContext\(ticket, \{ identityBound: false \}\);[\s\S]*?return await connectNode\(ticket, context\)/);
   assert.match(main, /appVersion: app\.getVersion\(\),[\s\S]*?capabilities,[\s\S]*?runners,[\s\S]*?transportPublicKey: identity\.transportPublicKeyPem/);
 });
 

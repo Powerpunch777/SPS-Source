@@ -60,7 +60,7 @@ test("recovery launch and unreadable connection settings never enter automatic H
   assert.match(persist, /if \(desktopStateUnavailable\) throw/);
   assert.match(persist, /if \(hasPendingLegacyDesktopOwnerAdoption\(state\)\) return;/);
   assert.match(main, /async function startDesktopAccountSignIn\(\) \{\s*if \(desktopStateUnavailable\) throw/);
-  assert.match(main, /async function connectNode\(\) \{\s*if \(desktopStateUnavailable\) throw/);
+  assert.match(main, /async function connectNode\([^)]*\) \{\s*if \(desktopStateUnavailable\) throw/);
   const accountStatus = section("function sendDesktopAccountStatus() {", "function openSpsExternalUrl(");
   assert.match(accountStatus, /if \(!backgroundStartupDeferred && nativeMemberAuthority\(\) && state\.nativeNodes\?\.entries\?\.some\(entry => entry\.enabled\)\)\s*\{\s*void ensureNativeNodeController\(\)\.resume\(\)\.catch\(\(\) => \{\}\);/);
   assert.match(main, /connectNativeNode: \(input, options\) => ensureNativeNodeController\(\)\.connect\(input, options\)/,

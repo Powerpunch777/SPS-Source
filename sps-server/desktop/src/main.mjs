@@ -360,6 +360,7 @@ const desktopUpdateController = createSpsDesktopUpdateController({
   setShutdownComplete: (value = true) => { shutdownComplete = value; },
 });
 let ownerHostManager = null;
+let ownerHostInstanceGeneration = 0;
 let ownerHostRuntimePromise = null;
 let defaultMemoryManager = null;
 let defaultMemoryStatus = disabledSpsExtensionStatus();
@@ -379,6 +380,11 @@ const TEAM_WORKPLANE_SYNC_RETRY_MS = 30_000;
 const ownerHostDesktopAccessToken = createSpsDesktopAccessToken();
 const ownerHostAgentJwtSecret = randomBytes(48).toString("base64url");
 let ownerHostCompanies = [];
+let ownerHostCompaniesRequestGeneration = 0;
+let ownerHostCompaniesResolvedGeneration = 0;
+let identityTeamContextRequestGeneration = 0;
+let workspaceProjectsRequestGeneration = 0;
+let desktopAuthPollRequestGeneration = 0;
 let pluginRuntimeStatus = {
   state: "checking",
   command: null,
@@ -561,17 +567,100 @@ async function requireSpsCoreRequestAccess(hubUrl, profile = state.profile) {
   return access;
 }
 
-async function refreshSpsIdentityTeamContext() {
+function captureWorkspaceReadScope(profile = state.profile) {
+  let profileSnapshot = profile ? structuredClone(profile) : null;
+  let profileFingerprint = profileSnapshot ? JSON.stringify(profileSnapshot) : null;
+  const teamAccessSnapshot = state.teamAccess ? structuredClone(state.teamAccess) : null;
+  const teamAccessFingerprint = JSON.stringify(teamAccessSnapshot);
+  const accountSubject = currentDesktopAccountSubject();
+  const sessionEpoch = currentDesktopSessionEpoch();
+  const ownerHostScope = isOwnerHostProfile(profileSnapshot);
+  const hostInstanceGeneration = ownerHostInstanceGeneration;
+  const hostManager = ownerHostScope ? ownerHostManager : null;
+  const hostUrl = ownerHostScope ? ownerHostStatus.url : null;
+  const hostStartedAt = ownerHostScope ? ownerHostStatus.startedAt : null;
+  const hostWasReady = ownerHostScope && ownerHostIsReady();
+  const hostOwnerSubject = ownerHostScope ? state.ownerHostOwnerSubject ?? null : null;
+  const assertOwner = () => {
+    if (currentDesktopAccountSubject() !== accountSubject
+      || currentDesktopSessionEpoch() !== sessionEpoch) {
+      throw new Error("SPS Desktop account changed during a Workspace read.");
+    }
+    if (JSON.stringify(state.teamAccess ?? null) !== teamAccessFingerprint) {
+      throw new Error("SPS Owner Host context changed during a Workspace read.");
+    }
+    if (ownerHostScope && (!isOwnerHostProfile()
+      || ownerHostInstanceGeneration !== hostInstanceGeneration
+      || ownerHostManager !== hostManager
+      || ownerHostStatus.url !== hostUrl
+      || (state.ownerHostOwnerSubject ?? null) !== hostOwnerSubject
+      || (hostWasReady && (!ownerHostIsReady() || ownerHostStatus.startedAt !== hostStartedAt)))) {
+      throw new Error("SPS Owner Host instance changed during a Workspace read.");
+    }
+  };
+  const assertCurrent = () => {
+    assertOwner();
+    if ((state.profile ? JSON.stringify(state.profile) : null) !== profileFingerprint) {
+      throw new Error("SPS Desktop connection changed during a Workspace read.");
+    }
+  };
+  const isCurrent = () => {
+    try { assertCurrent(); return true; }
+    catch { return false; }
+  };
+  return Object.freeze({
+    get profile() { return profileSnapshot; },
+    get teamAccess() { return teamAccessSnapshot; },
+    assertCurrent,
+    isCurrent,
+    refreshProfileAfterOwnedMutation() {
+      assertOwner();
+      if (!state.profile) throw new Error("SPS Desktop connection is unavailable.");
+      profileSnapshot = structuredClone(state.profile);
+      profileFingerprint = JSON.stringify(profileSnapshot);
+    },
+  });
+}
+
+async function refreshSpsIdentityTeamContext(capturedScope = null) {
   if (!isSpsIdentityRemoteProfile() || !state.profile) return null;
-  const access = await requireSpsCoreRequestAccess(state.profile.hubUrl);
-  const companies = await listSpsCompanies({ hubUrl: state.profile.hubUrl, ...access });
-  state.companies = normalizeCompanyList(companies);
-  if (!state.profile.companyId && state.companies.length === 1) {
-    state.profile.companyId = state.companies[0].id;
+  const scope = capturedScope ?? captureWorkspaceReadScope();
+  const requestGeneration = ++identityTeamContextRequestGeneration;
+  const isCurrent = () => scope.isCurrent() && requestGeneration === identityTeamContextRequestGeneration;
+  const assertCurrent = () => {
+    scope.assertCurrent();
+    if (requestGeneration !== identityTeamContextRequestGeneration) {
+      throw new Error("A newer SPS company refresh replaced this request.");
+    }
+  };
+  let access, companies;
+  try {
+    access = await requireSpsCoreRequestAccess(scope.profile.hubUrl, scope.profile);
+    if (!isCurrent()) return null;
+    companies = normalizeCompanyList(await listSpsCompanies({ hubUrl: scope.profile.hubUrl, ...access }));
+    if (!isCurrent()) return null;
+  } catch (error) {
+    if (!isCurrent()) return null;
+    throw error;
   }
-  await persistState();
-  if (state.profile.companyId) await refreshProjects();
-  return state.companies;
+
+  state.companies = companies;
+  if (!state.profile.companyId && companies.length === 1) {
+    state.profile.companyId = companies[0].id;
+    scope.refreshProfileAfterOwnedMutation();
+  }
+  try {
+    await persistState({ beforeCommit: assertCurrent });
+  } catch (error) {
+    if (!isCurrent()) return null;
+    throw error;
+  }
+  if (!isCurrent()) return null;
+  if (state.profile.companyId) {
+    try { await refreshProjects(); }
+    catch (error) { if (isCurrent()) throw error; return null; }
+  }
+  return isCurrent() ? state.companies : null;
 }
 
 async function acceptSpsIdentityInvite(hubUrl, inviteToken) {
@@ -1940,6 +2029,7 @@ async function startOwnerHost({ activate = false, restorePermit, expectedOwnerSu
 }
 
 async function startOwnerHostWithContext({ activate, expectedSubject }) {
+  ownerHostInstanceGeneration += 1;
   const ownerHost = await ensureOwnerHostManager();
   backgroundStartupDeferred = false;
   ownerHostStatus = {
@@ -2005,7 +2095,7 @@ async function bootstrapOwnerHost() {
   if (!state.ownerHostOwnerSubject && state.legacyOwnerHostAdoptionPending && currentDesktopAccount()) {
     try {
       await adoptLegacyOwnerHostIfNeeded();
-      await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+      await refreshOwnerHostCompanies().catch(() => []);
       await maybeOpenWorkspaceForCurrentAccount();
       sendDesktopAccountStatus();
       return;
@@ -2046,8 +2136,10 @@ async function bootstrapOwnerHost() {
   }
 }
 
-async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = false, sessionOnly = false } = {}) {
+async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = false, sessionOnly = false, assertCurrent = () => {} } = {}) {
+  assertCurrent();
   await requireReadyOwnerHost();
+  assertCurrent();
   if (ownerBootstrap && (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost())) {
     throw new Error("Only this SPS Owner Host can perform this local Host action.");
   }
@@ -2068,7 +2160,8 @@ async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = f
   headers[SPS_DESKTOP_ACCESS_HEADER] = ownerHostDesktopAccessToken;
   if (ownerBootstrap) headers[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER] = ownerHostDesktopAccessToken;
   if (isOwnerHostProfile()) {
-    const identitySession = await establishSpsIdentityCoreSession(requireSpsOwnerHostOrigin(ownerHostStatus.url));
+    const identitySession = await establishSpsIdentityCoreSession(ownerHostOrigin);
+    assertCurrent();
     if (!identitySession) {
       throw new Error("This SPS Owner Host did not accept the signed-in SPS Identity session.");
     }
@@ -2083,9 +2176,12 @@ async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = f
       signal: spsRequestTimeoutSignal(),
     });
   } catch (error) {
+    assertCurrent();
     throw spsRequestError(error, "SPS Owner Host request timed out. Reopen SPS Desktop and try again.");
   }
+  assertCurrent();
   const text = await response.text();
+  assertCurrent();
   let data = null;
   try {
     data = text ? JSON.parse(text) : null;
@@ -2095,6 +2191,7 @@ async function ownerHostApi(pathname, { method = "GET", body, ownerBootstrap = f
   if (!response.ok) {
     throw Object.assign(new Error(data?.error || `SPS Owner Host request failed with ${response.status}.`), { status: response.status });
   }
+  assertCurrent();
   return data;
 }
 
@@ -3489,7 +3586,7 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
     promoted = true;
     assertRestoreAccount();
     await startOwnerHost({ activate: true, restorePermit, expectedOwnerSubject: account.subject });
-    await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+    await refreshOwnerHostCompanies().catch(() => []);
     await dialog.showMessageBox(mainWindow ?? undefined, {
       type: "info",
       title: "SPS Server restored",
@@ -3528,7 +3625,27 @@ function normalizeCompanyList(value) {
 
 async function refreshOwnerHostCompanies() {
   if (!isOwnerHostProfile()) return [];
-  ownerHostCompanies = normalizeCompanyList(await ownerHostApi("/companies"));
+  const scope = captureWorkspaceReadScope();
+  const requestGeneration = ++ownerHostCompaniesRequestGeneration;
+  const isCurrent = () => scope.isCurrent() && requestGeneration === ownerHostCompaniesRequestGeneration;
+  const assertCurrent = () => {
+    scope.assertCurrent();
+    if (requestGeneration !== ownerHostCompaniesRequestGeneration) {
+      throw new Error("A newer Owner Host company refresh replaced this request.");
+    }
+  };
+  let companies;
+  try {
+    companies = normalizeCompanyList(await ownerHostApi("/companies", { assertCurrent }));
+  } catch (error) {
+    if (!isCurrent()) return [];
+    ownerHostCompanies = [];
+    ownerHostCompaniesResolvedGeneration = requestGeneration;
+    throw error;
+  }
+  if (!isCurrent()) return [];
+  ownerHostCompanies = companies;
+  ownerHostCompaniesResolvedGeneration = requestGeneration;
   return ownerHostCompanies;
 }
 
@@ -3608,6 +3725,7 @@ async function ensureInitialOwnerHostCompany() {
 }
 
 async function restartOwnerHostForConfiguration() {
+  ownerHostInstanceGeneration += 1;
   closeWorkspaceWindow();
   if (ownerHostManager) await ownerHostManager.stop({ force: true });
   ownerHostManager = null;
@@ -3916,7 +4034,7 @@ async function disablePrivateTeamAccess() {
   });
   await restartOwnerHostForConfiguration();
   await activateOwnerHostProfile();
-  await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+  await refreshOwnerHostCompanies().catch(() => []);
   return publicStatus();
 }
 
@@ -3927,48 +4045,100 @@ function normalizeProjectList(value) {
     .map((project) => ({ id: project.id, name: project.name }));
 }
 
+function staleWorkspaceReadError() {
+  return new Error("This Workspace read was superseded by a newer connection request.");
+}
+
 async function refreshProjects() {
+  const scope = captureWorkspaceReadScope();
+  const requestGeneration = ++workspaceProjectsRequestGeneration;
+  let ownerCompaniesGeneration = ownerHostCompaniesRequestGeneration;
+  const isCurrent = () => scope.isCurrent() && requestGeneration === workspaceProjectsRequestGeneration;
+  const assertCurrent = () => {
+    scope.assertCurrent();
+    if (requestGeneration !== workspaceProjectsRequestGeneration) {
+      throw new Error("A newer project refresh replaced this request.");
+    }
+  };
+  const persistCurrent = async () => {
+    try {
+      await persistState({ beforeCommit: () => {
+        assertCurrent();
+        if (isOwnerHostProfile(scope.profile)
+          && ownerCompaniesGeneration !== ownerHostCompaniesRequestGeneration) {
+          throw new Error("Owner Host company context changed during project refresh.");
+        }
+      } });
+    } catch (error) {
+      if (!isCurrent()) return false;
+      throw error;
+    }
+    return isCurrent();
+  };
+
   if (isOwnerHostProfile()) {
     // The Owner Host is not a Member Node, but it still needs the same
     // project list to choose the one source folder each project exposes.
-    if (!state.profile?.companyId && !state.teamAccess?.companyId && ownerHostCompanies.length === 0) {
-      await refreshOwnerHostCompanies();
+    if (!scope.profile?.companyId && !scope.teamAccess?.companyId && ownerHostCompanies.length === 0) {
+      try { await refreshOwnerHostCompanies(); }
+      catch (error) { if (isCurrent()) throw error; throw staleWorkspaceReadError(); }
+      if (!isCurrent() || ownerHostCompaniesResolvedGeneration !== ownerHostCompaniesRequestGeneration) throw staleWorkspaceReadError();
+      ownerCompaniesGeneration = ownerHostCompaniesRequestGeneration;
     }
-    const companyId = state.profile?.companyId
-      || state.teamAccess?.companyId
+    const companyId = scope.profile?.companyId
+      || scope.teamAccess?.companyId
       || ownerHostCompanies[0]?.id
       || null;
-    if (companyId && state.profile && !state.profile.companyId) {
+    let projects = [];
+    if (companyId) {
+      try {
+        projects = normalizeProjectList(await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/projects`, { assertCurrent }));
+      } catch (error) {
+        if (!isCurrent()) throw staleWorkspaceReadError();
+        throw error;
+      }
+    }
+    if (!isCurrent() || ownerCompaniesGeneration !== ownerHostCompaniesRequestGeneration) throw staleWorkspaceReadError();
+    if (companyId && scope.profile && !scope.profile.companyId) {
       // Private Owner Hosts already persist the company selected while team
       // access was enabled. Reuse it for Host-only folder management rather
       // than requiring a second, unrelated company picker.
       state.profile.companyId = companyId;
+      scope.refreshProfileAfterOwnedMutation();
     }
-    state.projects = companyId
-      ? normalizeProjectList(await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/projects`))
-      : [];
-    await persistState();
+    state.projects = projects;
+    if (!await persistCurrent()) throw staleWorkspaceReadError();
     return state.projects;
   }
-  const companyId = state.profile?.companyId;
-  if (!state.profile || !companyId) {
+
+  const companyId = scope.profile?.companyId;
+  if (!scope.profile || !companyId) {
+    if (!isCurrent()) throw staleWorkspaceReadError();
     state.projects = [];
-    await persistState();
+    if (!await persistCurrent()) throw staleWorkspaceReadError();
     return state.projects;
   }
-  const access = await resolveSpsCoreRequestAccess(state.profile.hubUrl);
+  let access;
+  try { access = await resolveSpsCoreRequestAccess(scope.profile.hubUrl, scope.profile); }
+  catch (error) { if (!isCurrent()) throw staleWorkspaceReadError(); throw error; }
+  if (!isCurrent()) throw staleWorkspaceReadError();
   if (!access.accessToken && !access.sessionCookie) {
+    if (!isCurrent()) throw staleWorkspaceReadError();
     state.projects = [];
-    await persistState();
+    if (!await persistCurrent()) throw staleWorkspaceReadError();
     return state.projects;
   }
-  const projects = await listSpsProjects({
-    hubUrl: state.profile.hubUrl,
-    companyId,
-    ...access,
-  });
+  let projects;
+  try {
+    projects = await listSpsProjects({
+      hubUrl: scope.profile.hubUrl,
+      companyId,
+      ...access,
+    });
+  } catch (error) { if (!isCurrent()) throw staleWorkspaceReadError(); throw error; }
+  if (!isCurrent()) throw staleWorkspaceReadError();
   state.projects = normalizeProjectList(projects);
-  await persistState();
+  if (!await persistCurrent()) throw staleWorkspaceReadError();
   return state.projects;
 }
 
@@ -4382,6 +4552,7 @@ function ensureCoreSettingsController() {
       return choice.response === 1;
     },
     restartHost: async () => {
+      ownerHostInstanceGeneration += 1;
       const current = await ownerHostManager?.inspect();
       if (current?.state === "running-existing") throw new Error("SPS cannot restart a Host process it does not own.");
       closeWorkspaceWindow();
@@ -5495,7 +5666,7 @@ function registerIpc() {
     ownerCreationInProgress = true;
     try {
       await startOwnerHost({ activate: true });
-      await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+      await refreshOwnerHostCompanies().catch(() => []);
       return publicStatus();
     } finally {
       ownerCreationInProgress = false;
@@ -5521,7 +5692,7 @@ function registerIpc() {
     const wasRemoteProfile = Boolean(state.profile && !isOwnerHostProfile());
     if (wasRemoteProfile) await disconnectCurrentNode();
     await startOwnerHost({ activate: true });
-    await refreshOwnerHostCompanies().catch(() => { ownerHostCompanies = []; });
+    await refreshOwnerHostCompanies().catch(() => []);
     return publicStatus();
   }));
   ipcMain.handle("desktop:refresh-owner-host-companies", async () => {
@@ -5702,18 +5873,23 @@ function registerIpc() {
     if (!state.profile) throw new Error("Save an SPS team connection first");
     if (isOwnerHostProfile()) throw new Error("SPS sign-in is used for remote team access, not local Owner Host mode.");
     if (isSpsIdentityRemoteProfile()) {
+      const scope = captureWorkspaceReadScope();
       let companyAccess = "unavailable";
       try {
-        await refreshSpsIdentityTeamContext();
+        await refreshSpsIdentityTeamContext(scope);
+        scope.assertCurrent();
         companyAccess = state.companies.length === 0
           ? "none"
           : state.profile.companyId
             ? "selected"
             : "choose";
       } catch {
+        if (!scope.isCurrent()) throw staleWorkspaceReadError();
         // The SPS Identity login remains valid while the Owner Host is temporarily unavailable.
       }
+      scope.assertCurrent();
       await maybeOpenWorkspaceForCurrentAccount();
+      scope.assertCurrent();
       return { ...publicStatus(), auth: { status: "approved", provider: "sps-identity", companyAccess } };
     }
     pendingAuth = await startSpsDesktopAuth({
@@ -5725,36 +5901,66 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:poll-auth", async () => {
     if (isSpsIdentityRemoteProfile() && state.profile) {
+      const scope = captureWorkspaceReadScope();
       let companyAccess = "unavailable";
       try {
-        await refreshSpsIdentityTeamContext();
+        await refreshSpsIdentityTeamContext(scope);
+        scope.assertCurrent();
         companyAccess = state.companies.length === 0
           ? "none"
           : state.profile.companyId
             ? "selected"
             : "choose";
       } catch {
+        if (!scope.isCurrent()) throw staleWorkspaceReadError();
         // The SPS Identity login remains valid while the Owner Host is temporarily unavailable.
       }
+      scope.assertCurrent();
       await maybeOpenWorkspaceForCurrentAccount();
+      scope.assertCurrent();
       return { ...publicStatus(), auth: { status: "approved", provider: "sps-identity", companyAccess } };
     }
     if (!state.profile || !pendingAuth) throw new Error("No SPS Desktop sign-in is waiting for approval");
-    const result = await pollSpsDesktopAuth({
-      hubUrl: state.profile.hubUrl,
-      challengeId: pendingAuth.id,
-      challengeToken: pendingAuth.token,
-    });
+    const scope = captureWorkspaceReadScope();
+    const authAttempt = pendingAuth;
+    const requestGeneration = ++desktopAuthPollRequestGeneration;
+    const isCurrent = () => scope.isCurrent()
+      && pendingAuth === authAttempt
+      && requestGeneration === desktopAuthPollRequestGeneration;
+    const assertCurrent = () => {
+      scope.assertCurrent();
+      if (pendingAuth !== authAttempt || requestGeneration !== desktopAuthPollRequestGeneration) {
+        throw new Error("A newer SPS Desktop sign-in check replaced this request.");
+      }
+    };
+    let result;
+    try {
+      result = await pollSpsDesktopAuth({
+        hubUrl: scope.profile.hubUrl,
+        challengeId: authAttempt.id,
+        challengeToken: authAttempt.token,
+      });
+    } catch (error) {
+      if (!isCurrent()) return publicStatus();
+      throw error;
+    }
+    if (!isCurrent()) return publicStatus();
     let companyAccess = "pending";
     if (result.status === "approved") {
-      state.encryptedBoardApiToken = encrypt(pendingAuth.boardApiToken);
+      state.encryptedBoardApiToken = encrypt(authAttempt.boardApiToken);
       pendingAuth = null;
-      await persistState();
+      try { await persistState({ beforeCommit: () => { scope.assertCurrent(); if (requestGeneration !== desktopAuthPollRequestGeneration) throw new Error("A newer SPS Desktop sign-in check replaced this request."); } }); }
+      catch (error) {
+        if (!scope.isCurrent() || requestGeneration !== desktopAuthPollRequestGeneration || pendingAuth !== null) return publicStatus();
+        throw error;
+      }
+      if (!scope.isCurrent() || requestGeneration !== desktopAuthPollRequestGeneration) return publicStatus();
       try {
         const account = await getSpsDesktopAccount({
-          hubUrl: state.profile.hubUrl,
-          accessToken: currentBoardToken(),
+          hubUrl: scope.profile.hubUrl,
+          accessToken: authAttempt.boardApiToken,
         });
+        if (!isCurrentAfterApproval()) return publicStatus();
         const displayName = resolveSpsNodeDisplayName({
           configuredName: state.profile.displayName,
           accountName: account?.name,
@@ -5762,48 +5968,62 @@ function registerIpc() {
         });
         if (state.profile.displayName !== displayName) {
           state.profile.displayName = displayName;
-          await persistState();
+          scope.refreshProfileAfterOwnedMutation();
+          await persistState({ beforeCommit: assertCurrentAfterApproval });
         }
       } catch {
+        if (!isCurrentAfterApproval()) return publicStatus();
         // Google approval remains valid if the optional account profile request
         // is temporarily unavailable. Registration still receives a safe local fallback.
       }
       try {
         const companies = await listSpsCompanies({
-          hubUrl: state.profile.hubUrl,
-          accessToken: currentBoardToken(),
+          hubUrl: scope.profile.hubUrl,
+          accessToken: authAttempt.boardApiToken,
         });
-        state.companies = Array.isArray(companies)
-          ? companies
-            .filter((company) => company && typeof company.id === "string" && typeof company.name === "string")
-            .map((company) => ({ id: company.id, name: company.name }))
-          : [];
+        if (!isCurrentAfterApproval()) return publicStatus();
+        state.companies = normalizeCompanyList(companies);
         if (!state.profile.companyId && state.companies.length === 1) {
           state.profile.companyId = state.companies[0].id;
+          scope.refreshProfileAfterOwnedMutation();
         }
         companyAccess = state.companies.length === 0
           ? "none"
           : state.profile.companyId
             ? "selected"
             : "choose";
-        await persistState();
+        await persistState({ beforeCommit: assertCurrentAfterApproval });
+        if (!isCurrentAfterApproval()) return publicStatus();
         if (state.profile.companyId) {
           try {
             await refreshProjects();
           } catch {
+            if (!isCurrentAfterApproval()) return publicStatus();
             // A successful sign-in is retained even if the project list is briefly unavailable.
           }
         }
       } catch {
+        if (!isCurrentAfterApproval()) return publicStatus();
         // Google approval completed. The user can retry after a transient Hub failure.
         companyAccess = "unavailable";
       }
+      if (!isCurrentAfterApproval()) return publicStatus();
       await maybeOpenWorkspaceForCurrentAccount();
     }
     return { ...publicStatus(), auth: { ...result, companyAccess } };
+
+    function isCurrentAfterApproval() {
+      return scope.isCurrent() && pendingAuth === null && requestGeneration === desktopAuthPollRequestGeneration;
+    }
+    function assertCurrentAfterApproval() {
+      scope.assertCurrent();
+      if (pendingAuth !== null || requestGeneration !== desktopAuthPollRequestGeneration) {
+        throw new Error("A newer SPS Desktop sign-in check replaced this request.");
+      }
+    }
   });
   ipcMain.handle("desktop:scan-capabilities", async () => await scanLocalCapabilities());
-  ipcMain.handle("desktop:connect-node", connectNode);
+  ipcMain.handle("desktop:connect-node", async () => await connectNode());
   ipcMain.handle("desktop:disconnect-node", async () => {
     const nodeDisconnect = await disconnectCurrentNode();
     return { ...publicStatus(), nodeDisconnect };

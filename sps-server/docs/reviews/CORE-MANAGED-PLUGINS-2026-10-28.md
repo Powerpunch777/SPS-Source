@@ -186,6 +186,11 @@ Core 완료 전 남은 필수 작업:
 등록·heartbeat·disconnect 및 계정 cookie/로그아웃의 후속 수명 보완과 실제 Main
 함수 VM/DI 검사 범위는 [Node 연결과 계정 세션 수명 보완](NODE-ACCOUNT-LIFETIME-2026-10-28.md)에
 기록했다. 계정 변경이나 로컬 세대 폐기는 원격 처리의 취소/삭제 증거가 아니다.
+Core의 출력 없는 legacy 명령 자동 재배정 제거와 실제 임시 DB 검증은
+[출력 없는 Runner 명령의 중복 배정 방지](RUNNER-SILENT-CLAIM-2026-10-28.md)에 기록했다.
+미완료 claim의 복구·실제 원격 종료 확인은 여전히 별도 필수 작업이다.
+Desktop 목록 조회의 수명과 기존 contract 검사 보완은
+[Workspace 목록 조회 검토](WORKSPACE-READ-LIFETIME-2026-10-28.md)에 기록했다.
 
 공개 Marketplace는 제품에서 제거한다. 전용 Builder 신규 요구는 별도 핸드오프까지
 보류한다. AppContainer 연구는 보존하고 완전한 비신뢰 코드 OS 격리는 1차 완료
