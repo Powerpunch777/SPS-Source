@@ -5,7 +5,7 @@
 공개 Marketplace·Builder 신규 개발·완전한 비신뢰 OS 격리를 필수 조건에서
 분리했지만 실제 Core 결함과 검사 실패를 완료로 바꾸지 않는다.
 
-현재 통합 Core 소스: `a922e43e3b57911e71f05ffa9910c8ee790dcc59`.
+현재 통합 Core 소스: `296feed754f723f30ae10b1f2a889aca4dd943ae`.
 아래 기록의 각 후보 revision과 당시 검증 결과는 서로 구분한다.
 Desktop `0.4.137` development-candidate와 SDK
 `61a929f6c783f78e5af603682de1543c7e24abc0`(미출시 `0.11.0`)는 유지한다.
@@ -205,6 +205,16 @@ packaged Host Plugin lifecycle의 기존 도구 opt-in 누락과 종료 허위 �
 [미실행 Node claim 반환](UNSTARTED-NODE-CLAIMS-2026-10-29.md)에 기록했다.
 Plugin별 자손과 전체 Host Job의 소유권 차이는
 [프로세스 소유권 점검](PLUGIN-PROCESS-OWNERSHIP-2026-10-29.md)을 따른다.
+그 점검에서 남긴 Windows Worker별 자손 소유권은
+[실행기 통합 기록](PLUGIN-WINDOWS-PROCESS-TREES-2026-10-29.md)에서 후속 구현했다.
+Core 독립 자산·target PID·종료 ACK를 연결했고 실제 Windows Worker/Node 자손의
+선택 중지와 crash 정리를 검사했다. POSIX 자손·packaged nested Job·강제 Core 손실·
+helper cache 회수와 배포 수용을 완료로 확대하지 않는다.
+이전 Source `eeafa0a` / Core `a922e43e` push `40715546162`와 PR `40715560866`의
+Windows Desktop job `122912100699`·`122912152089`는 packaged Host/Job·surfaces·
+preview·lifecycle·Node 서명/lease/capability 검사까지 성공했다. push의 Linux 전체
+타입·빌드와 9개 shard 등 나머지 job도 성공했고 compatibility 보안 gate만 실패했다.
+이전 후보의 성공을 새 Worker별 Job 실행기의 packaged 수용으로 사용하지 않는다.
 
 이전 Source `a5254ba` / Core `2417d613` PR `40706191315`의 Windows Desktop
 job `122878850805`가 성공으로 종료했다. 기존 도구 opt-in과 강화한 종료 판정이

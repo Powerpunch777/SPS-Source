@@ -375,6 +375,10 @@ async function buildOwnerHostCoreArtifacts() {
     await requireFile(path.join(serverPackageRoot, "dist", "onboarding-assets", relative),
       "SPS Owner Host Agent instructions are missing after the server build.");
   }
+  for (const relative of ["services/plugin-worker-process.js", "native-runtime/windows-job-supervisor/supervisor.mjs", "native-runtime/windows-job-supervisor/WindowsJobSupervisor.cs"]) {
+    await requireFile(path.join(serverPackageRoot, "dist", relative),
+      "SPS Core plugin process ownership runtime is missing after the server build.");
+  }
   await run(process.execPath, [prepareServerUiDist], coreRoot);
 }
 

@@ -45,6 +45,23 @@ test("builds and bundles the static Core Workspace UI with the Owner Host runtim
   assert.match(buildScript, /runtimePackageRoot/);
 });
 
+test("requires Core-owned process supervision assets in both built and packaged runtimes", async () => {
+  const [buildScript, verifier, coreAssets, coreManifest] = await Promise.all([
+    readFile(path.join(desktopDirectory, "scripts", "prepare-owner-host-runtime.mjs"), "utf8"),
+    readFile(path.join(desktopDirectory, "scripts", "verify-packaged-owner-host-runtime.mjs"), "utf8"),
+    readFile(path.resolve(desktopDirectory, "../../external/sps-core/server/scripts/copy-build-assets.mjs"), "utf8"),
+    readFile(path.resolve(desktopDirectory, "../../external/sps-core/server/package.json"), "utf8"),
+  ]);
+  for (const relative of ["services/plugin-worker-process.js", "native-runtime/windows-job-supervisor/supervisor.mjs", "native-runtime/windows-job-supervisor/WindowsJobSupervisor.cs"]) {
+    assert.ok(buildScript.includes(`"${relative}"`));
+    assert.ok(verifier.includes(`"node_modules/@paperclipai/server/dist/${relative}"`));
+  }
+  assert.ok(coreAssets.includes('"native-runtime"'));
+  const manifest = JSON.parse(coreManifest);
+  assert.ok(manifest.files.includes("dist"));
+  assert.equal(manifest.dependencies["@sps/desktop-node"], undefined);
+});
+
 test("ships one verified Owner Host runtime archive instead of expanded runtime files", async () => {
   const packageManifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
   const verifierScript = await readFile(
