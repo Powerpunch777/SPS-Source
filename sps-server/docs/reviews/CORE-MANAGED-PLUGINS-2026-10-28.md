@@ -112,6 +112,53 @@ assertion 1개가 새 `fixture.remove(progress => ...)` 형태를 인정하지 �
 보안 gate `122758011536` 실패도 유지한다. Linux shard 수는 실제 job 목록의
 serialized 4개·server 3개·workspaces 2개, 총 9개이며 이전의 8개 표기를 바로잡았다.
 
+Source `05171c0` 자동 push `40672649589`도 실패로 종료했다. Linux 전체 타입·빌드와
+9개 shard, Identity 22/24/26, Kit/Registry, bundled plugins, Room은 통과했다.
+Windows `122763066489`은 정적 검사를 지나 실제 `owner_creation` 단계에서
+`Bundled Plugin Builder is unavailable`로 실패했다. 새 기본 Builder OFF 정책과
+기존 E2E fixture의 필수 번들 가정이 충돌한다. Builder의 기본값을 되돌리지 않고
+기존 호환성 검사를 명시적 opt-in fixture로 수정했다. Workspace E2E는 실제 설치 API로
+패키지를 추가하고, packaged Owner Host smoke는 새 Workspace의 기본 OFF를 확인한 뒤
+명시적으로 활성화한다. package manifest의 기존 activation metadata와 런타임 기본
+정책을 구분한다. 관련 정적 검사 6개 통과, packaged smoke 보완 후 해당 파일 2개
+재통과 및 두 script 구문 검사 통과. 실제 Windows E2E는 재실행하지 않았다. 임시 데이터 제거 실패가
+해결되었다는 증거로 사용하지 않는다. 보안 `122763066727`은 같은 미승인 Zod
+High `1243066`으로 실패했다.
+
+## 후속 패키지 파일·프로세스 조정
+
+Core `115a05f15bff3be0382f382748b12070f41ab17c`로 커밋·push했고 Source의
+gitlink·support matrix·생성 candidate 문서를 같은 Core/기존 SDK 조합으로 맞췄다.
+후속 candidate 문서 검사 4개가 통과했다. 이 조합의 전체 CI 결과는 아직 없다.
+
+새 npm 설치와 업그레이드는 UUID별 전용 경로를 사용하고 검증한 packagePath를
+저장한다. 설치 전 검증·트랜잭션 실패는 소유한 staging만 제거하며, 저장 이후
+실패는 저장된 파일을 제거하지 않는다. 명시한 파일이 없으면 공유 경로의 다른
+버전으로 되돌아가 실행하지 않는다. 외부 로컬 소스 경로는 삭제하지 않는다.
+
+삭제는 해당 Plugin의 새 시작·재시작을 작업 종료까지 막고 정확한 Host handle의
+close를 확인한 후 파일과 Registry를 정리한다. 기존 공유 npm 경로는 다른 작업자나
+시작이 있으면 작업 전에 고정 maintenance 오류로 거절한다. 다른 Plugin을 자동으로
+중지하지 않는다. HTTP는 고정 409와 `plugin_package_maintenance_required`를
+반환하고 완료 audit·Inbox 삭제를 수행하지 않는다. shutdown은 진행 중 파일 작업을
+기다린다. 이는 정상 종료 조정이며 crash-atomic journal이나 자손 격리 증거는 아니다.
+직접 loader 호출도 현재 Plugin·배타성에 맞는 유효한 permit을 요구한다. 정리 작업이
+끝나면 permit을 폐기하므로 누락·위조·만료·다른 Plugin·공유 경로에 대한 일반 permit은
+거부한다. 이는 Core 내부의 호출 계약이며 OS 보안 경계가 아니다. 모호한 staging
+경로는 upgrade 원본으로도 사용하지 않는다. 이전 버전 artifact의 자동 정리·저널은
+아직 없으므로 이를 완료된 디스크 회수 또는 비정상 종료 복구로 표현하지 않는다.
+
+후속 집중 검사: loader fake npm 10개 통과(실제 다운로드 없음), 기존 restart·upgrade
+rollback과 새 lifecycle/manager 4개 파일 22개 통과, HTTP maintenance·완료 후 503
+선택 2개 통과·80개 미선택, OpenAPI 9개 통과. HTTP 첫 실행은 cold import가 20초를
+넘어 실패했고 기존 도구 검사와 같은 별도 beforeAll import budget으로 이동한 뒤
+통과했다. manager 시작 경합·유지한 handle 재시작·shutdown 대기를 추가한 해당 파일은
+8개 통과했다. permit 통합 후 3개 파일 21개 통과, 최종 lifecycle 분기 수정 후 해당
+3개만 재통과했다. 이 실행들은 서로 겹치므로 합산하지 않는다. 실제 HTTP/제품 종료
+timeout은 늘리지 않았다. 서버 타입 검사에서 generic callback 및 union narrowing
+오류를 발견해 수정했고, 최종 cached 서버 타입 검사는 exit 0·관련 입력 hash 동일로
+확인했다. 전체 로컬 suite·실제 DB·Windows 설치/배포 검사는 반복하지 않았다.
+
 보안 gate에는 승인 예외가 없는 Zod High `1243066`이 남아 있다. 기존 major 전환
 보류·보안 기준은 유지하며 실패를 제거하거나 승인한 것으로 처리하지 않는다.
 현재 UI token gate도 color 79·arbitrary value 36·font-size 1개, 총 116개로
@@ -122,8 +169,8 @@ Core 완료 전 남은 필수 작업:
 
 1. 이번 Workspace 삭제·권한 철회 보완의 실제 DB/Windows 통합 검증. mock 검사와
    실제 자식 프로세스 분리 증거를 전체 삭제 트랜잭션 수용으로 확대하지 않는다.
-2. 일반 Host Worker를 포함한 공유 npm 파일 변경 중 admission·정지·안전한 재가동
-   조정. 이번 Workspace fence만으로 전역 패키지 안전성을 완료했다고 하지 않는다.
+2. 전용 npm artifact와 공유 경로 maintenance 조정의 실제 DB/Windows 통합 검증,
+   비정상 종료 중 패키지 변경 복구. 집중 검사 통과를 전체 배포 증거로 확대하지 않는다.
 3. Core 비정상 종료 시 Plugin이 직접 만든 자손 프로세스의 소유권·종료·복구.
    SDK 직접 자식 EOF 정상 종료는 이 전체 보장의 대체가 아니다.
 4. 여러 Runner의 실제 배정·상태·실패·중단·복구와 Tailscale/SSH 운영 경로 검증.

@@ -1046,15 +1046,28 @@ try {
     console.log("Agent management E2E: Dashboard link, Settings directory, empty registration, Cancel without saving.");
   }
 
-  // A fresh SPS Host intentionally starts with Plugin Builder only. Install the
-  // packaged reference Workplane through the real Host API so this flow also
-  // verifies optional local-package installation without changing that default.
+  // Plugin Builder is a private development tool, not a default Workspace
+  // activation. Install it explicitly through the real Host API so this flow
+  // verifies its opt-in path without changing the neutral first-run policy.
+  const packagedPluginDiscoveryPath = packagedBinary ? path.join(
+    userDataDirectory,
+    "owner-host-runtime",
+    desktopVersion,
+    "sps-plugin-discovery",
+  ) : path.resolve(scriptDirectory, "..", "..", "sps-plugin-discovery");
   const packagedTeamWorkplanePath = packagedBinary ? path.join(
     userDataDirectory,
     "owner-host-runtime",
     desktopVersion,
     "sps-room-chat",
   ) : path.resolve(scriptDirectory, "..", "..", "sps-room-chat");
+  await api(workspaceCdp, "/api/plugins/install", {
+    method: "POST",
+    body: {
+      packageName: packagedPluginDiscoveryPath,
+      isLocalPath: true,
+    },
+  });
   await api(workspaceCdp, "/api/plugins/install", {
     method: "POST",
     body: {

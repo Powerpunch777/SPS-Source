@@ -47,13 +47,14 @@ test("Plugin Builder is a neutral, lifecycle-free SPS tool provider", () => {
 });
 
 test("Desktop packages Plugin Builder without Marketplace or lifecycle authority", async () => {
-  const [runtimeBuild, ownerHost, smoke, builderBuild, builderPackage, desktopMain] = await Promise.all([
+  const [runtimeBuild, ownerHost, smoke, builderBuild, builderPackage, desktopMain, workspaceSmoke] = await Promise.all([
     readFile(path.join(desktopRoot, "scripts", "prepare-owner-host-runtime.mjs"), "utf8"),
     readFile(path.join(desktopRoot, "src", "owner-host.mjs"), "utf8"),
     readFile(path.join(desktopRoot, "scripts", "smoke-packaged-owner-host-runtime.mjs"), "utf8"),
     readFile(path.join(serverRoot, "sps-plugin-discovery", "scripts", "build.mjs"), "utf8"),
     readFile(path.join(serverRoot, "sps-plugin-discovery", "package.json"), "utf8"),
     readFile(path.join(desktopRoot, "src", "main.mjs"), "utf8"),
+    readFile(path.join(desktopRoot, "scripts", "smoke-workspace-surfaces-desktop.mjs"), "utf8"),
   ]);
   assert.match(runtimeBuild, /"sps-plugin-discovery"/);
   assert.match(ownerHost, /"sps-plugin-discovery", "package\.json"/);
@@ -64,7 +65,16 @@ test("Desktop packages Plugin Builder without Marketplace or lifecycle authority
   assert.match(smoke, /assertPluginBuilderPlugin/);
   assert.match(smoke, /assertPluginBuilderBridge/);
   assert.match(smoke, /plugin-builder-workspace/);
-  assert.match(smoke, /keep only Plugin Builder enabled for a new Workspace/);
+  assert.match(smoke, /builderActivation\?\.enabled !== false/);
+  assert.match(smoke, /builderActivation\?\.defaultEnabled !== false/);
+  assert.match(smoke, /method: "PUT",[\s\S]*?body: JSON\.stringify\(\{ enabled: true \}\)/);
+  assert.match(smoke, /Plugin Builder did not remain default-off after explicit Workspace activation/);
+  assert.doesNotMatch(smoke, /keep only Plugin Builder enabled for a new Workspace/);
+  assert.match(workspaceSmoke, /Plugin Builder is a private development tool, not a default Workspace/);
+  assert.match(workspaceSmoke, /activation\. Install it explicitly through the real Host API/);
+  assert.match(workspaceSmoke, /const packagedPluginDiscoveryPath = packagedBinary \?/);
+  assert.match(workspaceSmoke, /packageName: packagedPluginDiscoveryPath,[\s\S]*?isLocalPath: true/);
+  assert.match(workspaceSmoke, /inactiveEntryPlugins\?\.plugins \?\? \[\]\)\.filter\(\(plugin\) => plugin\.activation\?\.enabled === true\)/);
   assert.match(smoke, /legacy built-in-agent API available/);
   assert.match(smoke, /SPS_CORE_BASELINE_MODE: "true"/);
   assert.match(smoke, /ui-v0\.4\.0/);

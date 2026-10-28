@@ -219,8 +219,10 @@ async function assertPluginBuilderPlugin() {
   if (!builder || builder.status !== "ready") {
     throw new Error("SPS Plugin Builder was not installed and ready in the packaged Owner Host.");
   }
+  // This is package metadata compatibility. Core's new-Workspace runtime
+  // policy is tested separately below and must remain default-off.
   if (builder.manifestJson?.companyActivation?.defaultEnabled !== true) {
-    throw new Error("SPS Plugin Builder must start enabled for a new Company.");
+    throw new Error("SPS Plugin Builder package activation metadata changed unexpectedly.");
   }
   if (
     builder.manifestJson?.sps?.contractVersion !== "2.0"
@@ -273,14 +275,30 @@ async function assertPluginBuilderBridge() {
   const memoryActivation = activationByKey.get("sps.default-memory");
   const roomsActivation = activationByKey.get("local.room-chat");
   if (
-    builderActivation?.enabled !== true
-    || builderActivation?.defaultEnabled !== true
+    builderActivation?.enabled !== false
+    || builderActivation?.defaultEnabled !== false
     || memoryActivation?.enabled !== false
     || memoryActivation?.defaultEnabled !== false
     || roomsActivation?.enabled !== false
     || roomsActivation?.defaultEnabled !== false
   ) {
-    throw new Error("The packaged SPS Baseline did not keep only Plugin Builder enabled for a new Workspace.");
+    throw new Error("A new Workspace must keep bundled plugins disabled until explicitly enabled.");
+  }
+
+  const enableBuilder = await ownerHostRequest(`/api/plugins/${encodeURIComponent(builderActivation.pluginId)}/companies/${encodeURIComponent(companyId)}/activation`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled: true }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const enabledPayload = await enableBuilder.json().catch(() => null);
+  if (!enableBuilder.ok || enabledPayload?.activation?.enabled !== true) {
+    throw new Error("Could not explicitly enable the private Plugin Builder for the disposable smoke Workspace.");
+  }
+  const explicitActivations = await ownerHostJson(`/api/plugins/companies/${companyId}`);
+  const explicitBuilderActivation = explicitActivations?.plugins?.find(plugin => plugin?.pluginKey === "sps.plugin-discovery")?.activation;
+  if (explicitBuilderActivation?.enabled !== true || explicitBuilderActivation?.defaultEnabled !== false) {
+    throw new Error("Plugin Builder did not remain default-off after explicit Workspace activation.");
   }
 
   const legacyBuiltIns = await ownerHostRequest(`/api/companies/${companyId}/built-in-agents`, {
