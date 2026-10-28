@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, open, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
   ownerHostVaultLayout,
   rebaseSpsOwnerHostConfigPaths,
   spsOwnerHostUrl,
+  updateSpsOwnerHostConfig,
 } from "../src/owner-host-config.mjs";
 
 test("creates a self-contained Owner Vault config", () => {
@@ -162,6 +163,139 @@ test("upgrades an existing local-trusted Owner Vault without moving its data", a
     assert.equal(result.config.server.deploymentMode, "authenticated");
     assert.equal(result.config.server.port, 31_310);
     assert.equal(result.config.database.embeddedPostgresPort, 54_339);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("does not treat config publication ENOENT as a missing config during upgrade", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-owner-host-config-upgrade-enoent-"));
+  try {
+    const vaultRoot = path.join(root, "vault");
+    const existing = createSpsOwnerHostConfig({ vaultRoot, serverPort: 31_310, databasePort: 54_339 });
+    existing.server.deploymentMode = "local_trusted";
+    await mkdir(vaultRoot, { recursive: true });
+    const configPath = path.join(vaultRoot, "config.json");
+    const original = JSON.stringify(existing);
+    await writeFile(configPath, original, "utf8");
+    let findPortsCalls = 0;
+
+    await assert.rejects(ensureSpsOwnerHostConfig({
+      vaultRoot,
+      fsApi: {
+        mkdir,
+        readFile,
+        open,
+        lstat,
+        unlink,
+        rename: async () => { throw Object.assign(new Error("injected rename failure"), { code: "ENOENT" }); },
+      },
+      findPorts: async () => {
+        findPortsCalls += 1;
+        return { serverPort: 31_311, databasePort: 54_340 };
+      },
+    }), error => error?.code === "ENOENT");
+
+    assert.equal(findPortsCalls, 0);
+    assert.equal(await readFile(configPath, "utf8"), original);
+    assert.deepEqual(await readdir(vaultRoot), ["config.json"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("creates a missing Owner Host config through the same atomic writer", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-owner-host-config-create-"));
+  try {
+    const vaultRoot = path.join(root, "vault");
+    const result = await ensureSpsOwnerHostConfig({
+      vaultRoot,
+      findPorts: async () => ({ serverPort: 31_310, databasePort: 54_339 }),
+    });
+    assert.equal(result.created, true);
+    assert.deepEqual(JSON.parse(await readFile(path.join(vaultRoot, "config.json"), "utf8")), result.config);
+    assert.deepEqual(await readdir(vaultRoot), ["config.json"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cleans only its owned config temp after publication fails", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-owner-host-config-write-failure-"));
+  try {
+    const vaultRoot = path.join(root, "vault");
+    await mkdir(vaultRoot);
+    const config = createSpsOwnerHostConfig({ vaultRoot, serverPort: 31_310, databasePort: 54_339 });
+    await writeFile(path.join(vaultRoot, "config.json"), JSON.stringify(config), "utf8");
+
+    await assert.rejects(updateSpsOwnerHostConfig({
+      vaultRoot,
+      update: previous => ({ ...previous, telemetry: { enabled: true } }),
+      fsApi: {
+        open,
+        lstat,
+        unlink,
+        readFile,
+        rename: async () => { throw new Error("injected config publish failure"); },
+      },
+    }), /injected config publish failure/);
+
+    assert.deepEqual(await readdir(vaultRoot), ["config.json"]);
+    assert.equal(JSON.parse(await readFile(path.join(vaultRoot, "config.json"), "utf8")).telemetry.enabled, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("preserves a replacement file instead of deleting it during failed config cleanup", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-owner-host-config-replacement-"));
+  try {
+    const vaultRoot = path.join(root, "vault");
+    await mkdir(vaultRoot);
+    const config = createSpsOwnerHostConfig({ vaultRoot, serverPort: 31_310, databasePort: 54_339 });
+    await writeFile(path.join(vaultRoot, "config.json"), JSON.stringify(config), "utf8");
+    let replacementPath;
+
+    await assert.rejects(updateSpsOwnerHostConfig({
+      vaultRoot,
+      update: previous => ({ ...previous, telemetry: { enabled: true } }),
+      fsApi: {
+        open,
+        lstat,
+        unlink,
+        readFile,
+        rename: async temporaryPath => {
+          replacementPath = temporaryPath;
+          await rm(temporaryPath);
+          await writeFile(temporaryPath, "replacement owned by another writer", "utf8");
+          throw new Error("injected config publish failure");
+        },
+      },
+    }), /injected config publish failure/);
+
+    assert.equal(await readFile(replacementPath, "utf8"), "replacement owned by another writer");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent config updates use independent temp files and leave valid JSON", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-owner-host-config-concurrent-"));
+  try {
+    const vaultRoot = path.join(root, "vault");
+    await mkdir(vaultRoot);
+    const config = createSpsOwnerHostConfig({ vaultRoot, serverPort: 31_310, databasePort: 54_339 });
+    const configPath = path.join(vaultRoot, "config.json");
+    await writeFile(configPath, JSON.stringify(config), "utf8");
+
+    await Promise.all([
+      updateSpsOwnerHostConfig({ vaultRoot, update: previous => ({ ...previous, server: { ...previous.server, port: 31_311 } }) }),
+      updateSpsOwnerHostConfig({ vaultRoot, update: previous => ({ ...previous, database: { ...previous.database, embeddedPostgresPort: 54_340 } }) }),
+    ]);
+
+    const saved = JSON.parse(await readFile(configPath, "utf8"));
+    assert.ok(saved.server.port === 31_311 || saved.database.embeddedPostgresPort === 54_340);
+    assert.deepEqual((await readdir(vaultRoot)).sort(), ["config.json"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

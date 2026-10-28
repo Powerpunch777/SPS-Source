@@ -1,6 +1,8 @@
 import net from "node:net";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 export const SPS_OWNER_HOST_DEFAULT_PORT = 31_310;
 export const SPS_OWNER_HOST_DEFAULT_DATABASE_PORT = 54_339;
@@ -20,6 +22,67 @@ function parseExistingConfig(raw, configPath) {
     return parsed;
   } catch (error) {
     throw new Error(`SPS Owner Host config is invalid at ${configPath}: ${error.message}`);
+  }
+}
+
+function sameOwnedIdentity(expected, actual) {
+  if (!actual.isFile() || actual.isSymbolicLink() || actual.nlink !== 1n) return false;
+  for (const key of ["dev", "ino", "birthtimeNs"]) {
+    if (expected[key] === 0n || actual[key] === 0n || expected[key] !== actual[key]) return false;
+  }
+  return true;
+}
+
+function sameOwnedFile(expected, actual) {
+  return sameOwnedIdentity(expected, actual) && expected.size === actual.size
+    && expected.mtimeNs === actual.mtimeNs && expected.ctimeNs === actual.ctimeNs;
+}
+
+function sameDirectory(expected, actual) {
+  if ((!expected.isDirectory() && !expected.isSymbolicLink())
+    || expected.isDirectory() !== actual.isDirectory()
+    || expected.isSymbolicLink() !== actual.isSymbolicLink()) return false;
+  for (const key of ["dev", "ino"]) {
+    if (expected[key] === 0n || actual[key] === 0n || expected[key] !== actual[key]) return false;
+  }
+  return true;
+}
+
+// Reference pattern: atomically's MIT-licensed src/index.ts at 5d3af2b945ef332483f86ae9cbb18a3b19657eb7.
+// This local implementation is not copied code; retain SPS's identity-bound temp cleanup and directory recheck.
+// Source: https://github.com/fabiospampinato/atomically/blob/5d3af2b945ef332483f86ae9cbb18a3b19657eb7/src/index.ts
+// MIT license: https://github.com/fabiospampinato/atomically/blob/5d3af2b945ef332483f86ae9cbb18a3b19657eb7/license
+async function writeOwnerHostConfig(layout, config, fsApi) {
+  const parent = await fsApi.lstat(layout.root, { bigint: true });
+  const bytes = `${JSON.stringify(config, null, 2)}\n`;
+  const temporaryPath = path.join(layout.root, `.config-${randomUUID()}.tmp`);
+  let owned;
+  try {
+    const handle = await fsApi.open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    try {
+      owned = await handle.stat({ bigint: true });
+      await handle.writeFile(bytes, "utf8");
+      await handle.sync();
+      owned = await handle.stat({ bigint: true });
+    } finally {
+      await handle.close();
+    }
+    const currentParent = await fsApi.lstat(layout.root, { bigint: true });
+    if (!sameDirectory(parent, currentParent)) throw new Error("SPS Owner Host config directory changed before save.");
+    const currentTemporary = await fsApi.lstat(temporaryPath, { bigint: true });
+    if (!sameOwnedFile(owned, currentTemporary)) throw new Error("SPS Owner Host config temporary file changed before save.");
+    await fsApi.rename(temporaryPath, layout.configPath);
+    owned = undefined;
+  } finally {
+    if (owned) {
+      try {
+        const current = await fsApi.lstat(temporaryPath, { bigint: true });
+        const currentParent = await fsApi.lstat(layout.root, { bigint: true });
+        if (sameDirectory(parent, currentParent) && sameOwnedIdentity(owned, current)) await fsApi.unlink(temporaryPath);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
   }
 }
 
@@ -245,16 +308,14 @@ export function rebaseSpsOwnerHostConfigPaths(config, { vaultRoot, now = new Dat
   };
 }
 
-export async function updateSpsOwnerHostConfig({ vaultRoot, update, fsApi = { mkdir, readFile, rename, writeFile } } = {}) {
+export async function updateSpsOwnerHostConfig({ vaultRoot, update, fsApi = { mkdir, readFile, rename, open, lstat, unlink } } = {}) {
   if (typeof update !== "function") throw new Error("SPS Owner Host config update function is required.");
   const layout = ownerHostVaultLayout(vaultRoot);
   const raw = await fsApi.readFile(layout.configPath, "utf8");
   const previous = parseExistingConfig(raw, layout.configPath);
   const next = update(previous);
   if (!next || typeof next !== "object") throw new Error("SPS Owner Host config update returned no config.");
-  const temporaryPath = `${layout.configPath}.${process.pid}.${Date.now()}.tmp`;
-  await fsApi.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-  await fsApi.rename(temporaryPath, layout.configPath);
+  await writeOwnerHostConfig(layout, next, fsApi);
   return { config: next, layout };
 }
 
@@ -266,13 +327,18 @@ export function spsOwnerHostUrl(config) {
 
 export async function ensureSpsOwnerHostConfig({
   vaultRoot,
-  fsApi = { mkdir, readFile, rename, writeFile },
+  fsApi = { mkdir, readFile, rename, open, lstat, unlink },
   findPorts = findSpsOwnerHostPorts,
   now,
 } = {}) {
   const layout = ownerHostVaultLayout(vaultRoot);
+  let raw;
   try {
-    const raw = await fsApi.readFile(layout.configPath, "utf8");
+    raw = await fsApi.readFile(layout.configPath, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  if (raw !== undefined) {
     const config = parseExistingConfig(raw, layout.configPath);
     if (config.server?.deploymentMode === "authenticated") {
       return { config, layout, created: false };
@@ -280,12 +346,8 @@ export async function ensureSpsOwnerHostConfig({
     // SPS Desktop no longer supports an anonymous local Core. Upgrade existing
     // vaults in place while retaining their data, port, and storage layout.
     const upgraded = configureSpsOwnerHostAuthenticatedLocal(config, { now });
-    const temporaryPath = `${layout.configPath}.${process.pid}.${Date.now()}.tmp`;
-    await fsApi.writeFile(temporaryPath, `${JSON.stringify(upgraded, null, 2)}\n`, "utf8");
-    await fsApi.rename(temporaryPath, layout.configPath);
+    await writeOwnerHostConfig(layout, upgraded, fsApi);
     return { config: upgraded, layout, created: false, upgraded: true };
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
   }
 
   const ports = await findPorts();
@@ -296,8 +358,6 @@ export async function ensureSpsOwnerHostConfig({
     now,
   });
   await fsApi.mkdir(layout.root, { recursive: true });
-  const temporaryPath = `${layout.configPath}.${process.pid}.${Date.now()}.tmp`;
-  await fsApi.writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  await fsApi.rename(temporaryPath, layout.configPath);
+  await writeOwnerHostConfig(layout, config, fsApi);
   return { config, layout, created: true };
 }
