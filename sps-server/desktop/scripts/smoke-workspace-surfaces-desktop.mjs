@@ -913,11 +913,14 @@ try {
       assert.equal(before.nativeConnectivity.lanEnabled, false);
       assert.equal(before.recovery.pluginsDisabled, true);
       assert.equal(await setupCdp.evaluate("typeof window.spsDesktopWorkspace"), "undefined");
-      nativeManagementStage = "host_start";
+      nativeManagementStage = "host_start_click";
       await click(setupCdp, '[data-action="open-workspace"]', "Start the actual prepared Host from independent Settings");
+      nativeManagementStage = "host_workspace_target";
       workspaceCdp = await openCdp(await waitForTarget(debugPort, child,
         target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""), "prepared Host Workspace", hostReadyTimeoutMs));
+      nativeManagementStage = "host_workspace_ready";
       await waitForPage(workspaceCdp, page => page.workspaceEntry === "empty", "prepared empty Workspace");
+      nativeManagementStage = "host_agents_check";
       assert.deepEqual(await api(workspaceCdp, `/api/companies/${company.id}/agents`), []);
       nativeManagementStage = "authority_checks";
       const runtimeGate = await workspaceCdp.evaluate(`(async () => {
