@@ -12,11 +12,10 @@ export function isSpsDefaultMemoryEnabled(env = process.env) {
 }
 
 export function isSpsPluginDiscoveryEnabled(env = process.env) {
-  // Discovery is the one first-company helper. It only gives an already
-  // connected Agent catalog-search and draft tools; it does not select a
-  // Workplane, memory strategy, or access model.
+  // Existing managed deployments may explicitly opt in. New Core deployments
+  // do not require the deferred Builder or public discovery surface.
   if (!enabledUnlessFalse(env.SPS_ENABLE_BUNDLED_EXTENSIONS, true)) return false;
-  return enabledUnlessFalse(env.SPS_ENABLE_PLUGIN_DISCOVERY, true);
+  return enabledUnlessFalse(env.SPS_ENABLE_PLUGIN_DISCOVERY, false);
 }
 
 export function isSpsRoomWorkplaneBundled(env = process.env) {

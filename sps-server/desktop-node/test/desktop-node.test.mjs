@@ -42,7 +42,6 @@ import {
   scanLocalCapabilities,
   scanLocalRunnerProfiles,
   sendSpsNodeHeartbeat,
-  spsMarketplaceMcpRuntimeEnvironment,
   SpsHubRequestError,
 } from "../src/index.mjs";
 import { createHash } from "node:crypto";
@@ -643,129 +642,6 @@ test("passes only runtime-safe environment variables to a local CLI", () => {
   assert.equal(environment.OPENAI_API_KEY, undefined);
   assert.equal(environment.CODEX_HOME, undefined);
   assert.equal(environment.CUSTOM_SECRET, undefined);
-});
-
-test("injects trusted local Marketplace MCP runtime paths after Hub environment filtering", () => {
-  const environment = {
-    ...buildSpsNodeRuntimeEnvironment(
-      {
-        SPS_MARKETPLACE_MCP_NODE: "C:\\hub-controlled\\node.exe",
-        SPS_MARKETPLACE_MCP_ENTRY: "C:\\hub-controlled\\assistant.js",
-        PAPERCLIP_API_KEY: "agent-token",
-      },
-      {
-        USERPROFILE: "C:\\Users\\member",
-        SPS_MARKETPLACE_MCP_NODE: "C:\\host\\should-not-leak-from-host-env",
-      },
-    ),
-    ...spsMarketplaceMcpRuntimeEnvironment({
-      nodeCommand: "C:\\SPS\\resources\\sps-owner-host-runtime\\bin\\node.exe",
-      entryPath: "C:\\SPS\\resources\\sps-owner-host-runtime\\node_modules\\@sps\\mcp-server\\dist\\marketplace-assistant-stdio.js",
-    }),
-  };
-
-  assert.equal(environment.SPS_MARKETPLACE_MCP_NODE, "C:\\SPS\\resources\\sps-owner-host-runtime\\bin\\node.exe");
-  assert.equal(environment.SPS_MARKETPLACE_MCP_ENTRY, "C:\\SPS\\resources\\sps-owner-host-runtime\\node_modules\\@sps\\mcp-server\\dist\\marketplace-assistant-stdio.js");
-  assert.equal(environment.PAPERCLIP_API_KEY, "agent-token");
-});
-
-test("leaves ordinary command environment unchanged when no Marketplace MCP runtime is available", () => {
-  const environment = {
-    ...buildSpsNodeRuntimeEnvironment(
-      { PAPERCLIP_API_KEY: "agent-token", TERM: "xterm" },
-      { Path: "C:\\bin", USERPROFILE: "C:\\Users\\member" },
-    ),
-    ...spsMarketplaceMcpRuntimeEnvironment(null),
-  };
-
-  assert.deepEqual(environment, {
-    Path: "C:\\bin",
-    USERPROFILE: "C:\\Users\\member",
-    PAPERCLIP_API_KEY: "agent-token",
-    TERM: "xterm",
-  });
-});
-
-test("injects the local Marketplace MCP runtime into spawn env without allowing Hub values to replace it", async () => {
-  const hub = await startMockHub();
-  const nodeCommand = path.resolve(os.tmpdir(), "sps-marketplace-mcp-node.exe");
-  const entryPath = path.resolve(os.tmpdir(), "sps-marketplace-mcp-entry.mjs");
-  try {
-    const result = await executeSpsNodeCommand({
-      command: {
-        id: "marketplace-mcp-runtime",
-        projectId: null,
-        command: "agy",
-        runtimeKind: "agy_cli",
-        args: [],
-        env: {
-          SPS_MARKETPLACE_MCP_NODE: "C:\\hub\\must-not-win.exe",
-          SPS_MARKETPLACE_MCP_ENTRY: "C:\\hub\\must-not-win.mjs",
-        },
-        stdin: null,
-        lastEventSeq: 0,
-      },
-      hubUrl: hub.hubUrl,
-      nodeId: "node-marketplace-mcp",
-      identity: createNodeIdentity(),
-      accessToken: "board-token",
-      profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
-      marketplaceMcpRuntime: { nodeCommand, entryPath },
-      resolveInvocation: async () => ({
-        executable: process.execPath,
-        args: [
-          "-e",
-          "process.stdout.write(JSON.stringify({ node: process.env.SPS_MARKETPLACE_MCP_NODE, entry: process.env.SPS_MARKETPLACE_MCP_ENTRY }))",
-        ],
-      }),
-      hostEnvironment: minimalWindowsChildEnvironment(),
-    });
-
-    assert.equal(result.exitCode, 0);
-    const output = JSON.parse(hub.events.map((event) => event.body.body).join(""));
-    assert.deepEqual(output, { node: nodeCommand, entry: entryPath });
-  } finally {
-    await hub.close();
-  }
-});
-
-test("does not add Marketplace MCP runtime variables to a normal command", async () => {
-  const hub = await startMockHub();
-  try {
-    const result = await executeSpsNodeCommand({
-      command: {
-        id: "normal-command-without-marketplace-mcp",
-        projectId: null,
-        command: "agy",
-        runtimeKind: "agy_cli",
-        args: [],
-        env: {
-          SPS_MARKETPLACE_MCP_NODE: "C:\\hub\\must-not-forward.exe",
-          SPS_MARKETPLACE_MCP_ENTRY: "C:\\hub\\must-not-forward.mjs",
-        },
-        stdin: null,
-        lastEventSeq: 0,
-      },
-      hubUrl: hub.hubUrl,
-      nodeId: "node-normal-command",
-      identity: createNodeIdentity(),
-      accessToken: "board-token",
-      profile: { defaultWorkspacePath: process.cwd(), projectWorkspaces: {} },
-      resolveInvocation: async () => ({
-        executable: process.execPath,
-        args: [
-          "-e",
-          "process.stdout.write(JSON.stringify({ node: process.env.SPS_MARKETPLACE_MCP_NODE, entry: process.env.SPS_MARKETPLACE_MCP_ENTRY }))",
-        ],
-      }),
-      hostEnvironment: minimalWindowsChildEnvironment(),
-    });
-
-    assert.equal(result.exitCode, 0);
-    assert.deepEqual(JSON.parse(hub.events.map((event) => event.body.body).join("")), {});
-  } finally {
-    await hub.close();
-  }
 });
 
 test("cancels a running local command when this Desktop Node disconnects", async () => {

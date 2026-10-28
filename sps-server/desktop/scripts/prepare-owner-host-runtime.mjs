@@ -320,7 +320,7 @@ async function buildOwnerHostCoreArtifacts() {
   const sharedTsconfig = path.join(coreRoot, "packages", "shared", "tsconfig.json");
   const catalogPackageRoot = path.join(coreRoot, "packages", "skills-catalog");
   const adapterUtilsTsconfig = path.join(coreRoot, "packages", "adapter-utils", "tsconfig.json");
-  const marketplaceMcpTsconfig = path.join(coreRoot, "packages", "mcp-server", "tsconfig.json");
+  const mcpServerTsconfig = path.join(coreRoot, "packages", "mcp-server", "tsconfig.json");
   const codexAdapterTsconfig = path.join(coreRoot, "packages", "adapters", "codex-local", "tsconfig.json");
   const claudeAdapterTsconfig = path.join(coreRoot, "packages", "adapters", "claude-local", "tsconfig.json");
   const serverPackageRoot = path.join(coreRoot, "server");
@@ -331,7 +331,7 @@ async function buildOwnerHostCoreArtifacts() {
   await requireFile(dbTsconfig, "SPS Owner Host database TypeScript config is missing.");
   await requireFile(sharedTsconfig, "SPS Owner Host shared-contract TypeScript config is missing.");
   await requireFile(adapterUtilsTsconfig, "SPS Owner Host adapter utility TypeScript config is missing.");
-  await requireFile(marketplaceMcpTsconfig, "SPS Owner Host Marketplace MCP TypeScript config is missing.");
+  await requireFile(mcpServerTsconfig, "SPS Owner Host MCP Server TypeScript config is missing.");
   await requireFile(codexAdapterTsconfig, "SPS Owner Host Codex adapter TypeScript config is missing.");
   await requireFile(claudeAdapterTsconfig, "SPS Owner Host Claude adapter TypeScript config is missing.");
   await requireFile(serverTsconfig, "SPS Owner Host server TypeScript config is missing.");
@@ -360,7 +360,7 @@ async function buildOwnerHostCoreArtifacts() {
   );
   await requireFile(path.join(catalogPackageRoot, "dist", "src", "canonical-bytes.js"), "SPS Skills Catalog canonical-byte runtime is missing after build.");
   await run(process.execPath, [tscCli, "-p", adapterUtilsTsconfig], coreRoot);
-  await run(process.execPath, [tscCli, "-p", marketplaceMcpTsconfig], coreRoot);
+  await run(process.execPath, [tscCli, "-p", mcpServerTsconfig], coreRoot);
   await run(process.execPath, [tscCli, "-p", codexAdapterTsconfig], coreRoot);
   await run(process.execPath, [tscCli, "-p", claudeAdapterTsconfig], coreRoot);
   // The server build also copies onboarding instructions and built-in assets.

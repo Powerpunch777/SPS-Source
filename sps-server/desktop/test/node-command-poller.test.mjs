@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   claimNextSpsNodeWork,
   executionTransportForSpsNodeWork,
-  spsNodeWorkRequiresMarketplaceMcp,
 } from "../src/node-command-poller.mjs";
 
 test("preserves legacy Agent command priority before polling plugin-owned runs", async () => {
@@ -49,16 +48,4 @@ test("reports no work when both Node queues are empty", async () => {
     claimPluginRun: async () => null,
   });
   assert.equal(next, null);
-});
-
-test("materializes Marketplace MCP only for an explicitly marked Agent command", () => {
-  assert.equal(spsNodeWorkRequiresMarketplaceMcp({
-    kind: "agent-command",
-    command: { env: { SPS_MARKETPLACE_MCP_REQUIRED: "1" } },
-  }), true);
-  assert.equal(spsNodeWorkRequiresMarketplaceMcp({ kind: "agent-command", command: { env: {} } }), false);
-  assert.equal(spsNodeWorkRequiresMarketplaceMcp({
-    kind: "plugin-run",
-    command: { env: { SPS_MARKETPLACE_MCP_REQUIRED: "1" } },
-  }), false);
 });

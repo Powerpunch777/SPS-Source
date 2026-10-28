@@ -1527,7 +1527,12 @@ try {
     const identityClosed = await attempt("identity_close", () => boundedCleanup(mockIdentity.close(), "mock Identity").then(() => true));
     let temporaryDataRemoved = false;
     if (!keepE2eData) {
-      temporaryDataRemoved = await attempt("temporary_data", () => boundedCleanup(fixture.remove(), "temporary data", 20_000)
+      temporaryDataRemoved = await attempt("temporary_data", () => boundedCleanup(fixture.remove(progress => {
+        const { phase, attempt: removeAttempt, elapsedMs, code } = progress;
+        console.log(`[workspace-e2e] temporary data cleanup: ${JSON.stringify({
+          phase, attempt: removeAttempt, elapsedMs, ...(code ? { code } : {}),
+        })}`);
+      }), "temporary data", 20_000)
         .then(() => true)) === true;
     }
     cleanupStage = "output_end";

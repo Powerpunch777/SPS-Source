@@ -19,7 +19,7 @@ const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const liveAgent = process.argv.includes("--live-agent");
-const deterministicAcp = path.join(desktopRoot, "scripts", "fixtures", "deterministic-marketplace-acp.mjs");
+const deterministicAcp = path.join(desktopRoot, "scripts", "fixtures", "deterministic-acp.mjs");
 const deterministicAgentCommand = `"${process.execPath}" "${deterministicAcp}"`;
 const syntheticOpenAiApiKey = "sk-test-sps-e2e-not-valid-for-provider";
 const credentialEnvironmentName = /(?:API[_-]?KEY|_KEY(?:_|$)|(?:ACCESS|REFRESH|AUTH)?[_-]?TOKEN|SECRET|PASSWORD|CREDENTIAL)/i;
@@ -192,29 +192,11 @@ async function clickText(cdp, texts, label, { exact = false, scopeText = null } 
   assert.equal(result?.ok, true, `${label} could not be clicked: ${result?.reason || "unknown"}. ${result?.body || result?.text || ""}`);
   return result;
 }
-function marketplaceTabProbeExpression(click = false) {
-  return `(() => {
-    const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
-    const visible = (element) => {
-      const style = getComputedStyle(element);
-      return style.display !== 'none' && style.visibility !== 'hidden'
-        && element.getClientRects().length > 0 && !element.closest('[hidden],[aria-hidden="true"]');
-    };
-    const tablist = [...document.querySelectorAll('[role="tablist"]')]
-      .find((element) => normalize(element.getAttribute('aria-label')) === 'Plugin sections');
-    const tab = [...(tablist?.querySelectorAll('[role="tab"]') || [])]
-      .find((element) => normalize(element.getAttribute('aria-label') || element.innerText || element.textContent) === 'Marketplace');
-    if (!tab || !visible(tab) || tab.matches(':disabled') || tab.getAttribute('aria-disabled') === 'true') return false;
-    ${click ? "tab.click();" : ""}
-    return true;
-  })()`;
-}
-async function waitForAndClickMarketplaceTab(cdp) {
-  const readyPage = await waitPage(cdp, () => cdp.evaluate(marketplaceTabProbeExpression()),
-    "visible, enabled Workspace Marketplace tab");
-  const clicked = await cdp.evaluate(marketplaceTabProbeExpression(true));
-  assert.equal(clicked, true, "Workspace Marketplace tab stopped being visible or enabled before click.");
-  return readyPage;
+async function waitForPluginManager(cdp) {
+  return await waitPage(cdp, (current) =>
+    /Plugins|Extensions|SPS Extensions/.test(current.text)
+      && (/Install Plugin|Open signed Registry review/.test(current.text)),
+  "Workspace plugin manager");
 }
 async function setField(cdp, selector, value, label) {
   const result = await cdp.evaluate(`(() => {
@@ -342,42 +324,8 @@ try {
 
   const before = lifecycleSnapshot(await api(workspace, "/api/plugins"));
   await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/company/settings/instance/plugins`)})`);
-  let managerPage = await waitForAndClickMarketplaceTab(workspace);
+  let managerPage = await waitForPluginManager(workspace);
   const hasGenericInstall = managerPage.text.includes("Install Plugin");
-
-  // Marketplace Assistant is allowed to search and explain verified metadata,
-  // but it must not mutate production plugin lifecycle state.
-  await waitPage(workspace, (current) => current.text.includes("Marketplace Assistant"), "Marketplace Assistant panel");
-  const assistantBefore = lifecycleSnapshot(await api(workspace, "/api/plugins"));
-  const assistantAgent = await workspace.evaluate(`(() => {
-    const select = document.querySelector('#marketplace-assistant-agent');
-    const option = [...(select?.options || [])].find((entry) => {
-      const label = (entry.textContent || '').split(' · ')[0].trim();
-      return label === ${JSON.stringify(lifecycleAgentName)};
-    });
-    return select && option ? option.value : null;
-  })()`);
-  assert.ok(assistantAgent, "Marketplace Assistant did not expose an allowed Agent.");
-  await setField(workspace, "#marketplace-assistant-agent", assistantAgent, "Marketplace Assistant Agent");
-  await clickText(workspace, "Open", "Marketplace Assistant session", { exact: true });
-  await waitPage(workspace, (current) => current.text.includes("Conversation"), "Marketplace Assistant conversation");
-  await setField(workspace, '[aria-label="Assistant message"]', "Which verified plugin helps with a small team?", "Marketplace Assistant message");
-  await clickText(workspace, "Send", "Marketplace Assistant message send");
-  await waitPage(workspace, (current) => current.text.includes("Working"), "Marketplace Assistant work start", 15000);
-  await waitPage(workspace, () => workspace.evaluate(`(() => {
-    const transcript = document.querySelector('[aria-label="Assistant transcript"]')?.innerText || '';
-    const body = document.body?.innerText || '';
-    return transcript.includes('Which verified plugin helps with a small team?')
-      && /Marketplace Assistant|System/.test(transcript)
-      && ${liveAgent ? "true" : "(transcript.includes('Deterministic Marketplace Assistant response.') || transcript.includes('Marketplace MCP search failed:'))"}
-      && !body.includes('Working');
-  })()`), "Marketplace Assistant terminal response", 90000);
-  if (!liveAgent) {
-    const transcript = await workspace.evaluate(`document.querySelector('[aria-label="Assistant transcript"]')?.innerText || ''`);
-    assert.match(transcript, /Deterministic Marketplace Assistant response\./, transcript);
-    assert.match(transcript, /search_marketplace_plugins result:/, transcript);
-  }
-  assert.deepEqual(lifecycleSnapshot(await api(workspace, "/api/plugins")), assistantBefore, "Marketplace Assistant changed plugin lifecycle state.");
 
   // Plugin Builder may create authoring records and previews, but it must not
   // install, enable, disable, or remove a production plugin by merely opening it.
@@ -391,9 +339,8 @@ try {
   // The baseline SPS UI delegates host installation to the signed Registry.
   // This is still an actual Desktop UI action; no lifecycle API is called.
   if (!hasGenericInstall) {
-    await waitForAndClickMarketplaceTab(workspace);
-    await waitPage(workspace, (current) => current.text.includes("Open secure install review"), "Workspace secure install review control");
-    await clickText(workspace, "Open secure install review", "Workspace secure install review");
+    await waitPage(workspace, (current) => current.text.includes("Open signed Registry review"), "Workspace signed Registry review control");
+    await clickText(workspace, "Open signed Registry review", "Workspace signed Registry review");
     registry = await cdpFor(await waitTarget(debugPort, child, (entry) => entry.title?.startsWith("SPS Plugin Sources"), "Plugin Registry UI"));
     await waitPage(registry, (current) => /Registry|Plugin sources|review/i.test(current.text), "Plugin Registry screen");
     await waitPage(
@@ -454,10 +401,10 @@ try {
   await waitPlugin(workspace, candidateId, (record) => !record || record.status === "uninstalled", "plugin uninstalled");
 
   const productionAfter = lifecycleSnapshot(await api(workspace, "/api/plugins"));
-  assert.deepEqual(productionAfter.filter((record) => record.id !== candidateId), lifecycleBeforeWorkspaceActions.filter((record) => record.id !== candidateId), "Marketplace/Builder flow changed an unrelated lifecycle record.");
+  assert.deepEqual(productionAfter.filter((record) => record.id !== candidateId), lifecycleBeforeWorkspaceActions.filter((record) => record.id !== candidateId), "Builder flow changed an unrelated lifecycle record.");
   assert.match(managerPage.text, /Plugins|Extensions/);
   succeeded = true;
-  console.log(JSON.stringify({ ok: true, lifecycle: ["install", "enable", "disable", "re-enable", "uninstall-cancel", "uninstall-confirm"], assistantLifecycleUnchanged: true }, null, 2));
+  console.log(JSON.stringify({ ok: true, lifecycle: ["install", "enable", "disable", "re-enable", "uninstall-cancel", "uninstall-confirm"] }, null, 2));
 } catch (error) {
   const diagnostics = [];
   for (const [label, cdp] of [["setup", setup], ["workspace", workspace], ["registry", registry]]) {

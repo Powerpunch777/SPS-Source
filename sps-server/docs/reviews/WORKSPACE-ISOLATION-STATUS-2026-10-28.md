@@ -1,5 +1,9 @@
 # Workspace 격리 구현 상태 — 2026-10-28
 
+후속 제품 정책: [Core 완성 정책](../current/CORE-COMPLETION-POLICY-ko.md)에 따라
+완전한 비신뢰 OS 격리는 1차 Core 완료 조건에서 제외한다. 아래는 구현 한계의
+기록이며, capability·grant·Secret·파일 API·프로세스 소유권·복구는 계속 필수다.
+
 Workspace별 논리적 권한 격리와 전용 Plugin 프로세스의 기반은 구현되어 있다.
 **신뢰할 수 없는 Plugin을 실행할 완전한 OS 격리와 Windows 출시 검증은 미완료다.**
 현재 Native 추가 개발 보류는 유지하며 Core와 로컬 Desktop을 우선한다.

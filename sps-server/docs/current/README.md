@@ -4,6 +4,7 @@
 
 | Need | Document |
 | --- | --- |
+| Confirmed Core completion scope; no public Marketplace, Builder handoff pending, untrusted OS containment deferred | [CORE-COMPLETION-POLICY-ko.md](CORE-COMPLETION-POLICY-ko.md) |
 | Light UI direction, typography, shared surfaces, and Builder layout | [SPS-LIGHT-UI-PLAN-ko.md](SPS-LIGHT-UI-PLAN-ko.md) |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
 | Native development deferred by user request; current evidence and restart checklist | [NATIVE-DEVELOPMENT-DEFERRED-ko.md](NATIVE-DEVELOPMENT-DEFERRED-ko.md) |

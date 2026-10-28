@@ -38,7 +38,7 @@ const requiredFiles = [
   "node_modules/@paperclipai/server/dist/onboarding-assets/ceo/TOOLS.md",
   "node_modules/@paperclipai/skills-catalog/dist/src/canonical-bytes.js",
   "node_modules/@sps/mcp-server/package.json",
-  "node_modules/@sps/mcp-server/dist/marketplace-assistant-stdio.js",
+  "node_modules/@sps/mcp-server/dist/plugin-session-tools-stdio.js",
   "node_modules/acpx/node_modules/@agentclientprotocol/sdk/package.json",
   "node_modules/@embedded-postgres/windows-x64/dist/index.js",
   "node_modules/embedded-postgres/dist/index.js",

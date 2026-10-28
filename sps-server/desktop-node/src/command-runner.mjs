@@ -94,23 +94,6 @@ export function buildSpsNodeRuntimeEnvironment(commandEnvironment, hostEnvironme
   };
 }
 
-export function spsMarketplaceMcpRuntimeEnvironment(runtime, environment = {}) {
-  const output = { ...environment };
-  if (!runtime) return output;
-  const nodeCommand = typeof runtime.nodeCommand === "string" ? runtime.nodeCommand.trim() : "";
-  const entryPath = typeof runtime.entryPath === "string" ? runtime.entryPath.trim() : "";
-  if (!path.isAbsolute(nodeCommand) || !path.isAbsolute(entryPath)) {
-    throw new Error("SPS Desktop Marketplace MCP runtime paths must be absolute local paths.");
-  }
-  const pathKey = Object.keys(output).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
-  output[pathKey] = [path.dirname(nodeCommand), output[pathKey]].filter(Boolean).join(path.delimiter);
-  // These values always come from the local Desktop installation. Hub input
-  // is filtered before this merge and therefore cannot replace either path.
-  output.SPS_MARKETPLACE_MCP_NODE = nodeCommand;
-  output.SPS_MARKETPLACE_MCP_ENTRY = entryPath;
-  return output;
-}
-
 async function listSignedInCodexProfiles(homeRoot) {
   const entries = await fs.readdir(homeRoot, { withFileTypes: true }).catch(() => []);
   const candidates = entries
@@ -439,7 +422,6 @@ export async function executeSpsNodeCommand({
   appendCommandEvent = appendSpsNodeCommandEvent,
   completeCommand = completeSpsNodeCommand,
   hostEnvironment = process.env,
-  marketplaceMcpRuntime = null,
   ownership,
   processTermination = defaultProcessTermination,
   spawnCommand = spawnOwnedCommand,
@@ -491,6 +473,9 @@ export async function executeSpsNodeCommand({
   const activeRun = { child: null, cancellationError: null, ownership, processTermination, sourceOpening: false, sourceSession: null };
   activeCommands.set(command.id, activeRun);
   try {
+    if (command.env?.SPS_MARKETPLACE_MCP_REQUIRED === "1") {
+      throw new Error("This legacy Marketplace Assistant command is retired.");
+    }
     const prepared = await withCommandPreflightTimeout(async () => {
       if (process.platform === "win32") await assertWindowsJobSupervisorAvailable();
       throwIfCommandCancelled(activeRun, cancellationGeneration);
@@ -539,10 +524,7 @@ export async function executeSpsNodeCommand({
       // The Hub process may be bound to localhost on its own computer. A member
       // Node must use the Hub URL it connected to, never that host-local address.
       const environment = {
-        ...spsMarketplaceMcpRuntimeEnvironment(
-          marketplaceMcpRuntime,
-          buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
-        ),
+        ...buildSpsNodeRuntimeEnvironment(command.env, hostEnvironment),
         PAPERCLIP_API_URL: hubUrl.replace(/\/$/, ""),
         SPS_WORKSPACE_PATH: workspace,
       };

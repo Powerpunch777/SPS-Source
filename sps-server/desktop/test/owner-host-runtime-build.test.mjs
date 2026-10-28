@@ -22,9 +22,9 @@ test("builds and bundles the static Core Workspace UI with the Owner Host runtim
   assert.doesNotMatch(buildScript, /\[tscCli, "-p", serverTsconfig\]/);
   assert.match(buildScript, /deployed Agent instructions do not match their source assets/);
   assert.match(buildScript, /adapterUtilsTsconfig/);
-  assert.match(buildScript, /marketplaceMcpTsconfig/);
+  assert.match(buildScript, /mcpServerTsconfig/);
   assert.match(buildScript, /packages", "mcp-server", "tsconfig\.json/);
-  assert.match(buildScript, /\[tscCli, "-p", marketplaceMcpTsconfig\]/);
+  assert.match(buildScript, /\[tscCli, "-p", mcpServerTsconfig\]/);
   assert.match(buildScript, /codexAdapterTsconfig/);
   assert.match(buildScript, /claudeAdapterTsconfig/);
   assert.match(buildScript, /serverUiDist/);
@@ -68,7 +68,7 @@ test("ships one verified Owner Host runtime archive instead of expanded runtime 
   assert.match(verifierScript, /\.verified-owner-host-runtime/);
 });
 
-test("keeps the Marketplace MCP stdio runtime in the Owner Host package contract", async () => {
+test("keeps the Plugin conversation MCP stdio runtime in the Owner Host package contract", async () => {
   const buildScript = await readFile(path.join(desktopDirectory, "scripts", "prepare-owner-host-runtime.mjs"), "utf8");
   const verifierScript = await readFile(path.join(desktopDirectory, "scripts", "verify-packaged-owner-host-runtime.mjs"), "utf8");
   const serverManifest = JSON.parse(await readFile(
@@ -82,13 +82,14 @@ test("keeps the Marketplace MCP stdio runtime in the Owner Host package contract
 
   assert.equal(serverManifest.dependencies["@sps/mcp-server"], "workspace:*");
   assert.equal(mcpManifest.name, "@sps/mcp-server");
-  assert.equal(mcpManifest.bin["sps-marketplace-assistant-mcp"], "./dist/marketplace-assistant-stdio.js");
-  assert.match(buildScript, /marketplaceMcpTsconfig/);
-  assert.match(buildScript, /\[tscCli, "-p", marketplaceMcpTsconfig\]/);
+  assert.equal(mcpManifest.bin["sps-mcp-server"], "./dist/stdio.js");
+  assert.equal(mcpManifest.bin["sps-marketplace-assistant-mcp"], undefined);
+  assert.match(buildScript, /mcpServerTsconfig/);
+  assert.match(buildScript, /\[tscCli, "-p", mcpServerTsconfig\]/);
   assert.match(buildScript, /"deploy"/);
   assert.match(buildScript, /runtimeRoot/);
   assert.match(verifierScript, /node_modules\/\@sps\/mcp-server\/package\.json/);
-  assert.match(verifierScript, /node_modules\/\@sps\/mcp-server\/dist\/marketplace-assistant-stdio\.js/);
+  assert.match(verifierScript, /node_modules\/\@sps\/mcp-server\/dist\/plugin-session-tools-stdio\.js/);
 });
 
 test("repairs and verifies the deployed ACPX dependency closure", async () => {
@@ -107,26 +108,6 @@ test("repairs and verifies the deployed ACPX dependency closure", async () => {
   assert.match(verifierScript, /loadDefaultAgentInstructionsBundle\(role\)/);
   assert.match(verifierScript, /node_modules\/\@paperclipai\/server\/dist\/onboarding-assets\/default\/AGENTS\.md/);
   assert.match(verifierScript, /ACPX dependency closure contract/);
-});
-
-test("runs the bundled Marketplace MCP protocol in every Windows package pipeline", async () => {
-  const packageManifest = JSON.parse(await readFile(path.join(desktopDirectory, "package.json"), "utf8"));
-  const smokeScript = await readFile(
-    path.join(desktopDirectory, "scripts", "smoke-packaged-marketplace-mcp-runtime.mjs"),
-    "utf8",
-  );
-
-  for (const scriptName of ["package:win", "release:win", "package:candidate:win"]) {
-    assert.match(packageManifest.scripts[scriptName], /smoke:packaged-marketplace-mcp-runtime/);
-    assert.match(packageManifest.scripts[scriptName], /release:clean-evidence/);
-    assert.match(packageManifest.scripts[scriptName], /release:verify-evidence-privacy/);
-  }
-  assert.match(smokeScript, /new StdioClientTransport/);
-  assert.match(smokeScript, /command: process\.platform === "win32" \? "node\.exe"/);
-  assert.match(smokeScript, /SPS_MARKETPLACE_MCP_NODE/);
-  assert.match(smokeScript, /search_marketplace_plugins/);
-  assert.match(smokeScript, /get_marketplace_plugin/);
-  assert.match(smokeScript, /packaged-scoped-token/);
 });
 
 test("uses a cross-platform DB migration copy step for Windows Desktop builds", async () => {

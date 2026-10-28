@@ -9,6 +9,10 @@ const FIXTURE_PREFIX = "sps-workspace-surfaces-e2e-";
 const REMOVE_ATTEMPTS = 20;
 const REMOVE_RETRY_DELAY_MS = 300;
 const RETRYABLE_REMOVE_CODES = new Set(["EPERM", "EBUSY", "ENOTEMPTY", "EACCES"]);
+const REMOVE_PROGRESS_PHASES = new Set([
+  "identity_check_start", "identity_check_done", "identity_check_failed",
+  "rm_start", "rm_done", "retry", "rm_failed",
+]);
 
 function fixtureError(stage) {
   const error = new Error("Workspace E2E fixture operation failed.");
@@ -53,6 +57,26 @@ function assertDirectoryIdentity(directory, expectedCanonical, expectedIdentity,
 
 function delay(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function reportRemoveProgress(onProgress, phase, attempt, elapsedMs, code) {
+  if (typeof onProgress !== "function" || !REMOVE_PROGRESS_PHASES.has(phase)) return;
+  const event = Object.freeze({
+    phase,
+    attempt,
+    elapsedMs: Math.max(0, Math.trunc(elapsedMs)),
+    ...(code ? { code } : {}),
+  });
+  try {
+    const result = onProgress(event);
+    if (result && typeof result.then === "function") void Promise.resolve(result).catch(() => undefined);
+  } catch {
+    // Diagnostics must never change cleanup behavior.
+  }
+}
+
+function safeRemoveErrorCode(error) {
+  return RETRYABLE_REMOVE_CODES.has(error?.code) ? error.code : "OTHER";
 }
 
 export async function createWorkspaceE2eFixture(options = {}) {
@@ -114,18 +138,34 @@ export async function createWorkspaceE2eFixture(options = {}) {
   }
 
   let removed = false;
-  async function remove() {
+  async function remove(onProgress) {
     if (removed) return;
     for (let attempt = 0; attempt < REMOVE_ATTEMPTS; attempt += 1) {
-      await assertCurrent();
+      const attemptNumber = attempt + 1;
+      const identityStartedAt = Date.now();
+      reportRemoveProgress(onProgress, "identity_check_start", attemptNumber, 0);
+      try {
+        await assertCurrent();
+      } catch (error) {
+        reportRemoveProgress(onProgress, "identity_check_failed", attemptNumber, Date.now() - identityStartedAt);
+        throw error;
+      }
+      reportRemoveProgress(onProgress, "identity_check_done", attemptNumber, Date.now() - identityStartedAt);
+      const removalStartedAt = Date.now();
+      reportRemoveProgress(onProgress, "rm_start", attemptNumber, 0);
       try {
         await rm(directory, { recursive: true, maxRetries: 0 });
         removed = true;
+        reportRemoveProgress(onProgress, "rm_done", attemptNumber, Date.now() - removalStartedAt);
         return;
       } catch (error) {
         if (!RETRYABLE_REMOVE_CODES.has(error?.code) || attempt + 1 === REMOVE_ATTEMPTS) {
+          reportRemoveProgress(onProgress, "rm_failed", attemptNumber, Date.now() - removalStartedAt,
+            safeRemoveErrorCode(error));
           throw fixtureError("remove");
         }
+        reportRemoveProgress(onProgress, "retry", attemptNumber, Date.now() - removalStartedAt,
+          safeRemoveErrorCode(error));
         await delay(REMOVE_RETRY_DELAY_MS);
       }
     }

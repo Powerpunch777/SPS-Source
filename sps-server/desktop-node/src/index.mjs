@@ -9,7 +9,6 @@ export {
   resolveSpsNodeInvocation,
   resolveSpsNodeCodexHome,
   resolveSpsNodeWorkspace,
-  spsMarketplaceMcpRuntimeEnvironment,
   isSpsHostSharedWorkspacePath,
 } from "./command-runner.mjs";
 export { createNodeIdentity, createNodeTransportIdentity, createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";

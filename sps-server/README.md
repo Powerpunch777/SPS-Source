@@ -10,10 +10,11 @@ Read [docs/current/README.md](docs/current/README.md) before changing product be
 The current product decision record is
 [docs/current/PRODUCT-ARCHITECTURE-ko.md](docs/current/PRODUCT-ARCHITECTURE-ko.md).
 
-The new priority is Windows-first native LAN connectivity; see the
-[plan](docs/current/WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md) and its Stage 0 audit.
-It is not implemented or supported yet. The current remote product path still
-requires Tailscale, including separate Host Source sharing dependencies.
+The priority is independent SPS Core completion under the
+[confirmed policy](docs/current/CORE-COMPLETION-POLICY-ko.md). Public Marketplace
+operation is removed, new Builder work waits for its handoff, and full untrusted
+OS containment is deferred with research retained. Tailscale private networking
+and SSH management remain the direction; additional Native LAN work is deferred.
 
 Core owns:
 

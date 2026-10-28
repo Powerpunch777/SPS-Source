@@ -2,6 +2,12 @@
 
 최종 갱신: 2026-10-28
 
+**확정 범위:** [Core 완성 정책](CORE-COMPLETION-POLICY-ko.md)이 아래 이전 단계 기록보다
+우선한다. 공개 Marketplace는 운영하지 않고 전용 Builder 신규 개발은 핸드오프까지
+보류한다. AppContainer 연구는 보존하되 완전한 비신뢰 OS 격리는 1차 필수 조건에서
+제외한다. 내부 Registry·검증·설치·업데이트, SDK·Runner와 기존 보안은 유지한다.
+현재 유일한 최우선 목표는 독립적으로 운영 가능한 SPS Core 완성이다.
+
 ## 현재 우선순위
 
 제품은 **AI 선택형 범용 워크스테이션**이며 Core 비공개·SDK 공개를 유지한다.
@@ -172,7 +178,7 @@ CLI/Gateway/OCE의 후속 확장보다 위 Windows 연결 작업을 먼저 진�
   플러그인 전용 실행 Grant로 바꾼다.
 - 현재 Project Source UI를 Host 소유의 이름 있는 Workspace Source로 바꾼다.
 
-완료 기준: 새 Workspace에는 Discovery & Builder 플러그인, Host/Member 기술 설정만
+이전 단계 기록(현재 필수 조건 아님): Discovery & Builder 플러그인과 Host/Member 기술 설정만
 있고 내장 Room/Task/역할 흐름이 없다.
 
 ## 1단계: Host, Member, Node, Source 기본 루프 — 자동 검증 완료, 물리 장치 확인 대기
@@ -201,15 +207,12 @@ CLI/Gateway/OCE의 후속 확장보다 위 Windows 연결 작업을 먼저 진�
 완료 기준: 플러그인 작성자가 SPS Core를 수정하지 않고 외부 폴더에서 개발, 검사,
 설치, 활성화, 비활성화, 업데이트, 복구, 삭제를 할 수 있다.
 
-## 3단계: 기본 Discovery & Builder 플러그인 — 완료
+## 3단계: 기존 Discovery/Builder 구현 기록 — 신규 개발 보류
 
-- 새 Workspace에서 유일한 기본 활성 플러그인으로 만든다.
-- 첫 Assistant에 Host가 선택한 Runtime을 필수로 연결한다.
-- Catalog 검색과 플러그인 설계 도구만 제공하고 자동 설치/활성화는 하지 않는다.
-- 생명주기 변경은 `설정 > 플러그인`의 명시적 행동으로 연결한다.
-
-완료 기준: 빈 Workspace에서 원하는 작업 방식을 설명하면 숨겨진 Workplane 없이
-안전한 추천이나 플러그인 설계를 받을 수 있다.
+기존 코드는 SDK/Core 호환성을 유지한다. 공개 탐색·추천과 Builder 신규 설계는
+Core 완성의 선행 조건이 아니다. 새 Workspace가 특정 Plugin이나 AI Runtime을
+필수로 요구해서는 안 된다. 내부 패키지의 검증·승인·설치·업데이트 관리는
+Core 관리 인터페이스에 남긴다. Builder의 향후 요구사항은 별도 핸드오프를 따른다.
 
 ## 4단계: 베타 준비 — 다음 단계
 
@@ -228,7 +231,7 @@ CLI/Gateway/OCE의 후속 확장보다 위 Windows 연결 작업을 먼저 진�
 
 ## 베타 이후
 
-- 커뮤니티 게시, 제3자 Registry, 신뢰/평판, Marketplace 검토 과정
+- 공개 게시·판매·평판·커뮤니티 유통은 제품 범위에서 제외한다.
 - Access Control, Team Workplane, Memory Provider, Game, Web, App,
   Plugin Development Pack 같은 선택형 공식 작업 플러그인
 - 추가 운영체제와 승인된 네트워크 방식

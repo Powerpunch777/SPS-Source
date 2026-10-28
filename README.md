@@ -8,6 +8,11 @@ SPS is a Desktop-first platform for building customizable workstations from
 plugins. AI is optional; customer-specific programs may use model APIs, CLI
 tools, external Agent runtimes, or no AI at all.
 
+SPS runs solutions built, reviewed and approved through its own delivery
+business. It does not operate a public Plugin marketplace. Internal Registry,
+package verification and lifecycle, SDK and Runner extensibility remain supported.
+See the [confirmed Core completion policy](sps-server/docs/current/CORE-COMPLETION-POLICY-ko.md).
+
 SPS Core manages the Desktop Host, optional Agent execution, Nodes, execution
 records, plugin runtime and lifecycle. Core enforces technical access boundaries
 without prescribing a company hierarchy, Room/Task model, business role
@@ -18,13 +23,15 @@ hierarchy, memory strategy or development domain.
 1. Sign in to SPS Desktop and create or join a server.
 2. A new server creates a neutral Workspace. No Agent is required.
 3. Use `Settings > Plugins` to inspect and explicitly manage plugins.
-4. The current source candidate bundles and initially enables Plugin Builder;
-   this is a product default, not a Core requirement. A Workspace with no
-   selected usable Shell has an independent empty entry.
-5. For AI-assisted authoring, connect an authorized Agent in Plugin Builder.
-   Ordinary plugin use and manual SDK authoring do not require an AI account.
+4. Review approved internal packages in Core management. No Builder or AI is
+   required to install and operate Plugins through the existing contracts.
+5. Existing Builder code remains compatible; new development waits for a separate
+   handoff after Core completion. A Workspace without a usable Shell has an
+   independent empty entry.
 
-The Catalog is not a separate application. It is the discovery area inside `Settings > Plugins`. A selected recommendation has no automatic lifecycle side effect; Agents decide how to respond to user requests using the available tools. Plugin packages and workers are installed once on the Owner Host, while each Company independently enables or disables the installed extensions it uses.
+Internal Registry lookup and package review support explicit Host installation and
+updates. Public search and recommendations are retired. Packages are installed on
+the Host; Workspace activation, settings and owned execution remain separate.
 
 ## Repository Layout
 

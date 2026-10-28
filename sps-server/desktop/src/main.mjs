@@ -53,7 +53,6 @@ import {
 import {
   claimNextSpsNodeWork,
   executionTransportForSpsNodeWork,
-  spsNodeWorkRequiresMarketplaceMcp,
 } from "./node-command-poller.mjs";
 import {
   buildInviteUrl,
@@ -1714,16 +1713,16 @@ async function ensureOwnerHostManager() {
     return { ...ownerHost, defaultMemory, url };
   }
 
-  // Desktop verifies the official Registry for Core Marketplace regardless of
-  // optional plugin activation. An unavailable refresh leaves the last trusted
-  // snapshot in place, so startup never depends on Marketplace availability.
+  // Desktop verifies the official signed Registry independently of optional
+  // plugin activation. An unavailable refresh leaves the last trusted snapshot
+  // in place, so startup never depends on Registry availability.
   try {
     const refreshed = await refreshSpsDiscoveryCatalog({ ownerVaultRoot: vaultRoot });
     if (!refreshed.refreshed) {
-      console.warn("SPS Marketplace catalog refresh was unavailable", refreshed.errors);
+      console.warn("SPS Registry catalog refresh was unavailable", refreshed.errors);
     }
   } catch (error) {
-    console.warn("SPS Marketplace catalog refresh failed", error);
+    console.warn("SPS Registry catalog refresh failed", error);
   }
 
   const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
@@ -1857,18 +1856,6 @@ async function ensureOwnerHostManager() {
             : {}),
           SPS_BUNDLED_PLUGIN_PATHS: bundledPluginPaths.join(path.delimiter),
           SPS_MARKETPLACE_CATALOG_PATH: discoveryCatalog.catalogPath,
-          ...(materializedRuntime
-            ? {
-              SPS_MARKETPLACE_MCP_ENTRY: path.join(
-                materializedRuntime,
-                "node_modules",
-                "@sps",
-                "mcp-server",
-                "dist",
-                "marketplace-assistant-stdio.js",
-              ),
-            }
-            : {}),
           // Keep the neutral Core free of a preselected workflow or memory
           // strategy. Refresh any already-installed first-party optional
           // package so an earlier Desktop path cannot leave a stale error in
@@ -4925,44 +4912,6 @@ function scheduleHeartbeat({ immediate = true } = {}) {
   if (immediate) void sendNodeHeartbeat();
 }
 
-async function resolveDesktopMarketplaceMcpRuntime() {
-  const bundledRuntimeRoot = app.isPackaged
-    ? await materializeCurrentSpsOwnerHostRuntime()
-    : path.join(__dirname, "..", ".owner-host-runtime");
-  const bundledNodeCommand = spsOwnerHostBundledNodePath(bundledRuntimeRoot);
-  const bundledEntryPath = path.join(
-    bundledRuntimeRoot,
-    "node_modules",
-    "@sps",
-    "mcp-server",
-    "dist",
-    "marketplace-assistant-stdio.js",
-  );
-  if (existsSync(bundledNodeCommand) && existsSync(bundledEntryPath)) {
-    return { nodeCommand: bundledNodeCommand, entryPath: bundledEntryPath };
-  }
-
-  if (!app.isPackaged) {
-    const developmentEntryPath = path.resolve(
-      __dirname,
-      "..",
-      "..",
-      "..",
-      "external",
-      "sps-core",
-      "packages",
-      "mcp-server",
-      "dist",
-      "marketplace-assistant-stdio.js",
-    );
-    if (existsSync(developmentEntryPath)) {
-      return { nodeCommand: process.execPath, entryPath: developmentEntryPath };
-    }
-  }
-
-  return null;
-}
-
 async function pollNodeCommands() {
   if (commandPollInFlight || !canRunSpsNodeCommands(state.nodeStatus) || !state.nodeId || !state.profile || !state.identity) return;
   commandPollInFlight = true;
@@ -4994,9 +4943,6 @@ async function pollNodeCommands() {
       identity: currentIdentity(),
       ...access,
       profile: state.profile,
-      marketplaceMcpRuntime: spsNodeWorkRequiresMarketplaceMcp(nextWork)
-        ? await resolveDesktopMarketplaceMcpRuntime()
-        : null,
       ...executionTransportForSpsNodeWork(nextWork.kind, {
         appendCommandEvent: appendSpsPluginNodeRunEvent,
         checkCommandLease: checkSpsPluginNodeRunLease,
@@ -5204,7 +5150,7 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:workspace-open-plugin-registries", async (event) => {
     assertLocalOwnerWorkspace(event, "Plugin Registry management");
-    // This bridge is opened from Settings > Plugins > Marketplace, so take
+    // This bridge is opened from Settings > Plugins, so take
     // the Host directly to the bundled trusted source. The generic menu item
     // still opens the source manager without preselecting a Registry.
     await showRegistryWindow({ sourceId: SPS_OFFICIAL_REGISTRY_SOURCE.id });

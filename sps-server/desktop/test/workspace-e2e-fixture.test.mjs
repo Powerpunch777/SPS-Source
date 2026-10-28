@@ -5,6 +5,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSyn
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { createWorkspaceE2eFixture } from "../scripts/workspace-e2e-fixture.mjs";
 import { canonicalNativeSmokeDirectorySync } from "../src/native-identity-smoke-paths.mjs";
 
@@ -177,4 +178,42 @@ test("accepts an actual Windows 8.3 alias for its temporary directory", {
   assert.equal(realpathSync.native(alias), canonicalTemporaryDirectory);
   assert.equal(await fixture.assertCurrent(), true);
   await fixture.remove();
+});
+
+test("workspace fixture removal reports only bounded progress fields", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "sps-workspace-fixture-test-"));
+  try {
+    const fixture = await createWorkspaceE2eFixture({ temporaryDirectory: parent });
+    const events = [];
+    await fixture.remove(event => events.push(event));
+
+    assert.equal((await stat(fixture.directory).catch(() => null)), null);
+    assert.equal(events.at(-1)?.phase, "rm_done");
+    for (const event of events) {
+      assert.deepEqual(Object.keys(event).sort(), ["attempt", "elapsedMs", "phase"]);
+      assert.ok(Number.isSafeInteger(event.attempt) && event.attempt >= 1 && event.attempt <= 20);
+      assert.ok(Number.isSafeInteger(event.elapsedMs) && event.elapsedMs >= 0);
+      assert.match(event.phase, /^(identity_check_start|identity_check_done|identity_check_failed|rm_start|rm_done|retry|rm_failed)$/);
+    }
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("workspace fixture cleanup ignores synchronous and asynchronous progress callback failures", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "sps-workspace-fixture-test-"));
+  try {
+    const fixture = await createWorkspaceE2eFixture({ temporaryDirectory: parent });
+    let calls = 0;
+    await fixture.remove(() => {
+      calls += 1;
+      if (calls === 1) throw new Error("diagnostic callback failure");
+      return Promise.reject(new Error("async diagnostic callback failure"));
+    });
+
+    assert.ok(calls > 0);
+    await assert.rejects(stat(fixture.directory), { code: "ENOENT" });
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
 });

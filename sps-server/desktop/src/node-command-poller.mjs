@@ -20,8 +20,3 @@ export function executionTransportForSpsNodeWork(kind, pluginTransport) {
     completeCommand: pluginTransport.completeCommand,
   };
 }
-
-export function spsNodeWorkRequiresMarketplaceMcp(work) {
-  return work?.kind === "agent-command"
-    && work.command?.env?.SPS_MARKETPLACE_MCP_REQUIRED === "1";
-}

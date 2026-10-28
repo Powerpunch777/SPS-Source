@@ -5,10 +5,10 @@ import test from "node:test";
 
 const desktopRoot = path.resolve(import.meta.dirname, "..");
 const harnessPath = path.join(desktopRoot, "scripts", "smoke-host-plugin-lifecycle-desktop.mjs");
-const fixturePath = path.join(desktopRoot, "scripts", "fixtures", "deterministic-marketplace-acp.mjs");
+const fixturePath = path.join(desktopRoot, "scripts", "fixtures", "deterministic-acp.mjs");
 const managedHomeHelperPath = path.join(desktopRoot, "scripts", "e2e-managed-codex-home.mjs");
 
-test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketplace/Builder side-effect free", async () => {
+test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Builder side-effect free", async () => {
   const harness = await readFile(harnessPath, "utf8");
   assert.match(harness, /SPS_DESKTOP_E2E_BINARY/);
   assert.match(harness, /SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS/);
@@ -17,10 +17,6 @@ test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketpl
   assert.match(harness, /#start-sps-account|Sign in/);
   assert.match(harness, /#create-owner-server|Create/);
   assert.match(harness, /company\/settings\/instance\/plugins/);
-  assert.match(harness, /function marketplaceTabProbeExpression\(click = false\)/);
-  assert.match(harness, /querySelectorAll\('\[role="tablist"\]'\)/);
-  assert.match(harness, /waitForAndClickMarketplaceTab\(workspace\)/);
-  assert.doesNotMatch(harness, /Loading SPS extensions\.\.\./, "Marketplace readiness must use the actual visible, enabled tab.");
   assert.match(harness, /Install Plugin/);
   assert.match(harness, /Start and use/);
   assert.match(harness, /Stop using/);
@@ -28,14 +24,10 @@ test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketpl
   assert.match(harness, /Uninstall Plugin/);
   assert.match(harness, /Uninstall and keep summaries/);
   assert.match(harness, /Cancel/);
-  assert.match(harness, /Marketplace/);
-  assert.match(harness, /Open secure install review/);
+  assert.match(harness, /Open signed Registry review/);
   assert.match(harness, /Stage for review/);
   assert.match(harness, /Apply this exact reviewed plugin version/);
-  assert.match(harness, /assistantLifecycleUnchanged/);
-  assert.match(harness, /Marketplace Assistant message send/);
-  assert.match(harness, /deterministic-marketplace-acp\.mjs/);
-  assert.match(harness, /Deterministic Marketplace Assistant response/);
+  assert.doesNotMatch(harness, /Marketplace Assistant|SPS_MARKETPLACE_MCP/);
   assert.match(harness, /--live-agent/);
   assert.match(harness, /Plugin Builder surface/);
   assert.match(harness, /lifecycleBeforeWorkspaceActions/);
@@ -48,25 +40,7 @@ test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Marketpl
   assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
 });
 
-test("required Host lifecycle E2E uses a deterministic ACP fixture with Marketplace MCP injection", async () => {
-  const fixture = await readFile(fixturePath, "utf8");
-  const main = await readFile(path.join(desktopRoot, "src", "main.mjs"), "utf8");
-  const manifest = JSON.parse(await readFile(path.join(desktopRoot, "package.json"), "utf8"));
-  assert.match(fixture, /session\/new/);
-  assert.match(fixture, /sps-marketplace/);
-  assert.match(fixture, /spawn\(marketplaceServer\.command/);
-  assert.match(fixture, /request\("tools\/call"/);
-  assert.match(fixture, /search_marketplace_plugins/);
-  assert.match(fixture, /search_marketplace_plugins result:/);
-  assert.match(fixture, /returned an MCP error\$\{text/);
-  assert.match(fixture, /agent_message_chunk/);
-  assert.match(main, /SPS_MARKETPLACE_MCP_ENTRY:\s*path\.join\(/);
-  assert.match(main, /"@sps",\s*\n\s*"mcp-server"/);
-  assert.doesNotMatch(manifest.scripts["test:e2e:host-plugin-lifecycle"], /--live-agent/);
-  assert.match(manifest.scripts["test:e2e:host-plugin-lifecycle:live"], /--live-agent/);
-});
-
-test("deterministic Host lifecycle E2E wires isolated synthetic Codex auth to its pinned local fixture", async () => {
+test("deterministic Host lifecycle E2E uses an isolated local ACP fixture", async () => {
   const harness = await readFile(harnessPath, "utf8");
   const fixture = await readFile(fixturePath, "utf8");
   const managedHomeHelper = await readFile(managedHomeHelperPath, "utf8");
@@ -100,6 +74,7 @@ test("deterministic Host lifecycle E2E wires isolated synthetic Codex auth to it
   assert.match(managedHomeHelper, /path\.relative\(root, candidate\)/);
   assert.match(managedHomeHelper, /relative\.startsWith\(`\.\.\$\{path\.sep\}`\)/);
   assert.match(harness, /path\.join\("companies", company\.id, "agents", lifecycleAgent\.id, "codex-home"\)/);
-  assert.match(fixture, /spawn\(marketplaceServer\.command[\s\S]*?shell: false/);
+  assert.match(fixture, /Deterministic test response/);
+  assert.doesNotMatch(fixture, /marketplace|mcpServers/i);
   assert.doesNotMatch(fixture, /spawn\(\s*["']codex(?:\.exe)?["']/i);
 });

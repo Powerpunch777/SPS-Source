@@ -1,8 +1,15 @@
 # SPS Product Architecture
 
-Last updated: 2026-10-26
+Last updated: 2026-10-28
 
 ## Purpose
+
+The confirmed [Core completion policy](CORE-COMPLETION-POLICY-ko.md) supersedes
+older Marketplace and Builder requirements below. SPS runs solutions developed,
+reviewed and approved through its own delivery business. It does not operate a
+public Plugin marketplace. Internal package management and SDK/Runner extensibility
+remain Core responsibilities; new Builder work waits for its separate handoff.
+Full untrusted-code OS containment is deferred, with research preserved.
 
 SPS is a customizable workstation platform for individuals, teams and
 customer-specific programs. Core supplies reusable technical infrastructure;
@@ -17,9 +24,11 @@ payments are not prerequisites. SPS Core stays private and the Plugin SDK public
 no repository visibility or license is changed by this plan.
 
 The [Windows native connectivity plan](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)
-now takes priority: Windows Desktop/Host/Member/Node first, then built-in LAN
-without an external Tailscale installation, account or Serve dependency. This is
-an unimplemented target, not a change to current supported transports. Linux
+retains the target of built-in Windows Host/Member/Node LAN without an external
+Tailscale installation, account or Serve dependency. Per the user's 2026-10-28
+direction, additional Native development is deferred while Core and local Desktop
+stability take priority; follow the [deferral record](NATIVE-DEVELOPMENT-DEFERRED-ko.md).
+Native remains unqualified and does not replace currently supported transports. Linux
 Headless Host, macOS and WAN/relay implementation are deferred; Linux CI remains
 a regression gate, not product support.
 
@@ -178,9 +187,9 @@ credentials, files, access grants or installations are migrated by this design.
   meaning.
 - Native Core management and recovery, independent of Plugin UI, once the
   recovery prerequisite has been implemented and verified.
-- Marketplace search, plugin details, and the Marketplace Assistant surface.
-  Core dispatches Assistant turns through a user-authorized AI adapter and
-  exposes only read-only catalog tools.
+- Internal Registry, approved package metadata, integrity/compatibility checks,
+  explicit Host installation, activation, update, removal and rollback. Public
+  discovery and Marketplace Assistant execution are retired.
 
 `Host` and `Member` are technical connection roles only. Core does not define
 business hierarchy, approvals, or who should lead a project.
@@ -216,11 +225,11 @@ Settings > Plugins contains:
 - Installed plugins, Workspace activation, disable, update, and rollback.
 - Local Development Registry management.
 - Personal plugin staging, technical checks, and activation.
-- Plugin-specific settings and the Marketplace Assistant.
+- Plugin-specific settings and internal package management.
 
 `Plugin Builder`는 plugin-management 화면이 아니라 번들 플러그인이 제공하는
 실제 제작 화면이다. 따라서 활성 상태에서는 Workspace navigation에 `Plugin
-Builder`를 표시할 수 있다. 검색과 상세 조회는 Core Marketplace가 담당하고,
+Builder`를 표시할 수 있다. 공개 Marketplace는 제공하지 않으며, 내부 패키지 조회와
 설치, 업데이트, 활성화, 비활성화, 삭제와 Registry 관리는 계속
 **Settings > Plugins**에서만 수행한다. Builder의 제작 화면이 보인다고 해서
 플러그인이 설치되거나 활성화되는 것은 아니다.
@@ -232,31 +241,21 @@ plugin.
 
 ## New Workspace Experience
 
-1. The user signs in to SPS Desktop and creates or joins a Host.
-2. A new Workspace begins neutral, with no hidden Paperclip company structure
-   and no mandatory workflow plugin.
-3. Core Marketplace is available without enabling a workflow plugin.
-4. Keyword, category, compatibility, and verification filters work without an
-   AI adapter.
-5. For conversational recommendations, the user selects an AI adapter they are
-   allowed to use. Core owns the Marketplace Assistant session and its two
-   read-only search/detail tools.
-6. Search, selection, recommendation, and detail inspection never imply a
-   lifecycle action and the Assistant receives no lifecycle tool.
-7. The Host opens the Core plugin detail page and performs installation,
-   activation, update, disable, or removal manually.
-8. If no suitable plugin exists, the Host may enable the bundled Plugin Builder
-   and create a plugin in a separate project folder.
+1. The user signs in and creates or joins a Host using supported private networking.
+2. A Workspace can start with zero Plugins and zero Agents; Core management stays reachable.
+3. The Host reviews approved internal packages and their compatibility/permissions.
+4. Installation, activation, update, disable, removal and rollback use Core management.
+5. Existing SDK/Runner contracts support delivered solutions without Plugin Builder.
+
+Public search/recommendations and Builder authoring are not prerequisites.
 
 ## Plugin Builder
 
-Plugin Builder is a bundled product plugin, not a Core workflow rule. It is the
-first reference implementation of the authoring platform and remains separate
-from Core Marketplace search. The current candidate enables the bundled plugin
-for a new Workspace as an initial discovery/authoring tool. Under the
-2026-10-25 target it is optional: that candidate default does not make an
-Extension, Agent, or Primary mandatory, and existing activation state remains
-subject to compatibility rules.
+New Builder development is on hold until its final design/handoff is provided
+following Core completion. Do not infer its future architecture from the existing
+implementation. Existing Builder code and SDK integration remain compatibility
+constraints. The following implementation notes are historical source behavior,
+not new requirements or a Core release gate.
 
 ### Builder Agent Structure
 
@@ -327,9 +326,11 @@ cover Lead/Worker delegation, stale builds, restart overlap, callback races and
 unconfirmed cancellation. Exact verification results are recorded in the
 [delivery plan](PLUGIN-BUILDER-DELIVERY-PLAN.md).
 
-## Personal Plugin Path
+## Controlled SDK Development and Delivery
 
-A user may use an unverified plugin that they created themselves.
+The SDK supports separate development projects. Production operation is limited
+to packages built, reviewed and approved through SPS delivery; a local source or
+successful technical validation alone is not that approval.
 
 1. The author builds a separate plugin project with the SPS Plugin SDK.
 2. The project is tested and packaged as an `.spsplugin` release.
@@ -339,48 +340,22 @@ A user may use an unverified plugin that they created themselves.
    and Core/Desktop compatibility without running the plugin code.
 5. The Host stages and activates the version for the selected Workspace.
 
-This path does not require SPS official review. The local source warning is
-intentional: the Host, not SPS, decides to trust their own development code.
-Mandatory technical checks cannot be skipped because they prevent malformed
-or incompatible packages from damaging the installation.
+Keep the existing controlled local-development interface and its explicit Host
+review for compatibility. Do not turn it into external self-service distribution.
+Technical checks and package integrity remain mandatory; new Builder workflow
+requirements wait for the separate handoff.
 
-## Marketplace Phase 1
+## Internal Package Management
 
-Marketplace is a feature inside **Settings > Plugins**, backed by the SPS
-Official Registry.
+Core retains the internal Registry, package identity/version, signed release and
+integrity/permission review, compatibility checks, explicit Host lifecycle and
+rollback. Existing verified metadata contracts remain available for managed
+integrations; they do not authorize installation or expose credentials.
 
-Phase 1 provides:
-
-- Search, detail pages, capability declarations, compatibility requirements,
-  release notes, and verified publisher information.
-- A Core-owned Marketplace Assistant that uses a user-authorized AI adapter.
-  Without an adapter, ordinary search and details remain available.
-- Read-only `search_marketplace_plugins` and `get_marketplace_plugin` tools.
-- Explicit Host installation, Workspace activation, update, disable, and
-  rollback.
-- Registry refresh independent of a Desktop update. A newly verified plugin
-  can appear after catalog refresh.
-- Compatibility blocking when a plugin needs a newer SPS Desktop/Core version.
-
-### Implementation status
-
-Core Marketplace search and plugin details are implemented by the SPS
-Marketplace route/service and are covered by Core route/service tests and the
-packaged Marketplace MCP smoke test. The Core-owned Marketplace Assistant is
-also implemented: it uses the selected user-authorized AI adapter and exposes
-only the read-only catalog tools above. The Assistant can search, compare, and
-recommend; it cannot install or change plugin state.
-
-The remaining Marketplace work is candidate-specific acceptance and registry
-productization: verify the complete search/detail/Assistant flow against the
-release tuple, refresh and compatibility behavior, and publish the evidence.
-This is validation and release work, not implementation of the Marketplace
-feature itself.
-
-Phase 1 does not provide public self-service uploads, payment, sales,
-ratings, refunds, or a community marketplace. A future Developer Portal may
-accept submissions, run automated checks, and support human review before a
-package is signed into the Official Registry.
+Public Marketplace search, recommendations, Assistant sessions/tools and public
+publishing/distribution/sales/reputation are outside the product. Retired Assistant
+credentials must continue to fail closed. Existing trust records and package data
+are not deleted as part of retiring the public surface.
 
 ## Export and Import
 
@@ -437,23 +412,19 @@ Implemented foundation:
   Diagnostics, Test Kit, Default Memory provider, and automatic Desktop-update
   mechanism.
 
-Still required before the first complete product release:
+Still required before Core completion:
 
-1. Run the Marketplace search/detail/Assistant acceptance flow against the
-   exact release tuple and publish its evidence. The feature implementation is
-   already present; this item is candidate verification and release gating.
-2. Run the current Plugin Builder conversation -> external SDK project -> manual
-   Desktop connection -> build/validate/test -> isolated Preview -> package and
-   explicit Host review flow against the exact release tuple. The source
-   foundation exists; parent verification of the current Host handoff and
-   restart/ledger cases is pending. Paid-provider authoring, automatic
-   conversation-to-Desktop project binding, public submission, publisher
-   review, Official Registry signing and community marketplace lifecycle remain
-   outside the verified scope.
-3. Complete a physical fresh-machine Host restore acceptance test with a real
-   transfer bundle and publish the evidence.
-4. Complete direct, two-computer Host/Member acceptance tests and publish a
-   signed Windows release to validate real automatic updates.
+1. Verify approved package install/start/stop/restart/update/rollback and Workspace
+   ownership, including uncertain shutdown and abnormal-parent termination.
+2. Verify Workspace data/settings/permission boundaries and cleanup after revocation
+   or deletion, preserving existing capability/grant/Secret/file controls.
+3. Verify multi-Runner assignment, state, interruption and recovery over the supported
+   Tailscale/SSH direction with existing SDK compatibility.
+4. Complete data-preserving backup/restore/install/update evidence and the required
+   Windows/CI/security gates against the same candidate tuple.
+
+Builder authoring, public distribution and full untrusted-code OS containment are
+not Core completion gates. See CORE-COMPLETION-POLICY-ko.md for the accepted scope.
 
 ## Non-Goals for the First Release
 
