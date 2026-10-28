@@ -1,5 +1,10 @@
 # SPS Windows 내장 연결 계획
 
+2026-10-28 사용자 요청으로 **Native 추가 개발을 보류**한다. 아래 설계와 과거 검증은
+보존하되 현재 개발 우선순위로 해석하지 않는다. Core와 로컬 Desktop 안정화를 먼저
+진행하며, 상태·오류·미완료 항목과 재개 순서는
+[Native 보류 기록](NATIVE-DEVELOPMENT-DEFERRED-ko.md)을 따른다.
+
 기준일: 2026-10-27 KST. 상태: **Core·Desktop 등록/Workspace/Host·Member 갱신 연결; Native 기본 OFF, 설치본·물리 LAN 검증 미완료**.
 사용자가 전달한 Windows-First Native Connectivity 인계서와 목표 교체 요청을
 반영한다. 이 문서는 네트워크 변경, 설치본 교체, 운영 배포 승인이 아니다.

@@ -6,7 +6,8 @@
 | --- | --- |
 | Light UI direction, typography, shared surfaces, and Builder layout | [SPS-LIGHT-UI-PLAN-ko.md](SPS-LIGHT-UI-PLAN-ko.md) |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
-| New Windows-first native LAN priority, unimplemented scope, decisions and migration gates | [WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md) |
+| Native development deferred by user request; current evidence and restart checklist | [NATIVE-DEVELOPMENT-DEFERRED-ko.md](NATIVE-DEVELOPMENT-DEFERRED-ko.md) |
+| Windows-first native LAN design and remaining scope; execution currently deferred | [WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md) |
 | Draft trusted transport/pairing and minimal SDK contract, not current exports | [WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md](WINDOWS-NATIVE-CONNECTIVITY-RFC-ko.md) |
 | Windows LAN, private beta and signed first-release scope/estimate assumptions | [SPS-DELIVERY-ESTIMATE-ko.md](SPS-DELIVERY-ESTIMATE-ko.md) |
 | AI-optional workstation direction, backend reuse, OCE boundary and first implementation scope | [MULTI-BACKEND-WORKSTATION-PLAN-ko.md](MULTI-BACKEND-WORKSTATION-PLAN-ko.md) |

@@ -44,6 +44,7 @@ Current product decisions live in [sps-server/docs/current](sps-server/docs/curr
 
 - [Product model](sps-server/docs/current/PRODUCT-MODEL-ko.md)
 - [Windows-first native LAN plan](sps-server/docs/current/WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)
+- [Native development deferred: status and restart notes](sps-server/docs/current/NATIVE-DEVELOPMENT-DEFERRED-ko.md)
 - [Multi-backend workstation plan](sps-server/docs/current/MULTI-BACKEND-WORKSTATION-PLAN-ko.md)
 - [Plugin developer platform](sps-server/docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)
 - [Roadmap](sps-server/docs/current/ROADMAP.md)

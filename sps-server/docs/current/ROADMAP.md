@@ -1,12 +1,14 @@
 # SPS 구현 로드맵
 
-최종 갱신: 2026-10-27
+최종 갱신: 2026-10-28
 
 ## 현재 우선순위
 
 제품은 **AI 선택형 범용 워크스테이션**이며 Core 비공개·SDK 공개를 유지한다.
-현재 제품 계약은 [아키텍처](PRODUCT-ARCHITECTURE-ko.md), 다음 우선순위는
-[Windows 내장 연결 계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)이다.
+현재 제품 계약은 [아키텍처](PRODUCT-ARCHITECTURE-ko.md)다. 2026-10-28 사용자
+요청으로 Native 추가 개발을 보류하고 **Core와 로컬 Desktop 안정화**를 우선한다.
+[Windows 내장 연결 계획](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)은 후속 설계로
+보존하며, [보류 기록과 재개 순서](NATIVE-DEVELOPMENT-DEFERRED-ko.md)를 따른다.
 다중 실행 경로의 기반·수용 기준은 [다중 백엔드 계획](MULTI-BACKEND-WORKSTATION-PLAN-ko.md)에 보존한다.
 구현 상태와 테스트 증거는 [재사용 감사](../reviews/MULTI-BACKEND-REUSE-AUDIT-2026-10-25.md),
 [Core/Plugin 진행 기록](../reviews/CORE_PLUGIN_ARCH_IMPLEMENTATION_PROGRESS.md)으로 분리한다.
