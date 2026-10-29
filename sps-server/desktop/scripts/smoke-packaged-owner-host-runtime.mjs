@@ -16,6 +16,7 @@ import {
   inspectRegistrySource,
 } from "../src/registry-source-catalog.mjs";
 import { stageSpsPluginArchive } from "../src/registry-staging.mjs";
+import { waitForBundledPluginRows } from "./bundled-plugin-smoke-readiness.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
@@ -235,6 +236,8 @@ async function assertPluginBuilderPlugin() {
     ? builder.manifestJson.tools.map((tool) => tool?.name).sort()
     : [];
   if (toolNames.join(",") !== [
+    "builder-delegate-worker",
+    "builder-worker-result",
     "create-sps-plugin-package",
     "create-sps-plugin-project",
     "inspect-sps-plugin-build",
@@ -274,16 +277,37 @@ async function assertPluginBuilderBridge() {
   const builderActivation = activationByKey.get("sps.plugin-discovery");
   const memoryActivation = activationByKey.get("sps.default-memory");
   const roomsActivation = activationByKey.get("local.room-chat");
+  // This compatibility fixture explicitly requests all three Host bundles.
+  // Preserve their declared defaults; a neutral Desktop does not preinstall
+  // this authoring package. Workspace overrides are exercised separately below.
   if (
-    builderActivation?.enabled !== false
-    || builderActivation?.defaultEnabled !== false
+    builderActivation?.enabled !== true
+    || builderActivation?.defaultEnabled !== true
     || memoryActivation?.enabled !== false
     || memoryActivation?.defaultEnabled !== false
     || roomsActivation?.enabled !== false
     || roomsActivation?.defaultEnabled !== false
   ) {
-    throw new Error("A new Workspace must keep bundled plugins disabled until explicitly enabled.");
+    throw new Error("Bundled Workspace activation did not preserve the declared package defaults.");
   }
+
+  const disableBuilder = await ownerHostRequest(`/api/plugins/${encodeURIComponent(builderActivation.pluginId)}/companies/${encodeURIComponent(companyId)}/activation`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled: false }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const disabledPayload = await disableBuilder.json().catch(() => null);
+  if (!disableBuilder.ok || disabledPayload?.activation?.enabled !== false
+    || disabledPayload?.activation?.defaultEnabled !== true) {
+    throw new Error("Could not explicitly disable the private authoring package without rewriting its manifest default.");
+  }
+  const disabledView = await ownerHostRequest("/api/plugins/sps.plugin-discovery/bridge/data", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key: "plugin-builder-workspace", companyId, params: {} }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (disabledView.status !== 403) throw new Error("Disabled Workspace plugin bridge remained accessible.");
 
   const enableBuilder = await ownerHostRequest(`/api/plugins/${encodeURIComponent(builderActivation.pluginId)}/companies/${encodeURIComponent(companyId)}/activation`, {
     method: "PUT",
@@ -297,8 +321,9 @@ async function assertPluginBuilderBridge() {
   }
   const explicitActivations = await ownerHostJson(`/api/plugins/companies/${companyId}`);
   const explicitBuilderActivation = explicitActivations?.plugins?.find(plugin => plugin?.pluginKey === "sps.plugin-discovery")?.activation;
-  if (explicitBuilderActivation?.enabled !== true || explicitBuilderActivation?.defaultEnabled !== false) {
-    throw new Error("Plugin Builder did not remain default-off after explicit Workspace activation.");
+  if (explicitBuilderActivation?.enabled !== true || explicitBuilderActivation?.defaultEnabled !== true
+    || explicitBuilderActivation?.source !== "explicit") {
+    throw new Error("Explicit Workspace activation rewrote the approved package default.");
   }
 
   const legacyBuiltIns = await ownerHostRequest(`/api/companies/${companyId}/built-in-agents`, {
@@ -827,6 +852,8 @@ try {
   await assertDesktopOnlyBoundary();
   await assertStaticWorkspaceUi();
   await assertBaselineTeamAccessUi();
+  await waitForBundledPluginRows({ request: ownerHostRequest,
+    pluginIds: ["sps.default-memory", "sps.plugin-discovery", "local.room-chat"] });
   await assertDefaultMemoryPlugin();
   await assertPluginBuilderPlugin();
   await assertPluginBuilderBridge();

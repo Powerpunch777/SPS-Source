@@ -19,6 +19,10 @@ Plugin Builder의 최종 설계와 핸드오프는 Core 완성 확인 후 별도
 SDK·Plugin 계약과 실행·배포 연동 여지는 보존한다. Builder 없이도 Core와
 기존 SDK만으로 승인한 Plugin을 설치·실행·관리할 수 있어야 한다.
 
+Core·Desktop 완성 작업이 끝나면 플러그인 신규 개발에 들어가기 전에 멈추고 결과를 보고한다.
+솔루션 플러그인 또는 Plugin Builder 신규 개발은 사용자의 별도 시작 지시 후 진행한다.
+기존 Core 플러그인 실행·SDK·권한·복구 호환성 검증은 계속 유지한다.
+
 AI와 Agent는 필수가 아니다. Runner는 실제 작업을 수행하는 실행 컴퓨터이며
 Target 또는 Agent와 동일시하지 않는다. 기존 Node 명칭·wire protocol·SDK 계약은
 호환성을 위해 유지하고, 용어 변경을 대규모 개명 작업으로 확대하지 않는다.
