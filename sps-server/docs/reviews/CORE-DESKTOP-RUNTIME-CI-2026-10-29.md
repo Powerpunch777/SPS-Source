@@ -108,8 +108,8 @@ is172332348bytes with SHA256
 `3dd0ecdd4c21f8b3ac32e73090e34410d7ca00ed75feecc7c6977a1b506ef08e`.
 Source298cac7 push40829380687 also completed all18CI jobs successfully.
 Its unsigned development unpacked build predates the fixes below; it does not
-qualify the newer candidate. The standalone packaged verifier is still extracting
-that archive and has not returned a terminal result.
+qualify the newer candidate. The standalone packaged verifier subsequently failed
+at runtime-directory promotion with Windows EPERM, as detailed below.
 
 Source3c9a65b corrected the stale activation source assertions while retaining
 all other coverage and adding explicit disable403 checks;3focused files passed
@@ -127,7 +127,7 @@ instead of `out:hello\n`. This failure is not waived as a flaky test.
   It serializes frames, reuses existing atomic temporary-file publication and
   joins uploads before stop cleanup. Failed normal input/EOF remains failed;
   cleanup can separately attempt EOF after the failure settles. Six controlled
-  promise tests and adapter-utils typecheck passed. Linux integration tests are
+  promise tests and adapter-utils typecheck/build passed. Linux integration tests are
   retained and still require updated-candidate CI. See Core
   `doc/SPS-PROCESS-SESSION-INPUT-ORDER.md` for bounds and provider limits.
 
@@ -141,3 +141,34 @@ Upgrade rollback retains the old package snapshot in process memory, not a
 durable operation journal. Restart recovery and safe artifact retirement must
 preserve current, rollback and still-running-worker references. Directory age or
 the word "staging" does not authorize deleting these artifacts.
+
+## Windows replacement failure and scoped content verification
+
+The standalone verifier's archive extraction and post-extraction checks reached
+promotion, then `rename(staging, target)` failed with EPERM after the previous
+target had moved to its backup path. The old catch deleted the staged candidate
+without restoring the previous target. This is an actual failed local check,
+not a completed package-verification result. It affected the development cache,
+not the installed SPS or user data. Its previous cache remains at
+`0.4.137.stale-23020-1793260147984`; it is an older candidate, not current evidence.
+
+The follow-up adds bounded retries for EPERM/EBUSY and restores the previous
+runtime if promotion still fails. If rollback fails or an unexpected destination
+appears, both artifacts are preserved and the aggregate error reports both
+failures. No unexpected destination is intentionally overwritten. Four focused
+regressions cover permanent/transient promotion failure, failed rollback and
+occupied-target protection. Runtime-package/build files pass24/24 without skips.
+This covers handled replacement errors; process/power loss between directory
+renames is a separate recovery boundary and is not proven crash-atomic here.
+
+To isolate content from materialization, the verifier was separately pointed at
+the already-prepared `.owner-host-runtime` using its existing explicit root
+override. This run passed the actual bundled Node/Windows Job supervisor,
+Owner Host admission, Node IPC, worker preload/private shutdown pipe, Zod4.6.6
+issue budget and runtime assets/dependency checks. It checks the earlier
+Source298cac7/Corea01b395e artifact's contents; it bypasses materialization and
+does not change that failed result or qualify current-candidate packaging.
+
+At Sourcefebfd3e, updated Core Linux workspaces B CI has passed, including the
+unchanged adapter integration tests and automatically discovered6queue regressions.
+Other jobs/current follow-up CI and new packaged candidate evidence remain pending.

@@ -281,6 +281,18 @@ async function acquireRuntimeLock(lockPath, { fsApi = fs, delay, targetRuntimeRo
   throw new Error("SPS Owner Host runtime preparation is already running for too long.");
 }
 
+async function renameRuntimeDirectory(fsApi, source, destination, delay) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fsApi.rename(source, destination);
+      return;
+    } catch (error) {
+      if (attempt >= 4 || !["EPERM", "EBUSY"].includes(error?.code)) throw error;
+      await delay(100 * (attempt + 1));
+    }
+  }
+}
+
 export async function materializeSpsOwnerHostRuntimePackage({
   packageRoot,
   targetRuntimeRoot,
@@ -338,16 +350,35 @@ export async function materializeSpsOwnerHostRuntimePackage({
       materializedAt: new Date().toISOString(),
     }, null, 2)}\n`, "utf8");
     try {
-      staleTarget = `${targetRuntimeRoot}.stale-${process.pid}-${Date.now()}`;
-      await fsApi.rename(targetRuntimeRoot, staleTarget);
+      const previousRuntimeRoot = `${targetRuntimeRoot}.stale-${process.pid}-${Date.now()}`;
+      await renameRuntimeDirectory(fsApi, targetRuntimeRoot, previousRuntimeRoot, delay);
+      staleTarget = previousRuntimeRoot;
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
       staleTarget = null;
     }
-    await fsApi.rename(stagingRoot, targetRuntimeRoot);
+    await renameRuntimeDirectory(fsApi, stagingRoot, targetRuntimeRoot, delay);
     if (staleTarget) void fsApi.rm(staleTarget, { recursive: true, force: true }).catch(() => undefined);
     return targetRuntimeRoot;
   } catch (error) {
+    if (staleTarget) {
+      try {
+        let destinationExists = false;
+        try {
+          await fsApi.lstat(targetRuntimeRoot);
+          destinationExists = true;
+        } catch (lookupError) {
+          if (lookupError?.code !== "ENOENT") throw lookupError;
+        }
+        if (destinationExists) throw new Error("Runtime replacement destination is occupied; refusing rollback overwrite.");
+        await renameRuntimeDirectory(fsApi, staleTarget, targetRuntimeRoot, delay);
+      } catch (restoreError) {
+        // Preserve both paths if rollback cannot be proved. Never discard the
+        // only previous runtime or overwrite an unexpected destination.
+        throw new AggregateError([error, restoreError],
+          `SPS Owner Host runtime replacement and rollback failed. Preserved previous runtime at ${staleTarget} and candidate at ${stagingRoot}.`);
+      }
+    }
     await fsApi.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   } finally {

@@ -146,6 +146,165 @@ test("keeps a failed extraction out of the final runtime path", async () => {
   }
 });
 
+test("restores the previous runtime when promoting the extracted runtime fails", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-promotion-rollback-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  const packageRoot = path.join(temporary, "package");
+  const targetRoot = path.join(temporary, "materialized");
+  const oldMarker = path.join(targetRoot, "old-marker.txt");
+  const promotionError = Object.assign(new Error("simulated sharing violation"), { code: "EPERM" });
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.mkdir(targetRoot, { recursive: true });
+    await fs.writeFile(oldMarker, "previous runtime", "utf8");
+
+    await assert.rejects(
+      materializeSpsOwnerHostRuntimePackage({
+        packageRoot,
+        targetRuntimeRoot: targetRoot,
+        fsApi: {
+          ...fs,
+          rename: async (from, to) => {
+            if (from.startsWith(`${targetRoot}.staging-`) && to === targetRoot) throw promotionError;
+            return fs.rename(from, to);
+          },
+        },
+        delay: async () => {},
+      }),
+      error => error === promotionError,
+    );
+    assert.equal(await fs.readFile(oldMarker, "utf8"), "previous runtime");
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test("retries a transient runtime promotion failure before succeeding", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-promotion-retry-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  const packageRoot = path.join(temporary, "package");
+  const targetRoot = path.join(temporary, "materialized");
+  const promotionError = Object.assign(new Error("transient sharing violation"), { code: "EPERM" });
+  let promotionAttempts = 0;
+  let retryDelays = 0;
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.mkdir(targetRoot, { recursive: true });
+    await fs.writeFile(path.join(targetRoot, "old-marker.txt"), "previous runtime", "utf8");
+
+    await materializeSpsOwnerHostRuntimePackage({
+      packageRoot,
+      targetRuntimeRoot: targetRoot,
+      fsApi: {
+        ...fs,
+        rename: async (from, to) => {
+          if (from.startsWith(`${targetRoot}.staging-`) && to === targetRoot && ++promotionAttempts === 1) {
+            throw promotionError;
+          }
+          return fs.rename(from, to);
+        },
+      },
+      delay: async () => { retryDelays += 1; },
+    });
+
+    assert.equal(promotionAttempts, 2);
+    assert.equal(retryDelays, 1);
+    assert.equal(await fs.readFile(path.join(targetRoot, "bin", "node.exe"), "utf8"), "node");
+    assert.match(await fs.readFile(path.join(targetRoot, ".sps-runtime-materialized.json"), "utf8"), /archiveSha256/);
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test("preserves both previous and staged runtimes when rollback also fails", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-rollback-failure-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  const packageRoot = path.join(temporary, "package");
+  const targetRoot = path.join(temporary, "materialized");
+  const promotionError = Object.assign(new Error("promotion sharing violation"), { code: "EPERM" });
+  const restoreError = Object.assign(new Error("restore denied"), { code: "EACCES" });
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.mkdir(targetRoot, { recursive: true });
+    await fs.writeFile(path.join(targetRoot, "old-marker.txt"), "previous runtime", "utf8");
+
+    await assert.rejects(
+      materializeSpsOwnerHostRuntimePackage({
+        packageRoot,
+        targetRuntimeRoot: targetRoot,
+        fsApi: {
+          ...fs,
+          rename: async (from, to) => {
+            if (from.startsWith(`${targetRoot}.staging-`) && to === targetRoot) throw promotionError;
+            if (from.startsWith(`${targetRoot}.stale-`) && to === targetRoot) throw restoreError;
+            return fs.rename(from, to);
+          },
+        },
+        delay: async () => {},
+      }),
+      error => error instanceof AggregateError
+        && error.errors.includes(promotionError)
+        && error.errors.includes(restoreError),
+    );
+
+    const entries = await fs.readdir(temporary);
+    const staleRoot = path.join(temporary, entries.find(name => name.startsWith("materialized.stale-")));
+    const stagingRoot = path.join(temporary, entries.find(name => name.startsWith("materialized.staging-")));
+    assert.equal(await fs.readFile(path.join(staleRoot, "old-marker.txt"), "utf8"), "previous runtime");
+    assert.equal(await fs.readFile(path.join(stagingRoot, "bin", "node.exe"), "utf8"), "node");
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test("does not overwrite an unexpected target during rollback", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-rollback-occupied-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  const packageRoot = path.join(temporary, "package");
+  const targetRoot = path.join(temporary, "materialized");
+  const promotionError = Object.assign(new Error("promotion sharing violation"), { code: "EPERM" });
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.mkdir(targetRoot, { recursive: true });
+    await fs.writeFile(path.join(targetRoot, "old-marker.txt"), "previous runtime", "utf8");
+
+    await assert.rejects(
+      materializeSpsOwnerHostRuntimePackage({
+        packageRoot,
+        targetRuntimeRoot: targetRoot,
+        fsApi: {
+          ...fs,
+          rename: async (from, to) => {
+            if (from.startsWith(`${targetRoot}.staging-`) && to === targetRoot) {
+              await fs.mkdir(targetRoot, { recursive: true });
+              await fs.writeFile(path.join(targetRoot, "unexpected-marker.txt"), "unexpected target", "utf8");
+              throw promotionError;
+            }
+            return fs.rename(from, to);
+          },
+        },
+        delay: async () => {},
+      }),
+      error => error instanceof AggregateError
+        && error.errors[0] === promotionError
+        && /destination is occupied/.test(error.errors[1]?.message ?? ""),
+    );
+
+    assert.equal(await fs.readFile(path.join(targetRoot, "unexpected-marker.txt"), "utf8"), "unexpected target");
+    const entries = await fs.readdir(temporary);
+    const staleRoot = path.join(temporary, entries.find(name => name.startsWith("materialized.stale-")));
+    const stagingRoot = path.join(temporary, entries.find(name => name.startsWith("materialized.staging-")));
+    assert.equal(await fs.readFile(path.join(staleRoot, "old-marker.txt"), "utf8"), "previous runtime");
+    assert.equal(await fs.readFile(path.join(stagingRoot, "bin", "node.exe"), "utf8"), "node");
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test("classifies stale runtime lock owners conservatively", () => {
   const cases = [
     {
