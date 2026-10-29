@@ -65,10 +65,12 @@ test("Desktop packages Plugin Builder without Marketplace or lifecycle authority
   assert.match(smoke, /assertPluginBuilderPlugin/);
   assert.match(smoke, /assertPluginBuilderBridge/);
   assert.match(smoke, /plugin-builder-workspace/);
-  assert.match(smoke, /builderActivation\?\.enabled !== false/);
-  assert.match(smoke, /builderActivation\?\.defaultEnabled !== false/);
+  assert.match(smoke, /builderActivation\?\.enabled !== true/);
+  assert.match(smoke, /builderActivation\?\.defaultEnabled !== true/);
   assert.match(smoke, /method: "PUT",[\s\S]*?body: JSON\.stringify\(\{ enabled: true \}\)/);
-  assert.match(smoke, /Plugin Builder did not remain default-off after explicit Workspace activation/);
+  assert.match(smoke, /body: JSON\.stringify\(\{ enabled: false \}\)/);
+  assert.match(smoke, /if \(disabledView\.status !== 403\)/);
+  assert.match(smoke, /Explicit Workspace activation rewrote the approved package default/);
   assert.doesNotMatch(smoke, /keep only Plugin Builder enabled for a new Workspace/);
   assert.match(workspaceSmoke, /Plugin Builder is a private development tool, not a default Workspace/);
   assert.match(workspaceSmoke, /activation\. Install it explicitly through the real Host API/);
