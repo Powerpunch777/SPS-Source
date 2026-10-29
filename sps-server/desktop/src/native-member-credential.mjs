@@ -1,9 +1,5 @@
-import "reflect-metadata";
 import { createHash, createPrivateKey, createPublicKey, X509Certificate, webcrypto } from "node:crypto";
-import {
-  AuthorityKeyIdentifierExtension, BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
-  KeyUsageFlags, KeyUsagesExtension, Name, SubjectKeyIdentifierExtension, X509Certificate as ParsedCertificate,
-} from "@peculiar/x509";
+import { loadNativeCertificateLibrary } from "./native-certificate-library.mjs";
 import { validateSpsNativeMemberIssuerCertificate } from "./native-identity-certificates.mjs";
 import { publicSpsNativeMemberEnrollmentRequest } from "./native-member-certificates.mjs";
 import { SPS_NATIVE_MEMBER_DEVICE_CERT_VALIDITY_DAYS } from "./native-connection-policy.mjs";
@@ -35,6 +31,11 @@ export async function validateSpsNativeMemberCredential(options) {
     const der = pem(certificate.certificatePem, "CERTIFICATE");
     parseBoundedNativeCertificateDer(der);
     const leaf = new X509Certificate(der);
+    const {
+      AuthorityKeyIdentifierExtension, BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
+      KeyUsageFlags, KeyUsagesExtension, Name, SubjectKeyIdentifierExtension,
+      X509Certificate: ParsedCertificate,
+    } = loadNativeCertificateLibrary();
     const parsed = new ParsedCertificate(der, NATIVE_CERTIFICATE_PARSE_OPTIONS);
     const expectedName = new Name(`CN=SPS Member Device ${request.deviceKeyId},OU=SPS Native Host ${request.hostId}`);
     const issuerParsed = new ParsedCertificate(issuer.raw, NATIVE_CERTIFICATE_PARSE_OPTIONS);

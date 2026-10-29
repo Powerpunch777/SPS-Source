@@ -1,11 +1,6 @@
-import "reflect-metadata";
 import { createHash, createPrivateKey, createPublicKey, randomBytes, webcrypto, X509Certificate } from "node:crypto";
 import { isIP } from "node:net";
-import {
-  BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
-  KeyUsageFlags, KeyUsagesExtension, SubjectAlternativeNameExtension,
-  SubjectKeyIdentifierExtension, X509Certificate as ParsedCertificate, X509CertificateGenerator,
-} from "@peculiar/x509";
+import { loadNativeCertificateLibrary } from "./native-certificate-library.mjs";
 import { SPS_NATIVE_SERVER_CERT_VALIDITY_DAYS } from "./native-connection-policy.mjs";
 import {
   nativeCertificateRecord as record, nativeCertificateUuid as uuid, nativeCertificateDate as date,
@@ -55,6 +50,11 @@ function checkCertificate(certificatePem, hostId, issuer) {
   const der = pem(certificatePem, "CERTIFICATE");
   parseBoundedNativeCertificateDer(der);
   const certificate = new X509Certificate(der);
+  const {
+    BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
+    KeyUsageFlags, KeyUsagesExtension, SubjectAlternativeNameExtension,
+    SubjectKeyIdentifierExtension, X509Certificate: ParsedCertificate,
+  } = loadNativeCertificateLibrary();
   const parsed = new ParsedCertificate(der, NATIVE_CERTIFICATE_PARSE_OPTIONS);
   if (parsed.signatureAlgorithm.name !== "ECDSA" || parsed.signatureAlgorithm.hash?.name !== "SHA-256"
     || !certificate.raw.equals(der)
@@ -171,6 +171,7 @@ export function requireCurrentSpsNativeHostIdentity(input, now = Date.now()) {
 }
 
 function sanSequence(details) {
+  const { SubjectAlternativeNameExtension } = loadNativeCertificateLibrary();
   return details.parsed.getExtension(SubjectAlternativeNameExtension).names.items.map(entry => ({ type: entry.type, value: entry.value }));
 }
 
@@ -221,6 +222,11 @@ export async function renewSpsNativeHostServerCertificate(input) {
     const serial = randomBytes(20);
     serial[0] = (serial[0] & 0x7f) | 1;
     const names = sanSequence(details.server);
+    const {
+      BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
+      KeyUsageFlags, KeyUsagesExtension, SubjectAlternativeNameExtension,
+      SubjectKeyIdentifierExtension, X509CertificateGenerator,
+    } = loadNativeCertificateLibrary();
     const extensions = [
       new BasicConstraintsExtension(false, undefined, true),
       new KeyUsagesExtension(KeyUsageFlags.digitalSignature, true),
@@ -242,6 +248,11 @@ export async function renewSpsNativeHostServerCertificate(input) {
 }
 
 async function selfSignedPair(hostId, hostnames, notBefore, notAfter, issuer) {
+  const {
+    BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
+    KeyUsageFlags, KeyUsagesExtension, SubjectAlternativeNameExtension,
+    SubjectKeyIdentifierExtension, X509CertificateGenerator,
+  } = loadNativeCertificateLibrary();
   const keys = await webcrypto.subtle.generateKey(KEY_ALGORITHM, true, ["sign", "verify"]);
   const serial = randomBytes(20);
   serial[0] = (serial[0] & 0x7f) | 1;

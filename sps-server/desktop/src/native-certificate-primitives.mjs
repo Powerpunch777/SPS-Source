@@ -1,4 +1,4 @@
-import { fromBER } from "asn1js";
+import { loadNativeAsn1Library } from "./native-certificate-library.mjs";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const NATIVE_CERTIFICATE_PARSE_OPTIONS = Object.freeze({ berOptions: Object.freeze({ maxDepth: 16, maxNodes: 256, maxContentLength: 4096 }) });
@@ -45,6 +45,7 @@ export function nativeCertificatePublicDer(key) {
 
 export function parseBoundedNativeCertificateDer(bytes) {
   if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > 4096) throw new Error("size");
+  const { fromBER } = loadNativeAsn1Library();
   const complete = fromBER(bytes, NATIVE_CERTIFICATE_PARSE_OPTIONS.berOptions);
   if (complete.offset !== bytes.length || complete.result.error || complete.result.warnings.length) throw new Error("asn1");
   const pending = [complete.result];

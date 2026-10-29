@@ -1,10 +1,5 @@
-import "reflect-metadata";
 import { createHash, createPrivateKey, createPublicKey, randomBytes, webcrypto, X509Certificate } from "node:crypto";
-import {
-  AuthorityKeyIdentifierExtension, BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
-  KeyUsageFlags, KeyUsagesExtension, Name, Pkcs10CertificateRequest, Pkcs10CertificateRequestGenerator,
-  SubjectKeyIdentifierExtension, X509Certificate as ParsedCertificate, X509CertificateGenerator,
-} from "@peculiar/x509";
+import { loadNativeCertificateLibrary } from "./native-certificate-library.mjs";
 import { requireCurrentSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
 import { SPS_NATIVE_MEMBER_DEVICE_CERT_VALIDITY_DAYS } from "./native-connection-policy.mjs";
 import {
@@ -42,6 +37,7 @@ async function parseRequest(input) {
     || parts[1].valueBlock.value?.length !== 1 || parts[2].valueBlock.unusedBits !== 0
     || info[3].idBlock.tagClass !== 3 || info[3].idBlock.tagNumber !== 0
     || !info[3].idBlock.isConstructed || info[3].valueBlock.value?.length !== 0) throw new Error("profile");
+  const { Name, Pkcs10CertificateRequest } = loadNativeCertificateLibrary();
   const request = new Pkcs10CertificateRequest(bytes, PARSE_OPTIONS);
   const publicKeyBytes = Buffer.from(request.publicKey.rawData);
   const publicKey = requireP256(createPublicKey({ key: publicKeyBytes, format: "der", type: "spki" }));
@@ -61,6 +57,7 @@ export async function createSpsNativeMemberKeyRequest(options) {
     uuid(value.hostId); uuid(value.deviceKeyId);
   } catch { throw failure("native_member_request_invalid"); }
   try {
+    const { Pkcs10CertificateRequestGenerator } = loadNativeCertificateLibrary();
     const keys = await webcrypto.subtle.generateKey(KEY_ALGORITHM, true, ["sign", "verify"]);
     const request = await Pkcs10CertificateRequestGenerator.create({
       name: memberSubject(value.hostId, value.deviceKeyId), keys, signingAlgorithm: SIGNING_ALGORITHM,
@@ -119,6 +116,11 @@ export async function issueSpsNativeMemberCertificate(options) {
       || publicDer(parsed.publicKey).equals(publicDer(new X509Certificate(host.server.certificatePem).publicKey))) throw new Error("scope");
   } catch { throw failure("native_member_issuance_invalid"); }
   try {
+    const {
+      AuthorityKeyIdentifierExtension, BasicConstraintsExtension, ExtendedKeyUsage, ExtendedKeyUsageExtension,
+      KeyUsageFlags, KeyUsagesExtension, SubjectKeyIdentifierExtension,
+      X509Certificate: ParsedCertificate, X509CertificateGenerator,
+    } = loadNativeCertificateLibrary();
     const issuer = new ParsedCertificate(host.memberIssuer.certificatePem);
     const privateBytes = pem(host.memberIssuer.privateKeyPem, "PRIVATE KEY");
     let signingKey;

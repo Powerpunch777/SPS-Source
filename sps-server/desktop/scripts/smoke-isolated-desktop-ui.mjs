@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { once } from "node:events";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, rm, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawnWindowsJobSupervisor } from "../node_modules/@sps/desktop-node/src/windows-job-supervisor.mjs";
 
-const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
 const packagedBinary = process.env.SPS_DESKTOP_E2E_BINARY?.trim();
@@ -134,15 +130,19 @@ async function inspectRenderer(target) {
 }
 
 async function stopChildTree(child) {
-  if (!child || child.exitCode !== null || !child.pid) return;
-  await execFileAsync("taskkill", ["/pid", String(child.pid), "/T", "/F"]).catch(() => undefined);
-  await Promise.race([
-    once(child, "exit").catch(() => undefined),
-    delay(5_000),
-  ]);
+  const terminal = await child.terminateOwnedJob();
+  assert.equal(terminal.activeProcesses, 0, "Isolated Desktop Job termination is unconfirmed; profile preserved.");
+  if (terminal.type === "exit") assert.equal(terminal.code, 0, "Isolated Desktop exited abnormally.");
 }
 
 async function removeTemporaryUserData(directory) {
+  const target = await realpath(directory);
+  const temporaryRoot = await realpath(os.tmpdir());
+  const relative = path.relative(temporaryRoot, target);
+  if ((await lstat(directory)).isSymbolicLink() || !relative.startsWith("sps-isolated-desktop-ui-")
+    || relative.includes(path.sep) || path.isAbsolute(relative)) {
+    throw new Error("Refusing isolated Desktop profile cleanup outside its dedicated temporary directory.");
+  }
   let lastError = null;
   for (let attempt = 0; attempt < 12; attempt += 1) {
     try {
@@ -158,26 +158,26 @@ async function removeTemporaryUserData(directory) {
 
 const debugPort = await findAvailablePort();
 const userData = await mkdtemp(path.join(os.tmpdir(), "sps-isolated-desktop-ui-"));
-const child = spawn(
-  electronBinary,
-  [
+const child = spawnWindowsJobSupervisor({
+  executable: electronBinary,
+  args: [
     `--user-data-dir=${userData}`,
     `--remote-debugging-port=${debugPort}`,
     "--remote-allow-origins=*",
     ...(isPackagedCandidate ? [] : ["."]),
   ],
-  {
-    cwd: isPackagedCandidate ? path.dirname(electronBinary) : desktopRoot,
-    env: {
-      ...process.env,
-      SPS_DESKTOP_E2E: "1",
-      SPS_DESKTOP_E2E_USER_DATA_DIR: userData,
-      SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
-    },
-    stdio: "ignore",
+  cwd: isPackagedCandidate ? path.dirname(electronBinary) : desktopRoot,
+  env: {
+    ...Object.fromEntries(Object.entries(process.env).filter(([, value]) => typeof value === "string")),
+    SPS_DESKTOP_E2E: "1",
+    SPS_DESKTOP_E2E_USER_DATA_DIR: userData,
+    SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
   },
-);
+});
+child.stdout.resume();
+child.stderr.resume();
 
+let firstError;
 try {
   const target = await waitForDesktopTarget(debugPort, child);
   const body = await inspectRenderer(target);
@@ -185,8 +185,18 @@ try {
   assert.match(body, /회사·Workspace·플러그인 데이터/);
   assert.match(body, /Google로 계속/);
   assert.doesNotMatch(body, /Rooms|Tasks|장기기억/);
-  console.log(`Isolated ${isPackagedCandidate ? "packaged" : "source"} SPS Desktop sign-in smoke test passed.`);
-} finally {
+} catch (error) {
+  firstError = error;
+}
+try {
+  // The original renderer deadline starts immediately after launch, including
+  // supervisor startup. Cleanup is a confirmed forced Job cancellation, not
+  // evidence of graceful Desktop shutdown or an installed-app qualification.
   await stopChildTree(child);
   await removeTemporaryUserData(userData);
+} catch (cleanupError) {
+  if (firstError) throw new AggregateError([firstError, cleanupError], "Isolated Desktop rendering and cleanup failed.");
+  throw cleanupError;
 }
+if (firstError) throw firstError;
+console.log(`Isolated ${isPackagedCandidate ? "packaged" : "source"} SPS Desktop sign-in smoke test passed with confirmed owned Job cleanup.`);
