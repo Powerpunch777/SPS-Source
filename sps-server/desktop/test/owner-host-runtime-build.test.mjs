@@ -152,7 +152,7 @@ test("verifies the deployed Core Zod version and issue budget during preparation
   assert.ok(buildScript.indexOf('"deploy"') < buildScript.indexOf("verifyPackagedZodRuntime(runtimeRoot)"));
   assert.match(packagedVerifier, /verifyPackagedZodRuntime\(runtimeRoot\)/);
   assert.match(zodVerifier, /createRequire\(serverReal\)/);
-  assert.match(zodVerifier, /EXPECTED_ZOD_VERSION = "3\.25\.76"/);
+  assert.match(zodVerifier, /EXPECTED_ZOD_VERSION = "4\.6\.6"/);
   assert.match(zodVerifier, /ISSUE_LIMIT = 100/);
   assert.match(zodVerifier, /root ESM/);
   assert.match(zodVerifier, /v3 ESM/);

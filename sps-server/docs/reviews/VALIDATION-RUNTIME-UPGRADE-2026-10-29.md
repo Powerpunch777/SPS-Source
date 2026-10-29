@@ -102,6 +102,28 @@ when file symlinks are unavailable, retaining every assertion. The corrected
 fixture passed **6/6** with no skips and no plugin product-code change. Actual
 packaged Windows/CI qualification remains separate evidence.
 
+## First current-tuple CI follow-up
+
+Source a12dc446 / Core a01b395e reached the remote pipeline. Core compatibility
+passed, including both production and full dependency security gates. The full
+local graph audit also passed, reporting only the three existing low findings
+(production once/katex plus development deepmerge); the generated security
+document check passed unchanged.
+
+The PR Windows unit step reported 1444 passed, one failed and two existing skips.
+Its sole failure was the old 3.25.76 version assertion in
+`owner-host-runtime-build.test.mjs`, missed during the verifier migration. That
+expectation now requires 4.6.6; all other assertions remain. The targeted build
+contract file passed 11/11 with no skips. This is not a whole-suite rerun result.
+
+The push Windows prerequisite step separately timed out while checking OpenSSL
+on PATH, Git's usr binary and the official image binary, each at the existing
+5-second limit. The PR's same prerequisite succeeded on PATH in 511ms. These
+logs show different runner outcomes; they do not establish a missing dependency
+or a product defect. No timeout, check or fixture was removed. A fresh pipeline
+for the corrected source must verify the prerequisite and the complete Windows
+path; the earlier failed run is retained as failed evidence.
+
 ## Rollback
 
 Restore Core manifests, imports, patch registration and lock together, plus
