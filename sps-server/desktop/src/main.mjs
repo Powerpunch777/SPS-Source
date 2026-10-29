@@ -33,6 +33,7 @@ import {
   createNodeTransportIdentity,
   claimSpsNodeCommand,
   claimSpsPluginNodeRun,
+  getSpsNodeClaimProtocol,
   completeSpsNodeCommand,
   appendSpsPluginNodeRunEvent,
   checkSpsPluginNodeRunLease,
@@ -57,6 +58,7 @@ import {
   executionTransportForSpsNodeWork,
 } from "./node-command-poller.mjs";
 import { createSpsNodeCompletionOutbox, SpsNodeCompletionOutboxError } from "./node-completion-outbox.mjs";
+import { createSpsNodeClaimJournal, SpsNodeClaimJournalError } from "./node-claim-journal.mjs";
 import {
   createSpsNodeConnectionLifetime,
   runSpsNodeConnectionSteps,
@@ -324,6 +326,27 @@ const nodeCompletionOutbox = createSpsNodeCompletionOutbox({
   },
   encrypt,
   decrypt,
+});
+const nodeClaimJournal = createSpsNodeClaimJournal({
+  readEncrypted() {
+    if (desktopStateUnavailable) throw new Error("SPS Desktop task recovery is unavailable.");
+    return state.encryptedNodeClaimJournal;
+  },
+  async writeEncrypted(ciphertext) {
+    if (desktopStateUnavailable || hasPendingLegacyDesktopOwnerAdoption(state)) {
+      throw new Error("SPS Desktop task recovery is unavailable.");
+    }
+    const targetState = state;
+    // As with the completion outbox, a failed save is not proof that nothing
+    // reached disk. Retain the value and require durable re-persistence.
+    targetState.encryptedNodeClaimJournal = ciphertext;
+    await persistState({ rememberActiveConnection: false, beforeCommit() {
+      if (desktopStateUnavailable || state !== targetState || hasPendingLegacyDesktopOwnerAdoption(state)) {
+        throw new Error("SPS Desktop task recovery is unavailable.");
+      }
+    } });
+  },
+  encrypt, decrypt,
 });
 let backgroundStartupDeferred = opensCoreSettingsOnLaunch;
 let pendingAuth = null;
@@ -5561,7 +5584,15 @@ async function pollNodeCommands() {
   let claimedCommand = false;
   let capturedClaim = null;
   let executionAttempted = false;
-  const persistCompletion = (kind, payload) => nodeCompletionOutbox.persist({ kind, payload, accountSubject });
+  let releaseClaimExecution = null;
+  const finishClaim = ({ kind, payload }) => nodeClaimJournal.finish({ kind, workId: payload.commandId,
+    accountSubject, hubUrl: payload.hubUrl, nodeId: payload.nodeId, identity: payload.identity });
+  const persistCompletion = async (kind, payload) => {
+    await nodeCompletionOutbox.persist({ kind, payload, accountSubject });
+    // Clear a claim only after its process-derived completion is durably in
+    // the outbox. Retry reconciliation runs before any outbox acknowledgement.
+    await finishClaim({ kind, payload });
+  };
   const completeWithReceipt = async (kind, payload) => {
     await persistCompletion(kind, payload);
     const complete = kind === "plugin-run" ? completeSpsPluginNodeRun : completeSpsNodeCommand;
@@ -5587,15 +5618,41 @@ async function pollNodeCommands() {
       ...access,
       completeNodeCommand: completeSpsNodeCommand,
       completePluginRun: completeSpsPluginNodeRun,
+      onPersisted: finishClaim,
       assertCurrent,
     });
     assertCurrent();
     await nodeCompletionOutbox.assertAvailable();
     assertCurrent();
-    const captureClaim = (kind, command) => {
+    const claimScope = { accountSubject, hubUrl: profileSnapshot.hubUrl, nodeId, identity };
+    const pendingClaim = await nodeClaimJournal.pending(claimScope);
+    assertCurrent();
+    if (pendingClaim?.phase === "aborted") {
+      await completeWithReceipt(pendingClaim.kind, { ...claimScope, ...access, commandId: pendingClaim.workId,
+        completion: { status: "failed", exitCode: null, signal: null, timedOut: false,
+          error: "Desktop did not start this command because the local Node poll changed before execution." } });
+      return;
+    }
+    // This signed read-only probe must succeed before sending a claim to an
+    // older Host. It consumes no work and has no legacy fallback.
+    await getSpsNodeClaimProtocol({ ...claimScope, ...access });
+    assertCurrent();
+    const claimWork = async (kind, claim) => {
+      const record = await nodeClaimJournal.begin({ ...claimScope, kind });
+      assertCurrent();
+      const command = await claim({ ...claimScope, ...access, claimRequestId: record.requestId });
+      if (!command) {
+        await nodeClaimJournal.empty({ ...claimScope, kind, requestId: record.requestId });
+        return null;
+      }
+      // Await durable association before capturing a not-started completion.
+      // A failed association save is retried with the same request, not closed
+      // as unstarted using an identity which was never durably recorded.
+      await nodeClaimJournal.receive({ ...claimScope, kind, requestId: record.requestId, workId: command.id });
       if (command && typeof command.id === "string" && command.id.trim().length > 0) {
         capturedClaim = Object.freeze({
           kind,
+          requestId: record.requestId,
           commandId: command.id,
           context: Object.freeze({
             hubUrl: profileSnapshot.hubUrl,
@@ -5609,24 +5666,17 @@ async function pollNodeCommands() {
     };
     const nextWork = await claimNextSpsNodeWork({
       assertCurrent,
-      claimAgentCommand: async () => captureClaim("agent-command", await claimSpsNodeCommand({
-        hubUrl: profileSnapshot.hubUrl,
-        nodeId,
-        identity,
-        ...access,
-      })),
-      claimPluginRun: async () => captureClaim("plugin-run", await claimSpsPluginNodeRun({
-        hubUrl: profileSnapshot.hubUrl,
-        nodeId,
-        identity,
-        ...access,
-      })),
+      claimAgentCommand: async () => pendingClaim?.kind === "plugin-run" ? null : claimWork("agent-command", claimSpsNodeCommand),
+      claimPluginRun: async () => claimWork("plugin-run", claimSpsPluginNodeRun),
     });
     assertCurrent();
     nodeRuntimeStatus.lastCommandPollAt = new Date().toISOString();
     nodeRuntimeStatus.commandPollError = null;
     if (!nextWork) return;
     claimedCommand = true;
+    assertCurrent();
+    releaseClaimExecution = await nodeClaimJournal.acquire({ ...claimScope, kind: nextWork.kind,
+      requestId: capturedClaim.requestId, workId: nextWork.command.id });
     assertCurrent();
     executionAttempted = true;
     await executeSpsNodeCommand({
@@ -5638,6 +5688,8 @@ async function pollNodeCommands() {
       profile: profileSnapshot,
       assertCurrent,
       persistCompletion: payload => persistCompletion(nextWork.kind, payload),
+      beforeSpawn: () => nodeClaimJournal.enter({ ...claimScope, kind: nextWork.kind,
+        requestId: capturedClaim.requestId, workId: nextWork.command.id }),
       completeCommand: payload => completeWithReceipt(nextWork.kind, payload),
       ...executionTransportForSpsNodeWork(nextWork.kind, {
         appendCommandEvent: appendSpsPluginNodeRunEvent,
@@ -5648,7 +5700,10 @@ async function pollNodeCommands() {
   } catch (error) {
     if (capturedClaim && !executionAttempted) {
       try {
-        await completeWithReceipt(capturedClaim.kind, {
+        const canAbort = await nodeClaimJournal.abort({ kind: capturedClaim.kind, requestId: capturedClaim.requestId,
+          workId: capturedClaim.commandId, accountSubject, hubUrl: capturedClaim.context.hubUrl,
+          nodeId: capturedClaim.context.nodeId, identity: capturedClaim.context.identity });
+        if (canAbort) await completeWithReceipt(capturedClaim.kind, {
           hubUrl: capturedClaim.context.hubUrl,
           nodeId: capturedClaim.context.nodeId,
           identity: capturedClaim.context.identity,
@@ -5668,6 +5723,20 @@ async function pollNodeCommands() {
       }
     }
     if (!commandPollGate.isCurrent(ticket, isEligible)) return;
+    if (error instanceof SpsNodeClaimJournalError) {
+      nodeRuntimeStatus.commandPollError = error.code === "execution-in-progress"
+        ? "A previous task is still settling on this connection. SPS will check again after it closes."
+        : error.code === "execution-uncertain"
+        ? "A previous task may have started before Desktop closed. SPS kept its recovery record and will not run it again automatically."
+        : error.code === "expired"
+          ? "A saved task request is too old to resume safely. SPS kept the record for recovery and paused new work on this connection."
+          : "SPS could not safely save or read task recovery records. Check local storage before retrying.";
+      return;
+    }
+    if (error instanceof SpsHubRequestError && error.code === "sps_node_claim_protocol_mismatch") {
+      nodeRuntimeStatus.commandPollError = "This Host could not confirm support for safe task recovery. Update or reconnect to the matching Host before accepting new work.";
+      return;
+    }
     if (error instanceof SpsNodeCompletionOutboxError) {
       nodeRuntimeStatus.commandPollError = error.code === "ack-mismatch"
         ? "The Host has not confirmed a saved task result. SPS kept it on this computer and paused new work from this connection."
@@ -5678,10 +5747,16 @@ async function pollNodeCommands() {
       await clearRemovedMemberConnection({ stillCurrent: isSameConnection });
       return;
     }
+    if (error instanceof SpsHubRequestError
+      && ["sps_node_claim_expired", "sps_node_claim_conflict", "sps_node_claim_unavailable"].includes(error.code)) {
+      nodeRuntimeStatus.commandPollError = "The Host cannot safely resume the saved task request. SPS kept its recovery record; review the task and Workspace status on the Host before continuing.";
+      return;
+    }
     nodeRuntimeStatus.commandPollError = claimedCommand
       ? safeNodeCommandFailure(error)
       : "Could not poll the SPS team Host for commands. Check the team address, network, and Desktop sign-in.";
   } finally {
+    releaseClaimExecution?.();
     commandPollGate.finish(ticket);
   }
 }

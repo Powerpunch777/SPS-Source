@@ -55,11 +55,48 @@ test("encrypted task results survive state saves and v13 reload without changing
   assert.equal((await loadState(root, { strictVersion: true })).encryptedNodeCompletionOutbox, "protected-task-results");
 });
 
+test("encrypted claim journal survives state saves and reload without replacing account, Node, or task results", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const original = {
+    ...emptyState(),
+    encryptedDesktopAccount: "existing-protected-account",
+    identity: { publicKeyPem: "existing-public-key", encryptedPrivateKey: "existing-protected-key" },
+    nodeId: "existing-node",
+    encryptedNodeCompletionOutbox: "protected-task-results",
+    encryptedNodeClaimJournal: "protected-claim-journal",
+  };
+  await saveState(root, original);
+  const loaded = await loadState(root, { strictVersion: true });
+  assert.equal(loaded.encryptedNodeClaimJournal, "protected-claim-journal");
+  assert.equal(loaded.encryptedNodeCompletionOutbox, "protected-task-results");
+  assert.equal(loaded.encryptedDesktopAccount, original.encryptedDesktopAccount);
+  assert.equal(loaded.nodeId, original.nodeId);
+  assert.deepEqual(loaded.identity, original.identity);
+  await saveState(root, loaded);
+  const reloaded = await loadState(root, { strictVersion: true });
+  assert.equal(reloaded.encryptedNodeClaimJournal, "protected-claim-journal");
+  assert.equal(reloaded.encryptedNodeCompletionOutbox, "protected-task-results");
+  assert.equal(reloaded.encryptedDesktopAccount, original.encryptedDesktopAccount);
+  assert.equal(reloaded.nodeId, original.nodeId);
+});
+
 test("malformed saved task result metadata cannot be silently replaced", async t => {
   const root = await isolatedSaveDirectory(t);
   const file = path.join(root, "sps-desktop-state.json");
   for (const value of [{ privateKeyPem: "invalid-object" }, ""]) {
     const bytes = JSON.stringify({ ...emptyState(), encryptedNodeCompletionOutbox: value });
+    await fs.writeFile(file, bytes);
+    await assert.rejects(loadState(root, { strictVersion: true }), /saved task result metadata is malformed/);
+    await assert.rejects(saveState(root, emptyState()), /saved task result metadata is malformed/);
+    assert.equal(await fs.readFile(file, "utf8"), bytes);
+  }
+});
+
+test("malformed claim journal metadata cannot be silently replaced", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const file = path.join(root, "sps-desktop-state.json");
+  for (const value of [{ privateKeyPem: "invalid-object" }, "", "x".repeat(4 * 1024 * 1024 + 1)]) {
+    const bytes = JSON.stringify({ ...emptyState(), encryptedNodeClaimJournal: value });
     await fs.writeFile(file, bytes);
     await assert.rejects(loadState(root, { strictVersion: true }), /saved task result metadata is malformed/);
     await assert.rejects(saveState(root, emptyState()), /saved task result metadata is malformed/);

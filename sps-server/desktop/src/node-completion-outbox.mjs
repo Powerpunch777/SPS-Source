@@ -278,6 +278,7 @@ export function createSpsNodeCompletionOutbox({
     sessionCookie,
     completeNodeCommand,
     completePluginRun,
+    onPersisted = async () => {},
     assertCurrent = () => {},
   }) {
     if (!boundedText(accountSubject, 512) || !boundedText(hubUrl, 2048)
@@ -301,6 +302,7 @@ export function createSpsNodeCompletionOutbox({
         completion: record.completion,
       };
       await persist({ kind: record.kind, payload, accountSubject: record.accountSubject });
+      await onPersisted({ kind: record.kind, payload, accountSubject: record.accountSubject });
       assertCurrent();
       const complete = record.kind === "plugin-run" ? completePluginRun : completeNodeCommand;
       const response = await complete(payload);

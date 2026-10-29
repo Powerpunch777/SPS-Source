@@ -423,6 +423,7 @@ export async function executeSpsNodeCommand({
   appendCommandEvent = appendSpsNodeCommandEvent,
   completeCommand = completeSpsNodeCommand,
   persistCompletion,
+  beforeSpawn,
   hostEnvironment = process.env,
   assertCurrent = () => {},
   ownership,
@@ -548,6 +549,17 @@ export async function executeSpsNodeCommand({
       return { environment, invocation, workspace };
     }, () => { activeRun.cancellationError ??= "SPS Desktop Source/command preparation timed out."; });
     const { environment, invocation, workspace } = prepared;
+    // Persist the caller's execution-entry fence before any owned process can
+    // start. Recheck cancellation after that awaited storage boundary.
+    if (typeof beforeSpawn === "function") {
+      await beforeSpawn();
+      throwIfCommandCancelled(activeRun, cancellationGeneration);
+      // Durable storage may wait long enough for remote authority to change.
+      // The entry marker is not a lease; check the Host again before launch.
+      const lease = await checkCommandLease({ hubUrl, nodeId, identity, accessToken, sessionCookie, commandId: command.id });
+      if (!lease?.active) throw new Error(lease?.error || "SPS Hub cancelled this local command before start.");
+      lastLeaseConfirmedAt = Date.now();
+    }
     // Promise.race/preflight resolution yields before this continuation. Fence
     // once more at the synchronous spawn boundary so cancellation cannot close
     // a Source and then let a prepared command start on the next microtask.

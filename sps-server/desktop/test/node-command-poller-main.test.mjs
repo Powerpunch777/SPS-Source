@@ -11,8 +11,16 @@ import {
 } from '../src/node-command-poller.mjs';
 import { createSpsNodeConnectionLifetime } from '../src/node-connection-lifecycle.mjs';
 import { createSpsNodeCompletionOutbox, SpsNodeCompletionOutboxError } from '../src/node-completion-outbox.mjs';
+import { createSpsNodeClaimJournal, SpsNodeClaimJournalError } from '../src/node-claim-journal.mjs';
+import { SpsHubRequestError } from '../../desktop-node/src/hub-client.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function successfulPayload(options) {
+  return { hubUrl: options.hubUrl, nodeId: options.nodeId, identity: options.identity,
+    accessToken: options.accessToken, commandId: options.command.id,
+    completion: { status: 'succeeded', exitCode: 0, signal: null, timedOut: false, error: null } };
+}
 
 function deferred() {
   let resolve;
@@ -33,7 +41,7 @@ function acceptedCompletion(payload) {
   };
 }
 
-async function createPollHarness(overrides = {}, outboxStorage = { ciphertext: null }) {
+async function createPollHarness(overrides = {}, outboxStorage = { ciphertext: null, journalCiphertext: null }) {
   const source = await readFile(path.join(desktopRoot, 'src', 'main.mjs'), 'utf8');
   const start = source.indexOf('async function pollNodeCommands() {');
   const end = source.indexOf('function scheduleCommandPolling()', start);
@@ -62,11 +70,24 @@ async function createPollHarness(overrides = {}, outboxStorage = { ciphertext: n
     Boolean,
     Error,
     SpsNodeCompletionOutboxError,
+    SpsNodeClaimJournalError,
+    SpsHubRequestError,
     nodeCompletionOutbox: createSpsNodeCompletionOutbox({
       readEncrypted: () => outboxStorage.ciphertext,
       writeEncrypted: async ciphertext => { outboxStorage.ciphertext = ciphertext; },
       encrypt: value => Buffer.from(value).toString('base64'),
       decrypt: value => Buffer.from(value, 'base64').toString('utf8'),
+    }),
+    nodeClaimJournal: createSpsNodeClaimJournal({
+      readEncrypted: () => outboxStorage.journalCiphertext,
+      writeEncrypted: async ciphertext => { outboxStorage.journalCiphertext = ciphertext; },
+      encrypt: value => Buffer.from(value).toString('base64'),
+      decrypt: value => Buffer.from(value, 'base64').toString('utf8'),
+    }),
+    getSpsNodeClaimProtocol: async () => ({
+      schemaVersion: 1,
+      requestIdVersion: 'v1',
+      maxRecoveryAgeMs: 86_400_000,
     }),
     outboxStorage,
     canRunSpsNodeCommands: status => status === 'active',
@@ -179,6 +200,168 @@ test('normal claimed work enters execution once and does not get an extra comple
   assert.deepEqual(harness.calls.executions, ['agent-normal-1']);
   assert.deepEqual(harness.calls.agentCompletions, []);
   assert.deepEqual(harness.calls.pluginCompletions, []);
+});
+
+test('Main resumes a lost Agent claim response with the exact saved request after restart', async () => {
+  const storage = { ciphertext: null }, ids = [];
+  const first = await createPollHarness({ claimSpsNodeCommand: async options => {
+    ids.push(options.claimRequestId);
+    throw new Error('claim response lost');
+  } }, storage);
+  await first.runPoll();
+  assert.deepEqual(first.calls.executions, []);
+  assert.ok(storage.journalCiphertext);
+  const restarted = await createPollHarness({ claimSpsNodeCommand: async options => {
+    ids.push(options.claimRequestId);
+    return { id: 'recovered-Agent-1' };
+  } }, storage);
+  restarted.executeSpsNodeCommand = async options => {
+    await options.beforeSpawn();
+    restarted.calls.executions.push(options.command.id);
+    await options.persistCompletion(successfulPayload(options));
+    await options.completeCommand(successfulPayload(options));
+  };
+  await restarted.runPoll();
+  assert.equal(ids.length, 2);
+  assert.equal(ids[0], ids[1]);
+  assert.deepEqual(restarted.calls.executions, ['recovered-Agent-1']);
+  assert.equal(JSON.parse(Buffer.from(storage.journalCiphertext, 'base64').toString()).records.length, 0);
+});
+
+test('Main resumes a pending Plugin claim before issuing any new Agent claim', async () => {
+  const storage = { ciphertext: null }, ids = [];
+  const first = await createPollHarness({ claimSpsPluginNodeRun: async options => {
+    ids.push(options.claimRequestId);
+    throw new Error('plugin response lost');
+  } }, storage);
+  await first.runPoll();
+  const restarted = await createPollHarness({
+    claimSpsPluginNodeRun: async options => { ids.push(options.claimRequestId); return { id: 'recovered-plugin' }; },
+  }, storage);
+  restarted.executeSpsNodeCommand = async options => {
+    await options.beforeSpawn();
+    restarted.calls.executions.push(options.command.id);
+    await options.persistCompletion(successfulPayload(options));
+    await options.completeCommand(successfulPayload(options));
+  };
+  await restarted.runPoll();
+  assert.deepEqual(restarted.calls.agentClaims, []);
+  assert.equal(ids[0], ids[1]);
+  assert.deepEqual(restarted.calls.executions, ['recovered-plugin']);
+  assert.equal(restarted.calls.pluginCompletions.length, 1);
+});
+
+test('Main never reclaims an entered task after restart without a final completion report', async () => {
+  const storage = { ciphertext: null };
+  const first = await createPollHarness({ claimSpsNodeCommand: async () => ({ id: 'uncertain-Agent' }) }, storage);
+  first.executeSpsNodeCommand = async options => {
+    await options.beforeSpawn();
+    first.calls.executions.push(options.command.id);
+    throw new Error('Desktop stopped after entering execution');
+  };
+  await first.runPoll();
+  const restarted = await createPollHarness({}, storage);
+  await restarted.runPoll();
+  assert.deepEqual(restarted.calls.agentClaims, []);
+  assert.deepEqual(restarted.calls.pluginClaims, []);
+  assert.deepEqual(restarted.calls.executions, []);
+  assert.match(restarted.nodeRuntimeStatus.commandPollError, /will not run it again automatically/);
+});
+
+test('a late old poll cannot report unstarted while a reconnect executes the same recovered request', { timeout: 10_000 }, async () => {
+  const firstStarted = deferred(), firstResponse = deferred(), executing = deferred(), closeExecution = deferred();
+  const ids = [];
+  const harness = await createPollHarness({ claimSpsNodeCommand: async options => {
+    ids.push(options.claimRequestId);
+    if (ids.length === 1) { firstStarted.resolve(); await firstResponse.promise; }
+    return { id: 'same-recovered-task' };
+  } });
+  harness.executeSpsNodeCommand = async options => {
+    await options.beforeSpawn();
+    harness.calls.executions.push(options.command.id);
+    executing.resolve();
+    await closeExecution.promise;
+    await options.persistCompletion(successfulPayload(options));
+    await options.completeCommand(successfulPayload(options));
+  };
+  const oldPoll = harness.runPoll();
+  await firstStarted.promise;
+  harness.commandPollGate.stop();
+  const reconnectPoll = harness.runPoll();
+  await executing.promise;
+  firstResponse.resolve();
+  await oldPoll;
+  assert.equal(ids.length, 2);
+  assert.equal(ids[0], ids[1]);
+  assert.deepEqual(harness.calls.executions, ['same-recovered-task']);
+  assert.deepEqual(harness.calls.agentCompletions, []);
+  closeExecution.resolve();
+  await reconnectPoll;
+  assert.equal(harness.calls.agentCompletions.length, 1);
+  assert.equal(harness.calls.agentCompletions[0].completion.status, 'succeeded');
+});
+
+test('a restarted aborted claim sends its final report without claiming or executing work', async () => {
+  const storage = { ciphertext: null }, first = await createPollHarness({}, storage);
+  const scope = { accountSubject: 'account-A', hubUrl: first.state.profile.hubUrl, nodeId: first.state.nodeId, identity: first.state.identity };
+  const pending = await first.nodeClaimJournal.begin({ ...scope, kind: 'plugin-run' });
+  const input = { ...scope, kind: pending.kind, requestId: pending.requestId, workId: 'not-started-plugin' };
+  await first.nodeClaimJournal.receive(input);
+  await first.nodeClaimJournal.abort(input);
+  const restarted = await createPollHarness({}, storage);
+  await restarted.runPoll();
+  assert.deepEqual(restarted.calls.agentClaims, []);
+  assert.deepEqual(restarted.calls.pluginClaims, []);
+  assert.deepEqual(restarted.calls.executions, []);
+  assert.equal(restarted.calls.pluginCompletions.length, 1);
+  assert.equal(restarted.calls.pluginCompletions[0].completion.status, 'failed');
+  assert.equal(await restarted.nodeClaimJournal.pending(scope), null);
+});
+
+test('a durable completion reconciles an entered journal before outbox acknowledgement on restart', async () => {
+  const storage = { ciphertext: null };
+  const first = await createPollHarness({ claimSpsNodeCommand: async () => ({ id: 'closed-before-journal-clear' }) }, storage);
+  first.executeSpsNodeCommand = async options => {
+    await options.beforeSpawn();
+    await first.nodeCompletionOutbox.persist({ kind: 'agent-command', accountSubject: 'account-A', payload: successfulPayload(options) });
+    throw new Error('crash between two durable writes');
+  };
+  await first.runPoll();
+  assert.equal(JSON.parse(Buffer.from(storage.journalCiphertext, 'base64').toString()).records[0].phase, 'entered');
+  const restarted = await createPollHarness({}, storage);
+  await restarted.runPoll();
+  assert.equal(restarted.calls.agentCompletions.length, 1);
+  assert.deepEqual(restarted.calls.executions, []);
+  assert.equal(JSON.parse(Buffer.from(storage.journalCiphertext, 'base64').toString()).records.length, 0);
+  assert.equal(JSON.parse(Buffer.from(storage.ciphertext, 'base64').toString()).receipts.length, 0);
+});
+
+test('an unsupported Host is rejected before sending or persisting a claim', async () => {
+  const storage = { ciphertext: null };
+  const harness = await createPollHarness({ getSpsNodeClaimProtocol: async () => {
+    throw new SpsHubRequestError(502, 'unsupported Host', 'sps_node_claim_protocol_mismatch');
+  } }, storage);
+  await harness.runPoll();
+  assert.deepEqual(harness.calls.agentClaims, []);
+  assert.deepEqual(harness.calls.pluginClaims, []);
+  assert.deepEqual(harness.calls.executions, []);
+  assert.equal(storage.journalCiphertext, undefined);
+  assert.match(harness.nodeRuntimeStatus.commandPollError, /Update or reconnect/);
+});
+
+test('Host refusal preserves the pending request and shows recovery status without another claim', async () => {
+  const storage = { ciphertext: null };
+  const harness = await createPollHarness({ claimSpsNodeCommand: async () => {
+    throw new SpsHubRequestError(409, 'stale claim', 'sps_node_claim_expired');
+  } }, storage);
+  await harness.runPoll();
+  const requestId = JSON.parse(Buffer.from(storage.journalCiphertext, 'base64').toString()).records[0].requestId;
+  assert.deepEqual(harness.calls.pluginClaims, []);
+  assert.deepEqual(harness.calls.executions, []);
+  assert.match(harness.nodeRuntimeStatus.commandPollError, /review the task and Workspace status/);
+  await harness.runPoll();
+  assert.equal(JSON.parse(Buffer.from(storage.journalCiphertext, 'base64').toString()).records[0].requestId, requestId);
+  assert.deepEqual(harness.calls.pluginClaims, []);
 });
 
 test('executor failure after entry does not infer that claimed work never started', async () => {

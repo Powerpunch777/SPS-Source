@@ -85,6 +85,41 @@ test("rejects a stale preflight connection before spawn and closes its opened So
   }
 });
 
+test("a failed execution-entry save prevents spawn and reports only an unstarted failure", { timeout: 10_000 }, async () => {
+  let spawned = 0, saved = 0;
+  const completions = [];
+  await assert.rejects(executeSpsNodeCommand(baseOptions(randomUUID(), {
+    beforeSpawn: async () => { saved++; throw new Error("entry journal storage failed"); },
+    spawnCommand: () => { spawned++; throw new Error("must not spawn"); },
+    completeCommand: async payload => { completions.push(payload.completion); },
+  })), /entry journal storage failed/);
+  assert.equal(saved, 1);
+  assert.equal(spawned, 0);
+  assert.deepEqual(completions, [{ status: "failed", exitCode: null, signal: null,
+    timedOut: false, error: "entry journal storage failed" }]);
+});
+
+test("connection cancellation during an awaited entry save is rechecked before spawn", { timeout: 10_000 }, async () => {
+  let stale = false, spawned = 0;
+  await assert.rejects(executeSpsNodeCommand(baseOptions(randomUUID(), {
+    assertCurrent: () => { if (stale) throw new Error("connection changed during entry save"); },
+    beforeSpawn: async () => { stale = true; },
+    spawnCommand: () => { spawned++; throw new Error("must not spawn"); },
+  })), /connection changed during entry save/);
+  assert.equal(spawned, 0);
+});
+
+test("remote lease revocation during an entry save prevents spawn", { timeout: 10_000 }, async () => {
+  let checks = 0, spawned = 0;
+  await assert.rejects(executeSpsNodeCommand(baseOptions(randomUUID(), {
+    beforeSpawn: async () => {},
+    checkCommandLease: async () => ++checks === 1 ? { active: true } : { active: false, error: "grant revoked during save" },
+    spawnCommand: () => { spawned++; throw new Error("must not spawn"); },
+  })), /grant revoked during save/);
+  assert.equal(checks, 2);
+  assert.equal(spawned, 0);
+});
+
 test("stale connection during a live lease check terminates only its command and waits for close", { timeout: 15_000 }, async () => {
   const targetId = randomUUID();
   const otherId = randomUUID();

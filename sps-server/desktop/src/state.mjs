@@ -38,10 +38,11 @@ function assertCriticalStateShape(value) {
       throw new Error("SPS Desktop credential metadata is malformed.");
     }
   }
-  if (value.encryptedNodeCompletionOutbox !== undefined && value.encryptedNodeCompletionOutbox !== null
-    && (typeof value.encryptedNodeCompletionOutbox !== "string"
-      || value.encryptedNodeCompletionOutbox.length < 1 || value.encryptedNodeCompletionOutbox.length > 4 * 1024 * 1024)) {
-    throw new Error("SPS Desktop saved task result metadata is malformed.");
+  for (const key of ["encryptedNodeCompletionOutbox", "encryptedNodeClaimJournal"]) {
+    if (value[key] !== undefined && value[key] !== null
+      && (typeof value[key] !== "string" || value[key].length < 1 || value[key].length > 4 * 1024 * 1024)) {
+      throw new Error("SPS Desktop saved task result metadata is malformed.");
+    }
   }
   if (value.identity !== undefined && value.identity !== null) {
     if (!isRecord(value.identity)) throw new Error("SPS Desktop Node identity is malformed.");
@@ -119,6 +120,7 @@ export function emptyState() {
     // Final Runner reports only, encrypted by Windows secure storage. This
     // optional v13 field survives older v13 loads without changing credentials.
     encryptedNodeCompletionOutbox: null,
+    encryptedNodeClaimJournal: null,
     companies: [],
     projects: [],
     nodeId: null,

@@ -20,6 +20,7 @@ import {
   canonicalJson,
   claimSpsNodeCommand,
   claimSpsPluginNodeRun,
+  getSpsNodeClaimProtocol,
   appendSpsPluginNodeRunEvent,
   completeSpsPluginNodeRun,
   createNodeIdentity,
@@ -46,6 +47,7 @@ import {
 } from "../src/index.mjs";
 import { createHash } from "node:crypto";
 import { parseLmStudioModels, parseOllamaModels } from "../src/capability-scan.mjs";
+import { createSpsNodeClaimRequestId } from "../src/claim-receipt.mjs";
 import { sealSpsHostProjectShareCredential } from "../../desktop/src/host-project-share.mjs";
 
 function minimalWindowsChildEnvironment(overrides = {}) {
@@ -853,6 +855,162 @@ test("claims Node commands through a signed Board-authenticated request", async 
   const body = JSON.parse(requests[0].options.body);
   assert.equal(typeof body.signature, "string");
   assert.equal(body.privateKeyPem, undefined);
+});
+
+test("claim protocol qualification never consumes queued work", async () => {
+  const identity = createNodeIdentity();
+  const requests = [];
+  const protocol = { schemaVersion: 1, requestIdVersion: "v1", maxRecoveryAgeMs: 86_400_000 };
+  const validResponse = await getSpsNodeClaimProtocol({
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return new Response(JSON.stringify(protocol), { status: 200, headers: { "content-type": "application/json" } });
+    },
+    hubUrl: "https://sps.example.test",
+    nodeId: "node-1",
+    identity,
+  });
+  assert.deepEqual(validResponse, protocol);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://sps.example.test/api/sps-nodes/node-1/claim-protocol");
+  assert.equal(requests[0].options.method, "POST");
+  const body = JSON.parse(requests[0].options.body);
+  assert.deepEqual(Object.keys(body).sort(), ["nonce", "signature", "timestamp"]);
+  assert.match(body.nonce, /^[A-Za-z0-9_-]{32,256}$/);
+  const message = buildSignedRequestMessage({
+    nodeId: "node-1",
+    method: "POST",
+    path: "/sps-nodes/node-1/claim-protocol",
+    timestamp: body.timestamp,
+    nonce: body.nonce,
+    bodySha256: createHash("sha256").update(canonicalJson({}), "utf8").digest("hex"),
+  });
+  assert.equal(verify(null, Buffer.from(message, "utf8"), createPublicKey(identity.publicKeyPem), Buffer.from(body.signature, "base64")), true);
+
+  for (const response of [
+    new Response(null, { status: 404 }),
+    new Response(JSON.stringify({ schemaVersion: 1, requestIdVersion: "v1", maxRecoveryAgeMs: 1 }), { status: 200 }),
+    new Response(null, { status: 204 }),
+  ]) {
+    const failedRequests = [];
+    await assert.rejects(() => getSpsNodeClaimProtocol({
+      fetchImpl: async (url, options) => {
+        failedRequests.push({ url, options });
+        return response;
+      },
+      hubUrl: "https://sps.example.test",
+      nodeId: "node-1",
+      identity,
+    }), error => error instanceof SpsHubRequestError
+      && error.status === 502
+      && error.code === "sps_node_claim_protocol_mismatch");
+    assert.equal(failedRequests.length, 1, "qualification failure must not retry or fall back to claim-next");
+    assert.equal(failedRequests[0].url, "https://sps.example.test/api/sps-nodes/node-1/claim-protocol");
+    assert.equal(JSON.parse(failedRequests[0].options.body).signature.length > 0, true);
+  }
+  assert.equal(requests.some(({ url }) => url.endsWith("/claim-next")), false);
+});
+
+test("claim request IDs are fresh, versioned, and use millisecond timestamps", () => {
+  const first = createSpsNodeClaimRequestId({ now: 1_700_000_000_000 });
+  const second = createSpsNodeClaimRequestId({ now: 1_700_000_000_000 });
+  assert.match(first, /^v1:1700000000000:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.notEqual(second, first);
+  assert.throws(() => createSpsNodeClaimRequestId({ now: 123 }), /13-digit millisecond timestamp/);
+  assert.throws(() => createSpsNodeClaimRequestId({ now: -999_999_999_999 }), /13-digit millisecond timestamp/);
+  assert.throws(() => createSpsNodeClaimRequestId({ now: Number.NaN }), /13-digit millisecond timestamp/);
+  assert.throws(() => createSpsNodeClaimRequestId({ now: 10_000_000_000_000 }), /13-digit millisecond timestamp/);
+});
+
+test("claim receipts bind Agent retries and Plugin claims to their request IDs", async () => {
+  const identity = createNodeIdentity();
+  const agentClaimRequestId = createSpsNodeClaimRequestId();
+  const pluginClaimRequestId = createSpsNodeClaimRequestId();
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    const requestBody = JSON.parse(options.body);
+    const kind = url.includes("/plugin-runs/") ? "plugin-run" : "agent-command";
+    return new Response(JSON.stringify({
+      schemaVersion: 1,
+      claimRequestId: requestBody.claimRequestId,
+      kind,
+      work: kind === "agent-command" ? { id: "agent-claim-1" } : null,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const common = {
+    fetchImpl,
+    hubUrl: "https://sps.example.test",
+    nodeId: "node-1",
+    identity,
+    accessToken: "board-token",
+  };
+
+  assert.deepEqual(await claimSpsNodeCommand({ ...common, claimRequestId: agentClaimRequestId }), { id: "agent-claim-1" });
+  assert.deepEqual(await claimSpsNodeCommand({ ...common, claimRequestId: agentClaimRequestId }), { id: "agent-claim-1" });
+  assert.equal(await claimSpsPluginNodeRun({ ...common, claimRequestId: pluginClaimRequestId }), null);
+  assert.equal(requests.length, 3);
+  const requestNonces = [];
+  for (const request of requests) {
+    const body = JSON.parse(request.options.body);
+    const expectedClaimRequestId = request.url.includes("/plugin-runs/") ? pluginClaimRequestId : agentClaimRequestId;
+    assert.equal(body.claimRequestId, expectedClaimRequestId);
+    assert.equal(typeof body.signature, "string");
+    assert.equal(body.privateKeyPem, undefined);
+    requestNonces.push(body.nonce);
+    const path = new URL(request.url).pathname.replace(/^\/api/, "");
+    const message = buildSignedRequestMessage({
+      nodeId: "node-1",
+      method: "POST",
+      path,
+      timestamp: body.timestamp,
+      nonce: body.nonce,
+      bodySha256: createHash("sha256").update(canonicalJson({ claimRequestId: expectedClaimRequestId }), "utf8").digest("hex"),
+    });
+    assert.equal(verify(null, Buffer.from(message, "utf8"), createPublicKey(identity.publicKeyPem), Buffer.from(body.signature, "base64")), true);
+  }
+  assert.equal(new Set(requestNonces).size, 3, "each attempt must have a fresh signed-request nonce");
+  assert.notEqual(agentClaimRequestId, pluginClaimRequestId);
+});
+
+test("claim receipt mismatch and legacy responses fail without a fallback request", async () => {
+  const identity = createNodeIdentity();
+  const claimRequestId = createSpsNodeClaimRequestId();
+  for (const receipt of [
+    null,
+    { schemaVersion: 1, claimRequestId: "v1:1700000000000:00000000-0000-4000-8000-000000000000", kind: "agent-command", work: null },
+    { schemaVersion: 1, claimRequestId, kind: "plugin-run", work: null },
+    { schemaVersion: 2, claimRequestId, kind: "agent-command", work: null },
+    { schemaVersion: 1, claimRequestId, kind: "agent-command", work: {} },
+  ]) {
+    let requests = 0;
+    await assert.rejects(() => claimSpsNodeCommand({
+      fetchImpl: async () => {
+        requests += 1;
+        return receipt === null
+          ? new Response(null, { status: 204 })
+          : new Response(JSON.stringify(receipt), { status: 200, headers: { "content-type": "application/json" } });
+      },
+      hubUrl: "https://sps.example.test",
+      nodeId: "node-1",
+      identity,
+      claimRequestId,
+    }), error => error instanceof SpsHubRequestError
+      && error.status === 502
+      && error.code === "sps_node_claim_protocol_mismatch");
+    assert.equal(requests, 1, "a mismatched receipt must not trigger a legacy retry");
+  }
+  await assert.rejects(() => claimSpsNodeCommand({
+    fetchImpl: async () => new Response(JSON.stringify({
+      schemaVersion: 1, claimRequestId, kind: "agent-command", work: null,
+    }), { status: 201, headers: { "content-type": "application/json" } }),
+    hubUrl: "https://sps.example.test",
+    nodeId: "node-1",
+    identity,
+    claimRequestId,
+  }), error => error instanceof SpsHubRequestError
+    && error.status === 502
+    && error.code === "sps_node_claim_protocol_mismatch");
 });
 
 test("does not spawn a command when its initial signed lease is denied", async () => {

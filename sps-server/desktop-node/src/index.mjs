@@ -33,6 +33,7 @@ export {
   sendSpsNodeHeartbeat,
   claimSpsNodeCommand,
   claimSpsPluginNodeRun,
+  getSpsNodeClaimProtocol,
   claimSpsWorkspaceSourceRoute,
   appendSpsNodeCommandEvent,
   appendSpsPluginNodeRunEvent,
@@ -50,3 +51,4 @@ export {
   normalizeHubUrl,
   SPS_NODE_HEARTBEAT_PROTOCOL,
 } from "./protocol.mjs";
+export { createSpsNodeClaimRequestId } from "./claim-receipt.mjs";
