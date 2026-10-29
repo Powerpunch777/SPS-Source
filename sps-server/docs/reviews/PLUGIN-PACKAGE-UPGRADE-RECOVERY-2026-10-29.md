@@ -1,9 +1,10 @@
 # Approved plugin upgrade recovery — 2026-10-29
 
 Status: implementation verified by selected lifecycle/database tests, server
-types and compatibility boundary checks. Candidate Core is
-`2f467b0a6455cf0feab4786c3c46e4d1bd410dd8`; its Source gitlink, support matrix
-and generated candidate document are aligned. New candidate CI is pending. This is not Core completion
+types and compatibility boundary checks. This increment was integrated as
+Core `2f467b0a6455cf0feab4786c3c46e4d1bd410dd8` and Source
+`228e9372ab3b8848c72f6dc9925fd8d6e7fbaf01`, with aligned gitlink, matrix and
+generated candidate document. Current CI belongs to its exact candidate. This is not Core completion
 or a qualification of an installed Desktop build.
 
 ## Resulting behavior
@@ -42,8 +43,12 @@ public Marketplace, Builder implementation or OS isolation is added.
 
 ## Required remaining work
 
-Installation-stage recovery, the capability-approval-pending upgrade branch,
-artifact retirement, runtime-cache interruption recovery and current packaged
+Approval-pending upgrades preserve the old pointer/manifest and remain stopped;
+they are not unjournaled package replacements. Initial install commits metadata
+and plugin migrations transactionally, retaining artifacts after uncertain
+commit. Interrupted initial activation can be explicitly retried through Enable
+after the subsequent lifecycle correction. Unreferenced staging/old-artifact
+retirement, runtime-cache interruption recovery and current packaged
 Desktop/installer data preservation still require separate work and evidence.
 Old runtime archives do not qualify the current code. Physical Host/Member/Runner
 validation remains a release requirement, even while one-computer work proceeds.
