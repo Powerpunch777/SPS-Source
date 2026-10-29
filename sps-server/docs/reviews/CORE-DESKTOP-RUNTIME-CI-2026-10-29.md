@@ -6,8 +6,10 @@ must wait for a separate user instruction after the Core/Desktop report.
 
 ## Tested candidates
 
-Core `a01b395e9cd0688db62d75f2fd8465dbdb6f307c` and public SDK
-`61a929f6c783f78e5af603682de1543c7e24abc0` are unchanged throughout this record.
+Initial evidence below uses Core `a01b395e9cd0688db62d75f2fd8465dbdb6f307c`.
+The later input-order follow-up uses Core `b4c2bc6f0e2a63a62f9b5ef8873581f520ad9385`,
+as distinguished in the final section. Public SDK
+`61a929f6c783f78e5af603682de1543c7e24abc0` is unchanged throughout this record.
 
 Source `07f927e0c8fb53ad4249d615a5a9ff576dd9f26a` passed both automatic
 [push40825997374](https://github.com/Powerpunch777/SPS-Source/actions/runs/40825997374)
@@ -97,3 +99,45 @@ Unpacked local Windows packaging/verification is a separate pending step.
 Public Marketplace, new Builder/solution-plugin implementation, new Native work
 and complete untrusted-code OS containment remain outside this increment.
 Existing SDK/data/security and approved-package compatibility are retained.
+
+## Later ownership and input-order follow-up
+
+The actual unpacked runtime prepare/build and functional install/update/rollback
+smoke completed successfully. Archive Source298cac7/Corea01b395e, all clean,
+is172332348bytes with SHA256
+`3dd0ecdd4c21f8b3ac32e73090e34410d7ca00ed75feecc7c6977a1b506ef08e`.
+Source298cac7 push40829380687 also completed all18CI jobs successfully.
+Its unsigned development unpacked build predates the fixes below; it does not
+qualify the newer candidate. The standalone packaged verifier is still extracting
+that archive and has not returned a terminal result.
+
+Source3c9a65b corrected the stale activation source assertions while retaining
+all other coverage and adding explicit disable403 checks;3focused files passed
+16/16. Its push40833647355 subsequently exposed a Linux workspaces B failure:
+the existing bidirectional process-session proxy returned code0 and empty stdout
+instead of `out:hello\n`. This failure is not waived as a flaky test.
+
+- Source703db18 fixes a preparation-lock defect reproduced with a small fixture:
+  the prior implementation reclaimed a16minute-old lock even with a live owner.
+  The fix requires a definitely absent owner (`ESRCH`), preserves live/unknown/
+  invalid owners and rechecks file identity before removal. Existing timeouts,
+  archive validation and resource limits are retained. Two focused files passed
+ 20/20 without skips, including the before/after regression and malformed lock.
+- Coreb4c2bc6f fixes input publication that allowed EOF to overtake earlier data.
+  It serializes frames, reuses existing atomic temporary-file publication and
+  joins uploads before stop cleanup. Failed normal input/EOF remains failed;
+  cleanup can separately attempt EOF after the failure settles. Six controlled
+  promise tests and adapter-utils typecheck passed. Linux integration tests are
+  retained and still require updated-candidate CI. See Core
+  `doc/SPS-PROCESS-SESSION-INPUT-ORDER.md` for bounds and provider limits.
+
+Current candidate Core/gitlink/documentation must agree before the next runtime
+build. Final new-candidate CI and rebuilt packaged-app evidence remain pending.
+The local Electron bootstrap failure above remains unresolved.
+
+Code inspection also confirms a separate outstanding package-recovery boundary:
+UUID staging roots can be active artifacts referenced by `plugins.packagePath`.
+Upgrade rollback retains the old package snapshot in process memory, not a
+durable operation journal. Restart recovery and safe artifact retirement must
+preserve current, rollback and still-running-worker references. Directory age or
+the word "staging" does not authorize deleting these artifacts.
