@@ -30,6 +30,7 @@ async function withRuntimeFixture(run) {
     cp(path.join(installedZodRoot, "package.json"), path.join(fixtureZodRoot, "package.json")),
     cp(path.join(installedZodRoot, "index.js"), path.join(fixtureZodRoot, "index.js")),
     cp(path.join(installedZodRoot, "index.cjs"), path.join(fixtureZodRoot, "index.cjs")),
+    cp(path.join(installedZodRoot, "v4"), path.join(fixtureZodRoot, "v4"), { recursive: true, dereference: true }),
     cp(path.join(installedZodRoot, "v3"), path.join(fixtureZodRoot, "v3"), { recursive: true, dereference: true }),
   ]);
   try {
@@ -69,8 +70,9 @@ test("verifies only the Core server's deployed Zod dependency across public entr
   await withRuntimeFixture(async runtimeRoot => {
     const result = await verifyPackagedZodRuntime(runtimeRoot);
     assert.deepEqual(result, {
-      version: "3.25.76",
+      version: "4.6.6",
       issueLimit: 100,
+      issueBudgetEntrypoints: ["v3 ESM", "v3 CommonJS"],
       entrypoints: ["root ESM", "v3 ESM", "root CommonJS", "v3 CommonJS"],
     });
   });
@@ -109,6 +111,21 @@ test("rejects a deployed runtime missing the Set early guard while retaining the
   });
 });
 
+test("rejects exhausted issue budgets that keep traversing invalid collections", async () => {
+  await withRuntimeFixture(async (runtimeRoot, packageJsonPath) => {
+    for (const relative of ["v3/types.js", "v3/types.cjs"]) {
+      const file = path.join(path.dirname(packageJsonPath), relative);
+      const source = await readFile(file, "utf8");
+      const updated = source
+        .replace("ctx.common.issueBudget.truncated && parsed.some", "false && parsed.some")
+        .replace('if (ctx.common.issueBudget.truncated && parsed.status !== "valid")', "if (false)");
+      assert.notEqual(updated, source, `${relative} must contain collection work bounds`);
+      await writeFile(file, updated);
+    }
+    await assert.rejects(verifyPackagedZodRuntime(runtimeRoot), /Zod collection read bound exceeded/);
+  });
+});
+
 test("rejects a missing packaged dependency instead of resolving outside runtimeRoot", async () => {
   await withRuntimeFixture(async (runtimeRoot, packageJsonPath) => {
     await rm(path.dirname(packageJsonPath), { recursive: true, force: false });
@@ -142,8 +159,8 @@ test("rejects a runtime package with a different manifest identity", async () =>
 test("rejects a deployed Zod package with an unexpected version", async () => {
   await withRuntimeFixture(async (runtimeRoot, packageJsonPath) => {
     const manifest = JSON.parse(await readFile(packageJsonPath, "utf8"));
-    manifest.version = "3.25.75";
+    manifest.version = "4.6.5";
     await writeFile(packageJsonPath, `${JSON.stringify(manifest)}\n`);
-    await assert.rejects(verifyPackagedZodRuntime(runtimeRoot), /must resolve Zod 3\.25\.76/);
+    await assert.rejects(verifyPackagedZodRuntime(runtimeRoot), /must resolve Zod 4\.6\.6/);
   });
 });

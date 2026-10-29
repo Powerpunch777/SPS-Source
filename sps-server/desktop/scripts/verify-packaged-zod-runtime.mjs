@@ -4,8 +4,9 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { verifyZodSizeGuards, verifyZodV3CollectionBounds } from "./verify-zod-resource-bounds.mjs";
 
-const EXPECTED_ZOD_VERSION = "3.25.76";
+const EXPECTED_ZOD_VERSION = "4.6.6";
 const ISSUE_LIMIT = 100;
 const OVERFLOW_MESSAGE = "Too many validation issues; additional issues omitted.";
 const VERIFY_CHILD_ARGUMENT = "--verify-packaged-zod-child";
@@ -46,59 +47,20 @@ async function verifyInFreshProcess(runtimeRoot) {
     if (!valid.success || valid.data.length !== 2) {
       throw new Error(`Packaged Core server Zod ${label} entrypoint rejected valid input.`);
     }
+    const isV3 = label.startsWith("v3 ");
     const invalid = z.array(z.string()).safeParse(Array.from({ length: 250 }, () => 1));
-    if (invalid.success || invalid.error.issues.length !== ISSUE_LIMIT
+    if (invalid.success) throw new Error(`Packaged Core server Zod ${label} accepted invalid input.`);
+    if (isV3 && (invalid.error.issues.length !== ISSUE_LIMIT
       || invalid.error.issues.at(-1)?.code !== "custom"
-      || invalid.error.issues.at(-1)?.message !== OVERFLOW_MESSAGE) {
+      || invalid.error.issues.at(-1)?.message !== OVERFLOW_MESSAGE)) {
       throw new Error(`Packaged Core server Zod ${label} entrypoint does not enforce the ${ISSUE_LIMIT}-issue budget.`);
     }
 
-    function trackedArray() {
-      let reads = 0;
-      const value = new Array(250);
-      for (let index = 0; index < value.length; index++) {
-        Object.defineProperty(value, String(index), { configurable: true, enumerable: true,
-          get() { reads++; return 1; } });
-      }
-      return { value, reads: () => reads };
-    }
-    for (const [constraint, schema] of [
-      ["max", z.array(z.string()).max(10)],
-      ["exact length", z.array(z.string()).length(10)],
-    ]) {
-      const tracked = trackedArray();
-      const result = schema.safeParse(tracked.value);
-      if (result.success || tracked.reads() !== 0
-        || !result.error.issues.some(issue => issue.code === "too_big" && issue.type === "array")) {
-        throw new Error(`Packaged Core server Zod ${label} entrypoint read array elements before rejecting the over-limit ${constraint}.`);
-      }
-    }
-
-    const trackedSet = (() => {
-      let reads = 0;
-      class TrackedSet extends Set {
-        values() { reads++; return super.values(); }
-      }
-      return { value: new TrackedSet(Array.from({ length: 250 }, (_, index) => `value-${index}`)), reads: () => reads };
-    })();
-    const setResult = z.set(z.string()).max(10).safeParse(trackedSet.value);
-    if (setResult.success || trackedSet.reads() !== 0
-      || !setResult.error.issues.some(issue => issue.code === "too_big" && issue.type === "set")) {
-      throw new Error(`Packaged Core server Zod ${label} entrypoint iterated Set values before rejecting an over-limit Set.`);
-    }
-
-    const asyncTracked = trackedArray();
-    let transformCalls = 0;
-    const asyncResult = await z.array(z.string().transform(async value => {
-      transformCalls++;
-      return value;
-    })).max(10).safeParseAsync(asyncTracked.value);
-    if (asyncResult.success || asyncTracked.reads() !== 0 || transformCalls !== 0
-      || !asyncResult.error.issues.some(issue => issue.code === "too_big" && issue.type === "array")) {
-      throw new Error(`Packaged Core server Zod ${label} entrypoint executed an async child transform before rejecting an over-limit array.`);
-    }
+    await verifyZodSizeGuards(`Packaged Core server Zod ${label}`, z);
+    if (isV3) await verifyZodV3CollectionBounds(`Packaged Core server Zod ${label}`, z);
   }
-  return { version: zodManifest.version, issueLimit: ISSUE_LIMIT, entrypoints: entries.map(([label]) => label) };
+  return { version: zodManifest.version, issueLimit: ISSUE_LIMIT,
+    issueBudgetEntrypoints: ["v3 ESM", "v3 CommonJS"], entrypoints: entries.map(([label]) => label) };
 }
 
 export async function verifyPackagedZodRuntime(runtimeRoot) {
@@ -110,7 +72,7 @@ export async function verifyPackagedZodRuntime(runtimeRoot) {
     throw new Error("Packaged Owner Host runtime root must be a real directory.");
   }
   const runtimeReal = await realpath(runtimeRoot);
-  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), VERIFY_CHILD_ARGUMENT, runtimeReal], {
+  const child = spawn(process.execPath, ["--max-old-space-size=128", fileURLToPath(import.meta.url), VERIFY_CHILD_ARGUMENT, runtimeReal], {
     cwd: runtimeReal,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
