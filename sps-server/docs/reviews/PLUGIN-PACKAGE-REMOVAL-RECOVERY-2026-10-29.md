@@ -56,6 +56,29 @@ Sourcefebfd3e push40837834865 and PR40837843451 also succeeded. Those exact runs
 precede this journal change and are not substituted for new-candidate CI.
 Core PR27's external review-key configuration remains a separate known issue.
 
+## Schema-aware upgrade failure follow-up
+
+Core `d9ac43c9e164ed14887b1ece7edb28f99a5975fd` also addresses a separate
+upgrade failure: plugin SQL migrations commit before worker startup, so failed
+activation cannot establish that the previous code remains schema-compatible.
+After entering activation with pending migrations, lifecycle now preserves the
+new package pointer, records error status, attempts exact-close/runtime cleanup,
+and reports `plugin_upgrade_data_recovery_required`. It never reactivates the old
+package on that path. No-pending-migration and pre-activation failures retain
+their existing rollback. This guard does not automatically restore a Host backup
+or implement durable upgrade phase recovery.
+
+Upgrade safety17/17 passed including4new controlled cases; final combined removal/
+upgrade selection28/28 and server `tsc --noEmit` passed. These controlled lifecycle
+cases do not claim a real database schema downgrade was tested.
+
+Source0285ff7 CI blocked direct legacy imports in the new SPS-owned journal
+service. The follow-up imports through the existing explicit compatibility facade;
+the unchanged boundary check and3regression tests pass. In that same0285ff7 run,
+Linux serialized3/4 job123349007577 ran the actual PostgreSQL journal suite:
+6/6passed, no skips. Its log is retained separately from new-candidate results.
+New full CI is still required after this follow-up.
+
 ## Remaining required work
 
 Removal intent is now durable. Installation-stage recovery, durable upgrade/
