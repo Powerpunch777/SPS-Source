@@ -260,11 +260,13 @@ async function acquireRuntimeLock(lockPath, { fsApi = fs, delay, targetRuntimeRo
       if (error?.code !== "EEXIST") throw error;
       if (await runtimeIsReady(targetRuntimeRoot, packageManifest, { fsApi })) return null;
       const details = await fsApi.stat(lockPath).catch(() => null);
-      if (details && details.size <= 4096 && Date.now() - details.mtimeMs > 15 * 60_000) {
+      if (details && details.size <= 4096) {
         const owner = await fsApi.readFile(lockPath, "utf8")
           .then((value) => JSON.parse(value.replace(/^\uFEFF/, "")))
           .catch(() => null);
         if (isRuntimePreparationLockOwnerGone(owner)) {
+          // A confirmed dead owner can be recovered immediately after a crash.
+          // File age never substitutes for process or lock-identity evidence.
           // Recheck the file observed before the process probe; another
           // preparation may have replaced it while that probe was pending.
           const currentDetails = await fsApi.stat(lockPath).catch(() => null);

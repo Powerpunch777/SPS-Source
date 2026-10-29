@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -392,6 +393,85 @@ test("does not reclaim an old runtime lock while its recorded process is alive",
     );
     assert.equal(extractionCalls, 0);
     assert.equal(await fs.readFile(lockPath, "utf8"), lockContents);
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test("reclaims a fresh lock after confirming its spawned owner exited", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-dead-lock-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  const packageRoot = path.join(temporary, "package");
+  const targetRoot = path.join(temporary, "materialized");
+  const lockPath = `${targetRoot}.lock`;
+  const child = spawnSync(process.execPath, ["-e", ""], { encoding: "utf8" });
+  assert.equal(child.status, 0, child.stderr);
+  assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0);
+  assert.throws(() => process.kill(child.pid, 0), error => error?.code === "ESRCH");
+  const waitingSentinel = new Error("waited instead of reclaiming a dead owner lock");
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.writeFile(lockPath, `${JSON.stringify({ pid: child.pid, createdAt: new Date().toISOString() })}\n`, "utf8");
+
+    assert.equal(await materializeSpsOwnerHostRuntimePackage({
+      packageRoot,
+      targetRuntimeRoot: targetRoot,
+      delay: async () => { throw waitingSentinel; },
+    }), targetRoot);
+
+    assert.equal(await fs.readFile(path.join(targetRoot, "dist", "index.js"), "utf8"), "export {};\n");
+    await assert.rejects(fs.stat(lockPath), error => error?.code === "ENOENT");
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test("preserves a replaced dead-owner lock when its identity changes during the probe", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-replaced-lock-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  const packageRoot = path.join(temporary, "package");
+  const targetRoot = path.join(temporary, "materialized");
+  const lockPath = `${targetRoot}.lock`;
+  const child = spawnSync(process.execPath, ["-e", ""], { encoding: "utf8" });
+  assert.equal(child.status, 0, child.stderr);
+  assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0);
+  assert.throws(() => process.kill(child.pid, 0), error => error?.code === "ESRCH");
+  const replacementLock = `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`;
+  const waitingSentinel = new Error("waited after the lock identity changed");
+  let lockStats = 0;
+  let extractionCalls = 0;
+  const fsApi = Object.create(fs);
+  fsApi.stat = async (filePath, ...args) => {
+      const details = await fs.stat(filePath, ...args);
+      if (filePath === lockPath && ++lockStats === 2) {
+        await fs.writeFile(lockPath, replacementLock, "utf8");
+        const changedAt = new Date(Date.now() + 2_000);
+        await fs.utimes(lockPath, changedAt, changedAt);
+        return await fs.stat(lockPath);
+      }
+      return details;
+  };
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.writeFile(lockPath, `${JSON.stringify({ pid: child.pid, createdAt: new Date().toISOString() })}\n`, "utf8");
+
+    await assert.rejects(materializeSpsOwnerHostRuntimePackage({
+      packageRoot,
+      targetRuntimeRoot: targetRoot,
+      fsApi,
+      delay: async () => { throw waitingSentinel; },
+      tarExtract: async () => {
+        extractionCalls += 1;
+        throw new Error("unexpected extraction after a lock identity change");
+      },
+    }), error => error === waitingSentinel);
+
+    assert.equal(lockStats, 2);
+    assert.equal(extractionCalls, 0);
+    assert.equal(await fs.readFile(lockPath, "utf8"), replacementLock);
+    await assert.rejects(fs.stat(path.join(targetRoot, "dist", "index.js")), error => error?.code === "ENOENT");
   } finally {
     await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
