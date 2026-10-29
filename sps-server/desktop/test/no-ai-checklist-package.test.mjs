@@ -24,6 +24,27 @@ test("UI-less variant has no UI entrypoint or UI capabilities", () => {
   assert.ok(!manifest.capabilities.some(value => value.startsWith("ui.")));
 });
 
+test("checklist bridge diagnostic exposes fixed codes without raw error details", async () => {
+  const source = (await readFile(new URL("./fixtures/no-ai-checklist/ui.mjs", import.meta.url), "utf8"))
+    .replace(/^import .*$/gm, "").replace("export function ChecklistPage", "function ChecklistPage");
+  for (const code of ["WORKER_UNAVAILABLE", "TIMEOUT", "private-path-or-credential"]) {
+    const sandbox = {
+      h: (tag, props, ...children) => ({ tag, props, children }),
+      useEffect() {},
+      useState: initial => [initial, () => {}],
+      useHostContext: () => ({ companyId: "fixture-workspace" }),
+      usePluginAction: () => async () => {},
+      usePluginData: () => ({ loading: false, data: null, error: { code, message: "private diagnostic message" } }),
+    };
+    const page = runInNewContext(`${source}\nChecklistPage()`, sandbox);
+    const alert = page.children.find(child => child?.props?.role === "alert");
+    assert.ok(alert);
+    assert.equal(alert.props["data-checklist-bridge-error"], code === "private-path-or-credential" ? "OTHER" : code);
+    assert.equal(alert.children[0], "The checklist could not be loaded. Try refreshing.");
+    assert.doesNotMatch(JSON.stringify(page), /private diagnostic message|private-path-or-credential/);
+  }
+});
+
 test("runtime inspection opts into existing read-only discovery without execution authority", () => {
   const manifest = checklistManifest({ withUi: false, runtimeDiscovery: true });
   assert.ok(manifest.capabilities.includes("sps.runtimes.read"));

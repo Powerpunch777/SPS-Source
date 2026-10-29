@@ -141,3 +141,10 @@ Host Job과 제어 연결 손실 검사는 별도 증거이며 이번 선택 검
 
 영속 Runner 완료 receipt·claim 인계, package crash journal, 설치·업데이트·복원 및
 보안 gate도 남아 있다. 기존 Marketplace·Builder·Native 보류 범위를 바꾸지 않는다.
+
+후속 Source `704f860` / Core `9c5bf8b3`의 두 Windows 실행은 이전 설치 400을
+지나 `workspace_restart`의 checklist 로드에서 실패했다. 종료 정리는 정상이고
+새 후보의 packaged nested Job 전체 수용 증거는 아니다.
+[초기 준비 경합·Core copier fixture 보완](PLUGIN-STARTUP-READINESS-2026-10-29.md)과
+[최종 결과 outbox·영속 완료 영수증](RUNNER-COMPLETION-OUTBOX-2026-10-29.md)에서
+후속 수정과 검증 범위를 구분한다. 실행 중 장애·claim 응답 유실의 복구는 별도다.

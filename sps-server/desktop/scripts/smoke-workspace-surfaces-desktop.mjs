@@ -469,6 +469,10 @@ async function describePage(cdp) {
   return await cdp.evaluate(`({ title: document.title, route: location.href, body: document.body?.innerText?.slice(0, 4000) || "",
     workspaceEntry: document.querySelector('[data-sps-workspace-entry]')?.getAttribute('data-sps-workspace-entry') || null,
     checklistReady: document.querySelector('[data-testid="checklist-jobs"]')?.textContent === "Jobs: 1",
+    checklistBridgeError: (() => {
+      const code = document.querySelector('[data-checklist-bridge-error]')?.getAttribute('data-checklist-bridge-error');
+      return ["WORKER_UNAVAILABLE", "TIMEOUT", "OTHER"].includes(code) ? code : code ? "OTHER" : null;
+    })(),
     legacyLayout: Boolean(document.querySelector('#main-content') && document.querySelector('aside') && document.querySelector('nav[aria-label="breadcrumb"]')),
     usageReady: Boolean(document.querySelector('[data-testid="sps-plugin-usage"] table')) && document.querySelector('[aria-label="Refresh execution usage"]')?.disabled === false,
     usagePeriod: document.querySelector('#sps-usage-period')?.value,

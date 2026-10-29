@@ -5,7 +5,7 @@
 공개 Marketplace·Builder 신규 개발·완전한 비신뢰 OS 격리를 필수 조건에서
 분리했지만 실제 Core 결함과 검사 실패를 완료로 바꾸지 않는다.
 
-현재 통합 Core 소스: `9c5bf8b35cba5a7b970c90abee569e6ffdbb2e72`.
+현재 통합 Core 소스: `4d0b587b56ec794c490b710d734c15ac7e310b2b`.
 아래 기록의 각 후보 revision과 당시 검증 결과는 서로 구분한다.
 Desktop `0.4.137` development-candidate와 SDK
 `61a929f6c783f78e5af603682de1543c7e24abc0`(미출시 `0.11.0`)는 유지한다.
@@ -266,3 +266,41 @@ TMP 문제가 원인이라고 확정할 로그는 없다. 이번 보완을 그 C
 전체 로컬 suite·배포 build·실제 설치·물리 컴퓨터 검사는 재실행하지 않았다.
 보안 gate, 영속 Runner 완료 receipt·claim 복구, package crash journal·cache 회수,
 실제 다중 Runner·공유/UAC·데이터 보존 설치/업데이트/복원 검증은 남아 있다.
+
+## 최신 완료 영수증·패키지 보존·초기 준비
+
+Core `4d0b587b`는 Node의 실제 최종 보고 digest를 명령·Plugin 완료 결과와 원자
+저장한다. nullable 컬럼 두 개의 migration 0174이며 요청 필드·기존 SDK 계약을
+바꾸지 않는다. 정상 취소로 상태·오류가 바뀌어도 원래 보고를 받았다는 증거를
+재전송 후 확인할 수 있다. Plugin 완료의 CAS loser도 정확한 ID·Node로 재조회하고
+행이 없으면 404로 처리한다. 과거 행·단순 큐 취소에는 가짜 영수증을 채우지 않는다.
+
+Desktop은 종료 확인한 결과만 기존 secure storage와 state 저장 경계로 암호화해
+보관하고, 같은 계정·Hub·Node·공개키로 결과만 다시 전송한다. 응답의 결과·영수증이
+일치할 때만 지운다. 다른 계정이나 새 키를 사용해 이전 결과를 보내지 않는다.
+설치 COMMIT 응답 유실과 직접 upgrade 쓰기 결과가 불확실할 때는 DB가 참조할 수
+있는 package artifact를 삭제하지 않는다. 확실한 쓰기 전 거절 정리는 유지한다.
+[구현·검증·남은 복구](RUNNER-COMPLETION-OUTBOX-2026-10-29.md)에 기록했다.
+
+App은 bundled 준비 이전부터 초기 대기를 설정하고, 각 Host Plugin의 준비만 기다려
+data/action·SSE 요청을 처리한다. SSE는 원래 권한·정책·epoch를 다시 확인한다.
+Workspace Worker의 기존 경로와 E2E timeout·성공 기준은 유지한다.
+[재시작 경합과 자산 fixture 보완](PLUGIN-STARTUP-READINESS-2026-10-29.md)을 따른다.
+
+최종 Core 관련 8개 파일 45개 통과·입력 hash 동일, startup route 선택 4개 파일
+14개 통과·87개 미선택, 실제 새 임시 PostgreSQL route 1개 통과·30개 미선택,
+cached 서버 타입 exit 0·TS hash 동일, DB 패키지 build/검사 통과다. Source outbox와
+Main/state 관련 4개 파일은 48개 통과·기존 환경 skip 2개, 기존 인접 검사 33개 통과,
+No-AI 진단/harness 선택 2개 통과다. 겹치는 실행을 합산하지 않는다. 새 후보 문서와
+실제 CI 결과는 별도로 확인한다.
+
+이전 Source `704f860` / Core `9c5bf8b3`의 두 CI는 전체 Linux 타입·빌드와 8개
+shard는 통과했으나 server 1/3의 copier fixture, Windows 재시작 checklist와 별도
+보안 gate에서 실패했다. fixture는 실제 요구 native-runtime을 추가해 검증을 복원했다.
+재시작은 초기 준비 경합을 보완했지만 당시 bridge code는 log에 없었으므로 정확한
+502였다고 단정하지 않으며, 새 후보의 실제 CI 통과를 대신하지 않는다.
+
+Core 전체 완료는 여전히 미확인이다. 실행 도중 손실·claim 응답 유실·attempt 인계,
+불일치/교체된 키의 보류 결과 해결, package 영속 journal·artifact/cache 회수,
+실제 multi-Runner·공유/UAC·데이터 보존 설치/업데이트/복원·보안 gate가 남아 있다.
+기존/고객 DB·설치 앱·OS trust·방화벽을 변경하지 않았고 release/npm 배포도 하지 않았다.

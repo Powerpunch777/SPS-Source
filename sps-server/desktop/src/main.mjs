@@ -56,6 +56,7 @@ import {
   createSpsNodeCommandPollGate,
   executionTransportForSpsNodeWork,
 } from "./node-command-poller.mjs";
+import { createSpsNodeCompletionOutbox, SpsNodeCompletionOutboxError } from "./node-completion-outbox.mjs";
 import {
   createSpsNodeConnectionLifetime,
   runSpsNodeConnectionSteps,
@@ -302,6 +303,28 @@ const ownerVaultOperations = createSpsOwnerVaultOperationGate({
 let ownerHostRecoveryPluginsDisabled = null;
 let state = emptyState();
 let desktopStateUnavailable = false;
+const nodeCompletionOutbox = createSpsNodeCompletionOutbox({
+  readEncrypted() {
+    if (desktopStateUnavailable) throw new Error("SPS Desktop saved task results are unavailable.");
+    return state.encryptedNodeCompletionOutbox;
+  },
+  async writeEncrypted(ciphertext) {
+    if (desktopStateUnavailable || hasPendingLegacyDesktopOwnerAdoption(state)) {
+      throw new Error("SPS Desktop saved task results are unavailable.");
+    }
+    const targetState = state;
+    // Preserve this value even if the save fails: a rejection cannot establish
+    // that no bytes reached disk. Every send re-persists the exact record.
+    targetState.encryptedNodeCompletionOutbox = ciphertext;
+    await persistState({ rememberActiveConnection: false, beforeCommit() {
+      if (desktopStateUnavailable || state !== targetState || hasPendingLegacyDesktopOwnerAdoption(state)) {
+        throw new Error("SPS Desktop saved task results are unavailable.");
+      }
+    } });
+  },
+  encrypt,
+  decrypt,
+});
 let backgroundStartupDeferred = opensCoreSettingsOnLaunch;
 let pendingAuth = null;
 let desktopAccountController = null;
@@ -5538,12 +5561,36 @@ async function pollNodeCommands() {
   let claimedCommand = false;
   let capturedClaim = null;
   let executionAttempted = false;
+  const persistCompletion = (kind, payload) => nodeCompletionOutbox.persist({ kind, payload, accountSubject });
+  const completeWithReceipt = async (kind, payload) => {
+    await persistCompletion(kind, payload);
+    const complete = kind === "plugin-run" ? completeSpsPluginNodeRun : completeSpsNodeCommand;
+    const response = await complete(payload);
+    await nodeCompletionOutbox.acknowledge({ kind, payload, accountSubject, response });
+    return response;
+  };
   try {
     assertCurrent();
+    if (!accountSubject) throw new Error("SPS Desktop requires sign-in before accepting task results.");
     const identity = currentIdentity();
     if (!identity) throw new Error("SPS Desktop Node identity is unavailable.");
     assertCurrent();
     const access = await requireSpsCoreRequestAccess(profileSnapshot.hubUrl, profileSnapshot);
+    assertCurrent();
+    // Retry only stored final reports using this exact current identity. The
+    // outbox never calls an executor or adopts another account's credentials.
+    await nodeCompletionOutbox.retryMatching({
+      accountSubject,
+      hubUrl: profileSnapshot.hubUrl,
+      nodeId,
+      identity,
+      ...access,
+      completeNodeCommand: completeSpsNodeCommand,
+      completePluginRun: completeSpsPluginNodeRun,
+      assertCurrent,
+    });
+    assertCurrent();
+    await nodeCompletionOutbox.assertAvailable();
     assertCurrent();
     const captureClaim = (kind, command) => {
       if (command && typeof command.id === "string" && command.id.trim().length > 0) {
@@ -5590,19 +5637,18 @@ async function pollNodeCommands() {
       ...access,
       profile: profileSnapshot,
       assertCurrent,
+      persistCompletion: payload => persistCompletion(nextWork.kind, payload),
+      completeCommand: payload => completeWithReceipt(nextWork.kind, payload),
       ...executionTransportForSpsNodeWork(nextWork.kind, {
         appendCommandEvent: appendSpsPluginNodeRunEvent,
         checkCommandLease: checkSpsPluginNodeRunLease,
-        completeCommand: completeSpsPluginNodeRun,
+        completeCommand: payload => completeWithReceipt(nextWork.kind, payload),
       }),
     });
   } catch (error) {
     if (capturedClaim && !executionAttempted) {
-      const completionFunction = capturedClaim.kind === "plugin-run"
-        ? completeSpsPluginNodeRun
-        : completeSpsNodeCommand;
       try {
-        await completionFunction({
+        await completeWithReceipt(capturedClaim.kind, {
           hubUrl: capturedClaim.context.hubUrl,
           nodeId: capturedClaim.context.nodeId,
           identity: capturedClaim.context.identity,
@@ -5617,10 +5663,17 @@ async function pollNodeCommands() {
           },
         });
       } catch {
-        // A failed completion request leaves Core's claim pending; never replay it.
+        // A failed request keeps the encrypted final report and Core's claim
+        // pending. Recovery retries the report only, never its execution.
       }
     }
     if (!commandPollGate.isCurrent(ticket, isEligible)) return;
+    if (error instanceof SpsNodeCompletionOutboxError) {
+      nodeRuntimeStatus.commandPollError = error.code === "ack-mismatch"
+        ? "The Host has not confirmed a saved task result. SPS kept it on this computer and paused new work from this connection."
+        : "SPS could not safely save or read task results. Existing saved results were kept; check local storage before retrying.";
+      return;
+    }
     if (isSpsTechnicalMemberAccessRemoved(error)) {
       await clearRemovedMemberConnection({ stillCurrent: isSameConnection });
       return;

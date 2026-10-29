@@ -39,7 +39,9 @@ export function ChecklistPage() {
         style: { flex: 1, minWidth: 0, border: "1px solid var(--border, #ddd)", borderRadius: 6, padding: 10 } }),
       h("button", { id: "checklist-add", type: "submit", style: buttonStyle, disabled: pending || !text.trim() || result.loading }, "Add")),
     result.loading ? h("p", { role: "status" }, "Loading checklist...") : null,
-    result.error || error ? h("p", { role: "alert" }, error ?? "The checklist could not be loaded. Try refreshing.") : null,
+    result.error || error ? h("p", { role: "alert", "data-checklist-bridge-error": result.error
+      ? (["WORKER_UNAVAILABLE", "TIMEOUT"].includes(result.error.code) ? result.error.code : "OTHER") : undefined },
+    error ?? "The checklist could not be loaded. Try refreshing.") : null,
     !result.loading && !result.error && items.length === 0 ? h("p", { "data-testid": "checklist-empty" }, "No items yet.") : null,
     h("ul", { style: { listStyle: "none", padding: 0, margin: 0 } }, ...items.map(item =>
       h("li", { key: item.id, style: { padding: "12px 0", borderBottom: "1px solid var(--border, #ddd)" } },

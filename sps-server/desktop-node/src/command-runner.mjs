@@ -422,6 +422,7 @@ export async function executeSpsNodeCommand({
   checkCommandLease = checkSpsNodeCommandLease,
   appendCommandEvent = appendSpsNodeCommandEvent,
   completeCommand = completeSpsNodeCommand,
+  persistCompletion,
   hostEnvironment = process.env,
   assertCurrent = () => {},
   ownership,
@@ -695,6 +696,10 @@ export async function executeSpsNodeCommand({
       commandId: command.id,
       completion,
     };
+    // Desktop can persist this final result in its protected completion
+    // outbox. This is after confirmed process closure and before output
+    // delivery; a receipt never authorizes command replay.
+    if (typeof persistCompletion === "function") await persistCompletion(normalCompletionPayload);
     // Cache the process-derived result before waiting for output delivery. If
     // the output POST fails, the catch path must report this same completion
     // rather than inventing a process failure.
@@ -732,6 +737,7 @@ export async function executeSpsNodeCommand({
         error: error instanceof Error ? error.message.slice(0, 16_000) : "SPS Desktop command execution failed.",
       },
     };
+    if (typeof persistCompletion === "function") await persistCompletion(fallbackCompletionPayload);
     await completeCommand(fallbackCompletionPayload).catch(() => undefined);
     throw error;
   } finally {

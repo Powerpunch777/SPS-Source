@@ -35,6 +35,38 @@ test("concurrent local saves preserve complete snapshots and the latest account/
   assert.deepEqual(saved.nativeMemberKeyIndex, { v: 1, entries: [] });
 });
 
+test("encrypted task results survive state saves and v13 reload without changing credentials", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const original = {
+    ...emptyState(),
+    encryptedDesktopAccount: "existing-protected-account",
+    identity: { publicKeyPem: "existing-public-key", encryptedPrivateKey: "existing-protected-key" },
+    nodeId: "existing-node",
+    encryptedNodeCompletionOutbox: "protected-task-results",
+  };
+  assert.equal(original.version, 13, "the additive encrypted slot must not break v13 rollback loads");
+  await saveState(root, original);
+  const loaded = await loadState(root, { strictVersion: true });
+  assert.equal(loaded.encryptedNodeCompletionOutbox, "protected-task-results");
+  assert.equal(loaded.encryptedDesktopAccount, original.encryptedDesktopAccount);
+  assert.deepEqual(loaded.identity, original.identity);
+  loaded.nodeStatus = "active";
+  await saveState(root, loaded);
+  assert.equal((await loadState(root, { strictVersion: true })).encryptedNodeCompletionOutbox, "protected-task-results");
+});
+
+test("malformed saved task result metadata cannot be silently replaced", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const file = path.join(root, "sps-desktop-state.json");
+  for (const value of [{ privateKeyPem: "invalid-object" }, ""]) {
+    const bytes = JSON.stringify({ ...emptyState(), encryptedNodeCompletionOutbox: value });
+    await fs.writeFile(file, bytes);
+    await assert.rejects(loadState(root, { strictVersion: true }), /saved task result metadata is malformed/);
+    await assert.rejects(saveState(root, emptyState()), /saved task result metadata is malformed/);
+    assert.equal(await fs.readFile(file, "utf8"), bytes);
+  }
+});
+
 test("a stale Native commit guard preserves existing state and does not poison later saves", async t => {
   const root = await isolatedSaveDirectory(t);
   const original = { ...emptyState(), encryptedDesktopAccount: "existing-encrypted-account" };

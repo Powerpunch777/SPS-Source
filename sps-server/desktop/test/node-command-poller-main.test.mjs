@@ -10,6 +10,7 @@ import {
   executionTransportForSpsNodeWork,
 } from '../src/node-command-poller.mjs';
 import { createSpsNodeConnectionLifetime } from '../src/node-connection-lifecycle.mjs';
+import { createSpsNodeCompletionOutbox, SpsNodeCompletionOutboxError } from '../src/node-completion-outbox.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -23,7 +24,16 @@ function snapshot(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-async function createPollHarness(overrides = {}) {
+function acceptedCompletion(payload) {
+  return {
+    id: payload.commandId,
+    nodeId: payload.nodeId,
+    ...payload.completion,
+    timedOut: payload.completion.timedOut ? 1 : 0,
+  };
+}
+
+async function createPollHarness(overrides = {}, outboxStorage = { ciphertext: null }) {
   const source = await readFile(path.join(desktopRoot, 'src', 'main.mjs'), 'utf8');
   const start = source.indexOf('async function pollNodeCommands() {');
   const end = source.indexOf('function scheduleCommandPolling()', start);
@@ -39,7 +49,7 @@ async function createPollHarness(overrides = {}) {
   const sandbox = {
     state: {
       profile: { hubUrl: 'https://hub-A.test', companyId: 'company-A' },
-      identity: { key: 'identity-A' },
+      identity: { key: 'identity-A', publicKeyPem: 'public-key-A' },
       nodeId: 'node-A',
       nodeStatus: 'active',
     },
@@ -51,6 +61,14 @@ async function createPollHarness(overrides = {}) {
     Date,
     Boolean,
     Error,
+    SpsNodeCompletionOutboxError,
+    nodeCompletionOutbox: createSpsNodeCompletionOutbox({
+      readEncrypted: () => outboxStorage.ciphertext,
+      writeEncrypted: async ciphertext => { outboxStorage.ciphertext = ciphertext; },
+      encrypt: value => Buffer.from(value).toString('base64'),
+      decrypt: value => Buffer.from(value, 'base64').toString('utf8'),
+    }),
+    outboxStorage,
     canRunSpsNodeCommands: status => status === 'active',
     currentDesktopAccountSubject: () => accountSubject,
     currentDesktopSessionEpoch: () => sessionEpoch,
@@ -59,8 +77,8 @@ async function createPollHarness(overrides = {}) {
     claimNextSpsNodeWork,
     claimSpsNodeCommand: async options => { calls.agentClaims.push(snapshot(options)); return null; },
     claimSpsPluginNodeRun: async options => { calls.pluginClaims.push(snapshot(options)); return null; },
-    completeSpsNodeCommand: async payload => { calls.agentCompletions.push(snapshot(payload)); },
-    completeSpsPluginNodeRun: async payload => { calls.pluginCompletions.push(snapshot(payload)); },
+    completeSpsNodeCommand: async payload => { calls.agentCompletions.push(snapshot(payload)); return acceptedCompletion(payload); },
+    completeSpsPluginNodeRun: async payload => { calls.pluginCompletions.push(snapshot(payload)); return acceptedCompletion(payload); },
     executeSpsNodeCommand: async options => { calls.executions.push(options.command.id); },
     appendSpsPluginNodeRunEvent: async () => {},
     checkSpsPluginNodeRunLease: async () => {},
@@ -72,7 +90,7 @@ async function createPollHarness(overrides = {}) {
     moveToNodeB() {
       nodeConnectionLifetime.stop();
       sandbox.state.profile = { hubUrl: 'https://hub-B.test', companyId: 'company-B' };
-      sandbox.state.identity = { key: 'identity-B' };
+      sandbox.state.identity = { key: 'identity-B', publicKeyPem: 'public-key-B' };
       sandbox.state.nodeId = 'node-B';
       accountSubject = 'account-B';
       sessionEpoch += 1;
@@ -111,7 +129,7 @@ test('late Agent claim is completed on captured A context without executing or c
   assert.deepEqual(harness.calls.agentCompletions[0], {
     hubUrl: 'https://hub-A.test',
     nodeId: 'node-A',
-    identity: { key: 'identity-A' },
+    identity: { key: 'identity-A', publicKeyPem: 'public-key-A' },
     accessToken: 'token-node-A',
     commandId: 'agent-A-1',
     completion: {
@@ -147,7 +165,7 @@ test('late Plugin run claim uses its own completion lane and captured A context'
   assert.equal(harness.calls.pluginCompletions.length, 1);
   assert.equal(harness.calls.pluginCompletions[0].hubUrl, 'https://hub-A.test');
   assert.equal(harness.calls.pluginCompletions[0].nodeId, 'node-A');
-  assert.deepEqual(harness.calls.pluginCompletions[0].identity, { key: 'identity-A' });
+  assert.deepEqual(harness.calls.pluginCompletions[0].identity, { key: 'identity-A', publicKeyPem: 'public-key-A' });
   assert.equal(harness.calls.pluginCompletions[0].accessToken, 'token-node-A');
   assert.equal(harness.calls.pluginCompletions[0].commandId, 'plugin-A-1');
   assert.equal(harness.calls.pluginCompletions[0].completion.status, 'failed');
@@ -221,4 +239,112 @@ test('a stale empty claim never fabricates a completion or falls through into th
   assert.deepEqual(harness.calls.executions, []);
   assert.deepEqual(harness.calls.agentCompletions, []);
   assert.deepEqual(harness.calls.pluginCompletions, []);
+});
+
+for (const kind of ['agent-command', 'plugin-run']) {
+  test(`${kind} saved result retries after Main restart before new claims without executing again`, async () => {
+    const storage = { ciphertext: null };
+    const first = await createPollHarness({}, storage);
+    const commandId = `closed-${kind}`;
+    const claim = async () => ({ id: commandId });
+    if (kind === 'agent-command') first.claimSpsNodeCommand = claim;
+    else first.claimSpsPluginNodeRun = claim;
+    const lostResponse = async () => { throw new Error('accepted response was lost'); };
+    if (kind === 'agent-command') first.completeSpsNodeCommand = lostResponse;
+    else first.completeSpsPluginNodeRun = lostResponse;
+    first.executeSpsNodeCommand = async options => {
+      first.calls.executions.push(options.command.id);
+      const payload = {
+        hubUrl: options.hubUrl,
+        nodeId: options.nodeId,
+        identity: options.identity,
+        accessToken: options.accessToken,
+        commandId: options.command.id,
+        completion: { status: 'succeeded', exitCode: 0, signal: null, timedOut: false, error: null },
+      };
+      await options.persistCompletion(payload);
+      assert.equal(JSON.parse(Buffer.from(storage.ciphertext, 'base64').toString()).receipts.length, 1);
+      await options.completeCommand(payload);
+    };
+    await first.runPoll();
+    assert.deepEqual(first.calls.executions, [commandId]);
+    assert.ok(storage.ciphertext);
+
+    const order = [];
+    const restarted = await createPollHarness({
+      claimSpsNodeCommand: async () => { order.push('claim-agent'); return null; },
+      claimSpsPluginNodeRun: async () => { order.push('claim-plugin'); return null; },
+    }, storage);
+    const acknowledge = async payload => { order.push('report'); return acceptedCompletion(payload); };
+    if (kind === 'agent-command') restarted.completeSpsNodeCommand = acknowledge;
+    else restarted.completeSpsPluginNodeRun = acknowledge;
+    await restarted.runPoll();
+
+    assert.deepEqual(order, ['report', 'claim-agent', 'claim-plugin']);
+    assert.deepEqual(restarted.calls.executions, []);
+    assert.equal(JSON.parse(Buffer.from(storage.ciphertext, 'base64').toString()).receipts.length, 0);
+  });
+}
+
+test('Main retains A results while B or a replacement A key is active', async () => {
+  const storage = { ciphertext: null };
+  const original = await createPollHarness({}, storage);
+  await original.nodeCompletionOutbox.persist({
+    kind: 'agent-command',
+    accountSubject: 'account-A',
+    payload: {
+      hubUrl: 'https://hub-A.test', nodeId: 'node-A', identity: original.state.identity, commandId: 'saved-A',
+      completion: { status: 'failed', exitCode: 1, signal: null, timedOut: false, error: 'process exited' },
+    },
+  });
+  const saved = storage.ciphertext;
+  const otherAccount = await createPollHarness({}, storage);
+  otherAccount.moveToNodeB();
+  await otherAccount.runPoll();
+  assert.deepEqual(otherAccount.calls.agentCompletions, []);
+  assert.deepEqual(otherAccount.calls.pluginCompletions, []);
+  assert.equal(storage.ciphertext, saved);
+
+  const replacedKey = await createPollHarness({}, storage);
+  replacedKey.state.identity = { key: 'replacement-A', publicKeyPem: 'public-key-A-replaced' };
+  await replacedKey.runPoll();
+  assert.deepEqual(replacedKey.calls.agentCompletions, []);
+  assert.equal(storage.ciphertext, saved);
+
+  const restored = await createPollHarness({}, storage);
+  await restored.runPoll();
+  assert.equal(restored.calls.agentCompletions.length, 1);
+  assert.equal(restored.calls.agentCompletions[0].commandId, 'saved-A');
+  assert.equal(restored.calls.agentCompletions[0].accessToken, 'token-node-A');
+  assert.deepEqual(restored.calls.executions, []);
+});
+
+test('a corrupt saved result pauses Main before claiming new work', async () => {
+  const storage = { ciphertext: 'invalid-not-json' };
+  const harness = await createPollHarness({}, storage);
+  await harness.runPoll();
+  assert.deepEqual(harness.calls.agentClaims, []);
+  assert.deepEqual(harness.calls.pluginClaims, []);
+  assert.deepEqual(harness.calls.executions, []);
+  assert.equal(storage.ciphertext, 'invalid-not-json');
+  assert.match(harness.nodeRuntimeStatus.commandPollError, /could not safely save or read task results/);
+});
+
+test('a different terminal result from Core stays saved and pauses new claims in Main', async () => {
+  const harness = await createPollHarness({
+    completeSpsNodeCommand: async payload => ({ ...acceptedCompletion(payload), status: 'cancelled' }),
+  });
+  await harness.nodeCompletionOutbox.persist({
+    kind: 'agent-command', accountSubject: 'account-A',
+    payload: {
+      hubUrl: 'https://hub-A.test', nodeId: 'node-A', identity: harness.state.identity, commandId: 'needs-review',
+      completion: { status: 'succeeded', exitCode: 0, signal: null, timedOut: false, error: null },
+    },
+  });
+  await harness.runPoll();
+  assert.deepEqual(harness.calls.agentClaims, []);
+  assert.deepEqual(harness.calls.pluginClaims, []);
+  assert.deepEqual(harness.calls.executions, []);
+  assert.equal(JSON.parse(Buffer.from(harness.outboxStorage.ciphertext, 'base64').toString()).receipts.length, 1);
+  assert.match(harness.nodeRuntimeStatus.commandPollError, /Host has not confirmed a saved task result/);
 });
