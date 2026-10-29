@@ -15,6 +15,7 @@ function initialStatus(app, message = "Desktop update service is starting.") {
 
 export function createSpsDesktopUpdateController({
   app,
+  isolatedE2e = false,
   dialog,
   getMainWindow,
   stopDesktopRuntimeGracefully,
@@ -37,7 +38,7 @@ export function createSpsDesktopUpdateController({
   };
 
   async function initialize() {
-    if (!app.isPackaged) {
+    if (!app.isPackaged || isolatedE2e) {
       return publishStatus({
         state: "disabled",
         channel: "latest",
@@ -46,7 +47,9 @@ export function createSpsDesktopUpdateController({
         currentVersion: app.getVersion(),
         availableVersion: null,
         percent: null,
-        message: "Desktop updates are available only in an installed SPS release.",
+        message: isolatedE2e
+          ? "Desktop updates are disabled for this isolated session."
+          : "Desktop updates are available only in an installed SPS release.",
       });
     }
 

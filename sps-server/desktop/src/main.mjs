@@ -92,6 +92,7 @@ import {
   renameSpsWorkspaceSource,
 } from "./workspace-sources.mjs";
 import { createSpsDesktopUpdateController } from "./desktop-update-controller.mjs";
+import { createSpsDesktopPlatformSettings } from "./desktop-platform-settings.mjs";
 import { createSpsDesktopRuntimeDrain } from "./desktop-runtime-drain.mjs";
 import { createSpsDesktopQuitCoordinator } from "./desktop-quit-coordinator.mjs";
 import { createSpsNativeNodeController } from "./native-node-controller.mjs";
@@ -242,12 +243,13 @@ import {
 import { synchronizeSpsTeamWorkplaneConfig } from "./bundled-workplane-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isolatedE2e = process.env.SPS_DESKTOP_E2E === "1";
 const developmentMode = resolveDesktopDevelopment({
   packaged: app.isPackaged,
   enabled: process.env.SPS_DESKTOP_DEV === "1",
   desktopRoot: path.resolve(__dirname, ".."),
   vaultBase: app.getPath("appData"),
-  e2e: process.env.SPS_DESKTOP_E2E === "1",
+  e2e: isolatedE2e,
 });
 if (developmentMode) {
   app.setPath("userData", developmentMode.profile);
@@ -269,6 +271,11 @@ function configureIsolatedE2eUserData() {
 
 configureIsolatedE2eUserData();
 const SPS_START_HIDDEN_ARGUMENT = "--sps-start-hidden";
+const desktopPlatformSettings = createSpsDesktopPlatformSettings({
+  app,
+  isolatedE2e,
+  startHiddenArgument: SPS_START_HIDDEN_ARGUMENT,
+});
 const opensCoreSettingsOnLaunch = process.argv.includes("--sps-core-settings");
 let mainWindow = null;
 let ownerCreationInProgress = false;
@@ -401,6 +408,7 @@ const startedHidden = process.argv.includes(SPS_START_HIDDEN_ARGUMENT);
 let launchAtLoginEnabled = false;
 const desktopUpdateController = createSpsDesktopUpdateController({
   app,
+  isolatedE2e,
   dialog,
   getMainWindow: () => mainWindow,
   stopDesktopRuntimeGracefully,
@@ -459,7 +467,7 @@ function resetNodeRuntimeStatus() {
 
 function refreshLaunchAtLoginStatus() {
   try {
-    launchAtLoginEnabled = Boolean(app.getLoginItemSettings().openAtLogin);
+    launchAtLoginEnabled = desktopPlatformSettings.readLaunchAtLogin();
   } catch {
     // The cached value remains usable when Windows startup registration is unavailable.
   }
@@ -6240,12 +6248,7 @@ function registerIpc() {
   });
   ipcMain.handle("desktop:set-launch-at-login", (_event, input) => {
     const enabled = Boolean(input?.enabled);
-    app.setLoginItemSettings({
-      openAtLogin: enabled,
-      openAsHidden: enabled,
-      args: enabled ? [SPS_START_HIDDEN_ARGUMENT] : [],
-    });
-    launchAtLoginEnabled = enabled;
+    launchAtLoginEnabled = desktopPlatformSettings.setLaunchAtLogin(enabled);
     return publicStatus();
   });
   ipcMain.handle("desktop:start-auth", async () => {
@@ -6471,7 +6474,7 @@ if (!allowsIsolatedE2eInstance && !app.requestSingleInstanceLock()) {
     registerIpc();
     configureWorkspaceRequestAuth();
     createApplicationMenu();
-    if (!developmentMode) app.setAsDefaultProtocolClient("sps");
+    if (!developmentMode) desktopPlatformSettings.registerProtocol();
     await createWindow({ show: !startedHidden && !backgroundStartupDeferred });
     if (developmentMode) {
       const stopWatching = watchDevelopmentSurfaces({

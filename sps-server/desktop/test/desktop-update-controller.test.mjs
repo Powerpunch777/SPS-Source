@@ -40,6 +40,41 @@ test("disables updates before the app is packaged", async () => {
   assert.throws(() => controller.requireService(), /updates are unavailable/);
 });
 
+test("disables packaged updates for isolated E2E without importing or invoking the updater", async () => {
+  const events = [];
+  let importCalls = 0;
+  const controller = createSpsDesktopUpdateController({
+    app: app(),
+    isolatedE2e: true,
+    dialog: { showMessageBox: async () => { events.push("dialog"); return { response: 0 }; } },
+    getMainWindow: () => null,
+    stopDesktopRuntimeGracefully: async () => { events.push("stop-runtime"); },
+    setQuitting: () => { events.push("set-quitting"); },
+    setShutdownComplete: () => { events.push("set-shutdown-complete"); },
+    importUpdater: async () => {
+      importCalls += 1;
+      throw new Error("isolated E2E must not import electron-updater");
+    },
+  });
+
+  const status = await controller.initialize();
+  assert.equal(status.state, "disabled");
+  assert.equal(status.currentVersion, "0.4.112");
+  assert.equal(status.availableVersion, null);
+  assert.match(status.message, /isolated session/);
+  assert.deepEqual(controller.getStatus(), status);
+  assert.throws(() => controller.requireService(), /updates are unavailable/);
+  await assert.rejects(controller.check(), /updates are unavailable/);
+  await assert.rejects(controller.download(), /updates are unavailable/);
+  await assert.rejects(controller.install(), /updates are unavailable/);
+  await assert.rejects(controller.installDownloaded(), /updates are unavailable/);
+  await controller.prompt({ state: "disabled", availableVersion: "0.4.113" }, { force: true });
+
+  assert.equal(importCalls, 0);
+  assert.equal(controller.isInstalling(), false);
+  assert.deepEqual(events, []);
+});
+
 test("owns update status and preserves safe install shutdown order", async () => {
   const autoUpdater = updater();
   const events = [];
