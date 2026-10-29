@@ -5,7 +5,7 @@
 공개 Marketplace·Builder 신규 개발·완전한 비신뢰 OS 격리를 필수 조건에서
 분리했지만 실제 Core 결함과 검사 실패를 완료로 바꾸지 않는다.
 
-현재 통합 Core 소스: `4d0b587b56ec794c490b710d734c15ac7e310b2b`.
+현재 통합 Core 소스: `40199c6e55e956c31381e2377860baa78bc7cabb`.
 아래 기록의 각 후보 revision과 당시 검증 결과는 서로 구분한다.
 Desktop `0.4.137` development-candidate와 SDK
 `61a929f6c783f78e5af603682de1543c7e24abc0`(미출시 `0.11.0`)는 유지한다.
@@ -304,3 +304,18 @@ Core 전체 완료는 여전히 미확인이다. 실행 도중 손실·claim 응
 불일치/교체된 키의 보류 결과 해결, package 영속 journal·artifact/cache 회수,
 실제 multi-Runner·공유/UAC·데이터 보존 설치/업데이트/복원·보안 gate가 남아 있다.
 기존/고객 DB·설치 앱·OS trust·방화벽을 변경하지 않았고 release/npm 배포도 하지 않았다.
+
+## 사용자 요청에 따른 일시 중지
+
+Core `40199c6e`의 관리상 실패·실제 Node 종료 근거 분리와 late report 보존을
+로컬 커밋으로 보관했다. [후속 구현과 근거](NODE-CLOSURE-AND-LATE-REPORTS-2026-10-29.md)를
+따르며 migration 0175는 nullable JSONB 두 컬럼의 추가다. 기존 관리 결과·SDK·
+권한·데이터는 유지한다. Workspace 삭제와 부모 취소는 미확인 terminal 작업을
+완료로 보지 않는다. signed 서비스 19개, helper/삭제 guard 선택 7개, Desktop/Main
+25개 및 실제 임시 DB 선택 3개가 통과했다(겹치는 실행 합산 금지). 최종 서버 타입
+exit 0·TS hash 동일이다.
+
+사용자가 “거기까지 하고 잠깐 멈춰”라고 요청해 로컬 상태를 저장한 뒤 일시 중지한다.
+이 후보는 아직 push하지 않았으며 원격 PR과 CI는 Source `45ac567` / Core `4d0b587b`
+기준이다. 해당 후보의 두 Windows job·전체 Linux 타입/빌드·9개 shard는 통과했고
+별도 보안 gate는 실패했다. 현재 로컬 변경의 새 CI는 재개 후 확인해야 한다.

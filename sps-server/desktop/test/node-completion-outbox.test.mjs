@@ -79,6 +79,17 @@ function receiptDigest(request, kind = "agent-command") {
   }), "utf8").digest("hex");
 }
 
+function normalizedReport(completion) {
+  return {
+    status: completion.status,
+    exitCode: completion.exitCode,
+    signal: completion.signal ?? null,
+    timedOut: completion.timedOut ?? false,
+    error: completion.error ?? null,
+    ...(completion.usageReport === undefined ? {} : { usageReport: completion.usageReport }),
+  };
+}
+
 function acceptedRow(request, { status = request.completion.status, error = request.completion.error, digest } = {}) {
   return {
     id: request.commandId,
@@ -374,4 +385,54 @@ test("keeps backward compatibility with a legacy normal row whose receipt digest
     response: { ...acceptedRow(record.payload), completionReceiptDigest: null },
   }), true);
   assert.equal(JSON.parse(store.readPlaintext()).receipts.length, 0);
+});
+
+test("accepts a separately stored exact report when Core keeps its policy terminal state", async () => {
+  const store = fixture();
+  const report = payload({ completion: {
+    status: "failed",
+    exitCode: 143,
+    signal: "SIGTERM",
+    timedOut: false,
+    error: "local result",
+  } });
+  const record = { kind: "agent-command", payload: report, accountSubject: owner.accountSubject };
+  await store.outbox.persist(record);
+  const row = {
+    id: report.commandId,
+    nodeId: report.nodeId,
+    status: "failed",
+    exitCode: null,
+    signal: null,
+    timedOut: 0,
+    error: "execution access was revoked",
+    completionReportJson: normalizedReport(report.completion),
+    completionReceiptDigest: receiptDigest(report, "agent-command"),
+  };
+  assert.equal(await store.outbox.acknowledge({ ...record, response: row }), true);
+  assert.equal(JSON.parse(store.readPlaintext()).receipts.length, 0);
+});
+
+test("retains report receipts when JSON is partial, tampered, out of scope, or digest-mismatched", async () => {
+  const record = { kind: "agent-command", payload: payload(), accountSubject: owner.accountSubject };
+  const valid = {
+    ...acceptedRow(record.payload, { status: "failed", error: "policy failure" }),
+    exitCode: null,
+    completionReportJson: normalizedReport(record.payload.completion),
+    completionReceiptDigest: receiptDigest(record.payload, record.kind),
+  };
+  const cases = [
+    { ...valid, completionReceiptDigest: undefined },
+    { ...valid, completionReceiptDigest: "0".repeat(64) },
+    { ...valid, completionReportJson: { ...normalizedReport(record.payload.completion), error: "tampered" } },
+    { ...valid, completionReportJson: { status: "succeeded" } },
+    { ...valid, nodeId: "another-node" },
+  ];
+  for (const response of cases) {
+    const store = fixture();
+    await store.outbox.persist(record);
+    await assert.rejects(store.outbox.acknowledge({ ...record, response }), error =>
+      error instanceof SpsNodeCompletionOutboxError && error.code === "ack-mismatch");
+    assert.equal(JSON.parse(store.readPlaintext()).receipts.length, 1);
+  }
 });

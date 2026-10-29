@@ -60,3 +60,11 @@ Host SSE 대기/대기 중 권한 변경 선택은 4개 파일 **14개 통과·8
 
 전체 로컬 suite/build·Windows Electron E2E·설치·물리 Runner를 재실행하지 않았다.
 새 후보의 CI 재시작 수용이 필요하며 기존 실패를 완료로 표시하지 않는다.
+
+후속 Source `45ac567` / Core `4d0b587b`의 push `40794257537`과 PR
+`40794265220`은 Windows Desktop job `123186727090` / `123186754283`이
+모두 성공했다. No-AI 재시작과 packaged Host/Windows Job·재시작·surfaces·Preview·
+Plugin lifecycle 단계까지 통과했다. 두 실행의 전체 Linux 타입·빌드와 9개 shard도
+모두 통과했다. 기존 copier fixture 회귀도 이 후보에서는 재현되지 않았다.
+별도 production security gate는 실패했으므로 전체 CI/출시 통과로 확대하지 않는다.
+이 성공은 이후 0175·종료 근거 보완의 검증을 대신하지 않는다.

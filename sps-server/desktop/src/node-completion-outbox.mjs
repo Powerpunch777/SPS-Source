@@ -220,7 +220,18 @@ export function createSpsNodeCompletionOutbox({
   function matchesAcceptedRow(record, response) {
     if (!response || typeof response !== "object" || Array.isArray(response)
       || response.id !== record.commandId || response.nodeId !== record.nodeId
-      || response.exitCode !== record.completion.exitCode
+      || !["succeeded", "failed", "cancelled"].includes(response.status)) return false;
+
+    if (response.completionReportJson !== undefined && response.completionReportJson !== null) {
+      let report;
+      try { report = safeCompletion(response.completionReportJson); } catch { return false; }
+      return JSON.stringify(canonicalValue(report)) === JSON.stringify(canonicalValue(record.completion))
+        && typeof response.completionReceiptDigest === "string"
+        && /^[a-f0-9]{64}$/.test(response.completionReceiptDigest)
+        && response.completionReceiptDigest === completionReceiptDigest(record);
+    }
+
+    if (response.exitCode !== record.completion.exitCode
       || (response.signal ?? null) !== record.completion.signal
       || (response.timedOut !== 0 && response.timedOut !== 1)
       || (response.timedOut === 1) !== record.completion.timedOut
