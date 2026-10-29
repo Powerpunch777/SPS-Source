@@ -15,6 +15,14 @@ test("exposes a real isolated Electron bootstrap smoke command", async () => {
   assert.match(smokeScript, /SPS_DESKTOP_E2E_BINARY/);
   assert.match(smokeScript, /isPackagedCandidate/);
   assert.match(smokeScript, /회사·Workspace·플러그인 데이터/);
-  assert.match(smokeScript, /taskkill/);
+  // The smoke now confirms closure through its owned Job instead of taskkill.
+  assert.match(smokeScript, /spawnWindowsJobSupervisor/);
+  assert.match(smokeScript, /await child\.terminateOwnedJob\(\)/);
+  assert.match(smokeScript, /terminal\.activeProcesses, 0/);
+  const stopIndex = smokeScript.indexOf("await stopChildTree(child);");
+  const removeIndex = smokeScript.indexOf("await removeTemporaryUserData(userData);");
+  assert.ok(stopIndex >= 0 && removeIndex > stopIndex,
+    "The owned Job must be confirmed before temporary user data is removed.");
+  assert.match(smokeScript, /new AggregateError\(\[firstError, cleanupError\]/);
   assert.match(smokeScript, /removeTemporaryUserData/);
 });
