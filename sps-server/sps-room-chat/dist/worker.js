@@ -9,7 +9,7 @@ function definePlugin(definition) {
   return Object.freeze({ definition });
 }
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/external.js
+// ../../external/sps-core/node_modules/.pnpm/zod@4.6.6_patch_hash=0f6c38_02aefac4c1bc1bab8d0ddf3d0f25a60a/node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
   BRAND: () => BRAND,
@@ -121,7 +121,7 @@ __export(external_exports, {
   void: () => voidType
 });
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/helpers/util.js
+// ../../external/sps-core/node_modules/.pnpm/zod@4.6.6_patch_hash=0f6c38_02aefac4c1bc1bab8d0ddf3d0f25a60a/node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -255,7 +255,7 @@ var getParsedType = (data) => {
   }
 };
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/ZodError.js
+// ../../external/sps-core/node_modules/.pnpm/zod@4.6.6_patch_hash=0f6c38_02aefac4c1bc1bab8d0ddf3d0f25a60a/node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -321,13 +321,28 @@ var ZodError = class _ZodError extends Error {
           while (i < issue.path.length) {
             const el = issue.path[i];
             const terminal = i === issue.path.length - 1;
-            if (!terminal) {
-              curr[el] = curr[el] || { _errors: [] };
-            } else {
-              curr[el] = curr[el] || { _errors: [] };
-              curr[el]._errors.push(mapper(issue));
+            if (el === "_errors") {
+              if (terminal)
+                curr._errors.push(mapper(issue));
+              i++;
+              continue;
+            }
+            if (!Object.prototype.hasOwnProperty.call(curr, el)) {
+              if (el === "__proto__") {
+                Object.defineProperty(curr, el, {
+                  value: { _errors: [] },
+                  writable: true,
+                  enumerable: true,
+                  configurable: true
+                });
+              } else {
+                curr[el] = { _errors: [] };
+              }
             }
             curr = curr[el];
+            if (terminal) {
+              curr._errors.push(mapper(issue));
+            }
             i++;
           }
         }
@@ -351,7 +366,7 @@ var ZodError = class _ZodError extends Error {
     return this.issues.length === 0;
   }
   flatten(mapper = (issue) => issue.message) {
-    const fieldErrors = {};
+    const fieldErrors = /* @__PURE__ */ Object.create(null);
     const formErrors = [];
     for (const sub of this.issues) {
       if (sub.path.length > 0) {
@@ -373,7 +388,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/locales/en.js
+// ../../external/sps-core/node_modules/.pnpm/zod@4.6.6_patch_hash=0f6c38_02aefac4c1bc1bab8d0ddf3d0f25a60a/node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -476,7 +491,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/errors.js
+// ../../external/sps-core/node_modules/.pnpm/zod@4.6.6_patch_hash=0f6c38_02aefac4c1bc1bab8d0ddf3d0f25a60a/node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -485,7 +500,7 @@ function getErrorMap() {
   return overrideErrorMap;
 }
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/helpers/parseUtil.js
+// ../../external/sps-core/node_modules/.pnpm/zod@4.6.6_patch_hash=0f6c38_02aefac4c1bc1bab8d0ddf3d0f25a60a/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path: path5, errorMaps, issueData } = params;
   const fullPath = [...path5, ...issueData.path || []];
@@ -608,15 +623,55 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/helpers/errorUtil.js
+// ../../external/sps-core/node_modules/.pnpm/zod@4.6.6_patch_hash=0f6c38_02aefac4c1bc1bab8d0ddf3d0f25a60a/node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// ../../external/sps-core/node_modules/.pnpm/zod@3.25.76_patch_hash=82d5_24ec7d1a2560475ed9ff29bfa90881fb/node_modules/zod/v3/types.js
+// ../../external/sps-core/node_modules/.pnpm/zod@4.6.6_patch_hash=0f6c38_02aefac4c1bc1bab8d0ddf3d0f25a60a/node_modules/zod/v3/types.js
 var issueBudgetParam = Symbol("zod.issueBudget");
+function parseCollectionElements(ctx, values, parseElement, finalize) {
+  const inputSize = Array.isArray(ctx.data) ? ctx.data.length : ctx.data.size;
+  if (inputSize === 0) return finalize([]);
+  if (ctx.common.async) {
+    return (async () => {
+      const results2 = [];
+      let batch = [], index2 = 0;
+      const flush = async () => {
+        const current = batch;
+        batch = [];
+        const parsed = await Promise.all(current);
+        results2.push(...parsed);
+        return ctx.common.issueBudget.truncated && parsed.some((item) => item.status !== "valid");
+      };
+      try {
+        for (const value of values) {
+          batch.push(parseElement(value, index2++));
+          if (batch.length >= 32 || ctx.common.issueBudget.truncated) {
+            if (await flush()) return INVALID;
+          }
+          if (index2 >= inputSize) break;
+        }
+        if (batch.length && await flush()) return INVALID;
+        return finalize(results2);
+      } catch (error) {
+        await Promise.allSettled(batch);
+        throw error;
+      }
+    })();
+  }
+  const results = [];
+  let index = 0;
+  for (const value of values) {
+    const parsed = parseElement(value, index++);
+    results.push(parsed);
+    if (ctx.common.issueBudget.truncated && parsed.status !== "valid") return INVALID;
+    if (index >= inputSize) break;
+  }
+  return finalize(results);
+}
 var ParseInputLazyPath = class {
   constructor(parent, value, path5, key) {
     this._cachedPath = [];
@@ -977,7 +1032,7 @@ var nanoidRegex = /^[a-z0-9_-]{21}$/i;
 var jwtRegex = /^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*$/;
 var durationRegex = /^[-+]?P(?!$)(?:(?:[-+]?\d+Y)|(?:[-+]?\d+[.,]\d+Y$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:(?:[-+]?\d+W)|(?:[-+]?\d+[.,]\d+W$))?(?:(?:[-+]?\d+D)|(?:[-+]?\d+[.,]\d+D$))?(?:T(?=[\d+-])(?:(?:[-+]?\d+H)|(?:[-+]?\d+[.,]\d+H$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:[-+]?\d+(?:[.,]\d+)?S)?)??$/;
 var emailRegex = /^(?!\.)(?!.*\.\.)([A-Z0-9_'+\-\.]*)[A-Z0-9_+-]@([A-Z0-9][A-Z0-9\-]*\.)+[A-Z]{2,}$/i;
-var _emojiRegex = `^(\\p{Extended_Pictographic}|\\p{Emoji_Component})+$`;
+var _emojiRegex = `^[\\p{Extended_Pictographic}\\p{Emoji_Component}]+$`;
 var emojiRegex;
 var ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/;
 var ipv4CidrRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/(3[0-2]|[12]?[0-9])$/;
@@ -2329,17 +2384,12 @@ var ZodArray = class _ZodArray extends ZodType {
     if (def.exactLength !== null && ctx.data.length > def.exactLength.value || def.maxLength !== null && ctx.data.length > def.maxLength.value) {
       return INVALID;
     }
-    if (ctx.common.async) {
-      return Promise.all([...ctx.data].map((item, i) => {
-        return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
-      })).then((result2) => {
-        return ParseStatus.mergeArray(status, result2);
-      });
-    }
-    const result = [...ctx.data].map((item, i) => {
-      return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
-    });
-    return ParseStatus.mergeArray(status, result);
+    return parseCollectionElements(
+      ctx,
+      ctx.data,
+      (item, index) => ctx.common.async ? def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, index)) : def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, index)),
+      (result) => ParseStatus.mergeArray(status, result)
+    );
   }
   get element() {
     return this._def.type;
@@ -2947,7 +2997,11 @@ function mergeValues(a, b) {
     const bKeys = util.objectKeys(b);
     const sharedKeys = util.objectKeys(a).filter((key) => bKeys.indexOf(key) !== -1);
     const newObj = { ...a, ...b };
+    if (Object.prototype.hasOwnProperty.call(newObj, "__proto__"))
+      delete newObj.__proto__;
     for (const key of sharedKeys) {
+      if (key === "__proto__")
+        continue;
       const sharedValue = mergeValues(a[key], b[key]);
       if (!sharedValue.valid) {
         return { valid: false };
@@ -3168,43 +3222,21 @@ var ZodMap = class extends ZodType {
     }
     const keyType = this._def.keyType;
     const valueType = this._def.valueType;
-    const pairs = [...ctx.data.entries()].map(([key, value], index) => {
-      return {
-        key: keyType._parse(new ParseInputLazyPath(ctx, key, ctx.path, [index, "key"])),
-        value: valueType._parse(new ParseInputLazyPath(ctx, value, ctx.path, [index, "value"]))
+    return parseCollectionElements(ctx, ctx.data.entries(), ([key, value], index) => {
+      const parsedKey = keyType._parse(new ParseInputLazyPath(ctx, key, ctx.path, [index, "key"]));
+      const parsedValue = valueType._parse(new ParseInputLazyPath(ctx, value, ctx.path, [index, "value"]));
+      const combine = (key2, value2) => {
+        if (key2.status === "aborted" || value2.status === "aborted") return INVALID;
+        return {
+          status: key2.status === "dirty" || value2.status === "dirty" ? "dirty" : "valid",
+          value: [key2.value, value2.value]
+        };
       };
+      return ctx.common.async ? Promise.all([parsedKey, parsedValue]).then(([key2, value2]) => combine(key2, value2)) : combine(parsedKey, parsedValue);
+    }, (results) => {
+      const merged = ParseStatus.mergeArray(status, results);
+      return merged.status === "aborted" ? merged : { status: merged.status, value: new Map(merged.value) };
     });
-    if (ctx.common.async) {
-      const finalMap = /* @__PURE__ */ new Map();
-      return Promise.resolve().then(async () => {
-        for (const pair of pairs) {
-          const key = await pair.key;
-          const value = await pair.value;
-          if (key.status === "aborted" || value.status === "aborted") {
-            return INVALID;
-          }
-          if (key.status === "dirty" || value.status === "dirty") {
-            status.dirty();
-          }
-          finalMap.set(key.value, value.value);
-        }
-        return { status: status.value, value: finalMap };
-      });
-    } else {
-      const finalMap = /* @__PURE__ */ new Map();
-      for (const pair of pairs) {
-        const key = pair.key;
-        const value = pair.value;
-        if (key.status === "aborted" || value.status === "aborted") {
-          return INVALID;
-        }
-        if (key.status === "dirty" || value.status === "dirty") {
-          status.dirty();
-        }
-        finalMap.set(key.value, value.value);
-      }
-      return { status: status.value, value: finalMap };
-    }
   }
 };
 ZodMap.create = (keyType, valueType, params) => {
@@ -3254,9 +3286,9 @@ var ZodSet = class _ZodSet extends ZodType {
       }
     }
     const valueType = this._def.valueType;
-    function finalizeSet(elements2) {
+    function finalizeSet(elements) {
       const parsedSet = /* @__PURE__ */ new Set();
-      for (const element of elements2) {
+      for (const element of elements) {
         if (element.status === "aborted")
           return INVALID;
         if (element.status === "dirty")
@@ -3268,12 +3300,12 @@ var ZodSet = class _ZodSet extends ZodType {
     if (def.maxSize !== null && ctx.data.size > def.maxSize.value) {
       return INVALID;
     }
-    const elements = [...ctx.data.values()].map((item, i) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, i)));
-    if (ctx.common.async) {
-      return Promise.all(elements).then((elements2) => finalizeSet(elements2));
-    } else {
-      return finalizeSet(elements);
-    }
+    return parseCollectionElements(
+      ctx,
+      ctx.data.values(),
+      (item, index) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, index)),
+      finalizeSet
+    );
   }
   min(minSize, message) {
     return new _ZodSet({
@@ -3352,7 +3384,7 @@ var ZodFunction = class _ZodFunction extends ZodType {
           throw error;
         });
         const result = await Reflect.apply(fn, this, parsedArgs);
-        const parsedReturns = await me._def.returns._def.type.parseAsync(result, params).catch((e) => {
+        const parsedReturns = await me._def.returns._def.type.parseAsync(result, createParams()).catch((e) => {
           error.addIssue(makeReturnsIssue(result, e));
           throw error;
         });
@@ -3367,7 +3399,7 @@ var ZodFunction = class _ZodFunction extends ZodType {
           throw new ZodError([makeArgsIssue(args, parsedArgs.error)]);
         }
         const result = Reflect.apply(fn, this, parsedArgs.data);
-        const parsedReturns = me._def.returns.safeParse(result, params);
+        const parsedReturns = me._def.returns.safeParse(result, createParams());
         if (!parsedReturns.success) {
           throw new ZodError([makeReturnsIssue(result, parsedReturns.error)]);
         }
@@ -9134,6 +9166,10 @@ var spsNodeSignedRequestSchema = external_exports.object({
   nonce: external_exports.string().regex(/^[A-Za-z0-9_-]{32,256}$/),
   signature: external_exports.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(64).max(2048)
 });
+var SPS_NODE_CLAIM_REQUEST_ID_PATTERN = "^v1:([1-9][0-9]{12}):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
+var spsNodeClaimRequestSchema = spsNodeSignedRequestSchema.extend({
+  claimRequestId: external_exports.string().max(80).regex(new RegExp(SPS_NODE_CLAIM_REQUEST_ID_PATTERN)).optional()
+});
 var spsNodeCommandEventSchema = external_exports.object({
   sequence: external_exports.number().int().positive(),
   stream: external_exports.enum(["stdout", "stderr"]),
@@ -9208,6 +9244,25 @@ var jsonSchemaSchema = external_exports.record(external_exports.string(), extern
   },
   { message: "Must be a valid JSON Schema object (requires at least a 'type', '$ref', or composition keyword)" }
 );
+function containsSecretRefFormat(value) {
+  if (Array.isArray(value)) return value.some(containsSecretRefFormat);
+  if (!value || typeof value !== "object") return false;
+  const record = value;
+  if (record.format === "secret-ref") return true;
+  return Object.values(record).some(containsSecretRefFormat);
+}
+function isSafeWorkspaceWorkerPath(value) {
+  if (value.length === 0 || value.length > 512 || /[\\\x00-\x1f\x7f?*\[\]{}!#]/.test(value) || value.startsWith("/") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return false;
+  const relative = value.startsWith("./") ? value.slice(2) : value;
+  return relative.length > 0 && relative.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+function containsAsyncSchema(value) {
+  if (Array.isArray(value)) return value.some(containsAsyncSchema);
+  if (!value || typeof value !== "object") return false;
+  const record = value;
+  if (record.$async === true) return true;
+  return Object.values(record).some(containsAsyncSchema);
+}
 var CRON_FIELD_PATTERN = /^(\*(?:\/[0-9]+)?|[0-9]+(?:-[0-9]+)?(?:\/[0-9]+)?)(?:,(\*(?:\/[0-9]+)?|[0-9]+(?:-[0-9]+)?(?:\/[0-9]+)?))*$/;
 var PLUGIN_DEPENDENCY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 var PLUGIN_SERVICE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{1,127}$/;
@@ -9905,9 +9960,14 @@ var pluginManifestV1Schema = external_exports.object({
   capabilities: external_exports.array(external_exports.enum(PLUGIN_CAPABILITIES)).min(1),
   entrypoints: external_exports.object({
     worker: external_exports.string().min(1),
+    workspaceWorker: external_exports.string().refine(
+      isSafeWorkspaceWorkerPath,
+      "Must be a safe relative package path"
+    ).optional(),
     ui: external_exports.string().min(1).optional()
   }),
   instanceConfigSchema: jsonSchemaSchema.optional(),
+  workspaceConfigSchema: jsonSchemaSchema.optional(),
   jobs: external_exports.array(pluginJobDeclarationSchema).optional(),
   webhooks: external_exports.array(pluginWebhookDeclarationSchema).optional(),
   tools: external_exports.array(pluginToolDeclarationSchema).optional(),
@@ -9942,6 +10002,27 @@ var pluginManifestV1Schema = external_exports.object({
     actions: external_exports.array(pluginInboxActionDeclarationSchema).min(1).max(100).optional()
   }).optional()
 }).superRefine((manifest, ctx) => {
+  if (manifest.workspaceConfigSchema && !manifest.entrypoints.workspaceWorker) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "workspaceConfigSchema requires entrypoints.workspaceWorker",
+      path: ["workspaceConfigSchema"]
+    });
+  }
+  if (manifest.workspaceConfigSchema && containsSecretRefFormat(manifest.workspaceConfigSchema)) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "workspaceConfigSchema cannot declare secret-ref fields until Workspace-scoped plugin secrets are supported",
+      path: ["workspaceConfigSchema"]
+    });
+  }
+  if (manifest.workspaceConfigSchema && containsAsyncSchema(manifest.workspaceConfigSchema)) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: "workspaceConfigSchema cannot declare async schemas",
+      path: ["workspaceConfigSchema"]
+    });
+  }
   const requiredIds = manifest.requiredDependencies?.map((dependency) => dependency.id) ?? [];
   const conflictIds = manifest.conflicts?.map((conflict) => conflict.id) ?? [];
   for (const [field, ids] of [["requiredDependencies", requiredIds], ["conflicts", conflictIds]]) {
