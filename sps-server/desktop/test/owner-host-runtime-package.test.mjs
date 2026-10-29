@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   createSpsOwnerHostRuntimePackage,
   inspectSpsOwnerHostRuntimeArchive,
+  isRuntimePreparationLockOwnerGone,
   materializeSpsOwnerHostRuntimePackage,
   readSpsOwnerHostRuntimePackage,
   SPS_OWNER_HOST_RUNTIME_ARCHIVE,
@@ -140,6 +141,133 @@ test("keeps a failed extraction out of the final runtime path", async () => {
       },
     }), /simulated extraction failure/);
     await assert.rejects(fs.access(targetRoot));
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test("classifies stale runtime lock owners conservatively", () => {
+  const cases = [
+    {
+      name: "ESRCH confirms a different PID is gone",
+      owner: { pid: process.pid + 10_000 },
+      probe: () => { throw Object.assign(new Error("missing process"), { code: "ESRCH" }); },
+      expected: true,
+    },
+    {
+      name: "EPERM leaves a different PID unknown",
+      owner: { pid: process.pid + 10_000 },
+      probe: () => { throw Object.assign(new Error("permission denied"), { code: "EPERM" }); },
+      expected: false,
+    },
+    {
+      name: "other probe errors leave a different PID unknown",
+      owner: { pid: process.pid + 10_000 },
+      probe: () => { throw Object.assign(new Error("probe failed"), { code: "EIO" }); },
+      expected: false,
+    },
+    {
+      name: "a successful probe keeps a different PID live",
+      owner: { pid: process.pid + 10_000 },
+      probe: () => undefined,
+      expected: false,
+    },
+    {
+      name: "the current process is never reclaimed as a stale owner",
+      owner: { pid: process.pid },
+      probe: () => { throw Object.assign(new Error("probe must not run"), { code: "ESRCH" }); },
+      expected: false,
+    },
+    ...[
+      null,
+      {},
+      { pid: "123" },
+      { pid: 0 },
+      { pid: -1 },
+      { pid: 1.5 },
+      { pid: Number.MAX_SAFE_INTEGER + 1 },
+    ].map(owner => ({
+      name: `invalid owner record ${JSON.stringify(owner)}`,
+      owner,
+      probe: () => { throw Object.assign(new Error("probe must not run"), { code: "ESRCH" }); },
+      expected: false,
+    })),
+  ];
+
+  for (const entry of cases) {
+    assert.equal(
+      isRuntimePreparationLockOwnerGone(entry.owner, { probe: entry.probe }),
+      entry.expected,
+      entry.name,
+    );
+  }
+});
+
+test("does not reclaim an old runtime lock while its recorded process is alive", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-live-lock-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  const packageRoot = path.join(temporary, "package");
+  const targetRoot = path.join(temporary, "materialized");
+  const lockPath = `${targetRoot}.lock`;
+  const staleAt = new Date(Date.now() - 16 * 60_000);
+  const lockContents = `${JSON.stringify({ pid: process.pid, createdAt: staleAt.toISOString() })}\n`;
+  const waitingSentinel = new Error("waited for the live runtime lock");
+  let extractionCalls = 0;
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.writeFile(lockPath, lockContents, "utf8");
+    await fs.utimes(lockPath, staleAt, staleAt);
+
+    await assert.rejects(
+      materializeSpsOwnerHostRuntimePackage({
+        packageRoot,
+        targetRuntimeRoot: targetRoot,
+        delay: async () => { throw waitingSentinel; },
+        tarExtract: async () => {
+          extractionCalls += 1;
+          throw new Error("unexpected extraction while another process owns the lock");
+        },
+      }),
+      error => error === waitingSentinel,
+    );
+    assert.equal(extractionCalls, 0);
+    assert.equal(await fs.readFile(lockPath, "utf8"), lockContents);
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test("does not reclaim a malformed stale runtime lock", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-malformed-lock-"));
+  const runtimeRoot = path.join(temporary, "runtime");
+  const packageRoot = path.join(temporary, "package");
+  const targetRoot = path.join(temporary, "materialized");
+  const lockPath = `${targetRoot}.lock`;
+  const staleAt = new Date(Date.now() - 16 * 60_000);
+  const lockContents = "{malformed stale lock\n";
+  const waitingSentinel = new Error("waited for the malformed runtime lock");
+  let extractionCalls = 0;
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.writeFile(lockPath, lockContents, "utf8");
+    await fs.utimes(lockPath, staleAt, staleAt);
+
+    await assert.rejects(
+      materializeSpsOwnerHostRuntimePackage({
+        packageRoot,
+        targetRuntimeRoot: targetRoot,
+        delay: async () => { throw waitingSentinel; },
+        tarExtract: async () => {
+          extractionCalls += 1;
+          throw new Error("unexpected extraction while a malformed lock exists");
+        },
+      }),
+      error => error === waitingSentinel,
+    );
+    assert.equal(extractionCalls, 0);
+    assert.equal(await fs.readFile(lockPath, "utf8"), lockContents);
   } finally {
     await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }

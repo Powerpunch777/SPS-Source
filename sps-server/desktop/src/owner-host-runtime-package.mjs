@@ -238,6 +238,18 @@ async function runtimeIsReady(targetRuntimeRoot, packageManifest, { fsApi = fs }
   }
 }
 
+export function isRuntimePreparationLockOwnerGone(owner, { probe = (pid) => process.kill(pid, 0) } = {}) {
+  if (!Number.isSafeInteger(owner?.pid) || owner.pid <= 0 || owner.pid === process.pid) return false;
+  try {
+    probe(owner.pid);
+    return false;
+  } catch (error) {
+    // Age and probe failures such as EPERM are not evidence that the owner
+    // stopped. A reused live PID conservatively keeps the preparation locked.
+    return error?.code === "ESRCH";
+  }
+}
+
 async function acquireRuntimeLock(lockPath, { fsApi = fs, delay, targetRuntimeRoot, packageManifest } = {}) {
   for (let attempt = 0; attempt < 240; attempt += 1) {
     try {
@@ -248,9 +260,20 @@ async function acquireRuntimeLock(lockPath, { fsApi = fs, delay, targetRuntimeRo
       if (error?.code !== "EEXIST") throw error;
       if (await runtimeIsReady(targetRuntimeRoot, packageManifest, { fsApi })) return null;
       const details = await fsApi.stat(lockPath).catch(() => null);
-      if (details && Date.now() - details.mtimeMs > 15 * 60_000) {
-        await fsApi.rm(lockPath, { force: true }).catch(() => undefined);
-        continue;
+      if (details && details.size <= 4096 && Date.now() - details.mtimeMs > 15 * 60_000) {
+        const owner = await fsApi.readFile(lockPath, "utf8")
+          .then((value) => JSON.parse(value.replace(/^\uFEFF/, "")))
+          .catch(() => null);
+        if (isRuntimePreparationLockOwnerGone(owner)) {
+          // Recheck the file observed before the process probe; another
+          // preparation may have replaced it while that probe was pending.
+          const currentDetails = await fsApi.stat(lockPath).catch(() => null);
+          if (currentDetails && ["dev", "ino", "size", "mtimeMs", "ctimeMs"]
+            .every((key) => currentDetails[key] === details[key])) {
+            await fsApi.rm(lockPath, { force: true }).catch(() => undefined);
+            continue;
+          }
+        }
       }
       await delay(500);
     }
