@@ -29,6 +29,12 @@ Target 또는 Agent와 동일시하지 않는다. 기존 Node 명칭·wire proto
 통신·원격 관리는 확정된 Tailscale 사설 네트워크와 SSH 방향을 유지한다.
 추가 Native LAN 개발은 [보류 기록](NATIVE-DEVELOPMENT-DEFERRED-ko.md)을 따른다.
 
+2026-10-30 이동용 내보내기는 현재 DB snapshot·포함 파일의 민감값을 유지하되,
+민감정보가 포함될 수 있고 SPS가 이동 파일 자체를 암호화하지 않는다고 명확히 안내한다.
+기존 기기 개인키·로컬 로그인 저장소·별도 Vault secret 경로를 추가로 포함하지 않는다.
+일반 전체 백업과 복원 후 자격증명·실행 권한 정리도 그대로 유지한다.
+[내보내기 민감정보 검토](../reviews/OWNER-VAULT-EXPORT-SENSITIVITY-2026-10-30.md)를 따른다.
+
 ## 보안 경계
 
 지원 Plugin은 자체 제작·검토·승인한 패키지다. 일반 Worker는 현재 같은 OS 사용자

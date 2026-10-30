@@ -3755,7 +3755,7 @@ async function exportOwnerVaultTransfer() {
     type: "info",
     title: "SPS Server export complete",
     message: "SPS created a portable server transfer bundle.",
-    detail: `${exported.bundleRoot}\n\nThe bundle excludes account credentials and encryption keys.`,
+    detail: `${exported.bundleRoot}\n\nDesktop sign-in storage and separate Vault secret/key folders are omitted. The database snapshot and included files can still contain sensitive settings or credentials. The transfer is not encrypted by SPS. Keep this transfer private. Restore-time credential cleanup does not sanitize the exported file.`,
   });
   return exported;
 }

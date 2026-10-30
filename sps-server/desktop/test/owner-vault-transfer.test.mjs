@@ -39,7 +39,7 @@ test("allows Host restore only into an absent or bootstrap-only vault", async ()
   }
 });
 
-test("exports a portable Owner Vault transfer without secrets or live database files", async () => {
+test("exports a portable Owner Vault transfer without Vault secret folders or live database files", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-transfer-"));
   try {
     const vault = path.join(root, "owner-vault");
