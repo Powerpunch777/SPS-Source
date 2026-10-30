@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn as spawnChildProcess } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { prepareWindowsHostJob } from "@sps/desktop-node";
+import { attachSpsNativeMemberSignerChannel } from "./native-member-signer-channel.mjs";
+import { createSpsNativeParentIngressClient } from "./native-parent-ingress-client.mjs";
+import { attachSpsNativeWorkspaceParentChannel } from "./native-workspace-parent-channel.mjs";
 
 function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
@@ -17,14 +22,43 @@ function hostDiagnostics(value) {
   return text.split(/\r?\n/).filter(Boolean).slice(-12).join("\n").slice(-2_000);
 }
 
+function childHasExited(child) {
+  return Boolean(child && (child.exitCode != null || child.signalCode != null));
+}
+
+function hasOwnedHostJob(child) {
+  return typeof child?.terminateOwnedJob === "function" && typeof child?.waitForOwnedJobTermination === "function";
+}
+
+function reportOwnerHostEvent(environment, event) {
+  if (environment?.SPS_DESKTOP_E2E === "1" && typeof event === "string" && /^[a-z-]{1,64}$/.test(event)) {
+    console.log(`[owner-host-job] ${event}`);
+  }
+}
+
+function ownerHostGateModulePath() {
+  const modulePath = fileURLToPath(import.meta.url);
+  return modulePath.split(path.sep).some(part => part.toLowerCase() === "app.asar") && process.resourcesPath
+    ? path.join(process.resourcesPath, "sps-owner-host-job", "owner-host-job-gate.mjs")
+    : fileURLToPath(new URL("./owner-host-job-gate.mjs", import.meta.url));
+}
+
 function waitForChildExit(child, timeoutMs) {
-  if (!child || child.exitCode != null) return Promise.resolve();
+  if (!child || childHasExited(child)) return Promise.resolve(true);
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    child.once("exit", () => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve();
-    });
+      child.removeListener?.("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(childHasExited(child)), timeoutMs);
+    child.once("exit", onExit);
+    // Cover exit between the initial check and listener registration.
+    if (childHasExited(child)) finish(true);
   });
 }
 
@@ -58,6 +92,14 @@ async function fileExists(entry, fsApi) {
   } catch {
     return false;
   }
+}
+
+function resolveOwnerHostInstanceId(value) {
+  const instanceId = value ?? "sps-desktop-owner";
+  if (typeof instanceId !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(instanceId)) {
+    throw new Error("SPS Owner Host instanceId must be 1-64 ASCII letters, digits, dots, underscores, or hyphens.");
+  }
+  return instanceId;
 }
 
 async function removeDirectoryWithRetry(target, { fsApi, delay, attempts = 20 } = {}) {
@@ -111,6 +153,53 @@ async function findTsxLoader(coreRoot, fsApi) {
 
 export function spsOwnerHostBundledNodePath(runtimeRoot, platform = process.platform) {
   return path.join(runtimeRoot, "bin", platform === "win32" ? "node.exe" : "node");
+}
+
+async function fileSha256(filePath, fsApi) {
+  const contents = await fsApi.readFile(filePath);
+  return createHash("sha256").update(contents).digest("hex");
+}
+
+export async function materializeStableSpsOwnerHostNode({
+  runtimeRoot,
+  stableRoot,
+  platform = process.platform,
+  fsApi = fs,
+} = {}) {
+  if (!runtimeRoot || !stableRoot) return null;
+  const source = spsOwnerHostBundledNodePath(runtimeRoot, platform);
+  if (!(await fileExists(source, fsApi))) return null;
+
+  const executableName = platform === "win32" ? "node.exe" : "node";
+  const target = path.join(stableRoot, executableName);
+  const metadataPath = path.join(stableRoot, "node-source.json");
+  const sourceSha256 = await fileSha256(source, fsApi);
+  try {
+    const metadata = JSON.parse(await fsApi.readFile(metadataPath, "utf8"));
+    if (
+      metadata?.sha256 === sourceSha256
+      && await fileExists(target, fsApi)
+      && await fileSha256(target, fsApi) === sourceSha256
+    ) return target;
+  } catch {
+    // Missing or stale metadata is repaired from the verified packaged runtime.
+  }
+
+  await fsApi.mkdir(stableRoot, { recursive: true });
+  const temporaryTarget = path.join(stableRoot, `${executableName}.tmp-${process.pid}-${Date.now()}`);
+  const temporaryMetadata = `${metadataPath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fsApi.copyFile(source, temporaryTarget);
+    await fsApi.rm(target, { force: true });
+    await fsApi.rename(temporaryTarget, target);
+    await fsApi.writeFile(temporaryMetadata, `${JSON.stringify({ format: 1, sha256: sourceSha256 })}\n`, "utf8");
+    await fsApi.rm(metadataPath, { force: true });
+    await fsApi.rename(temporaryMetadata, metadataPath);
+    return target;
+  } finally {
+    await fsApi.rm(temporaryTarget, { force: true }).catch(() => undefined);
+    await fsApi.rm(temporaryMetadata, { force: true }).catch(() => undefined);
+  }
 }
 
 export async function materializeSpsOwnerHostRuntime({
@@ -211,10 +300,13 @@ export async function resolveSpsOwnerHostRuntime({
   coreRoots,
   nodeCommand = "node",
   packagedNodeCommand = process.execPath,
+  stableNodeCommand = null,
   configPath = null,
+  instanceId,
   environment = {},
   fsApi = fs,
 } = {}) {
+  const resolvedInstanceId = resolveOwnerHostInstanceId(instanceId);
   const packagedRoots = Array.isArray(packagedRuntimeRoots) ? packagedRuntimeRoots.filter(Boolean) : [];
   for (const runtimeRoot of packagedRoots) {
     const entry = path.join(runtimeRoot, "dist", "index.js");
@@ -222,8 +314,9 @@ export async function resolveSpsOwnerHostRuntime({
     if (!(await fileExists(entry, fsApi)) || !(await fileExists(bootstrap, fsApi))) continue;
     const bundledNodeCommand = spsOwnerHostBundledNodePath(runtimeRoot);
     const hasBundledNode = await fileExists(bundledNodeCommand, fsApi);
+    const hasStableNode = stableNodeCommand ? await fileExists(stableNodeCommand, fsApi) : false;
     return {
-      command: hasBundledNode ? bundledNodeCommand : packagedNodeCommand,
+      command: hasStableNode ? stableNodeCommand : hasBundledNode ? bundledNodeCommand : packagedNodeCommand,
       args: [
         "sps-owner-host-bootstrap.mjs",
       ],
@@ -231,9 +324,10 @@ export async function resolveSpsOwnerHostRuntime({
       environment: {
         // Older Desktop packages used Electron as Node. Keep that fallback so
         // an existing runtime can still be opened during an in-place update.
-        ...(hasBundledNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
+        ...(hasStableNode || hasBundledNode ? {} : { ELECTRON_RUN_AS_NODE: "1" }),
         ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
         ...environment,
+        PAPERCLIP_INSTANCE_ID: resolvedInstanceId,
       },
       kind: "packaged-owner-runtime",
     };
@@ -252,11 +346,15 @@ export async function resolveSpsOwnerHostRuntime({
         "--import", pathToFileURL(tsx.loader).href,
         entry,
         "run",
-        "--instance", "sps-desktop-owner",
+        "--instance", resolvedInstanceId,
         ...(configPath ? ["--config", configPath] : []),
       ],
       cwd: coreRoot,
-      environment: { ...environment },
+      environment: {
+        ...environment,
+        ...(configPath ? { PAPERCLIP_CONFIG: configPath } : {}),
+        PAPERCLIP_INSTANCE_ID: resolvedInstanceId,
+      },
       kind: "development-core",
     };
   }
@@ -268,19 +366,48 @@ export function createSpsOwnerHostManager({
   resolveRuntime = async () => null,
   spawn = spawnChildProcess,
   fetchImpl = fetch,
+  baseEnvironment = process.env,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   // First launch has to initialize Embedded PostgreSQL and can take several
   // minutes while Windows inspects its native runtime files.
   startupAttempts = 720,
   terminateTree = terminateWindowsProcessTree,
+  exitConfirmationMs = 5_000,
+  createNativeSigner = null,
+  onNativeInvalidation = () => {},
+  prepareOwnedJob = process.platform === "win32" && spawn === spawnChildProcess
+    ? () => prepareWindowsHostJob({ gateModulePath: ownerHostGateModulePath() }, {
+      onEvent: event => reportOwnerHostEvent(baseEnvironment, event),
+    })
+    : null,
 } = {}) {
   if (!url) throw new Error("SPS Owner Host URL is required.");
+  if (!Number.isSafeInteger(exitConfirmationMs) || exitConfirmationMs < 1 || exitConfirmationMs > 30_000) {
+    throw new Error("SPS Owner Host exit confirmation timeout must be between 1 and 30000 milliseconds.");
+  }
   let ownedChild = null;
   let lastError = null;
   let startedAt = null;
-  let childOutput = "";
+  let nativeChannel = null;
+  let nativeIngress = null;
+  let nativeWorkspace = null;
+  let lifecycleGeneration = 0;
+  let startPromise = null;
+  let startPromiseGeneration = null;
+  let jobPreparation = null;
+  let preparedJob = null;
+  const stopsInFlight = new Set();
 
   async function inspect() {
+    if (ownedChild && (childHasExited(ownedChild) || ownedChild.hasUnconfirmedOwnedJobTermination?.())) {
+      return { state: "stopping", owned: true, url, health: null, startedAt,
+        processTree: hasOwnedHostJob(ownedChild) ? "windows_job" : "child_only",
+        lastError: lastError ?? "SPS Owner Host process-tree termination has not been confirmed." };
+    }
+    if (!ownedChild && (jobPreparation || preparedJob)) {
+      return { state: preparedJob?.hasUnconfirmedOwnedJobTermination?.() ? "stopping" : "starting",
+        owned: true, url, health: null, startedAt, lastError };
+    }
     const health = await healthAt(url, fetchImpl);
     if (health) {
       // A slow first boot can outlive the bounded start loop. Once the Host
@@ -289,86 +416,314 @@ export function createSpsOwnerHostManager({
       lastError = null;
       return {
         state: ownedChild ? "running" : "running-existing",
+        owned: Boolean(ownedChild),
+        processTree: ownedChild ? hasOwnedHostJob(ownedChild) ? "windows_job" : "child_only" : null,
         url,
         health,
         startedAt,
         lastError,
       };
     }
-    if (ownedChild && ownedChild.exitCode == null) {
-      return { state: "starting", url, health: null, startedAt, lastError };
+    if (ownedChild && !childHasExited(ownedChild)) {
+      return { state: "starting", owned: true, url, health: null, startedAt, lastError,
+        processTree: hasOwnedHostJob(ownedChild) ? "windows_job" : "child_only" };
     }
-    return { state: "stopped", url, health: null, startedAt: null, lastError };
+    return { state: "stopped", owned: false, url, health: null, startedAt: null, lastError };
   }
 
-  async function start() {
+  async function startOwned(generation) {
     const current = await inspect();
+    if (generation !== lifecycleGeneration) return inspect();
     if (current.state !== "stopped") return current;
     const runtime = await resolveRuntime();
+    if (generation !== lifecycleGeneration) return inspect();
     if (!runtime) {
       lastError = "SPS Owner Host runtime is not installed on this computer.";
       return inspect();
     }
 
     try {
-      const child = spawn(runtime.command, runtime.args, {
+      if (generation !== lifecycleGeneration) return inspect();
+      let job = null;
+      if (prepareOwnedJob) {
+        const preparing = Promise.resolve().then(() => prepareOwnedJob());
+        jobPreparation = preparing;
+        try { job = preparedJob = await preparing; }
+        finally { if (jobPreparation === preparing) jobPreparation = null; }
+        if (generation !== lifecycleGeneration) {
+          await job.dispose();
+          if (preparedJob === job) preparedJob = null;
+          return inspect();
+        }
+      }
+      const spawnOptions = {
         cwd: runtime.cwd,
-        stdio: ["ignore", "pipe", "pipe"],
+        // The stop-only pipe survives Native signer IPC revocation. Neither
+        // descriptor grants Native signing unless its own channel is attached.
+        stdio: ["ignore", "pipe", "pipe", "ipc", "pipe"],
         windowsHide: true,
         env: {
-          ...process.env,
+          ...baseEnvironment,
           ...runtime.environment,
           PAPERCLIP_TELEMETRY_DISABLED: "1",
+          SPS_DESKTOP_OWNED_SHUTDOWN_PIPE: "1",
         },
-      });
+      };
+      let child;
+      try { child = job ? job.spawn(runtime.command, runtime.args, spawnOptions) : spawn(runtime.command, runtime.args, spawnOptions); }
+      catch (error) {
+        if (job) { await job.dispose(); if (preparedJob === job) preparedJob = null; }
+        throw error;
+      }
+      child.stdio?.[4]?.on?.("error", () => {});
+      child.stdio?.[4]?.on?.("error", () => reportOwnerHostEvent(baseEnvironment, "stop-pipe-error"));
+      child.stdio?.[4]?.once?.("close", () => reportOwnerHostEvent(baseEnvironment, "stop-pipe-close"));
+      child.stdout?.once?.("close", () => reportOwnerHostEvent(baseEnvironment, "stdout-close"));
+      child.stderr?.once?.("close", () => reportOwnerHostEvent(baseEnvironment, "stderr-close"));
+      child.once("disconnect", () => reportOwnerHostEvent(baseEnvironment, "core-ipc-disconnect"));
+      child.once("close", () => reportOwnerHostEvent(baseEnvironment, "core-close"));
       ownedChild = child;
+      if (preparedJob === job) preparedJob = null;
+      let childChannel = null;
+      let childWorkspace = null;
+      if (createNativeSigner) {
+        let signer;
+        try {
+          signer = createNativeSigner();
+          childChannel = attachSpsNativeMemberSignerChannel(child, signer, {
+            isCurrent: () => ownedChild === child,
+            // Revoke Native authority immediately, but let the admitted Core's
+            // IPC reach EOF. Parent disconnect skips Node's IPC close accounting
+            // and can prevent the real ChildProcess.close used by the job join.
+            disconnectOnDispose: !hasOwnedHostJob(child),
+          });
+          nativeChannel = childChannel;
+          nativeIngress = createSpsNativeParentIngressClient(child, { isCurrent: () => ownedChild === child });
+          const childEnvironment = runtime.environment ?? {};
+          if (childEnvironment.SPS_NATIVE_WORKSPACE_CHANNEL === "1"
+            && childEnvironment.SPS_NATIVE_PARENT_INGRESS === "1"
+            && childEnvironment.SPS_NATIVE_HOST_MANAGEMENT === "1") {
+            try {
+              childWorkspace = attachSpsNativeWorkspaceParentChannel(child, {
+                inspectBinding: options => signer.inspect(options),
+                isCurrent: () => ownedChild === child,
+              });
+              nativeWorkspace = childWorkspace;
+            } catch {
+              childWorkspace?.dispose();
+              childWorkspace = null;
+            }
+          }
+        } catch {
+          // Native signing is unavailable, not an alternative route to Owner
+          // authority. Preserve the ordinary Host when no channel can attach.
+          childChannel?.dispose();
+          try { signer?.dispose(); } catch { /* Native remains unavailable. */ }
+          if (nativeChannel === childChannel) nativeChannel = null;
+          nativeIngress?.dispose();
+          nativeIngress = null;
+          childWorkspace?.dispose();
+          if (nativeWorkspace === childWorkspace) nativeWorkspace = null;
+        }
+      }
       startedAt = new Date().toISOString();
       lastError = null;
-      childOutput = "";
+      let childOutput = "";
       const captureOutput = (chunk) => {
+        if (ownedChild !== child) return;
         childOutput = `${childOutput}${String(chunk)}`.slice(-8_000);
       };
       child.stdout?.on("data", captureOutput);
       child.stderr?.on("data", captureOutput);
-      child.once("error", (error) => { lastError = asMessage(error); });
+      child.once("error", (error) => {
+        if (ownedChild !== child) return;
+        lastError = asMessage(error);
+      });
       child.once("exit", (code) => {
+        reportOwnerHostEvent(baseEnvironment, "core-exit");
+        if (ownedChild !== child) return;
+        // fd4 is an independent, duplex parent-owned stop pipe. After the
+        // actual Core has exited, its unused parent read side must also close
+        // before Node can emit ChildProcess.close. Preserve output drainage and
+        // the separate retained-job acknowledgement rather than skipping them.
+        child.stdio?.[4]?.destroy?.();
+        child.stdout?.resume?.();
+        child.stderr?.resume?.();
+        if (!hasOwnedHostJob(child)) {
+          try { if (child.connected) child.disconnect(); } catch { /* Core is already terminal. */ }
+        }
+        childChannel?.dispose();
+        nativeIngress?.dispose();
+        nativeIngress = null;
+        childWorkspace?.dispose();
+        if (nativeWorkspace === childWorkspace) nativeWorkspace = null;
+        try { onNativeInvalidation(); } catch { /* Authority remains revoked. */ }
+        if (nativeChannel === childChannel) nativeChannel = null;
         if (code && code !== 0) {
           const details = hostDiagnostics(childOutput);
           lastError = `SPS Owner Host exited with code ${code}.${details ? ` ${details}` : ""}`;
         }
-        ownedChild = null;
-        startedAt = null;
+        if (hasOwnedHostJob(child)) {
+          // Keep the exact child and job while descendants or their confirmation
+          // remain outstanding. A leader exit must not permit a replacement Host.
+          void child.waitForOwnedJobTermination().then(() => {
+            if (ownedChild === child) { ownedChild = null; startedAt = null; }
+          }).catch(() => {
+            if (ownedChild === child) lastError = "SPS Owner Host process-tree termination has not been confirmed.";
+          });
+        } else { ownedChild = null; startedAt = null; }
       });
+      if (child.supervisorReady) {
+        try { await child.supervisorReady; }
+        catch {
+          lastError = "SPS Owner Host could not enter its owned process environment.";
+          await child.terminateOwnedJob().catch(() => {});
+          return inspect();
+        }
+      }
     } catch (error) {
+      if (error?.code === "owner_host_job_preparation_unconfirmed" && error.ownedHostJob) preparedJob = error.ownedHostJob;
       lastError = asMessage(error);
       return inspect();
     }
 
     for (let attempt = 0; attempt < startupAttempts; attempt += 1) {
       await delay(500);
+      if (generation !== lifecycleGeneration) return inspect();
       const state = await inspect();
+      if (generation !== lifecycleGeneration) return inspect();
       if (state.state === "running") return state;
       if (state.state === "stopped") return state;
     }
+    if (generation !== lifecycleGeneration) return inspect();
     lastError = "SPS Owner Host did not become ready in time.";
     return inspect();
   }
 
-  async function stop({ force = false } = {}) {
+  function start() {
+    if (stopsInFlight.size) {
+      return Promise.all([...stopsInFlight]).then(() => start());
+    }
+    if (startPromise && startPromiseGeneration === lifecycleGeneration) return startPromise;
+    const generation = lifecycleGeneration;
+    const operation = startOwned(generation);
+    startPromise = operation;
+    startPromiseGeneration = generation;
+    const clearStart = () => {
+      if (startPromise !== operation) return;
+      startPromise = null;
+      startPromiseGeneration = null;
+    };
+    void operation.then(clearStart, clearStart);
+    return operation;
+  }
+
+  function invalidateNativeSigner() {
+    try { onNativeInvalidation(); } catch { /* Authority remains revoked. */ }
+    nativeIngress?.dispose();
+    nativeIngress = null;
+    nativeWorkspace?.dispose();
+    nativeWorkspace = null;
+    const channel = nativeChannel;
+    nativeChannel = null;
+    channel?.dispose();
+  }
+
+  async function stopOwned({ force = false } = {}) {
+    reportOwnerHostEvent(baseEnvironment, "stop-begin");
+    invalidateNativeSigner();
+    reportOwnerHostEvent(baseEnvironment, "native-invalidated");
+    const preparing = jobPreparation;
+    if (preparing) {
+      try { await preparing; } catch { /* The startup path records its failure. */ }
+    }
+    if (!ownedChild && preparedJob) {
+      const job = preparedJob;
+      try { await job.dispose(); }
+      catch {
+        lastError = "SPS Owner Host process environment cleanup has not been confirmed.";
+        throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
+      }
+      if (preparedJob === job) preparedJob = null;
+    }
     const child = ownedChild;
-    if (child && child.exitCode == null) {
+    const terminateOwnedTree = async () => {
+      if (!hasOwnedHostJob(child)) return terminateTree(child.pid);
+      try {
+        reportOwnerHostEvent(baseEnvironment, "force-job-requested");
+        await child.terminateOwnedJob();
+        reportOwnerHostEvent(baseEnvironment, "force-job-confirmed");
+      }
+      catch {
+        lastError = "SPS Owner Host process-tree termination has not been confirmed.";
+        throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
+      }
+    };
+    if (child && !childHasExited(child)) {
       if (force) {
-        await terminateTree(child.pid);
+        await terminateOwnedTree();
       } else {
-        child.kill("SIGINT");
+        const shutdownPipe = child.stdio?.[4];
+        if (process.platform === "win32" && shutdownPipe && !shutdownPipe.destroyed && !shutdownPipe.writableEnded) {
+          try {
+            shutdownPipe.end("sps.owner-host.shutdown/v1\n");
+            reportOwnerHostEvent(baseEnvironment, "stop-pipe-ended");
+          } catch { reportOwnerHostEvent(baseEnvironment, "stop-pipe-write-failed"); }
+        } else if (process.platform === "win32" && child.connected === true && typeof child.send === "function") {
+          try { child.send({ v: 1, kind: "sps.owner-host.shutdown" }, () => {}); } catch {}
+        } else child.kill("SIGINT");
         await waitForChildExit(child, 12_000);
-        if (child.exitCode == null) await terminateTree(child.pid);
+        reportOwnerHostEvent(baseEnvironment, "grace-period-finished");
+        if (!childHasExited(child)) {
+          await terminateOwnedTree();
+        }
+      }
+      if (!await waitForChildExit(child, exitConfirmationMs)) {
+        lastError = "SPS Owner Host process did not exit after termination was requested.";
+        throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
       }
     }
-    ownedChild = null;
-    startedAt = null;
+    if (child && hasOwnedHostJob(child)) {
+      try {
+        reportOwnerHostEvent(baseEnvironment, "job-confirmation-pending");
+        await child.waitForOwnedJobTermination();
+        reportOwnerHostEvent(baseEnvironment, "job-confirmed");
+      }
+      catch {
+        lastError = "SPS Owner Host process-tree termination has not been confirmed.";
+        throw Object.assign(new Error(lastError), { code: "owner_host_stop_unconfirmed" });
+      }
+    }
+    if (child && ownedChild === child && childHasExited(child)) {
+      ownedChild = null;
+      startedAt = null;
+      if (child.exitCode === 0 || child.signalCode != null) lastError = null;
+    }
     return inspect();
   }
 
-  return { inspect, start, stop };
+  function stop(options) {
+    if (!options?.force && stopsInFlight.size) {
+      return Promise.all([...stopsInFlight]).then(() => inspect());
+    }
+    lifecycleGeneration += 1;
+    const operation = stopOwned(options);
+    stopsInFlight.add(operation);
+    const clearStop = () => stopsInFlight.delete(operation);
+    void operation.then(clearStop, clearStop);
+    return operation;
+  }
+
+  function dispatchNativeIngress(operation, request, options) {
+    if (!ownedChild || ownedChild.exitCode != null || !nativeIngress) {
+      return Promise.reject(Object.assign(new Error("The owned Native Host channel is unavailable."), { code: "native_ingress_unavailable" }));
+    }
+    return nativeIngress.dispatch(operation, request, options);
+  }
+  function readNativeWorkspace(request, options) {
+    if (!ownedChild || ownedChild.exitCode != null || !nativeWorkspace) return Promise.reject(Object.assign(
+      new Error("The owned Native Workspace channel is unavailable."), { code: "native_workspace_unavailable" }));
+    return nativeWorkspace.read(request, options);
+  }
+  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace };
 }

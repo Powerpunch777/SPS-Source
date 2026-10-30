@@ -1,7 +1,8 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { writeGeneratedFileAtomic } from "./generated-file-writer.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
@@ -35,8 +36,8 @@ if (manifest.includes(versionPlaceholder) || worker.includes(versionPlaceholder)
   throw new Error("Room Chat manifest version was not synchronized.");
 }
 await Promise.all([
-  writeFile(resolve(root, "dist", "manifest.js"), manifest, "utf8"),
-  writeFile(workerPath, worker, "utf8")
+  writeGeneratedFileAtomic(resolve(root, "dist", "manifest.js"), manifest),
+  writeGeneratedFileAtomic(workerPath, worker)
 ]);
 
 console.log(`Bundled Room worker with its SDK, synchronized v${version}, and copied ${files.length} support files.`);

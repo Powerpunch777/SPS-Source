@@ -1,3 +1,5 @@
+import { normalizeSpsWorkspaceSources } from "./workspace-sources.mjs";
+
 function stringOrEmpty(value, limit = 4096) {
   return typeof value === "string" ? value.trim().slice(0, limit) : "";
 }
@@ -31,8 +33,13 @@ export function normalizeSpsAccountConnection(value) {
     authMode,
     companyId: stringOrEmpty(value.companyId, 240),
     displayName: stringOrEmpty(value.displayName, 120),
-    defaultWorkspacePath: stringOrEmpty(value.defaultWorkspacePath),
-    projectWorkspaces: cloneProjectWorkspaces(value.projectWorkspaces),
+    defaultWorkspacePath: connectionKind === "owner-host" ? stringOrEmpty(value.defaultWorkspacePath) : "",
+    // Project source directories belong to the Owner Host. Member Nodes must
+    // receive only a Hub-issued, host-managed execution path for a Task.
+    projectWorkspaces: connectionKind === "owner-host" ? cloneProjectWorkspaces(value.projectWorkspaces) : {},
+    // Generic Workspace sources are Host-local handles. Plugins may request a
+    // Core-mediated route later, but a Member never receives a local path.
+    workspaceSources: connectionKind === "owner-host" ? normalizeSpsWorkspaceSources(value.workspaceSources) : [],
   };
 }
 

@@ -7,8 +7,13 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    uses: ./.github/workflows/sps-verify.yml
+    secrets: inherit
+
   build-and-publish-beta:
     name: Package unsigned Windows candidate
+    needs: verify
     runs-on: windows-latest
 
     steps:
@@ -24,9 +29,11 @@ jobs:
           cache-dependency-path: |
             sps-server/desktop/package-lock.json
             external/sps-plugin-sdk/package-lock.json
+            sps-server/sps-plugin-discovery/package-lock.json
+            sps-server/sps-room-chat/package-lock.json
 
       - name: Install pinned pnpm for SPS Core
-        run: npm install --global pnpm@9.15.4
+        run: npm install --global pnpm@11.9.0
 
       - name: Install SPS Core dependencies
         working-directory: external/sps-core
@@ -50,9 +57,27 @@ jobs:
         working-directory: sps-server/desktop
         run: npm ci
 
+      - name: Enforce SPS production dependency security policy
+        working-directory: sps-server/desktop
+        run: npm run audit:release
+
+      - name: Enforce SPS development dependency security policy
+        working-directory: sps-server/desktop
+        run: |
+          npm run audit:development
+          npm run docs:security:check
+
       - name: Run Desktop tests
         working-directory: sps-server/desktop
         run: npm test -- --test-concurrency=1
+
+      - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-plugin-discovery
+        run: npm ci
+
+      - name: Install SPS Room Chat dependencies for Desktop runtime packaging
+        working-directory: sps-server/sps-room-chat
+        run: npm ci
 
       - name: Build unsigned candidate without publishing
         working-directory: sps-server/desktop
@@ -67,5 +92,7 @@ jobs:
             sps-server/desktop/dist/SPS-Desktop-Setup-*.exe.blockmap
             sps-server/desktop/dist/latest.yml
             sps-server/desktop/dist/sps-release-manifest.json
+            sps-server/desktop/dist/SPS-Agent-Runtime-Pack-*.zip
+            sps-server/desktop/dist/sps-agent-runtime-packs.json
           if-no-files-found: error
           retention-days: 14

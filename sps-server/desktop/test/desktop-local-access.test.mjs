@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createSpsDesktopAccessToken,
+  isSpsDesktopTechnicalHostRequest,
   isSpsDesktopWorkspaceRequest,
   SPS_DESKTOP_ACCESS_TOKEN_ENV,
   spsDesktopAccessEnvironment,
@@ -20,4 +21,120 @@ test("injects the desktop token only into the active local Owner Host origin", (
   assert.equal(isSpsDesktopWorkspaceRequest({ ...input, url: "http://127.0.0.1:31310/SPS/projects" }), true);
   assert.equal(isSpsDesktopWorkspaceRequest({ ...input, url: "https://redongames.com" }), false);
   assert.equal(isSpsDesktopWorkspaceRequest({ ...input, url: "http://127.0.0.1:31311/SPS/projects" }), false);
+});
+
+test("limits the Host proof to Core technical-team routes on the active Owner Host", () => {
+  const input = { workspaceOrigin: "http://127.0.0.1:31310" };
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/sps-members",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/invites",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/sps-workspace-sources",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/workspace-shell",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/plugins/install",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/instance/settings",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/instance/database-backups",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/cli-auth/me",
+  }), true);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "http://127.0.0.1:31310/api/companies/company-1/issues",
+  }), false);
+  assert.equal(isSpsDesktopTechnicalHostRequest({
+    ...input,
+    url: "https://remote.tailnet.ts.net/api/companies/company-1/sps-members",
+  }), false);
+});
+
+test("grants execution-summary Host proof only to the exact GET endpoint on the active Host", () => {
+  const workspaceOrigin = "http://127.0.0.1:31310";
+  const endpoint = "/api/companies/11111111-1111-4111-8111-111111111111/sps-executions/summary";
+  const check = (url, method) => isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url, method });
+  assert.equal(check(`${workspaceOrigin}${endpoint}?pluginId=fixture`, "GET"), true);
+  for (const method of [undefined, "POST", "PUT", "DELETE", "PATCH"]) {
+    assert.equal(check(`${workspaceOrigin}${endpoint}`, method), false);
+  }
+  for (const url of [
+    `https://remote.tailnet.ts.net${endpoint}`,
+    `http://127.0.0.1:31311${endpoint}`,
+    `${workspaceOrigin}${endpoint}/other`,
+    `${workspaceOrigin}${endpoint}-other`,
+    `${workspaceOrigin}/api/companies/not-uuid/sps-executions/summary`,
+  ]) assert.equal(check(url, "GET"), false);
+});
+
+test("grants read-only execution history proof only to exact local Host routes", () => {
+  const workspaceOrigin = "http://127.0.0.1:31310";
+  const root = "/api/companies/11111111-1111-4111-8111-111111111111/sps-executions";
+  const id = "22222222-2222-4222-8222-222222222222";
+  const check = (url, method = "GET") => isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url, method });
+  for (const suffix of ["", `/node/${id}`, `/agent_session/${id}`, `/model_request/${id}`]) {
+    const url = `${workspaceOrigin}${root}${suffix}?pluginId=fixture`;
+    assert.equal(check(url), true);
+    for (const method of ["POST", "PUT", "DELETE", "PATCH", undefined]) assert.equal(check(url, method ?? ""), false);
+    assert.equal(check(`https://member.example.test${root}${suffix}`), false);
+    assert.equal(check(`http://127.0.0.1:31311${root}${suffix}`), false);
+  }
+  for (const suffix of ["/", "/unknown", `/other/${id}`, "/node/not-uuid", `/node/${id}/cancel`, `/node/${id}/events`]) {
+    assert.equal(check(`${workspaceOrigin}${root}${suffix}`), false);
+  }
+});
+
+test("model management Host proof requires exact local routes, UUIDs and methods", () => {
+  const workspaceOrigin = "http://127.0.0.1:31310";
+  const root = "/api/companies/11111111-1111-4111-8111-111111111111";
+  const id = "22222222-2222-4222-8222-222222222222";
+  const allowed = [
+    [`${root}/sps-model-connections`, ["GET", "POST"]],
+    [`${root}/sps-model-connections/${id}`, ["PATCH"]],
+    [`${root}/sps-model-connections/${id}/grants`, ["GET", "POST"]],
+    [`${root}/sps-model-grants/${id}/revoke`, ["POST"]],
+  ];
+  for (const [pathname, methods] of allowed) {
+    for (const method of [undefined, "GET", "POST", "PATCH", "PUT", "DELETE"]) {
+      assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `${workspaceOrigin}${pathname}`, method }), methods.includes(method));
+      assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `https://member.example.test${pathname}`, method }), false);
+    }
+    for (const suffix of ["/", "/other"]) assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `${workspaceOrigin}${pathname}${suffix}`, method: methods[0] }), false);
+    assert.equal(isSpsDesktopTechnicalHostRequest({ workspaceOrigin, url: `${workspaceOrigin}${pathname.replace(id, "not-uuid")}`, method: methods[0] }), !pathname.includes(id));
+  }
+});
+
+test("Workspace execution control receives Host proof only on its exact local GET and POST", () => {
+  const workspaceOrigin = "http://127.0.0.1:31310";
+  const route = "/api/companies/11111111-1111-4111-8111-111111111111/execution-control";
+  const check = (url, method) => isSpsDesktopTechnicalHostRequest({ url, workspaceOrigin, method });
+  for (const method of ["GET", "POST"]) {
+    assert.equal(check(`${workspaceOrigin}${route}`, method), true);
+    for (const url of [
+      `http://127.0.0.1:31311${route}`, `https://member.example.test${route}`,
+      `${workspaceOrigin}${route}/`, `${workspaceOrigin}${route}/stop`, `${workspaceOrigin}${route}-other`,
+      `${workspaceOrigin}${route}?action=stop`, `${workspaceOrigin}${route}#stop`,
+      `${workspaceOrigin}${route.replace("11111111-1111-4111-8111-111111111111", "not-uuid")}`,
+    ]) assert.equal(check(url, method), false);
+  }
+  for (const method of [undefined, "PATCH", "PUT", "DELETE", "OPTIONS", "HEAD"]) {
+    assert.equal(check(`${workspaceOrigin}${route}`, method), false);
+  }
 });

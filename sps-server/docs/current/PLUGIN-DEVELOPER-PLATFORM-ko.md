@@ -18,8 +18,39 @@ SPS Core는 플러그인 제작자가 반복 인프라를 새로 만들지 않�
 | Backend and Node API | Agent 실행기, Node, Runner 상태와 command 기록 |
 | Connector SDK | MCP, OAuth, HTTP API, CLI 연결 |
 | Catalog API | Marketplace 검색과 package metadata 조회 |
-| Test Kit | mock Company/Agent/Node, lifecycle, UI, tool 회귀 검사 |
+| Diagnostics SDK | Core·Desktop·Plugin의 안전하고 구조화된 상태 증거 |
+| Test Kit | mock Workspace/Host/Member/Node/Runtime/Source, lifecycle, UI, tool 회귀 검사 |
+| Conformance Report | 패키지 후보와 release 검토에 붙는 불변 검증 결과 |
 | Authoring CLI | init, validate, test, pack, inspect, local publish |
+
+## Diagnostics와 Test Kit
+
+공개 SDK `0.6.0`부터 다음 진입점을 SPS Desktop 없이 플러그인 저장소에서
+직접 사용할 수 있다.
+
+```text
+@sonparkserver/plugin-sdk/diagnostics/v1
+@sonparkserver/plugin-sdk/testing/v1
+@sonparkserver/plugin-sdk/conformance/v1
+```
+
+Diagnostics는 콘솔 로그를 전달하는 통로가 아니다. `origin`, `category`,
+`level`, 안정적인 `code`, 짧은 `message`, 제한된 구조형 `details`만 보존한다.
+자격증명, secret, 절대 로컬 경로, command, stdout, stderr와 순환 객체는
+진단 이벤트나 conformance 보고서에 들어갈 수 없다.
+
+Test Kit는 메모리 안에서 결정적으로 동작한다. Workspace와 Host·Member,
+Node·Runtime·Source, capability 허용·거부, 네트워크 단절, lifecycle,
+migration·rollback·backup, Shell·Dashboard·Inbox 충돌, Tool·Event·Job·Run,
+Stream·Connector·MCP와 UI 상태를 실제 SPS 설치 없이 시험한다.
+
+Conformance Report는 테스트 결과와 안전한 Diagnostics를 묶는다. Developer
+Mode가 build·validate·test를 모두 통과시킨 후보에 이 보고서를 첨부하며,
+Host는 release 검토 화면에서 콘솔이나 DB를 열지 않고 근거를 확인할 수 있다.
+
+공개 SDK `0.7.1`부터 `@sonparkserver/plugin-sdk/dependency/v1`도 제공한다.
+필수·선택 의존성, 서비스 발견, 버전 범위, 충돌, 순환 관계와 변경 영향은
+설치나 활성화를 수행하지 않는 순수 분석 계약으로 검증한다.
 
 ## 제작 흐름
 

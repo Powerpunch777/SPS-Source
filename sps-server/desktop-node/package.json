@@ -5,6 +5,8 @@
   "type": "module",
   "exports": "./src/index.mjs",
   "scripts": {
+    "build:windows-supervisor": "node scripts/build-windows-job-supervisor.mjs",
+    "pretest": "node scripts/prepare-windows-job-supervisor.mjs",
     "test": "node --test"
   },
   "engines": {

@@ -1,0 +1,21 @@
+name = "sps-identity-staging"
+main = "src/worker.mjs"
+compatibility_date = "2026-07-24"
+workers_dev = true
+
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sps-identity-staging"
+database_id = "b0f62d9e-0f87-4ed2-ac99-ffc164c0892c"
+
+[vars]
+SPS_IDENTITY_ISSUER = "https://auth-staging.redongames.com"
+SPS_IDENTITY_AUDIENCE = "sps-core"
+SPS_IDENTITY_KEY_ID = "sps-identity-staging-2026-01"
+SPS_IDENTITY_REPLAY_KEY_VERSION = "v1"
+SPS_IDENTITY_PROTOCOL_VERSION = "2"
+SPS_IDENTITY_ROLLBACK_FLOOR = "bridge-v2"
+SPS_IDENTITY_ROLLOUT_PHASE = "bridge"

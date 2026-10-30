@@ -2,6 +2,10 @@ agent-swarm-codex-poc/.env.codex
 agent-swarm-codex-poc/encryption_key
 agent-swarm-codex-poc/*.log
 external/
+/.od-skills/
+/.pnpm-store/
+/.tmp-*/
+/node_modules/
 paperclip-game-workplane/memory-sidecar/config.local.json
 paperclip-game-workplane/memory-sidecar/data/
 paperclip-game-workplane/paperclip-memory-plugin/node_modules/
@@ -18,6 +22,14 @@ sps-server/desktop/dist/
 sps-server/desktop/dist-google-login/
 sps-server/desktop/dist-*/
 sps-server/desktop/.owner-host-runtime*/
+sps-server/desktop/.npm-cache/
+sps-server/desktop/.dev-profile/
+sps-server/desktop/.agent-runtime-packs/
+sps-server/desktop/.remote-member-*
+sps-server/desktop/.tmp-*
+sps-server/desktop/.*.log
+sps-server/desktop/artifacts/
+sps-server/desktop/index.html
 sps-server/desktop/*.stderr.log
 sps-server/desktop/*.stdout.log
 sps-server/desktop/*.url
@@ -35,3 +47,11 @@ sps-server/desktop/.onboarding-e2e-profile/
 sps-server/sps-identity/.dev.vars
 sps-server/sps-identity/.wrangler/
 sps-server/sps-identity/.secrets/
+sps-server/sps-identity/artifacts/
+
+# Candidate-specific physical release evidence is injected from a protected
+# GitHub Actions secret. Committing it would change the revision it certifies.
+sps-server/release/evidence/v*.json
+
+# Built Windows execution supervisor; source and build recipe are versioned.
+sps-server/desktop-node/native/windows-job-supervisor/bin/

@@ -1,8 +1,87 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { normalizeSpsAccountConnection } from "./account-connections.mjs";
+import { normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
+import { normalizeSpsNativeNodeState } from "./native-node-state.mjs";
+import { normalizeSpsOwnerRestoreAttempts } from "./owner-restore-attempts.mjs";
 
-const STATE_VERSION = 9;
+const STATE_VERSION = 13;
+const legacyConnectionMigrations = new WeakSet();
+const legacyOwnerAdoptions = new WeakSet();
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertConnectionShape(value) {
+  if (!isRecord(value) || typeof value.hubUrl !== "string" || !value.hubUrl.trim()
+    || value.hubUrl.length > 4096
+    || (value.connectionKind !== undefined && !["owner-host", "remote"].includes(value.connectionKind))
+    || (value.authMode !== undefined && !["legacy", "sps-identity"].includes(value.authMode))) {
+    throw new Error("SPS Desktop connection metadata is malformed.");
+  }
+}
+
+function assertCriticalStateShape(value) {
+  if (!isRecord(value)) throw new Error("SPS Desktop connection settings are malformed.");
+  normalizeSpsOwnerRestoreAttempts(value.ownerRestoreAttempts);
+  if (value.nativeMemberKeyIndex !== undefined) normalizeSpsNativeMemberKeyIndex(value.nativeMemberKeyIndex);
+  if (value.nativeNodes !== undefined) normalizeSpsNativeNodeState(value.nativeNodes);
+  const owner = value.ownerHostOwnerSubject;
+  if (owner !== undefined && owner !== null
+    && (typeof owner !== "string" || !owner.trim() || owner.length > 512 || owner !== owner.trim())) {
+    throw new Error("SPS Desktop Host ownership metadata is malformed.");
+  }
+  if (value.legacyOwnerHostAdoptionPending !== undefined && typeof value.legacyOwnerHostAdoptionPending !== "boolean") {
+    throw new Error("SPS Desktop legacy ownership metadata is malformed.");
+  }
+  for (const key of ["encryptedDesktopAccount", "encryptedBoardApiToken", "encryptedTeamCredentials", "encryptedHostProjectShareSecrets"]) {
+    if (value[key] !== undefined && value[key] !== null && typeof value[key] !== "string") {
+      throw new Error("SPS Desktop credential metadata is malformed.");
+    }
+  }
+  for (const key of ["encryptedNodeCompletionOutbox", "encryptedNodeClaimJournal"]) {
+    if (value[key] !== undefined && value[key] !== null
+      && (typeof value[key] !== "string" || value[key].length < 1 || value[key].length > 4 * 1024 * 1024)) {
+      throw new Error("SPS Desktop saved task result metadata is malformed.");
+    }
+  }
+  if (value.identity !== undefined && value.identity !== null) {
+    if (!isRecord(value.identity)) throw new Error("SPS Desktop Node identity is malformed.");
+    for (const key of ["publicKeyPem", "encryptedPrivateKey", "transportPublicKeyPem", "encryptedTransportPrivateKey", "algorithm", "transportAlgorithm"]) {
+      if (value.identity[key] !== undefined && value.identity[key] !== null && typeof value.identity[key] !== "string") {
+        throw new Error("SPS Desktop Node credential metadata is malformed.");
+      }
+    }
+  }
+  if (value.version >= 5 && value.legacyOwnerHostAdoptionPending === true) {
+    throw new Error("Unverified persisted legacy Host adoption requires recovery.");
+  }
+  if (value.profile !== undefined && value.profile !== null) assertConnectionShape(value.profile);
+  if (value.accountConnections !== undefined) {
+    if (!isRecord(value.accountConnections)) throw new Error("SPS Desktop account routing is malformed.");
+    for (const [subject, connection] of Object.entries(value.accountConnections)) {
+      if (!subject.trim() || subject.length > 512 || subject !== subject.trim()) throw new Error("SPS Desktop account subject is malformed.");
+      assertConnectionShape(connection);
+      if (connection.connectionKind === "owner-host" && subject !== owner) {
+        throw new Error("SPS Desktop account routing conflicts with Host ownership.");
+      }
+    }
+  }
+  if (value.version >= 5 && value.profile?.connectionKind === "owner-host" && !owner) {
+    throw new Error("SPS Desktop Host profile has no established owner.");
+  }
+}
+
+// Only a genuinely loaded pre-account-routing state can use this one-time path.
+// It is deliberately not a serialized flag that a current-version file can set.
+export function consumeLegacyDesktopConnectionMigration(state) {
+  return legacyConnectionMigrations.delete(state);
+}
+
+export function hasPendingLegacyDesktopOwnerAdoption(state) {
+  return legacyOwnerAdoptions.has(state) && state.legacyOwnerHostAdoptionPending === true && !state.ownerHostOwnerSubject;
+}
 
 function statePath(userDataPath) {
   return path.join(userDataPath, "sps-desktop-state.json");
@@ -25,33 +104,64 @@ export function emptyState() {
     version: STATE_VERSION,
     encryptedDesktopAccount: null,
     desktopAccountLastAttempt: null,
+    desktopJoinLastAttempt: null,
     desktopDeviceId: null,
+    // Public identifiers only, separate from Node keys and account routing.
+    // Credential bytes and trusted pins remain in guarded encrypted storage.
+    nativeMemberKeyIndex: normalizeSpsNativeMemberKeyIndex({ v: 1, entries: [] }),
+    nativeNodes: normalizeSpsNativeNodeState({ v: 1, entries: [] }),
     accountConnections: {},
     ownerHostOwnerSubject: null,
-    // A narrowly-scoped bridge for the original local-only SPS Desktop. It is
-    // set only when that legacy state and its physical Owner Vault coexist.
+    ownerRestoreAttempts: [],
+    // A narrowly-scoped bridge for SPS Desktop states created before SPS
+    // Identity was required. It is set only when that legacy state and its
+    // physical Owner Vault coexist.
     legacyOwnerHostAdoptionPending: false,
     profile: null,
     identity: null,
     encryptedBoardApiToken: null,
+    // Final Runner reports only, encrypted by Windows secure storage. This
+    // optional v13 field survives older v13 loads without changing credentials.
+    encryptedNodeCompletionOutbox: null,
+    encryptedNodeClaimJournal: null,
     companies: [],
     projects: [],
     nodeId: null,
     nodeStatus: null,
+    // A local transport key is not usable for Host project access until the
+    // matching public key has been accepted by Core for this SPS Node.
+    transportKeyPublishedAt: null,
     teamAccess: null,
     encryptedTeamCredentials: null,
+    // Owner Host-only secrets for per-Node project source access. This is
+    // always protected by Windows secure storage and never copied into a
+    // Member connection record.
+    encryptedHostProjectShareSecrets: null,
   };
 }
 
-export async function loadState(userDataPath) {
+export async function loadState(userDataPath, { strictVersion = false } = {}) {
   try {
     const raw = await fs.readFile(statePath(userDataPath), "utf8");
-    const parsed = JSON.parse(raw);
-    if (![1, 2, 3, 4, 5, 6, 7, 8, STATE_VERSION].includes(parsed?.version)) return emptyState();
+    // Windows tools can write a UTF-8 BOM even when the content is otherwise
+    // valid JSON. Treat it as transport encoding, not as part of the state.
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, STATE_VERSION].includes(parsed?.version)) {
+      if (strictVersion) throw new Error("SPS Desktop connection settings use an unsupported version.");
+      return emptyState();
+    }
+    if (strictVersion) assertCriticalStateShape(parsed);
     // Earlier state versions contain a valid profile and Node identity. v5 adds
     // account-scoped connection records while keeping the physical Owner Host
     // and its vault on this computer.
     const state = { ...emptyState(), ...parsed, version: STATE_VERSION };
+    state.ownerRestoreAttempts = normalizeSpsOwnerRestoreAttempts(parsed.ownerRestoreAttempts);
+    // Missing legacy metadata is empty; present corrupt metadata is never
+    // silently replaced, even for a non-strict inspection load.
+    state.nativeMemberKeyIndex = normalizeSpsNativeMemberKeyIndex(
+      parsed.nativeMemberKeyIndex === undefined ? { v: 1, entries: [] } : parsed.nativeMemberKeyIndex,
+    );
+    state.nativeNodes = normalizeSpsNativeNodeState(parsed.nativeNodes === undefined ? { v: 1, entries: [] } : parsed.nativeNodes);
     // Version 8 retires the former per-machine Google OAuth configuration.
     // The central SPS Identity service owns the confidential Google client.
     delete state.desktopGoogleClientId;
@@ -66,6 +176,7 @@ export async function loadState(userDataPath) {
         .filter(([, connection]) => Boolean(connection)),
     );
     state.desktopAccountLastAttempt = normalizeDesktopAccountAttempt(state.desktopAccountLastAttempt);
+    state.desktopJoinLastAttempt = normalizeDesktopAccountAttempt(state.desktopJoinLastAttempt);
     state.ownerHostOwnerSubject = typeof state.ownerHostOwnerSubject === "string" && state.ownerHostOwnerSubject.length > 0
       ? state.ownerHostOwnerSubject.slice(0, 512)
       : null;
@@ -85,10 +196,12 @@ export async function loadState(userDataPath) {
         const vaultConfig = path.join(userDataPath, "owner-vault", "config.json");
         await fs.access(vaultConfig);
         state.legacyOwnerHostAdoptionPending = true;
+        legacyOwnerAdoptions.add(state);
       } catch {
         // A stale state file without its vault is not an Owner Host to adopt.
       }
     }
+    if (Number(parsed.version) <= 4) legacyConnectionMigrations.add(state);
     return state;
   } catch (error) {
     if (error?.code === "ENOENT") return emptyState();
@@ -96,10 +209,129 @@ export async function loadState(userDataPath) {
   }
 }
 
-export async function saveState(userDataPath, value) {
-  await fs.mkdir(userDataPath, { recursive: true });
-  const destination = statePath(userDataPath);
-  const temporary = destination + ".tmp";
-  await fs.writeFile(temporary, JSON.stringify(value, null, 2) + "\n", "utf8");
-  await fs.rename(temporary, destination);
+const pendingStateSaves = new Map();
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.birthtimeNs === right.birthtimeNs;
+}
+
+function assertOwnedRegularFile(stat, label) {
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n) {
+    throw new Error(`Refusing to write SPS Desktop state through a linked or non-file ${label}.`);
+  }
+}
+
+async function inspectStateDirectory(requestedDirectory, expected = null) {
+  const requested = await fs.lstat(requestedDirectory, { bigint: true });
+  if (!requested.isDirectory() || requested.isSymbolicLink()) {
+    throw new Error("Refusing to write SPS Desktop state through a linked or non-directory user data folder.");
+  }
+  const canonical = await fs.realpath(requestedDirectory);
+  const canonicalStat = await fs.lstat(canonical, { bigint: true });
+  if (!canonicalStat.isDirectory() || canonicalStat.isSymbolicLink()
+    || !sameFileIdentity(requested, canonicalStat)) {
+    throw new Error("SPS Desktop user data folder changed while state was being saved.");
+  }
+  if (expected && (canonical !== expected.canonical || !sameFileIdentity(canonicalStat, expected.identity))) {
+    throw new Error("SPS Desktop user data folder changed while state was being saved.");
+  }
+  return { canonical, identity: canonicalStat };
+}
+
+async function inspectStateSlot(file, label, { allowMissing = false } = {}) {
+  let stat;
+  try {
+    stat = await fs.lstat(file, { bigint: true });
+  } catch (error) {
+    if (allowMissing && error?.code === "ENOENT") return null;
+    throw error;
+  }
+  assertOwnedRegularFile(stat, label);
+  return stat;
+}
+
+async function validateExistingStateBeforeReplace(userDataPath, destination) {
+  const existing = await inspectStateSlot(destination, "state file", { allowMissing: true });
+  if (existing) await loadState(userDataPath, { strictVersion: true });
+}
+
+async function assertOwnedTemporaryFile(file, identity) {
+  const current = await inspectStateSlot(file, "temporary file");
+  if (!sameFileIdentity(current, identity)) {
+    throw new Error("SPS Desktop state temporary file changed while state was being saved.");
+  }
+}
+
+// Account refresh, Node bookkeeping and explicit settings actions may save at
+// the same time. Serialize each local destination so they cannot overwrite the
+// same temporary file or rename another save's bytes. This is process-local;
+// it is not a cross-process lock or power-loss durability guarantee.
+export async function saveState(userDataPath, value, { beforeCommit = () => {} } = {}) {
+  if (typeof beforeCommit !== "function") throw new TypeError("Invalid Desktop state commit guard.");
+  normalizeSpsOwnerRestoreAttempts(value.ownerRestoreAttempts);
+  const bytes = JSON.stringify(value, null, 2) + "\n";
+  const destination = path.resolve(statePath(userDataPath));
+  const queueKey = process.platform === "win32" ? destination.toLowerCase() : destination;
+  function guard() {
+    const result = beforeCommit();
+    if (result !== undefined) {
+      if (result instanceof Promise) void result.catch(() => {});
+      throw new TypeError("Desktop state commit guards must be synchronous.");
+    }
+  }
+  const pending = (pendingStateSaves.get(queueKey) ?? Promise.resolve()).then(async () => {
+    guard();
+    const requestedDirectory = path.dirname(destination);
+    await fs.mkdir(requestedDirectory, { recursive: true });
+    guard();
+    const directory = await inspectStateDirectory(requestedDirectory);
+    const temporary = destination + ".tmp";
+    let handle;
+    let temporaryIdentity = null;
+    try {
+      // A fixed sibling is retained for compatibility with recovery checks,
+      // but it must be absent before this save claims it. wx prevents following
+      // an attacker-planted symlink and refuses stale or non-owned temp slots.
+      await inspectStateSlot(temporary, "temporary slot", { allowMissing: true }).then(existing => {
+        if (existing) throw new Error("Refusing to replace an existing SPS Desktop state temporary file.");
+      });
+      await validateExistingStateBeforeReplace(userDataPath, destination);
+      await inspectStateDirectory(requestedDirectory, directory);
+      handle = await fs.open(temporary, "wx", 0o600);
+      temporaryIdentity = await handle.stat({ bigint: true });
+      assertOwnedRegularFile(temporaryIdentity, "temporary file");
+      await assertOwnedTemporaryFile(temporary, temporaryIdentity);
+      await inspectStateDirectory(requestedDirectory, directory);
+      await handle.writeFile(bytes, "utf8");
+      await handle.sync();
+      guard();
+      await assertOwnedTemporaryFile(temporary, temporaryIdentity);
+      await inspectStateDirectory(requestedDirectory, directory);
+      await validateExistingStateBeforeReplace(userDataPath, destination);
+      await handle.close();
+      handle = null;
+      guard();
+      await assertOwnedTemporaryFile(temporary, temporaryIdentity);
+      await inspectStateDirectory(requestedDirectory, directory);
+      await validateExistingStateBeforeReplace(userDataPath, destination);
+      guard();
+      await fs.rename(temporary, destination);
+      temporaryIdentity = null;
+    } finally {
+      if (handle) await handle.close().catch(() => {});
+      if (temporaryIdentity) {
+        try {
+          await inspectStateDirectory(requestedDirectory, directory);
+          await assertOwnedTemporaryFile(temporary, temporaryIdentity);
+          await fs.unlink(temporary);
+        } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        }
+      }
+    }
+  });
+  const settled = pending.catch(() => {});
+  pendingStateSaves.set(queueKey, settled);
+  void settled.then(() => { if (pendingStateSaves.get(queueKey) === settled) pendingStateSaves.delete(queueKey); });
+  await pending;
 }

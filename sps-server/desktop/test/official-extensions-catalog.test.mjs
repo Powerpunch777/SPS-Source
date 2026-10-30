@@ -31,6 +31,7 @@ test("Official Extensions exposes only public, verified catalog information with
           visibility: "public",
           catalog: { displayName: "Public Plugin", summary: "Verified.", documentationUrl: "https://docs.example.test/plugin" },
           capabilities: ["ui.page.register"],
+          compatibility: { sps: ">=0.4.0 <0.5.0", pluginApi: 1, extensionProfile: "2.0" },
           publisherId: "example",
           publisherProfile: { id: "example", displayName: "Example", websiteUrl: "https://example.test" },
           artifact: { sha256: "b".repeat(64), sizeBytes: 456 },
@@ -47,6 +48,7 @@ test("Official Extensions exposes only public, verified catalog information with
   assert.deepEqual(catalog.releases[0].artifact, { sha256: "b".repeat(64), sizeBytes: 456 });
   assert.equal("artifactUrl" in catalog.releases[0], false);
   assert.deepEqual(catalog.releases[0].capabilities, ["ui.page.register"]);
+  assert.deepEqual(catalog.releases[0].compatibility, { sps: ">=0.4.0 <0.5.0", pluginApi: 1, extensionProfile: "2.0" });
 });
 
 test("Official Extensions returns a safe unavailable catalog when verification fails", async () => {

@@ -1,38 +1,61 @@
-# SPS
+# SPS Source
 
-SPS is a Desktop-first platform for building AI work environments from plugins.
+This is the private product source repository for SPS. The public product
+overview, downloads, and feedback routes live at
+[Powerpunch777/SPS](https://github.com/Powerpunch777/SPS).
 
-SPS Core manages the Desktop Host, Agents, Nodes, execution records, plugin runtime, and plugin lifecycle. It does not prescribe a company hierarchy, a Room/Task model, a human permission model, a memory strategy, or a development domain.
+SPS is a Desktop-first platform for building customizable workstations from
+plugins. AI is optional; customer-specific programs may use model APIs, CLI
+tools, external Agent runtimes, or no AI at all.
 
-## First Company
+SPS runs solutions built, reviewed and approved through its own delivery
+business. It does not operate a public Plugin marketplace. Internal Registry,
+package verification and lifecycle, SDK and Runner extensibility remain supported.
+See the [confirmed Core completion policy](sps-server/docs/current/CORE-COMPLETION-POLICY-ko.md).
+
+SPS Core manages the Desktop Host, optional Agent execution, Nodes, execution
+records, plugin runtime and lifecycle. Core enforces technical access boundaries
+without prescribing a company hierarchy, Room/Task model, business role
+hierarchy, memory strategy or development domain.
+
+## First Workspace
 
 1. Sign in to SPS Desktop and create or join a server.
-2. A new server creates an empty Company.
-3. Connect and verify one Agent. This is required.
-4. SPS Desktop starts the bundled `Plugin Discovery & Builder` tool provider.
-5. Talk to the Agent to discover, design, or build the plugins and Packs you need.
-6. Use `Settings > Plugins` to inspect Catalog results and manage installed plugins.
+2. A new server creates a neutral Workspace. No Agent is required.
+3. Use `Settings > Plugins` to inspect and explicitly manage plugins.
+4. Review approved internal packages in Core management. No Builder or AI is
+   required to install and operate Plugins through the existing contracts.
+5. Existing Builder code remains compatible; new development waits for a separate
+   handoff after Core completion. A Workspace without a usable Shell has an
+   independent empty entry.
 
-The Catalog is not a separate application. It is the discovery area inside `Settings > Plugins`. A selected recommendation has no automatic lifecycle side effect; Agents decide how to respond to user requests using the available tools. Plugin packages and workers are installed once on the Owner Host, while each Company independently enables or disables the installed extensions it uses.
+Internal Registry lookup and package review support explicit Host installation and
+updates. Public search and recommendations are retired. Packages are installed on
+the Host; Workspace activation, settings and owned execution remain separate.
 
 ## Repository Layout
 
 ```text
-external/sps-core/       Private SPS product Core (tracked from its stable main branch)
+external/sps-core/       Private SPS product Core (exact revision pinned by the support matrix)
+external/sps-plugin-sdk/ Public plugin authoring SDK and CLI (pinned submodule)
 sps-server/              SPS Desktop, Host, Node, plugin runtime, and first-party extensions
-sps-plugin-sdk/          Public plugin authoring SDK and CLI
-sps-official-extensions/ Signed first-party extension distribution source
-redon-games-website/     Redon Games public website
 ```
+
+The signed Official Extensions registry and the Redon Games website are
+separate sibling repositories; they are not product-source directories in this
+private repository.
 
 ## Product Documents
 
 Current product decisions live in [sps-server/docs/current](sps-server/docs/current/README.md).
 
 - [Product model](sps-server/docs/current/PRODUCT-MODEL-ko.md)
+- [Windows-first native LAN plan](sps-server/docs/current/WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)
+- [Native development deferred: status and restart notes](sps-server/docs/current/NATIVE-DEVELOPMENT-DEFERRED-ko.md)
+- [Multi-backend workstation plan](sps-server/docs/current/MULTI-BACKEND-WORKSTATION-PLAN-ko.md)
 - [Plugin developer platform](sps-server/docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)
 - [Roadmap](sps-server/docs/current/ROADMAP.md)
-- [Company plugin activation](sps-server/docs/current/COMPANY-PLUGIN-ACTIVATION.md)
+- [Workspace plugin activation](sps-server/docs/current/WORKSPACE-PLUGIN-ACTIVATION.md)
 - [Plugin compatibility and updates](sps-server/docs/current/PLUGIN-COMPATIBILITY-AND-UPDATES.md)
 
 ## Development
@@ -44,9 +67,19 @@ The product runtime lives in the private `SPS-Core` repository. The public
 not a product runtime, release channel, or support surface.
 
 ```powershell
-Set-Location .\sps-server\plugin-platform
+Set-Location .\external\sps-plugin-sdk
+npm test
+
+Set-Location ..\..\sps-server\desktop
 npm test
 
 Set-Location ..\sps-room-chat
 npm run check
+
+Set-Location ..\sps-identity
+npm test
 ```
+
+The retired internal `sps-server/plugin-platform` copy has been removed. Plugin
+authoring, conformance, packaging, Registry publishing, and templates all come
+from the pinned public SDK under `external/sps-plugin-sdk`.

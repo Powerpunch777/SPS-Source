@@ -3,14 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22 <27"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "keygen": "node scripts/generate-signing-key.mjs",
     "verify:deployment": "node scripts/verify-deployment.mjs",
+    "verify:staging-evidence": "node scripts/validate-staging-evidence.mjs",
+    "verify:oauth-evidence": "node scripts/validate-full-oauth-evidence.mjs",
+    "smoke:staging": "node scripts/smoke-staging.mjs",
+    "smoke:oauth": "node scripts/smoke-oauth-interactive.mjs",
+    "attest:release": "node scripts/create-release-attestation.mjs",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
   "devDependencies": {
+    "miniflare": "^4.20260730.0",
     "wrangler": "^4.31.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260730.1": true
   }
 }

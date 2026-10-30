@@ -1,10 +1,34 @@
-import { createHash } from "node:crypto";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveSpsReleaseBaseline } from "./release-baseline.mjs";
+import {
+  readSpsOwnerHostRuntimePackage,
+  SPS_REQUEST_HOSTNAME_RUNTIME_PATH,
+} from "../src/owner-host-runtime-package.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDirectory, "..");
+const spsServerRoot = path.resolve(desktopRoot, "..");
+const workspaceRoot = path.resolve(spsServerRoot, "..");
+const coreRoot = path.join(workspaceRoot, "external", "sps-core");
+const DEVICE_FINGERPRINT = /^[0-9a-f]{64}$/;
+
+function protectedDeviceFingerprints(value, required) {
+  let parsed = value;
+  if (typeof parsed === "string" && parsed.trim()) {
+    try { parsed = JSON.parse(parsed); } catch { throw new Error("Protected SPS physical device enrollment JSON is invalid."); }
+  }
+  const valid = DEVICE_FINGERPRINT.test(parsed?.host ?? "")
+    && DEVICE_FINGERPRINT.test(parsed?.member ?? "")
+    && parsed.host !== parsed.member;
+  if (!valid) {
+    if (required) throw new Error("Stable release preparation requires distinct protected Host and Member device fingerprints.");
+    return null;
+  }
+  return { host: parsed.host, member: parsed.member };
+}
 
 function yamlScalar(source, key) {
   const match = source.match(new RegExp(`^${key}:\\s*['"]?([^\\r\\n'"]+)['"]?\\s*$`, "m"));
@@ -16,12 +40,68 @@ async function sha256(filePath) {
   return createHash("sha256").update(content).digest("hex");
 }
 
+async function runtimePackArtifacts(distRoot) {
+  const catalogPath = path.join(distRoot, "sps-agent-runtime-packs.json");
+  let catalog;
+  try {
+    catalog = JSON.parse((await readFile(catalogPath, "utf8")).replace(/^\uFEFF/, ""));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(catalog?.packs)) throw new Error("Agent Runtime pack catalog is invalid.");
+  return Promise.all(catalog.packs.map(async (pack) => {
+    if (typeof pack?.archive !== "string" || !/^SPS-Agent-Runtime-Pack-[A-Za-z0-9._-]+-[A-Za-z0-9._-]+\.zip$/.test(pack.archive)) {
+      throw new Error("Agent Runtime pack catalog contains an unsafe archive name.");
+    }
+    const archivePath = path.join(distRoot, pack.archive);
+    const archive = await stat(archivePath);
+    return {
+      id: pack.id,
+      label: pack.label,
+      version: pack.version,
+      commands: pack.commands,
+      file: pack.archive,
+      sizeBytes: archive.size,
+      sha256: await sha256(archivePath),
+    };
+  }));
+}
+
+export function assertSpsReleaseBaselineUnchanged(expected, current) {
+  const comparable = (baseline) => ({
+    status: baseline?.status,
+    desktopVersion: baseline?.desktopVersion,
+    sourceRevision: baseline?.sourceRevision,
+    sourceDirty: baseline?.sourceDirty,
+    core: baseline?.core,
+    pluginSdk: baseline?.pluginSdk,
+    bundledExtensions: baseline?.bundledExtensions,
+  });
+  if (JSON.stringify(comparable(expected)) !== JSON.stringify(comparable(current))) {
+    throw new Error("SPS release baseline changed during packaging. Rebuild from a clean, fixed Source revision.");
+  }
+}
+
 export async function createSpsReleaseManifest({
   runtimeRoot = path.join(desktopRoot, ".owner-host-runtime"),
   distRoot = path.join(desktopRoot, "dist"),
   outputPath = path.join(distRoot, "sps-release-manifest.json"),
+  verifyCurrentRepository = false,
+  trustedDeviceFingerprints = process.env.SPS_PHYSICAL_RELEASE_DEVICE_KEYS_JSON,
+  requireTrustedDevices = process.env.SPS_REQUIRE_TRUSTED_PHYSICAL_DEVICES === "1",
+  ownerHostRuntimePackageRoot = path.join(distRoot, "win-unpacked", "resources", "sps-owner-host-runtime-package"),
 } = {}) {
   const baseline = JSON.parse(await readFile(path.join(runtimeRoot, "sps-release-baseline.json"), "utf8"));
+  if (verifyCurrentRepository) {
+    const currentBaseline = await resolveSpsReleaseBaseline({
+      workspaceRoot,
+      desktopRoot,
+      spsServerRoot,
+      coreRoot,
+      builtAt: baseline.builtAt,
+    });
+    assertSpsReleaseBaselineUnchanged(baseline, currentBaseline);
+  }
   const updateMetadataPath = path.join(distRoot, "latest.yml");
   const updateMetadata = await readFile(updateMetadataPath, "utf8");
   const metadataVersion = yamlScalar(updateMetadata, "version");
@@ -35,22 +115,45 @@ export async function createSpsReleaseManifest({
     throw new Error(`latest.yml installer ${metadataInstaller ?? "missing"} does not match ${expectedInstaller}.`);
   }
 
-  const distEntries = await readdir(distRoot);
-  const releaseInstallers = distEntries.filter((entry) => /^SPS-Desktop-Setup-\d+\.\d+\.\d+\.exe$/.test(entry));
-  if (releaseInstallers.length !== 1 || releaseInstallers[0] !== expectedInstaller) {
-    throw new Error(`Release output must contain exactly one installer named ${expectedInstaller}.`);
-  }
-
   const installerPath = path.join(distRoot, expectedInstaller);
-  const installerStats = await stat(installerPath);
+  let installerStats;
+  try {
+    installerStats = await stat(installerPath);
+  } catch {
+    throw new Error(`Release output is missing the expected installer ${expectedInstaller}.`);
+  }
+  if (!installerStats.isFile()) throw new Error(`Release installer is not a file: ${expectedInstaller}.`);
+  const installerSha256 = await sha256(installerPath);
+  const challengePath = path.join(distRoot, "sps-release-challenge.json");
+  const challenge = {
+    schemaVersion: 1,
+    desktopVersion: baseline.desktopVersion,
+    sourceRevision: baseline.sourceRevision,
+    installerSha256,
+    releaseNonce: randomBytes(32).toString("hex"),
+    generatedAt: new Date().toISOString(),
+  };
+  const enrolledDevices = protectedDeviceFingerprints(trustedDeviceFingerprints, requireTrustedDevices);
+  if (enrolledDevices) challenge.trustedDeviceFingerprints = enrolledDevices;
+  await writeFile(challengePath, `${JSON.stringify(challenge, null, 2)}\n`, "utf8");
+  const challengeStats = await stat(challengePath);
+  const ownerHostRuntime = await readSpsOwnerHostRuntimePackage(ownerHostRuntimePackageRoot);
   const manifest = {
     schemaVersion: 1,
     baseline,
+    ownerHostRuntime: {
+      archive: ownerHostRuntime.manifest.archive,
+      runtimeManifestSha256: ownerHostRuntime.manifest.runtime.manifestSha256,
+      requestHostnameModule: {
+        relativePath: SPS_REQUEST_HOSTNAME_RUNTIME_PATH,
+        sha256: ownerHostRuntime.manifest.runtime.criticalFiles[SPS_REQUEST_HOSTNAME_RUNTIME_PATH],
+      },
+    },
     artifacts: {
       installer: {
         file: expectedInstaller,
         sizeBytes: installerStats.size,
-        sha256: await sha256(installerPath),
+        sha256: installerSha256,
       },
       updateMetadata: {
         file: "latest.yml",
@@ -60,6 +163,16 @@ export async function createSpsReleaseManifest({
         file: `${expectedInstaller}.blockmap`,
         sha256: await sha256(path.join(distRoot, `${expectedInstaller}.blockmap`)),
       },
+      agentRuntimeCatalog: {
+        file: "sps-agent-runtime-packs.json",
+        sha256: await sha256(path.join(distRoot, "sps-agent-runtime-packs.json")),
+      },
+      releaseChallenge: {
+        file: "sps-release-challenge.json",
+        sizeBytes: challengeStats.size,
+        sha256: await sha256(challengePath),
+      },
+      agentRuntimePacks: await runtimePackArtifacts(distRoot),
     },
   };
   await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
@@ -68,6 +181,6 @@ export async function createSpsReleaseManifest({
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const distRoot = process.argv[2] ? path.resolve(process.argv[2]) : path.join(desktopRoot, "dist");
-  await createSpsReleaseManifest({ distRoot });
+  await createSpsReleaseManifest({ distRoot, verifyCurrentRepository: true });
   console.log(`Created SPS release manifest: ${path.join(distRoot, "sps-release-manifest.json")}`);
 }

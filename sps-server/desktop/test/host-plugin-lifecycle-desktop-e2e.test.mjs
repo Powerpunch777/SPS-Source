@@ -1,0 +1,98 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+
+const desktopRoot = path.resolve(import.meta.dirname, "..");
+const harnessPath = path.join(desktopRoot, "scripts", "smoke-host-plugin-lifecycle-desktop.mjs");
+const fixturePath = path.join(desktopRoot, "scripts", "fixtures", "deterministic-acp.mjs");
+const managedHomeHelperPath = path.join(desktopRoot, "scripts", "e2e-managed-codex-home.mjs");
+
+test("Host plugin lifecycle Desktop E2E uses real UI controls and keeps Builder side-effect free", async () => {
+  const harness = await readFile(harnessPath, "utf8");
+  assert.match(harness, /SPS_DESKTOP_E2E_BINARY/);
+  assert.match(harness, /SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS/);
+  assert.match(harness, /SPS_ENABLE_PLUGIN_DISCOVERY:\s*"true"/);
+  assert.match(harness, /parseE2eHostReadyTimeout/);
+  assert.match(harness, /mockIdentity/);
+  assert.match(harness, /#start-sps-account|Sign in/);
+  assert.match(harness, /#create-owner-server|Create/);
+  assert.match(harness, /company\/settings\/instance\/plugins/);
+  assert.match(harness, /Install Plugin/);
+  assert.match(harness, /Start and use/);
+  assert.match(harness, /Stop using/);
+  assert.match(harness, /re-enable/i);
+  assert.match(harness, /Uninstall Plugin/);
+  assert.match(harness, /Uninstall and keep summaries/);
+  assert.match(harness, /Cancel/);
+  assert.match(harness, /Open signed Registry review/);
+  assert.match(harness, /Stage for review/);
+  assert.match(harness, /Apply this exact reviewed plugin version/);
+  assert.doesNotMatch(harness, /Marketplace Assistant|SPS_MARKETPLACE_MCP/);
+  assert.match(harness, /--live-agent/);
+  assert.match(harness, /Plugin Builder surface/);
+  assert.match(harness, /shutdownPreviewE2eDesktop/);
+  assert.match(harness, /requestBrowserClose: cdp \? \(\) => cdp\.command\("Browser\.close"\)/);
+  assert.match(harness, /desktopExitConfirmed: desktopStopped\.exitConfirmed/);
+  assert.match(harness, /desktopGraceful: desktopStopped\.graceful/);
+  assert.match(harness, /temporaryDataRemoved: dataRemoved && cdpClosed && identityClosed/);
+  assert.match(harness, /removeOwnedTemporaryRoot\(temporaryRoot\), "temporary data", 20_000/);
+  assert.match(harness, /path\.dirname\(absoluteTarget\) !== expectedParent/);
+  assert.match(harness, /path\.basename\(absoluteTarget\)\.startsWith\("sps-host-plugin-lifecycle-e2e-"\)/);
+  assert.match(harness, /!metadata\.isDirectory\(\) \|\| metadata\.isSymbolicLink\(\)/);
+  assert.match(harness, /absoluteTarget !== temporaryRoot/);
+  assert.match(harness, /const temporaryRootIdentity = await lstat\(temporaryRoot, \{ bigint: true \}\)/);
+  assert.match(harness, /const temporaryRootCanonical = await realpath\(temporaryRoot\)/);
+  assert.match(harness, /metadata\.dev !== temporaryRootIdentity\.dev \|\| metadata\.ino !== temporaryRootIdentity\.ino/);
+  assert.match(harness, /resolvedTarget !== temporaryRootCanonical/);
+  assert.match(harness, /process\.exit\(OWNED_JOB_CLEANUP_PENDING_EXIT_CODE\)/);
+  assert.match(harness, /postgresCleanupConfirmed: null/);
+  assert.match(harness, /cleanupQualification: "pending"/);
+  assert.match(harness, /lifecycleBeforeWorkspaceActions/);
+  assert.match(harness, /Review update/);
+  assert.match(harness, /approve-capabilities-/);
+  assert.match(harness, /Approve and apply update/);
+  assert.match(harness, /productionAfter/);
+  assert.doesNotMatch(harness, /fetch\([^\n]+\/api\/plugins\/(?:install|enable|disable|uninstall)/i, "Lifecycle mutation must not be performed by API from the E2E harness.");
+  assert.doesNotMatch(harness, /method:\s*["'](?:POST|PUT|DELETE)["'][^\n]+plugins/i, "The harness must reserve lifecycle changes for visible UI controls.");
+  assert.doesNotMatch(harness, /ipcMain|E2E-only IPC|test-only IPC/i);
+});
+
+test("deterministic Host lifecycle E2E uses an isolated local ACP fixture", async () => {
+  const harness = await readFile(harnessPath, "utf8");
+  const fixture = await readFile(fixturePath, "utf8");
+  const managedHomeHelper = await readFile(managedHomeHelperPath, "utf8");
+  assert.match(harness, /deterministicAgentCommand = `"\$\{process\.execPath\}" "\$\{deterministicAcp\}"`/);
+  assert.match(harness, /syntheticOpenAiApiKey = "sk-test-sps-e2e-not-valid-for-provider"/);
+  assert.match(harness, /syntheticCodexHome = liveAgent \? null : path\.join\(temporaryRoot, "synthetic-codex-home"\)/);
+  assert.match(harness, /writeFile\(path\.join\(syntheticCodexHome, "auth\.json"\)/);
+  assert.match(harness, /JSON\.stringify\(\{\s*OPENAI_API_KEY: syntheticOpenAiApiKey,/);
+  assert.doesNotMatch(harness, /auth_mode\s*:/);
+  assert.match(harness, /CODEX_HOME: codexHome/);
+  assert.match(harness, /agentCommand: deterministicAgentCommand, env: \{ OPENAI_API_KEY: syntheticOpenAiApiKey \}/);
+  assert.doesNotMatch(harness, /env: \{ CODEX_HOME: syntheticCodexHome \}/);
+  assert.match(harness, /isolatedDeterministicEnvironment\(syntheticCodexHome\)/);
+  assert.doesNotMatch(harness, /\b(?:HOME|USERPROFILE):\s*temporaryHome/);
+  assert.match(harness, /credentialEnvironmentName\.test\(name\)/);
+  const credentialPattern = harness.match(/const credentialEnvironmentName = (\/[^;\n]+\/[a-z]*);/)?.[1];
+  assert.ok(credentialPattern, "Deterministic E2E must define a credential environment filter.");
+  const patternEnd = credentialPattern.lastIndexOf("/");
+  const credentialEnvironmentName = new RegExp(credentialPattern.slice(1, patternEnd), credentialPattern.slice(patternEnd + 1));
+  for (const name of ["OPENAI_API_KEY", "CODEX_AUTH_TOKEN", "AWS_SECRET_ACCESS_KEY"]) {
+    assert.equal(credentialEnvironmentName.test(name), true, `${name} must not reach the deterministic E2E process.`);
+  }
+  for (const name of ["PATH", "HOME", "USERPROFILE", "CI"]) {
+    assert.equal(credentialEnvironmentName.test(name), false, `${name} must remain available to the deterministic E2E process.`);
+  }
+  assert.match(harness, /managedCodexHome\?\.type, "plain"/);
+  assert.match(harness, /resolveIsolatedE2eManagedCodexHomeRelative\(userData, managedCodexHome\.value\)/);
+  assert.match(managedHomeHelper, /await realpath\(userDataDirectory\)/);
+  assert.match(managedHomeHelper, /error\?\.code !== "ENOENT"/);
+  assert.match(managedHomeHelper, /await lstat\(candidate\)/);
+  assert.match(managedHomeHelper, /path\.relative\(root, candidate\)/);
+  assert.match(managedHomeHelper, /relative\.startsWith\(`\.\.\$\{path\.sep\}`\)/);
+  assert.match(harness, /path\.join\("companies", company\.id, "agents", lifecycleAgent\.id, "codex-home"\)/);
+  assert.match(fixture, /Deterministic test response/);
+  assert.doesNotMatch(fixture, /marketplace|mcpServers/i);
+  assert.doesNotMatch(fixture, /spawn\(\s*["']codex(?:\.exe)?["']/i);
+});

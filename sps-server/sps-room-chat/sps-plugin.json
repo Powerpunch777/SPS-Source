@@ -2,17 +2,19 @@
   "schemaVersion": 1,
   "plugin": {
     "id": "local.room-chat",
-    "version": "0.3.91",
+    "version": "0.3.92",
     "apiVersion": "1"
   },
   "runtime": {
     "manifestEntry": "dist/manifest.js",
-    "manifestSha256": "c961a15c57e85f74adf000e9b78c6ea303283254e4c85dffd70fc24c950e02b9"
+    "manifestSha256": "fc67ad846b851511481fa41ff19e618971f32e02bee906c5263f9f389e51380f"
   },
   "capabilities": [
     "ui.page.register",
     "ui.sidebar.register",
     "ui.detailTab.register",
+    "ui.workspaceShell.provide",
+    "ui.dashboard.contribute",
     "host.local_api.access",
     "issues.read",
     "issues.create",
@@ -35,7 +37,8 @@
     "jobs.schedule",
     "plugin.state.read",
     "plugin.state.write",
+    "inbox.items.publish",
     "instance.settings.register"
   ],
-  "permissionsDigest": "cbaa0fe8bd46cd443574cb5bc11e060f82192a86744d237a01036cf27107120a"
+  "permissionsDigest": "00a5f9dad67284df4d421f5de455cadcd9f5a6f1e3cef1e31a2c8904e935d71d"
 }

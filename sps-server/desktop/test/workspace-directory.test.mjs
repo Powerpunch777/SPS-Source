@@ -25,11 +25,11 @@ test("rejects relative, missing, and file project paths", async () => {
   try {
     await assert.rejects(
       () => requireSpsWorkspaceDirectory("relative-project"),
-      /absolute local folder/,
+      /absolute folder path available to this computer/,
     );
     await assert.rejects(
       () => requireSpsWorkspaceDirectory(path.join(root, "missing")),
-      /does not exist/,
+      /not available to this computer/,
     );
     await assert.rejects(
       () => requireSpsWorkspaceDirectory(filePath),

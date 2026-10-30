@@ -131,7 +131,7 @@ try {
     $localLauncherContent -match '\[switch\]\$EnableAgentInstructionSync' -and
     $localLauncherContent -match 'if\s*\(\$EnableAgentInstructionSync\s+-and\s+-not\s+\$SkipAgentInstructionSync\)' -and
     $localLauncherContent -match 'external\\paperclip-core' -and
-    $localLauncherContent -match 'pnpm@9\.15\.4 run paperclipai run --instance' -and
+    $localLauncherContent -match 'pnpm@11\.9\.0 run paperclipai run --instance' -and
     $localLauncherContent -match 'if\s*\(\$UseRegistryPackage\)' -and
     $localLauncherContent -match '\$ErrorActionPreference\s*=\s*"Continue"' -and
     $localLauncherContent -match '\$exitCode\s*=\s*\$LASTEXITCODE'

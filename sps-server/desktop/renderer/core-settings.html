@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" />
+    <title>SPS Core Settings</title>
+    <link rel="stylesheet" href="./core-settings.css" />
+  </head>
+  <body>
+    <main class="settings-shell">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">LOCAL DESKTOP CONTROLS</p>
+          <h1>Core settings</h1>
+          <p class="intro">Host health, recovery options, and local maintenance.</p>
+        </div>
+      </header>
+
+      <p id="action-notice" class="notice" role="status" aria-live="polite"></p>
+
+      <section class="section" aria-labelledby="host-heading" aria-busy="true" id="status-region">
+        <div class="section-heading">
+          <div>
+            <h2 id="host-heading">Host status</h2>
+            <p id="status-message" class="muted" role="status" aria-live="polite">Loading local host status...</p>
+          </div>
+          <button id="retry-status" class="button secondary" type="button" hidden>Retry</button>
+        </div>
+
+        <dl id="status-details" class="status-grid" hidden>
+          <div class="status-item">
+            <dt>Host</dt>
+            <dd id="host-state">Unknown</dd>
+          </div>
+          <div class="status-item">
+            <dt>App version</dt>
+            <dd id="app-version">Unknown</dd>
+          </div>
+          <div class="status-item">
+            <dt>Settings shortcut</dt>
+            <dd id="shortcut-state">Unavailable</dd>
+          </div>
+          <div class="status-item">
+            <dt>Plugin startup</dt>
+            <dd id="plugin-state">Unknown</dd>
+          </div>
+          <div class="status-item">
+            <dt>Local storage</dt>
+            <dd id="storage-state">Unknown</dd>
+          </div>
+        </dl>
+
+        <div id="host-error" class="inline-warning" role="status" hidden>
+          The host reported an error. Diagnostic details are hidden to protect credentials.
+        </div>
+        <div id="storage-error" class="inline-warning" role="status" hidden>
+          Storage reported an error. Diagnostic details are hidden to protect credentials.
+        </div>
+        <div id="desktop-state-error" class="inline-warning" role="status" hidden>
+          Desktop connection settings are unavailable. Existing settings were left unchanged. Host and Node startup are blocked.
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="native-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="native-heading">Native LAN (in development)</h2>
+            <p class="muted">Native device registration is off until you enable it for this app session. Preparing an identity does not enable LAN access.</p>
+          </div>
+        </div>
+        <dl class="native-grid">
+          <div class="native-item">
+            <dt>LAN access</dt>
+            <dd id="native-listener-state">Off · not active</dd>
+          </div>
+          <div class="native-item">
+            <dt>Host identity</dt>
+            <dd id="native-identity-state" role="status" aria-live="polite">Unavailable</dd>
+          </div>
+          <div class="native-item native-detail" id="native-fingerprint-row" hidden>
+            <dt>Server SHA-256 fingerprint</dt>
+            <dd id="native-fingerprint"></dd>
+          </div>
+          <div class="native-item native-detail" id="native-server-expiry-row" hidden>
+            <dt>Server certificate expires</dt>
+            <dd id="native-server-expiry"></dd>
+          </div>
+          <div class="native-item native-detail" id="native-issuer-expiry-row" hidden>
+            <dt>Member issuer expires</dt>
+            <dd id="native-issuer-expiry"></dd>
+          </div>
+        </dl>
+        <div class="native-form" id="native-identity-form" hidden>
+          <label for="native-certificate-address">Certificate address</label>
+          <input id="native-certificate-address" type="text" inputmode="text" autocomplete="off" spellcheck="false" aria-describedby="native-address-help" />
+          <p class="help-text" id="native-address-help">Enter a private IPv4 or ULA address, for example 192.168.1.10.</p>
+          <button id="prepare-native-identity" class="button secondary" type="button" disabled>Prepare host identity</button>
+        </div>
+
+        <div id="native-identity-maintenance" class="native-form" hidden>
+          <p class="help-text">Stop Native listening before renewing the Host certificate. Renewal uses the existing key during the final 30 days, or the final third of a shorter certificate. Start listening separately afterwards.</p>
+          <button id="renew-native-identity" class="button secondary" type="button" disabled>Renew Host certificate</button>
+          <button id="repair-native-identity-publication" class="button secondary" type="button" disabled>Repair certificate save</button>
+        </div>
+
+        <div class="section-heading compact-heading">
+          <div>
+            <h3>Native devices</h3>
+            <p class="muted">Review and manage devices for this local Host. LAN access remains off.</p>
+          </div>
+          <button id="refresh-native-devices" class="button secondary" type="button" disabled>Refresh devices</button>
+        </div>
+        <p id="native-devices-status" class="muted" role="status" aria-live="polite" aria-busy="true">Loading native devices...</p>
+        <p id="native-devices-empty" class="muted" hidden>No Native devices are registered.</p>
+        <p id="native-devices-error" class="inline-warning" role="status" hidden>Native device management is unavailable. Diagnostic details are hidden.</p>
+        <div id="native-devices-list" class="action-list" aria-live="polite"></div>
+        <div class="section-heading compact-heading native-invitations-heading">
+          <div>
+            <h3>Host invitations</h3>
+            <p class="muted">Review active and past invitations for this local Host. Refresh only when you choose to check.</p>
+          </div>
+          <button id="refresh-native-invitations" class="button secondary" type="button" disabled>Refresh invitations</button>
+        </div>
+        <p id="native-invitations-status" class="muted" role="status" aria-live="polite" aria-busy="false">Select Refresh to review Host invitations.</p>
+        <p id="native-invitations-empty" class="muted" hidden>No Host invitations are available.</p>
+        <p id="native-invitations-error" class="inline-warning" role="status" hidden>Native invitation management is unavailable. Diagnostic details are hidden.</p>
+        <div id="native-invitations-list" class="action-list" aria-live="polite"></div>
+        <div class="native-form" id="native-listener-form" hidden>
+          <h3>Host registration listener</h3>
+          <p class="help-text">Choose this computer's private network address covered by its prepared certificate. This session accepts device registration only; Workspace access remains separate.</p>
+          <label for="native-listener-address">Private network address</label>
+          <input id="native-listener-address" type="text" autocomplete="off" spellcheck="false" maxlength="45" />
+          <label for="native-listener-port">Registration port</label>
+          <input id="native-listener-port" type="number" min="1024" max="65535" value="43123" />
+          <button id="start-native-listener" class="button secondary" type="button" disabled>Enable registration</button>
+          <button id="stop-native-listener" class="button secondary" type="button" disabled>Stop registration</button>
+          <button id="copy-native-invitation" class="button secondary" type="button" disabled>Create and copy invitation</button>
+        </div>
+        <div class="section-heading compact-heading">
+          <div>
+            <h3>This computer's Native registration</h3>
+            <p class="muted">Register using an invitation from the Host owner. Approval and Workspace access are separate. Select Show Workspaces to check membership; Native LAN remains in development.</p>
+          </div>
+        </div>
+        <div class="native-form">
+          <label for="native-member-invitation">Host invitation</label>
+          <input id="native-member-invitation" type="password" autocomplete="off" spellcheck="false" maxlength="8192" />
+          <label for="native-member-name">Computer name</label>
+          <input id="native-member-name" type="text" autocomplete="off" maxlength="120" />
+          <button id="register-native-member" class="button secondary" type="button" disabled>Register this computer</button>
+        </div>
+        <p id="native-member-result" class="muted" role="status" aria-live="polite">Sign in to manage this computer's registration.</p>
+        <button id="refresh-native-registrations" class="button secondary" type="button" disabled>Show saved registrations</button>
+        <div id="native-registrations-list" class="action-list" aria-live="polite"></div>
+      </section>
+
+      <section class="section" aria-labelledby="recovery-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="recovery-heading">Recovery</h2>
+            <p class="muted">Choose whether plugins start with the host.</p>
+          </div>
+        </div>
+        <label class="toggle-row" for="plugins-disabled">
+          <input id="plugins-disabled" data-action type="checkbox" disabled />
+          <span>
+            <strong>Disable plugin startup</strong>
+            <span class="help-text">This setting applies on the next startup. Saving it does not restart the host.</span>
+          </span>
+        </label>
+        <p class="caution">This recovery option does not claim to sandbox plugins or other host code.</p>
+      </section>
+
+      <section class="section" aria-labelledby="actions-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="actions-heading">Host actions</h2>
+            <p class="muted">Each action runs only when selected.</p>
+          </div>
+        </div>
+        <div class="action-list">
+          <div class="action-row">
+            <div>
+              <h3>Workspace</h3>
+              <p class="help-text">Open the local workspace.</p>
+            </div>
+            <button class="button secondary" data-action="open-workspace" type="button" disabled>Open workspace</button>
+          </div>
+          <div class="action-row">
+            <div>
+              <h3>Updates</h3>
+              <p class="help-text">Check for desktop updates.</p>
+            </div>
+            <button class="button secondary" data-action="check-updates" type="button" disabled>Check updates</button>
+          </div>
+          <div class="action-row">
+            <div>
+              <h3>Restart host</h3>
+              <p class="help-text">Restart is separate from recovery settings and requires this explicit action.</p>
+            </div>
+            <button class="button primary" data-action="restart-host" type="button" disabled>Restart host</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="transfer-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="transfer-heading">Export and transfer</h2>
+            <p class="muted">Use the desktop's local export and inspection flows.</p>
+          </div>
+        </div>
+        <div class="action-list">
+          <div class="action-row">
+            <div>
+              <h3>Export host</h3>
+              <p class="help-text">Start a host export.</p>
+            </div>
+            <button class="button secondary" data-action="export-host" type="button" disabled>Export host</button>
+          </div>
+          <div class="action-row">
+            <div>
+              <h3>Inspect transfer</h3>
+              <p class="help-text">Review a transfer artifact without starting a restore here.</p>
+            </div>
+            <button class="button secondary" data-action="inspect-transfer" type="button" disabled>Inspect transfer</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="local-desktop-heading">
+        <div class="section-heading compact-heading">
+          <div>
+            <h2 id="local-desktop-heading">Local desktop</h2>
+          </div>
+        </div>
+        <div class="action-list">
+          <div class="action-row">
+            <div>
+              <h3>SPS Desktop</h3>
+            </div>
+            <button id="quit-desktop" class="button secondary" type="button">Quit SPS Desktop</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./core-settings.mjs"></script>
+  </body>
+</html>

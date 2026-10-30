@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import {
   generatePluginSigningKeyPair,
   publishPluginToLocalRegistry,
 } from "@sonparkserver/plugin-sdk/authoring/plugin-package-v1.mjs";
+import { buildPluginWorker } from "@sonparkserver/plugin-sdk/authoring/worker-bundle-v1.mjs";
 import {
   acquireRegistryRelease,
   addRegistrySource,
@@ -87,6 +88,12 @@ test("stages a local release published by the Plugin Kit without executing it", 
       displayName: "Weather",
       version: "1.0.0",
     });
+    await cp(
+      path.resolve("node_modules", "@sonparkserver", "plugin-sdk"),
+      path.join(sourceDirectory, "node_modules", "@sonparkserver", "plugin-sdk"),
+      { recursive: true },
+    );
+    await buildPluginWorker({ sourceDirectory });
     const publisher = generatePluginSigningKeyPair();
     const registryRoot = generatePluginSigningKeyPair();
     await publishPluginToLocalRegistry({
@@ -124,7 +131,7 @@ test("stages a local release published by the Plugin Kit without executing it", 
     assert.deepEqual(report.releases[0].compatibility, {
       sps: ">=0.4.0 <0.5.0",
       pluginApi: 1,
-      extensionProfile: "1.0",
+      extensionProfile: "2.0",
     });
     const acquired = await acquireRegistryRelease({
       vaultRoot,

@@ -1,11 +1,13 @@
 import { createSignedHeartbeat, createSignedNodeRequest } from "./identity.mjs";
 import { normalizeHubUrl } from "./protocol.mjs";
+import { validateSpsNodeClaimReceipt } from "./claim-receipt.mjs";
 
 export class SpsHubRequestError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null) {
     super(message);
     this.name = "SpsHubRequestError";
     this.status = status;
+    this.code = typeof code === "string" && code.trim() ? code.trim() : null;
   }
 }
 
@@ -33,13 +35,21 @@ export async function probeSpsHub({
     throw new SpsHubRequestError(
       response.status,
       data?.error ?? `SPS Hub health check failed with ${response.status}`,
+      data?.code,
     );
   }
   return data;
 }
 
-async function requestJson(fetchImpl, url, method, body, accessToken, sessionCookie) {
-  const headers = { "content-type": "application/json" };
+async function requestJson(fetchImpl, url, method, body, accessToken, sessionCookie, expectedStatus = null) {
+  // Desktop Node requests run in Electron's main process, not a browser. Add
+  // the Hub's own Origin explicitly so authenticated mutation guards can
+  // distinguish this signed-in Desktop request from an untrusted cross-site
+  // request.
+  const headers = {
+    "content-type": "application/json",
+    origin: new URL(url).origin,
+  };
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
   if (sessionCookie) headers.cookie = `sps_identity_session=${encodeURIComponent(sessionCookie)}`;
   const response = await fetchImpl(url, {
@@ -53,6 +63,14 @@ async function requestJson(fetchImpl, url, method, body, accessToken, sessionCoo
     throw new SpsHubRequestError(
       response.status,
       data?.error ?? `SPS Hub request failed with ${response.status}`,
+      data?.code,
+    );
+  }
+  if (expectedStatus !== null && response.status !== expectedStatus) {
+    throw new SpsHubRequestError(
+      502,
+      "Host does not support resumable task claims.",
+      "sps_node_claim_protocol_mismatch",
     );
   }
   return data;
@@ -68,9 +86,10 @@ async function signedNodeRequestJson({
   method,
   path,
   payload,
+  expectedStatus,
 }) {
   const body = createSignedNodeRequest({ identity, nodeId, method, path, payload });
-  return requestJson(fetchImpl, apiUrl(hubUrl, path), method, body, accessToken, sessionCookie);
+  return requestJson(fetchImpl, apiUrl(hubUrl, path), method, body, accessToken, sessionCookie, expectedStatus);
 }
 
 export async function startSpsDesktopAuth({
@@ -167,6 +186,7 @@ export async function registerSpsNode({
   appVersion,
   capabilities,
   runners,
+  transportPublicKey,
   accessToken,
   sessionCookie,
 }) {
@@ -182,6 +202,7 @@ export async function registerSpsNode({
       appVersion,
       capabilities,
       ...(runners ? { runners } : {}),
+      ...(transportPublicKey ? { transportPublicKey } : {}),
     },
     accessToken,
     sessionCookie,
@@ -226,6 +247,50 @@ export async function disconnectSpsNode({
   );
 }
 
+async function claimNodeWork({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+  claimRequestId,
+  kind,
+  path,
+}) {
+  const payload = claimRequestId === undefined ? {} : { claimRequestId };
+  const response = await signedNodeRequestJson({
+    fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie,
+    method: "POST", path, payload,
+    ...(claimRequestId === undefined ? {} : { expectedStatus: 200 }),
+  });
+  if (claimRequestId === undefined) return response;
+  const receipt = validateSpsNodeClaimReceipt(response, { claimRequestId, kind });
+  if (!receipt.valid) {
+    throw new SpsHubRequestError(
+      502,
+      "Host does not support resumable task claims.",
+      "sps_node_claim_protocol_mismatch",
+    );
+  }
+  return receipt.work;
+}
+
+export async function getSpsNodeClaimProtocol({ fetchImpl = fetch, hubUrl, nodeId, identity, accessToken, sessionCookie }) {
+  let value;
+  try {
+    value = await signedNodeRequestJson({ fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie,
+      method: "POST", path: `/sps-nodes/${encodeURIComponent(nodeId)}/claim-protocol`, payload: {}, expectedStatus: 200 });
+  } catch (error) {
+    if (!(error instanceof SpsHubRequestError) || error.status !== 404) throw error;
+    throw new SpsHubRequestError(502, "Host does not support resumable task claims.", "sps_node_claim_protocol_mismatch");
+  }
+  if (!value || value.schemaVersion !== 1 || value.requestIdVersion !== "v1" || value.maxRecoveryAgeMs !== 86_400_000) {
+    throw new SpsHubRequestError(502, "Host does not support resumable task claims.", "sps_node_claim_protocol_mismatch");
+  }
+  return value;
+}
+
 export async function claimSpsNodeCommand({
   fetchImpl = fetch,
   hubUrl,
@@ -233,8 +298,38 @@ export async function claimSpsNodeCommand({
   identity,
   accessToken,
   sessionCookie,
+  claimRequestId,
 }) {
   const path = `/sps-nodes/${encodeURIComponent(nodeId)}/commands/claim-next`;
+  return claimNodeWork({ fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie, claimRequestId, kind: "agent-command", path });
+}
+
+export async function claimSpsPluginNodeRun({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+  claimRequestId,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/plugin-runs/claim-next`;
+  return claimNodeWork({ fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie, claimRequestId, kind: "plugin-run", path });
+}
+
+export async function claimSpsWorkspaceSourceRoute({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  sourceId,
+  identity,
+  accessToken,
+  sessionCookie,
+}) {
+  if (typeof sourceId !== "string" || !sourceId.trim()) {
+    throw new Error("SPS Workspace Source route claims require a Source id");
+  }
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/workspace-sources/${encodeURIComponent(sourceId)}/claim-route`;
   return signedNodeRequestJson({ fetchImpl, hubUrl, nodeId, identity, accessToken, sessionCookie, method: "POST", path, payload: {} });
 }
 
@@ -251,6 +346,32 @@ export async function appendSpsNodeCommandEvent({
   body,
 }) {
   const path = `/sps-nodes/${encodeURIComponent(nodeId)}/commands/${encodeURIComponent(commandId)}/events`;
+  return signedNodeRequestJson({
+    fetchImpl,
+    hubUrl,
+    nodeId,
+    identity,
+    accessToken,
+    sessionCookie,
+    method: "POST",
+    path,
+    payload: { sequence, stream, body },
+  });
+}
+
+export async function appendSpsPluginNodeRunEvent({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+  commandId,
+  sequence,
+  stream,
+  body,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/plugin-runs/${encodeURIComponent(commandId)}/events`;
   return signedNodeRequestJson({
     fetchImpl,
     hubUrl,
@@ -287,6 +408,29 @@ export async function checkSpsNodeCommandLease({
   });
 }
 
+export async function checkSpsPluginNodeRunLease({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+  commandId,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/plugin-runs/${encodeURIComponent(commandId)}/lease`;
+  return signedNodeRequestJson({
+    fetchImpl,
+    hubUrl,
+    nodeId,
+    identity,
+    accessToken,
+    sessionCookie,
+    method: "POST",
+    path,
+    payload: {},
+  });
+}
+
 export async function completeSpsNodeCommand({
   fetchImpl = fetch,
   hubUrl,
@@ -298,6 +442,30 @@ export async function completeSpsNodeCommand({
   completion,
 }) {
   const path = `/sps-nodes/${encodeURIComponent(nodeId)}/commands/${encodeURIComponent(commandId)}/complete`;
+  return signedNodeRequestJson({
+    fetchImpl,
+    hubUrl,
+    nodeId,
+    identity,
+    accessToken,
+    sessionCookie,
+    method: "POST",
+    path,
+    payload: completion,
+  });
+}
+
+export async function completeSpsPluginNodeRun({
+  fetchImpl = fetch,
+  hubUrl,
+  nodeId,
+  identity,
+  accessToken,
+  sessionCookie,
+  commandId,
+  completion,
+}) {
+  const path = `/sps-nodes/${encodeURIComponent(nodeId)}/plugin-runs/${encodeURIComponent(commandId)}/complete`;
   return signedNodeRequestJson({
     fetchImpl,
     hubUrl,
