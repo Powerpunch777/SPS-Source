@@ -186,3 +186,47 @@ unowned process. A real harmless timeout probe exercises the same diagnostic
 branch and still fails with 124 after confirmed owned cleanup. No installer
 was run locally. The 18-minute bound, reduced token, private desktop, exact
 artifact/data assertions and rejection of forced-cleanup acceptance remain.
+
+## Owned Window Diagnostics, Not A Timeout Waiver
+
+Exact Source `cd4174f6a6071c8130cd7d22a3aae06142cbd965`, run `41059503771`,
+Windows job `124075392991`, is terminal failure. Fresh install, ordinary
+uninstall, historical install and their assertions again completed. Historical
+replacement started at 13:31:11 UTC and reached the unchanged whole-scenario
+deadline at 13:43:47 UTC. The pre-termination actual Job snapshot was readable:
+one Node, two consoles, the restricted launcher and the current candidate NSIS
+installer. No old uninstaller, Electron, Postgres or Windows-error process was
+present in that snapshot. This narrows the surviving process, not the internal
+reason it is waiting. The result remained 124 with forced cleanup, not a pass.
+
+The test-only helper now reads top-level windows on its exact owned desktop,
+and rechecks each process against its exact Job before inspecting its controls.
+It reports only fixed window/control categories, numeric control IDs, state
+booleans and allowlisted message categories. Raw titles, text, PIDs, account
+names and paths are not emitted. Enumeration is limited to 32 windows and 64
+controls, with a 2.5-second observation budget and 100-ms `WM_GETTEXT` waits.
+No click, close message, input injection, station switch or termination authority
+is added. An unknown/localized message stays `other`, never an inferred error.
+The APIs follow [Microsoft's desktop enumeration contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumdesktopwindows).
+
+A harmless real MessageBox fixture was observed on the locally owned isolated
+desktop, including its deliberately non-public email/path text being omitted
+from output. Its timeout remained a failure (124), followed by confirmed Job
+emptiness and desktop closure. Local `privateWindowStation: false` is not
+hosted private-station proof. No installer ran locally. The actual NSIS timeout
+diagnostic still requires new-HEAD hosted CI; no cause or fix is claimed yet.
+
+A separate Luna audit also checked the install smoke's pending-exit footer.
+Its complete import graph does not load the vendor `async-exit-hook`; a harmless
+child without that hook naturally returned 76. The historical DB helper's prior
+hook issue was therefore not copied into this unrelated script or treated as
+the installer hang's cause.
+
+Validation after adding the reader: `node --test --test-reporter=spec
+test/installer-window-diagnostics.test.mjs` passed 2/2. The full Desktop command
+`node --test --test-reporter=spec test/*.test.mjs` passed 1625 of 1627, with two
+environment-dependent 8.3-alias skips and zero failures (exit 0). The first
+fixture-only assertion assumed an OK button ID of 1; the actual observed
+MessageBox exposed ID 2. The test now requires the observed enabled button and
+integer ID without pretending the diagnostic clicks or interprets it. All
+existing timeout, failure-code and natural-cleanup assertions remain intact.

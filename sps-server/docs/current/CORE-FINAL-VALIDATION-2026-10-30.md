@@ -38,6 +38,23 @@ deferred Native development are excluded.
 
 ## Execution Rules
 
+### Latest Hosted Observations
+
+- Exact Source `9c38ad9b668ed1a56d051196dcecdd5bb4061421`, push run
+  `41060904764`, passed all 17 non-Windows jobs, including all nine Linux shards
+  and full Core typecheck/build. Its Windows historical-backup-through-actual-
+  Main step passed. Packaged Windows integration was still running at this
+  observation; these results do not qualify the entire Windows job.
+- Prior Source `cd4174f6a6071c8130cd7d22a3aae06142cbd965`, run
+  `41059503771`, is terminal failure in historical installer replacement.
+  Its real pre-timeout Job contained the current installer but no old
+  uninstaller. A bounded, read-only owned-desktop window diagnostic is added
+  for the next run; it is not an installer correction or successful acceptance.
+  See the [timeout record](../reviews/INSTALLER-CI-HANG-2026-10-30.md).
+- Local full Desktop validation after the owned-window diagnostic: 1627 total,
+  1625 passed, two unavailable-8.3-alias skips and zero failures. This exercises
+  a real harmless modal but never a local installer or real installed data.
+
 1. Fix reproduced Core defects before adding optional features. Preserve existing
    API, SDK, capability, Source, credential and authentication boundaries.
 2. Start with focused tests; use the real isolated Electron app for integrated

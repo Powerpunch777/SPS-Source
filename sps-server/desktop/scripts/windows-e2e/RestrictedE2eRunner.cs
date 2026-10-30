@@ -265,7 +265,7 @@ public static class RestrictedE2eRunner
     }
     static bool Mode(string value)
     {
-        return value == "probe" || value == "probe-registry" || value == "probe-installer-processes" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
+        return value == "probe" || value == "probe-registry" || value == "probe-installer-processes" || value == "probe-installer-dialog" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
             || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
@@ -370,6 +370,7 @@ public static class RestrictedE2eRunner
         if (mode == "probe-exit-76") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-native-exit") return unchecked((int)0xC0000142);
         if (mode == "probe-timeout") { System.Threading.Thread.Sleep(60000); return 1; }
+        if (mode == "probe-installer-dialog") { InstallerWindowDiagnostics.ShowProbeDialog(); return 1; }
         if (mode == "probe-preview-pending") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-preview-zeroexit") return 0;
         if (mode == "workspace-pending") return unchecked((int)OwnedJobCleanupPendingExitCode);
@@ -917,7 +918,7 @@ public static class RestrictedE2eRunner
             Require(AssignProcessToJobObject(job, child.Process), "Assign suspended child to cleanup job"); assigned = true;
             Require(ResumeThread(child.Thread) != 0xFFFFFFFF, "Resume E2E child");
             stage = "child_wait";
-            uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : mode == "probe-installer-processes" ? 45u * 1000u : 18u * 60u * 1000u);
+            uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : mode == "probe-installer-dialog" ? 4000u : mode == "probe-installer-processes" ? 45u * 1000u : 18u * 60u * 1000u);
             if (wait == 258)
             {
                 // Inspect only this Job before its timeout cleanup destroys the
@@ -925,6 +926,8 @@ public static class RestrictedE2eRunner
                 // names are diagnostic, never permission to accept a timeout.
                 if (mode == "installer-data-preservation" || mode == "probe-timeout")
                     WriteOwnedJobProcessDiagnostics(job, 0);
+                if (mode == "installer-data-preservation" || mode == "probe-installer-dialog")
+                    InstallerWindowDiagnostics.Write(job, desktop);
                 Require(TerminateJobObject(job, 124), "Terminate timed-out E2E job");
                 cleanupWasForced = true;
                 Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm timed-out child exit");
