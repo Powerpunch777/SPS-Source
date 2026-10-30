@@ -110,6 +110,8 @@ test("Core Settings and tray use one deferred normal quit without a force-stop o
   const quitWiring = section("const desktopQuitCoordinator = createSpsDesktopQuitCoordinator(", 'app.on("will-quit"');
   assert.match(quitWiring, /drain: \(\) => \{\s*nativeMemberController\?\.dispose\(\);\s*return stopDesktopRuntimeGracefully\(\);/);
   assert.match(quitWiring, /isInstalling: \(\) => desktopUpdateController\.isInstalling\(\)/);
+  assert.match(quitWiring, /consumeFailedUpdateQuit: \(\) => desktopUpdateController\.consumeFailedUpdateQuit\(\)/);
+  assert.match(main, /updateQuitEvents: nativeAutoUpdater/);
   assert.match(quitWiring, /showFailure: async \(\) =>/);
   assert.match(quitWiring, /app\.on\("before-quit", event => \{ void desktopQuitCoordinator\.handle\(event\); \}\);/);
 });

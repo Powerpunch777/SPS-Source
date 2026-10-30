@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { app, autoUpdater as nativeAutoUpdater, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
 import { randomBytes, randomUUID } from "node:crypto";
 import { spawn as spawnChildProcess } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
@@ -414,6 +414,7 @@ let launchAtLoginEnabled = false;
 const desktopUpdateController = createSpsDesktopUpdateController({
   app,
   isolatedE2e,
+  updateQuitEvents: nativeAutoUpdater,
   dialog,
   getMainWindow: () => mainWindow,
   stopDesktopRuntimeGracefully,
@@ -6659,6 +6660,7 @@ async function stopDesktopRuntimeGracefully() {
 const desktopQuitCoordinator = createSpsDesktopQuitCoordinator({
   isComplete: () => shutdownComplete,
   isInstalling: () => desktopUpdateController.isInstalling(),
+  consumeFailedUpdateQuit: () => desktopUpdateController.consumeFailedUpdateQuit(),
   drain: () => {
     nativeMemberController?.dispose();
     return stopDesktopRuntimeGracefully();

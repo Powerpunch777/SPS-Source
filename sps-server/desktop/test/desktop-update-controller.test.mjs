@@ -228,3 +228,115 @@ test("exposes the in-flight update drain and never resets shutdown state when ad
   assert.equal(dialogCalls, 0);
   controller.stop();
 });
+
+test("recovers from a synchronous updater error event and permits an explicit retry", async () => {
+  const autoUpdater = updater();
+  let quitting = false;
+  let shutdownComplete = false;
+  let promptCalls = 0;
+  autoUpdater.quitAndInstall = () => {
+    autoUpdater.quitAndInstallCalls += 1;
+    if (autoUpdater.quitAndInstallCalls === 1) {
+      autoUpdater.emit("error", new Error("private token/path"));
+    }
+  };
+  const controller = createSpsDesktopUpdateController({
+    app: app(),
+    dialog: { showMessageBox: async () => { promptCalls++; return { response: 1 }; } },
+    getMainWindow: () => ({ isDestroyed: () => false }),
+    stopDesktopRuntimeGracefully: async () => {},
+    setQuitting: (value) => { quitting = value; },
+    setShutdownComplete: (value) => { shutdownComplete = value; },
+    importUpdater: async () => ({ autoUpdater }),
+  });
+
+  try {
+    await controller.initialize();
+    autoUpdater.emit("update-available", { version: "0.4.113" });
+    autoUpdater.emit("update-downloaded", { version: "0.4.113" });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const failed = await controller.install();
+    assert.equal(failed.state, "ready");
+    assert.match(failed.message, /update remains downloaded; retry Restart and install/);
+    assert.doesNotMatch(failed.message, /private token\/path/);
+    assert.equal(controller.isInstalling(), false);
+    assert.equal(quitting, false);
+    assert.equal(shutdownComplete, false);
+    assert.equal(autoUpdater.quitAndInstallCalls, 1);
+    assert.equal(promptCalls, 1, "Only the initial downloaded-update prompt may open automatically.");
+
+    const retried = await controller.install();
+    assert.equal(retried.state, "installing");
+    assert.equal(autoUpdater.quitAndInstallCalls, 2);
+    assert.equal(quitting, true);
+    assert.equal(shutdownComplete, true);
+  } finally {
+    controller.stop();
+  }
+});
+
+test("a later handoff error cancels only its native update quit and permits retry after that quit settles", async () => {
+  const autoUpdater = updater();
+  const updateQuitEvents = new EventEmitter();
+  let quitting = false, shutdownComplete = false, promptCalls = 0;
+  const controller = createSpsDesktopUpdateController({
+    app: app(), updateQuitEvents,
+    dialog: { showMessageBox: async () => { promptCalls++; return { response: 1 }; } },
+    getMainWindow: () => ({ isDestroyed: () => false }),
+    stopDesktopRuntimeGracefully: async () => {},
+    setQuitting: value => { quitting = value; },
+    setShutdownComplete: value => { shutdownComplete = value; },
+    importUpdater: async () => ({ autoUpdater }),
+  });
+  try {
+    await controller.initialize();
+    autoUpdater.emit("update-available", { version: "0.4.113" });
+    autoUpdater.emit("update-downloaded", { version: "0.4.113" });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(promptCalls, 1);
+    assert.equal((await controller.install()).state, "installing");
+    await new Promise(resolve => setImmediate(resolve));
+    autoUpdater.emit("error", new Error("private asynchronous installer path"));
+    assert.equal(controller.getStatus().state, "ready");
+    assert.equal(controller.isInstalling(), false);
+    assert.equal(quitting, false);
+    assert.equal(shutdownComplete, false);
+    assert.equal(promptCalls, 1, "Failure must not prompt another automatic install.");
+    assert.equal(controller.consumeFailedUpdateQuit(), false, "An ordinary quit has not been identified as an update quit.");
+    await assert.rejects(controller.installDownloaded(), /finishing a failed update handoff/);
+    updateQuitEvents.emit("before-quit-for-update");
+    assert.equal(controller.consumeFailedUpdateQuit(), true);
+    assert.equal(controller.consumeFailedUpdateQuit(), false, "The failed update's quit fence is one-use.");
+    assert.equal((await controller.install()).state, "installing");
+    updateQuitEvents.emit("before-quit-for-update");
+    assert.equal(controller.consumeFailedUpdateQuit(), false, "A later successful attempt can quit.");
+    assert.equal(quitting, true);
+    assert.equal(shutdownComplete, true);
+  } finally { controller.stop(); }
+});
+
+test("an error during an awaited drain cannot revive the old installer continuation", async () => {
+  const autoUpdater = updater();
+  let release;
+  const controller = createSpsDesktopUpdateController({
+    app: app(), getMainWindow: () => null, dialog: {},
+    stopDesktopRuntimeGracefully: () => new Promise(resolve => { release = resolve; }),
+    importUpdater: async () => ({ autoUpdater }),
+  });
+  try {
+    await controller.initialize();
+    autoUpdater.emit("update-available", { version: "0.4.113" });
+    autoUpdater.emit("update-downloaded", { version: "0.4.113" });
+    const install = controller.install();
+    await new Promise(resolve => setImmediate(resolve));
+    autoUpdater.emit("error", new Error("private updater failure"));
+    assert.equal(controller.isInstalling(), true, "The in-flight runtime drain still owns shutdown.");
+    const duplicate = controller.installDownloaded().then(() => null, error => error);
+    release();
+    assert.equal((await install).state, "ready");
+    assert.match((await duplicate).message, /could not close safely/);
+    assert.equal(autoUpdater.quitAndInstallCalls, 0);
+    assert.equal(controller.isInstalling(), false);
+  } finally { controller.stop(); }
+});
