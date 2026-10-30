@@ -1,10 +1,76 @@
 import assert from "node:assert/strict";
-import { lstat, readFile, realpath, unlink } from "node:fs/promises";
+import { lstat, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createLifecycleRegistryFixture } from "./plugin-package-lifecycle-acceptance.mjs";
+import { createChecklistPackage } from "./no-ai-checklist-package.mjs";
 
 const pluginKey = "local.core-package-lifecycle";
 const confirmation = "Apply this exact reviewed plugin version? SPS will import its runtime only after this confirmation. It may install, update, or roll back the current plugin version.";
+
+export function isBundledRestoreReviewLogLine(line, pluginKey) {
+  const message = "bundled plugin requires new Host review; skipping automatic import";
+  try {
+    const event = JSON.parse(line);
+    return event.pluginKey === pluginKey && event.msg === message;
+  } catch {
+    // Core's file transport is pino-pretty singleLine with a JSON metadata
+    // suffix, not JSONL. Parse that suffix rather than a loose key substring.
+    const prefix = /^\[\d{2}:\d{2}:\d{2}\] INFO: /.exec(line);
+    if (!prefix || !line.slice(prefix[0].length).startsWith(`${message} `)) return false;
+    try {
+      const metadata = JSON.parse(line.slice(prefix[0].length + message.length + 1));
+      return metadata.pluginKey === pluginKey;
+    } catch { return false; }
+  }
+}
+
+// This former-Host local canary uses a current official bundle's identity to
+// exercise the real automatic-refresh selector, not Memory provider features.
+export async function seedBundledTransferReviewCanary({ workspace, fixture, api }) {
+  await fixture.assertCurrent();
+  const pluginKey = "sps.default-memory";
+  assert.equal((await api(workspace, "/api/plugins")).some(row => row.pluginKey === pluginKey), false);
+  const directory = path.join(fixture.directory, "former-host-bundled-id-canary");
+  await createChecklistPackage(directory, { id: pluginKey, withUi: false });
+  const manifestImportProbe = path.join(fixture.directory, "owned-bundled-review-manifest-import.txt");
+  const entry = path.join(directory, "dist", "manifest.js");
+  await writeFile(entry, `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(manifestImportProbe)}, "former-host-import\\n");\n${await readFile(entry, "utf8")}`);
+  // Explicit fixture setup through the existing authenticated Host install
+  // API; no DB seed, permission patch or target-Host approval bypass.
+  const installed = await api(workspace, "/api/plugins/install", {
+    method: "POST", body: { packageName: directory, isLocalPath: true },
+  });
+  assert.equal(installed.pluginKey, pluginKey);
+  assert.equal(installed.status, "ready");
+  assert.equal((await lstat(manifestImportProbe)).isFile(), true);
+  return { pluginId: installed.id, pluginKey, manifestImportProbe, logBoundary: 0 };
+}
+
+export async function assertBundledTransferReviewPending({ workspace, fixture, vaultRoot, evidence, api, waitFor, requireNewStartup = false }) {
+  await fixture.assertCurrent();
+  const file = path.join(vaultRoot, "logs", "server.log");
+  const root = await realpath(fixture.directory);
+  const canonical = await realpath(file);
+  const relative = path.relative(root, canonical);
+  assert.ok(relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  const boundary = requireNewStartup ? evidence.logBoundary : 0;
+  const bytes = await waitFor(async () => {
+    const metadata = await lstat(file);
+    assert.ok(metadata.isFile() && !metadata.isSymbolicLink() && metadata.size <= 8 * 1024 * 1024);
+    const content = await readFile(file);
+    assert.ok(content.length <= 8 * 1024 * 1024 && content.length >= boundary);
+    const rows = new TextDecoder("utf-8", { fatal: true }).decode(content.subarray(boundary)).split(/\r?\n/);
+    const skipped = rows.some(line => isBundledRestoreReviewLogLine(line, evidence.pluginKey));
+    return skipped ? content : null;
+  }, "actual current official bundle's new-Host review barrier", 30_000);
+  const record = await api(workspace, `/api/plugins/${evidence.pluginId}`);
+  assert.equal(record.id, evidence.pluginId);
+  assert.equal(record.pluginKey, evidence.pluginKey);
+  assert.equal(record.status, "uninstalled");
+  assert.equal(record.packagePath, null);
+  await assert.rejects(lstat(evidence.manifestImportProbe), { code: "ENOENT" });
+  evidence.logBoundary = bytes.length;
+}
 
 async function openRegistry(app, workspace, waitFor) {
   const opened = await workspace.evaluate(() => window.spsDesktopWorkspace.openPluginRegistries());
@@ -17,7 +83,7 @@ async function openRegistry(app, workspace, waitFor) {
   return page;
 }
 
-async function applyReviewedStage(registry, stageId, waitFor) {
+async function applyReviewedStage(registry, stageId, waitFor, targetPluginKey = pluginKey) {
   let handled = 0, dialogError;
   const onDialog = async dialog => {
     if (dialog.type() !== "confirm" || dialog.message() !== confirmation) {
@@ -37,10 +103,44 @@ async function applyReviewedStage(registry, stageId, waitFor) {
       if (await registry.locator("#notice").evaluate(element => element.classList.contains("error"))) {
         throw new Error(`Registry review failed: ${notice}`);
       }
-      return notice === `${pluginKey} v0.1.0 is ready.`;
+      return notice === `${targetPluginKey} v0.1.0 is ready.`;
     }, "explicit exact-package Registry confirmation and activation");
     assert.equal(handled, 1);
   } finally { registry.off("dialog", onDialog); }
+}
+
+export async function approveRestoredCurrentAppBundle({ app, workspace, evidence, api, waitFor }) {
+  const registry = await openRegistry(app, workspace, waitFor);
+  try {
+    const button = registry.locator(`.stage-bundled-review[data-plugin-id="${evidence.pluginKey}"]`);
+    await button.waitFor();
+    await button.click();
+    const stage = await waitFor(async () => (await api(workspace, "/api/plugins/registry/stages"))
+      .find(row => row.pluginId === evidence.pluginKey && row.source.registryId === "io.sps.current-app-bundles"),
+    "actual current-app bundle static stage");
+    assert.equal(stage.status, "staged");
+    assert.equal(stage.review, null);
+    assert.equal((await api(workspace, `/api/plugins/${evidence.pluginId}`)).status, "uninstalled");
+    await assert.rejects(lstat(evidence.manifestImportProbe), { code: "ENOENT" });
+
+    let cancelled = false, dialogError;
+    registry.once("dialog", async dialog => {
+      if (dialog.type() !== "confirm" || dialog.message() !== confirmation) dialogError = new Error("Unexpected bundle approval dialog.");
+      await dialog.dismiss();
+      cancelled = true;
+    });
+    await registry.locator(`.enable-stage[data-stage-id="${stage.stageId}"]`).click();
+    await waitFor(() => { if (dialogError) throw dialogError; return cancelled; }, "declined current-app bundle approval");
+    assert.equal((await api(workspace, `/api/plugins/${evidence.pluginId}`)).status, "uninstalled");
+    await applyReviewedStage(registry, stage.stageId, waitFor, evidence.pluginKey);
+    const record = await api(workspace, `/api/plugins/${evidence.pluginId}`);
+    assert.equal(record.id, evidence.pluginId);
+    assert.equal(record.status, "ready");
+    assert.equal(record.manifestJson.id, evidence.pluginKey);
+    assert.ok(record.manifestJson.capabilities.includes("memory.providers.register"));
+    await assert.rejects(lstat(evidence.manifestImportProbe), { code: "ENOENT" });
+    evidence.approved = true;
+  } finally { await registry.close(); }
 }
 
 const requestData = (api, workspace, pluginId, companyId) => api(workspace, `/api/plugins/${pluginId}/data/checklist`, {

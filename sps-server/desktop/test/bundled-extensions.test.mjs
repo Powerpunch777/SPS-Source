@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   disabledSpsExtensionStatus,
   isSpsDefaultMemoryEnabled,
@@ -34,4 +35,13 @@ test("reports disabled extensions without a fake runtime endpoint", () => {
     lastError: null,
     vaultPath: null,
   });
+});
+
+test("official bundles declare non-executable identities for restore-time review checks", async () => {
+  for (const [directory, id] of [["sps-default-memory", "sps.default-memory"],
+    ["sps-plugin-discovery", "sps.plugin-discovery"], ["sps-room-chat", "local.room-chat"]]) {
+    const metadata = JSON.parse(await readFile(new URL(`../../${directory}/package.json`, import.meta.url), "utf8"));
+    assert.equal(metadata.spsPlugin.id, id);
+    assert.equal(metadata.spsPlugin.manifest, "./dist/manifest.js");
+  }
 });

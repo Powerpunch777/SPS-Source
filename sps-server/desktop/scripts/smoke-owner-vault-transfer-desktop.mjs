@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -14,7 +14,7 @@ import { projectLegacyDesktopStateV11 } from "./legacy-desktop-state-fixture.mjs
 import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
 import { readSpsOwnerVaultRestoreReceipt } from "../src/owner-vault-restore-receipt.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
-import { seedReviewedTransferPlugin, resetTransferPluginImportProbe, reviewRestoredTransferPlugin, assertRestoredTransferPluginData } from "./owner-vault-plugin-acceptance.mjs";
+import { seedReviewedTransferPlugin, resetTransferPluginImportProbe, reviewRestoredTransferPlugin, assertRestoredTransferPluginData, seedBundledTransferReviewCanary, assertBundledTransferReviewPending, approveRestoredCurrentAppBundle } from "./owner-vault-plugin-acceptance.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const core = path.resolve(root, "../../external/sps-core");
@@ -47,6 +47,7 @@ let failure;
 let applicationOutput = "";
 let historicalEvidence;
 let registryPluginEvidence;
+let bundledReviewEvidence;
 
 async function bounded(operation, description) {
   let timer;
@@ -316,6 +317,8 @@ async function chooseOnly(app, title, directory) {
   // Playwright's documented native-dialog fixture changes only the selector,
   // never Main's export/restore handler or the Core/database implementation.
   await app.evaluate(({ dialog }, { title, directory }) => {
+    if (globalThis.__spsTransferNativeDialogs) throw new Error("Native transfer picker fixture is already active.");
+    globalThis.__spsTransferNativeDialogs = { showOpenDialog: dialog.showOpenDialog, showMessageBox: dialog.showMessageBox };
     dialog.showOpenDialog = async (...args) => {
       const options = args.at(-1);
       if (options.title !== title) throw new Error("Unexpected native folder dialog in transfer acceptance.");
@@ -327,6 +330,16 @@ async function chooseOnly(app, title, directory) {
       return { response: 0, checkboxChecked: false };
     };
   }, { title, directory });
+}
+
+async function restoreNativeDialogs(app) {
+  await app.evaluate(({ dialog }) => {
+    const originals = globalThis.__spsTransferNativeDialogs;
+    if (!originals) throw new Error("Native transfer picker fixture is not active.");
+    dialog.showOpenDialog = originals.showOpenDialog;
+    dialog.showMessageBox = originals.showMessageBox;
+    delete globalThis.__spsTransferNativeDialogs;
+  });
 }
 
 async function verifyHistoricalMainSchema() {
@@ -380,15 +393,18 @@ try {
     await writeFile(path.join(sourceStatus.ownerHost.vaultPath, attachment), content, { flag: "wx" });
     if (!crashAfterPromotion && !legacyDesktopState) {
       registryPluginEvidence = await seedReviewedTransferPlugin({ app: source.app, workspace: sourceWorkspace, company, fixture, api, waitFor });
+      bundledReviewEvidence = await seedBundledTransferReviewCanary({ workspace: sourceWorkspace, fixture, api });
       phases.push("reviewed-registry-plugin-and-distinct-workspace-data-seeded");
     }
     await chooseOnly(source.app, "Choose a folder for SPS Server export", exportDirectory);
     exported = await bounded(source.page.evaluate(() => window.spsDesktop.exportOwnerVaultTransfer()), "Main export");
+    await restoreNativeDialogs(source.app);
     assert.ok(exported?.bundleRoot);
     phases.push("main-export");
     console.log("[vault-transfer] Main export complete");
     await stop(source.app);
     if (registryPluginEvidence) await resetTransferPluginImportProbe({ fixture, evidence: registryPluginEvidence });
+    if (bundledReviewEvidence) await resetTransferPluginImportProbe({ fixture, evidence: bundledReviewEvidence });
   }
 
   const target = await launch(targetProfile, origin);
@@ -417,6 +433,7 @@ try {
   const restored = crashAfterPromotion
     ? await restoredApp.page.evaluate(() => window.spsDesktop.getStatus())
     : await bounded(target.page.evaluate(() => window.spsDesktop.restoreOwnerServer()), "Main restore");
+  if (!crashAfterPromotion) await restoreNativeDialogs(target.app);
   assert.equal(restored.ownerHost.state, "running");
   assert.equal(restored.ownerHost.restoreAttempts.length, crashAfterPromotion ? 1 : 0);
   assert.equal(restored.profile.connectionKind, "owner-host");
@@ -433,10 +450,17 @@ try {
     phases.push("historical-backup-restored-sanitized-and-upgraded-by-real-main", "both-historical-workspace-projects-retained");
   }
   assert.deepEqual(await readFile(path.join(restored.ownerHost.vaultPath, attachment)), content);
+  if (bundledReviewEvidence) await assertBundledTransferReviewPending({ workspace: restoredWorkspace, fixture,
+    vaultRoot: restored.ownerHost.vaultPath, evidence: bundledReviewEvidence, api, waitFor });
   if (registryPluginEvidence) {
     await reviewRestoredTransferPlugin({ app: restoredApp.app, workspace: restoredWorkspace, fixture,
       vaultRoot: restored.ownerHost.vaultPath, evidence: registryPluginEvidence, api, waitFor });
     phases.push("registry-package-bytes-restored-without-code-import", "new-host-reviewed-package-and-preserved-both-workspace-states");
+  }
+  if (bundledReviewEvidence) {
+    await assertBundledTransferReviewPending({ workspace: restoredWorkspace, fixture,
+      vaultRoot: restored.ownerHost.vaultPath, evidence: bundledReviewEvidence, api, waitFor });
+    phases.push("current-official-bundle-remains-review-pending-after-unrelated-package-approval");
   }
   phases.push("main-restore-returned-running", "typed-row-and-attachment-preserved");
   console.log("[vault-transfer] restored Host running; typed row and attachment preserved");
@@ -479,6 +503,14 @@ try {
       await assertRestoredTransferPluginData({ workspace: reopened, evidence: registryPluginEvidence, api, waitFor });
       phases.push("reviewed-restored-package-and-workspace-data-retained-after-restart");
     }
+    if (bundledReviewEvidence) {
+      await assertBundledTransferReviewPending({ workspace: reopened, fixture,
+        vaultRoot: path.join(targetProfile, "owner-vault"), evidence: bundledReviewEvidence, api, waitFor, requireNewStartup: true });
+      phases.push("official-bundle-review-required-after-real-main-restart");
+      await approveRestoredCurrentAppBundle({ app: restarted.app, workspace: reopened,
+        evidence: bundledReviewEvidence, api, waitFor });
+      phases.push("current-app-bundle-staged-without-import-declined-then-explicitly-approved");
+    }
     if (historicalEvidence) {
       const second = await api(reopened, `/api/companies/${historicalEvidence.secondCompany.id}/projects`);
       assert.ok(second.some(row => row.id === historicalEvidence.secondProject.id));
@@ -489,6 +521,21 @@ try {
     phases.push("restored-host-restart");
     console.log("[vault-transfer] restored Host restart complete");
     await stop(restarted.app);
+    if (bundledReviewEvidence?.approved) {
+      const approvedRestart = await launch(targetProfile, origin);
+      await signIn(approvedRestart.page, origin);
+      await readyHost(approvedRestart.page);
+      await bounded(approvedRestart.page.evaluate(() => window.spsDesktop.openWorkspace()), "reopen explicitly approved bundle Host");
+      const approvedWorkspace = await workspace(approvedRestart.app, approvedRestart.page);
+      const record = await api(approvedWorkspace, `/api/plugins/${bundledReviewEvidence.pluginId}`);
+      assert.equal(record.status, "ready");
+      assert.equal(record.pluginKey, bundledReviewEvidence.pluginKey);
+      assert.ok(record.manifestJson.capabilities.includes("memory.providers.register"));
+      await assert.rejects(lstat(bundledReviewEvidence.manifestImportProbe), { code: "ENOENT" });
+      await assertRestoredTransferPluginData({ workspace: approvedWorkspace, evidence: registryPluginEvidence, api, waitFor });
+      phases.push("explicit-bundle-approval-and-other-workspace-data-survive-restart");
+      await stop(approvedRestart.app);
+    }
   }
 } catch (error) {
   failure = error;
@@ -522,6 +569,8 @@ const evidence = { kind: "source-main-transfer-acceptance", phases, mockIdentity
   legacyDesktopStateMigrationQualified: legacyDesktopState,
   historicalCoreBackupRestoreQualified: historicalCoreBackup,
   managedRegistryPluginTransferQualified: Boolean(registryPluginEvidence),
+  restoredOfficialBundleApprovalRequiredQualified: Boolean(bundledReviewEvidence),
+  currentAppBundleReapprovalQualified: bundledReviewEvidence?.approved === true,
   ...(historicalEvidence ? { historicalCoreSchema: historicalEvidence.baseline, historicalMigrations: historicalEvidence.oldMigrations } : {}),
   ...(historicalEvidence ? { currentMigrations: historicalEvidence.currentHistory.length } : {}),
   historicalInstalledDatabaseMigrationQualified: false,

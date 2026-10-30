@@ -48,20 +48,38 @@ The user was asked whether new Host transfer should:
    before execution; or
 2. Preserve data only and require reinstalling the matching plugin package.
 
-After a clarification question, the user explicitly selected including the
-plugins. The implementation follows option 1: preserve managed package bytes
-and data, but require new-Host review. It does not copy arbitrary external
-local-folder plugins or restore old CLI/Node/Source credentials. A transfer
-backup does not uninstall or change the original Host's plugins.
+After clarification, the user selected preserving SPS-managed Registry plugin
+data and package bytes, subject to new Host approval before any restored plugin
+can execute. This applies to every restored plugin, including official bundled
+copies supplied by the current app; bundled or bootstrap provenance is not an
+approval exception. Disabled, uninstalled, and pending-upgrade records must
+not auto-reactivate. Managed Registry records/data and package bytes are in
+scope. Code in an external local-folder plugin directory is out of scope: do
+not copy or execute it, and require the owner to reselect that folder on the
+new Host. A transfer backup does not uninstall or change the original Host's
+plugins.
 
-Acceptance must include a real installed reviewed
-fixture, two Workspace data canaries, actual Main export/fresh-Host restore,
-package presence/absence and path/trust assertions, restart, and exact data
-preservation. Tests must distinguish data retention from code execution and
-require existing capability/compatibility/integrity review rather than granting
-new execution permission merely because the bytes came from a backup.
+New Host review covers plugin metadata, requested capabilities, and Host
+compatibility, followed by explicit owner approval. It is not an external
+security audit or a guarantee that plugin code is safe. Read and validate
+plugin identity/metadata before importing its module: Node.js ESM `import()`
+loads the referenced module and can execute its code ([Node.js ESM import
+expressions](https://nodejs.org/api/esm.html#import-expressions)). This policy
+requires no SDK, API, or schema change.
 
-## Implemented Correction And Local Evidence
+Future acceptance must cover every restored plugin class, including official
+bundled copies; prove metadata is read before module import; verify managed
+Registry data/package preservation, external-folder code exclusion and
+reselection, disabled/uninstalled/pending-upgrade non-reactivation, explicit
+new-Host approval, and restart behavior. Tests must distinguish data retention
+from code execution and must not treat backup provenance as approval.
+
+## Historical Implementation And Local Evidence (2026-10-30)
+
+The following describes implementation and test evidence recorded on
+2026-10-30 only. It is historical evidence, not qualification of the policy
+above; in particular, it does not establish the clarified approval requirements
+for official bundled copies or every restored plugin state.
 
 Core `ee400bccc0258185e89fa01187336625d0eeb8b4` uses the existing soft-uninstall
 state to retire prior-Host execution approval and clears all old package paths
@@ -82,7 +100,7 @@ ancestor-link rejection, missing-index compatibility and environment-independent
 inventory sorting. Those corrections are included; no speculative alternate
 index format or regex-based credential stripping remains.
 
-The actual Main acceptance now includes a reviewed package and two
+The actual Main acceptance at that time included a reviewed package and two
 distinct Workspace data canaries. Its fixture manifest writes an owned marker
 only when genuinely imported. The target must preserve exact package bytes,
 keep that marker absent before new-Host review, recover the same plugin ID and
@@ -115,7 +133,9 @@ that proves no config publication, receipt, promotion or Host activation.
 The new transfer, existing transfer and acceptance fixture tests passed 25/25.
 Fresh production audit: two Low, zero Critical/High, no exceptions.
 
-Exact new-HEAD hosted CI and installed-byte qualification remain required.
+At that time, exact new-HEAD hosted CI and installed-byte qualification remained
+required. These historical results do not claim tests passed for the policy
+clarified above.
 The transfer inventory detects accidental changes, not an authenticated backup
 signature. New Host review remains required even when all hashes match. No real
 installed user profile or external plugin checkout was a test target.

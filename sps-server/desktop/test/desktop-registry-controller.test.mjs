@@ -5,6 +5,8 @@ import { registerDesktopRegistryIpc } from "../src/desktop-registry-controller.m
 
 const channels = [
   "desktop:registry-list-sources",
+  "desktop:registry-list-bundled-reviews",
+  "desktop:registry-stage-bundled-review",
   "desktop:registry-choose-local-source",
   "desktop:registry-add-source",
   "desktop:registry-remove-source",
@@ -53,6 +55,8 @@ function makeHarness() {
     assertRegistryWindowEvent: () => { registryAssertions += 1; },
     assertRegistryOwner: () => { ownerAssertions += 1; },
     listRegistrySources: services.registry_list_sources,
+    listDesktopBundledPluginReviews: services.registry_list_bundled_reviews,
+    stageDesktopBundledPluginReview: services.registry_stage_bundled_review,
     chooseDesktopLocalRegistryFolder: services.registry_choose_local_source,
     addDesktopRegistrySource: services.registry_add_source,
     removeDesktopRegistrySource: services.registry_remove_source,
@@ -88,6 +92,7 @@ test("forwards registry and developer arguments without changing their shape", a
   const harness = makeHarness();
   const inputs = new Map([
     ["desktop:registry-add-source", { sourceId: "source-1" }],
+    ["desktop:registry-stage-bundled-review", { pluginId: "sps.fixture", directory: "ignored" }],
     ["desktop:registry-remove-source", { sourceId: "source-2" }],
     ["desktop:registry-inspect-source", { sourceId: "source-3" }],
     ["desktop:registry-stage-release", { release: "release-1" }],
@@ -113,6 +118,7 @@ test("forwards registry and developer arguments without changing their shape", a
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_reveal_package").args, ["project-package"]);
   assert.deepEqual(harness.calls.find((call) => call.key === "registry_add_source").args, [inputs.get("desktop:registry-add-source")]);
   assert.deepEqual(harness.calls.find((call) => call.key === "registry_remove_source").args, ["source-2"]);
+  assert.deepEqual(harness.calls.find((call) => call.key === "registry_stage_bundled_review").args, ["sps.fixture"]);
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_inspect_project").args, ["project-2"]);
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_list_preview_diagnostics").args, [{ limit: 3 }]);
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_remove_project").args, ["project-9"]);

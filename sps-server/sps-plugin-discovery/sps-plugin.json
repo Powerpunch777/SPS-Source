@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "plugin": {
+    "id": "sps.plugin-discovery",
+    "version": "0.4.0",
+    "apiVersion": "1"
+  },
+  "runtime": {
+    "manifestEntry": "dist/manifest.js",
+    "manifestSha256": "67f354efc6f390a8c15540d84f2c1eb31437cfef476086cbd1918fcb86d1d106"
+  },
+  "capabilities": [
+    "agent.tools.register",
+    "plugin.state.read",
+    "plugin.state.write",
+    "ui.page.register",
+    "agents.read",
+    "agent.sessions.create",
+    "agent.sessions.list",
+    "agent.sessions.send",
+    "agent.sessions.read",
+    "agent.sessions.cancel"
+  ],
+  "permissionsDigest": "57c1a840defa5057ffaee7c7e19d1dcce2ca9d65d4507258f83b93e0cf1691a6"
+}

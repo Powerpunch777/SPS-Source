@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { createWorkspaceE2eFixture } from "../scripts/workspace-e2e-fixture.mjs";
 import { createLifecycleRegistryFixture } from "../scripts/plugin-package-lifecycle-acceptance.mjs";
+import { isBundledRestoreReviewLogLine } from "../scripts/owner-vault-plugin-acceptance.mjs";
 
 test("transfer package import probe stays inert through public SDK build/pack and observes a genuine later import", { timeout: 45_000 }, async t => {
   const fixture = await createWorkspaceE2eFixture();
@@ -30,7 +31,21 @@ test("actual Main restores only inert stages with final-Host paths before promot
   const promote = restore.indexOf("await fs.rename(stagingRoot, targetRoot);");
   const activate = restore.indexOf("await startOwnerHost({ activate: true");
   assert.ok(sql >= 0 && rebase > sql && receipt > rebase && promote > receipt && activate > promote);
-  assert.match(restore, /Restored Registry packages remain inactive/);
+  assert.match(restore, /Restored plugins, including official bundled plugins, require approval/);
+});
+
+test("bundled review observation reads actual Core pretty-log JSON metadata and rejects unrelated records", () => {
+  const message = "bundled plugin requires new Host review; skipping automatic import";
+  const pluginKey = "sps.default-memory";
+  assert.equal(isBundledRestoreReviewLogLine(`[02:14:52] INFO: ${message} {"pluginKey":"${pluginKey}"}`, pluginKey), true);
+  assert.equal(isBundledRestoreReviewLogLine(JSON.stringify({ msg: message, pluginKey }), pluginKey), true);
+  for (const line of [
+    `[02:14:52] INFO: ${message} {"pluginKey":"local.other"}`,
+    `[02:14:52] INFO: unrelated {"pluginKey":"${pluginKey}"}`,
+    `[02:14:52] INFO: ${message} invalid metadata`,
+    JSON.stringify({ msg: "unrelated", pluginKey }),
+    "null", "[]", "", message,
+  ]) assert.equal(isBundledRestoreReviewLogLine(line, pluginKey), false);
 });
 
 test("transfer acceptance retains two real Worker states, demands new Host review and verifies post-restart data", async () => {

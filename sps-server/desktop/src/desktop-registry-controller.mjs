@@ -10,6 +10,8 @@ export function registerDesktopRegistryIpc({
   assertRegistryWindowEvent,
   assertRegistryOwner,
   listRegistrySources,
+  listDesktopBundledPluginReviews,
+  stageDesktopBundledPluginReview,
   chooseDesktopLocalRegistryFolder,
   addDesktopRegistrySource,
   removeDesktopRegistrySource,
@@ -38,6 +40,16 @@ export function registerDesktopRegistryIpc({
   ipcMain.handle("desktop:registry-list-sources", async (event) => {
     assertRegistryEvent(event);
     return await listRegistrySources();
+  });
+
+  ipcMain.handle("desktop:registry-list-bundled-reviews", async event => {
+    assertRegistryEvent(event);
+    return await listDesktopBundledPluginReviews();
+  });
+
+  ipcMain.handle("desktop:registry-stage-bundled-review", async (event, input) => {
+    assertRegistryEvent(event);
+    return await stageDesktopBundledPluginReview(input?.pluginId);
   });
   ipcMain.handle("desktop:registry-choose-local-source", async (event) => {
     assertRegistryEvent(event);

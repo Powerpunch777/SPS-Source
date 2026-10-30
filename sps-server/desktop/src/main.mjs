@@ -25,6 +25,7 @@ import { createSpsNativeHostIngress } from "./native-host-ingress.mjs";
 import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader,
   createSpsNativeMemberPublicationRecovery } from "./native-member-pending-store.mjs";
 import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
+import { listRestoredBundledPluginReviews, stageRestoredBundledPluginReview } from "./bundled-plugin-review.mjs";
 import { readSpsOwnerVaultRestoreReceipt, writeSpsOwnerVaultRestoreReceipt } from "./owner-vault-restore-receipt.mjs";
 import { normalizeSpsOwnerRestoreAttempts, ownerRestoreAttemptsForAccount, resolveSpsOwnerRestoreAttemptDirectory } from "./owner-restore-attempts.mjs";
 import { createSpsOwnerHostRestoreRunner } from "./owner-host-restore-runner.mjs";
@@ -2673,6 +2674,39 @@ async function listRegistrySources() {
   return configured.sources.map(registrySourceView);
 }
 
+async function currentAppBundleReviewContext() {
+  assertRegistryOwner();
+  await requireReadyOwnerHost();
+  const assertCurrent = captureOwnerMembershipRecoveryScope();
+  const runtime = app.isPackaged ? await materializeCurrentSpsOwnerHostRuntime() : path.resolve(__dirname, "..", "..");
+  if (!runtime) throw new Error("Current app bundle runtime is unavailable.");
+  const records = await ownerHostApi("/plugins?status=uninstalled", { ownerBootstrap: true, assertCurrent });
+  if (!Array.isArray(records)) throw new Error("Owner Host returned an invalid plugin review list.");
+  assertCurrent();
+  const bundles = [
+    { pluginId: "sps.default-memory", directory: path.join(runtime, "sps-default-memory") },
+    { pluginId: "sps.plugin-discovery", directory: path.join(runtime, "sps-plugin-discovery") },
+    { pluginId: "local.room-chat", directory: path.join(runtime, "sps-room-chat") },
+  ];
+  return { bundles, records, assertCurrent, vaultRoot: ownerVaultRoot() };
+}
+
+async function listDesktopBundledPluginReviews() {
+  const context = await currentAppBundleReviewContext();
+  const reviews = await listRestoredBundledPluginReviews(context);
+  context.assertCurrent();
+  return reviews;
+}
+
+async function stageDesktopBundledPluginReview(pluginId) {
+  const context = await currentAppBundleReviewContext();
+  return stageRestoredBundledPluginReview({ ...context, pluginId,
+    registerStage: body => ownerHostApi("/plugins/registry/stages", {
+      method: "POST", ownerBootstrap: true, assertCurrent: context.assertCurrent, body,
+    }),
+  });
+}
+
 async function addDesktopRegistrySource(input) {
   assertRegistryOwner();
   if (!input || typeof input !== "object") throw new Error("Registry source details are required.");
@@ -3930,7 +3964,7 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
       type: "info",
       title: "SPS Server restored",
       message: "The SPS Server was restored into this fresh Owner Host.",
-      detail: "Restored Registry packages remain inactive. Review them in Settings > Plugins before enabling them on this Host. External plugin/project folders must be selected again. Google/CLI sessions, API secrets, Tailscale and Node credentials require reconnection.",
+      detail: "Restored plugins, including official bundled plugins, require approval in Settings > Plugins before running on this Host. External plugin/project folders must be selected again. Google/CLI sessions, API secrets, Tailscale and Node credentials require reconnection.",
     });
     return publicStatus();
   } catch (error) {
@@ -6153,6 +6187,8 @@ function registerIpc() {
     assertRegistryWindowEvent,
     assertRegistryOwner,
     listRegistrySources,
+    listDesktopBundledPluginReviews,
+    stageDesktopBundledPluginReview,
     chooseDesktopLocalRegistryFolder,
     addDesktopRegistrySource,
     removeDesktopRegistrySource,

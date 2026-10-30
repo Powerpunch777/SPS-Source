@@ -4,6 +4,17 @@ Date: 2026-10-30. Scope: source Desktop on Windows, with isolated temporary
 profiles and a loopback fixture Identity. This is not installed-byte, production
 Google, physical Host/Member, or Stable release qualification.
 
+This is a historical acceptance record for behavior exercised on 2026-10-30,
+not acceptance of the subsequently clarified transfer policy. Under that
+policy, every restored plugin, including official bundled copies from the
+current app, requires new-Host review of metadata, requested capabilities, and
+Host compatibility, plus explicit owner approval before execution. This review
+is not an external security audit. Managed Registry plugin data and package
+bytes are preserved; external local-folder plugin code is excluded and must be
+reselected. Disabled, uninstalled, and pending-upgrade records may not
+auto-reactivate. No SDK, API, or schema change is required. Historical test
+results below do not claim these newer requirements passed.
+
 ## Baseline and changes
 
 - Source parent: `d3777c155632f23349ac2243f3fc615cb8759643`.

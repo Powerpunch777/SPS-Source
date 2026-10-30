@@ -85,6 +85,8 @@ function harness(overrides = {}, { search = "", confirm = true } = {}) {
   const calls = [];
   const api = {
     listSources: async () => [sourceA, sourceB],
+    listBundledReviews: async () => [],
+    stageBundledReview: async input => { calls.push({ method: "stageBundledReview", ...JSON.parse(JSON.stringify(input)) }); return { stage }; },
     listStages: async () => [],
     listDeveloperProjects: async () => [],
     getDeveloperContext: async () => null,
@@ -120,6 +122,32 @@ function harness(overrides = {}, { search = "", confirm = true } = {}) {
     output: () => [...elements.values()].map(element => element.innerHTML).join("\n"),
   };
 }
+
+test("restored current-app copies stage without implicit confirmation or enablement", async () => {
+  const review = { pluginId: "sps.default-memory", packageName: "memory <script>", version: "0.1.0",
+    capabilities: ["events.subscribe"], manifestSha256: "c".repeat(64) };
+  const h = harness({ listBundledReviews: async () => [review] });
+  await h.ready;
+  assert.match(h.get("#bundled-review-list").innerHTML, /memory &lt;script&gt;/);
+  const button = h.button("#bundled-review-list", "stage-bundled-review");
+  await h.click("#bundled-review-list", button);
+  assert.deepEqual(h.calls, [{ method: "stageBundledReview", pluginId: review.pluginId }]);
+  assert.match(h.get("#notice").textContent, /without running code/);
+  assert.equal(button.disabled, false);
+});
+
+test("restored bundle review failures stay stopped and support refresh", async () => {
+  const h = harness({ listBundledReviews: async () => { throw new Error("private-path"); } });
+  await h.ready;
+  assert.match(h.get("#bundled-review-list").innerHTML, /Could not load/);
+  assert.doesNotMatch(h.output(), /private-path/);
+  h.api.listBundledReviews = async () => [];
+  await h.get("#refresh-bundled-reviews").emit("click");
+  // Refresh handler schedules its async read without changing lifecycle state.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(h.get("#bundled-review-list").innerHTML, /No restored/);
+  assert.deepEqual(h.calls, []);
+});
 
 test("ignores late source inspection results and stages only the displayed source", async () => {
   const a = deferred();

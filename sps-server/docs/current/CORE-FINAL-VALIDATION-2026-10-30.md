@@ -41,6 +41,23 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- New-Host approval now also covers the current app's official bundle copies.
+  Core `b3da129` preserves inactive lifecycle states before manifest import.
+  Actual isolated source Main transfer, declined/accepted Registry approval and
+  two target restarts passed, including real relocated Default Memory code and
+  unchanged other-Workspace data. Core bootstrap20/20, UI4/4, all30 type checks
+  and full build passed. The unrelated global UI token gate remains failing,
+  not silently waived. See [approval evidence](../reviews/BUNDLED-RESTORE-APPROVAL-2026-10-31.md).
+- Exact Source `d3d0515`, run `41091696495`, is terminal failure in historical
+  installer replacement despite all17 non-Windows and earlier source/packaged
+  app scenarios passing. At 17:31:21 UTC the unchanged deadline found the old
+  uninstaller and an x86 PowerShell command classified as execution-policy
+  (without NoProfile/NonInteractive); forced cleanup124 was rejected. This is
+  best-effort command metadata, not proof of the instruction blocking. The
+  separate exact-source historical diagnostic `41091696529` instead returned
+  old-uninstaller exit2 after56074ms and natural Job closure. Neither proves a
+  successful upgrade. Bounded file-tree measurement is added for diagnosis.
+
 - Exact Source `1cbc497c94f668b8e7e2825114ebf30971cd4109`, run `41078863800`,
   passed all 17 non-Windows jobs and the actual source/packaged app scenarios,
   but failed historical installer replacement with the old uninstaller and its
