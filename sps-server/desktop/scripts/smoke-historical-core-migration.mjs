@@ -178,10 +178,14 @@ try {
   if (failure || cleanupErrors.length) throw new AggregateError([...(failure ? [failure] : []), ...cleanupErrors],
     "Historical Core schema migration acceptance did not qualify.");
 }
-console.log(JSON.stringify({ kind: "historical-core-schema-acceptance", historicalCore: HISTORICAL_CORE_SCHEMA_BASELINE.coreCommit,
+const evidence = { kind: "historical-core-schema-acceptance", historicalCore: HISTORICAL_CORE_SCHEMA_BASELINE.coreCommit,
   journalSha256: HISTORICAL_CORE_SCHEMA_BASELINE.journalSha256, sqlSha256: HISTORICAL_CORE_SCHEMA_BASELINE.sqlSha256,
   historicalMigrations: 157, addedMigrations: 19, recordsVerified: records.length, phases,
   javascriptBackupRestore: true, ownedDatabaseCleanup: true, historicalApplicationExecuted: false,
   installedDatabaseMigrationQualified: false, signedInstallerQualified: false, physicalTwoDeviceQualified: false,
-  ...(pendingJobCleanup ? { ownedJobCleanup: "pending-external-observation" } : {}) }));
-if (pendingJobCleanup) process.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE;
+  ...(pendingJobCleanup ? { ownedJobCleanup: "pending-external-observation" } : {}) };
+await new Promise((resolve, reject) => process.stdout.write(`${JSON.stringify(evidence)}\n`, error => error ? reject(error) : resolve()));
+// All clients, owned PostgreSQL and temporary files were already cleaned up.
+// The vendor's beforeExit hook forces zero, so flush output before explicitly
+// returning the pending code. Only the external Job owner may accept it.
+if (pendingJobCleanup) process.exit(OWNED_JOB_CLEANUP_PENDING_EXIT_CODE);

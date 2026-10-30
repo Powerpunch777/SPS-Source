@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import test from "node:test";
 
@@ -41,8 +42,42 @@ test("historical schema acceptance uses actual pinned SQL, data snapshots, backu
   assert.match(source, /if \(failure \|\| cleanupErrors\.length\) throw new AggregateError/);
   assert.match(source, /historicalApplicationExecuted: false/);
   assert.match(source, /installedDatabaseMigrationQualified: false/);
-  assert.match(source, /if \(pendingJobCleanup\) process\.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
+  assert.match(source, /await new Promise\(\(resolve, reject\) => process\.stdout\.write/);
+  assert.match(source, /if \(pendingJobCleanup\) process\.exit\(OWNED_JOB_CLEANUP_PENDING_EXIT_CODE\)/);
   assert.doesNotMatch(source, /DATABASE_URL|process\.argv\[\d+\].*postgres|runNsis|electron\.launch|catch\s*\{\s*\}/);
+});
+
+test("historical acceptance flushes actual evidence and preserves pending exit despite the vendor beforeExit hook", async () => {
+  const source = await readFile(script, "utf8");
+  const start = source.lastIndexOf("const evidence = {");
+  assert.ok(start > source.indexOf("if (failure || cleanupErrors.length) throw new AggregateError"));
+  const require = createRequire(new URL("../../../external/sps-core/server/package.json", import.meta.url));
+  const hookPath = createRequire(require.resolve("embedded-postgres")).resolve("async-exit-hook");
+  const entry = `import { createRequire } from 'node:module';
+    const require = createRequire(import.meta.url);
+    const hook = require(${JSON.stringify(hookPath)}); hook(done => { if (typeof done === 'function') done(); });
+    const pendingJobCleanup = true;
+    const OWNED_JOB_CLEANUP_PENDING_EXIT_CODE = 76;
+    const HISTORICAL_CORE_SCHEMA_BASELINE = { coreCommit: 'a'.repeat(40), journalSha256: 'b'.repeat(64), sqlSha256: 'c'.repeat(64) };
+    const phases = ['fixture-cleanup-completed']; const records = Array(12);
+    ${source.slice(start)}`;
+  const naturalExit = await exec(process.execPath, ["--input-type=module", "-e",
+    entry.replace("process.exit(OWNED_JOB_CLEANUP_PENDING_EXIT_CODE)", "process.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE")], {
+    timeout: 10_000, windowsHide: true, maxBuffer: 16_384,
+  });
+  assert.equal(naturalExit.stderr, "");
+  assert.equal(JSON.parse(naturalExit.stdout).ownedJobCleanup, "pending-external-observation");
+  await assert.rejects(exec(process.execPath, ["--input-type=module", "-e", entry], {
+    timeout: 10_000, windowsHide: true, maxBuffer: 16_384,
+  }), error => {
+    assert.equal(error.code, 76);
+    assert.equal(error.stderr, "");
+    const evidence = JSON.parse(error.stdout);
+    assert.equal(evidence.ownedJobCleanup, "pending-external-observation");
+    assert.equal(evidence.recordsVerified, 12);
+    assert.deepEqual(evidence.phases, ["fixture-cleanup-completed"]);
+    return true;
+  });
 });
 
 test("historical schema CI requires hosted reduced-token ownership and natural whole-Job cleanup", async () => {
