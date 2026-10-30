@@ -230,3 +230,13 @@ fixture-only assertion assumed an OK button ID of 1; the actual observed
 MessageBox exposed ID 2. The test now requires the observed enabled button and
 integer ID without pretending the diagnostic clicks or interprets it. All
 existing timeout, failure-code and natural-cleanup assertions remain intact.
+
+The first hosted reader run at `191cc34` (`41066568863`, Windows job
+`124099306684`) failed only its fixture's `visible === true` assertion. The
+actual owned private-station dialog had already been found with readable,
+untruncated diagnostics and the fixed fixture-message category. A private
+station need not show its windows to the interactive user. The fixture now
+checks that visibility is an observed boolean rather than requiring true;
+it still requires the real dialog/category/enabled button and failure 124
+before confirmed cleanup. No installer operation or timeout result was
+accepted by this correction. Exact corrected-HEAD hosted CI remains required.
