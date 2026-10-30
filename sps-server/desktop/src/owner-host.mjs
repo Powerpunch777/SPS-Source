@@ -122,15 +122,15 @@ function removeDirectoryInBackground(target, options) {
   void removeDirectoryWithRetry(target, options).catch(() => undefined);
 }
 
-async function moveDirectoryAside(target, { fsApi, delay } = {}) {
-  const stale = `${target}.stale-${process.pid}-${Date.now()}`;
-  try {
-    await fsApi.rename(target, stale);
-    return stale;
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    await removeDirectoryWithRetry(target, { fsApi, delay });
-    return null;
+async function renameOwnerRuntimeDirectory(source, destination, { fsApi, delay }) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fsApi.rename(source, destination);
+      return;
+    } catch (error) {
+      if (attempt >= 4 || !["EPERM", "EBUSY"].includes(error?.code)) throw error;
+      await delay(100 * (attempt + 1));
+    }
   }
 }
 
@@ -190,10 +190,10 @@ export async function materializeStableSpsOwnerHostNode({
   const temporaryMetadata = `${metadataPath}.tmp-${process.pid}-${Date.now()}`;
   try {
     await fsApi.copyFile(source, temporaryTarget);
-    await fsApi.rm(target, { force: true });
+    // Rename replaces an unlocked file atomically. Removing first would lose
+    // the previous executable if promotion fails, including on Windows.
     await fsApi.rename(temporaryTarget, target);
     await fsApi.writeFile(temporaryMetadata, `${JSON.stringify({ format: 1, sha256: sourceSha256 })}\n`, "utf8");
-    await fsApi.rm(metadataPath, { force: true });
     await fsApi.rename(temporaryMetadata, metadataPath);
     return target;
   } finally {
@@ -275,24 +275,50 @@ export async function materializeSpsOwnerHostRuntime({
   removeDirectoryInBackground(staleStagingRoot, { fsApi, delay });
   await removeDirectoryWithRetry(stagingRoot, { fsApi, delay });
   await fsApi.mkdir(stagingRoot, { recursive: true });
-  await fsApi.cp(path.join(sourceRuntimeRoot, "dist"), path.join(stagingRoot, "dist"), { recursive: true, dereference: false });
-  await fsApi.cp(sourceDependencyRoot, path.join(stagingRoot, "node_modules"), { recursive: true, dereference: false });
-  if (sourceHasBundledNode) {
-    await fsApi.cp(sourceBin, path.join(stagingRoot, "bin"), { recursive: true, dereference: false });
+  let staleTargetRoot = null;
+  try {
+    await fsApi.cp(path.join(sourceRuntimeRoot, "dist"), path.join(stagingRoot, "dist"), { recursive: true, dereference: false });
+    await fsApi.cp(sourceDependencyRoot, path.join(stagingRoot, "node_modules"), { recursive: true, dereference: false });
+    if (sourceHasBundledNode) {
+      await fsApi.cp(sourceBin, path.join(stagingRoot, "bin"), { recursive: true, dereference: false });
+    }
+    await fsApi.copyFile(sourceManifest, path.join(stagingRoot, "sps-owner-host-runtime.json"));
+    await fsApi.copyFile(sourceBootstrap, path.join(stagingRoot, "sps-owner-host-bootstrap.mjs"));
+    await fsApi.copyFile(sourcePackage, path.join(stagingRoot, "package.json"));
+    for (const entry of sourceSupport) {
+      const relative = path.relative(sourceRuntimeRoot, entry.source);
+      const sourceDirectory = path.dirname(entry.source);
+      const targetDirectory = path.join(stagingRoot, path.dirname(relative));
+      await fsApi.cp(sourceDirectory, targetDirectory, { recursive: true, dereference: false });
+    }
+    const previous = `${targetRuntimeRoot}.stale-${process.pid}-${Date.now()}`;
+    try {
+      await renameOwnerRuntimeDirectory(targetRuntimeRoot, previous, { fsApi, delay });
+      staleTargetRoot = previous;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await renameOwnerRuntimeDirectory(stagingRoot, targetRuntimeRoot, { fsApi, delay });
+    if (staleTargetRoot) removeDirectoryInBackground(staleTargetRoot, { fsApi, delay });
+    return targetRuntimeRoot;
+  } catch (error) {
+    if (staleTargetRoot) {
+      try {
+        let occupied = false;
+        try { await fsApi.lstat(targetRuntimeRoot); occupied = true; }
+        catch (lookupError) { if (lookupError?.code !== "ENOENT") throw lookupError; }
+        if (occupied) throw new Error("Runtime replacement destination is occupied; refusing rollback overwrite.");
+        await renameOwnerRuntimeDirectory(staleTargetRoot, targetRuntimeRoot, { fsApi, delay });
+      } catch (restoreError) {
+        // Preserve both versions when recovery is uncertain, just as the
+        // archive materializer does. Never delete the last previous runtime.
+        throw new AggregateError([error, restoreError],
+          `SPS legacy runtime replacement and rollback failed. Preserved previous runtime at ${staleTargetRoot} and candidate at ${stagingRoot}.`);
+      }
+    }
+    await removeDirectoryWithRetry(stagingRoot, { fsApi, delay }).catch(() => undefined);
+    throw error;
   }
-  await fsApi.copyFile(sourceManifest, path.join(stagingRoot, "sps-owner-host-runtime.json"));
-  await fsApi.copyFile(sourceBootstrap, path.join(stagingRoot, "sps-owner-host-bootstrap.mjs"));
-  await fsApi.copyFile(sourcePackage, path.join(stagingRoot, "package.json"));
-  for (const entry of sourceSupport) {
-    const relative = path.relative(sourceRuntimeRoot, entry.source);
-    const sourceDirectory = path.dirname(entry.source);
-    const targetDirectory = path.join(stagingRoot, path.dirname(relative));
-    await fsApi.cp(sourceDirectory, targetDirectory, { recursive: true, dereference: false });
-  }
-  const staleTargetRoot = await moveDirectoryAside(targetRuntimeRoot, { fsApi, delay });
-  await fsApi.rename(stagingRoot, targetRuntimeRoot);
-  if (staleTargetRoot) removeDirectoryInBackground(staleTargetRoot, { fsApi, delay });
-  return targetRuntimeRoot;
 }
 
 export async function resolveSpsOwnerHostRuntime({
