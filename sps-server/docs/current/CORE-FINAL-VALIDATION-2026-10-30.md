@@ -60,6 +60,13 @@ deferred Native development are excluded.
   two-Workspace restore/review/restart and separate pinned historical restore
   both exited 0. Core `ee400bc` full typecheck/build and sanitizer 15/15 passed;
   these do not replace final-HEAD hosted or installed-byte evidence.
+- Latest installer diagnostic at Source `a7e5859`, run `41067242330`, failed
+  after confirming an actual hidden old-uninstall error dialog in silent NSIS.
+  Supported production NSIS hooks now exit nonzero instead of awaiting that
+  dialog; the original uninstaller failure is still fatal. Focused 9/9 and full
+  Desktop 1639/1641 (two 8.3-alias skips) passed, and real NSIS preprocessing
+  passed without executing an installer. Actual new-HEAD assembly/error result
+  and successful historical replacement remain required.
 
 1. Fix reproduced Core defects before adding optional features. Preserve existing
    API, SDK, capability, Source, credential and authentication boundaries.

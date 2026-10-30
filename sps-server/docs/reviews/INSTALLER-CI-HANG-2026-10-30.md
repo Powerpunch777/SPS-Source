@@ -240,3 +240,55 @@ checks that visibility is an observed boolean rather than requiring true;
 it still requires the real dialog/category/enabled button and failure 124
 before confirmed cleanup. No installer operation or timeout result was
 accepted by this correction. Exact corrected-HEAD hosted CI remains required.
+
+## Actual Silent NSIS Error Dialog Confirmed
+
+Source `a7e5859fdbad7ffcce500ac4349b1d9fb66be8ed`, push run `41067242330`,
+Windows job `124101758274`, is terminal failure. Historical installation exited
+0 at 14:38:57 UTC; the next candidate replacement started immediately and
+timed out at 14:49:32 UTC. The actual owned Job held only the restricted
+launcher, Node/consoles and candidate setup; no old uninstaller was still live.
+The owned window reader returned `readOK: true`, `truncated: false`, and one
+hidden enabled dialog with message category `old_uninstall_failed` and an enabled
+button. Raw dialog text, paths, account information and numeric old exit code
+were deliberately not captured. Forced cleanup still failed acceptance with 124.
+
+This confirms a real silent-install error-prompt wait, rather than merely a slow
+CPU or a still-running uninstaller in this run. The pinned current builder's
+`handleUninstallResult` displays its localized old-uninstall failure MessageBox
+without a silent default. NSIS documents that `/SD` selects silent-mode behavior;
+see [MessageBox](https://nsis.sourceforge.io/Reference/MessageBox). The setup
+therefore waits on a modal even when `/S` was explicitly requested. Another
+older run (`9c38ad9`, `41060904764`) still held old-uninstaller/PowerShell at its
+deadline; this result does not retroactively identify that different wait.
+
+A supported product NSIS include now rejects launch failure and
+nonzero old-uninstaller exit immediately in silent mode while preserving the
+interactive localized error prompt. It will not skip the old uninstaller,
+ignore its failure, remove files itself, suppress data checks or accept a
+timeout. Propagating the original nonzero exit will expose the underlying
+uninstaller failure on the next hosted run. That cause and successful actual
+replacement remain unresolved; the dialog fix alone is not an upgrade pass.
+
+The configured `build/installer.nsh` implements the vendor-supported
+`customUnInstallCheck` and `customUnInstallCheckCurrentUser` hooks. Launch errors
+exit 2; otherwise the original nonzero `$R0` exits unchanged. Silent failure
+branches contain no MessageBox; interactive failures retain the localized
+prompt. A successful old-uninstaller result returns to the unchanged vendor
+installation sequence. No alternate uninstaller, kill, registry deletion,
+file removal or keep/delete-data flag is introduced.
+
+The parent found the existing electron-builder cache's NSIS 3.0.4.1 compiler
+and ran its `/SAFEPPO` preprocessing against the committed harmless
+`test/fixtures/nsis-uninstall-result.nsi` with this exact include. Both supported
+macros and their labels expanded successfully (exit 0). No output installer or
+NSIS executable was run locally. This is preprocessing evidence, not full
+NSIS assembly, actual error exit, or a successful historical replacement;
+the next hosted real builder/install run must supply those results.
+
+After adding the production include, focused installer/safety/diagnostic tests
+passed 9/9. The full Desktop spec-reporter suite passed 1639 of 1641 tests,
+with two unavailable-8.3-alias skips and zero failures (exit 0). Its first run
+caught the release-channel test's exact old NSIS-options object; that test now
+requires the new supported include while preserving every prior policy option.
+No test is permitted to treat the propagated old-uninstaller error as success.

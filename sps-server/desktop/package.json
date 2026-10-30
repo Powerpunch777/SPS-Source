@@ -118,6 +118,7 @@
       "oneClick": true,
       "perMachine": false,
       "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh",
       "useZip": false,
       "differentialPackage": false
     }
