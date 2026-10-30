@@ -82,6 +82,7 @@ import {
   shouldRefreshJoinedDesktopNode,
 } from "./node-activation.mjs";
 import { isSpsTechnicalMemberAccessRemoved } from "./member-access.mjs";
+import { recoverSpsTechnicalMembership } from "./owner-membership-recovery.mjs";
 import { consumeLegacyDesktopConnectionMigration, emptyState, hasPendingLegacyDesktopOwnerAdoption, loadState, saveState } from "./state.mjs";
 import {
   getSpsAccountConnection,
@@ -677,6 +678,7 @@ function captureWorkspaceReadScope(profile = state.profile) {
     get profile() { return profileSnapshot; },
     get teamAccess() { return teamAccessSnapshot; },
     assertCurrent,
+    assertOwnerContext: assertOwner,
     isCurrent,
     refreshProfileAfterOwnedMutation() {
       assertOwner();
@@ -2540,44 +2542,37 @@ async function ensurePrivateTeamOwnerMembership() {
     throw new Error("Sign in with this SPS Owner Host account before managing its team.");
   }
 
+  const assertCurrent = captureOwnerMembershipRecoveryScope();
+  const { companyId, url: hubUrl, hostname } = state.teamAccess;
   await requireReadyOwnerHost();
+  assertCurrent();
   await reconcileSpsTailscaleServe({
-    hostname: state.teamAccess.hostname,
+    hostname,
     ownerHostUrl: requireSpsOwnerHostOrigin(ownerHostStatus.url),
   });
-
-  const companyId = state.teamAccess.companyId;
-  const accessibleCompanies = await listCurrentOwnerIdentityCompanies();
-  if (accessibleCompanies.some((company) => company.id === companyId)) {
-    return { recovered: false, companies: accessibleCompanies };
-  }
+  assertCurrent();
 
   // A Desktop can survive account refreshes and partially completed older
   // hand-offs. Local launch proofs authorize recovery, not a workflow role.
   // The technical Member invitation is accepted through the Identity route;
   // Host authority remains the separate local Desktop proof.
-  const recoveryInvitation = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/invites`, {
-    method: "POST",
-    ownerBootstrap: true,
-    body: {
-      allowedJoinTypes: "human",
-      humanRole: "operator",
-      expiresInMinutes: 15,
-      agentMessage: null,
-    },
+  return recoverSpsTechnicalMembership({
+    companyId,
+    assertCurrent,
+    listMemberships: () => listCurrentOwnerIdentityCompanies(),
+    createInvitation: () => ownerHostApi(`/companies/${encodeURIComponent(companyId)}/invites`, {
+      method: "POST",
+      ownerBootstrap: true,
+      assertCurrent,
+      body: {
+        allowedJoinTypes: "human",
+        humanRole: "operator",
+        expiresInMinutes: 15,
+        agentMessage: null,
+      },
+    }),
+    acceptInvitation: token => acceptSpsIdentityInvite(hubUrl, token),
   });
-  if (typeof recoveryInvitation?.token !== "string") {
-    throw new Error("SPS Owner Host did not return a membership recovery invitation.");
-  }
-  const accepted = await acceptSpsIdentityInvite(state.teamAccess.url, recoveryInvitation.token);
-  if (accepted?.status !== "approved") {
-    throw new Error("SPS Identity did not approve this Owner membership recovery.");
-  }
-  const verifiedCompanies = await listCurrentOwnerIdentityCompanies();
-  if (!verifiedCompanies.some((company) => company.id === companyId)) {
-    throw new Error("SPS could not verify the recovered Owner membership.");
-  }
-  return { recovered: true, companies: verifiedCompanies };
 }
 
 async function stageRegistryPluginFromFilePicker() {
@@ -4023,7 +4018,29 @@ function initialOwnerHostCompanyName() {
   return accountName ? `${accountName} Workspace` : "SPS Workspace";
 }
 
-async function recoverInitialOwnerHostMemberships(recoverableCompanies) {
+function captureOwnerMembershipRecoveryScope() {
+  if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
+    throw new Error("Only the signed-in Host can recover Workspace membership.");
+  }
+  const scope = captureWorkspaceReadScope();
+  const connectionGeneration = ownerVaultOperations.connectionGeneration();
+  const connectionFingerprint = () => {
+    const profile = { ...state.profile };
+    delete profile.companyId;
+    return JSON.stringify(profile);
+  };
+  const connection = connectionFingerprint();
+  return () => {
+    scope.assertOwnerContext();
+    if (!currentAccountOwnsOwnerHost()
+      || ownerVaultOperations.connectionGeneration() !== connectionGeneration
+      || connectionFingerprint() !== connection) {
+      throw new Error("SPS Host connection changed during membership recovery.");
+    }
+  };
+}
+
+async function recoverInitialOwnerHostMemberships(recoverableCompanies, assertCurrent = captureOwnerMembershipRecoveryScope()) {
   // A pre-authenticated SPS Vault can already contain companies created by an
   // older Desktop build. Inspecting that local Vault requires both Desktop
   // launch proofs; accepting the short-lived invitation still uses the real
@@ -4031,45 +4048,52 @@ async function recoverInitialOwnerHostMemberships(recoverableCompanies) {
   // the pre-identity -> authenticated migration.
   const companies = Array.isArray(recoverableCompanies)
     ? normalizeCompanyList(recoverableCompanies)
-    : normalizeCompanyList(await ownerHostApi("/companies", { ownerBootstrap: true }));
+    : normalizeCompanyList(await ownerHostApi("/companies", { ownerBootstrap: true, assertCurrent }));
   for (const company of companies) {
-    const invitation = await ownerHostApi(`/companies/${encodeURIComponent(company.id)}/invites`, {
-      method: "POST",
-      ownerBootstrap: true,
-      body: {
-        allowedJoinTypes: "human",
-        humanRole: "operator",
-        expiresInMinutes: 15,
-        agentMessage: null,
-      },
+    await recoverSpsTechnicalMembership({
+      companyId: company.id,
+      assertCurrent,
+      listMemberships: () => ownerHostApi("/companies", { sessionOnly: true, assertCurrent }),
+      createInvitation: () => ownerHostApi(`/companies/${encodeURIComponent(company.id)}/invites`, {
+        method: "POST",
+        ownerBootstrap: true,
+        assertCurrent,
+        body: {
+          allowedJoinTypes: "human",
+          humanRole: "operator",
+          expiresInMinutes: 15,
+          agentMessage: null,
+        },
+      }),
+      acceptInvitation: token => ownerHostApi(`/invites/${encodeURIComponent(token)}/accept`, {
+        method: "POST",
+        sessionOnly: true,
+        assertCurrent,
+        body: { requestType: "human" },
+      }),
     });
-    if (typeof invitation?.token !== "string") {
-      throw new Error(`SPS Owner Host could not recover access to ${company.name}.`);
-    }
-    const accepted = await ownerHostApi(`/invites/${encodeURIComponent(invitation.token)}/accept`, {
-      method: "POST",
-      body: { requestType: "human" },
-    });
-    if (accepted?.status !== "approved") {
-      throw new Error(`SPS Identity did not approve recovered access to ${company.name}.`);
-    }
   }
+  assertCurrent();
   return companies;
 }
 
 async function ensureInitialOwnerHostCompany() {
   if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) return [];
+  const assertCurrent = captureOwnerMembershipRecoveryScope();
 
   // This protected local read is also the durable Core-admin bootstrap for
   // the signed-in Host. It is safe to repeat and never replaces a real admin
   // belonging to another SPS account.
   const vaultCompanies = normalizeCompanyList(await ownerHostApi("/companies", {
     ownerBootstrap: true,
+    assertCurrent,
   }));
-  let companies = await refreshOwnerHostCompanies();
+  // UI refreshes may be superseded and return an empty sentinel. Membership
+  // decisions require an unsuperseded read of the actual signed-in session.
+  let companies = normalizeCompanyList(await ownerHostApi("/companies", { sessionOnly: true, assertCurrent }));
   if (companies.length === 0) {
-    await recoverInitialOwnerHostMemberships(vaultCompanies);
-    companies = await refreshOwnerHostCompanies();
+    await recoverInitialOwnerHostMemberships(vaultCompanies, assertCurrent);
+    companies = normalizeCompanyList(await ownerHostApi("/companies", { sessionOnly: true, assertCurrent }));
   }
   if (companies.length === 0) {
     // The two local Desktop proofs plus the real SPS session are required by
@@ -4079,17 +4103,20 @@ async function ensureInitialOwnerHostCompany() {
       method: "POST",
       body: { name: initialOwnerHostCompanyName() },
       ownerBootstrap: true,
+      assertCurrent,
     });
     companies = normalizeCompanyList([created]);
-    ownerHostCompanies = companies;
   }
 
+  assertCurrent();
+  ownerHostCompanies = companies;
+  ownerHostCompaniesResolvedGeneration = ++ownerHostCompaniesRequestGeneration;
   const selectedCompanyId = state.profile?.companyId;
   if (state.profile && !companies.some((company) => company.id === selectedCompanyId)) {
     state.profile.companyId = companies[0]?.id ?? "";
   }
   state.companies = companies.map((company) => ({ ...company }));
-  await persistState();
+  await persistState({ beforeCommit: assertCurrent });
   return companies;
 }
 
