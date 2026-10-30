@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Core: `ee400bccc0258185e89fa01187336625d0eeb8b4` (earlier evidence names its prior revision explicitly).
+- Core: `258800f0d931932d855e275ed7cfab2c1bf0a080` (earlier evidence names its prior revision explicitly).
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native

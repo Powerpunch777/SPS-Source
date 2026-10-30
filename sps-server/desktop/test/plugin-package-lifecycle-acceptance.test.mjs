@@ -31,6 +31,11 @@ test("actual Desktop lifecycle acceptance uses exact Host confirmation and verif
     'registry.expectConfirmation(confirmation)', 'registry.assertConfirmationHandled()',
     'assert.deepEqual(version.data, { version: "0.1.0" })', 'secondCompany',
   ]) assert.ok(source.includes(proof), `Missing lifecycle acceptance assertion: ${proof}`);
+  const staged = source.indexOf('assert.equal(stage.status, "staged")');
+  const actualControl = source.indexOf('`review button ${version}`', staged);
+  const confirmation = source.indexOf("registry.expectConfirmation(confirmation)", actualControl);
+  const click = source.indexOf('`Apply reviewed lifecycle ${version}`', confirmation);
+  assert.ok(staged >= 0 && actualControl > staged && confirmation > actualControl && click > confirmation);
   assert.doesNotMatch(source, /approvedCapabilityEscalation|approvedDataMigrationPlanHash|SPS_DESKTOP_E2E_SKIP|--live-agent/);
   const noAi = await readFile(new URL("../scripts/no-ai-checklist-acceptance.mjs", import.meta.url), "utf8");
   const restarted = noAi.indexOf("workspace = await restart(");

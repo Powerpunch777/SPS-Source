@@ -120,6 +120,12 @@ export async function runSignedPluginLifecycleAcceptance({ cdp, company, secondC
       const stage = stages.find(row => row.pluginId === pluginKey && row.version === version);
       assert.equal(stage.artifactSha256, fixture.artifacts.find(item => item.version === version).sha256);
       assert.equal(stage.status, "staged");
+      // Core can commit the stage before the renderer's awaited queue refresh
+      // publishes its button. Require the real reviewed control, not DB timing.
+      await eventually(() => registry.evaluate(`(() => {
+        const button = document.querySelector(${JSON.stringify(`.enable-stage[data-stage-id="${stage.stageId}"]`)});
+        return Boolean(button && !button.disabled);
+      })()`), Boolean, `review button ${version}`);
       registry.expectConfirmation(confirmation);
       await click(registry, `.enable-stage[data-stage-id="${stage.stageId}"]`, `Apply reviewed lifecycle ${version}`);
       await eventually(() => registry.evaluate(`({ text: document.querySelector('#notice')?.textContent ?? '', error: document.querySelector('#notice')?.classList.contains('error') === true })`),

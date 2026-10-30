@@ -119,3 +119,35 @@ Exact new-HEAD hosted CI and installed-byte qualification remain required.
 The transfer inventory detects accidental changes, not an authenticated backup
 signature. New Host review remains required even when all hashes match. No real
 installed user profile or external plugin checkout was a test target.
+
+## Hosted Follow-Up And Test Synchronization
+
+Source `e189d575f3046585d316d9a23459810a7ee8a7dc` push run `41071168629`
+failed two tests in Linux serialized shard 3/4: the real PostgreSQL package-
+operation tests still expected status `error` after restore. The approved new
+policy deliberately produces `uninstalled` and a cleared package path. Core
+`258800f0d931932d855e275ed7cfab2c1bf0a080` updates those two stale expectations
+and additionally requires unchanged plugin ID/key/version/manifest and retained
+journal identity/snapshots. All 13 tests passed against actual temporary
+PostgreSQL; production behavior and prior cancellation assertions are unchanged.
+
+The same Source push's Windows source runtime-discovery test observed the new
+Registry stage through Core before the renderer had inserted its review button.
+It failed immediately with `not found`, rather than proving an activation bug.
+The acceptance now uses the existing bounded polling helper to await the actual
+enabled stage-specific review control before requesting/clicking its unchanged
+confirmation. It still requires the same artifact/version and real UI action;
+there is no direct lifecycle/approval bypass or increased timeout.
+
+The combined actual source runtime-discovery acceptance exited 0 after that
+correction: signed v1/v2 update, genuine failing-v3 activation rollback, exact-v1
+Host-confirmed rollback, both Workspace states, simulated signed Node/Agent
+descriptor/loopback model control, natural restart and all three Main exits/six
+output EOFs/owned-data cleanup. It does not use a real model provider or external
+Runner computer. The dedicated lifecycle/transfer fixture tests passed 5/5.
+
+Separately, PR run `41071175798` for Source e189d57, Windows job `124115433184`,
+completed its actual Main managed-plugin transfer step successfully at
+14:33:55 UTC (started 14:33:06). The rest of the job was still live, and this
+PR-run step is not a full workflow or new-HEAD installer qualification. The
+exact new Source/Core pair still requires its own full hosted gate.
