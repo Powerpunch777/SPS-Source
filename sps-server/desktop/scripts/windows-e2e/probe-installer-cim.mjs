@@ -9,7 +9,8 @@ import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "../preview-e2e-cleanup-cont
 
 const args = process.argv.slice(2);
 const variant = args[0];
-validateInstallerCimProbeInput({ platform: process.platform, variant, args });
+const architecture = process.env.SPS_INSTALLER_CIM_PROBE_ARCH ?? "x64";
+validateInstallerCimProbeInput({ platform: process.platform, variant, architecture, args });
 const parent = await realpath(os.tmpdir());
 await assertPlainDirectory(parent);
 const root = await mkdtemp(path.join(parent, "sps-installer-cim-probe-"));
@@ -17,8 +18,8 @@ const identity = await lstat(root, { bigint: true });
 const started = Date.now();
 let passed = false;
 try {
-  const invocation = buildInstallerCimProbe({ variant, fixtureRoot: root, windowsRoot: process.env.WINDIR });
-  console.log(JSON.stringify({ installerCimDiagnostic: true, variant, stage: "powershell-start", installerExecuted: false }));
+  const invocation = buildInstallerCimProbe({ variant, architecture, fixtureRoot: root, windowsRoot: process.env.WINDIR });
+  console.log(JSON.stringify({ installerCimDiagnostic: true, variant, architecture, stage: "powershell-start", installerExecuted: false }));
   let result;
   try {
     const output = await promisify(execFile)(invocation.executable, invocation.args, invocation.options);
@@ -27,7 +28,7 @@ try {
     result = { exitCode: Number.isInteger(error.code) ? error.code : null, signal: error.signal ?? null,
       stdout: error.stdout ?? Buffer.alloc(0), stderr: error.stderr ?? Buffer.alloc(0) };
   }
-  const summary = summarizeInstallerCimProbe({ variant, ...result, elapsedMs: Date.now() - started });
+  const summary = summarizeInstallerCimProbe({ variant, architecture, ...result, elapsedMs: Date.now() - started });
   console.log(JSON.stringify(summary));
   passed = summary.matchedExpectedExit;
 } finally {

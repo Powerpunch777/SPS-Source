@@ -32,6 +32,11 @@ test("installer CIM probe builds only the fixed readonly startup, legacy, and cu
     });
     assert.equal(probe.args.includes("-File"), false);
     assert.equal(probe.args.some(arg => /Remove-|Stop-Process|Start-Process|Set-Item|taskkill/i.test(arg)), false);
+    assert.deepEqual(buildInstallerCimProbe({ variant, architecture: "x64", fixtureRoot, windowsRoot }), probe);
+    assert.deepEqual(buildInstallerCimProbe({ variant, architecture: "x86", fixtureRoot, windowsRoot }), {
+      ...probe,
+      executable: "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+    });
   }
 });
 
@@ -40,6 +45,11 @@ test("installer CIM input validation permits only the fixed Windows variants and
     assert.equal(validateInstallerCimProbeInput({
       platform: "win32", variant, args: [variant, cleanupArgument],
     }), undefined);
+    for (const architecture of ["x64", "x86"]) {
+      assert.equal(validateInstallerCimProbeInput({
+        platform: "win32", variant, architecture, args: [variant, cleanupArgument],
+      }), undefined);
+    }
   }
 
   for (const invalid of [
@@ -49,6 +59,20 @@ test("installer CIM input validation permits only the fixed Windows variants and
     { platform: "win32", variant: "current", args: ["current", "--other"] },
     { platform: "win32", variant: "legacy", args: ["legacy", cleanupArgument, "extra"] },
   ]) assert.throws(() => validateInstallerCimProbeInput(invalid));
+});
+
+test("installer CIM helpers strictly reject architectures other than x64 and x86", () => {
+  for (const architecture of [null, "", "X64", "X86", "arm64", "ia32", "x86 ", " x64", 32, ["x86"], {}]) {
+    assert.throws(() => validateInstallerCimProbeInput({
+      platform: "win32", variant: "current", architecture, args: ["current", cleanupArgument],
+    }));
+    assert.throws(() => buildInstallerCimProbe({
+      variant: "current", architecture, fixtureRoot, windowsRoot,
+    }));
+    assert.throws(() => summarizeInstallerCimProbe({
+      variant: "current", architecture, exitCode: 1, signal: null, stdout: "", stderr: "", elapsedMs: 0,
+    }));
+  }
 });
 
 test("installer CIM probe rejects untrusted variants and command paths", () => {
@@ -68,20 +92,26 @@ test("installer CIM probe rejects untrusted variants and command paths", () => {
 
 test("installer CIM summaries expose counts and status only, and match only clean expected exits", () => {
   for (const [variant, exitCode] of [["startup", 0], ["legacy", 1], ["current", 1]]) {
-    const summary = summarizeInstallerCimProbe({
+    const result = {
       variant, exitCode, signal: null, stdout: Buffer.alloc(0), stderr: "", elapsedMs: 25,
-    });
+    };
+    const summary = summarizeInstallerCimProbe(result);
     assert.deepEqual(summary, {
       installerCimDiagnostic: true,
       diagnosticOnly: true,
       installerExecuted: false,
       variant,
+      architecture: "x64",
       exitCode,
       signal: null,
       elapsedMs: 25,
       stdoutBytes: 0,
       stderrBytes: 0,
       matchedExpectedExit: true,
+    });
+    assert.deepEqual(summarizeInstallerCimProbe({ ...result, architecture: "x64" }), summary);
+    assert.deepEqual(summarizeInstallerCimProbe({ ...result, architecture: "x86" }), {
+      ...summary, architecture: "x86",
     });
   }
 

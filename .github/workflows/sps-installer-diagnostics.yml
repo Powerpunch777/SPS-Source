@@ -13,13 +13,14 @@ permissions:
 
 jobs:
   readonly-process-check:
-    name: Read-only PowerShell check (${{ matrix.variant }})
+    name: Read-only PowerShell check (${{ matrix.architecture }}, ${{ matrix.variant }})
     runs-on: windows-latest
     timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
         variant: [startup, legacy, current]
+        architecture: [x64, x86]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v6
@@ -29,4 +30,6 @@ jobs:
       - name: Diagnose under the existing restricted token and owned Job
         shell: powershell
         working-directory: sps-server/desktop
+        env:
+          SPS_INSTALLER_CIM_PROBE_ARCH: ${{ matrix.architecture }}
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode probe-installer-cim-${{ matrix.variant }}

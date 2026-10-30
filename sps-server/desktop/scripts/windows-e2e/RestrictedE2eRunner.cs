@@ -296,7 +296,7 @@ public static class RestrictedE2eRunner
             "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)",
             "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432",
             "HOME", "HOMEDRIVE", "HOMEPATH", "GITHUB_ACTIONS", "RUNNER_OS", "RUNNER_ENVIRONMENT", "CI",
-            "SPS_DESKTOP_E2E_SOURCE", "SPS_DESKTOP_E2E_BINARY", "SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS"
+            "SPS_DESKTOP_E2E_SOURCE", "SPS_DESKTOP_E2E_BINARY", "SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS", "SPS_INSTALLER_CIM_PROBE_ARCH"
         })
         {
             string value = Environment.GetEnvironmentVariable(name);

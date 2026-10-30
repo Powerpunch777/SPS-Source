@@ -64,3 +64,23 @@ clean-output requirements to reject nonterminating CIM errors that also return
 the expected exit code. Full Desktop `node --test --test-reporter=spec
 test/*.test.mjs`: 1649 total, 1647 passed, two unavailable-8.3-alias skips, zero
 failures. Exact committed-HEAD hosted diagnostic results remain pending.
+
+## First Hosted Diagnostic Result
+
+Source `c23d86d4636750e23aa201ec45aab4e2c68429bc`, separate run `41087991576`,
+completed all three x64 probes successfully in the hosted private window station.
+Startup took 216 ms, legacy query 21070 ms, current query 30753 ms. Output/error
+byte counts were zero; each owner observed natural Job emptiness. Thus a generic
+claim that the restricted token or private station always prevents PowerShell/
+CIM execution is disproved. This narrow result does not reproduce or qualify
+the old uninstaller handoff.
+
+The next diagnostic also selects the fixed SysWOW64 executable to compare x86
+and x64 behavior: a 32-bit NSIS caller can have System32 redirected, unlike the
+64-bit Node probe. The architecture is strictly x64/x86 and affects only this
+read-only probe, not product launch or installer policy. See Microsoft's
+[WOW64 redirector reference](https://learn.microsoft.com/en-us/windows/win32/winprog64/file-system-redirector).
+The actual local x86 legacy query took 1425 ms and exited naturally with clean
+expected status. Hosted cross-architecture comparison and actual old-uninstaller
+causality remain pending. No timeout increase or successful installer claim is
+derived from these diagnostics.
