@@ -269,11 +269,13 @@ public static class RestrictedE2eRunner
             || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
-            || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation";
+            || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation"
+            || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery";
     }
     static bool OwnedJobGateMode(string value)
     {
         return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
+            || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery"
             || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "workspace-pending"
@@ -384,6 +386,9 @@ public static class RestrictedE2eRunner
         if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true"
             || Environment.GetEnvironmentVariable("RUNNER_OS") != "Windows")
             throw new InvalidOperationException("Desktop launch mode is restricted to Windows CI");
+        if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery")
+            && Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
+            throw new InvalidOperationException("Owner Vault E2E requires a GitHub-hosted runner");
         foreach (string script in new[] { "sync-local-desktop-node.mjs", "sync-local-plugin-sdk.mjs" })
         {
             // The normal build stage prepares these copies and native helpers.
@@ -397,6 +402,8 @@ public static class RestrictedE2eRunner
         if (mode == "native-plugin-sdk") return RunNativePluginSdk(node, directory);
         if (mode == "execution-control") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--execution-control", OwnedJobCleanupArgument);
         if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", OwnedJobCleanupArgument);
+        if (mode == "owner-vault-transfer") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", OwnedJobCleanupArgument);
+        if (mode == "owner-vault-crash-recovery") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", "--crash-after-promotion", OwnedJobCleanupArgument);
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "installer-data-preservation")
         {

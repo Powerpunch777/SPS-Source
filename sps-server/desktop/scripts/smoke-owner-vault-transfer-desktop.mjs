@@ -10,6 +10,9 @@ import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 import { createWorkspaceE2eChildTracker } from "./workspace-e2e-child-tracker.mjs";
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
+import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
+import { readSpsOwnerVaultRestoreReceipt } from "../src/owner-vault-restore-receipt.mjs";
+import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const core = path.resolve(root, "../../external/sps-core");
@@ -17,6 +20,11 @@ const require = createRequire(path.join(core, "package.json"));
 const { _electron: electron } = require("@playwright/test");
 const timeout = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const execFileAsync = promisify(execFile);
+const crashAfterPromotion = process.argv.includes("--crash-after-promotion");
+const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
+if (process.argv.slice(2).some(arg => !["--crash-after-promotion", OWNED_JOB_CLEANUP_ARGUMENT].includes(arg))) {
+  throw new Error("Unknown transfer acceptance mode.");
+}
 if (process.platform !== "win32") throw new Error("Owner Vault Main acceptance requires Windows.");
 if (process.env.SPS_DESKTOP_E2E_BINARY) throw new Error("This acceptance is source-only, not signed release evidence.");
 
@@ -28,6 +36,8 @@ const targetProfile = path.join(fixture.directory, "target");
 const exportDirectory = path.join(fixture.directory, "export");
 const ownedApps = new Set();
 const phases = [];
+const crashedApps = new Set();
+let confirmedCrashCount = 0;
 let failure;
 let applicationOutput = "";
 
@@ -128,10 +138,59 @@ async function stop(app) {
     } });
   assert.equal(stopped.graceful, true, "Forced shutdown cannot qualify a transfer or permit fixture deletion.");
   const output = await tracker.waitForOutputEnd(5000);
-  assert.equal(output.orderly, output.children);
+  assert.equal(output.orderly + confirmedCrashCount, output.children);
   assert.equal(output.outputEnded, output.children * 2);
   assert.equal(output.outputFailed, 0);
   ownedApps.delete(app);
+}
+
+async function exitAfterPromotion(app, profile) {
+  await app.evaluate(({ app }, profile) => {
+    const fs = process.getBuiltinModule("fs/promises");
+    const path = process.getBuiltinModule("path");
+    const originalRename = fs.rename;
+    const target = path.join(profile, "owner-vault");
+    let armed = true;
+    fs.rename = async (...args) => {
+      const [source, destination] = args;
+      const selected = armed && destination === target && path.dirname(source) === profile
+        && /^owner-vault\.restore-[0-9a-f-]{36}$/.test(path.basename(source));
+      const result = await originalRename(...args);
+      if (selected) {
+        armed = false;
+        // This is a source-only fault injection, after the actual rename.
+        // app.exit intentionally skips Main's normal quit/drain handlers.
+        app.exit(71);
+      }
+      return result;
+    };
+  }, profile);
+}
+
+async function observePromotionExit(app, setup) {
+  const child = app.process();
+  let timer;
+  const exited = once(child, "exit");
+  const operation = setup.evaluate(() => window.spsDesktop.restoreOwnerServer());
+  // A disappearing renderer rejects its pending IPC; only the exact observed
+  // process exit and on-disk receipt can qualify the intended fault boundary.
+  const outcome = operation.then(() => "returned", () => "disconnected");
+  try {
+    const [code, signal] = await Promise.race([exited, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Promotion fault did not terminate its owned Main.")), timeout);
+    })]);
+    assert.equal(code, 71);
+    assert.equal(signal, null);
+    assert.equal(await bounded(outcome, "interrupted renderer IPC closure"), "disconnected");
+    crashedApps.add(app);
+    confirmedCrashCount += 1;
+    ownedApps.delete(app);
+    const output = await tracker.waitForOutputEnd(10_000);
+    assert.equal(output.exited, output.children);
+    assert.equal(output.outputEnded, output.children * 2);
+    assert.equal(output.outputFailed, 0);
+    await assertNoFixtureProcesses();
+  } finally { clearTimeout(timer); }
 }
 
 async function assertNoFixtureProcesses() {
@@ -192,18 +251,37 @@ try {
   const before = await target.page.evaluate(() => window.spsDesktop.getStatus());
   assert.equal(before.profile, null);
   await chooseOnly(target.app, "Choose an SPS Server transfer folder to restore", exported.bundleRoot);
-  const restored = await bounded(target.page.evaluate(() => window.spsDesktop.restoreOwnerServer()), "Main restore");
+  let restoredApp = target;
+  if (crashAfterPromotion) {
+    await exitAfterPromotion(target.app, targetProfile);
+    await observePromotionExit(target.app, target.page);
+    const receipt = await readSpsOwnerVaultRestoreReceipt({ vaultRoot: path.join(targetProfile, "owner-vault") });
+    assert.equal(receipt?.ownerSubject, "sps-desktop-e2e-owner");
+    assert.deepEqual(await readFile(path.join(targetProfile, "owner-vault", attachment)), content);
+    phases.push("abrupt-exit-after-real-promotion", "owner-receipt-and-file-retained");
+    console.log("[vault-transfer] promotion fault observed; original account receipt and file retained");
+    restoredApp = await launch(targetProfile, origin);
+    await signIn(restoredApp.page, origin);
+    await readyHost(restoredApp.page);
+    const recovered = await restoredApp.page.evaluate(() => window.spsDesktop.getStatus());
+    assert.equal(recovered.profile, null, "Interrupted activation must not invent a replacement connection.");
+    await bounded(restoredApp.page.evaluate(() => window.spsDesktop.useOwnerHost()), "reopen recovered local Host");
+    phases.push("explicit-original-account-host-reopen");
+  }
+  const restored = crashAfterPromotion
+    ? await restoredApp.page.evaluate(() => window.spsDesktop.getStatus())
+    : await bounded(target.page.evaluate(() => window.spsDesktop.restoreOwnerServer()), "Main restore");
   assert.equal(restored.ownerHost.state, "running");
-  assert.equal(restored.ownerHost.restoreAttempts.length, 0);
+  assert.equal(restored.ownerHost.restoreAttempts.length, crashAfterPromotion ? 1 : 0);
   assert.equal(restored.profile.connectionKind, "owner-host");
-  await bounded(target.page.evaluate(() => window.spsDesktop.openWorkspace()), "open restored Workspace");
-  const restoredWorkspace = await workspace(target.app, target.page);
+  await bounded(restoredApp.page.evaluate(() => window.spsDesktop.openWorkspace()), "open restored Workspace");
+  const restoredWorkspace = await workspace(restoredApp.app, restoredApp.page);
   const projects = await api(restoredWorkspace, `/api/companies/${company.id}/projects`);
   assert.ok(projects.some(row => row.id === project.id && row.name === project.name));
   assert.deepEqual(await readFile(path.join(restored.ownerHost.vaultPath, attachment)), content);
   phases.push("main-restore-returned-running", "typed-row-and-attachment-preserved");
   console.log("[vault-transfer] restored Host running; typed row and attachment preserved");
-  await stop(target.app);
+  await stop(restoredApp.app);
 
   const restarted = await launch(targetProfile, origin);
   await signIn(restarted.page, origin);
@@ -224,16 +302,23 @@ try {
   for (const app of ownedApps) {
     try { await stop(app); } catch (error) { cleanupErrors.push(error); }
   }
-  await identity.close().catch(error => cleanupErrors.push(error));
+  let identityClosed = false;
+  await identity.close().then(() => { identityClosed = true; }).catch(error => cleanupErrors.push(error));
   const processes = await tracker.waitForOutputEnd(5000);
   tracker.dispose();
-  if (processes.orderly !== processes.children || processes.outputFailed
-    || processes.outputEnded !== processes.children * 2) cleanupErrors.push(new Error("Owned Main/output cleanup incomplete."));
-  await assertNoFixtureProcesses().catch(error => cleanupErrors.push(error));
+  let fixtureProcessesAbsent = false;
+  await assertNoFixtureProcesses().then(() => { fixtureProcessesAbsent = true; }).catch(error => cleanupErrors.push(error));
+  try {
+    validateOwnerVaultE2eCleanup({ ...processes, expectedCrashCount: crashAfterPromotion ? 1 : 0,
+      confirmedCrashCount, fixtureProcessesAbsent, identityClosed });
+  } catch (error) { cleanupErrors.push(error); }
   if (!cleanupErrors.length) await fixture.remove().catch(error => cleanupErrors.push(error));
   if (failure || cleanupErrors.length) throw new AggregateError([...(failure ? [failure] : []), ...cleanupErrors],
     "Source Owner Vault Main acceptance did not qualify.");
 }
 console.log(JSON.stringify({ kind: "source-main-transfer-acceptance", phases, mockIdentity: true,
+  crashAfterPromotion, expectedCrashCount: crashedApps.size,
   signedInstallerQualified: false, previousStableUpgradeQualified: false, physicalTwoDeviceQualified: false,
-  ownedMainOutputAndTemporaryDataCleanup: true, wholeDescendantJobQualification: false }));
+  ownedMainOutputAndTemporaryDataCleanup: true, wholeDescendantJobQualification: false,
+  ...(ownedJobCleanupPending ? { ownedJobCleanup: "pending-external-observation" } : {}) }));
+if (ownedJobCleanupPending) process.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE;

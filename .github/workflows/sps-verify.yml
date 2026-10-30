@@ -451,6 +451,24 @@ jobs:
           SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode execution-control
 
+      - name: Verify Owner Vault transfer through source Desktop Main
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_SOURCE: "1"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode owner-vault-transfer
+
+      - name: Verify Owner Vault crash recovery through source Desktop Main
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_SOURCE: "1"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode owner-vault-crash-recovery
+
       - name: Build unpacked Windows Desktop for E2E
         working-directory: sps-server/desktop
         run: npx electron-builder --win dir --publish never
