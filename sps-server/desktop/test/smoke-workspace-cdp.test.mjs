@@ -103,15 +103,17 @@ test("socket close rejects every pending CDP command and clears its listeners", 
 });
 
 test("malformed CDP JSON rejects the call and closes the session", async () => {
-  const harness = createHarness();
-  const cdp = await openHarness(harness);
-  const command = cdp.command("Runtime.evaluate");
+  for (const invalidMessage of ["{", "null", "[]", "1"]) {
+    const harness = createHarness();
+    const cdp = await openHarness(harness);
+    const command = cdp.command("Runtime.evaluate");
 
-  harness.socket.dispatch("message", { data: "{" });
-  await assert.rejects(command, /malformed JSON response/);
-  assert.equal(harness.socket.listenerCount("message"), 0);
-  assert.equal(harness.socket.closed, true);
-  await cdp.close();
+    harness.socket.dispatch("message", { data: invalidMessage });
+    await assert.rejects(command, /malformed JSON response/);
+    assert.equal(harness.socket.listenerCount("message"), 0);
+    assert.equal(harness.socket.closed, true);
+    await cdp.close();
+  }
 });
 
 test("socket close before open rejects promptly and leaves no open timer", async () => {
@@ -121,4 +123,71 @@ test("socket close before open rejects promptly and leaves no open timer", async
   harness.socket.close();
   await assert.rejects(opening, /CDP socket failed before opening/);
   assert.equal(harness.socket.listenerCount("open"), 0);
+});
+
+test("bounded CDP diagnostics preserve click phases and context destruction after timeout without sensitive payloads", async () => {
+  const harness = createHarness();
+  const cdp = await openHarness(harness);
+  const command = cdp.evaluate("pending click expression", true);
+  const canary = "sensitive-cdp-payload-canary";
+  const emit = (message) => harness.socket.dispatch("message", { data: JSON.stringify(message) });
+
+  emit({ method: "Runtime.consoleAPICalled", params: { args: [
+    { type: "string", value: "__sps_e2e_click_phase__" }, { type: "string", value: "locating" },
+    { type: "string", value: canary },
+  ] } });
+  emit({ method: "Runtime.consoleAPICalled", params: { args: [
+    { type: "string", value: "__sps_e2e_click_phase__" }, { type: "string", value: "scrolling" },
+    { type: "string", value: canary },
+  ] } });
+  emit({ method: "Runtime.consoleAPICalled", params: { args: [
+    { type: "string", value: canary }, { type: "string", value: "dispatching" },
+  ] } });
+  emit({
+    method: "Runtime.executionContextDestroyed",
+    params: { executionContextId: 98765, origin: canary, name: canary, expression: canary, result: { value: canary } },
+    expression: canary,
+    result: { value: canary },
+  });
+
+  harness.fireTimer(10_000);
+  await assert.rejects(command, /Runtime\.evaluate timed out after 10000ms/);
+  assert.equal(harness.socket.closed, true);
+  assert.equal(harness.socket.listenerCount("message"), 0);
+
+  const snapshot = cdp.snapshotDiagnostics();
+  const phases = snapshot.recent.filter((entry) => entry.kind === "click").map((entry) => entry.phase);
+  assert.equal(phases.length, 2);
+  assert.equal(phases[0], "locating");
+  assert.equal(phases[1], "scrolling");
+  assert.ok(snapshot.recent.some((entry) => entry.kind === "lifecycle" && entry.event === "Runtime.executionContextDestroyed"));
+  assert.ok(snapshot.recent.some((entry) => entry.kind === "timeout" && entry.method === "Runtime.evaluate"));
+  assert.equal(snapshot.socketClosed, true);
+  assert.equal(JSON.stringify(snapshot).includes(canary), false);
+  await cdp.close();
+});
+
+test("CDP diagnostics stay bounded and snapshots do not expose mutable internal state", async () => {
+  const harness = createHarness();
+  const cdp = await openHarness(harness);
+  const pending = cdp.command("Runtime.evaluate");
+  const canary = "lifecycle-private-canary";
+  for (let index = 0; index < 100; index += 1) {
+    harness.socket.dispatch("message", { data: JSON.stringify({
+      method: "Runtime.executionContextCreated",
+      params: { origin: canary, name: canary, executionContextId: index, expression: canary, result: { value: canary } },
+    }) });
+  }
+
+  const first = cdp.snapshotDiagnostics();
+  assert.equal(first.recent.length, 40);
+  assert.equal(JSON.stringify(first).includes(canary), false);
+  first.recent[0].event = "mutated snapshot";
+  first.recent.push({ kind: "injected" });
+  const second = cdp.snapshotDiagnostics();
+  assert.equal(second.recent.length, 40);
+  assert.notEqual(second.recent[0].event, "mutated snapshot");
+  assert.equal(second.recent.some((entry) => entry.kind === "injected"), false);
+  await cdp.close();
+  await assert.rejects(pending, /CDP socket closed before the response arrived/);
 });

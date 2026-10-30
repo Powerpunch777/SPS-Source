@@ -338,10 +338,21 @@ async function openCdp(target) {
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   let id = 0;
   const pending = new Map();
+  const recent = [];
+  const diagnosticStart = Date.now();
+  let diagnosticSequence = 0;
+  const note = (kind, detail = {}) => {
+    recent.push({ sequence: ++diagnosticSequence, elapsedMs: Date.now() - diagnosticStart, kind, ...detail });
+    if (recent.length > 40) recent.shift();
+  };
+  const lifecycleEvents = new Set(["Runtime.executionContextCreated", "Runtime.executionContextDestroyed",
+    "Runtime.executionContextsCleared", "Inspector.detached", "Inspector.targetCrashed"]);
+  const clickPhases = new Set(["locating", "located", "scrolling", "scrolled", "dispatching", "dispatched"]);
   let socketFailed = false;
   const socketFailure = () => {
     if (socketFailed) return;
     socketFailed = true;
+    note("socket_closed", { pending: pending.size });
     for (const request of pending.values()) {
       clearTimeout(request.timeout);
       socket.removeEventListener("message", request.listener);
@@ -386,9 +397,14 @@ async function openCdp(target) {
       return;
     }
     const requestId = ++id;
+    const methodName = /^[A-Za-z]+\.[A-Za-z]+$/.test(method) ? method : "unknown";
+    note("request", { id: requestId, method: methodName });
     const listener = (event) => {
       let message;
-      try { message = JSON.parse(event.data); }
+      try {
+        message = JSON.parse(event.data);
+        if (!message || typeof message !== "object" || Array.isArray(message)) throw new Error("Invalid CDP message shape.");
+      }
       catch {
         pending.delete(requestId);
         clearTimeout(timeout);
@@ -398,16 +414,27 @@ async function openCdp(target) {
         socket.close();
         return;
       }
+      // Fixed, bounded diagnostics only: never retain expressions, URLs,
+      // arbitrary console arguments, exception text, tokens or result values.
+      if (lifecycleEvents.has(message.method)) note("lifecycle", { event: message.method, id: requestId });
+      if (message.method === "Runtime.consoleAPICalled") {
+        const args = message.params?.args;
+        if (Array.isArray(args) && args[0]?.value === "__sps_e2e_click_phase__" && clickPhases.has(args[1]?.value)) {
+          note("click", { phase: args[1].value, id: requestId });
+        }
+      }
       if (message.id !== requestId) return;
       const active = pending.get(requestId);
       if (!active) return;
       clearTimeout(active.timeout);
       pending.delete(requestId);
       socket.removeEventListener("message", listener);
+      note("response", { id: requestId, method: methodName, failed: Boolean(message.error) });
       if (message.error) reject(new Error(message.error.message));
       else resolve(message.result);
     };
     const timeout = setTimeout(() => {
+      note("timeout", { id: requestId, method: methodName });
       pending.delete(requestId);
       socket.removeEventListener("message", listener);
       reject(new Error(`CDP ${method} timed out after 10000ms.`));
@@ -425,6 +452,7 @@ async function openCdp(target) {
     }
   });
   return {
+    snapshotDiagnostics() { return { socketClosed: socketFailed, recent: recent.map(entry => ({ ...entry })) }; },
     async command(method, params = {}) {
       return await call(method, params);
     },
@@ -498,11 +526,18 @@ async function describePage(cdp) {
 
 async function click(cdp, selector, label) {
   const result = await cdp.evaluate(`(() => {
+    const trace = phase => console.debug("__sps_e2e_click_phase__", phase);
+    trace("locating");
     const element = document.querySelector(${JSON.stringify(selector)});
     if (!element) return { ok: false, reason: "not found" };
     if (element.disabled) return { ok: false, reason: "disabled" };
+    trace("located");
+    trace("scrolling");
     element.scrollIntoView({ block: "center", inline: "center" });
+    trace("scrolled");
+    trace("dispatching");
     element.click();
+    trace("dispatched");
     return { ok: true, text: element.textContent || "" };
   })()`);
   assert.equal(result?.ok, true, `${label} could not be clicked: ${result?.reason || "unknown"}`);
@@ -657,6 +692,7 @@ try {
     "the SPS Desktop setup window",
   );
   setupCdp = await openCdp(setupTarget);
+  await setupCdp.command("Runtime.enable");
   nativeManagementStage = "initial_setup_ui";
   await waitForPage(setupCdp, (page) => page.body.includes("SPS"), "the SPS setup content");
   await waitForEnabled(setupCdp, "#start-sps-account", "SPS sign-in readiness");
@@ -1544,6 +1580,7 @@ try {
   diagnostics.push(`Failure stage summary: ${JSON.stringify(snapshotPreviewE2eFailure(error, failurePhase))}`);
   for (const [label, cdp] of [["setup", setupCdp], ["workspace", workspaceCdp]]) {
     if (!cdp) continue;
+    diagnostics.push(`${label}-cdp: ${JSON.stringify(cdp.snapshotDiagnostics())}`);
     try { diagnostics.push(`${label}: ${JSON.stringify(await describePage(cdp))}`); } catch (diagnosticError) { diagnostics.push(`${label}: ${errorText(diagnosticError)}`); }
   }
   if (appOutput.trim()) diagnostics.push(`app-output:\n${appOutput.trim()}`);
