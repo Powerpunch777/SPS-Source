@@ -6,6 +6,14 @@ import path from "node:path";
 import { consumeLegacyDesktopConnectionMigration, emptyState, hasPendingLegacyDesktopOwnerAdoption, loadState, saveState } from "../src/state.mjs";
 import { allocateSpsNativeMemberKeyIndex } from "../src/native-member-key-index.mjs";
 
+test("invalid new restore attempt metadata cannot replace a valid saved state", async t => {
+  const root = await isolatedSaveDirectory(t);
+  await saveState(root, emptyState());
+  const before = await fs.readFile(path.join(root, "sps-desktop-state.json"));
+  await assert.rejects(saveState(root, { ...emptyState(), ownerRestoreAttempts: [{ id: "../arbitrary" }] }), /restore records/);
+  assert.deepEqual(await fs.readFile(path.join(root, "sps-desktop-state.json")), before);
+});
+
 async function isolatedSaveDirectory(t) {
   const created = await fs.mkdtemp(path.join(os.tmpdir(), "sps-state-save-"));
   const root = await fs.realpath(created);
@@ -100,6 +108,73 @@ test("malformed claim journal metadata cannot be silently replaced", async t => 
     await fs.writeFile(file, bytes);
     await assert.rejects(loadState(root, { strictVersion: true }), /saved task result metadata is malformed/);
     await assert.rejects(saveState(root, emptyState()), /saved task result metadata is malformed/);
+    assert.equal(await fs.readFile(file, "utf8"), bytes);
+  }
+});
+
+test("owner restore attempts persist through v13 save/load without changing account credentials or routing", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const original = {
+    ...emptyState(),
+    ownerHostOwnerSubject: "owner-A",
+    ownerRestoreAttempts: [
+      { id: "11111111-1111-4111-8111-111111111111", ownerSubject: "owner-A", createdAt: "2026-10-30T12:00:00.000Z" },
+      { id: "22222222-2222-4222-8222-222222222222", ownerSubject: "owner-B", createdAt: "2026-10-29T12:00:00.000Z" },
+    ],
+    encryptedDesktopAccount: "protected-account-bytes",
+    identity: { publicKeyPem: "node-public-key", encryptedPrivateKey: "protected-node-key" },
+    accountConnections: {
+      "owner-A": { hubUrl: "https://host-a.example.test", connectionKind: "remote", authMode: "sps-identity",
+        companyId: "", displayName: "Host A", defaultWorkspacePath: "", projectWorkspaces: {}, workspaceSources: [] },
+      "owner-B": { hubUrl: "https://host-b.example.test", connectionKind: "remote", authMode: "sps-identity",
+        companyId: "", displayName: "Host B", defaultWorkspacePath: "", projectWorkspaces: {}, workspaceSources: [] },
+    },
+    profile: { hubUrl: "https://host-a.example.test", connectionKind: "remote", authMode: "sps-identity" },
+  };
+  assert.equal(original.version, 13);
+  await saveState(root, original);
+
+  const loaded = await loadState(root, { strictVersion: true });
+  assert.equal(loaded.version, 13);
+  assert.deepEqual(loaded.ownerRestoreAttempts, original.ownerRestoreAttempts);
+  assert.equal(loaded.encryptedDesktopAccount, original.encryptedDesktopAccount);
+  assert.deepEqual(loaded.identity, original.identity);
+  assert.deepEqual(loaded.accountConnections, original.accountConnections);
+  assert.deepEqual(loaded.profile, original.profile);
+
+  await saveState(root, loaded);
+  const reloaded = await loadState(root, { strictVersion: true });
+  assert.deepEqual(reloaded.ownerRestoreAttempts, original.ownerRestoreAttempts);
+  assert.equal(reloaded.encryptedDesktopAccount, original.encryptedDesktopAccount);
+  assert.deepEqual(reloaded.identity, original.identity);
+  assert.deepEqual(reloaded.accountConnections, original.accountConnections);
+  assert.deepEqual(reloaded.profile, original.profile);
+});
+
+test("malformed owner restore attempts fail strict and inspection loads and cannot be replaced", async t => {
+  const root = await isolatedSaveDirectory(t);
+  const file = path.join(root, "sps-desktop-state.json");
+  const valid = { id: "33333333-3333-4333-8333-333333333333", ownerSubject: "owner-A", createdAt: "2026-10-30T12:00:00.000Z" };
+  const malformed = [
+    [{ ...valid, id: "../outside" }],
+    [{ ...valid, stagingPath: "C:\\outside" }],
+    [valid, { ...valid }],
+    Array.from({ length: 129 }, (_, index) => ({
+      ...valid,
+      id: `${String(index + 1).padStart(8, "0")}-4444-4444-8444-444444444444`,
+    })),
+  ];
+
+  for (const attempts of malformed) {
+    const bytes = JSON.stringify({
+      ...emptyState(),
+      encryptedDesktopAccount: "must-remain-byte-identical",
+      ownerRestoreAttempts: attempts,
+    });
+    await fs.writeFile(file, bytes, "utf8");
+    await assert.rejects(loadState(root, { strictVersion: true }), /SPS preserved restore records/);
+    await assert.rejects(loadState(root), /SPS preserved restore records/);
+    await assert.rejects(saveState(root, emptyState()), /SPS preserved restore records/);
     assert.equal(await fs.readFile(file, "utf8"), bytes);
   }
 });

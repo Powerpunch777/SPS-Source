@@ -26,6 +26,7 @@ import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetRe
   createSpsNativeMemberPublicationRecovery } from "./native-member-pending-store.mjs";
 import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
 import { readSpsOwnerVaultRestoreReceipt, writeSpsOwnerVaultRestoreReceipt } from "./owner-vault-restore-receipt.mjs";
+import { normalizeSpsOwnerRestoreAttempts, ownerRestoreAttemptsForAccount, resolveSpsOwnerRestoreAttemptDirectory } from "./owner-restore-attempts.mjs";
 import { createSpsOwnerHostRestoreRunner } from "./owner-host-restore-runner.mjs";
 import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
 import {
@@ -3791,7 +3792,7 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
   if (!account) throw new Error("Sign in to SPS before restoring an SPS Server.");
   if (desktopAccountController?.getStatus().pending) throw new Error("Finish the current SPS sign-in before restoring a Host.");
   if (ownerHostIsReady()) throw new Error("Stop the current SPS Owner Host before restoring a Server.");
-  if (state.ownerHostOwnerSubject || isOwnerHostProfile()) {
+  if (state.ownerHostOwnerSubject || isOwnerHostProfile() || hasPendingLegacyDesktopOwnerAdoption(state)) {
     throw new Error("SPS Host restore is allowed only on a fresh Host that has never been activated.");
   }
   const targetRoot = ownerVaultRoot();
@@ -3830,6 +3831,20 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
   const stagingRoot = path.join(app.getPath("userData"), `owner-vault.restore-${restoreId}`);
   let promoted = false;
   try {
+    const previousAttempts = state.ownerRestoreAttempts;
+    const attempts = normalizeSpsOwnerRestoreAttempts([
+      ...normalizeSpsOwnerRestoreAttempts(previousAttempts),
+      { id: restoreId, ownerSubject: account.subject, createdAt: new Date().toISOString() },
+    ]);
+    state.ownerRestoreAttempts = attempts;
+    try {
+      // Record the account/path identity before creating or copying any data.
+      await persistState({ rememberActiveConnection: false, beforeCommit: assertRestoreAccount });
+      assertRestoreAccount();
+    } catch (error) {
+      if (state.ownerRestoreAttempts === attempts) state.ownerRestoreAttempts = previousAttempts;
+      throw error;
+    }
     const stagingConfig = await ensureSpsOwnerHostConfig({ vaultRoot: stagingRoot });
     const imported = await importSpsOwnerVaultTransfer({ bundleRoot: inspected.bundleRoot, vaultRoot: stagingRoot });
     const developmentCoreRoot = path.resolve(__dirname, "..", "..", "..", "external", "sps-core");
@@ -3884,6 +3899,10 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
     promoted = true;
     assertRestoreAccount();
     await startOwnerHost({ activate: true, restorePermit, expectedOwnerSubject: account.subject });
+    const retainedAttempts = normalizeSpsOwnerRestoreAttempts(state.ownerRestoreAttempts);
+    state.ownerRestoreAttempts = retainedAttempts.filter(entry => entry.id !== restoreId);
+    try { await persistState({ rememberActiveConnection: false }); }
+    catch (error) { state.ownerRestoreAttempts = retainedAttempts; throw error; }
     await refreshOwnerHostCompanies().catch(() => []);
     await dialog.showMessageBox(mainWindow ?? undefined, {
       type: "info",
@@ -3902,6 +3921,33 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
     const reason = typeof error?.message === "string" ? error.message : "SPS Host restore did not finish.";
     throw new Error(`${reason} Any data already staged was retained for recovery.`, { cause: error });
   }
+}
+
+async function revealOwnerRestoreAttempt(id) {
+  return ownerVaultOperations.start(async () => {
+    const subject = currentDesktopAccountSubject();
+    const expectedState = state;
+    const connectionGeneration = ownerVaultOperations.connectionGeneration();
+    const userDataPath = app.getPath("userData");
+    const promotedVaultRoot = ownerVaultRoot();
+    if (!subject || desktopStateUnavailable || isQuitting) throw new Error("Sign in before opening preserved restore data.");
+    if (desktopAccountController?.getStatus().pending) throw new Error("Finish the current SPS sign-in before opening preserved restore data.");
+    const assertCurrent = () => {
+      if (state !== expectedState || desktopStateUnavailable || isQuitting || currentDesktopAccountSubject() !== subject
+        || ownerVaultOperations.connectionGeneration() !== connectionGeneration || app.getPath("userData") !== userDataPath
+        || ownerVaultRoot() !== promotedVaultRoot
+        || !normalizeSpsOwnerRestoreAttempts(state.ownerRestoreAttempts).some(entry => entry.id === id && entry.ownerSubject === subject)) {
+        throw new Error("The SPS account or restore record changed.");
+      }
+    };
+    assertCurrent();
+    const directory = await resolveSpsOwnerRestoreAttemptDirectory({ userDataPath, id, ownerSubject: subject, promotedVaultRoot });
+    assertCurrent();
+    // Reveal selects the directory in Explorer; it neither executes its files
+    // nor grants authority to resume, promote or delete an uncertain restore.
+    shell.showItemInFolder(directory);
+    return true;
+  });
 }
 
 async function showPluginRuntimeStatus() {
@@ -5300,6 +5346,7 @@ function publicStatus() {
       },
       pluginRuntime: { ...pluginRuntimeStatus },
       legacyAdoptionPending: Boolean(state.legacyOwnerHostAdoptionPending),
+      restoreAttempts: ownerRestoreAttemptsForAccount(state.ownerRestoreAttempts, desktopAccount?.subject),
     },
     agentRuntimePacks: agentRuntimePacks.map((pack) => ({
       id: pack.id,
@@ -6097,6 +6144,7 @@ function registerIpc() {
     }
   });
   ipcMain.handle("desktop:restore-owner-server", async () => await restoreOwnerServerFromTransfer());
+  ipcMain.handle("desktop:reveal-owner-restore-attempt", async (_event, id) => revealOwnerRestoreAttempt(id));
   ipcMain.handle("desktop:join-server", async (_event, input) => {
     if (!currentDesktopAccount()) throw new Error("Sign in to SPS before joining an SPS Server.");
     return await acceptInviteCode(input);

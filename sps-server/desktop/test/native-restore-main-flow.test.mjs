@@ -4,6 +4,7 @@ import path from "node:path";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { createSpsOwnerVaultOperationGate } from "../src/owner-vault-operation-gate.mjs";
+import { normalizeSpsOwnerRestoreAttempts } from "../src/owner-restore-attempts.mjs";
 
 const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
 function section(start, end) {
@@ -21,10 +22,11 @@ const accountActions = section("async function startDesktopAccountSignIn()", "fu
 
 function fixture(phase) {
   let account = { subject: "owner-a", name: "Fixture Owner" };
-  const state = { ownerHostOwnerSubject: null, profile: null };
+  const state = { ownerHostOwnerSubject: null, profile: null, ownerRestoreAttempts: [] };
   const root = path.resolve("C:/fixture/vault");
   const calls = [];
   const savedOwners = [];
+  const savedAttempts = [];
   let stagedReceipt = null;
   let vaultReceipt = null;
   const scope = {
@@ -38,11 +40,19 @@ function fixture(phase) {
     currentDesktopAccountSubject: () => account?.subject ?? null,
     ownerVaultRoot: () => root,
     ownerHostIsReady: () => false,
+    hasPendingLegacyDesktopOwnerAdoption: () => false,
     isOwnerHostProfile: () => state.profile?.connectionKind === "owner-host",
     ownerHostStatus: { url: "http://127.0.0.1:31310" },
     ownerHostCompanies: [],
     requireSpsOwnerHostOrigin: value => value,
-    persistState: async (options) => { options?.beforeCommit?.(); savedOwners.push(state.ownerHostOwnerSubject); },
+    normalizeSpsOwnerRestoreAttempts,
+    persistState: async (options) => {
+      options?.beforeCommit?.();
+      if (phase === "attempt-save-failure") throw new Error("Restore attempt save failed");
+      savedOwners.push(state.ownerHostOwnerSubject);
+      savedAttempts.push(structuredClone(state.ownerRestoreAttempts));
+      calls.push("state-saved");
+    },
     readSpsOwnerVaultRestoreReceipt: async () => vaultReceipt,
     writeSpsOwnerVaultRestoreReceipt: async ({ ownerSubject, restoreId, beforeCommit }) => {
       beforeCommit();
@@ -56,12 +66,17 @@ function fixture(phase) {
     disabledSpsExtensionStatus: () => ({ state: "disabled" }),
     dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ["fixture-transfer"] }), showMessageBox: async () => {} },
     mainWindow: null,
-    randomUUID: () => "fixture-restore",
+    randomUUID: () => "11111111-1111-4111-8111-111111111111",
     assertSpsOwnerVaultRestoreTarget: async () => ({ root, fresh: true, reason: "bootstrap-only" }),
     nativeIdentityStore: () => ({}),
+    resolveSpsOwnerRestoreAttemptDirectory: async ({ id }) => path.join(root, `retained-${id}`),
+    shell: { showItemInFolder: directory => calls.push(["revealed", directory]) },
     assertSpsNativeHostCredentialsAbsentForRestore: async () => { calls.push("presence-checked"); },
     inspectSpsOwnerVaultTransfer: async () => ({ bundleRoot: "fixture-transfer" }),
-    ensureSpsOwnerHostConfig: async () => ({ layout: { configPath: "fixture-config" } }),
+    ensureSpsOwnerHostConfig: async () => {
+      calls.push("staging-config");
+      return { layout: { configPath: "fixture-config" } };
+    },
     importSpsOwnerVaultTransfer: async () => ({ backupFile: "fixture-backup" }),
     resolveSpsOwnerHostRuntime: async () => ({ command: "fixture", cwd: "fixture", environment: {} }),
     runOwnerHostRestoreProcess: async () => {
@@ -97,8 +112,8 @@ function fixture(phase) {
       await scope.activateOwnerHostProfile(expectedSubject, expectedRestoreGeneration);
     },
   };
-  runInNewContext(`${activation}\n${start}\n${restore}\n${bootstrap}\n${saveProfile}\n${accountActions}\nthis.activateOwnerHostProfile = activateOwnerHostProfile; this.startOwnerHost = startOwnerHost; this.bootstrapOwnerHost = bootstrapOwnerHost; this.restore = restoreOwnerServerFromTransfer; this.saveRemoteProfile = saveRemoteProfile; this.startDesktopAccountSignIn = startDesktopAccountSignIn; this.signOutDesktopAccount = signOutDesktopAccount;`, scope);
-  return { scope, calls, state, root, savedOwners, receipt: () => vaultReceipt, setAccount: value => { account = value; } };
+  runInNewContext(`${activation}\n${start}\n${restore}\n${bootstrap}\n${saveProfile}\n${accountActions}\nthis.activateOwnerHostProfile = activateOwnerHostProfile; this.startOwnerHost = startOwnerHost; this.bootstrapOwnerHost = bootstrapOwnerHost; this.restore = restoreOwnerServerFromTransfer; this.reveal = revealOwnerRestoreAttempt; this.saveRemoteProfile = saveRemoteProfile; this.startDesktopAccountSignIn = startDesktopAccountSignIn; this.signOutDesktopAccount = signOutDesktopAccount;`, scope);
+  return { scope, calls, state, root, savedOwners, savedAttempts, receipt: () => vaultReceipt, setAccount: value => { account = value; } };
 }
 
 test("the actual Main restore flow checks Native absence and activates only its captured account", async () => {
@@ -111,6 +126,9 @@ test("the actual Main restore flow checks Native absence and activates only its 
   assert.ok(ctx.calls.indexOf("database-restored") < ctx.calls.indexOf("ownership-receipt-written"));
   assert.ok(ctx.calls.indexOf("ownership-receipt-written") < ctx.calls.indexOf("promoted"));
   assert.equal(ctx.receipt().ownerSubject, "owner-a");
+  assert.ok(ctx.calls.indexOf("state-saved") < ctx.calls.indexOf("staging-config"));
+  assert.equal(ctx.savedAttempts[0][0].ownerSubject, "owner-a");
+  assert.equal(ctx.state.ownerRestoreAttempts.length, 0);
 });
 
 test("account changes during bootstrap removal, promotion or Host start never activate a different Owner", async () => {
@@ -145,6 +163,8 @@ test("Main preserves restore staging and refuses promotion when database shutdow
   assert.equal(ctx.state.ownerHostOwnerSubject, null);
   assert.notEqual(ctx.state.profile?.connectionKind, "owner-host");
   assert.equal(ctx.calls.includes("ownership-receipt-written"), false);
+  assert.equal(ctx.state.ownerRestoreAttempts.length, 1);
+  assert.equal(ctx.savedAttempts[0][0].id, ctx.state.ownerRestoreAttempts[0].id);
 });
 
 test("Native credentials block restore while unchanged Member routing retains the existing fresh-Host behavior", async () => {
@@ -235,9 +255,47 @@ test("a conflicting saved Owner cannot replace a restored Vault binding", async 
   await assert.rejects(ctx.scope.restore());
   ctx.state.ownerHostOwnerSubject = "owner-b";
   ctx.setAccount({ subject: "owner-b", name: "Other Owner" });
+  const beforeRecoverySaves = ctx.savedOwners.length;
   await assert.rejects(ctx.scope.startOwnerHost({ activate: true }), /ownership conflicts/);
   assert.equal(ctx.state.ownerHostOwnerSubject, "owner-b");
-  assert.equal(ctx.savedOwners.length, 0);
+  assert.equal(ctx.savedOwners.length, beforeRecoverySaves);
+});
+
+test("a failed attempt-record save aborts before staging data is created", async () => {
+  const ctx = fixture("attempt-save-failure");
+  await assert.rejects(ctx.scope.restore(), /Restore attempt save failed/);
+  assert.equal(ctx.calls.includes("staging-config"), false);
+  assert.equal(ctx.calls.includes("database-restored"), false);
+  assert.equal(ctx.state.ownerRestoreAttempts.length, 0);
+});
+
+test("preserved restore reveal requires the original account and an exact recorded ID", async () => {
+  const ctx = fixture("database-stop");
+  await assert.rejects(ctx.scope.restore());
+  const id = ctx.state.ownerRestoreAttempts[0].id;
+  ctx.setAccount({ subject: "owner-b", name: "Other account" });
+  await assert.rejects(ctx.scope.reveal(id), /account or restore record changed/);
+  ctx.setAccount({ subject: "owner-a", name: "Original account" });
+  await assert.rejects(ctx.scope.reveal("../other-vault"), /account or restore record changed/);
+  assert.equal(ctx.calls.some(value => Array.isArray(value) && value[0] === "revealed"), false);
+  await ctx.scope.reveal(id);
+  assert.equal(ctx.calls.filter(value => Array.isArray(value) && value[0] === "revealed").length, 1);
+  assert.equal(ctx.state.ownerRestoreAttempts.length, 1, "Revealing must not retire or delete restore data.");
+});
+
+test("account changes and same-account connection ABA invalidate an awaited restore reveal", async () => {
+  for (const change of ["different-account", "same-account-aba"]) {
+    const ctx = fixture("database-stop");
+    await assert.rejects(ctx.scope.restore());
+    const id = ctx.state.ownerRestoreAttempts[0].id;
+    ctx.scope.resolveSpsOwnerRestoreAttemptDirectory = async () => {
+      if (change === "different-account") ctx.setAccount({ subject: "owner-b", name: "Other account" });
+      else await ctx.scope.ownerVaultOperations.changeConnection(async () => {});
+      return ctx.root;
+    };
+    await assert.rejects(ctx.scope.reveal(id), /account or restore record changed/);
+    assert.equal(ctx.calls.some(value => Array.isArray(value) && value[0] === "revealed"), false);
+  }
 });
 
 test("concurrent Host starts join durable recovery and cannot use an uncommitted Owner binding", async () => {

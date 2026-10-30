@@ -3,6 +3,7 @@ import path from "node:path";
 import { normalizeSpsAccountConnection } from "./account-connections.mjs";
 import { normalizeSpsNativeMemberKeyIndex } from "./native-member-key-index.mjs";
 import { normalizeSpsNativeNodeState } from "./native-node-state.mjs";
+import { normalizeSpsOwnerRestoreAttempts } from "./owner-restore-attempts.mjs";
 
 const STATE_VERSION = 13;
 const legacyConnectionMigrations = new WeakSet();
@@ -23,6 +24,7 @@ function assertConnectionShape(value) {
 
 function assertCriticalStateShape(value) {
   if (!isRecord(value)) throw new Error("SPS Desktop connection settings are malformed.");
+  normalizeSpsOwnerRestoreAttempts(value.ownerRestoreAttempts);
   if (value.nativeMemberKeyIndex !== undefined) normalizeSpsNativeMemberKeyIndex(value.nativeMemberKeyIndex);
   if (value.nativeNodes !== undefined) normalizeSpsNativeNodeState(value.nativeNodes);
   const owner = value.ownerHostOwnerSubject;
@@ -110,6 +112,7 @@ export function emptyState() {
     nativeNodes: normalizeSpsNativeNodeState({ v: 1, entries: [] }),
     accountConnections: {},
     ownerHostOwnerSubject: null,
+    ownerRestoreAttempts: [],
     // A narrowly-scoped bridge for SPS Desktop states created before SPS
     // Identity was required. It is set only when that legacy state and its
     // physical Owner Vault coexist.
@@ -152,6 +155,7 @@ export async function loadState(userDataPath, { strictVersion = false } = {}) {
     // account-scoped connection records while keeping the physical Owner Host
     // and its vault on this computer.
     const state = { ...emptyState(), ...parsed, version: STATE_VERSION };
+    state.ownerRestoreAttempts = normalizeSpsOwnerRestoreAttempts(parsed.ownerRestoreAttempts);
     // Missing legacy metadata is empty; present corrupt metadata is never
     // silently replaced, even for a non-strict inspection load.
     state.nativeMemberKeyIndex = normalizeSpsNativeMemberKeyIndex(
@@ -264,6 +268,7 @@ async function assertOwnedTemporaryFile(file, identity) {
 // it is not a cross-process lock or power-loss durability guarantee.
 export async function saveState(userDataPath, value, { beforeCommit = () => {} } = {}) {
   if (typeof beforeCommit !== "function") throw new TypeError("Invalid Desktop state commit guard.");
+  normalizeSpsOwnerRestoreAttempts(value.ownerRestoreAttempts);
   const bytes = JSON.stringify(value, null, 2) + "\n";
   const destination = path.resolve(statePath(userDataPath));
   const queueKey = process.platform === "win32" ? destination.toLowerCase() : destination;

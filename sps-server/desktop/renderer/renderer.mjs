@@ -63,6 +63,34 @@ function renderAccount(status) {
   show(note, Boolean(desktopAccount.error));
 }
 
+function renderOwnerRestoreAttempts(status) {
+  const section = $("#owner-restore-attempts-screen");
+  const list = $("#owner-restore-attempt-list");
+  if (!section || !list) return;
+  const attempts = account(status).signedIn === true && Array.isArray(status?.ownerHost?.restoreAttempts)
+    ? status.ownerHost.restoreAttempts
+    : [];
+  show(section, attempts.length > 0);
+  list.replaceChildren(...attempts.map((attempt) => {
+    const row = document.createElement("div");
+    row.className = "runtime-pack-row";
+
+    const createdAt = document.createElement("span");
+    const date = new Date(attempt.createdAt);
+    createdAt.textContent = Number.isNaN(date.getTime()) ? "날짜 정보 없음" : date.toLocaleString();
+
+    const reveal = document.createElement("button");
+    reveal.className = "secondary-action";
+    reveal.type = "button";
+    reveal.textContent = "폴더 위치 보기";
+    reveal.addEventListener("click", () => run(async () => {
+      await window.spsDesktop.revealOwnerRestoreAttempt(attempt.id);
+    }));
+    row.append(createdAt, reveal);
+    return row;
+  }));
+}
+
 function renderServerChoice(status) {
   const desktopAccount = account(status);
   const visible = desktopAccount.signedIn === true && !status?.profile;
@@ -258,6 +286,7 @@ function renderLocalFolders(status) {
 function render(status) {
   latestStatus = status;
   renderAccount(status);
+  renderOwnerRestoreAttempts(status);
   renderServerChoice(status);
   renderOwnerServer(status);
   renderWorkspace(status);
