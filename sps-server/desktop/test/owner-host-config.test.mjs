@@ -294,7 +294,8 @@ test("concurrent config updates use independent temp files and leave valid JSON"
     ]);
 
     const saved = JSON.parse(await readFile(configPath, "utf8"));
-    assert.ok(saved.server.port === 31_311 || saved.database.embeddedPostgresPort === 54_340);
+    assert.equal(saved.server.port, 31_311);
+    assert.equal(saved.database.embeddedPostgresPort, 54_340);
     assert.deepEqual((await readdir(vaultRoot)).sort(), ["config.json"]);
   } finally {
     await rm(root, { recursive: true, force: true });
