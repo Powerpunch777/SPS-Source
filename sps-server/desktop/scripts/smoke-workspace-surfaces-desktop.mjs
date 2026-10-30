@@ -177,7 +177,7 @@ async function followCapturedIdentityAuthorization(mockIdentity, expectedOrigin)
   assert.match(callbackPage, /sign-in|sign in|completed/i);
 }
 
-async function openCdp(target) {
+async function openCdp(target, { reviewedPluginConfirmation = false } = {}) {
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   let id = 0;
   const pending = new Map();
@@ -294,7 +294,31 @@ async function openCdp(target) {
       reject(error);
     }
   });
+  let expectedConfirmation = null, confirmationHandled = false, confirmationFailure = null;
+  if (reviewedPluginConfirmation) socket.addEventListener("message", event => {
+    const message = JSON.parse(event.data);
+    if (message.method !== "Page.javascriptDialogOpening") return;
+    const accept = message.params.type === "confirm" && message.params.message === expectedConfirmation;
+    expectedConfirmation = null;
+    void call("Page.handleJavaScriptDialog", { accept }).then(() => {
+      confirmationHandled = accept;
+      if (!accept) confirmationFailure = new Error("Unexpected Registry confirmation was rejected.");
+    }).catch(error => { confirmationFailure = error; });
+  });
   return {
+    expectConfirmation(message) {
+      assert.equal(reviewedPluginConfirmation, true);
+      assert.equal(typeof message, "string");
+      assert.equal(expectedConfirmation, null);
+      expectedConfirmation = message;
+      confirmationHandled = false;
+      confirmationFailure = null;
+    },
+    assertConfirmationHandled() {
+      if (confirmationFailure) throw confirmationFailure;
+      assert.equal(expectedConfirmation, null, "Expected Registry confirmation was not shown.");
+      assert.equal(confirmationHandled, true);
+    },
     snapshotDiagnostics() { return { socketClosed: socketFailed, recent: recent.map(entry => ({ ...entry })) }; },
     async command(method, params = {}) {
       return await call(method, params);
@@ -858,6 +882,14 @@ try {
     failurePhase = "workspace_surfaces";
     await runNoAiChecklistAcceptance({
       cdp: workspaceCdp, company, api, click, captureScreenshot, screenshotPath, temporaryRoot: userDataDirectory, runtimeDiscovery,
+      openRegistry: async () => {
+        const opened = await workspaceCdp.evaluate("window.spsDesktopWorkspace.openPluginRegistries()", true);
+        assert.equal(opened?.opened, true);
+        const target = await waitForTarget(debugPort, child, entry => entry.title?.startsWith("SPS Plugin Sources"), "Host signed Registry");
+        const registry = await openCdp(target, { reviewedPluginConfirmation: true });
+        await registry.command("Page.enable");
+        return registry;
+      },
       restart: async ({ companyPrefix, pluginId }) => {
         failurePhase = "workspace_restart";
         await closeDesktopForRestart();

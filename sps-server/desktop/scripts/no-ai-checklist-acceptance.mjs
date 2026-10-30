@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { createChecklistPackage, CHECKLIST_PLUGIN_KEY } from "./no-ai-checklist-package.mjs";
 import { runRuntimeDiscoveryAcceptance } from "./runtime-discovery-acceptance.mjs";
+import { runSignedPluginLifecycleAcceptance } from "./plugin-package-lifecycle-acceptance.mjs";
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -26,7 +27,7 @@ async function assertDenied(cdp, url, body, label) {
   assert.match(JSON.stringify(result.body), /capability|scope|not enabled|disabled|denied|outside|permission/i, `${label} failed for an unrelated reason: ${JSON.stringify(result)}`);
 }
 
-export async function runNoAiChecklistAcceptance({ cdp, company, api, click, restart, openRecovery, captureScreenshot, screenshotPath, temporaryRoot, runtimeDiscovery = false }) {
+export async function runNoAiChecklistAcceptance({ cdp, company, api, click, restart, openRecovery, openRegistry, captureScreenshot, screenshotPath, temporaryRoot, runtimeDiscovery = false }) {
   let workspace = cdp;
   const request = (url, options) => api(workspace, url, options);
   const data = (plugin, companyId = company.id, params = {}) => request(`/api/plugins/${plugin.id}/data/checklist`, {
@@ -55,6 +56,9 @@ export async function runNoAiChecklistAcceptance({ cdp, company, api, click, res
   const second = await request("/api/companies", { method: "POST", body: { name: "No-AI scope B" } });
   assert.ok(second.id && second.issuePrefix);
   await activate(plugin, second.id, true);
+  const verifyPackageLifecycleAfterRestart = await runSignedPluginLifecycleAcceptance({
+    cdp: workspace, company, secondCompany: second, api, click, openRegistry, temporaryRoot,
+  });
   if (runtimeDiscovery) await runRuntimeDiscoveryAcceptance({ cdp: workspace, company, secondCompany: second, api, temporaryRoot });
 
   const pageUrl = `/${company.issuePrefix}/plugins/${plugin.id}`;
@@ -132,6 +136,7 @@ export async function runNoAiChecklistAcceptance({ cdp, company, api, click, res
 
   workspace = await restart({ companyPrefix: company.issuePrefix, pluginId: plugin.id });
   console.log("[no-ai] Desktop and Owner Host restarted with the same temporary data");
+  await verifyPackageLifecycleAfterRestart(workspace);
   assert.deepEqual(await data(plugin), persisted, "Host restart lost checklist data/event/Job state");
   assert.deepEqual((await data(plugin, second.id)).items, []);
   assert.deepEqual(await request(`/api/companies/${company.id}/agents`), []);

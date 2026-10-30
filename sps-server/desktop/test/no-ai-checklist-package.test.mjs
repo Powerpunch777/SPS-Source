@@ -1,10 +1,43 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { checklistManifest, createChecklistPackage } from "../scripts/no-ai-checklist-package.mjs";
+
+async function runWorkerRequests(workerPath, requests) {
+  const child = spawn(process.execPath, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
+  const lines = createInterface({ input: child.stdout });
+  const iterator = lines[Symbol.asyncIterator]();
+  const request = async (requestId, requestMethod, requestParams = {}) => {
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: requestId, method: requestMethod, params: requestParams })}\n`);
+    while (true) {
+      const next = await iterator.next();
+      assert.equal(next.done, false, "Worker exited before responding");
+      const message = JSON.parse(next.value);
+      if (typeof message.method === "string") {
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: null })}\n`);
+        continue;
+      }
+      if (message.id === requestId) return message;
+    }
+  };
+  try {
+    const responses = [];
+    for (const [id, method, params] of requests) responses.push(await request(id, method, params));
+    child.stdin.end();
+    const [code] = await once(child, "exit");
+    assert.equal(code, 0);
+    return responses;
+  } finally {
+    lines.close();
+    if (child.exitCode === null) child.kill();
+  }
+}
 
 test("No-AI reference declares only optional UI, scoped state, events and Jobs", () => {
   const manifest = checklistManifest();
@@ -22,6 +55,80 @@ test("UI-less variant has no UI entrypoint or UI capabilities", () => {
   assert.equal(manifest.ui, undefined);
   assert.equal(manifest.entrypoints.ui, undefined);
   assert.ok(!manifest.capabilities.some(value => value.startsWith("ui.")));
+});
+
+test("versions stay consistent across manifest and package metadata while defaults remain unchanged", async () => {
+  const manifest = checklistManifest();
+  assert.equal(manifest.version, "0.1.0");
+  assert.deepEqual(manifest.capabilities, ["plugin.state.read", "plugin.state.write", "events.emit", "events.subscribe", "jobs.schedule", "ui.page.register"]);
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-no-ai-version-test-"));
+  try {
+    const defaultDirectory = path.join(root, "default");
+    const customDirectory = path.join(root, "custom");
+    const { manifest: defaultManifest } = await createChecklistPackage(defaultDirectory);
+    const { manifest: customManifest } = await createChecklistPackage(customDirectory, { version: "2.4.6" });
+    const defaultMeta = JSON.parse(await readFile(path.join(defaultDirectory, "package.json"), "utf8"));
+    const customMeta = JSON.parse(await readFile(path.join(customDirectory, "package.json"), "utf8"));
+    assert.equal(defaultMeta.version, defaultManifest.version);
+    assert.equal(defaultMeta.version, "0.1.0");
+    assert.equal(customManifest.version, "2.4.6");
+    assert.equal(customMeta.version, customManifest.version);
+  } finally {
+    assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith("sps-no-ai-version-test-"));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle probe uses the public SDK worker for healthy version data and failing initialization", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-no-ai-lifecycle-test-"));
+  try {
+    const healthyDirectory = path.join(root, "healthy");
+    const failingDirectory = path.join(root, "failing");
+    const version = "3.2.1";
+    const { manifest } = await createChecklistPackage(healthyDirectory, { withUi: false, version, lifecycleProbe: true });
+    const packageMetadata = JSON.parse(await readFile(path.join(healthyDirectory, "package.json"), "utf8"));
+    const healthyBundle = await readFile(path.join(healthyDirectory, "dist/worker.js"), "utf8");
+    assert.equal(packageMetadata.version, manifest.version);
+    assert.match(healthyBundle, /runSpsWorker/);
+    assert.match(healthyBundle, /defineSpsPlugin/);
+    const [initialized, health, versionData] = await runWorkerRequests(path.join(healthyDirectory, "dist/worker.js"), [
+      ["healthy-init", "initialize"],
+      ["healthy-health", "health"],
+      ["healthy-data", "getData", { key: "package-version", params: {} }],
+      ["healthy-shutdown", "shutdown"],
+    ]);
+    assert.deepEqual(initialized.result, { ok: true, supportedMethods: ["health", "shutdown", "executeTool", "onEvent", "runJob", "getData", "performAction"] }, JSON.stringify(initialized));
+    assert.deepEqual(health.result, { status: "ok", ready: true, mode: "no-ai" });
+    assert.deepEqual(versionData.result, { version });
+
+    await createChecklistPackage(failingDirectory, { withUi: false, version: "3.2.2", lifecycleProbe: true, failInitialize: true });
+    const failingBundle = await readFile(path.join(failingDirectory, "dist/worker.js"), "utf8");
+    assert.match(failingBundle, /SPS lifecycle fixture initialization failure/);
+    const [failed] = await runWorkerRequests(path.join(failingDirectory, "dist/worker.js"), [
+      ["failing-init", "initialize"],
+      ["failing-shutdown", "shutdown"],
+    ]);
+    assert.equal(failed.error.message, "SPS lifecycle fixture initialization failure");
+  } finally {
+    assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith("sps-no-ai-lifecycle-test-"));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("lifecycle probe rejects unrelated fixture modes and failInitialize without lifecycleProbe", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-no-ai-lifecycle-options-test-"));
+  try {
+    for (const option of ["runtimeDiscovery", "modelRequests", "probeScope", "agentDiscovery"]) {
+      await assert.rejects(createChecklistPackage(path.join(root, option), { lifecycleProbe: true, [option]: true }), /lifecycleProbe cannot be combined/);
+    }
+    await assert.rejects(createChecklistPackage(path.join(root, "orphan-failure"), { failInitialize: true }), /failInitialize requires lifecycleProbe/);
+  } finally {
+    assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith("sps-no-ai-lifecycle-options-test-"));
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("checklist bridge diagnostic exposes fixed codes without raw error details", async () => {
