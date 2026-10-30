@@ -56,8 +56,15 @@ try {
   restoreFailed = true;
   restoreError = error;
 }
+const postgresProcess = instance.process;
 try {
   await instance.stop();
+  // A PostgreSQL descendant can retain inherited pipes after its parent has
+  // exited. Release only this exact, stopped child's stdio so the helper can
+  // exit; the owning Windows Job still has to terminate and join descendants.
+  for (const stream of [postgresProcess?.stdin, postgresProcess?.stdout, postgresProcess?.stderr]) {
+    stream?.destroy();
+  }
 } catch (shutdownError) {
   if (restoreFailed) throw new AggregateError([restoreError, shutdownError], "SPS Host restore and database shutdown both failed.");
   throw new Error("SPS Host restore database shutdown was not confirmed.", { cause: shutdownError });
