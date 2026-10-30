@@ -1,0 +1,32 @@
+name: Diagnose SPS installer process checks
+
+on:
+  push:
+    paths:
+      - .github/workflows/sps-installer-diagnostics.yml
+      - sps-server/desktop/scripts/installer-cim-diagnostic.mjs
+      - sps-server/desktop/scripts/windows-e2e/probe-installer-cim.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readonly-process-check:
+    name: Read-only PowerShell check (${{ matrix.variant }})
+    runs-on: windows-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [startup, legacy, current]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Diagnose under the existing restricted token and owned Job
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode probe-installer-cim-${{ matrix.variant }}

@@ -5,7 +5,7 @@ candidate, original Core `01fe9b16162fb8f6c0023e5efda30c1189094f10`, SDK
 `61a929f6c783f78e5af603682de1543c7e24abc0`. This records a confirmed gap and
 the subsequent approved correction. Integration qualification is still pending.
 
-## Current Behavior
+## Pre-Correction Behavior
 
 - Actual Main export requests a whole-DB backup. The transfer copies that
   snapshot unchanged plus its existing allowlisted managed data directories.
@@ -21,7 +21,7 @@ the subsequent approved correction. Integration qualification is still pending.
   folders must not be silently read/copied or granted execution authority on a
   different Host. The old absolute reference is not proof of new-Host approval.
 
-Relevant current sources: `desktop/src/main.mjs` export/restore handlers,
+Relevant sources for the original diagnosis: `desktop/src/main.mjs` export/restore handlers,
 `desktop/src/owner-vault-transfer.mjs`, `desktop/src/registry-staging.mjs`,
 Core `packages/db/src/post-restore-sanitizer.ts` and
 `server/src/services/plugin-loader.ts`.

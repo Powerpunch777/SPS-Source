@@ -41,6 +41,15 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Exact Source `1cbc497c94f668b8e7e2825114ebf30971cd4109`, run `41078863800`,
+  passed all 17 non-Windows jobs and the actual source/packaged app scenarios,
+  but failed historical installer replacement with the old uninstaller and its
+  PowerShell child still live at the unchanged deadline. This run had no hidden
+  failure dialog. Fresh install/ordinary uninstall preserved all nine records;
+  later repair/reinstall phases were not reached. The new narrow read-only
+  PowerShell diagnosis does not bypass or qualify this failure. Full local
+  Desktop after adding its contracts: 1647/1649, two 8.3-alias skips, zero failures.
+  See [diagnostic scope](../reviews/INSTALLER-CIM-DIAGNOSTIC-2026-10-31.md).
 - Exact Source `9c38ad9b668ed1a56d051196dcecdd5bb4061421`, push run
   `41060904764`, passed all 17 non-Windows jobs, including all nine Linux shards
   and full Core typecheck/build. Its Windows historical-backup-through-actual-
