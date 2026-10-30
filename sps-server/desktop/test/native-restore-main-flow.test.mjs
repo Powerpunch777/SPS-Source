@@ -26,7 +26,8 @@ function fixture(phase) {
   const scope = {
     path, process: { execPath: "fixture-node" }, __dirname: path.resolve("C:/fixture/desktop/src"), os: { hostname: () => "fixture" },
     app: { isPackaged: false, getPath: () => path.resolve("C:/fixture/user-data") },
-    desktopStateUnavailable: false, state, ownerVaultOperations: createSpsOwnerVaultOperationGate(),
+    desktopStateUnavailable: false, isQuitting: false, state, ownerVaultOperations: createSpsOwnerVaultOperationGate(),
+    ownerHostRestoreRunner: { hasUnconfirmedTermination: () => false, generation: () => 0n },
     desktopAccountController: { getStatus: () => ({ pending: false }) },
     ensureDesktopIdentityAccessToken: async () => "fixture-token",
     currentDesktopAccount: () => account,
@@ -52,6 +53,8 @@ function fixture(phase) {
     runOwnerHostRestoreProcess: async () => {
       if (phase === "database-stop") throw new Error("Fixture database shutdown unconfirmed");
       calls.push("database-restored");
+      if (phase === "quitting-during-restore") scope.isQuitting = true;
+      if (phase === "cancelled-after-failed-quit") scope.ownerHostRestoreRunner.generation = () => 1n;
     },
     updateSpsOwnerHostConfig: async () => {},
     refreshOwnerHostCompanies: async () => [],
@@ -65,7 +68,7 @@ function fixture(phase) {
         if (phase === "rename") account = { subject: "owner-b", name: "Different Fixture" };
       },
     },
-    startOwnerHostWithContext: async ({ expectedSubject }) => {
+    startOwnerHostWithContext: async ({ expectedSubject, expectedRestoreGeneration }) => {
       calls.push(["start", expectedSubject]);
       if (phase === "start") account = { subject: "owner-b", name: "Different Fixture" };
       if (phase === "profile-save") {
@@ -74,10 +77,11 @@ function fixture(phase) {
         await assert.rejects(scope.signOutDesktopAccount(), /restore to finish/);
       }
       scope.ownerHostIsReady = () => true;
-      await scope.activateOwnerHostProfile(expectedSubject);
+      if (phase === "quit-during-host-start") scope.ownerHostRestoreRunner.generation = () => 1n;
+      await scope.activateOwnerHostProfile(expectedSubject, expectedRestoreGeneration);
     },
   };
-  runInNewContext(`${activation}\n${start}\n${restore}\n${saveProfile}\n${accountActions}\nthis.activateOwnerHostProfile = activateOwnerHostProfile; this.restore = restoreOwnerServerFromTransfer; this.saveRemoteProfile = saveRemoteProfile; this.startDesktopAccountSignIn = startDesktopAccountSignIn; this.signOutDesktopAccount = signOutDesktopAccount;`, scope);
+  runInNewContext(`${activation}\n${start}\n${restore}\n${saveProfile}\n${accountActions}\nthis.activateOwnerHostProfile = activateOwnerHostProfile; this.startOwnerHost = startOwnerHost; this.restore = restoreOwnerServerFromTransfer; this.saveRemoteProfile = saveRemoteProfile; this.startDesktopAccountSignIn = startDesktopAccountSignIn; this.signOutDesktopAccount = signOutDesktopAccount;`, scope);
   return { scope, calls, state, root };
 }
 
@@ -142,4 +146,46 @@ test("pending account switches and expired sign-in block restore before touching
   expired.scope.ensureDesktopIdentityAccessToken = async () => null;
   await assert.rejects(expired.scope.restore(), /current SPS sign-in is required/);
   assert.deepEqual(expired.calls, []);
+});
+
+test("application shutdown blocks a new restore before it touches Vault data", async () => {
+  const ctx = fixture();
+  ctx.scope.isQuitting = true;
+  await assert.rejects(ctx.scope.restore(), /closing/);
+  assert.deepEqual(ctx.calls, []);
+});
+
+test("application shutdown during database restore prevents staging promotion and Host start", async () => {
+  const ctx = fixture("quitting-during-restore");
+  await assert.rejects(ctx.scope.restore(), /closing/);
+  assert.equal(ctx.calls.includes("database-restored"), true);
+  assert.equal(ctx.calls.includes("promoted"), false);
+  assert.equal(ctx.calls.some(value => Array.isArray(value) && value[0] === "start"), false);
+  assert.equal(ctx.state.ownerHostOwnerSubject, null);
+});
+
+test("an earlier unconfirmed restore termination blocks Vault writes and Host activation", async () => {
+  const ctx = fixture();
+  ctx.scope.ownerHostRestoreRunner.hasUnconfirmedTermination = () => true;
+  await assert.rejects(ctx.scope.restore(), /termination is unconfirmed/);
+  assert.deepEqual(ctx.calls, []);
+  assert.equal(ctx.state.ownerHostOwnerSubject, null);
+  await assert.rejects(ctx.scope.startOwnerHost({ activate: true }), /termination is unconfirmed/);
+  await assert.rejects(ctx.scope.activateOwnerHostProfile("owner-a"), /termination is unconfirmed/);
+  assert.deepEqual(ctx.calls, []);
+});
+
+test("a failed quit cannot revive the old restore continuation after the closing flag resets", async () => {
+  const ctx = fixture("cancelled-after-failed-quit");
+  assert.equal(ctx.scope.isQuitting, false);
+  await assert.rejects(ctx.scope.restore(), /closing/);
+  assert.equal(ctx.calls.includes("promoted"), false);
+  assert.equal(ctx.state.ownerHostOwnerSubject, null);
+});
+
+test("quit invalidation during restored Host startup cannot claim the Owner profile", async () => {
+  const ctx = fixture("quit-during-host-start");
+  await assert.rejects(ctx.scope.restore(), /restored SPS data was retained/);
+  assert.equal(ctx.calls.includes("promoted"), true);
+  assert.equal(ctx.state.ownerHostOwnerSubject, null);
 });

@@ -10,6 +10,7 @@ export function createSpsDesktopRuntimeDrain({ stopIngress, stopScheduling, canc
     ["Native Node", "native_node"],
     ["Memory", "memory"],
     ["Owner Host", "owner_host"],
+    ["Owner Host restore", "owner_host_restore"],
     ["Plugin preview", "plugin_preview"],
   ]);
   const managerLabels = new Map([...managerTraceIds].map(([label, id]) => [id, label]));

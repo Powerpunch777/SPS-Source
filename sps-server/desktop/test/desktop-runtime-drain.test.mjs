@@ -124,6 +124,22 @@ test("a failing diagnostic callback cannot interrupt runtime cleanup", async () 
   assert.deepEqual(calls, ["ingress", "host"]);
 });
 
+test("restore cleanup is joined and its uncertainty prevents Desktop drain completion", async () => {
+  const wait = deferred(), trace = [];
+  let done = false;
+  const value = fixture({ trace: stage => trace.push(stage), getManagers: () => [
+    { name: "Owner Host restore", stop: async () => { await wait.promise; throw new Error("private restore path"); } },
+  ] });
+  const outcome = value.drain().then(() => assert.fail("must reject"), error => { done = true; return error; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(done, false);
+  wait.resolve();
+  const error = await outcome;
+  assert.deepEqual(error.errors.map(item => item.message), ["Owner Host restore cleanup did not finish."]);
+  assert.ok(trace.includes("manager_owner_host_restore_failed"));
+  assert.equal(trace.includes("manager_owner_host_restore_done"), false);
+});
+
 test("closes Host share admission immediately and joins changes before stopping Core", async () => {
   const shares = deferred();
   const otherCleanup = deferred();

@@ -25,6 +25,7 @@ import { createSpsNativeHostIngress } from "./native-host-ingress.mjs";
 import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader,
   createSpsNativeMemberPublicationRecovery } from "./native-member-pending-store.mjs";
 import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
+import { createSpsOwnerHostRestoreRunner } from "./owner-host-restore-runner.mjs";
 import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
 import {
   cancelSpsNodeCommands,
@@ -309,6 +310,7 @@ const ownerVaultOperations = createSpsOwnerVaultOperationGate({
     return nodeCleanup;
   },
 });
+const ownerHostRestoreRunner = createSpsOwnerHostRestoreRunner();
 let ownerHostRecoveryPluginsDisabled = null;
 let state = emptyState();
 let desktopStateUnavailable = false;
@@ -381,7 +383,7 @@ const DESKTOP_SHUTDOWN_TRACE_STAGES = new Set([
   "stop_ingress_start", "stop_ingress_done", "stop_ingress_failed",
   "stop_scheduling_failed", "cancel_commands_failed",
   "stop_updates_start", "stop_updates_done", "stop_updates_failed",
-  ...["native_workspace", "native_plugin", "native_node", "memory", "owner_host", "plugin_preview"]
+  ...["native_workspace", "native_plugin", "native_node", "memory", "owner_host", "owner_host_restore", "plugin_preview"]
     .flatMap(manager => ["start", "done", "failed"].map(result => `manager_${manager}_${result}`)),
 ]);
 function traceDesktopShutdown(stage) {
@@ -2238,7 +2240,11 @@ async function ensureOwnerHostManager() {
   return { ...ownerHost, defaultMemory, url };
 }
 
-async function activateOwnerHostProfile(expectedSubject = null) {
+async function activateOwnerHostProfile(expectedSubject = null, expectedRestoreGeneration = null) {
+  if (isQuitting || ownerHostRestoreRunner.hasUnconfirmedTermination()
+    || expectedRestoreGeneration !== null && expectedRestoreGeneration !== ownerHostRestoreRunner.generation()) {
+    throw new Error("SPS Desktop is closing or an earlier restore termination is unconfirmed.");
+  }
   const account = currentDesktopAccount();
   if (!account) throw new Error("Sign in to SPS before activating this SPS Owner Host.");
   if (expectedSubject && account.subject !== expectedSubject) throw new Error("The SPS account changed during Host startup.");
@@ -2267,12 +2273,16 @@ async function activateOwnerHostProfile(expectedSubject = null) {
 }
 
 async function startOwnerHost({ activate = false, restorePermit, expectedOwnerSubject = null } = {}) {
+  if (isQuitting || ownerHostRestoreRunner.hasUnconfirmedTermination()) {
+    throw new Error("SPS Desktop is closing or an earlier restore termination is unconfirmed.");
+  }
   const expectedSubject = activate ? expectedOwnerSubject ?? currentDesktopAccountSubject() : null;
+  const expectedRestoreGeneration = restorePermit ? ownerHostRestoreRunner.generation() : null;
   if (activate && !expectedSubject) throw new Error("Sign in to SPS before starting the local Host.");
-  return ownerVaultOperations.start(() => startOwnerHostWithContext({ activate, expectedSubject }), { restorePermit });
+  return ownerVaultOperations.start(() => startOwnerHostWithContext({ activate, expectedSubject, expectedRestoreGeneration }), { restorePermit });
 }
 
-async function startOwnerHostWithContext({ activate, expectedSubject }) {
+async function startOwnerHostWithContext({ activate, expectedSubject, expectedRestoreGeneration }) {
   ownerHostInstanceGeneration += 1;
   const ownerHost = await ensureOwnerHostManager();
   backgroundStartupDeferred = false;
@@ -2326,7 +2336,7 @@ async function startOwnerHostWithContext({ activate, expectedSubject }) {
     if (!ownerHostIsReady()) {
       throw new Error(ownerHostStatus.lastError || "SPS Owner Host did not become ready.");
     }
-    await activateOwnerHostProfile(expectedSubject);
+    await activateOwnerHostProfile(expectedSubject, expectedRestoreGeneration);
     await ensureInitialOwnerHostCompany();
     // A previously installed Team Workplane is company-scoped. Bind it only
     // after the local Owner identity and initial company are both available.
@@ -3712,30 +3722,7 @@ async function inspectOwnerVaultTransfer() {
 }
 
 function runOwnerHostRestoreProcess({ command, cwd, helperPath, configPath, backupFile, dbModulePath, embeddedPostgresModulePath, environment }) {
-  return new Promise((resolve, reject) => {
-    const child = spawnChildProcess(command, [
-      helperPath,
-      configPath,
-      backupFile,
-      dbModulePath,
-      embeddedPostgresModulePath,
-    ], {
-      cwd,
-      windowsHide: true,
-      stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, ...environment },
-    });
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => {
-      stderr = `${stderr}${String(chunk)}`.slice(-8_000);
-    });
-    child.once("error", reject);
-    child.once("close", (code, signal) => {
-      if (signal) reject(new Error(`SPS Host restore stopped unexpectedly (${signal}).`));
-      else if (code !== 0) reject(new Error(`SPS Host database restore failed${stderr.trim() ? `: ${stderr.trim()}` : "."}`));
-      else resolve();
-    });
-  });
+  return ownerHostRestoreRunner.run({ command, cwd, helperPath, configPath, backupFile, dbModulePath, embeddedPostgresModulePath, environment });
 }
 
 async function restoreOwnerServerFromTransfer() {
@@ -3743,6 +3730,9 @@ async function restoreOwnerServerFromTransfer() {
 }
 
 async function restoreOwnerServerFromTransferLocked(restorePermit) {
+  if (isQuitting || ownerHostRestoreRunner.hasUnconfirmedTermination()) {
+    throw new Error("SPS Desktop is closing or an earlier restore termination is unconfirmed.");
+  }
   const account = currentDesktopAccount();
   if (!account) throw new Error("Sign in to SPS before restoring an SPS Server.");
   if (desktopAccountController?.getStatus().pending) throw new Error("Finish the current SPS sign-in before restoring a Host.");
@@ -3751,9 +3741,14 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
     throw new Error("SPS Host restore is allowed only on a fresh Host that has never been activated.");
   }
   const targetRoot = ownerVaultRoot();
+  const restoreGeneration = ownerHostRestoreRunner.generation();
   const originalProfile = state.profile;
   const originalRouting = JSON.stringify(state.profile);
   const assertRestoreAccount = () => {
+    if (isQuitting || ownerHostRestoreRunner.hasUnconfirmedTermination()
+      || restoreGeneration !== ownerHostRestoreRunner.generation()) {
+      throw new Error("SPS Desktop is closing or an earlier restore termination is unconfirmed.");
+    }
     if (desktopStateUnavailable || currentDesktopAccountSubject() !== account.subject
       || state.ownerHostOwnerSubject || state.profile !== originalProfile || JSON.stringify(state.profile) !== originalRouting
       || ownerHostIsReady() || ownerVaultRoot() !== targetRoot) {
@@ -6540,6 +6535,7 @@ const drainDesktopRuntime = createSpsDesktopRuntimeDrain({
       { name: "Native Node", stop: () => nativeNodeController?.dispose() },
       { name: "Memory", stop: () => defaultMemoryManager?.stop({ force: false }) },
       { name: "Owner Host", stop: () => ownerHostManager?.stop({ force: false }) },
+      { name: "Owner Host restore", stop: () => ownerHostRestoreRunner.stop() },
       { name: "Plugin preview", stop: () => preview?.manager?.stop({ force: false }),
         onStopped: () => { if (pluginPreviewRuntime === preview) pluginPreviewRuntime = null; } },
     ];

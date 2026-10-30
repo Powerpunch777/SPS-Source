@@ -52,3 +52,4 @@ export {
   SPS_NODE_HEARTBEAT_PROTOCOL,
 } from "./protocol.mjs";
 export { createSpsNodeClaimRequestId } from "./claim-receipt.mjs";
+export { spawnWindowsJobSupervisor } from "./windows-job-supervisor.mjs";
