@@ -53,6 +53,15 @@ test("exports a portable Owner Vault transfer without secrets or live database f
     await fs.mkdir(path.join(vault, "database"), { recursive: true });
     await fs.mkdir(exports);
     await fs.writeFile(backup, "database");
+    const restoreReceipt = path.join(vault, "sps-desktop-restore.json");
+    const receiptBytes = `${JSON.stringify({
+      format: "sps-desktop-owner-restore",
+      version: 1,
+      ownerSubject: "owner-a",
+      restoreId: "00000000-0000-4000-8000-000000000001",
+      createdAt: "2026-07-21T03:04:05.000Z",
+    })}\n`;
+    await fs.writeFile(restoreReceipt, receiptBytes);
     await fs.writeFile(path.join(vault, "storage", "attachment.txt"), "asset");
     await fs.writeFile(path.join(vault, "instances", "room.md"), "room");
     await fs.writeFile(path.join(vault, "memory", "data", "memory.json"), "memory");
@@ -66,11 +75,20 @@ test("exports a portable Owner Vault transfer without secrets or live database f
     assert.equal(path.basename(exported.bundleRoot), createSpsOwnerTransferName(now));
     assert.equal(inspected.manifest.format, SPS_OWNER_TRANSFER_FORMAT);
     assert.ok(inspected.manifest.entries.includes("storage/attachment.txt"));
+    assert.equal(await fs.readFile(restoreReceipt, "utf8"), receiptBytes);
+    await assert.rejects(fs.access(path.join(exported.bundleRoot, "sps-desktop-restore.json")));
     assert.equal(await fs.readFile(path.join(exported.bundleRoot, "storage", "attachment.txt"), "utf8"), "asset");
     assert.equal(await fs.readFile(path.join(exported.bundleRoot, "instances", "room.md"), "utf8"), "room");
     assert.equal(await fs.readFile(path.join(exported.bundleRoot, "memory", "data", "memory.json"), "utf8"), "memory");
     await assert.rejects(fs.access(path.join(exported.bundleRoot, "secrets", "master.key")));
     await assert.rejects(fs.access(path.join(exported.bundleRoot, "database", "live.data")));
+
+    const imported = await importSpsOwnerVaultTransfer({
+      bundleRoot: exported.bundleRoot,
+      vaultRoot: path.join(root, "restored-vault"),
+    });
+    assert.equal(await fs.readFile(restoreReceipt, "utf8"), receiptBytes);
+    await assert.rejects(fs.access(path.join(imported.vaultRoot, "sps-desktop-restore.json")));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

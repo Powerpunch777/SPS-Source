@@ -25,6 +25,7 @@ import { createSpsNativeHostIngress } from "./native-host-ingress.mjs";
 import { createSpsNativeMemberPendingKeyStore, createSpsNativeMemberHostTargetReader,
   createSpsNativeMemberPublicationRecovery } from "./native-member-pending-store.mjs";
 import { createSpsOwnerVaultOperationGate } from "./owner-vault-operation-gate.mjs";
+import { readSpsOwnerVaultRestoreReceipt, writeSpsOwnerVaultRestoreReceipt } from "./owner-vault-restore-receipt.mjs";
 import { createSpsOwnerHostRestoreRunner } from "./owner-host-restore-runner.mjs";
 import { redactPluginPreviewDiagnosticMessage as redactLocalDiagnostic } from "./plugin-preview-diagnostics.mjs";
 import {
@@ -311,6 +312,7 @@ const ownerVaultOperations = createSpsOwnerVaultOperationGate({
   },
 });
 const ownerHostRestoreRunner = createSpsOwnerHostRestoreRunner();
+let ownerRestoreBindingRecovery = null;
 let ownerHostRecoveryPluginsDisabled = null;
 let state = emptyState();
 let desktopStateUnavailable = false;
@@ -2272,6 +2274,41 @@ async function activateOwnerHostProfile(expectedSubject = null, expectedRestoreG
   return publicStatus();
 }
 
+async function recoverRestoredOwnerHostBinding() {
+  if (ownerRestoreBindingRecovery) return ownerRestoreBindingRecovery;
+  const pending = (async () => {
+    if (desktopStateUnavailable) throw new Error("Repair SPS Desktop connection settings before recovering a restored Host.");
+    const vaultRoot = ownerVaultRoot();
+    const receipt = await readSpsOwnerVaultRestoreReceipt({ vaultRoot });
+    if (desktopStateUnavailable || ownerVaultRoot() !== vaultRoot) throw new Error("The restored Host context changed during recovery.");
+    if (!receipt) return;
+    if (state.ownerHostOwnerSubject && state.ownerHostOwnerSubject !== receipt.ownerSubject) {
+      throw new Error("The restored Host ownership conflicts with Desktop settings. Existing data was preserved for recovery.");
+    }
+    if (!state.ownerHostOwnerSubject) {
+      const legacyPending = state.legacyOwnerHostAdoptionPending;
+      state.ownerHostOwnerSubject = receipt.ownerSubject;
+      state.legacyOwnerHostAdoptionPending = false;
+      try {
+        await persistState({ rememberActiveConnection: false, beforeCommit: () => {
+          if (desktopStateUnavailable || ownerVaultRoot() !== vaultRoot || state.ownerHostOwnerSubject !== receipt.ownerSubject) {
+            throw new Error("The restored Host ownership changed while saving recovery settings.");
+          }
+        } });
+      } catch (error) {
+        if (state.ownerHostOwnerSubject === receipt.ownerSubject) {
+          state.ownerHostOwnerSubject = null;
+          state.legacyOwnerHostAdoptionPending = legacyPending;
+        }
+        throw error;
+      }
+    }
+  })();
+  ownerRestoreBindingRecovery = pending;
+  try { return await pending; }
+  finally { if (ownerRestoreBindingRecovery === pending) ownerRestoreBindingRecovery = null; }
+}
+
 async function startOwnerHost({ activate = false, restorePermit, expectedOwnerSubject = null } = {}) {
   if (isQuitting || ownerHostRestoreRunner.hasUnconfirmedTermination()) {
     throw new Error("SPS Desktop is closing or an earlier restore termination is unconfirmed.");
@@ -2279,7 +2316,18 @@ async function startOwnerHost({ activate = false, restorePermit, expectedOwnerSu
   const expectedSubject = activate ? expectedOwnerSubject ?? currentDesktopAccountSubject() : null;
   const expectedRestoreGeneration = restorePermit ? ownerHostRestoreRunner.generation() : null;
   if (activate && !expectedSubject) throw new Error("Sign in to SPS before starting the local Host.");
-  return ownerVaultOperations.start(() => startOwnerHostWithContext({ activate, expectedSubject, expectedRestoreGeneration }), { restorePermit });
+  return ownerVaultOperations.start(async () => {
+    await recoverRestoredOwnerHostBinding();
+    if (isQuitting || ownerHostRestoreRunner.hasUnconfirmedTermination()
+      || expectedRestoreGeneration !== null && expectedRestoreGeneration !== ownerHostRestoreRunner.generation()) {
+      throw new Error("SPS Desktop is closing or an earlier restore termination is unconfirmed.");
+    }
+    if (activate && (currentDesktopAccountSubject() !== expectedSubject
+      || state.ownerHostOwnerSubject && state.ownerHostOwnerSubject !== expectedSubject)) {
+      throw new Error("This restored SPS Owner Host belongs to a different SPS account. Sign in with its original restoring account.");
+    }
+    return startOwnerHostWithContext({ activate, expectedSubject, expectedRestoreGeneration });
+  }, { restorePermit });
 }
 
 async function startOwnerHostWithContext({ activate, expectedSubject, expectedRestoreGeneration }) {
@@ -2346,6 +2394,12 @@ async function startOwnerHostWithContext({ activate, expectedSubject, expectedRe
 }
 
 async function bootstrapOwnerHost() {
+  try { await recoverRestoredOwnerHostBinding(); }
+  catch (error) {
+    ownerHostStatus = { ...ownerHostStatus, state: "stopped", lastError: error instanceof Error ? error.message : "Restored Host ownership requires recovery." };
+    sendDesktopAccountStatus();
+    return;
+  }
   if (!state.ownerHostOwnerSubject && state.legacyOwnerHostAdoptionPending && currentDesktopAccount()) {
     try {
       await adoptLegacyOwnerHostIfNeeded();
@@ -3772,7 +3826,8 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
   await assertFreshRestoreContext();
 
   const inspected = await inspectSpsOwnerVaultTransfer({ bundleRoot: selection.filePaths[0] });
-  const stagingRoot = path.join(app.getPath("userData"), `owner-vault.restore-${randomUUID()}`);
+  const restoreId = randomUUID();
+  const stagingRoot = path.join(app.getPath("userData"), `owner-vault.restore-${restoreId}`);
   let promoted = false;
   try {
     const stagingConfig = await ensureSpsOwnerHostConfig({ vaultRoot: stagingRoot });
@@ -3814,6 +3869,10 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
       update: (config) => rebaseSpsOwnerHostConfigPaths(config, { vaultRoot: targetRoot }),
     });
 
+    // The account binding moves with the validated database. A crash after
+    // rename but before profile persistence must not make its data unowned.
+    await writeSpsOwnerVaultRestoreReceipt({ vaultRoot: stagingRoot, ownerSubject: account.subject,
+      restoreId, beforeCommit: assertRestoreAccount });
     const finalTarget = await assertFreshRestoreContext();
     assertRestoreAccount();
     if (finalTarget.reason === "bootstrap-only") {
