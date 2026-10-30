@@ -450,12 +450,13 @@ let workspaceProjectsRequestGeneration = 0;
 let desktopAuthPollRequestGeneration = 0;
 const hostShareMutationCoordinator = createSpsHostShareMutationCoordinator();
 let pluginRuntimeStatus = {
-  state: "checking",
+  state: "not-inspected",
   command: null,
   npmCli: null,
   version: null,
-  message: "Checking SPS plugin runtime.",
+  message: "SPS plugin runtime has not been inspected.",
 };
+let pluginRuntimeRefreshPromise = null;
 let agentRuntimePacks = [];
 
 function emptyNodeRuntimeStatus() {
@@ -2019,10 +2020,28 @@ async function synchronizeReadyTeamWorkplane() {
   return teamWorkplaneSyncPromise;
 }
 
+function refreshPluginRuntimeStatus() {
+  if (pluginRuntimeRefreshPromise) return pluginRuntimeRefreshPromise;
+  pluginRuntimeStatus = { ...pluginRuntimeStatus, state: "checking", message: "Checking SPS plugin runtime." };
+  const pending = Promise.resolve().then(() => inspectSpsPluginRuntime()).then(status => {
+    pluginRuntimeStatus = status;
+    return status;
+  }, () => {
+    pluginRuntimeStatus = {
+      state: "local-folder-only", command: null, npmCli: null, version: null,
+      message: "npm runtime inspection is unavailable. Local-folder plugins remain available.",
+    };
+    return pluginRuntimeStatus;
+  }).finally(() => {
+    if (pluginRuntimeRefreshPromise === pending) pluginRuntimeRefreshPromise = null;
+  });
+  pluginRuntimeRefreshPromise = pending;
+  return pending;
+}
+
 async function refreshOwnerRuntimeStatus() {
-  if (pluginRuntimeStatus.state === "checking") {
-    pluginRuntimeStatus = await inspectSpsPluginRuntime();
-  }
+  // Optional npm detection belongs to Host initialization or an explicit
+  // inspection, never to a status read that could outlive the requesting UI.
   if (defaultMemoryManager) {
     const memory = await defaultMemoryManager.inspect();
     defaultMemoryStatus = {
@@ -2062,7 +2081,7 @@ async function ensureOwnerHostManager() {
   const defaultMemory = defaultMemoryEnabled
     ? await ensureSpsDefaultMemoryConfig({ ownerVaultRoot: vaultRoot })
     : null;
-  pluginRuntimeStatus = await inspectSpsPluginRuntime();
+  await refreshPluginRuntimeStatus();
   agentRuntimePacks = await listSpsAgentRuntimePacks({ root: ownerAgentRuntimePacksRoot() });
   const url = spsOwnerHostUrl(ownerHost.config);
   if (ownerHostManager && ownerHostStatus.url === url && (!defaultMemoryEnabled || defaultMemoryManager)) {
@@ -3954,7 +3973,7 @@ async function revealOwnerRestoreAttempt(id) {
 }
 
 async function showPluginRuntimeStatus() {
-  pluginRuntimeStatus = await inspectSpsPluginRuntime();
+  await refreshPluginRuntimeStatus();
   await dialog.showMessageBox(mainWindow ?? undefined, {
     type: pluginRuntimeStatus.state === "ready" ? "info" : "warning",
     title: "SPS plugin runtime",
