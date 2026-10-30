@@ -14,6 +14,7 @@ import { projectLegacyDesktopStateV11 } from "./legacy-desktop-state-fixture.mjs
 import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
 import { readSpsOwnerVaultRestoreReceipt } from "../src/owner-vault-restore-receipt.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
+import { seedReviewedTransferPlugin, resetTransferPluginImportProbe, reviewRestoredTransferPlugin, assertRestoredTransferPluginData } from "./owner-vault-plugin-acceptance.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const core = path.resolve(root, "../../external/sps-core");
@@ -45,6 +46,7 @@ let confirmedCrashCount = 0;
 let failure;
 let applicationOutput = "";
 let historicalEvidence;
+let registryPluginEvidence;
 
 async function bounded(operation, description) {
   let timer;
@@ -376,12 +378,17 @@ try {
     attachment = path.join("storage", "transfer-acceptance.txt");
     await mkdir(path.join(sourceStatus.ownerHost.vaultPath, "storage"), { recursive: true });
     await writeFile(path.join(sourceStatus.ownerHost.vaultPath, attachment), content, { flag: "wx" });
+    if (!crashAfterPromotion && !legacyDesktopState) {
+      registryPluginEvidence = await seedReviewedTransferPlugin({ app: source.app, workspace: sourceWorkspace, company, fixture, api, waitFor });
+      phases.push("reviewed-registry-plugin-and-distinct-workspace-data-seeded");
+    }
     await chooseOnly(source.app, "Choose a folder for SPS Server export", exportDirectory);
     exported = await bounded(source.page.evaluate(() => window.spsDesktop.exportOwnerVaultTransfer()), "Main export");
     assert.ok(exported?.bundleRoot);
     phases.push("main-export");
     console.log("[vault-transfer] Main export complete");
     await stop(source.app);
+    if (registryPluginEvidence) await resetTransferPluginImportProbe({ fixture, evidence: registryPluginEvidence });
   }
 
   const target = await launch(targetProfile, origin);
@@ -426,6 +433,11 @@ try {
     phases.push("historical-backup-restored-sanitized-and-upgraded-by-real-main", "both-historical-workspace-projects-retained");
   }
   assert.deepEqual(await readFile(path.join(restored.ownerHost.vaultPath, attachment)), content);
+  if (registryPluginEvidence) {
+    await reviewRestoredTransferPlugin({ app: restoredApp.app, workspace: restoredWorkspace, fixture,
+      vaultRoot: restored.ownerHost.vaultPath, evidence: registryPluginEvidence, api, waitFor });
+    phases.push("registry-package-bytes-restored-without-code-import", "new-host-reviewed-package-and-preserved-both-workspace-states");
+  }
   phases.push("main-restore-returned-running", "typed-row-and-attachment-preserved");
   console.log("[vault-transfer] restored Host running; typed row and attachment preserved");
   const legacyEvidence = legacyDesktopState
@@ -463,6 +475,10 @@ try {
     const reopened = await workspace(restarted.app, restarted.page);
     const afterRestart = await api(reopened, `/api/companies/${company.id}/projects`);
     assert.ok(afterRestart.some(row => row.id === project.id));
+    if (registryPluginEvidence) {
+      await assertRestoredTransferPluginData({ workspace: reopened, evidence: registryPluginEvidence, api, waitFor });
+      phases.push("reviewed-restored-package-and-workspace-data-retained-after-restart");
+    }
     if (historicalEvidence) {
       const second = await api(reopened, `/api/companies/${historicalEvidence.secondCompany.id}/projects`);
       assert.ok(second.some(row => row.id === historicalEvidence.secondProject.id));
@@ -505,6 +521,7 @@ const evidence = { kind: "source-main-transfer-acceptance", phases, mockIdentity
   crashAfterPromotion, expectedCrashCount: crashedApps.size,
   legacyDesktopStateMigrationQualified: legacyDesktopState,
   historicalCoreBackupRestoreQualified: historicalCoreBackup,
+  managedRegistryPluginTransferQualified: Boolean(registryPluginEvidence),
   ...(historicalEvidence ? { historicalCoreSchema: historicalEvidence.baseline, historicalMigrations: historicalEvidence.oldMigrations } : {}),
   ...(historicalEvidence ? { currentMigrations: historicalEvidence.currentHistory.length } : {}),
   historicalInstalledDatabaseMigrationQualified: false,

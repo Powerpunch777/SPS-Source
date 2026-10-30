@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Core: `01fe9b16162fb8f6c0023e5efda30c1189094f10`.
+- Core: `ee400bccc0258185e89fa01187336625d0eeb8b4` (earlier evidence names its prior revision explicitly).
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -33,6 +33,7 @@ deferred Native development are excluded.
 | Historical backup through actual Main | New ordinary source acceptance passed locally | A pinned old-schema backup entered actual Main fresh-Host restore, sanitizer and Host startup. Both historical Workspace projects, Unicode description and storage bytes remained; the fixture-bound actual DB had 176 migrations and unchanged history after current-Main restart. Final caller exit 0. This is not installed in-place update provenance. See [acceptance](../reviews/HISTORICAL-CORE-MAIN-RESTORE-2026-10-30.md). |
 | Status responsiveness | Optional npm wait reproduced and corrected locally | Status polling no longer starts/awaits npm detection; explicit probes remain awaited and deduplicated. Actual isolated Settings/Quit and source No-AI restart flow passed locally. Historical CDP timeout attribution and final-HEAD CI are separate. See [responsiveness verification](../reviews/DESKTOP-STATUS-RESPONSIVENESS-2026-10-30.md). |
 | Transfer sensitivity wording | Corrected; contents retained | The user selected retaining potentially sensitive snapshot contents with accurate warnings. Separate credential/key-directory exclusions and post-restore sanitation remain unchanged; the app states that SPS does not encrypt the transfer. See [sensitivity audit](../reviews/OWNER-VAULT-EXPORT-SENSITIVITY-2026-10-30.md). |
+| Installed Registry plugin transfer | User-approved V2 inclusion/new-Host review passed actual local Main acceptance | Core retires prior-Host activation/paths while preserving IDs/data. Managed file inventory and inert-stage rebasing preserve package bytes; v1 stays readable. Actual Main/Registry UI proved no import before review, same plugin ID, two distinct Workspace data canaries and restart. Final-HEAD hosted CI remains required. See [preservation review](../reviews/PLUGIN-TRANSFER-PRESERVATION-GAP-2026-10-30.md). |
 | Core full regression and security | All 17 non-Windows jobs passed on `cd4174f`; latest Main-restore integration CI remains required | Run `41059503771` completed every non-Windows job including all nine Linux shards/full Core typecheck/build; Windows remained live in actual source transfer acceptance at the last observation. Updated local Desktop command `node --test test/*.test.mjs`: 1625 total, 1623 pass, two environment skips, zero failures. The new historical-Main restore requires its own final-HEAD CI. Fresh production audit: two Low; full graph: three Low; both zero Critical/High, no exceptions. This is not a full Windows or Stable pass. |
 | Production Identity and signed physical release | Separate external gates | Production rollout, trusted code signing, identical-byte installation/update on Host and Member as required for release. Do not manufacture certificates or count source fixture Identity as production. |
 
@@ -54,6 +55,11 @@ deferred Native development are excluded.
 - Local full Desktop validation after the owned-window diagnostic: 1627 total,
   1625 passed, two unavailable-8.3-alias skips and zero failures. This exercises
   a real harmless modal but never a local installer or real installed data.
+- After the approved managed-plugin transfer change: 1640 total, 1638 passed,
+  two unavailable-8.3-alias skips, zero failures. Actual local Main V2 package/
+  two-Workspace restore/review/restart and separate pinned historical restore
+  both exited 0. Core `ee400bc` full typecheck/build and sanitizer 15/15 passed;
+  these do not replace final-HEAD hosted or installed-byte evidence.
 
 1. Fix reproduced Core defects before adding optional features. Preserve existing
    API, SDK, capability, Source, credential and authentication boundaries.

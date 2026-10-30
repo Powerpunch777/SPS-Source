@@ -119,6 +119,7 @@ import {
   spsOwnerHostBundledNodePath,
 } from "./owner-host.mjs";
 import { materializeSpsOwnerHostRuntimePackage } from "./owner-host-runtime-package.mjs";
+import { rebaseRestoredRegistryStages } from "./owner-vault-registry-transfer.mjs";
 import {
   configureSpsOwnerHostAuthenticatedLocal,
   configureSpsOwnerHostPrivateTeamAccess,
@@ -3896,6 +3897,10 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
       environment: app.isPackaged ? runtime.environment : { ...runtime.environment, ELECTRON_RUN_AS_NODE: "1" },
     });
 
+    // Packages remain static, unreviewed stages. Publish only final-Vault
+    // references before promotion; never load code from the old Host's paths.
+    await rebaseRestoredRegistryStages({ vaultRoot: stagingRoot, destinationVaultRoot: targetRoot });
+
     await updateSpsOwnerHostConfig({
       vaultRoot: stagingRoot,
       update: (config) => rebaseSpsOwnerHostConfigPaths(config, { vaultRoot: targetRoot }),
@@ -3925,7 +3930,7 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
       type: "info",
       title: "SPS Server restored",
       message: "The SPS Server was restored into this fresh Owner Host.",
-      detail: "External project folders, Google/CLI sessions, API secrets, Tailscale, and Node credentials were not included. Reconnect them from SPS settings.",
+      detail: "Restored Registry packages remain inactive. Review them in Settings > Plugins before enabling them on this Host. External plugin/project folders must be selected again. Google/CLI sessions, API secrets, Tailscale and Node credentials require reconnection.",
     });
     return publicStatus();
   } catch (error) {

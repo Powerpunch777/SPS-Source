@@ -25,6 +25,7 @@ function fixture(phase) {
   const state = { ownerHostOwnerSubject: null, profile: null, ownerRestoreAttempts: [] };
   const root = path.resolve("C:/fixture/vault");
   const calls = [];
+  const rebaseCalls = [];
   const savedOwners = [];
   const savedAttempts = [];
   let stagedReceipt = null;
@@ -96,7 +97,12 @@ function fixture(phase) {
       if (phase === "quitting-during-restore") scope.isQuitting = true;
       if (phase === "cancelled-after-failed-quit") scope.ownerHostRestoreRunner.generation = () => 1n;
     },
-    updateSpsOwnerHostConfig: async () => {},
+    rebaseRestoredRegistryStages: async args => {
+      rebaseCalls.push({ vaultRoot: args.vaultRoot, destinationVaultRoot: args.destinationVaultRoot });
+      calls.push("registry-stages-rebased");
+      if (phase === "registry-rebase-failure") throw new Error("Registry stage rebase failed");
+    },
+    updateSpsOwnerHostConfig: async ({ vaultRoot }) => { calls.push(["config-updated", vaultRoot]); },
     refreshOwnerHostCompanies: async () => [],
     fs: {
       rm: async target => {
@@ -124,7 +130,7 @@ function fixture(phase) {
     },
   };
   runInNewContext(`${activation}\n${start}\n${restore}\n${bootstrap}\n${saveProfile}\n${accountActions}\nthis.activateOwnerHostProfile = activateOwnerHostProfile; this.startOwnerHost = startOwnerHost; this.bootstrapOwnerHost = bootstrapOwnerHost; this.restore = restoreOwnerServerFromTransfer; this.reveal = revealOwnerRestoreAttempt; this.saveRemoteProfile = saveRemoteProfile; this.startDesktopAccountSignIn = startDesktopAccountSignIn; this.signOutDesktopAccount = signOutDesktopAccount;`, scope);
-  return { scope, calls, state, root, savedOwners, savedAttempts, receipt: () => vaultReceipt, restoreInvocation: () => restoreInvocation, materializeCalls: () => materializeCalls, setAccount: value => { account = value; } };
+  return { scope, calls, state, root, savedOwners, savedAttempts, receipt: () => vaultReceipt, restoreInvocation: () => restoreInvocation, rebaseCalls, materializeCalls: () => materializeCalls, setAccount: value => { account = value; } };
 }
 
 test("the actual Main restore flow checks Native absence and activates only its captured account", async () => {
@@ -135,11 +141,32 @@ test("the actual Main restore flow checks Native absence and activates only its 
   assert.ok(ctx.calls.some(value => Array.isArray(value) && value[0] === "start" && value[1] === "owner-a"));
   assert.equal(ctx.scope.ownerVaultOperations.isRestoring(), false);
   assert.ok(ctx.calls.indexOf("database-restored") < ctx.calls.indexOf("ownership-receipt-written"));
+  assert.ok(ctx.calls.indexOf("database-restored") < ctx.calls.indexOf("registry-stages-rebased"));
+  assert.ok(ctx.calls.indexOf("registry-stages-rebased") < ctx.calls.findIndex(value => Array.isArray(value) && value[0] === "config-updated"));
   assert.ok(ctx.calls.indexOf("ownership-receipt-written") < ctx.calls.indexOf("promoted"));
+  assert.deepEqual(ctx.rebaseCalls, [{
+    vaultRoot: path.join("C:/fixture/user-data", "owner-vault.restore-11111111-1111-4111-8111-111111111111"),
+    destinationVaultRoot: ctx.root,
+  }]);
   assert.equal(ctx.receipt().ownerSubject, "owner-a");
   assert.ok(ctx.calls.indexOf("state-saved") < ctx.calls.indexOf("staging-config"));
   assert.equal(ctx.savedAttempts[0][0].ownerSubject, "owner-a");
   assert.equal(ctx.state.ownerRestoreAttempts.length, 0);
+});
+
+test("registry stage rebase failure retains staging and blocks config, receipt, promotion, and Host start", async () => {
+  const ctx = fixture("registry-rebase-failure");
+  const stagingRoot = path.join("C:/fixture/user-data", "owner-vault.restore-11111111-1111-4111-8111-111111111111");
+
+  await assert.rejects(ctx.scope.restore(), /Registry stage rebase failed.*staged was retained for recovery/);
+
+  assert.deepEqual(ctx.rebaseCalls, [{ vaultRoot: stagingRoot, destinationVaultRoot: ctx.root }]);
+  assert.ok(ctx.calls.indexOf("database-restored") < ctx.calls.indexOf("registry-stages-rebased"));
+  assert.equal(ctx.calls.some(value => Array.isArray(value) && value[0] === "config-updated"), false);
+  assert.equal(ctx.calls.includes("ownership-receipt-written"), false);
+  assert.equal(ctx.calls.includes("promoted"), false);
+  assert.equal(ctx.calls.some(value => Array.isArray(value) && value[0] === "start"), false);
+  assert.equal(ctx.calls.some(value => Array.isArray(value) && value[0] === "remove" && value[1] === stagingRoot), false);
 });
 
 test("source restore launches Electron in Node mode instead of passing the relative Core command to Windows supervision", async () => {

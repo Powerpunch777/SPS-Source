@@ -7,6 +7,14 @@ It is not a new installer or Stable release. The generated
 [current candidate](CURRENT-CANDIDATE.md) and support matrix are authoritative
 for its Core/SDK tuple; do not use a historical tuple from this document.
 
+Current source also includes user-approved managed Registry package transfer.
+V2 exports preserve package files and data; fresh-Host restore clears old paths
+and execution approval, stages local unreviewed packages at the new path, and
+requires normal Host review before execution. V1 data-only transfers remain
+readable. Actual local Main/Registry UI acceptance preserved both Workspace
+state canaries and restart, but new-HEAD Windows/installed-byte qualification
+remains required. See [preservation evidence](../reviews/PLUGIN-TRANSFER-PRESERVATION-GAP-2026-10-30.md).
+
 ## Candidate tuple
 
 - Desktop: unreleased source `0.4.137`

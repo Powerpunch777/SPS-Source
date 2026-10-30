@@ -38,7 +38,7 @@ async function eventually(read, accepts, label, timeout = 30_000) {
   throw new Error(`Timed out waiting for package lifecycle ${label}: ${JSON.stringify(value)}`);
 }
 
-export async function createLifecycleRegistryFixture(root) {
+export async function createLifecycleRegistryFixture(root, { manifestImportProbe = null } = {}) {
   const registry = path.join(root, "signed-package-lifecycle");
   const keys = path.join(registry, "keys");
   for (const directory of [keys, path.join(registry, "artifacts"), path.join(registry, "releases")]) {
@@ -57,6 +57,13 @@ export async function createLifecycleRegistryFixture(root) {
     const { manifest } = await createChecklistPackage(directory, {
       id: pluginKey, version, withUi: false, lifecycleProbe: true, failInitialize: version === "0.3.0",
     });
+    if (manifestImportProbe) {
+      const relative = path.relative(await realpath(root), path.resolve(manifestImportProbe));
+      assert.ok(relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+      const file = path.join(directory, "dist/manifest.js");
+      const declaration = await readFile(file, "utf8");
+      await writeFile(file, `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(manifestImportProbe)}, 'manifest-imported\\n');\n${declaration}`);
+    }
     const manifestBytes = await readFile(path.join(directory, "dist/manifest.js"));
     await writeFile(path.join(directory, "sps-plugin.json"), `${JSON.stringify({
       schemaVersion: 1, plugin: { id: pluginKey, version, apiVersion: "1" },

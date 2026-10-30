@@ -364,13 +364,20 @@ are not deleted as part of retiring the public surface.
 Only the signed-in Host can create a portable Owner Vault transfer bundle. It
 contains a fresh database backup plus SPS-managed `storage`, `instances`,
 `projects`, and, when present, Default Memory data and journals.
+The user approved including SPS-managed Registry plugin packages as well.
+The version-2 implementation preserves these files and static review stages;
+legacy version-1 bundles remain readable. New-Host review is required before
+execution, and external local plugin folders are not silently copied.
 
-It deliberately excludes account sessions, encryption keys, raw secrets,
-memory sidecar credentials, live database files, logs, Tailscale state, CLI
-logins, Agent credentials, and Host project folders located outside the Owner
-Vault. After SQL restore, SPS also removes restored session, OAuth, API-key,
-secret-material, Node-credential, and transient execution records before the
-new Host starts.
+It deliberately excludes separate Desktop sign-in storage, Vault encryption
+key/secret folders, memory sidecar credentials, live database files, logs,
+Tailscale state, CLI login stores, and Host project folders outside the Owner
+Vault. The DB snapshot and included managed files are copied unchanged and can
+still contain sensitive settings or credentials. The user selected retaining
+these contents with a warning; SPS does not encrypt this transfer. After SQL
+restore, the sanitizer removes restored session, OAuth, API-key, secret-material,
+Node-credential and transient execution records before the new Host starts.
+That later cleanup does not sanitize the exported bundle.
 
 Host restore is available only during fresh-Host setup. SPS validates and
 restores into a temporary Vault, promotes it only after success, and refuses
@@ -378,7 +385,12 @@ to merge with or replace an activated Host.
 
 The destination Host must sign in again, reconnect CLI/API credentials,
 Tailscale and Member Nodes, reselect external Workspace Sources, and recheck
-plugin compatibility.
+plugin compatibility. Prior version-1 transfers omit `registry-staging/packages`
+even though installed plugin records/state remain in the DB. The approved
+version-2 correction includes managed package files, resets prior-Host activation
+and old paths, and requires review/reinstall at the new Host while retaining
+plugin IDs and data. Integration qualification remains in progress. See the
+[current preservation review](../reviews/PLUGIN-TRANSFER-PRESERVATION-GAP-2026-10-30.md).
 
 ### Workspace Packages
 
@@ -390,8 +402,9 @@ Workspace.
 
 Local source contents and credentials are never packaged. Plugin-owned opaque
 database, file, and Memory Provider data require a future standard plugin
-portability contract; until then, Host Transfer is the complete server-level
-preservation path.
+portability contract. Host Transfer is the current server-level data-preservation
+path. Version-1 package-file limits and version-2 integration evidence remain
+distinct; copied package bytes never imply automatic executable-plugin trust.
 
 ## Implementation Status and Order
 
