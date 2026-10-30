@@ -10,6 +10,7 @@ import { queryInstallerRegistrations } from "./installer-registry-query.mjs";
 import { queryInstallerProcesses } from "./installer-process-query.mjs";
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./historical-installer-baseline.mjs";
+import { collectInstallerPathCensus } from "./installer-path-census.mjs";
 
 assertHostedInstallerCi();
 
@@ -133,6 +134,7 @@ try {
   }
 
   phase = "historical-uninstall";
+  trace("pre-uninstall-path-census", await collectInstallerPathCensus(installation));
   const copiedUninstaller = path.join(fixture, "owned-historical-uninstaller.exe");
   assertContained(fixture, copiedUninstaller);
   await verifyFixture();
@@ -156,6 +158,9 @@ try {
     uninstallChild.once("close", (code, signal) => resolve({ code, signal, elapsedMs: Date.now() - uninstallStarted }));
   });
   trace("historical-uninstall-close", uninstallResult);
+  if (uninstallResult.code !== 0 && !await missing(installation)) {
+    trace("failed-uninstall-path-census", await collectInstallerPathCensus(installation));
+  }
   assert.equal(uninstallResult.signal, null);
   assert.equal(uninstallResult.code, 0);
 

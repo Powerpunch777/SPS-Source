@@ -148,7 +148,21 @@ native-helper no-general-shell contract caught the first harmless C# fixture
 placement; it was preserved unchanged by moving the fixed sleeping fixture to
 its dedicated Node probe. Targeted guard/diagnostic tests passed five checks,
 including an actual native classification/timeout/privacy/cleanup observation.
-Hosted standalone old-uninstaller execution is still pending, not asserted here.
+Hosted standalone execution at Source `d3d0515ea82159876023ead3c4258a5d6e1a9b22`
+is now terminal: run `41091696529`, job `124186938254`, failed rather than
+timed out. The pinned old installation exited 0 after 224182 ms; the actual
+updated-uninstaller handoff then exited 2 after 56074 ms (16:44:17 UTC), with
+no signal and natural owning-Job emptiness. This narrows the issue to an actual
+uninstaller failure in that attempt, but does not identify its failing operation
+or qualify replacement by the current installer.
+
+The next diagnostic adds a bounded read-only census immediately before that
+same handoff and, when still present, after failure. It reports only fixed
+aggregate file/directory/link counts, maximum path lengths and paths over 259
+characters, never names or file contents. It refuses links and bounds traversal
+by entries, depth and elapsed time; incomplete observation remains explicit.
+The installed fixture path and full installer deadline are not shortened or
+extended. Long paths remain a hypothesis to measure, not an asserted cause.
 
 Final local full Desktop validation after integration: 1655 total, 1653 passed,
 two unavailable-8.3-alias skips, zero failures (`node --test
