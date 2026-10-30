@@ -265,7 +265,7 @@ public static class RestrictedE2eRunner
     }
     static bool Mode(string value)
     {
-        return value == "probe" || value == "probe-registry" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
+        return value == "probe" || value == "probe-registry" || value == "probe-installer-processes" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
             || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
@@ -278,7 +278,7 @@ public static class RestrictedE2eRunner
             || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration"
             || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
-            || value == "probe-preview-zeroexit" || value == "workspace-pending"
+            || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "workspace-pending"
             || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit";
     }
     static int OwnedJobWaitMilliseconds(string mode)
@@ -360,6 +360,8 @@ public static class RestrictedE2eRunner
                 System.Reflection.Assembly.GetExecutingAssembly().Location);
             return RunNode(node, directory, "windows-e2e/probe-installer-registry.mjs");
         }
+        if (mode == "probe-installer-processes")
+            return RunNode(node, directory, "windows-e2e/probe-installer-processes.mjs", OwnedJobCleanupArgument);
         if (mode == "probe-exit") return 7;
         if (mode == "probe-exit-76") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-native-exit") return unchecked((int)0xC0000142);
@@ -909,7 +911,7 @@ public static class RestrictedE2eRunner
             Require(AssignProcessToJobObject(job, child.Process), "Assign suspended child to cleanup job"); assigned = true;
             Require(ResumeThread(child.Thread) != 0xFFFFFFFF, "Resume E2E child");
             stage = "child_wait";
-            uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : 18u * 60u * 1000u);
+            uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : mode == "probe-installer-processes" ? 45u * 1000u : 18u * 60u * 1000u);
             if (wait == 258)
             {
                 Require(TerminateJobObject(job, 124), "Terminate timed-out E2E job");

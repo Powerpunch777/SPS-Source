@@ -51,3 +51,37 @@ No installer was launched locally. The existing local SPS app and data were not
 used. Exact Source `3ebc90c` runs `41043933502` and `41043942032` predate these
 diagnostics and must be observed separately; they were still live at the time
 of this record. Do not restart them solely because an observation times out.
+
+## Read-Only Process Preflight
+
+The fixed `probe-installer-processes` mode exercises the same WMI process-name
+filter through the existing reduced-token native launcher, without installing,
+modifying registry/data, requiring zero matching processes, or stopping any
+unowned process. Output contains only a count and elapsed milliseconds. The
+PowerShell call retains a 30-second timeout; only this diagnostic has a
+45-second native parent deadline. Ordinary acceptance remains at 18 minutes.
+
+The parent reran the probe locally and observed `count: 0`, `elapsedMs: 140`,
+the reduced same-user token, natural owned-Job emptiness and closed owned
+desktop handles. This host did **not** create a private window station
+(`privateWindowStation: false`, station cleanup `not_owned`). The result proves
+the local query is responsive, not equivalence to the CI private-station
+environment and not the cause of the historical installer hang.
+
+The new Windows test requires a successful query and natural cleanup. Genuine
+nonzero results and timeouts fail instead of being swallowed. In hosted CI it
+also requires the private window station actually to be present. It is part of
+the ordinary Desktop test glob, so a reproducible CIM prerequisite problem can
+fail before packaging rather than first surfacing in the 18-minute installer
+acceptance. Existing full installer checks are unchanged.
+
+Targeted Windows launcher/probe tests passed 21/21 after parent review:
+
+```powershell
+node --test test/installer-process-probe.test.mjs test/windows-ci-e2e-runner.test.mjs
+.\scripts\run-windows-ci-e2e.ps1 -Mode probe-installer-processes
+```
+
+After integrating that probe, the full Desktop test command passed 1565 of
+1567 tests, with two environment-dependent skips and zero failures. This adds
+an earlier prerequisite diagnostic, not successful installation evidence.
