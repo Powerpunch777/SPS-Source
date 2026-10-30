@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { assertHostedInstallerCi, assertPlainDirectory, assertContained, nsisInvocation } from "./installer-ci-safety.mjs";
+import { SPS_INSTALLER_REGISTRY_QUERY } from "./installer-registry-query.mjs";
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 
 // Fail before even reading a profile, creating a fixture, or querying registry.
@@ -37,22 +38,7 @@ async function missing(file) {
   catch (error) { if (error.code === "ENOENT") return true; throw error; }
 }
 async function registryInstallations() {
-  const script = `
-    $ErrorActionPreference = 'Stop'
-    $items = @()
-    foreach ($root in @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall')) {
-      try { $null = Get-Item -LiteralPath $root -ErrorAction Stop }
-      catch { if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { continue }; throw }
-      foreach ($key in Get-ChildItem -LiteralPath $root -ErrorAction Stop) {
-        $item = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction Stop
-        if ($item.DisplayName -match '^SPS(?:\\s|$)') {
-          $items += [pscustomobject]@{ name=$item.DisplayName; version=$item.DisplayVersion; uninstall=$item.UninstallString; perUser=$root.StartsWith('HKCU:') }
-        }
-      }
-    }
-    ConvertTo-Json -InputObject @($items) -Compress
-  `;
-  const { stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, timeout: 30000 });
+  const { stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", SPS_INSTALLER_REGISTRY_QUERY], { windowsHide: true, timeout: 30000 });
   return JSON.parse(stdout.replace(/^\uFEFF/, ""));
 }
 async function assertNoDesktopProcess() {
