@@ -15,7 +15,10 @@ test('installer process query accepts only a nonnegative count and elapsed time'
 });
 
 test('installer process query validates its owned helper and preserves native failures', async t => {
-  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'installer-process-query-'));
+  // Hosted Windows can expose TEMP through an 8.3 alias. Valid fixtures must
+  // use the canonical root, just like the compiled launcher's helper path.
+  const temporaryParent = await realpath(os.tmpdir());
+  const temporaryRoot = await mkdtemp(path.join(temporaryParent, 'installer-process-query-'));
   const temporaryRootIdentity = await lstat(temporaryRoot, { bigint: true });
   t.after(async () => {
     const resolvedRoot = path.resolve(temporaryRoot);

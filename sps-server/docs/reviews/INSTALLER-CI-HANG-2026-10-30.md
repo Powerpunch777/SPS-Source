@@ -134,3 +134,20 @@ unchanged zero-process mutation assertion. The final spec-reporter full run
 passed 1592 of 1594 tests, with two environment skips and zero failures
 (`node --test --test-reporter=spec test/*.test.mjs`, exit 0). A separate dot
 reporter run also exited 0. Neither run executes the local installer.
+
+## Hosted Native Probe And Canonical Fixture Correction
+
+Source `2c5ceefacdfd9d4eef5ab1333809948144d39852`, push run `41050065257`,
+Windows job `124043625525`, passed the real restricted native process probe
+(`ok 384`, 11:48:15 UTC). The test requires the actual private window station on
+hosted CI and natural owned-Job cleanup. This supplies the CI-specific native
+probe evidence missing from the local result; it still does not run NSIS.
+
+The job then failed a separate mocked-helper unit test (`not ok 386`): its temp
+fixture used `os.tmpdir()` without canonicalizing the path. The real helper
+reader correctly rejected a noncanonical directory. Production helper checks
+were not loosened. The fixture now resolves its temp parent before creating its
+owned directory, matching the existing registry-query fixture pattern. The
+corrected focused query/probe/registry tests passed 9/9 locally, and the full
+Desktop run again passed 1592/1594 with two environment skips and zero failures.
+Exact new-HEAD hosted CI and the full installer flow remain pending.
