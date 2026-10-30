@@ -31,3 +31,29 @@ test("historical NSIS upgrade is exercised before candidate repair and never lau
   assert.match(source, /assert\.notEqual\(await hashFile\(path\.join\(installation, "resources\/app\.asar"\)\), expected\.get\("resources\/app\.asar"\)/);
   assert.match(source, /process\.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
 });
+
+test("installer diagnostics identify blocking boundaries without printing fixture paths or weakening the hosted guard", async () => {
+  const source = await readFile(new URL("../scripts/smoke-installer-data-preservation.mjs", import.meta.url), "utf8");
+  const guard = source.indexOf("assertHostedInstallerCi();");
+  const firstTrace = source.indexOf('traceInstallerStage("begin")');
+  const firstProfileRead = source.indexOf("const appData =");
+  assert.ok(guard >= 0 && firstTrace > guard && firstProfileRead > firstTrace);
+  for (const [before, operation, after] of [
+    ['traceInstallerStage("registry-query-start")', "await queryInstallerRegistrations()", 'traceInstallerStage("registry-query-done"'],
+    ['traceInstallerStage("process-query-start")', 'await exec("powershell.exe"', 'traceInstallerStage("process-query-done")'],
+    ['traceInstallerStage("historical-download-start")', "await stageHistoricalInstaller(fixture)", 'traceInstallerStage("historical-download-verified")'],
+    ['traceInstallerStage("isolated-first-frame-start")', "await exec(process.execPath", 'traceInstallerStage("isolated-first-frame-verified")'],
+  ]) {
+    const start = source.indexOf(before);
+    const call = source.indexOf(operation, start);
+    const finish = source.indexOf(after, call);
+    assert.ok(start >= 0 && call > start && finish > call, operation);
+  }
+  const traceStart = source.indexOf("function traceInstallerStage(");
+  const traceEnd = source.indexOf('\ntraceInstallerStage("begin")', traceStart);
+  const trace = source.slice(traceStart, traceEnd);
+  assert.match(trace, /installerPhase: phase, installerStage: stage/);
+  assert.doesNotMatch(trace, /fixture|appData|process\.env|installation|executable|\.path/);
+  assert.match(source, /traceInstallerStage\("nsis-close", \{ code, signal, elapsedMs: Date\.now\(\) - started \}\)/);
+  assert.match(source, /assert\.equal\(signal, null\); assert\.equal\(code, 0, "NSIS operation failed\."\)/);
+});
