@@ -3842,8 +3842,11 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
     if (promoted) {
       throw new Error("The restored SPS data was retained, but Host activation did not finish. Sign in with the original restoring account and reopen the local Host. Do not import another transfer over this Vault.", { cause: error });
     }
-    await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
-    throw error;
+    // A restore helper error can mean database shutdown was not confirmed.
+    // Preserve staged files instead of deleting a possibly live database or
+    // replacing the original failure with cleanup. Never promote on failure.
+    const reason = typeof error?.message === "string" ? error.message : "SPS Host restore did not finish.";
+    throw new Error(`${reason} Any data already staged was retained for recovery.`, { cause: error });
   }
 }
 

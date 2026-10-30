@@ -49,7 +49,10 @@ function fixture(phase) {
     ensureSpsOwnerHostConfig: async () => ({ layout: { configPath: "fixture-config" } }),
     importSpsOwnerVaultTransfer: async () => ({ backupFile: "fixture-backup" }),
     resolveSpsOwnerHostRuntime: async () => ({ command: "fixture", cwd: "fixture", environment: {} }),
-    runOwnerHostRestoreProcess: async () => { calls.push("database-restored"); },
+    runOwnerHostRestoreProcess: async () => {
+      if (phase === "database-stop") throw new Error("Fixture database shutdown unconfirmed");
+      calls.push("database-restored");
+    },
     updateSpsOwnerHostConfig: async () => {},
     refreshOwnerHostCompanies: async () => [],
     fs: {
@@ -104,6 +107,18 @@ test("Main refuses profile saves and account switches through deferred restored-
   await ctx.scope.restore();
   assert.equal(ctx.state.ownerHostOwnerSubject, "owner-a");
   assert.equal(ctx.state.profile.connectionKind, "owner-host");
+});
+
+test("Main preserves restore staging and refuses promotion when database shutdown fails", async () => {
+  const ctx = fixture("database-stop");
+  await assert.rejects(ctx.scope.restore(), error => {
+    assert.match(error.message, /staged was retained for recovery/);
+    assert.match(error.cause.message, /database shutdown unconfirmed/);
+    return true;
+  });
+  assert.equal(ctx.calls.includes("promoted"), false);
+  assert.equal(ctx.calls.some(value => Array.isArray(value) && (value[0] === "remove" || value[0] === "start")), false);
+  assert.equal(ctx.state.ownerHostOwnerSubject, null);
 });
 
 test("Native credentials block restore while unchanged Member routing retains the existing fresh-Host behavior", async () => {

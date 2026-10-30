@@ -37,6 +37,8 @@ const instance = new embeddedModule.default({
   initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
 });
 
+let restoreFailed = false;
+let restoreError;
 try {
   await fs.mkdir(databaseDir, { recursive: true });
   await instance.initialise();
@@ -50,6 +52,14 @@ try {
     connectTimeoutSeconds: 30,
   });
   await db.sanitizePostRestoreDatabase(connectionString);
-} finally {
-  await instance.stop().catch(() => undefined);
+} catch (error) {
+  restoreFailed = true;
+  restoreError = error;
 }
+try {
+  await instance.stop();
+} catch (shutdownError) {
+  if (restoreFailed) throw new AggregateError([restoreError, shutdownError], "SPS Host restore and database shutdown both failed.");
+  throw new Error("SPS Host restore database shutdown was not confirmed.", { cause: shutdownError });
+}
+if (restoreFailed) throw restoreError;
