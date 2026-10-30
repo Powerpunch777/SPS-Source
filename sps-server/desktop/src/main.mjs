@@ -2123,7 +2123,7 @@ async function ensureOwnerHostManager() {
     resolveRuntime: async () => {
       const recovery = await loadCoreRecoverySettings({ userDataPath: app.getPath("userData") });
       ownerHostRecoveryPluginsDisabled = recovery.pluginsDisabled;
-      const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
+      const materializedRuntime = app.isPackaged ? await materializeCurrentSpsOwnerHostRuntime() : null;
       const stableNodeCommand = app.isPackaged && materializedRuntime
         ? await materializeStableSpsOwnerHostNode({
           runtimeRoot: materializedRuntime,
@@ -3137,7 +3137,7 @@ async function pluginPreviewApi(preview, pathname, { method = "GET", body } = {}
 }
 
 async function resolveDesktopPluginPreviewRuntime(preview) {
-  const materializedRuntime = await materializeCurrentSpsOwnerHostRuntime();
+  const materializedRuntime = app.isPackaged ? await materializeCurrentSpsOwnerHostRuntime() : null;
   const stableNodeCommand = app.isPackaged && materializedRuntime
     ? await materializeStableSpsOwnerHostNode({
       runtimeRoot: materializedRuntime,
