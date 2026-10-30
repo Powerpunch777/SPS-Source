@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('probe', 'probe-registry', 'probe-installer-processes', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation', 'owner-vault-transfer', 'owner-vault-crash-recovery', 'owner-vault-state-migration', 'historical-core-migration')]
+  [ValidateSet('probe', 'probe-registry', 'probe-installer-processes', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation', 'owner-vault-transfer', 'owner-vault-crash-recovery', 'owner-vault-state-migration', 'historical-core-migration', 'owner-vault-historical-core')]
   [string] $Mode
 )
 
@@ -16,7 +16,7 @@ if (-not $isProbe -and
 if ($Mode -ceq 'installer-data-preservation' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
   throw 'Installer data preservation E2E requires a GitHub-hosted runner.'
 }
-if (($Mode -ceq 'owner-vault-transfer' -or $Mode -ceq 'owner-vault-crash-recovery' -or $Mode -ceq 'owner-vault-state-migration') -and
+if (($Mode -ceq 'owner-vault-transfer' -or $Mode -ceq 'owner-vault-crash-recovery' -or $Mode -ceq 'owner-vault-state-migration' -or $Mode -ceq 'owner-vault-historical-core') -and
     $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
   throw 'Owner Vault E2E requires a GitHub-hosted runner.'
 }

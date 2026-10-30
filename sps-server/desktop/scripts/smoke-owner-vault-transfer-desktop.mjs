@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -23,9 +23,10 @@ const timeout = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_
 const execFileAsync = promisify(execFile);
 const crashAfterPromotion = process.argv.includes("--crash-after-promotion");
 const legacyDesktopState = process.argv.includes("--legacy-desktop-state");
+const historicalCoreBackup = process.argv.includes("--historical-core-backup");
 const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
-if (crashAfterPromotion && legacyDesktopState) throw new Error("Legacy Desktop state migration and crash recovery are separate acceptance modes.");
-if (process.argv.slice(2).some(arg => !["--crash-after-promotion", "--legacy-desktop-state", OWNED_JOB_CLEANUP_ARGUMENT].includes(arg))) {
+if ([crashAfterPromotion, legacyDesktopState, historicalCoreBackup].filter(Boolean).length > 1) throw new Error("Legacy Desktop state, historical Core backup and crash recovery are separate acceptance modes.");
+if (process.argv.slice(2).some(arg => !["--crash-after-promotion", "--legacy-desktop-state", "--historical-core-backup", OWNED_JOB_CLEANUP_ARGUMENT].includes(arg))) {
   throw new Error("Unknown transfer acceptance mode.");
 }
 if (process.platform !== "win32") throw new Error("Owner Vault Main acceptance requires Windows.");
@@ -43,6 +44,7 @@ const crashedApps = new Set();
 let confirmedCrashCount = 0;
 let failure;
 let applicationOutput = "";
+let historicalEvidence;
 
 async function bounded(operation, description) {
   let timer;
@@ -325,31 +327,62 @@ async function chooseOnly(app, title, directory) {
   }, { title, directory });
 }
 
+async function verifyHistoricalMainSchema() {
+  await fixture.assertCurrent();
+  const vault = path.join(targetProfile, "owner-vault");
+  const config = JSON.parse(await readFile(path.join(vault, "config.json"), "utf8"));
+  const expectedData = await realpath(path.join(vault, "database"));
+  assert.equal(await realpath(config.database.embeddedPostgresDataDir), expectedData);
+  const port = config.database.embeddedPostgresPort;
+  assert.ok(Number.isInteger(port) && port > 0 && port < 65536);
+  const postgres = createRequire(path.join(core, "packages", "db", "package.json"))("postgres");
+  const sql = postgres(`postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`, { max: 1, connect_timeout: 5, onnotice() {} });
+  try {
+    const rows = await sql`SHOW data_directory`;
+    assert.equal(await realpath(rows[0].data_directory), expectedData, "Historical Main assertion reached a different database cluster");
+    const history = await sql`SELECT hash, created_at::text AS created_at FROM drizzle.__drizzle_migrations ORDER BY created_at, hash`;
+    assert.equal(history.length, 176);
+    assert.equal((await sql`SELECT to_regclass('public.sps_plugin_package_operations') IS NOT NULL AS present`)[0].present, true);
+    await fixture.assertCurrent();
+    return Array.from(history);
+  } finally { await sql.end({ timeout: 5 }); }
+}
+
 try {
   await mkdir(exportDirectory);
   const { origin } = await identity.start();
-  const source = await launch(sourceProfile, origin);
-  await signIn(source.page, origin);
-  console.log("[vault-transfer] source sign-in settled");
-  await source.page.locator("#create-owner-server").click();
-  const sourceWorkspace = await workspace(source.app, source.page);
-  const companies = await api(sourceWorkspace, "/api/companies");
-  assert.ok(companies[0]?.id);
-  const company = companies[0];
-  const project = await api(sourceWorkspace, `/api/companies/${company.id}/projects`, {
-    method: "POST", body: { name: "Transfer acceptance fixture", description: "Preserve this typed row across Main restore" } });
-  assert.ok(project.id);
-  const sourceStatus = await source.page.evaluate(() => window.spsDesktop.getStatus());
-  const content = Buffer.from("SPS transfer acceptance attachment\n");
-  const attachment = path.join("storage", "transfer-acceptance.txt");
-  await mkdir(path.join(sourceStatus.ownerHost.vaultPath, "storage"), { recursive: true });
-  await writeFile(path.join(sourceStatus.ownerHost.vaultPath, attachment), content, { flag: "wx" });
-  await chooseOnly(source.app, "Choose a folder for SPS Server export", exportDirectory);
-  const exported = await bounded(source.page.evaluate(() => window.spsDesktop.exportOwnerVaultTransfer()), "Main export");
-  assert.ok(exported?.bundleRoot);
-  phases.push("main-export");
-  console.log("[vault-transfer] Main export complete");
-  await stop(source.app);
+  let exported, company, project, attachment, content;
+  if (historicalCoreBackup) {
+    const { prepareHistoricalOwnerTransfer } = await import("./historical-owner-transfer-fixture.mjs");
+    historicalEvidence = await prepareHistoricalOwnerTransfer({ fixture, destinationRoot: exportDirectory });
+    ({ company, project, attachment, content } = historicalEvidence);
+    exported = historicalEvidence;
+    phases.push("pinned-historical-schema-backup-prepared-and-owned-postgres-closed");
+    console.log("[vault-transfer] exact historical schema backup prepared without running an old application");
+  } else {
+    const source = await launch(sourceProfile, origin);
+    await signIn(source.page, origin);
+    console.log("[vault-transfer] source sign-in settled");
+    await source.page.locator("#create-owner-server").click();
+    const sourceWorkspace = await workspace(source.app, source.page);
+    const companies = await api(sourceWorkspace, "/api/companies");
+    assert.ok(companies[0]?.id);
+    company = companies[0];
+    project = await api(sourceWorkspace, `/api/companies/${company.id}/projects`, {
+      method: "POST", body: { name: "Transfer acceptance fixture", description: "Preserve this typed row across Main restore" } });
+    assert.ok(project.id);
+    const sourceStatus = await source.page.evaluate(() => window.spsDesktop.getStatus());
+    content = Buffer.from("SPS transfer acceptance attachment\n");
+    attachment = path.join("storage", "transfer-acceptance.txt");
+    await mkdir(path.join(sourceStatus.ownerHost.vaultPath, "storage"), { recursive: true });
+    await writeFile(path.join(sourceStatus.ownerHost.vaultPath, attachment), content, { flag: "wx" });
+    await chooseOnly(source.app, "Choose a folder for SPS Server export", exportDirectory);
+    exported = await bounded(source.page.evaluate(() => window.spsDesktop.exportOwnerVaultTransfer()), "Main export");
+    assert.ok(exported?.bundleRoot);
+    phases.push("main-export");
+    console.log("[vault-transfer] Main export complete");
+    await stop(source.app);
+  }
 
   const target = await launch(targetProfile, origin);
   await signIn(target.page, origin);
@@ -384,6 +417,14 @@ try {
   const restoredWorkspace = await workspace(restoredApp.app, restoredApp.page);
   const projects = await api(restoredWorkspace, `/api/companies/${company.id}/projects`);
   assert.ok(projects.some(row => row.id === project.id && row.name === project.name));
+  if (historicalEvidence) {
+    const oldProject = projects.find(row => row.id === project.id);
+    assert.equal(oldProject.description, project.description);
+    const second = await api(restoredWorkspace, `/api/companies/${historicalEvidence.secondCompany.id}/projects`);
+    assert.ok(second.some(row => row.id === historicalEvidence.secondProject.id && row.name === historicalEvidence.secondProject.name));
+    historicalEvidence.currentHistory = await verifyHistoricalMainSchema();
+    phases.push("historical-backup-restored-sanitized-and-upgraded-by-real-main", "both-historical-workspace-projects-retained");
+  }
   assert.deepEqual(await readFile(path.join(restored.ownerHost.vaultPath, attachment)), content);
   phases.push("main-restore-returned-running", "typed-row-and-attachment-preserved");
   console.log("[vault-transfer] restored Host running; typed row and attachment preserved");
@@ -422,6 +463,13 @@ try {
     const reopened = await workspace(restarted.app, restarted.page);
     const afterRestart = await api(reopened, `/api/companies/${company.id}/projects`);
     assert.ok(afterRestart.some(row => row.id === project.id));
+    if (historicalEvidence) {
+      const second = await api(reopened, `/api/companies/${historicalEvidence.secondCompany.id}/projects`);
+      assert.ok(second.some(row => row.id === historicalEvidence.secondProject.id));
+      assert.deepEqual(await readFile(path.join(targetProfile, "owner-vault", attachment)), content);
+      assert.deepEqual(await verifyHistoricalMainSchema(), historicalEvidence.currentHistory, "Host restart changed the completed migration history");
+      phases.push("historical-core-data-and-file-retained-after-current-main-restart");
+    }
     phases.push("restored-host-restart");
     console.log("[vault-transfer] restored Host restart complete");
     await stop(restarted.app);
@@ -453,12 +501,16 @@ try {
   if (failure || cleanupErrors.length) throw new AggregateError([...(failure ? [failure] : []), ...cleanupErrors],
     "Source Owner Vault Main acceptance did not qualify.");
 }
-console.log(JSON.stringify({ kind: "source-main-transfer-acceptance", phases, mockIdentity: true,
+const evidence = { kind: "source-main-transfer-acceptance", phases, mockIdentity: true,
   crashAfterPromotion, expectedCrashCount: crashedApps.size,
   legacyDesktopStateMigrationQualified: legacyDesktopState,
+  historicalCoreBackupRestoreQualified: historicalCoreBackup,
+  ...(historicalEvidence ? { historicalCoreSchema: historicalEvidence.baseline, historicalMigrations: historicalEvidence.oldMigrations } : {}),
+  ...(historicalEvidence ? { currentMigrations: historicalEvidence.currentHistory.length } : {}),
   historicalInstalledDatabaseMigrationQualified: false,
   signedInstallerQualified: false, previousStableUpgradeQualified: false, physicalTwoDeviceQualified: false,
   ownedMainOutputAndTemporaryDataCleanup: true, wholeDescendantJobQualification: false,
   fixtureProcessScan: ownedJobCleanupPending ? "not-performed-external-job-pending" : "command-line-scan-passed",
-  ...(ownedJobCleanupPending ? { ownedJobCleanup: "pending-external-observation" } : {}) }));
-if (ownedJobCleanupPending) process.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE;
+  ...(ownedJobCleanupPending ? { ownedJobCleanup: "pending-external-observation" } : {}) };
+await new Promise((resolve, reject) => process.stdout.write(`${JSON.stringify(evidence)}\n`, error => error ? reject(error) : resolve()));
+if (ownedJobCleanupPending) process.exit(OWNED_JOB_CLEANUP_PENDING_EXIT_CODE);

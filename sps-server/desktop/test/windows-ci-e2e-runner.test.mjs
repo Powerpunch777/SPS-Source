@@ -343,7 +343,7 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-transfer'/);
   assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-crash-recovery'/);
   assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-state-migration'/);
-  const ownerVaultHostedGuard = wrapper.indexOf("if (($Mode -ceq 'owner-vault-transfer' -or $Mode -ceq 'owner-vault-crash-recovery' -or $Mode -ceq 'owner-vault-state-migration') -and");
+  const ownerVaultHostedGuard = wrapper.indexOf("if (($Mode -ceq 'owner-vault-transfer' -or $Mode -ceq 'owner-vault-crash-recovery' -or $Mode -ceq 'owner-vault-state-migration' -or $Mode -ceq 'owner-vault-historical-core') -and");
   const hostedInstallerGuard = wrapper.indexOf("if ($Mode -ceq 'installer-data-preservation' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted')");
   const helperCompile = wrapper.indexOf("$phase = 'compile'");
   assert.ok(ownerVaultHostedGuard >= 0 && helperCompile > ownerVaultHostedGuard);
@@ -359,7 +359,7 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   assert.match(source, /return code == 0 \? unchecked\(\(int\)OwnedJobCleanupPendingExitCode\) : code;/);
   assert.match(source, /if \(mode == "workspace-surfaces"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", OwnedJobCleanupArgument\);/);
   assert.match(source, /return RunNode\(node, directory, "smoke-installer-data-preservation\.mjs", OwnedJobCleanupArgument\);/);
-  const ownerVaultCiGuard = source.indexOf('if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery" || mode == "owner-vault-state-migration" || mode == "historical-core-migration")');
+  const ownerVaultCiGuard = source.indexOf('if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery" || mode == "owner-vault-state-migration" || mode == "historical-core-migration" || mode == "owner-vault-historical-core")');
   const ownerVaultHostedGuardInChild = source.indexOf('Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted"', ownerVaultCiGuard);
   const ownerVaultTransferDispatch = source.indexOf('if (mode == "owner-vault-transfer")', ownerVaultHostedGuardInChild);
   assert.ok(ownerVaultCiGuard >= 0 && ownerVaultHostedGuardInChild > ownerVaultCiGuard && ownerVaultTransferDispatch > ownerVaultHostedGuardInChild);

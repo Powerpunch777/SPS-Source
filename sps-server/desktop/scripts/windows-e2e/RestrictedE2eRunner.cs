@@ -270,12 +270,12 @@ public static class RestrictedE2eRunner
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation"
-            || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration";
+            || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core";
     }
     static bool OwnedJobGateMode(string value)
     {
         return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
-            || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration"
+            || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core"
             || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "workspace-pending"
@@ -392,7 +392,7 @@ public static class RestrictedE2eRunner
         if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true"
             || Environment.GetEnvironmentVariable("RUNNER_OS") != "Windows")
             throw new InvalidOperationException("Desktop launch mode is restricted to Windows CI");
-        if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery" || mode == "owner-vault-state-migration" || mode == "historical-core-migration")
+        if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery" || mode == "owner-vault-state-migration" || mode == "historical-core-migration" || mode == "owner-vault-historical-core")
             && Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
             throw new InvalidOperationException("Owner Vault E2E requires a GitHub-hosted runner");
         foreach (string script in new[] { "sync-local-desktop-node.mjs", "sync-local-plugin-sdk.mjs" })
@@ -411,6 +411,7 @@ public static class RestrictedE2eRunner
         if (mode == "owner-vault-transfer") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "owner-vault-crash-recovery") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", "--crash-after-promotion", OwnedJobCleanupArgument);
         if (mode == "owner-vault-state-migration") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", "--legacy-desktop-state", OwnedJobCleanupArgument);
+        if (mode == "owner-vault-historical-core") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", "--historical-core-backup", OwnedJobCleanupArgument);
         if (mode == "historical-core-migration") return RunNode(node, directory, "smoke-historical-core-migration.mjs", OwnedJobCleanupArgument);
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "installer-data-preservation")
