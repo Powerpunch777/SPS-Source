@@ -8,6 +8,7 @@ const fields = [
   "confirmedCrashCount",
   "fixtureProcessesAbsent",
   "identityClosed",
+  "delegatedJobCleanup",
 ];
 
 export function validateOwnerVaultE2eCleanup(summary) {
@@ -32,7 +33,9 @@ export function validateOwnerVaultE2eCleanup(summary) {
   if (!Number.isInteger(summary.outputFailed) || summary.outputFailed < 0 || summary.outputFailed > 64) {
     throw new RangeError("outputFailed must be an integer from 0 through 64.");
   }
-  if (summary.fixtureProcessesAbsent !== true || summary.identityClosed !== true) {
+  if (typeof summary.delegatedJobCleanup !== "boolean"
+    || (summary.delegatedJobCleanup ? summary.fixtureProcessesAbsent !== null : summary.fixtureProcessesAbsent !== true)
+    || summary.identityClosed !== true) {
     throw new TypeError("Fixture process absence and identity closure must be confirmed.");
   }
   if (

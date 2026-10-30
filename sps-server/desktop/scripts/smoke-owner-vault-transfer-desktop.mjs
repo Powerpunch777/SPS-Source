@@ -189,7 +189,7 @@ async function observePromotionExit(app, setup) {
     assert.equal(output.exited, output.children);
     assert.equal(output.outputEnded, output.children * 2);
     assert.equal(output.outputFailed, 0);
-    await assertNoFixtureProcesses();
+    if (!ownedJobCleanupPending) await assertNoFixtureProcesses();
   } finally { clearTimeout(timer); }
 }
 
@@ -306,11 +306,15 @@ try {
   await identity.close().then(() => { identityClosed = true; }).catch(error => cleanupErrors.push(error));
   const processes = await tracker.waitForOutputEnd(5000);
   tracker.dispose();
-  let fixtureProcessesAbsent = false;
-  await assertNoFixtureProcesses().then(() => { fixtureProcessesAbsent = true; }).catch(error => cleanupErrors.push(error));
+  let fixtureProcessesAbsent = ownedJobCleanupPending ? null : false;
+  // The restricted CI parent owns the OS Job and must observe natural
+  // emptiness after this child exits 76. Do not run WMI inside that token.
+  if (!ownedJobCleanupPending) {
+    await assertNoFixtureProcesses().then(() => { fixtureProcessesAbsent = true; }).catch(error => cleanupErrors.push(error));
+  }
   try {
     validateOwnerVaultE2eCleanup({ ...processes, expectedCrashCount: crashAfterPromotion ? 1 : 0,
-      confirmedCrashCount, fixtureProcessesAbsent, identityClosed });
+      confirmedCrashCount, fixtureProcessesAbsent, identityClosed, delegatedJobCleanup: ownedJobCleanupPending });
   } catch (error) { cleanupErrors.push(error); }
   if (!cleanupErrors.length) await fixture.remove().catch(error => cleanupErrors.push(error));
   if (failure || cleanupErrors.length) throw new AggregateError([...(failure ? [failure] : []), ...cleanupErrors],
@@ -320,5 +324,6 @@ console.log(JSON.stringify({ kind: "source-main-transfer-acceptance", phases, mo
   crashAfterPromotion, expectedCrashCount: crashedApps.size,
   signedInstallerQualified: false, previousStableUpgradeQualified: false, physicalTwoDeviceQualified: false,
   ownedMainOutputAndTemporaryDataCleanup: true, wholeDescendantJobQualification: false,
+  fixtureProcessScan: ownedJobCleanupPending ? "not-performed-external-job-pending" : "command-line-scan-passed",
   ...(ownedJobCleanupPending ? { ownedJobCleanup: "pending-external-observation" } : {}) }));
 if (ownedJobCleanupPending) process.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE;

@@ -13,6 +13,7 @@ function summary(overrides = {}) {
     confirmedCrashCount: 0,
     fixtureProcessesAbsent: true,
     identityClosed: true,
+    delegatedJobCleanup: false,
     ...overrides,
   };
 }
@@ -75,10 +76,19 @@ test("rejects invalid counts, live children, and unconfirmed or contradictory cr
     { outputFailed: 1 },
     { fixtureProcessesAbsent: false },
     { identityClosed: 0 },
+    { delegatedJobCleanup: true },
     { extra: true },
   ];
 
   for (const overrides of invalid) {
     assert.throws(() => validateOwnerVaultE2eCleanup(summary(overrides)), undefined, JSON.stringify(overrides));
   }
+});
+
+test("delegated cleanup remains explicitly unobserved in the child and cannot claim local process absence", () => {
+  const delegated = summary({ fixtureProcessesAbsent: null, delegatedJobCleanup: true });
+  assert.deepEqual(validateOwnerVaultE2eCleanup(delegated), delegated);
+  assert.throws(() => validateOwnerVaultE2eCleanup(summary({ fixtureProcessesAbsent: null })));
+  assert.throws(() => validateOwnerVaultE2eCleanup(summary({ delegatedJobCleanup: true, fixtureProcessesAbsent: true })));
+  assert.throws(() => validateOwnerVaultE2eCleanup(summary({ delegatedJobCleanup: "true", fixtureProcessesAbsent: null })));
 });

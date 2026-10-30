@@ -149,6 +149,13 @@ No exact new-commit CI pass is claimed before those steps complete remotely.
 
 ## Still separate
 
+The first hosted run after adding this harness failed during its restricted-token
+WMI cleanup query even though the normal scenario completed. It is not a passing
+CI record. Delegated cleanup was subsequently moved to the existing external
+native Job gate while keeping standalone scans fail-closed; see
+[CI cleanup correction](OWNER-VAULT-CI-CLEANUP-2026-10-30.md). Exact revised-head
+hosted qualification is still required.
+
 - Other abrupt-exit boundaries during database restore/activation, power loss,
   and cross-account source-app recovery beyond existing authorization tests.
 - Previous Stable upgrade, real application-data migration, normal installed
