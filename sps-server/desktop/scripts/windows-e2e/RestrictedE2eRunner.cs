@@ -265,7 +265,7 @@ public static class RestrictedE2eRunner
     }
     static bool Mode(string value)
     {
-        return value == "probe" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
+        return value == "probe" || value == "probe-registry" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
             || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
@@ -352,6 +352,12 @@ public static class RestrictedE2eRunner
         if (!administratorDenied || !userDefaultDacl) throw new InvalidOperationException("Child token security checks failed");
         Console.WriteLine("{\"restrictedE2eChild\":true,\"administratorEnabled\":false,\"powerUsersEnabled\":false,\"privilegesReduced\":true,\"sameUserToken\":true,\"administratorDenied\":" + (administratorDenied ? "true" : "false") + ",\"userDefaultDacl\":" + (userDefaultDacl ? "true" : "false") + "}");
         if (mode == "probe") return 0;
+        if (mode == "probe-registry")
+        {
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            return RunNode(node, directory, "windows-e2e/probe-installer-registry.mjs");
+        }
         if (mode == "probe-exit") return 7;
         if (mode == "probe-exit-76") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-native-exit") return unchecked((int)0xC0000142);
@@ -396,6 +402,8 @@ public static class RestrictedE2eRunner
         {
             if (Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
                 throw new InvalidOperationException("Installer data preservation E2E requires a GitHub-hosted runner");
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
             return RunNode(node, directory, "smoke-installer-data-preservation.mjs", OwnedJobCleanupArgument);
         }
         return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs", OwnedJobCleanupArgument);
@@ -987,6 +995,12 @@ public static class RestrictedE2eRunner
         try
         {
             Console.OutputEncoding = new UTF8Encoding(false);
+            if (args.Length == 1 && args[0] == "--read-installer-registry")
+            {
+                stage = "installer_registry_query";
+                Console.WriteLine(InstallerRegistryReader.ReadJson());
+                return 0;
+            }
             if (args.Length == 1 && args[0] == "--probe-leaf")
             { CheckPrivileges(); System.Threading.Thread.Sleep(60000); return 1; }
             if (args.Length == 4 && args[0] == "--child" && Mode(args[1])) return Child(args[1], args[2], args[3]);

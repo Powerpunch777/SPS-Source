@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('probe', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation')]
+  [ValidateSet('probe', 'probe-registry', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation')]
   [string] $Mode
 )
 
@@ -51,12 +51,13 @@ try {
   $phase = 'temp_validation'
   Assert-PlainDirectoryChain $build
   $source = Join-Path $PSScriptRoot 'windows-e2e\RestrictedE2eRunner.cs'
+  $registrySource = Join-Path $PSScriptRoot 'windows-e2e\InstallerRegistryReader.cs'
   $exe = Join-Path $build 'RestrictedE2eRunner.exe'
   $phase = 'node_resolution'
   $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
   $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
   $phase = 'compile'
-  & $compiler /nologo /optimize+ /platform:x64 "/out:$exe" $source
+  & $compiler /nologo /optimize+ /platform:x64 "/out:$exe" $source $registrySource
   $compileExitCode = $LASTEXITCODE
   if ($compileExitCode -ne 0) {
     Write-ExitDiagnostic 'restricted_e2e_compile_exit' $phase $compileExitCode

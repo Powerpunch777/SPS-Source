@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { assertHostedInstallerCi, assertPlainDirectory, assertContained, nsisInvocation } from "./installer-ci-safety.mjs";
-import { SPS_INSTALLER_REGISTRY_QUERY } from "./installer-registry-query.mjs";
+import { queryInstallerRegistrations } from "./installer-registry-query.mjs";
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 
 // Fail before even reading a profile, creating a fixture, or querying registry.
@@ -38,8 +38,7 @@ async function missing(file) {
   catch (error) { if (error.code === "ENOENT") return true; throw error; }
 }
 async function registryInstallations() {
-  const { stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", SPS_INSTALLER_REGISTRY_QUERY], { windowsHide: true, timeout: 30000 });
-  return JSON.parse(stdout.replace(/^\uFEFF/, ""));
+  return queryInstallerRegistrations();
 }
 async function assertNoDesktopProcess() {
   const script = `$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Filter "Name = 'SPS Desktop.exe'" -ErrorAction Stop); if ($p.Count -ne 0) { throw 'An SPS Desktop process is present; refusing installer mutation.' }`;

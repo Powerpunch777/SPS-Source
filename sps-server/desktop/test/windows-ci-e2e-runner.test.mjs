@@ -22,6 +22,17 @@ const assertCleanup = stdout => {
   return output;
 };
 
+test("Windows CI reads installer registrations under its restricted token and closes owned objects", { skip: process.platform !== "win32" }, async () => {
+  const result = await run("probe-registry");
+  const output = assertCleanup(result.stdout);
+  assert.equal(output[0].restrictedE2eDesktop, true);
+  assert.equal(output[1].restrictedE2eChild, true);
+  assert.equal(output[1].privilegesReduced, true);
+  const registry = output.find(record => record.installerRegistryRead === true);
+  assert.equal(Number.isInteger(registry?.matchedRegistrations), true);
+  assert.ok(registry.matchedRegistrations >= 0);
+});
+
 test("Windows CI E2E uses a checked reduced same-user token and reports owned-object cleanup", { skip: process.platform !== "win32" }, async () => {
   const result = await run("probe");
   const output = assertCleanup(result.stdout);
