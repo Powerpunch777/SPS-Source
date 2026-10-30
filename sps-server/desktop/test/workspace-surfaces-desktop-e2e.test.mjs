@@ -13,9 +13,10 @@ const extractFinalCleanup = (source) => {
 };
 
 test("ships a packaged Desktop Workspace Surfaces E2E harness", async () => {
-  const [packageJson, script] = await Promise.all([
+  const [packageJson, script, identityFixture] = await Promise.all([
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/desktop-e2e-identity.mjs", import.meta.url), "utf8"),
   ]);
   const scripts = JSON.parse(packageJson).scripts;
 
@@ -25,12 +26,8 @@ test("ships a packaged Desktop Workspace Surfaces E2E harness", async () => {
     "SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE",
     "SPS_DESKTOP_E2E_ALLOW_LOOPBACK_IDENTITY",
     "parseE2eHostReadyTimeout",
-    "generateKeyPairSync",
-    "/.well-known/jwks.json",
-    "/v1/desktop/authorize",
-    "/v1/desktop/token",
-    "/v1/desktop/refresh",
-    "/v1/desktop/revoke",
+    'import { createMockIdentityServer } from "./desktop-e2e-identity.mjs"',
+    "const mockIdentity = createMockIdentityServer()",
     "#start-sps-account",
     "#create-owner-server",
     "workspace-shell",
@@ -62,6 +59,10 @@ test("ships a packaged Desktop Workspace Surfaces E2E harness", async () => {
     "createWorkspaceE2eFixture",
   ]) {
     assert.ok(script.includes(required), `Workspace Surfaces E2E is missing ${required}`);
+  }
+  for (const required of ["generateKeyPairSync", "/.well-known/jwks.json", "/v1/desktop/authorize",
+    "/v1/desktop/token", "/v1/desktop/refresh", "/v1/desktop/revoke"]) {
+    assert.ok(identityFixture.includes(required), `Shared Desktop Identity fixture is missing ${required}`);
   }
 });
 
