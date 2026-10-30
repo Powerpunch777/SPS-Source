@@ -478,6 +478,12 @@ jobs:
           SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode owner-vault-state-migration
 
+      - name: Verify pinned historical Core schema upgrade and backup recovery
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-core-migration
+
       - name: Build unpacked Windows Desktop for E2E
         working-directory: sps-server/desktop
         run: npx electron-builder --win dir --publish never
