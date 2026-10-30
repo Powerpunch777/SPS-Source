@@ -85,3 +85,52 @@ node --test test/installer-process-probe.test.mjs test/windows-ci-e2e-runner.tes
 After integrating that probe, the full Desktop test command passed 1565 of
 1567 tests, with two environment-dependent skips and zero failures. This adds
 an earlier prerequisite diagnostic, not successful installation evidence.
+
+## Subsequent CI Attribution And Native Correction
+
+Later terminal logs narrowed a specific failure to the process precondition:
+
+- Source `3ebc90c` push run `41043933502`, Windows job `124023222704`,
+  failed in the installer/data-preservation step at 11:28:43 UTC. The
+  `Get-CimInstance Win32_Process` subprocess reported `SIGTERM` and the child
+  returned 1; the external Job emptied naturally. This was before installer
+  mutation, not proof that NSIS itself failed.
+- Source `cb3e773` push run `41047846792`, Windows job `124036237249`,
+  reproduced an unavailable CIM query in the early isolated process test:
+  `not ok 379`, signal `SIGTERM`, empty stdout/stderr, helper child exit 1.
+  The test correctly failed rather than substituting a zero process count.
+  The matching PR run `41047854244` also failed that Desktop test stage.
+- All 17 other jobs passed on the exact `cb3e773` push. The old `377b4f0`
+  uninstrumented 18-minute timeouts remain separately unattributed; these later
+  results do not retroactively establish their exact last phase.
+
+Process inspection now uses the already compiled owned test helper's fixed
+read-only `--read-installer-processes` subcommand. It calls Toolhelp process
+snapshot enumeration and compares the exact executable name case-insensitively.
+No WMI/PowerShell service, process handles for termination, registry mutation or
+new production authority is involved. Only a count and elapsed milliseconds are
+returned. Invalid snapshots, enumeration errors other than end-of-list, helper
+replacement, malformed output and query failures abort acceptance. See the
+[Microsoft Toolhelp example](https://learn.microsoft.com/en-us/windows/win32/toolhelp/taking-a-snapshot-and-viewing-processes).
+
+Both the early probe and every install/uninstall process precondition use this
+same reader. The installer still requires zero SPS processes before mutations;
+the read-only local probe does not require zero and never kills any process.
+Hosted-only installer permission, empty registry/data requirements, hash checks,
+30-second query bound, 45-second probe parent, 18-minute acceptance parent and
+natural whole-Job cleanup requirement are unchanged.
+
+The parent ran the new native read-only probe locally: `count: 0`,
+`elapsedMs: 5`, reduced same-user token, natural owned-Job emptiness and closed
+owned desktop. This machine still reported `privateWindowStation: false`, so
+that local pass is not the final CI-private-station proof or a successful
+installer acceptance. No local installer was run and installed data was not
+touched. Exact new-HEAD hosted CI remains required.
+
+After parent review, the focused process/launcher/historical-flow tests passed
+26/26. The first full run caught one stale diagnostics contract that required the
+removed PowerShell call; it was corrected to require the native query and the
+unchanged zero-process mutation assertion. The final spec-reporter full run
+passed 1592 of 1594 tests, with two environment skips and zero failures
+(`node --test --test-reporter=spec test/*.test.mjs`, exit 0). A separate dot
+reporter run also exited 0. Neither run executes the local installer.

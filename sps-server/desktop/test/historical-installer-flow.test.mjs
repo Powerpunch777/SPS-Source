@@ -40,7 +40,7 @@ test("installer diagnostics identify blocking boundaries without printing fixtur
   assert.ok(guard >= 0 && firstTrace > guard && firstProfileRead > firstTrace);
   for (const [before, operation, after] of [
     ['traceInstallerStage("registry-query-start")', "await queryInstallerRegistrations()", 'traceInstallerStage("registry-query-done"'],
-    ['traceInstallerStage("process-query-start")', 'await exec("powershell.exe"', 'traceInstallerStage("process-query-done")'],
+    ['traceInstallerStage("process-query-start")', 'await queryInstallerProcesses()', 'traceInstallerStage("process-query-done")'],
     ['traceInstallerStage("historical-download-start")', "await stageHistoricalInstaller(fixture)", 'traceInstallerStage("historical-download-verified")'],
     ['traceInstallerStage("isolated-first-frame-start")', "await exec(process.execPath", 'traceInstallerStage("isolated-first-frame-verified")'],
   ]) {
@@ -56,4 +56,6 @@ test("installer diagnostics identify blocking boundaries without printing fixtur
   assert.doesNotMatch(trace, /fixture|appData|process\.env|installation|executable|\.path/);
   assert.match(source, /traceInstallerStage\("nsis-close", \{ code, signal, elapsedMs: Date\.now\(\) - started \}\)/);
   assert.match(source, /assert\.equal\(signal, null\); assert\.equal\(code, 0, "NSIS operation failed\."\)/);
+  assert.match(source, /assert\.equal\(result\.count, 0, "An SPS Desktop process is present; refusing installer mutation\."\)/);
+  assert.doesNotMatch(source, /Get-CimInstance/);
 });

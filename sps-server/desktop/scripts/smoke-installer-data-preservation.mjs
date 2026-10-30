@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { assertHostedInstallerCi, assertPlainDirectory, assertContained, nsisInvocation } from "./installer-ci-safety.mjs";
 import { queryInstallerRegistrations } from "./installer-registry-query.mjs";
+import { queryInstallerProcesses } from "./installer-process-query.mjs";
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./historical-installer-baseline.mjs";
 
@@ -51,8 +52,8 @@ async function registryInstallations() {
 }
 async function assertNoDesktopProcess() {
   traceInstallerStage("process-query-start");
-  const script = `$ErrorActionPreference='Stop'; $p=@(Get-CimInstance Win32_Process -Filter "Name = 'SPS Desktop.exe'" -ErrorAction Stop); if ($p.Count -ne 0) { throw 'An SPS Desktop process is present; refusing installer mutation.' }`;
-  await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, timeout: 30000 });
+  const result = await queryInstallerProcesses();
+  assert.equal(result.count, 0, "An SPS Desktop process is present; refusing installer mutation.");
   traceInstallerStage("process-query-done");
 }
 assert.deepEqual(await registryInstallations(), [], "Existing SPS registration must never be replaced by this fixture.");

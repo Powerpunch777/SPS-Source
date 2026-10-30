@@ -361,7 +361,11 @@ public static class RestrictedE2eRunner
             return RunNode(node, directory, "windows-e2e/probe-installer-registry.mjs");
         }
         if (mode == "probe-installer-processes")
+        {
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
             return RunNode(node, directory, "windows-e2e/probe-installer-processes.mjs", OwnedJobCleanupArgument);
+        }
         if (mode == "probe-exit") return 7;
         if (mode == "probe-exit-76") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-native-exit") return unchecked((int)0xC0000142);
@@ -1009,6 +1013,12 @@ public static class RestrictedE2eRunner
             {
                 stage = "installer_registry_query";
                 Console.WriteLine(InstallerRegistryReader.ReadJson());
+                return 0;
+            }
+            if (args.Length == 1 && args[0] == "--read-installer-processes")
+            {
+                stage = "installer_process_query";
+                Console.WriteLine(InstallerProcessReader.ReadJson());
                 return 0;
             }
             if (args.Length == 1 && args[0] == "--probe-leaf")

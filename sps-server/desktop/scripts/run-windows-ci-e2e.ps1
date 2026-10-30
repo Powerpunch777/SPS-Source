@@ -56,12 +56,13 @@ try {
   Assert-PlainDirectoryChain $build
   $source = Join-Path $PSScriptRoot 'windows-e2e\RestrictedE2eRunner.cs'
   $registrySource = Join-Path $PSScriptRoot 'windows-e2e\InstallerRegistryReader.cs'
+  $processSource = Join-Path $PSScriptRoot 'windows-e2e\InstallerProcessReader.cs'
   $exe = Join-Path $build 'RestrictedE2eRunner.exe'
   $phase = 'node_resolution'
   $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
   $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
   $phase = 'compile'
-  & $compiler /nologo /optimize+ /platform:x64 "/out:$exe" $source $registrySource
+  & $compiler /nologo /optimize+ /platform:x64 "/out:$exe" $source $registrySource $processSource
   $compileExitCode = $LASTEXITCODE
   if ($compileExitCode -ne 0) {
     Write-ExitDiagnostic 'restricted_e2e_compile_exit' $phase $compileExitCode
