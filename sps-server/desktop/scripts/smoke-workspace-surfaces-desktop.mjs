@@ -27,6 +27,14 @@ const sourceElectron = process.env.SPS_DESKTOP_E2E_SOURCE === "1"
   : null;
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const keepE2eData = process.env.SPS_DESKTOP_E2E_KEEP_DATA === "1";
+const hostChoiceReadinessExpression = `(async () => {
+  const status = await window.spsDesktop.getStatus();
+  const button = document.querySelector('#create-owner-server');
+  return status.desktopAccount?.signedIn === true && status.desktopAccount.pending === false
+    && status.profile === null && Boolean(button && !button.disabled
+      && button.getAttribute('aria-busy') !== 'true' && button.getClientRects().length > 0
+      && !button.closest('[hidden]'));
+})()`;
 const screenshotPath = process.env.SPS_DESKTOP_E2E_SCREENSHOT?.trim() || null;
 const runtimeDiscovery = process.argv.includes("--runtime-discovery");
 const noAiChecklist = runtimeDiscovery || process.argv.includes("--no-ai-checklist");
@@ -428,7 +436,7 @@ async function waitForPage(cdp, predicate, description, timeoutMs = 45_000) {
   while (Date.now() < expiresAt) {
     try {
       last = await describePage(cdp);
-      if (predicate(last)) return last;
+      if (await predicate(last)) return last;
     } catch {
       // Navigation can briefly detach the current document.
     }
@@ -569,7 +577,7 @@ try {
   console.log("[no-ai] mock Identity authorization followed the real loopback state/PKCE callback without starting a system browser");
   await waitForPage(setupCdp, () => issued.length > 0, "the mock Identity authorization callback", 30_000);
   nativeManagementStage = "post_signin_host_choice";
-  await waitForPage(setupCdp, (page) => page.body.includes("Create") || page.body.includes("Server"), "the post-sign-in Host choice", 45_000);
+  await waitForPage(setupCdp, () => setupCdp.evaluate(hostChoiceReadinessExpression, true), "the settled signed-in Host choice", 45_000);
   if (screenshotPath && sourceElectron && !executionControlOnly) {
     const directory = path.dirname(screenshotPath);
     for (const [width, height] of [[1024, 720], [620, 760]]) {

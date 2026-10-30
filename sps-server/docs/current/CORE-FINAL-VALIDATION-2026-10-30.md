@@ -67,6 +67,12 @@ deferred Native development are excluded.
   Desktop 1639/1641 (two 8.3-alias skips) passed, and real NSIS preprocessing
   passed without executing an installer. Actual new-HEAD assembly/error result
   and successful historical replacement remain required.
+- Packaged PR run `41073142664` did not reach Host creation before its Workspace
+  wait expired. Shared CDP acceptance now requires settled public sign-in and
+  the actual visible idle Host-choice control before one click; no authorization
+  or product startup check is bypassed. Actual source execution-control/restart
+  acceptance exited 0; full Desktop 1642/1644, two 8.3-alias skips, zero failures.
+  See [readiness record](../reviews/DESKTOP-HOST-CHOICE-ACCEPTANCE-2026-10-31.md).
 
 1. Fix reproduced Core defects before adding optional features. Preserve existing
    API, SDK, capability, Source, credential and authentication boundaries.
