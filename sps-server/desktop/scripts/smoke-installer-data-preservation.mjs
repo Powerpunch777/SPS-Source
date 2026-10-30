@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { assertHostedInstallerCi, assertPlainDirectory, assertContained, nsisInvocation } from "./installer-ci-safety.mjs";
 import { queryInstallerRegistrations } from "./installer-registry-query.mjs";
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
+import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./historical-installer-baseline.mjs";
 
 // Fail before even reading a profile, creating a fixture, or querying registry.
 assertHostedInstallerCi();
@@ -72,6 +73,9 @@ await assertPlainDirectory(fixture);
 const installation = path.join(fixture, "SPS Desktop");
 assertContained(fixture, installation);
 await mkdir(installation);
+// This withdrawn, unsigned input is only a pinned historical compatibility
+// fixture. Never launch its Main or treat it as an approved Stable baseline.
+const { path: historicalInstaller } = await stageHistoricalInstaller(fixture);
 const sentinels = [];
 for (const root of dataRoots) {
   await mkdir(root);
@@ -122,6 +126,21 @@ async function checkInstalledPackage() {
   assert.equal(installed[0].uninstall.toLowerCase(), `"${path.join(installation, "Uninstall SPS Desktop.exe")}" /currentuser`.toLowerCase());
   for (const [relative, digest] of expected) assert.equal(await hashFile(path.join(installation, relative)), digest, "Installed package differs from the current verified unpacked input.");
 }
+async function checkHistoricalInstallation() {
+  await assertPlainDirectory(installation);
+  const installed = await registryInstallations();
+  assert.equal(installed.length, 1);
+  assert.equal(installed[0].name, `SPS Desktop ${HISTORICAL_INSTALLER_BASELINE.version}`);
+  assert.equal(installed[0].version, HISTORICAL_INSTALLER_BASELINE.version);
+  assert.equal(installed[0].perUser, true);
+  assert.equal(installed[0].uninstall.toLowerCase(), `"${path.join(installation, "Uninstall SPS Desktop.exe")}" /currentuser`.toLowerCase());
+  for (const relative of ["SPS Desktop.exe", "resources/app.asar", "Uninstall SPS Desktop.exe"]) {
+    const details = await lstat(path.join(installation, relative));
+    assert.equal(details.isFile() && !details.isSymbolicLink() && details.size > 0, true);
+  }
+  assert.notEqual(await hashFile(path.join(installation, "resources/app.asar")), expected.get("resources/app.asar"),
+    "Historical installation must not already be the candidate package.");
+}
 let installedFirstFrames = 0;
 async function checkInstalledFirstFrame() {
   const { stdout } = await exec(process.execPath, [path.join(desktop, "scripts/smoke-isolated-desktop-ui.mjs")], {
@@ -133,8 +152,24 @@ async function checkInstalledFirstFrame() {
   await checkRetainedData();
   installedFirstFrames += 1;
 }
+async function uninstallOwnedCandidate(name) {
+  const copiedUninstaller = path.join(fixture, name);
+  await copyFile(path.join(installation, "Uninstall SPS Desktop.exe"), copiedUninstaller);
+  await runNsis(copiedUninstaller, true);
+  assert.deepEqual(await registryInstallations(), []);
+  assert.equal(await missing(path.join(installation, "resources/app.asar")), true);
+}
 let phase = "fresh-install";
 try {
+  await runNsis(installer);
+  await checkInstalledPackage();
+  await checkInstalledFirstFrame();
+  phase = "uninstall-before-historical-input";
+  await uninstallOwnedCandidate("owned-uninstaller-before-historical.exe");
+  phase = "historical-install";
+  await runNsis(historicalInstaller);
+  await checkHistoricalInstallation();
+  phase = "historical-version-upgrade";
   await runNsis(installer);
   await checkInstalledPackage();
   await checkInstalledFirstFrame();
@@ -149,20 +184,19 @@ try {
   // Mirror electron-builder's own waited uninstaller: copy outside INSTDIR and
   // pass unquoted _?=last. Do not use --updated/KEEP_APP_DATA/delete-data flags;
   // default uninstall policy itself must preserve the fixture's user records.
-  const copiedUninstaller = path.join(fixture, "owned-uninstaller.exe");
-  await copyFile(path.join(installation, "Uninstall SPS Desktop.exe"), copiedUninstaller);
-  await runNsis(copiedUninstaller, true);
-  assert.deepEqual(await registryInstallations(), []);
-  assert.equal(await missing(path.join(installation, "resources/app.asar")), true);
+  await uninstallOwnedCandidate("owned-uninstaller-preserve-data.exe");
   phase = "reinstall-retained-data";
   await runNsis(installer);
   await checkInstalledPackage();
   await checkInstalledFirstFrame();
   console.log(JSON.stringify({ installerDataPreservation: true, sourceRevision: baseline.sourceRevision,
-    installerSha256: await hashFile(installer), phases: ["fresh-install", "in-place-reinstall", "uninstall-preserve-data", "reinstall-retained-data"],
+    installerSha256: await hashFile(installer), phases: ["fresh-install", "uninstall-before-historical-input", "historical-install", "historical-version-upgrade", "in-place-reinstall", "uninstall-preserve-data", "reinstall-retained-data"],
+    historicalInstaller: { version: HISTORICAL_INSTALLER_BASELINE.version, sha256: HISTORICAL_INSTALLER_BASELINE.sha256,
+      withdrawn: true, signingTrustQualified: false, applicationLaunched: false },
     retainedRecords: sentinels.length, packageByteParity: artifacts.length, silentInstaller: true,
     desktopProcessAbsentAtInstallerBoundaries: true, isolatedInstalledFirstFrames: installedFirstFrames,
-    repairedFixturePackage: true, inertPreservationSentinels: true, previousStableUpgradeQualified: false, applicationDataMigrationQualified: false,
+    repairedFixturePackage: true, inertPreservationSentinels: true, historicalInstallerUpgradeQualified: true,
+    previousStableUpgradeQualified: false, applicationDataMigrationQualified: false,
     normalUserProfileStartupQualified: false, signedInstallerQualified: false,
     cleanupQualification: "pending" }));
   // Only the parent launcher may qualify natural process-tree completion.

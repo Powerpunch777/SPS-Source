@@ -10,6 +10,7 @@ import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 import { createWorkspaceE2eChildTracker } from "./workspace-e2e-child-tracker.mjs";
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
+import { projectLegacyDesktopStateV11 } from "./legacy-desktop-state-fixture.mjs";
 import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
 import { readSpsOwnerVaultRestoreReceipt } from "../src/owner-vault-restore-receipt.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
@@ -21,8 +22,10 @@ const { _electron: electron } = require("@playwright/test");
 const timeout = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const execFileAsync = promisify(execFile);
 const crashAfterPromotion = process.argv.includes("--crash-after-promotion");
+const legacyDesktopState = process.argv.includes("--legacy-desktop-state");
 const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
-if (process.argv.slice(2).some(arg => !["--crash-after-promotion", OWNED_JOB_CLEANUP_ARGUMENT].includes(arg))) {
+if (crashAfterPromotion && legacyDesktopState) throw new Error("Legacy Desktop state migration and crash recovery are separate acceptance modes.");
+if (process.argv.slice(2).some(arg => !["--crash-after-promotion", "--legacy-desktop-state", OWNED_JOB_CLEANUP_ARGUMENT].includes(arg))) {
   throw new Error("Unknown transfer acceptance mode.");
 }
 if (process.platform !== "win32") throw new Error("Owner Vault Main acceptance requires Windows.");
@@ -142,6 +145,109 @@ async function stop(app) {
   assert.equal(output.outputEnded, output.children * 2);
   assert.equal(output.outputFailed, 0);
   ownedApps.delete(app);
+}
+
+async function captureLegacyStateEvidence(app, expectedSubject) {
+  return await app.evaluate(({ app, safeStorage }, expectedSubject) => {
+    const fs = process.getBuiltinModule("fs");
+    const path = process.getBuiltinModule("path");
+    const crypto = process.getBuiltinModule("crypto");
+    const statePath = path.join(app.getPath("userData"), "sps-desktop-state.json");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8").replace(/^\uFEFF/, ""));
+    if (state.version !== 13) throw new Error("Expected current v13 state before legacy projection.");
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows safeStorage is unavailable for migration evidence.");
+    const decrypt = value => safeStorage.decryptString(Buffer.from(value, "base64"));
+    const digest = value => crypto.createHash("sha256").update(value).digest("hex");
+    if (typeof state.encryptedDesktopAccount !== "string") throw new Error("Persisted fixture account ciphertext is missing.");
+    const accountJson = decrypt(state.encryptedDesktopAccount);
+    const account = JSON.parse(accountJson);
+    if (account.subject !== expectedSubject) throw new Error("Persisted fixture account subject did not decrypt as expected.");
+
+    let identity = state.identity;
+    let generatedIdentity = null;
+    if (identity === null) {
+      const hasNativeNodes = Array.isArray(state.nativeNodes?.entries) && state.nativeNodes.entries.length > 0;
+      if (state.nodeId || hasNativeNodes) throw new Error("Refusing to create a fixture key for a state with a Node ID or grants.");
+      const pair = crypto.generateKeyPairSync("ed25519");
+      const publicKeyPem = pair.publicKey.export({ type: "spki", format: "pem" });
+      const privateKeyPem = pair.privateKey.export({ type: "pkcs8", format: "pem" });
+      generatedIdentity = {
+        publicKeyPem,
+        encryptedPrivateKey: safeStorage.encryptString(privateKeyPem).toString("base64"),
+      };
+      identity = generatedIdentity;
+    } else if (!identity || typeof identity.publicKeyPem !== "string" || typeof identity.encryptedPrivateKey !== "string") {
+      throw new Error("Existing persisted Node identity is malformed; refusing to replace it.");
+    }
+
+    const route = {
+      desktopDeviceId: state.desktopDeviceId ?? null,
+      ownerHostOwnerSubject: state.ownerHostOwnerSubject ?? null,
+      accountConnections: state.accountConnections ?? {},
+      profile: state.profile ?? null,
+      nodeId: state.nodeId ?? null,
+    };
+    const decryptDigest = value => value ? digest(decrypt(value)) : null;
+    const nodePrivateKey = decrypt(identity.encryptedPrivateKey);
+    const transportPrivateKey = identity.encryptedTransportPrivateKey
+      ? decrypt(identity.encryptedTransportPrivateKey)
+      : null;
+    const snapshot = {
+      accountSubject: account.subject,
+      accountDigest: digest(accountJson),
+      routeDigest: digest(JSON.stringify(route)),
+      desktopDeviceId: route.desktopDeviceId,
+      ownerHostOwnerSubject: route.ownerHostOwnerSubject,
+      nodeId: route.nodeId,
+      nodePublicKeyPem: identity.publicKeyPem,
+      nodePrivateKeyDigest: digest(nodePrivateKey),
+      transportPublicKeyPem: identity.transportPublicKeyPem ?? null,
+      transportPrivateKeyDigest: transportPrivateKey ? digest(transportPrivateKey) : null,
+      boardCredentialDigest: decryptDigest(state.encryptedBoardApiToken),
+      teamCredentialDigest: decryptDigest(state.encryptedTeamCredentials),
+      hostProjectShareSecretDigest: decryptDigest(state.encryptedHostProjectShareSecrets),
+    };
+    return { snapshot, generatedIdentity };
+  }, expectedSubject);
+}
+
+async function rewriteAsLegacyV11State(profile, fixture, stateEvidence) {
+  await fixture.assertCurrent();
+  const statePath = path.join(profile, "sps-desktop-state.json");
+  if (path.resolve(path.dirname(statePath)) !== path.resolve(profile)) {
+    throw new Error("Legacy state fixture escaped its owned profile.");
+  }
+  const current = JSON.parse((await readFile(statePath, "utf8")).replace(/^\uFEFF/, ""));
+  assert.equal(current.version, 13);
+  if (stateEvidence.generatedIdentity) {
+    assert.equal(current.identity, null, "A generated fixture identity may only fill a truly missing identity.");
+    current.identity = stateEvidence.generatedIdentity;
+  }
+  const legacy = projectLegacyDesktopStateV11(current);
+  assert.equal(legacy.encryptedDesktopAccount, current.encryptedDesktopAccount);
+  assert.equal(legacy.desktopDeviceId, current.desktopDeviceId);
+  assert.equal(legacy.ownerHostOwnerSubject, current.ownerHostOwnerSubject);
+  assert.deepEqual(legacy.accountConnections, current.accountConnections);
+  assert.deepEqual(legacy.profile, current.profile);
+  assert.equal(legacy.encryptedBoardApiToken, current.encryptedBoardApiToken);
+  assert.equal(legacy.encryptedHostProjectShareSecrets, current.encryptedHostProjectShareSecrets);
+  await writeFile(statePath, `${JSON.stringify(legacy, null, 2)}\n`, { flag: "w" });
+  return legacy;
+}
+
+async function assertMigratedMain(app, expectedEvidence) {
+  const status = await app.windows().find(page => page.url().startsWith("file:")).evaluate(() => window.spsDesktop.getStatus());
+  assert.equal(status.desktopAccount.signedIn, true, "Migration must restore the existing account without signing in again.");
+  assert.equal(status.profile?.connectionKind, "owner-host");
+  await readyHost(app.windows().find(page => page.url().startsWith("file:")));
+  const evidence = await captureLegacyStateEvidence(app, expectedEvidence.accountSubject);
+  assert.deepEqual(evidence.snapshot, expectedEvidence, "DPAPI-backed account, route, Node identity, and secrets changed across restart.");
+  const persistedVersion = await app.evaluate(({ app }) => {
+    const fs = process.getBuiltinModule("fs");
+    const path = process.getBuiltinModule("path");
+    return JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), "sps-desktop-state.json"), "utf8")).version;
+  });
+  assert.equal(persistedVersion, 13, "Current Main must persist the migrated state in the current format.");
 }
 
 async function exitAfterPromotion(app, profile) {
@@ -281,18 +387,45 @@ try {
   assert.deepEqual(await readFile(path.join(restored.ownerHost.vaultPath, attachment)), content);
   phases.push("main-restore-returned-running", "typed-row-and-attachment-preserved");
   console.log("[vault-transfer] restored Host running; typed row and attachment preserved");
+  const legacyEvidence = legacyDesktopState
+    ? await captureLegacyStateEvidence(restoredApp.app, "sps-desktop-e2e-owner")
+    : null;
   await stop(restoredApp.app);
 
-  const restarted = await launch(targetProfile, origin);
-  await signIn(restarted.page, origin);
-  await readyHost(restarted.page);
-  await bounded(restarted.page.evaluate(() => window.spsDesktop.openWorkspace()), "reopen restored Workspace");
-  const reopened = await workspace(restarted.app, restarted.page);
-  const afterRestart = await api(reopened, `/api/companies/${company.id}/projects`);
-  assert.ok(afterRestart.some(row => row.id === project.id));
-  phases.push("restored-host-restart");
-  console.log("[vault-transfer] restored Host restart complete");
-  await stop(restarted.app);
+  if (legacyDesktopState) {
+    await rewriteAsLegacyV11State(targetProfile, fixture, legacyEvidence);
+    phases.push("closed-profile-projected-to-authentic-v11-state");
+    const migrated = await launch(targetProfile, origin);
+    await assertMigratedMain(migrated.app, legacyEvidence.snapshot);
+    await bounded(migrated.page.evaluate(() => window.spsDesktop.openWorkspace()), "open migrated Workspace");
+    const migratedWorkspace = await workspace(migrated.app, migrated.page);
+    const migratedProjects = await api(migratedWorkspace, `/api/companies/${company.id}/projects`);
+    assert.ok(migratedProjects.some(row => row.id === project.id && row.name === project.name));
+    assert.deepEqual(await readFile(path.join(targetProfile, "owner-vault", attachment)), content);
+    phases.push("v11-state-decrypted-and-upgraded-by-current-main", "core-db-row-and-vault-file-retained");
+    await stop(migrated.app);
+
+    const stable = await launch(targetProfile, origin);
+    await assertMigratedMain(stable.app, legacyEvidence.snapshot);
+    await bounded(stable.page.evaluate(() => window.spsDesktop.openWorkspace()), "reopen migrated Workspace");
+    const stableWorkspace = await workspace(stable.app, stable.page);
+    const stableProjects = await api(stableWorkspace, `/api/companies/${company.id}/projects`);
+    assert.ok(stableProjects.some(row => row.id === project.id && row.name === project.name));
+    assert.deepEqual(await readFile(path.join(targetProfile, "owner-vault", attachment)), content);
+    phases.push("migrated-current-state-survives-second-restart");
+    await stop(stable.app);
+  } else {
+    const restarted = await launch(targetProfile, origin);
+    await signIn(restarted.page, origin);
+    await readyHost(restarted.page);
+    await bounded(restarted.page.evaluate(() => window.spsDesktop.openWorkspace()), "reopen restored Workspace");
+    const reopened = await workspace(restarted.app, restarted.page);
+    const afterRestart = await api(reopened, `/api/companies/${company.id}/projects`);
+    assert.ok(afterRestart.some(row => row.id === project.id));
+    phases.push("restored-host-restart");
+    console.log("[vault-transfer] restored Host restart complete");
+    await stop(restarted.app);
+  }
 } catch (error) {
   failure = error;
   // Keep diagnostics in the failed command output, never in public release assets.
@@ -322,6 +455,8 @@ try {
 }
 console.log(JSON.stringify({ kind: "source-main-transfer-acceptance", phases, mockIdentity: true,
   crashAfterPromotion, expectedCrashCount: crashedApps.size,
+  legacyDesktopStateMigrationQualified: legacyDesktopState,
+  historicalInstalledDatabaseMigrationQualified: false,
   signedInstallerQualified: false, previousStableUpgradeQualified: false, physicalTwoDeviceQualified: false,
   ownedMainOutputAndTemporaryDataCleanup: true, wholeDescendantJobQualification: false,
   fixtureProcessScan: ownedJobCleanupPending ? "not-performed-external-job-pending" : "command-line-scan-passed",

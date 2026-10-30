@@ -2534,17 +2534,17 @@ async function ensurePrivateTeamOwnerMembership() {
   }
 
   // A Desktop can survive account refreshes and partially completed older
-  // hand-offs. Its per-launch local proof may mint exactly one Owner recovery
-  // invite, but the invite is accepted through the Tailscale Identity route so
-  // the resulting membership belongs to the actual signed-in SPS account.
+  // hand-offs. Local launch proofs authorize recovery, not a workflow role.
+  // The technical Member invitation is accepted through the Identity route;
+  // Host authority remains the separate local Desktop proof.
   const recoveryInvitation = await ownerHostApi(`/companies/${encodeURIComponent(companyId)}/invites`, {
     method: "POST",
     ownerBootstrap: true,
     body: {
       allowedJoinTypes: "human",
-      humanRole: "owner",
+      humanRole: "operator",
       expiresInMinutes: 15,
-      agentMessage: "SPS Desktop Owner membership recovery.",
+      agentMessage: null,
     },
   });
   if (typeof recoveryInvitation?.token !== "string") {
@@ -4019,9 +4019,9 @@ async function recoverInitialOwnerHostMemberships(recoverableCompanies) {
       ownerBootstrap: true,
       body: {
         allowedJoinTypes: "human",
-        humanRole: "owner",
+        humanRole: "operator",
         expiresInMinutes: 15,
-        agentMessage: "SPS Desktop local Host membership recovery.",
+        agentMessage: null,
       },
     });
     if (typeof invitation?.token !== "string") {

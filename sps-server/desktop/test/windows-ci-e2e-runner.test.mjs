@@ -248,7 +248,7 @@ test("Owner Vault modes require a GitHub-hosted runner before helper compilation
 
 test("all Owner-Host-dependent Windows CI E2Es including installer use the reduced-token wrapper and guards", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
-  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "owner-vault-transfer", "owner-vault-crash-recovery", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle", "installer-data-preservation"]) {
+  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "owner-vault-transfer", "owner-vault-crash-recovery", "owner-vault-state-migration", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle", "installer-data-preservation"]) {
     assert.match(workflow, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
   }
   const source = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
@@ -335,7 +335,8 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   assert.match(wrapper, /ValidateSet\([^)]*'installer-data-preservation'/);
   assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-transfer'/);
   assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-crash-recovery'/);
-  const ownerVaultHostedGuard = wrapper.indexOf("if (($Mode -ceq 'owner-vault-transfer' -or $Mode -ceq 'owner-vault-crash-recovery') -and");
+  assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-state-migration'/);
+  const ownerVaultHostedGuard = wrapper.indexOf("if (($Mode -ceq 'owner-vault-transfer' -or $Mode -ceq 'owner-vault-crash-recovery' -or $Mode -ceq 'owner-vault-state-migration') -and");
   const hostedInstallerGuard = wrapper.indexOf("if ($Mode -ceq 'installer-data-preservation' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted')");
   const helperCompile = wrapper.indexOf("$phase = 'compile'");
   assert.ok(ownerVaultHostedGuard >= 0 && helperCompile > ownerVaultHostedGuard);
@@ -351,7 +352,7 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   assert.match(source, /return code == 0 \? unchecked\(\(int\)OwnedJobCleanupPendingExitCode\) : code;/);
   assert.match(source, /if \(mode == "workspace-surfaces"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", OwnedJobCleanupArgument\);/);
   assert.match(source, /return RunNode\(node, directory, "smoke-installer-data-preservation\.mjs", OwnedJobCleanupArgument\);/);
-  const ownerVaultCiGuard = source.indexOf('if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery")');
+  const ownerVaultCiGuard = source.indexOf('if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery" || mode == "owner-vault-state-migration")');
   const ownerVaultHostedGuardInChild = source.indexOf('Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted"', ownerVaultCiGuard);
   const ownerVaultTransferDispatch = source.indexOf('if (mode == "owner-vault-transfer")', ownerVaultHostedGuardInChild);
   assert.ok(ownerVaultCiGuard >= 0 && ownerVaultHostedGuardInChild > ownerVaultCiGuard && ownerVaultTransferDispatch > ownerVaultHostedGuardInChild);
@@ -384,8 +385,11 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   const ownerVaultSteps = workflow.slice(sourceExecutionControlStep, sourceExecutionControlEnd);
   const ownerVaultTransferStep = ownerVaultSteps.indexOf("- name: Verify Owner Vault transfer through source Desktop Main");
   const ownerVaultCrashStep = ownerVaultSteps.indexOf("- name: Verify Owner Vault crash recovery through source Desktop Main");
+  const ownerVaultMigrationStep = ownerVaultSteps.indexOf("- name: Verify legacy Desktop state migration through source Main");
   assert.ok(ownerVaultTransferStep > 0 && ownerVaultCrashStep > ownerVaultTransferStep);
-  for (const [step, mode] of [[ownerVaultTransferStep, "owner-vault-transfer"], [ownerVaultCrashStep, "owner-vault-crash-recovery"]]) {
+  assert.ok(ownerVaultMigrationStep > ownerVaultCrashStep);
+  assert.match(source, /if \(mode == "owner-vault-state-migration"\) return RunNode\(node, directory, "smoke-owner-vault-transfer-desktop\.mjs", "--legacy-desktop-state", OwnedJobCleanupArgument\);/);
+  for (const [step, mode] of [[ownerVaultTransferStep, "owner-vault-transfer"], [ownerVaultCrashStep, "owner-vault-crash-recovery"], [ownerVaultMigrationStep, "owner-vault-state-migration"]]) {
     const nextStep = ownerVaultSteps.indexOf("\n      - name:", step + 1);
     const block = ownerVaultSteps.slice(step, nextStep < 0 ? undefined : nextStep);
     assert.match(block, /timeout-minutes: 20/);
