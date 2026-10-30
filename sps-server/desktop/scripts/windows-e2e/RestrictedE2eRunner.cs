@@ -269,11 +269,11 @@ public static class RestrictedE2eRunner
             || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
-            || value == "plugin-preview" || value == "host-plugin-lifecycle";
+            || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation";
     }
     static bool OwnedJobGateMode(string value)
     {
-        return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
+        return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "workspace-pending"
@@ -293,7 +293,7 @@ public static class RestrictedE2eRunner
             "SystemRoot", "WINDIR", "SystemDrive", "ComSpec", "PATH", "PATHEXT", "TEMP", "TMP",
             "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)",
             "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432",
-            "HOME", "HOMEDRIVE", "HOMEPATH", "GITHUB_ACTIONS", "RUNNER_OS", "CI",
+            "HOME", "HOMEDRIVE", "HOMEPATH", "GITHUB_ACTIONS", "RUNNER_OS", "RUNNER_ENVIRONMENT", "CI",
             "SPS_DESKTOP_E2E_SOURCE", "SPS_DESKTOP_E2E_BINARY", "SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS"
         })
         {
@@ -392,6 +392,12 @@ public static class RestrictedE2eRunner
         if (mode == "execution-control") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--execution-control", OwnedJobCleanupArgument);
         if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs", OwnedJobCleanupArgument);
+        if (mode == "installer-data-preservation")
+        {
+            if (Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
+                throw new InvalidOperationException("Installer data preservation E2E requires a GitHub-hosted runner");
+            return RunNode(node, directory, "smoke-installer-data-preservation.mjs", OwnedJobCleanupArgument);
+        }
         return RunNode(node, directory, "smoke-host-plugin-lifecycle-desktop.mjs", OwnedJobCleanupArgument);
     }
     static bool CheckPrivileges()

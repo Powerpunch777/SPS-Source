@@ -507,6 +507,16 @@ jobs:
           SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode host-plugin-lifecycle
 
+      - name: Build unsigned Windows installer for data preservation E2E
+        working-directory: sps-server/desktop
+        run: npx --no-install electron-builder --prepackaged dist/win-unpacked --win nsis --publish never
+
+      - name: Verify installed Windows package and retained user data
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-data-preservation
+
       - name: Test SPS node signing, command lease, and capability flow
         working-directory: sps-server/desktop-node
         run: npm test

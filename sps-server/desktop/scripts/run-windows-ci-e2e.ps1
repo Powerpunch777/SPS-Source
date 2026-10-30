@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('probe', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle')]
+  [ValidateSet('probe', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation')]
   [string] $Mode
 )
 
@@ -12,6 +12,9 @@ $isProbe = $Mode.StartsWith('probe', [StringComparison]::Ordinal) -or $workspace
 if (-not $isProbe -and
     ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows')) {
   throw 'Desktop launch mode is restricted to Windows CI.'
+}
+if ($Mode -ceq 'installer-data-preservation' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
+  throw 'Installer data preservation E2E requires a GitHub-hosted runner.'
 }
 
 function Assert-PlainDirectoryChain([string] $Directory) {

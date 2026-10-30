@@ -220,9 +220,9 @@ test("Desktop execution modes are unavailable outside Windows CI", { skip: proce
   });
 });
 
-test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", async () => {
+test("all Owner-Host-dependent Windows CI E2Es including installer use the reduced-token wrapper and guards", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
-  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle"]) {
+  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle", "installer-data-preservation"]) {
     assert.match(workflow, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
   }
   const source = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
@@ -244,6 +244,7 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   const gateEnd = source.indexOf("    static int OwnedJobWaitMilliseconds(", gateStart);
   assert.ok(gateStart >= 0 && gateEnd > gateStart);
   assert.match(source.slice(gateStart, gateEnd), /value == "host-plugin-lifecycle"/);
+  assert.match(source.slice(gateStart, gateEnd), /value == "installer-data-preservation"/);
   assert.match(source, /WaitForNaturalJobEmpty\(job, OwnedJobWaitMilliseconds\(mode\)\)/);
   assert.match(source, /const int OwnedProcessDiagnosticLimit = 256;/);
   assert.match(source, /QueryInformationJobObject\(job, 3, buffer/);
@@ -301,6 +302,10 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   assert.ok(jobClose >= 0 && desktopClose > jobClose && tokenClose > desktopClose);
   assert.doesNotMatch(source, /SANDBOX_INERT|CREATE_BREAKAWAY_FROM_JOB|LogonUser|SetUserObjectSecurity|SetSecurityInfo|net user|New-LocalUser/);
   assert.match(wrapper, /ValidateSet\([^)]*'native-management'/);
+  assert.match(wrapper, /ValidateSet\([^)]*'installer-data-preservation'/);
+  const hostedInstallerGuard = wrapper.indexOf("if ($Mode -ceq 'installer-data-preservation' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted')");
+  const helperCompile = wrapper.indexOf("$phase = 'compile'");
+  assert.ok(hostedInstallerGuard >= 0 && helperCompile > hostedInstallerGuard);
   assert.match(wrapper, /\$workspaceProbeModes = @\('workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit'\)/);
   assert.match(wrapper, /\$workspaceProbeModes -ccontains \$Mode/);
   assert.match(source, /value == "native-management"/);
@@ -311,8 +316,28 @@ test("all Owner-Host-dependent Windows CI E2Es use the reduced-token wrapper", a
   assert.match(source, /"--isolated-native-workspace-channel", "--with-native-plugin-sdk"/);
   assert.match(source, /return code == 0 \? unchecked\(\(int\)OwnedJobCleanupPendingExitCode\) : code;/);
   assert.match(source, /if \(mode == "workspace-surfaces"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", OwnedJobCleanupArgument\);/);
+  assert.match(source, /return RunNode\(node, directory, "smoke-installer-data-preservation\.mjs", OwnedJobCleanupArgument\);/);
+  assert.match(source, /Environment\.GetEnvironmentVariable\("RUNNER_ENVIRONMENT"\) != "github-hosted"/);
+  const environmentBlockStart = source.indexOf("    static IntPtr EnvironmentBlock()");
+  const runNodeStart = source.indexOf("    static int RunNode(", environmentBlockStart);
+  assert.ok(environmentBlockStart >= 0 && runNodeStart > environmentBlockStart);
+  assert.match(source.slice(environmentBlockStart, runNodeStart), /"RUNNER_ENVIRONMENT"/);
+  const installerDispatch = source.indexOf('if (mode == "installer-data-preservation")');
+  const ciGuard = source.indexOf('if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS")');
+  const syncChecks = source.indexOf('foreach (string script in new[]', ciGuard);
+  const installerRun = source.indexOf('return RunNode(node, directory, "smoke-installer-data-preservation.mjs", OwnedJobCleanupArgument);', installerDispatch);
+  assert.ok(ciGuard >= 0 && syncChecks > ciGuard && installerDispatch > syncChecks && installerRun > installerDispatch);
   assert.match(source, /start\.UseShellExecute = false;/);
   assert.doesNotMatch(source.slice(0, processClassifierStart) + source.slice(processDiagnosticsEnd), /(?:powershell|cmd\.exe)/i);
   assert.match(wrapper, /Write-ExitDiagnostic 'restricted_e2e_helper_exit'/);
   assert.match(wrapper, /\$phase = 'helper_exit'/);
+  const installerBuildStep = workflow.indexOf("- name: Build unsigned Windows installer for data preservation E2E");
+  const installerVerifyStep = workflow.indexOf("- name: Verify installed Windows package and retained user data");
+  const nodeSigningStep = workflow.indexOf("- name: Test SPS node signing, command lease, and capability flow");
+  assert.ok(installerBuildStep > 0 && installerVerifyStep > installerBuildStep && nodeSigningStep > installerVerifyStep);
+  const installerBuildBlock = workflow.slice(installerBuildStep, installerVerifyStep);
+  const installerVerifyBlock = workflow.slice(installerVerifyStep, nodeSigningStep);
+  assert.match(installerBuildBlock, /working-directory: sps-server\/desktop[\s\S]*?run: npx --no-install electron-builder --prepackaged dist\/win-unpacked --win nsis --publish never/);
+  assert.match(installerVerifyBlock, /timeout-minutes: 20[\s\S]*?shell: powershell[\s\S]*?working-directory: sps-server\/desktop[\s\S]*?run: \.\\scripts\\run-windows-ci-e2e\.ps1 -Mode installer-data-preservation/);
+  assert.doesNotMatch(installerBuildBlock + installerVerifyBlock, /(?:^|\n)\s*RUNNER_(?:ENVIRONMENT|OS)\s*:/);
 });
