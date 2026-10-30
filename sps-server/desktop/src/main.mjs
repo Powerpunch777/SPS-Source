@@ -3869,14 +3869,16 @@ async function restoreOwnerServerFromTransferLocked(restorePermit) {
       ? path.join(runtimeRoot, "node_modules", "embedded-postgres", "dist", "index.js")
       : path.join(developmentCoreRoot, "packages", "db", "node_modules", "embedded-postgres", "dist", "index.js");
     await runOwnerHostRestoreProcess({
-      command: runtime.command,
+      // The source Core resolver uses PATH's "node" for its CLI. Windows
+      // process ownership requires an absolute executable for this helper.
+      command: app.isPackaged ? runtime.command : process.execPath,
       cwd: runtime.cwd,
       helperPath,
       configPath: stagingConfig.layout.configPath,
       backupFile: imported.backupFile,
       dbModulePath,
       embeddedPostgresModulePath,
-      environment: runtime.environment,
+      environment: app.isPackaged ? runtime.environment : { ...runtime.environment, ELECTRON_RUN_AS_NODE: "1" },
     });
 
     await updateSpsOwnerHostConfig({

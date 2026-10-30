@@ -29,9 +29,12 @@ function fixture(phase) {
   const savedAttempts = [];
   let stagedReceipt = null;
   let vaultReceipt = null;
+  let restoreInvocation = null;
+  let materializeCalls = 0;
+  const packagedRuntimeRoot = path.resolve("C:/fixture/user-data/owner-host-runtime/0.4.137");
   const scope = {
-    path, process: { execPath: "fixture-node" }, __dirname: path.resolve("C:/fixture/desktop/src"), os: { hostname: () => "fixture" },
-    app: { isPackaged: false, getPath: () => path.resolve("C:/fixture/user-data") },
+    path, process: { execPath: path.resolve("C:/fixture/electron.exe") }, __dirname: path.resolve("C:/fixture/desktop/src"), os: { hostname: () => "fixture" },
+    app: { isPackaged: phase === "packaged-runtime", getPath: () => path.resolve("C:/fixture/user-data") },
     desktopStateUnavailable: false, isQuitting: false, state, ownerVaultOperations: createSpsOwnerVaultOperationGate(), ownerRestoreBindingRecovery: null,
     ownerHostRestoreRunner: { hasUnconfirmedTermination: () => false, generation: () => 0n },
     desktopAccountController: { getStatus: () => ({ pending: false }) },
@@ -78,8 +81,16 @@ function fixture(phase) {
       return { layout: { configPath: "fixture-config" } };
     },
     importSpsOwnerVaultTransfer: async () => ({ backupFile: "fixture-backup" }),
-    resolveSpsOwnerHostRuntime: async () => ({ command: "fixture", cwd: "fixture", environment: {} }),
-    runOwnerHostRestoreProcess: async () => {
+    materializeCurrentSpsOwnerHostRuntime: async () => { materializeCalls += 1; return packagedRuntimeRoot; },
+    resolveSpsOwnerHostRuntime: async () => ({
+      command: phase === "packaged-runtime" ? path.join(packagedRuntimeRoot, "node.exe") : "node",
+      cwd: phase === "packaged-runtime" ? packagedRuntimeRoot : "fixture-source-core",
+      environment: phase === "packaged-runtime"
+        ? { SPS_RESTORE_RUNTIME: "packaged-canary" }
+        : { SPS_RESTORE_RUNTIME: "source-canary" },
+    }),
+    runOwnerHostRestoreProcess: async invocation => {
+      restoreInvocation = structuredClone(invocation);
       if (phase === "database-stop") throw new Error("Fixture database shutdown unconfirmed");
       calls.push("database-restored");
       if (phase === "quitting-during-restore") scope.isQuitting = true;
@@ -113,7 +124,7 @@ function fixture(phase) {
     },
   };
   runInNewContext(`${activation}\n${start}\n${restore}\n${bootstrap}\n${saveProfile}\n${accountActions}\nthis.activateOwnerHostProfile = activateOwnerHostProfile; this.startOwnerHost = startOwnerHost; this.bootstrapOwnerHost = bootstrapOwnerHost; this.restore = restoreOwnerServerFromTransfer; this.reveal = revealOwnerRestoreAttempt; this.saveRemoteProfile = saveRemoteProfile; this.startDesktopAccountSignIn = startDesktopAccountSignIn; this.signOutDesktopAccount = signOutDesktopAccount;`, scope);
-  return { scope, calls, state, root, savedOwners, savedAttempts, receipt: () => vaultReceipt, setAccount: value => { account = value; } };
+  return { scope, calls, state, root, savedOwners, savedAttempts, receipt: () => vaultReceipt, restoreInvocation: () => restoreInvocation, materializeCalls: () => materializeCalls, setAccount: value => { account = value; } };
 }
 
 test("the actual Main restore flow checks Native absence and activates only its captured account", async () => {
@@ -129,6 +140,27 @@ test("the actual Main restore flow checks Native absence and activates only its 
   assert.ok(ctx.calls.indexOf("state-saved") < ctx.calls.indexOf("staging-config"));
   assert.equal(ctx.savedAttempts[0][0].ownerSubject, "owner-a");
   assert.equal(ctx.state.ownerRestoreAttempts.length, 0);
+});
+
+test("source restore launches Electron in Node mode instead of passing the relative Core command to Windows supervision", async () => {
+  const ctx = fixture();
+  await ctx.scope.restore();
+  assert.equal(ctx.restoreInvocation().command, ctx.scope.process.execPath);
+  assert.equal(path.isAbsolute(ctx.restoreInvocation().command), true);
+  assert.equal(ctx.materializeCalls(), 0);
+  assert.deepEqual(ctx.restoreInvocation().environment, {
+    SPS_RESTORE_RUNTIME: "source-canary",
+    ELECTRON_RUN_AS_NODE: "1",
+  });
+});
+
+test("packaged restore preserves its materialized runtime command and environment", async () => {
+  const ctx = fixture("packaged-runtime");
+  await ctx.scope.restore();
+  assert.equal(ctx.materializeCalls(), 1);
+  assert.equal(ctx.restoreInvocation().command, path.join("C:/fixture/user-data/owner-host-runtime/0.4.137", "node.exe"));
+  assert.equal(ctx.restoreInvocation().cwd, path.resolve("C:/fixture/user-data/owner-host-runtime/0.4.137"));
+  assert.deepEqual(ctx.restoreInvocation().environment, { SPS_RESTORE_RUNTIME: "packaged-canary" });
 });
 
 test("account changes during bootstrap removal, promotion or Host start never activate a different Owner", async () => {
