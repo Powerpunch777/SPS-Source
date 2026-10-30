@@ -10,7 +10,7 @@ test("Owner Host creation succeeds only after activation is ready", async () => 
 
   assert.match(
     main,
-    /if \(activate\) \{\s*if \(!ownerHostIsReady\(\)\) \{\s*throw new Error\(ownerHostStatus\.lastError \|\| "SPS Owner Host did not become ready\."\);\s*\}\s*await activateOwnerHostProfile\(expectedSubject\);\s*await ensureInitialOwnerHostCompany\(\);[\s\S]*?await synchronizeReadyTeamWorkplane\(\);\s*\}/,
+    /if \(activate\) \{\s*if \(!ownerHostIsReady\(\)\) \{\s*throw new Error\(ownerHostStatus\.lastError \|\| "SPS Owner Host did not become ready\."\);\s*\}\s*await activateOwnerHostProfile\(expectedSubject, expectedRestoreGeneration\);\s*await ensureInitialOwnerHostCompany\(\);[\s\S]*?await synchronizeReadyTeamWorkplane\(\);\s*\}/,
   );
   assert.match(
     renderer,
