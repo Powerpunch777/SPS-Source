@@ -696,7 +696,10 @@ export async function executeSpsNodeCommand({
       exitCode: result.exitCode,
       signal: result.signal,
       timedOut: result.timedOut,
-      error: leaseCancellationError ?? (result.timedOut ? `Local command exceeded ${timeoutMs}ms.` : null),
+      error: leaseCancellationError ?? (result.timedOut ? `Local command exceeded ${timeoutMs}ms.`
+        : result.exitCode === 0 ? null
+        : Number.isSafeInteger(result.exitCode) ? `Local command exited with code ${result.exitCode}.`
+        : "Local command exited without a successful status."),
     };
     if (typeof command.pluginKey === "string" && usageReport) completion.usageReport = usageReport;
     normalCompletionPayload = {

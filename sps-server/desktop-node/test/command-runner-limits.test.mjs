@@ -130,6 +130,44 @@ test("clamps a 1 ms neutral plugin timeout to 1 second and waits for the child t
   assert.equal(processIsAlive(childPid), false);
 });
 
+test("reports a natural nonzero CLI exit after confirmed child closure", { timeout: 10_000 }, async () => {
+  let stdout = "";
+  let childPid = null;
+  let completion = null;
+  let persistedCompletion = null;
+  let childWasDeadAtCompletion = false;
+
+  const result = await executeSpsNodeCommand(makeExecutionOptions(
+    makeCommand("natural-nonzero-exit-regression"),
+    {
+      resolveInvocation: async () => ({
+        executable: process.execPath,
+        args: ["-e", "process.stdout.write(JSON.stringify({pid: process.pid}) + '\\n'); process.exit(7);"],
+      }),
+      appendCommandEvent: async (input) => {
+        if (input.stream === "stdout") stdout += input.body;
+      },
+      persistCompletion: async (input) => { persistedCompletion = input; },
+      completeCommand: async (input) => {
+        childPid = JSON.parse(stdout.trim()).pid;
+        childWasDeadAtCompletion = !processIsAlive(childPid);
+        completion = input;
+      },
+    },
+  ));
+
+  assert.equal(result.exitCode, 7);
+  assert.equal(result.timedOut, false);
+  assert.equal(completion?.completion.status, "failed");
+  assert.equal(completion?.completion.exitCode, 7);
+  assert.equal(completion?.completion.signal, null);
+  assert.equal(completion?.completion.timedOut, false);
+  assert.equal(completion?.completion.error, "Local command exited with code 7.");
+  assert.deepEqual(persistedCompletion, completion);
+  assert.equal(childWasDeadAtCompletion, true);
+  assert.equal(processIsAlive(childPid), false);
+});
+
 test("rejects duplicate active IDs without disturbing the original process and permits reuse after completion", async () => {
   const fixture = await createWorkspaceE2eFixture();
   const directory = fixture.directory;
