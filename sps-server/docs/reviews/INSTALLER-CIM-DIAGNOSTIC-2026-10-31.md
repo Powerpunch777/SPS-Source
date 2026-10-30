@@ -84,3 +84,74 @@ The actual local x86 legacy query took 1425 ms and exited naturally with clean
 expected status. Hosted cross-architecture comparison and actual old-uninstaller
 causality remain pending. No timeout increase or successful installer claim is
 derived from these diagnostics.
+
+## Cross-Architecture Result And Owned Command Classification
+
+Exact Source `300ccdc40b85a0466a992741fdb3906575afe6d9`, diagnostic run
+`41088750908`, passed all six hosted probes with empty output/error and natural
+Job cleanup: x86 startup 5778 ms, legacy 52669 ms, current 44258 ms; x64 startup
+227 ms, legacy 31027 ms, current 30737 ms. This also disproves an always-broken
+x86 query hypothesis, not the specific old-uninstaller failure.
+
+The next bounded diagnostic reads native command-line metadata only for the
+already-owned Job's Windows PowerShell processes and emits fixed invocation
+categories, architecture and argument-marker booleans. It never logs command
+text, path, account, PID or token. It rechecks process Job membership and exact
+System32/SysWOW64 image path. Two native metadata queries accept at most 64 KiB,
+validate the returned Unicode buffer boundaries and NUL handling, and fail to
+`unavailable` for unsupported APIs, access failures or malformed results. There
+is no process-memory read, write, process injection, WMI fallback or elevated
+product privilege. Metadata is best effort, not authority or a proof of the
+instruction currently executing.
+
+The undocumented information class is used only in the acceptance helper,
+following an independently written bounded native-query approach; see the
+[Microsoft API caveat](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess)
+and [Chromium's primary implementation discussion](https://chromium.googlesource.com/chromium/src/+/0ed6d7ba52656400c3f3604e9fd62cbf2c1623f9/chrome/chrome_cleaner/engines/broker/scanner_sandbox_interface.cc).
+It does not become a runtime requirement for SPS or an installer success gate.
+
+A harmless local PowerShell sleeping fixture with deliberately private command
+text was classified successfully in about five seconds. The test required the
+original timeout exit124, forced owned-Job cleanup with `accepted:false`, exact
+five-field public metadata, no private text, and correct owned-desktop/station
+closure. Luna's bounded test and the parent's direct rerun both passed. No actual
+installer or installed profile was used. Actual old-uninstaller command metadata
+still requires the next hosted installer attempt.
+
+## Standalone Historical Handoff Diagnosis
+
+The separate hosted-only diagnostic now also downloads and installs the exact
+pinned withdrawn 0.4.86 input into its own temporary installation, then copies
+that installation's uninstaller out and invokes the same silent per-user
+`/KEEP_APP_DATA --updated` handoff with unquoted final `_?=`. It does not require
+a Core build, candidate package or product Main startup, so a new observation
+does not wait for unrelated app scenarios. The complete candidate replacement
+gate remains unchanged and mandatory; a standalone result cannot qualify it.
+
+The fixed helper mode requires GitHub-hosted Windows in both wrapper and native
+child before any installation, and the script repeats the existing hosted
+guard before reading manifest/profile/registry/fixtures. It refuses any SPS
+registration, SPS process, pre-existing APPDATA alias or linked directory,
+validates its canonical temporary fixture identity, verifies the pinned download,
+exact installed registration and regular owned files, and never launches the
+withdrawn application. It preserves the existing `sps-installer-data-*` staging
+namespace rather than expanding the historical-download guard. The separate
+diagnostic uses a shorter eight-minute owning-Job bound; full installation
+qualification stays at eighteen minutes. A timeout/failure is not a pass, and
+the fixture is left only for the disposable VM's lifecycle, never recursively
+removed from a profile.
+
+Parent review corrected an invalid direct fs/promises constant import, checked
+APPDATA parent chains and installation directories, and added a real non-hosted
+Node invocation that must fail at the first guard without output. The existing
+native-helper no-general-shell contract caught the first harmless C# fixture
+placement; it was preserved unchanged by moving the fixed sleeping fixture to
+its dedicated Node probe. Targeted guard/diagnostic tests passed five checks,
+including an actual native classification/timeout/privacy/cleanup observation.
+Hosted standalone old-uninstaller execution is still pending, not asserted here.
+
+Final local full Desktop validation after integration: 1655 total, 1653 passed,
+two unavailable-8.3-alias skips, zero failures (`node --test
+--test-reporter=spec test/*.test.mjs`, exit0). Diagnostic workflow YAML parsed
+successfully. These results do not qualify the pending hosted old-uninstaller
+or candidate replacement.

@@ -6,12 +6,45 @@ on:
       - .github/workflows/sps-installer-diagnostics.yml
       - sps-server/desktop/scripts/installer-cim-diagnostic.mjs
       - sps-server/desktop/scripts/windows-e2e/probe-installer-cim.mjs
+      - sps-server/desktop/scripts/windows-e2e/InstallerProcessCommandDiagnostics.cs
+      - sps-server/desktop/test/installer-process-command-diagnostics.test.mjs
+      - sps-server/desktop/scripts/smoke-historical-uninstaller-diagnostic.mjs
+      - sps-server/desktop/test/historical-uninstaller-diagnostic.test.mjs
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  historical-uninstaller:
+    name: Isolated historical uninstaller diagnosis only
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Diagnose fixed withdrawn installer in the guarded disposable VM
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-uninstaller-diagnostic
+
+  owned-command-classification:
+    name: Read-only owned command classification
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Verify bounded classification without printing command text
+        working-directory: sps-server/desktop
+        run: node --test test/installer-process-command-diagnostics.test.mjs
+
   readonly-process-check:
     name: Read-only PowerShell check (${{ matrix.architecture }}, ${{ matrix.variant }})
     runs-on: windows-latest
