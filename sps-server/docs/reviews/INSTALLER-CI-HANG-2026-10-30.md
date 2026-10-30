@@ -151,3 +151,38 @@ owned directory, matching the existing registry-query fixture pattern. The
 corrected focused query/probe/registry tests passed 9/9 locally, and the full
 Desktop run again passed 1592/1594 with two environment skips and zero failures.
 Exact new-HEAD hosted CI and the full installer flow remain pending.
+
+## Historical Replacement Now Reached In CI
+
+Exact Source `ed83ab763429d5cb5cde1cdf8a528d9ff64c9b30`, push run
+`41051299729`, Windows job `124047737982`, is terminal failure. Its phase
+output establishes more than the older unattributed timeout:
+
+- Native registry/process preconditions completed before mutation.
+- Fresh candidate NSIS install exited 0 after 138,824 ms. Five installed
+  artifact hashes matched the verified unpacked input, and its isolated first
+  frame passed. Nine inert preservation sentinels were unchanged.
+- Ordinary candidate uninstall exited 0 after 98,419 ms; registry was empty,
+  installed ASAR absent and all sentinels unchanged.
+- Pinned withdrawn 0.4.86 NSIS install exited 0 after 283,599 ms. Its separate
+  historical registry/package assertions passed. Its application was not run.
+- Current candidate replacement began at 12:42:19 UTC. No `nsis-close` arrived
+  before the original whole-scenario 18-minute deadline at 12:51:28 UTC.
+  The native owner force-closed its own Job and returned 124, acceptance false.
+
+The failure is now localized to the historical-version replacement operation,
+not CIM, download, fresh install or the candidate's ordinary uninstall. It
+does not establish whether the copied old uninstaller, subsequent extraction
+or another internal NSIS operation was waiting. The exact installed
+electron-builder template calls copied old-uninstaller `ExecWait` before
+installing new application files, but that source order alone is not proof
+of which operation stalled in this run. No old installer is a trusted Stable
+predecessor, and this run is not an overall installer pass.
+
+The existing native owner now snapshots only its actual Job before timeout
+termination in installer mode. It reuses bounded process counts and sanitized
+image/parent names, without PID, command line, user path or termination of an
+unowned process. A real harmless timeout probe exercises the same diagnostic
+branch and still fails with 124 after confirmed owned cleanup. No installer
+was run locally. The 18-minute bound, reduced token, private desktop, exact
+artifact/data assertions and rejection of forced-cleanup acceptance remain.

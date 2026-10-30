@@ -919,6 +919,11 @@ public static class RestrictedE2eRunner
             uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : mode == "probe-installer-processes" ? 45u * 1000u : 18u * 60u * 1000u);
             if (wait == 258)
             {
+                // Inspect only this Job before its timeout cleanup destroys the
+                // installer/uninstaller relationship. Counts and sanitized image
+                // names are diagnostic, never permission to accept a timeout.
+                if (mode == "installer-data-preservation" || mode == "probe-timeout")
+                    WriteOwnedJobProcessDiagnostics(job, 0);
                 Require(TerminateJobObject(job, 124), "Terminate timed-out E2E job");
                 cleanupWasForced = true;
                 Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm timed-out child exit");

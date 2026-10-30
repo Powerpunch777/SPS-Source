@@ -69,7 +69,13 @@ test("Windows CI E2E timeout terminates and confirms the job before failing", { 
   await assert.rejects(run("probe-timeout"), failure => {
     assert.equal(failure.code, 124);
     assert.match(failure.stderr, /restricted_e2e_timeout/);
-    assertCleanup(failure.stdout);
+    const output = assertCleanup(failure.stdout);
+    const diagnosticIndex = output.findIndex(record => Object.hasOwn(record, "readOK"));
+    const emptyIndex = output.findIndex(record => record.ownedJobEmpty === true);
+    assert.ok(diagnosticIndex >= 0 && emptyIndex > diagnosticIndex, "Live owned-process evidence must precede forced timeout cleanup");
+    assert.equal(output[diagnosticIndex].readOK, true);
+    assert.ok(output[diagnosticIndex].total > 0);
+    assert.doesNotMatch(JSON.stringify(output[diagnosticIndex]), /[A-Za-z]:[\\/]|\\\\|"(?:pid|processId|commandLine)"/i);
     return true;
   });
 });
