@@ -268,3 +268,27 @@ Final compact/original/safety/real harmless exit selection:13/13. Full local
 Desktop1696total/1694pass/two environment skips/zero failures, exit0. Actual
 installer execution remains forbidden locally. Hosted baseline/control results
 at the new revision are still required.
+
+## Hosted Original And Compact Comparison
+
+Exact Source `766e7ffe`, compact-control run `41156378560`, completed the
+historical handoff successfully on the pinned old installer `0.4.86`. The
+original-path run was job `124403974704`: old installation exited0 after
+334520ms; its pre-uninstall census was29314files/3051dirs, maximum absolute/
+relative path lengths282/181, and46 paths over259characters. The compact run
+was job `124403974605`: old installation exited0 after305457ms; its pre-
+uninstall census was29333files/3052dirs, maximum absolute/relative path lengths
+257/187, and0 paths over259characters. In both runs the captured uninstall
+availability and execution-policy commands exited0, the process-query exited1,
+and all captured commands completed. The original-path uninstaller exited2
+after105675ms, with its post-census unchanged; the compact uninstaller exited0
+after141579ms. Both runs ended with natural Job/Desktop/station closure and
+natural cleanup.
+
+The hosted runner images differed (`20261021.278.1` original versus
+`20261030.294.1` compact), so this is not a fully controlled causal proof. The
+result narrows the path-length hypothesis but does not establish path length as
+the cause. Microsoft's [maximum path-length reference](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
+remains background, not proof of the failing operation. Neither run qualifies
+candidate replacement, previous-Stable upgrade or long paths; do not shorten
+any gates or declare a fix from this comparison.

@@ -41,6 +41,23 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- A separate reproduced async Workspace-open race is corrected using the
+  existing account/session/profile/Host read scope. Six regressions failed
+  before correction; focused18/18 and related55/55 now pass. Actual isolated
+  Main transfer additionally passed real same-account sign-out/sign-in, renderer
+  unload veto, old-completion rejection, destruction of only the stale window,
+  and continued authenticated project access in the newer window. Full local
+  Desktop1707total/1705pass/two environment skips/zero failures. This does not
+  establish the cause of the earlier intermittent fourth-Main timeout or qualify
+  the pending final-HEAD hosted/installed tests. See the
+  [Workspace observation](../reviews/WORKSPACE-OPEN-OBSERVATION-2026-10-31.md).
+- Source766e7ff diagnostic41156378560 is terminal: original job124403974704
+  returned uninstall2/unchanged282-character census; compact job124403974605
+  returned uninstall0 with max257/zero paths over259. Both captured process
+  checks completed and whole Jobs closed naturally. Different runner image
+  versions prevent a fully controlled causal claim. Neither diagnostic qualifies
+  candidate replacement or long paths; the original full gate is unchanged.
+  See the [comparison record](../reviews/INSTALLER-CIM-DIAGNOSTIC-2026-10-31.md).
 - Source7e462f2's short diagnostic41153852056 failed after actual captured
   availability0/policy0/process-query1, followed about4.9s later by uninstall2.
   Census stayed unchanged; a stuck captured query is not that attempt's cause,

@@ -14,6 +14,7 @@ import { projectLegacyDesktopStateV11 } from "./legacy-desktop-state-fixture.mjs
 import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
 import { readSpsOwnerVaultRestoreReceipt } from "../src/owner-vault-restore-receipt.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
+import { assertWorkspaceOpenAccountFence } from "./workspace-open-account-fence-acceptance.mjs";
 import { seedReviewedTransferPlugin, resetTransferPluginImportProbe, reviewRestoredTransferPlugin, assertRestoredTransferPluginData, seedBundledTransferReviewCanary, assertBundledTransferReviewPending, approveRestoredCurrentAppBundle } from "./owner-vault-plugin-acceptance.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -534,6 +535,11 @@ try {
       await assert.rejects(lstat(bundledReviewEvidence.manifestImportProbe), { code: "ENOENT" });
       await assertRestoredTransferPluginData({ workspace: approvedWorkspace, evidence: registryPluginEvidence, api, waitFor });
       phases.push("explicit-bundle-approval-and-other-workspace-data-survive-restart");
+      const fence = await bounded(assertWorkspaceOpenAccountFence({ app: approvedRestart.app, setup: approvedRestart.page,
+        identityOrigin: origin, signIn, waitFor, api, company, project, expectedUserData: targetProfile,
+        expectedWorkspaceOrigin: new URL(approvedWorkspace.url()).origin }), "real Workspace account lifecycle fence");
+      assert.ok(Object.values(fence).every(value => value === true));
+      phases.push("real-sign-out-sign-in-discards-only-stale-unload-vetoing-workspace");
       await stop(approvedRestart.app);
     }
   }

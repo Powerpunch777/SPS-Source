@@ -4896,6 +4896,7 @@ async function openWorkspace() {
   }
   const hubOrigin = workspaceHubUrl();
   if (!hubOrigin) throw new Error("Save an SPS team connection first");
+  const scope = captureWorkspaceReadScope();
   setupMode = false;
   // Every SPS Desktop Host and Member has a signed-in SPS Identity account.
   // The Desktop-only header protects the loopback transport as an additional
@@ -4903,12 +4904,14 @@ async function openWorkspace() {
   trace("identity-session-start");
   const usesIdentitySession = await establishSpsIdentityCoreSession(hubOrigin);
   trace("identity-session-complete");
+  scope.assertCurrent();
   if (!currentBoardToken() && !usesIdentitySession) {
     throw new Error("SPS could not establish this Desktop account's Workspace session. Sign in to SPS Desktop again and retry.");
   }
   trace("node-registration-start");
   await ensureJoinedDesktopNode();
   trace("node-registration-complete");
+  scope.assertCurrent();
   if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
     if (workspaceWindow.isMinimized()) workspaceWindow.restore();
     workspaceWindow.show();
@@ -4931,10 +4934,24 @@ async function openWorkspace() {
     ),
   });
   workspaceWindow = currentWindow;
+  const discardCapturedWindow = () => {
+    if (workspaceWindow === currentWindow) {
+      workspaceWindow = null;
+      workspaceOrigin = null;
+      createApplicationMenu();
+      refreshTrayMenu();
+    }
+    // A renderer's beforeunload must not retain another account's stale view.
+    if (!currentWindow.isDestroyed()) currentWindow.destroy();
+  };
   createApplicationMenu();
   refreshTrayMenu();
   configureWorkspaceNavigation(currentWindow, hubOrigin);
   currentWindow.once("ready-to-show", () => {
+    if (!scope.isCurrent() || workspaceWindow !== currentWindow) {
+      discardCapturedWindow();
+      return;
+    }
     currentWindow.show();
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
   });
@@ -4946,8 +4963,19 @@ async function openWorkspace() {
     refreshTrayMenu();
   });
   trace("workspace-load-start");
-  await currentWindow.loadURL(`${hubOrigin}/`);
-  trace("workspace-load-complete");
+  try {
+    await currentWindow.loadURL(`${hubOrigin}/`);
+    trace("workspace-load-complete");
+    scope.assertCurrent();
+    if (workspaceWindow !== currentWindow || currentWindow.isDestroyed()) {
+      throw new Error("SPS Workspace window changed while it was opening.");
+    }
+  } catch (error) {
+    if (!scope.isCurrent() || workspaceWindow !== currentWindow || currentWindow.isDestroyed()) {
+      discardCapturedWindow();
+    }
+    throw error;
+  }
 }
 
 async function maybeOpenWorkspaceForCurrentAccount() {

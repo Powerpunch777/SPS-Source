@@ -5,11 +5,17 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 
 const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
+const scopeStartMarker = "function captureWorkspaceReadScope(profile = state.profile)";
+const scopeEndMarker = "function captureHostShareMutation";
 const startMarker = "async function openWorkspace()";
 const endMarker = "async function maybeOpenWorkspaceForCurrentAccount()";
+const scopeStart = main.indexOf(scopeStartMarker);
+const scopeEnd = main.indexOf(scopeEndMarker, scopeStart + scopeStartMarker.length);
 const start = main.indexOf(startMarker);
 const end = main.indexOf(endMarker, start + startMarker.length);
+assert.ok(scopeStart >= 0 && scopeEnd > scopeStart, "workspace read scope source boundaries should exist");
 assert.ok(start >= 0 && end > start, "openWorkspace source boundaries should exist");
+const workspaceReadScopeSource = main.slice(scopeStart, scopeEnd);
 const openWorkspaceSource = main.slice(start, end);
 const phases = [
   "begin",
@@ -26,19 +32,37 @@ function fixture({ e2e = true, existingWindow = null, sequence = 0, overrides = 
   const calls = [];
   const output = [];
   const createdWindows = [];
-  const account = { email: "private-account@example.invalid", accessToken: "private-account-token" };
+  const account = { email: "private-account@example.invalid", accessToken: "private-account-token", subject: "account-subject" };
   const workspaceUrl = "https://private-workspace.example.invalid";
+  const runtime = {
+    sessionEpoch: 1,
+    ownerHostInstanceGeneration: 1,
+    ownerHostManager: null,
+    ownerHostStatus: { url: null, startedAt: null },
+    loadHandlers: [],
+  };
+  const handlers = new WeakMap();
   const scope = {
     process: { env: { SPS_DESKTOP_E2E: e2e ? "1" : "0" } },
     console: { error: (...args) => output.push(args.join(" ")) },
     path,
     __dirname: "C:/private/sps-desktop/src",
-    state: { profile: { connectionKind: "member" } },
+    state: { profile: { connectionKind: "member", hubUrl: workspaceUrl }, teamAccess: null, ownerHostOwnerSubject: null },
+    structuredClone,
     currentDesktopAccount: () => account,
+    currentDesktopAccountSubject: () => account?.subject ?? null,
+    currentDesktopSessionEpoch: () => runtime.sessionEpoch,
     isOwnerHostProfile: () => false,
     currentAccountOwnsOwnerHost: () => true,
+    ownerHostIsReady: () => false,
+    get ownerHostInstanceGeneration() { return runtime.ownerHostInstanceGeneration; },
+    set ownerHostInstanceGeneration(value) { runtime.ownerHostInstanceGeneration = value; },
+    get ownerHostManager() { return runtime.ownerHostManager; },
+    set ownerHostManager(value) { runtime.ownerHostManager = value; },
+    get ownerHostStatus() { return runtime.ownerHostStatus; },
+    set ownerHostStatus(value) { runtime.ownerHostStatus = value; },
     currentBoardToken: () => "private-board-token",
-    workspaceHubUrl: () => workspaceUrl,
+    workspaceHubUrl: () => scope.state.profile?.hubUrl ?? null,
     setupMode: true,
     establishSpsIdentityCoreSession: async origin => {
       calls.push(["identity-session", origin]);
@@ -51,12 +75,48 @@ function fixture({ e2e = true, existingWindow = null, sequence = 0, overrides = 
     BrowserWindow: class FakeBrowserWindow {
       constructor(options) {
         calls.push(["create-window", options]);
-        this.webContents = {};
+        this.destroyed = false;
+        this.shown = false;
+        this.focused = false;
+        this.closeCalls = 0;
+        this.destroyCalls = 0;
+        this.webContents = { willPreventUnload: false };
         this.loadURL = async url => {
           calls.push(["load-url", url]);
+          const loadHandler = runtime.loadHandlers.shift();
+          if (loadHandler) await loadHandler(this, url);
         };
-        this.once = (event, handler) => calls.push(["window-once", event, handler]);
-        this.on = (event, handler) => calls.push(["window-on", event, handler]);
+        this.isDestroyed = () => this.destroyed;
+        this.isMinimized = () => false;
+        this.show = () => { this.shown = true; calls.push(["show-window", this]); };
+        this.focus = () => { this.focused = true; calls.push(["focus-window", this]); };
+        this.close = () => {
+          this.closeCalls += 1;
+          calls.push(["close-window", this]);
+          if (this.webContents.willPreventUnload) return;
+          if (this.destroyed) return;
+          this.destroyed = true;
+          handlers.get(this)?.get("closed")?.();
+        };
+        this.destroy = () => {
+          this.destroyCalls += 1;
+          calls.push(["destroy-window", this]);
+          if (this.destroyed) return;
+          this.destroyed = true;
+          handlers.get(this)?.get("closed")?.();
+        };
+        this.once = (event, handler) => {
+          calls.push(["window-once", event, handler]);
+          const ownHandlers = handlers.get(this) ?? new Map();
+          ownHandlers.set(event, handler);
+          handlers.set(this, ownHandlers);
+        };
+        this.on = (event, handler) => {
+          calls.push(["window-on", event, handler]);
+          const ownHandlers = handlers.get(this) ?? new Map();
+          ownHandlers.set(event, handler);
+          handlers.set(this, ownHandlers);
+        };
         createdWindows.push(this);
       }
     },
@@ -68,8 +128,28 @@ function fixture({ e2e = true, existingWindow = null, sequence = 0, overrides = 
     workspaceOpenTraceSequence: sequence,
     ...overrides,
   };
-  runInNewContext(`${openWorkspaceSource}\nthis.openWorkspace = openWorkspace;`, scope);
-  return { scope, calls, output, createdWindows, account, workspaceUrl };
+  runInNewContext(`${workspaceReadScopeSource}\n${openWorkspaceSource}\nthis.captureWorkspaceReadScope = captureWorkspaceReadScope; this.openWorkspace = openWorkspace;`, scope);
+  return { scope, calls, output, createdWindows, account, workspaceUrl, runtime, handlers };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+  return { promise, resolve, reject };
+}
+
+function eventHandler(harness, window, event) {
+  const handler = harness.handlers.get(window)?.get(event);
+  assert.equal(typeof handler, "function", `expected ${event} handler`);
+  return handler;
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 20 && !predicate(); attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.ok(predicate(), "expected asynchronous operation to reach its deferred phase");
 }
 
 function parseTraceLines(lines) {
@@ -161,6 +241,143 @@ test("authentication, profile, and ownership denials happen before window creati
       assert.deepEqual(traces.map(({ phase }) => phase), ["begin"]);
     });
   }
+});
+
+test("account subject and session epoch changes during identity setup prevent window creation", async () => {
+  const identity = deferred();
+  let identityStarted = false;
+  const harness = fixture({ overrides: { establishSpsIdentityCoreSession: () => { identityStarted = true; return identity.promise; } } });
+
+  const opening = harness.scope.openWorkspace();
+  await waitFor(() => identityStarted);
+  harness.account.subject = "different-account-subject";
+  harness.runtime.sessionEpoch += 1;
+  identity.resolve(true);
+
+  await assert.rejects(opening, /account changed during a Workspace read/);
+  assert.equal(harness.createdWindows.length, 0);
+});
+
+test("profile and hub changes during node registration prevent window creation", async () => {
+  const registration = deferred();
+  let registrationStarted = false;
+  const harness = fixture({ overrides: { ensureJoinedDesktopNode: () => { registrationStarted = true; return registration.promise; } } });
+
+  const opening = harness.scope.openWorkspace();
+  await waitFor(() => registrationStarted);
+  harness.scope.state.profile = { connectionKind: "member", hubUrl: "https://different-workspace.example.invalid", changed: true };
+  registration.resolve();
+
+  await assert.rejects(opening, /connection changed during a Workspace read/);
+  assert.equal(harness.createdWindows.length, 0);
+});
+
+test("same-account epoch changes during node registration reject ABA account reuse", async () => {
+  const registration = deferred();
+  let registrationStarted = false;
+  const harness = fixture({ overrides: { ensureJoinedDesktopNode: () => { registrationStarted = true; return registration.promise; } } });
+
+  const opening = harness.scope.openWorkspace();
+  await waitFor(() => registrationStarted);
+  harness.runtime.sessionEpoch += 1;
+  registration.resolve();
+
+  await assert.rejects(opening, /account changed during a Workspace read/);
+  assert.equal(harness.account.subject, "account-subject");
+  assert.equal(harness.createdWindows.length, 0);
+});
+
+test("Owner Host instance generation changes during node registration prevent window creation", async () => {
+  const registration = deferred();
+  const hostManager = {};
+  let registrationStarted = false;
+  const harness = fixture({ overrides: {
+    isOwnerHostProfile: () => true,
+    ownerHostManager: hostManager,
+    ownerHostStatus: { url: "http://127.0.0.1:4317", startedAt: 1 },
+    ownerHostIsReady: () => false,
+    ensureJoinedDesktopNode: () => { registrationStarted = true; return registration.promise; },
+  } });
+
+  const opening = harness.scope.openWorkspace();
+  await waitFor(() => registrationStarted);
+  harness.scope.ownerHostInstanceGeneration += 1;
+  registration.resolve();
+
+  await assert.rejects(opening, /Owner Host instance changed during a Workspace read/);
+  assert.equal(harness.createdWindows.length, 0);
+});
+
+test("stale ready-to-show destroys its captured window despite a will-unload close veto", async () => {
+  const loading = deferred();
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => loading.promise);
+  const opening = harness.scope.openWorkspace();
+  await waitFor(() => harness.createdWindows.length === 1);
+  const staleWindow = harness.createdWindows[0];
+  assert.ok(staleWindow);
+
+  harness.account.subject = "changed-before-ready";
+  staleWindow.webContents.willPreventUnload = true;
+  const newerWindow = { isDestroyed: () => false };
+  harness.scope.workspaceWindow = newerWindow;
+  eventHandler(harness, staleWindow, "ready-to-show")();
+
+  assert.equal(staleWindow.shown, false);
+  assert.equal(staleWindow.closeCalls, 0);
+  assert.equal(staleWindow.destroyCalls, 1);
+  assert.equal(staleWindow.destroyed, true);
+  assert.equal(harness.scope.workspaceWindow, newerWindow);
+  loading.resolve();
+  await assert.rejects(opening, /account changed during a Workspace read/);
+  assert.equal(harness.scope.workspaceWindow, newerWindow);
+});
+
+test("late stale load completion destroys only its old window, despite unload veto", async () => {
+  const oldLoad = deferred();
+  const newerLoad = deferred();
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => oldLoad.promise, () => newerLoad.promise);
+
+  const oldOpening = harness.scope.openWorkspace();
+  await waitFor(() => harness.createdWindows.length === 1);
+  const oldWindow = harness.createdWindows[0];
+  assert.ok(oldWindow);
+  oldWindow.webContents.willPreventUnload = true;
+
+  harness.runtime.sessionEpoch += 1;
+  harness.scope.state.profile = { ...harness.scope.state.profile, hubUrl: "https://newer-workspace.example.invalid" };
+  const newOpening = harness.scope.openWorkspace();
+  await waitFor(() => harness.createdWindows.length === 2);
+  const newWindow = harness.createdWindows[1];
+  assert.ok(newWindow);
+  assert.equal(harness.scope.workspaceWindow, newWindow);
+
+  oldLoad.resolve();
+  await assert.rejects(oldOpening, /account changed during a Workspace read/);
+  assert.equal(oldWindow.closeCalls, 0);
+  assert.equal(oldWindow.destroyCalls, 1);
+  assert.equal(oldWindow.destroyed, true);
+  assert.equal(newWindow.destroyed, false);
+  assert.equal(harness.scope.workspaceWindow, newWindow);
+
+  newerLoad.resolve();
+  await newOpening;
+});
+
+test("ordinary workspace load failure leaves the current window intact", async () => {
+  const failure = new Error("workspace network failure");
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => Promise.reject(failure));
+
+  await assert.rejects(harness.scope.openWorkspace(), error => error === failure);
+
+  const window = harness.createdWindows[0];
+  assert.ok(window);
+  assert.equal(window.destroyCalls, 0);
+  assert.equal(window.closeCalls, 0);
+  assert.equal(window.destroyed, false);
+  assert.equal(harness.scope.workspaceWindow, window);
 });
 
 test("existing workspace window is reused without another load", async () => {
