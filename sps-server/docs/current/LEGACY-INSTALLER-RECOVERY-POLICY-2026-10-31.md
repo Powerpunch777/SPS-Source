@@ -223,3 +223,59 @@ remaining241-file stage had1730total/1727pass/three unavailable-8.3-alias skips/
 zero failures (41455ms). Aggregate1732total/1729pass/three skips. Focused CI/YAML
 contracts5/5 and `git diff --check` passed. No installer or installed user
 profile was used. New-HEAD hosted validation remains required.
+
+## Confirmed Residue Cleanup (User Decision)
+
+The user subsequently approved an additional recovery step: only after the
+user has reviewed the old target and backed up work stored inside it may the
+remaining old program files be cleaned. No automatic cleanup follows an
+update error. AppData, Host Vault, external projects and unknown user files
+must not become cleanup targets. This supersedes the pending-decision note
+above, not the failed uninstall evidence or the ordinary automatic-update gate.
+
+Implementation is incremental and is **not yet an available cleanup feature**:
+
+1. The pure `legacy-installer-residue-plan.mjs` validates two complete captured
+   inventories, their canonical content hashes, unchanged root identity, exact
+   old version, observed replacement failure, ordinary uninstall0, no registered
+   install and no Desktop process. It permits only unchanged remaining files
+   within the old expanded `resources/sps-owner-host-runtime` tree and its
+   known parent directories. Unknown, added, changed, conflicting-case, escaped,
+   malformed or oversized records fail with a fixed path-free error. A plan
+   requires user confirmation and is neither authority nor a filesystem remover.
+2. The clean hosted old-package prepare stage captures the pinned installer
+   bytes before uninstall, writes a bounded package inventory containing only
+   relative names/sizes/content hashes and the pinned installer SHA, then the
+   owner must finish natural Job closure. A private two-day Actions artifact
+   preserves only that inventory, never the checkpoint, root file identity,
+   account, machine name, absolute path or AppData. The inventory is not yet
+   obtained/reviewed/pinned for production. A live user's arbitrary snapshot
+   cannot replace trusted original-package membership.
+3. Next, bind the reviewed exact-package inventory, actual per-user old install,
+   target directory identity and real backup/target confirmation in a separate
+   installer recovery operation. Silent mode still exits nonzero. Cancellation
+   must mutate nothing. Run ordinary uninstall, verify its outcome and retained
+   data, then allow cleanup of matching original program residue only. Native
+   file/ancestor handles must prevent link/reparse/root replacement races; do
+   not substitute recursive deletion of a caller-provided path. New or changed
+   files and uncertain process ownership stop recovery. No elevation or process
+   killing is added implicitly.
+4. Wire the real confirmation UI, native cleanup and explicit same-candidate
+   reinstall; verify decline/cancel, linked/replaced targets, unknown files,
+   retained data, five installed hashes, first frame and natural process closure
+   in the disposable hosted environment. The existing old-uninstaller-only
+   diagnostic remains a failure when residue survives; the approved additional
+   cleanup must have its own actual evidence, not a waived absence assertion.
+
+The planner, no-mutation snapshot compatibility and guarded inventory workflow
+selection pass17/17 focused tests. Production confirmation, native deletion,
+package-inventory trust/loading and complete recovered installation remain
+unimplemented/unqualified at this checkpoint. No installed app or actual user
+data was accessed. Core/SDK/API/schema and the deferred Native product scope
+are unchanged; a Windows installer recovery helper is not Native LAN work.
+
+Final local validation of this foundation: `npm run test:ci` exited0 with
+serial2/2 plus1737total/1734pass/three unavailable-alias skips/zero failures in
+the remaining242-file stage (aggregate1739total/1736pass/three skips). Both
+workflow files parse and diff-check passes. Hosted inventory generation and
+its artifact content/hash still need review; no cleanup executor is included.

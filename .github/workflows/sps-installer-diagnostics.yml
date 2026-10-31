@@ -14,6 +14,8 @@ on:
       - sps-server/desktop/test/installer-command-exit-observation.test.mjs
       - sps-server/desktop/scripts/smoke-historical-uninstaller-diagnostic.mjs
       - sps-server/desktop/scripts/historical-standard-recovery-stages.mjs
+      - sps-server/desktop/src/legacy-installer-residue-plan.mjs
+      - sps-server/desktop/test/legacy-installer-residue-plan.test.mjs
       - sps-server/desktop/test/historical-standard-recovery.test.mjs
       - sps-server/desktop/test/historical-uninstaller-diagnostic.test.mjs
       - sps-server/desktop/test/historical-uninstaller-compact-control.test.mjs
@@ -71,6 +73,13 @@ jobs:
         working-directory: sps-server/desktop
         timeout-minutes: 10
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-standard-recovery-prepare
+      - name: Preserve private pinned-package inventory without machine identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: sps-legacy-program-inventory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: sps-server/desktop/dist/sps-legacy-program-inventory-0.4.86.json
+          if-no-files-found: error
+          retention-days: 2
       - name: Complete same-VM standard uninstall recovery
         shell: powershell
         working-directory: sps-server/desktop

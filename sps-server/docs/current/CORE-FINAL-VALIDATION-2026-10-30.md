@@ -41,6 +41,24 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Sourcec2c71c9 Windows push124423434422 and PR124423446745 passed the complete
+  local-contract/native-probe suite after its isolated scheduling, then failed
+  the actual No-AI source restart observation. Both saw the reference route
+  with an empty body and a CDP socket close within180/230ms. Main reported a
+  later Workspace load completion, but the cause of the target retirement is
+  not proved. A new actual isolated local source No-AI/runtime-discovery run
+  completed all Registry lifecycle/failed activation/manual rollback/A-B state,
+  runtime/model/Agent descriptor capability checks, restart and independent
+  recovery assertions; all3 Mains exited0,6 output streams ended and owned
+  temporary data was removed. That local exit0 is not whole-descendant/physical
+  or hosted equivalence. The CI restart failure remains open, not waived.
+- User approved explicit backup/target confirmation before cleaning only
+  verified old program residue. First implementation is a non-deleting content
+  planner and bounded machine-identity-free inventory capture on the clean
+  pinned-package hosted fixture. Focused17/17 passed; the private catalog must
+  still be obtained/reviewed/pinned, and real confirmation/native handle-bound
+  removal/reinstall must be implemented and accepted. No recursive or local
+  installed-data cleanup was added. See the [recovery implementation steps](LEGACY-INSTALLER-RECOVERY-POLICY-2026-10-31.md).
 - Sourcec3c79c3 Verify41161958027 passed all17 non-Windows jobs, including nine
   Linux shards/full Core build/security policies. Windows job124421238364
   failed literal-LF workflow inspection on CRLF and a real harmless PowerShell

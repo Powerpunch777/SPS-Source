@@ -13,6 +13,7 @@ import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./histo
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { captureInstallerSnapshot } from "./installer-retained-snapshot.mjs";
 import { collectInstallerPathCensus } from "./installer-path-census.mjs";
+import { encodeLegacyProgramInventory } from "../src/legacy-installer-residue-plan.mjs";
 
 const relativeRecords = ["sps-desktop-state.json", "workspaces/retained/data.bin", "secrets/retained-opaque-record.bin"];
 const checkpointName = "sps-standard-recovery-checkpoint.json";
@@ -234,6 +235,14 @@ export async function runHistoricalStandardRecoveryStage(stage) {
       checkpoint.asarSha256 = await hash(asar);
       await verifyOld();
       await verifyRetained();
+      phase = "capture-clean-package-inventory";
+      const inventory = encodeLegacyProgramInventory(await captureInstallerSnapshot(installation));
+      const output = path.join(desktop, "dist");
+      await mkdir(output, { recursive: true });
+      await assertPlainDirectory(output);
+      await writeFile(path.join(output, "sps-legacy-program-inventory-0.4.86.json"), inventory, { flag: "wx", mode: 0o600 });
+      trace("clean-package-inventory", { bytes: inventory.length, sha256: createHash("sha256").update(inventory).digest("hex"),
+        installerSha256: HISTORICAL_INSTALLER_BASELINE.sha256, containsMachineIdentity: false });
       const encoded = `${JSON.stringify(checkpoint)}\n`;
       parseHistoricalRecoveryCheckpoint(encoded);
       await writeFile(checkpointPath, encoded, { flag: "wx", mode: 0o600 });
