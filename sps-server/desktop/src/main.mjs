@@ -4897,6 +4897,19 @@ async function openWorkspace() {
   const hubOrigin = workspaceHubUrl();
   if (!hubOrigin) throw new Error("Save an SPS team connection first");
   const scope = captureWorkspaceReadScope();
+  const traceScopeRejection = () => {
+    if (!operation) return;
+    try { scope.assertCurrent(); }
+    catch (error) {
+      switch (error?.message) {
+        case "SPS Desktop account changed during a Workspace read.": trace("scope-account-changed"); break;
+        case "SPS Owner Host context changed during a Workspace read.": trace("scope-host-context-changed"); break;
+        case "SPS Owner Host instance changed during a Workspace read.": trace("scope-host-instance-changed"); break;
+        case "SPS Desktop connection changed during a Workspace read.": trace("scope-connection-changed"); break;
+        default: trace("scope-rejection-unclassified");
+      }
+    }
+  };
   setupMode = false;
   // Every SPS Desktop Host and Member has a signed-in SPS Identity account.
   // The Desktop-only header protects the loopback transport as an additional
@@ -4935,6 +4948,7 @@ async function openWorkspace() {
   });
   workspaceWindow = currentWindow;
   const discardCapturedWindow = () => {
+    trace("captured-window-discarded");
     if (workspaceWindow === currentWindow) {
       workspaceWindow = null;
       workspaceOrigin = null;
@@ -4948,14 +4962,18 @@ async function openWorkspace() {
   refreshTrayMenu();
   configureWorkspaceNavigation(currentWindow, hubOrigin);
   currentWindow.once("ready-to-show", () => {
+    trace("window-ready-to-show");
     if (!scope.isCurrent() || workspaceWindow !== currentWindow) {
+      traceScopeRejection();
       discardCapturedWindow();
       return;
     }
     currentWindow.show();
+    trace("window-shown");
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
   });
   currentWindow.on("closed", () => {
+    trace("window-closed");
     if (workspaceWindow !== currentWindow) return;
     workspaceWindow = null;
     workspaceOrigin = null;
@@ -4972,6 +4990,7 @@ async function openWorkspace() {
     }
   } catch (error) {
     if (!scope.isCurrent() || workspaceWindow !== currentWindow || currentWindow.isDestroyed()) {
+      traceScopeRejection();
       discardCapturedWindow();
     }
     throw error;

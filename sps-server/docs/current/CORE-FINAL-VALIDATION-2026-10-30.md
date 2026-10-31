@@ -51,7 +51,11 @@ deferred Native development are excluded.
   runtime/model/Agent descriptor capability checks, restart and independent
   recovery assertions; all3 Mains exited0,6 output streams ended and owned
   temporary data was removed. That local exit0 is not whole-descendant/physical
-  or hosted equivalence. The CI restart failure remains open, not waived.
+  or hosted equivalence. E2E-only fixed readiness/closure/discard/scope-category
+  phases now aid diagnosis without altering any fence, wait or target choice.
+  Focused24/24 and final local aggregate1741total/1738pass/three alias skips/
+  zero failures passed. The CI restart failure remains open, not waived; see
+  the [target observation](../reviews/WORKSPACE-RESTART-TARGET-2026-10-31.md).
 - User approved explicit backup/target confirmation before cleaning only
   verified old program residue. First implementation is a non-deleting content
   planner and bounded machine-identity-free inventory capture on the clean

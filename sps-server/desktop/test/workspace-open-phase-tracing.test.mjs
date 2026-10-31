@@ -26,6 +26,15 @@ const phases = [
   "existing-window-reused",
   "workspace-load-start",
   "workspace-load-complete",
+  "scope-account-changed",
+  "scope-host-context-changed",
+  "scope-host-instance-changed",
+  "scope-connection-changed",
+  "scope-rejection-unclassified",
+  "captured-window-discarded",
+  "window-ready-to-show",
+  "window-shown",
+  "window-closed",
 ];
 
 function fixture({ e2e = true, existingWindow = null, sequence = 0, overrides = {} } = {}) {
@@ -208,6 +217,39 @@ test("trace call sites use only fixed phase literals", () => {
     assert.ok(phases.includes(literal[1]), `unknown trace phase: ${literal[1]}`);
     return argument;
   }));
+});
+
+test("ready/closed diagnostics retain fixed lifecycle phases without changing production silence", async () => {
+  for (const e2e of [false, true]) {
+    const harness = fixture({ e2e });
+    await harness.scope.openWorkspace();
+    const window = harness.createdWindows[0];
+    eventHandler(harness, window, "ready-to-show")();
+    assert.equal(window.shown, true);
+    window.destroy();
+    if (!e2e) assert.deepEqual(harness.output, []);
+    else assert.deepEqual(parseTraceLines(harness.output).slice(-3).map(entry => entry.phase),
+      ["window-ready-to-show", "window-shown", "window-closed"]);
+  }
+});
+
+test("stale readiness records only the rejected boundary category, never its profile values", async () => {
+  for (const [change, expected] of [
+    [harness => { harness.runtime.sessionEpoch++; }, "scope-account-changed"],
+    [harness => { harness.scope.state.profile.privateValue = "private-profile-value"; }, "scope-connection-changed"],
+    [harness => { harness.scope.state.teamAccess = { privateValue: "private-team-value" }; }, "scope-host-context-changed"],
+  ]) {
+    const harness = fixture();
+    await harness.scope.openWorkspace();
+    change(harness);
+    eventHandler(harness, harness.createdWindows[0], "ready-to-show")();
+    const phases = parseTraceLines(harness.output).map(entry => entry.phase);
+    assert.ok(phases.includes(expected));
+    assert.ok(phases.includes("captured-window-discarded"));
+    assert.ok(phases.includes("window-closed"));
+    assert.equal(harness.createdWindows[0].destroyed, true);
+    assert.doesNotMatch(harness.output.join("\n"), /private-profile|private-team|private-account|private-workspace/);
+  }
 });
 
 test("authentication, profile, and ownership denials happen before window creation", async t => {
