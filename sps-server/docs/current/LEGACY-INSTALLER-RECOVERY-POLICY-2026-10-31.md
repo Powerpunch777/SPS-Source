@@ -279,3 +279,17 @@ serial2/2 plus1737total/1734pass/three unavailable-alias skips/zero failures in
 the remaining242-file stage (aggregate1739total/1736pass/three skips). Both
 workflow files parse and diff-check passes. Hosted inventory generation and
 its artifact content/hash still need review; no cleanup executor is included.
+
+## Native Foundation Follow-Up
+
+The clean hosted inventory has now been obtained and reviewed: original raw
+5909697bytes/SHA256dc41392d, asset gzip1313545bytes/SHA25635834b4d, exact pinned
+old-installer digest and canonical content-tree hash match. The checked-in
+metadata and loader reject every other compressed/raw hash or structure; no
+machine identity is retained. The native Windows library now locks verified
+ancestors and entries, checks original package file bytes and streams, rejects
+links/hardlinks/unknown files, rechecks after consent and deletes through exact
+open handles in postorder. Decline/throw do not delete. It is not yet wired to
+an installer executable, real registry/process authorization or real user UI.
+Native20/20 plus catalog2/2 actual local tests pass; full recovery remains open.
+See [native evidence and limitations](../reviews/LEGACY-RESIDUE-NATIVE-2026-10-31.md).
