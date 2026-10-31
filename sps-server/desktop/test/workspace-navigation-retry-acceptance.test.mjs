@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { assertWorkspaceNavigationRetry } from "../scripts/workspace-navigation-retry-acceptance.mjs";
+import { assertWorkspaceNavigationRetry, isOwnedSocketFailureCode } from "../scripts/workspace-navigation-retry-acceptance.mjs";
 
 const directory = "C:/fixtures/navigation-retry";
 const origin = "http://127.0.0.1:4317";
+
+test("owned socket failure accepts only the observed Chromium connection error variants", () => {
+  for (const value of [-15, -101, -324]) assert.equal(isOwnedSocketFailureCode(value), true);
+  for (const value of [undefined, null, false, 0, 15, -3, -20, -104, -102, NaN, Infinity, "-15", {}, [-15]]) {
+    assert.equal(isOwnedSocketFailureCode(value), false);
+  }
+});
 
 for (const scenario of [
   { name: "absent E2E", e2e: undefined },

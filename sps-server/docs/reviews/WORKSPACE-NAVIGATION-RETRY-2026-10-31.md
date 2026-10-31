@@ -60,3 +60,23 @@ Core/SDK/API/schema and all authorization boundaries remain unchanged. A fresh
 exact-HEAD hosted gate is still required; full legacy recovery remains failed
 before ordinary uninstall. The separate installed in-place migration evidence
 gap is recorded in [the audit](INSTALLED-MIGRATION-EVIDENCE-GAP-2026-10-31.md).
+
+## Hosted network-error variant
+
+Push run `41190991746`, Windows job `124507578637`, observed the same owned
+TCP fixture as Chromium `ERR_SOCKET_NOT_CONNECTED` (`-15`), not the locally
+observed reset/empty-response codes `-101`/`-324`. The initial acceptance omitted
+`-15` and failed before its retained-window assertion. It is a failed run, not
+an installer or legacy recovery pass; no installer input was produced there.
+
+The fixture now records the actual main-frame error for its exact owned URL
+and permits only those three explicit native error codes. Unknown errors,
+abort/cancellation, numbers encoded as strings, and fabricated rejections still
+cannot pass. A real IPC rejection, retained failed window, one explicit retry,
+authenticated project read and natural Main cleanup are unchanged. The exact
+source transfer command was rerun successfully after this change and helper
+extraction. Focused retry guards are now 7/7.
+
+The error definition was checked against Chromium's official
+[network-error source](https://raw.githubusercontent.com/chromium/chromium/main/net/base/net_error_list.h).
+No Chromium implementation was copied.

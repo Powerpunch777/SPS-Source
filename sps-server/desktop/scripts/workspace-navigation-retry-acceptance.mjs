@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 
+export function isOwnedSocketFailureCode(value) {
+  return value === -15 || value === -101 || value === -324;
+}
+
 export async function assertWorkspaceNavigationRetry({ app, setup, expectedUserData, expectedWorkspaceOrigin,
   waitFor, api, company, project }) {
   const origin = new URL(expectedWorkspaceOrigin);
@@ -49,7 +53,7 @@ export async function assertWorkspaceNavigationRetry({ app, setup, expectedUserD
       control.onCreated = (_event, window) => {
         control.created.push(window);
         const listener = (_event, code, _description, url, mainFrame) => {
-          if (url === failingUrl && mainFrame && [-101, -324].includes(code)) {
+          if (url === failingUrl && mainFrame) {
             control.failed = window;
             control.errorCode = code;
           }
@@ -73,12 +77,14 @@ export async function assertWorkspaceNavigationRetry({ app, setup, expectedUserD
     let rejected = false;
     try { await setup.evaluate(() => window.spsDesktop.openWorkspace()); }
     catch { rejected = true; }
-    const failure = await app.evaluate(({ BrowserWindow }) => {
+    const observation = await app.evaluate(({ BrowserWindow }) => {
       const control = globalThis.__spsNavigationRetryAcceptance;
       if (BrowserWindow.prototype.loadURL === control.wrapper) BrowserWindow.prototype.loadURL = control.original;
       return { attempted: control.attempted, created: control.created.length,
-        nativeFailure: [-101, -324].includes(control.errorCode), retained: Boolean(control.failed && !control.failed.isDestroyed()) };
+        errorCode: control.errorCode, retained: Boolean(control.failed && !control.failed.isDestroyed()) };
     });
+    const failure = { attempted: observation.attempted, created: observation.created,
+      nativeFailure: isOwnedSocketFailureCode(observation.errorCode), retained: observation.retained };
     if (!rejected || !failure.nativeFailure) console.error(`[workspace-retry-observation] ${JSON.stringify({ rejected, ...failure })}`);
     assert.equal(rejected, true, "The real failed socket navigation must reject its Main IPC.");
     assert.deepEqual(failure, { attempted: 1, created: 1, nativeFailure: true, retained: true });
