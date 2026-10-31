@@ -169,3 +169,19 @@ two unavailable-8.3-alias skips, zero failures (`node --test
 --test-reporter=spec test/*.test.mjs`, exit0). Diagnostic workflow YAML parsed
 successfully. These results do not qualify the pending hosted old-uninstaller
 or candidate replacement.
+
+## Census Follow-Up
+
+Exact Source04f1cda diagnostic41151544506/job124388976259 is terminal failure:
+old installation returned0 after293223ms; updated uninstaller returned2 after
+86260ms with no signal. Both complete censuses retained29314 files and3051
+directories,46 paths longer than259 characters. There was no observed removal
+of these counted entries. This is not proof that path length caused the error.
+
+Five of six separate read-only architecture probes passed. x86 legacy
+job124388976398 reached its60-second bound with SIGTERM and empty output/error;
+x64 legacy and x86 current returned the clean expected1. The same x86 legacy
+probe passed in the prior run, so an always-broken architecture claim remains
+unsupported. No installer-success gate, path, timeout or cleanup requirement
+has been relaxed. Source04f1cda Windows verification stopped earlier at a missing
+public-SDK build prerequisite and did not reach candidate installer qualification.

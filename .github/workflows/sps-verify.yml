@@ -43,6 +43,9 @@ jobs:
           npm run audit:development
           npm run docs:security:check
 
+      - name: Verify patched Storybook docgen glob compatibility
+        run: node --test scripts/storybook-glob-compat.test.mjs
+
       - name: Typecheck SPS Core server
         run: pnpm --filter @paperclipai/server run typecheck
 
@@ -410,6 +413,10 @@ jobs:
 
       - name: Install SPS Room Chat dependencies for Desktop runtime packaging
         working-directory: sps-server/sps-room-chat
+        run: npm ci
+
+      - name: Install public Plugin SDK build tools for Desktop runtime packaging
+        working-directory: external/sps-plugin-sdk
         run: npm ci
 
       - name: Prepare Owner Host runtime for Desktop E2E

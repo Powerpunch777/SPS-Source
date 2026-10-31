@@ -55,9 +55,11 @@ The production runtime no longer depends on a former source-tree SDK link.
   (79 color, 36 arbitrary-value, 1 font-size). Neither edited UI file appears
   in that output. This global check is not reported as passing.
 - `npm run check` in Default Memory and static sidecar validation passed.
-- Production dependency policy: two Low findings, zero Critical/High, no
+- Historical local production dependency policy: two Low findings, zero Critical/High, no
   exceptions. Full development/build graph: three Low, zero Critical/High,
-  no exceptions. This is not a claim of zero vulnerabilities.
+  no exceptions. Newly visible Moderate findings subsequently blocked exact
+  Source04f1cda CI. See the current
+  [dependency review](MINIMATCH-PATH-REVIEW-2026-10-31.md), not this older count.
 - Full Desktop `node --test --test-reporter=spec test/*.test.mjs`: 1677 total,
   1675 passed, two unavailable-8.3-alias skips, zero failures. The first full
   attempt correctly rejected the unstaged Core pin; another rejected the
@@ -92,3 +94,14 @@ contract; the boundary checker was not relaxed or allowlisted for Memory.
 
 Exact final-HEAD Linux/Windows/packaged CI remains required. No installed app,
 real user Vault, Production Identity, signing key or physical PC was changed.
+
+## Hosted Follow-Up
+
+Source04f1cda push41151544581 completed all nine Linux test shards and full Core
+typecheck/build, but the run failed. Core compatibility correctly rejected a new
+unreviewed minimatch Moderate finding. Windows unit tests passed1675/1677 with
+two environment skips, then runtime preparation failed because the relocated
+Memory build resolved esbuild from the public SDK checkout without installing
+that checkout's dev tools. Public-SDK `npm ci` is now an explicit prerequisite
+for every runtime-packaging workflow, separate from Desktop's dependency install.
+Neither historical result qualifies the corrected final-HEAD Windows flow.

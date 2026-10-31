@@ -1,6 +1,6 @@
 # SPS Core final validation checklist
 
-Updated: 2026-10-30. This is a working checklist, not a Core completion or Stable
+Updated: 2026-10-31. This is a working checklist, not a Core completion or Stable
 release declaration. The scope is set by
 [Core completion policy](CORE-COMPLETION-POLICY-ko.md). Core remains private,
 SDK public; AI is optional. New Builder features, public Marketplace, and
@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Core: `258800f0d931932d855e275ed7cfab2c1bf0a080` (earlier evidence names its prior revision explicitly).
+- Core: `b17fb830138b4acde96aa7b5c911f7e8cccfa698` (earlier evidence names its prior revision explicitly).
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -41,6 +41,20 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Source04f1cda push41151544581 is terminal failure, despite successful nine
+  Linux shards/full Core build and1675/1677 Desktop tests (two environment
+  skips). Core compatibility rejected a newly visible unreviewed Moderate;
+  Windows runtime preparation lacked public-SDK esbuild build tools. The
+  current follow-up patches the affected Storybook glob path, records one-week
+  remaining matcher-path reviews and installs SDK build tools explicitly in all
+  packaging jobs. Local Core all30 typechecks/build and Storybook build passed.
+  Production audit now has2Low/1reviewedModerate; full graph3Low/2reviewedModerate,
+  zero Critical/High in either, not zero vulnerabilities. See the
+  [dependency review](../reviews/MINIMATCH-PATH-REVIEW-2026-10-31.md).
+- Standalone diagnostic41151544506 is also terminal failure: historical
+  uninstall exit2 after86260ms, with identical complete pre/post file censuses.
+  Five of six separate PowerShell probes passed; x86 legacy timed out. No
+  successful historical replacement or proof of path-length causality is claimed.
 - New-Host approval now also covers the current app's official bundle copies.
   Core `b3da129` preserves inactive lifecycle states before manifest import.
   Actual isolated source Main transfer, declined/accepted Registry approval and
