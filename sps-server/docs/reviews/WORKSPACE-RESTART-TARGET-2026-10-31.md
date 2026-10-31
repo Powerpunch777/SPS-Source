@@ -58,3 +58,40 @@ Final full local `npm run test:ci` exited0: serial observer2/2, remaining242-fil
 stage1739total/1736pass/three unavailable-8.3-alias skips/zero failures;
 aggregate1741total/1738pass/three skips. No installed profile or Production
 Identity was involved. Current-HEAD hosted tracing is pending, not a fix claim.
+
+## Exact Hosted Boundary and Readiness Follow-Up
+
+Sourcebe40e0c push41164222213/job124428172046 reproduced the same restart
+failure. The new fixed phases now identify `scope-host-instance-changed` at
+the first restarted window's ready-to-show callback, followed by captured
+window discard/closure. Opening2 then completed its load and showed a current
+window. The retired CDP socket closed at113ms with no pending requests. This
+confirms scope-driven target retirement, not which underlying Host field
+changed or that a product authority fence should be relaxed. The same-HEAD PR
+job124428183760 passed the No-AI restart and later source/packaged scenarios;
+at observation it is still running the current installer gate, not fully passed.
+
+The No-AI restart acceptance now preserves its existing Host-target wait, then
+uses one shared45-second document/navigation/state deadline. Before navigating
+it requires a committed nonempty document, visibility hint, the narrow existing
+Main-only current-Workspace account bridge, exact prior server origin and
+expected account email. It does not treat Electron visibility alone as proof
+of a shown/authorized window. Unqualified closed targets may be retired only
+within that same deadline and bounded count; a live evaluation error, wrong
+account, signed-out state, malformed result or duplicate/foreign debugger target
+fails rather than falling back. A closed target ID is never reopened. It does
+not replay navigation/actions, restart the app, reset a deadline, change Main
+behavior or waive any subsequent A/B persistence/capability assertions.
+
+Readiness and actual-callsite partition/deadline contracts22/22 passed. Actual
+isolated source runtime-discovery acceptance passed with the new selection:
+retired-unqualified-target count0 locally, all prior functional checks,3 Main
+exits0/6 output EOFs/owned TEMP removal and caller0. This local run again did
+not reproduce hosted retirement; current-HEAD hosted confirmation remains
+required. The new helper is only acceptance code, not a new product bridge or
+authority to use an arbitrary replacement Workspace.
+
+Final full local suite after the native/catalog and readiness changes:
+`npm run test:ci` serial2/2 plus1783total/1780pass/three unavailable-8.3-alias
+skips/zero failures in245remaining files; aggregate1785total/1782pass/three
+skips, exit0. This does not substitute for the next exact-HEAD hosted result.

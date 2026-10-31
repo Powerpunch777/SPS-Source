@@ -41,6 +41,25 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Sourcebe40e0c push124428172046 now confirms first restarted-window retirement
+  at the existing `scope-host-instance-changed` fence; a later current opening
+  loads/shows. The exact changed Host field is not proved and no fence changes.
+  No-AI acceptance now retains its existing Host wait and uses one original45s
+  deadline for current document/account/origin readiness, one navigation and
+  full reference-state observation. Wrong-account/live errors stay failures;
+  only unqualified retired targets may be dropped, never action replay. Tests
+  22/22 and actual local source runtime-discovery/restart/recovery caller0/all3
+  Main0/6EOF/owned TEMP cleanup passed. Local retired count0 does not reproduce
+  hosted retirement. Full local CI aggregate1785total/1782pass/three alias skips/
+  zero failures. New-HEAD hosted confirmation remains required; see the
+  [updated observation](../reviews/WORKSPACE-RESTART-TARGET-2026-10-31.md).
+- Pinned old-package inventory was obtained/reviewed and checked in as bounded
+  hash-pinned metadata, not user data/executable bytes. Native handle-bound
+  residue verification/removal passed19 actual isolated scenarios (20tests),
+  including long paths, decline/throw, links/ADS/writers/root replacement and
+  unknown insertion refusal; catalog2/2 passed. Still no production helper UI,
+  authorization/integration or complete legacy recovery pass. See the
+  [native foundation](../reviews/LEGACY-RESIDUE-NATIVE-2026-10-31.md).
 - Sourcec2c71c9 Windows push124423434422 and PR124423446745 passed the complete
   local-contract/native-probe suite after its isolated scheduling, then failed
   the actual No-AI source restart observation. Both saw the reference route

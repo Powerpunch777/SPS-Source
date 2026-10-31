@@ -17,6 +17,7 @@ import { workspaceE2eCleanupDisposition, workspaceE2eCleanupFailureReason } from
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 import { annotatePreviewE2eCdpFailure, snapshotPreviewE2eFailure } from "./preview-e2e-failure-diagnostics.mjs";
 import { createMockIdentityServer } from "./desktop-e2e-identity.mjs";
+import { waitForCurrentWorkspaceTarget } from "./workspace-current-target-readiness.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -900,20 +901,30 @@ try {
       },
       restart: async ({ companyPrefix, pluginId }) => {
         failurePhase = "workspace_restart";
+        const expectedOrigin = await workspaceCdp.evaluate("location.origin");
+        const expectedAccount = await workspaceCdp.evaluate("window.spsDesktopWorkspace.getDesktopAccount()", true);
+        assert.equal(expectedAccount.signedIn, true);
         await closeDesktopForRestart();
         launchDesktop();
-        const restartedTarget = await waitForTarget(debugPort, child,
-          target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || ""), "restarted No-AI Host Workspace", hostReadyTimeoutMs);
-        workspaceCdp = await openCdp(restartedTarget);
+        await waitForTarget(debugPort, child, target => {
+          try { return new URL(target.url).origin === expectedOrigin; } catch { return false; }
+        }, "restarted No-AI Host Workspace", hostReadyTimeoutMs);
+        const documentDeadline = Date.now() + 45_000;
+        const restarted = await waitForCurrentWorkspaceTarget({ expectedOrigin, expectedAccountEmail: expectedAccount.email,
+          listTargets: () => listTargets(debugPort), openCdp, mainIsRunning: () => child.exitCode === null && child.signalCode === null,
+          timeoutMs: Math.max(1, documentDeadline - Date.now()) });
+        const restartedTarget = restarted.target;
+        workspaceCdp = restarted.cdp;
+        console.log(JSON.stringify({ workspaceRestartDocumentReady: true, retiredUnqualifiedTargets: restarted.retiredTargets }));
         // Startup may correctly restore the separate model-fixture Workspace.
         // Reopen the exact reference UI before checking its persisted state.
         const expectedPath = `/${companyPrefix}/plugins/${pluginId}`;
         const expectedUrl = new URL(expectedPath, restartedTarget.url).href;
-        // CDP can report the intended HTTP target before its document commits.
-        // Absolute Page.navigate is valid even while that document is blank.
+        // Select a committed, current-account document before navigating. The
+        // entire readiness/navigation/state observation shares the original budget.
         await workspaceCdp.command("Page.navigate", { url: expectedUrl });
         await waitForPage(workspaceCdp, page => page.route === expectedUrl && page.checklistReady === true,
-          "restarted reference Workspace checklist UI");
+          "restarted reference Workspace checklist UI", Math.max(1, documentDeadline - Date.now()));
         failurePhase = "workspace_surfaces";
         return workspaceCdp;
       },
