@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('probe', 'probe-registry', 'probe-installer-processes', 'probe-installer-dialog', 'probe-installer-command', 'probe-installer-command-exit', 'probe-installer-cim-startup', 'probe-installer-cim-legacy', 'probe-installer-cim-current', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation', 'historical-uninstaller-diagnostic', 'historical-uninstaller-compact-control', 'historical-standard-recovery-prepare', 'historical-standard-recovery', 'owner-vault-transfer', 'owner-vault-crash-recovery', 'owner-vault-state-migration', 'historical-core-migration', 'owner-vault-historical-core')]
+  [ValidateSet('probe', 'probe-registry', 'probe-installer-processes', 'probe-installer-dialog', 'probe-installer-command', 'probe-installer-command-exit', 'probe-installer-cim-startup', 'probe-installer-cim-legacy', 'probe-installer-cim-current', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation', 'installer-current-preservation', 'installer-operator-upgrade', 'installer-operator-reinstall', 'historical-uninstaller-diagnostic', 'historical-uninstaller-compact-control', 'historical-standard-recovery-prepare', 'historical-standard-recovery', 'owner-vault-transfer', 'owner-vault-crash-recovery', 'owner-vault-state-migration', 'historical-core-migration', 'owner-vault-historical-core')]
   [string] $Mode
 )
 
@@ -15,6 +15,10 @@ if (-not $isProbe -and
 }
 if ($Mode -ceq 'installer-data-preservation' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
   throw 'Installer data preservation E2E requires a GitHub-hosted runner.'
+}
+if (($Mode -ceq 'installer-current-preservation' -or $Mode -ceq 'installer-operator-upgrade' -or $Mode -ceq 'installer-operator-reinstall') -and
+    $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
+  throw 'Installer preservation and recovery E2Es require a GitHub-hosted runner.'
 }
 if ($Mode -ceq 'historical-uninstaller-diagnostic' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
   throw 'Historical uninstaller diagnostics require a GitHub-hosted runner.'

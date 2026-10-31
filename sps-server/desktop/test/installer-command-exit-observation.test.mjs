@@ -13,6 +13,7 @@ const fixture = fileURLToPath(new URL("../scripts/windows-e2e/probe-installer-co
 const records = stdout => stdout.trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
 const wrapperArguments = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", wrapper,
   "-Mode", "probe-installer-command-exit"];
+const privateOutput = /private-command@example\.invalid|private-command-fixture|(?:[A-Z]:\\|\\\\)|processId|processID|commandLine|rawCommand|\bpid\b/i;
 
 test("installer command-exit probe is a fixed, passive fixture with fail-closed ownership guards", async () => {
   const source = await readFile(fixture, "utf8");
@@ -44,6 +45,12 @@ test("owned Windows wrapper observes the naturally exited PowerShell command and
     windowsHide: true,
     timeout: 75_000,
     maxBuffer: 32_768,
+  }).catch(error => {
+    // Keep passive phase/owned-Job diagnostics when the native deadline fails;
+    // the command's raw arguments and machine paths must still never be logged.
+    assert.doesNotMatch(error.stdout ?? "", privateOutput);
+    for (const record of records(error.stdout ?? "")) console.error(JSON.stringify(record));
+    throw error;
   });
   const output = records(result.stdout);
   assert.deepEqual(output.filter(record => record.ownedInstallerCommandExitFixture === true), [
@@ -102,6 +109,5 @@ test("owned Windows wrapper observes the naturally exited PowerShell command and
     ownedWindowStationClose: desktopRecord.privateWindowStation ? "closed" : "not_owned",
   });
   assert.equal(result.stderr, "");
-  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`,
-    /private-command@example\.invalid|private-command-fixture|(?:[A-Z]:\\|\\\\)|processId|processID|commandLine|rawCommand|\bpid\b/i);
+  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, privateOutput);
 });

@@ -564,12 +564,78 @@ jobs:
         working-directory: sps-server/desktop
         run: npx --no-install electron-builder --prepackaged dist/win-unpacked --win nsis --publish never
 
+      - name: Preserve private installer inputs for mandatory recovery E2E
+        uses: actions/upload-artifact@v4
+        with:
+          name: sps-installer-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            sps-server/desktop/dist/SPS-Desktop-Setup-*.exe
+            sps-server/desktop/dist/win-unpacked/**
+            sps-server/desktop/.owner-host-runtime/sps-release-baseline.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Verify installed Windows package and retained user data
         timeout-minutes: 20
         shell: powershell
         working-directory: sps-server/desktop
-        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-data-preservation
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-current-preservation
 
       - name: Test SPS node signing, command lease, and capability flow
         working-directory: sps-server/desktop-node
         run: npm test
+
+  legacy-installer-recovery:
+    name: SPS Legacy Installer Recovery
+    needs: desktop
+    if: ${{ !cancelled() }}
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Download exact private installer inputs from this workflow attempt
+        uses: actions/download-artifact@v5
+        with:
+          name: sps-installer-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: sps-server/desktop
+
+      - name: Install SPS Desktop dependencies
+        working-directory: sps-server/desktop
+        run: npm ci
+
+      - name: Sync Desktop Node runtime for installer recovery
+        working-directory: sps-server/desktop
+        run: npm run sync:desktop-node
+
+      - name: Prepare standard historical uninstall recovery
+        timeout-minutes: 10
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-standard-recovery-prepare
+
+      - name: Verify installer operator upgrade recovery
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-operator-upgrade
+
+      - name: Complete standard historical uninstall recovery
+        timeout-minutes: 10
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-standard-recovery
+
+      - name: Verify installer operator reinstall recovery
+        timeout-minutes: 10
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-operator-reinstall

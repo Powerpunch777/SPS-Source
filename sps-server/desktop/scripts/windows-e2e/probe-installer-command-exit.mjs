@@ -9,11 +9,13 @@ if (process.platform !== "win32" || process.argv.length !== 3 || process.argv[2]
 
 const executable = path.join(process.env.WINDIR, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 const command = "Get-Command Get-CimInstance | Out-Null; # private-command@example.invalid C:\\private-command-fixture\nStart-Sleep -Milliseconds 1200; exit 7";
+console.log(JSON.stringify({ ownedInstallerCommandExitProbePhase: "node-ready" }));
 const child = spawn(executable, ["-NoProfile", "-NonInteractive", "-Command", command], {
   shell: false,
   windowsHide: true,
   stdio: "ignore",
 });
+child.once("spawn", () => console.log(JSON.stringify({ ownedInstallerCommandExitProbePhase: "powershell-created" })));
 const result = await new Promise((resolve, reject) => {
   child.once("error", reject);
   child.once("close", (code, signal) => resolve({ code, signal }));

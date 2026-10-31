@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, constants } from "node:fs";
 import { copyFile, lstat, mkdir, mkdtemp, open, readFile, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { assertHostedInstallerCi, assertContained, assertPlainDirectory, nsisInvocation } from "./installer-ci-safety.mjs";
 import { queryInstallerProcesses } from "./installer-process-query.mjs";
 import { queryInstallerRegistrations } from "./installer-registry-query.mjs";
 import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./historical-installer-baseline.mjs";
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
+import { captureInstallerSnapshot } from "./installer-retained-snapshot.mjs";
+import { collectInstallerPathCensus } from "./installer-path-census.mjs";
 
 const relativeRecords = ["sps-desktop-state.json", "workspaces/retained/data.bin", "secrets/retained-opaque-record.bin"];
 const checkpointName = "sps-standard-recovery-checkpoint.json";
@@ -20,9 +23,11 @@ export function parseHistoricalRecoveryCheckpoint(text, now = Date.now()) {
   try {
     if (typeof text !== "string" || Buffer.byteLength(text) > 4096 || !Number.isSafeInteger(now)) throw invalid();
     const value = JSON.parse(text);
-    const keys = ["version", "createdAt", "fixtureName", "fixtureIdentity", "installerSha256", "uninstallerSha256", "asarSha256", "retained"];
+    const keys = ["version", "createdAt", "state", "fixtureName", "fixtureIdentity", "installerSha256", "uninstallerSha256", "asarSha256", "retained",
+      "candidateInstallerSha256", "installationTreeSha256", "installationIdentity"];
     if (!value || Object.keys(value).sort().join(",") !== keys.sort().join(",")
-      || `${JSON.stringify(value)}\n` !== text || value.version !== 1
+      || `${JSON.stringify(value)}\n` !== text || value.version !== 2
+      || !["installed", "upgrade-failed", "uninstalled"].includes(value.state)
       || !Number.isSafeInteger(value.createdAt) || now < value.createdAt || now - value.createdAt > 30 * 60_000
       || !/^sps-installer-data-uninstaller-diagnostic-[A-Za-z0-9]{6}$/.test(value.fixtureName)
       || !/^\d+:\d+:\d+$/.test(value.fixtureIdentity)
@@ -30,13 +35,17 @@ export function parseHistoricalRecoveryCheckpoint(text, now = Date.now()) {
       || !digestPattern.test(value.uninstallerSha256) || !digestPattern.test(value.asarSha256)
       || !Array.isArray(value.retained) || value.retained.length !== 10
       || !value.retained.every(hash => typeof hash === "string" && digestPattern.test(hash))) throw invalid();
+    if (value.state === "installed") {
+      if (value.candidateInstallerSha256 !== null || value.installationTreeSha256 !== null || value.installationIdentity !== null) throw invalid();
+    } else if (!digestPattern.test(value.candidateInstallerSha256) || !digestPattern.test(value.installationTreeSha256)
+      || !/^\d+:\d+:\d+$/.test(value.installationIdentity)) throw invalid();
     return value;
   } catch { throw invalid(); }
 }
 
 export async function runHistoricalStandardRecoveryStage(stage) {
   assertHostedInstallerCi();
-  assert.ok(stage === "standard-uninstall-prepare" || stage === "standard-uninstall-complete");
+  assert.ok(["standard-uninstall-prepare", "standard-uninstall-complete", "operator-upgrade", "operator-reinstall"].includes(stage));
   const preparing = stage === "standard-uninstall-prepare";
   let phase = "prerequisites";
   const trace = (event, detail = {}) => console.log(JSON.stringify({ historicalRecoveryStage: stage, event, ...detail }));
@@ -80,9 +89,10 @@ export async function runHistoricalStandardRecoveryStage(stage) {
       for (const alias of aliases) assert.equal(await missing(alias), true);
       const fixture = await mkdtemp(path.join(temporaryRoot, "sps-installer-data-uninstaller-diagnostic-"));
       assertContained(temporaryRoot, fixture);
-      checkpoint = { version: 1, createdAt: Date.now(), fixtureName: path.basename(fixture),
+      checkpoint = { version: 2, createdAt: Date.now(), state: "installed", fixtureName: path.basename(fixture),
         fixtureIdentity: await identity(fixture), installerSha256: HISTORICAL_INSTALLER_BASELINE.sha256,
-        uninstallerSha256: "", asarSha256: "", retained: [] };
+        uninstallerSha256: "", asarSha256: "", retained: [], candidateInstallerSha256: null,
+        installationTreeSha256: null, installationIdentity: null };
     } else {
       const stat = await lstat(checkpointPath, { bigint: true });
       assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1n && stat.size <= 4096n);
@@ -129,7 +139,63 @@ export async function runHistoricalStandardRecoveryStage(stage) {
       assert.equal(await hash(uninstaller), checkpoint.uninstallerSha256);
       assert.equal(await hash(asar), checkpoint.asarSha256);
     };
-    const run = async invocation => {
+    const exec = promisify(execFile);
+    const desktop = path.resolve(import.meta.dirname, "..");
+    const repository = path.resolve(desktop, "../..");
+    const candidateInput = async () => {
+      const baseline = JSON.parse(await readFile(path.join(desktop, ".owner-host-runtime", "sps-release-baseline.json"), "utf8"));
+      assert.equal(baseline.schemaVersion, 1);
+      assert.equal(baseline.product, "SPS Desktop");
+      assert.equal(baseline.desktopVersion, manifest.version);
+      assert.equal(baseline.sourceDirty, false);
+      assert.equal(baseline.core.dirty, false);
+      assert.equal(baseline.pluginSdk.dirty, false);
+      const gitHead = async directory => {
+        const { stdout } = await exec("git", ["rev-parse", "HEAD"], { cwd: directory, shell: false,
+          windowsHide: true, timeout: 10_000, maxBuffer: 4096 });
+        const revision = stdout.trim();
+        assert.match(revision, /^[a-f0-9]{40}$/);
+        return revision;
+      };
+      assert.equal(baseline.sourceRevision, await gitHead(repository));
+      assert.equal(baseline.core.revision, await gitHead(path.join(repository, "external", "sps-core")));
+      assert.equal(baseline.pluginSdk.revision, await gitHead(path.join(repository, "external", "sps-plugin-sdk")));
+      const installer = path.join(desktop, "dist", `SPS-Desktop-Setup-${manifest.version}.exe`);
+      const sha256 = await hash(installer);
+      if (checkpoint.candidateInstallerSha256) assert.equal(sha256, checkpoint.candidateInstallerSha256);
+      const expected = new Map();
+      for (const relative of ["SPS Desktop.exe", "resources/app.asar",
+        "resources/sps-windows-job-supervisor/SpsWindowsJobSupervisor.exe",
+        "resources/sps-owner-host-runtime-package/sps-owner-host-runtime.tgz",
+        "resources/sps-owner-host-runtime-package/sps-owner-host-runtime-package.json"]) {
+        expected.set(relative, await hash(path.join(desktop, "dist", "win-unpacked", relative)));
+      }
+      return { installer, sha256, expected, baseline };
+    };
+    const persistCheckpoint = async () => {
+      checkpoint.createdAt = Date.now();
+      const encoded = `${JSON.stringify(checkpoint)}\n`;
+      parseHistoricalRecoveryCheckpoint(encoded);
+      const handle = await open(checkpointPath, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      try {
+        const stat = await handle.stat({ bigint: true });
+        assert.ok(stat.isFile() && stat.nlink === 1n);
+        assert.equal([stat.dev, stat.ino, stat.birthtimeNs].join(":"), checkpointIdentity);
+        await handle.truncate(0);
+        await handle.writeFile(encoded);
+        await handle.sync();
+      } finally { await handle.close(); }
+      const after = await lstat(checkpointPath, { bigint: true });
+      assert.ok(after.isFile() && !after.isSymbolicLink() && after.nlink === 1n);
+      assert.equal([after.dev, after.ino, after.birthtimeNs].join(":"), checkpointIdentity);
+    };
+    const removeCheckpoint = async () => {
+      const current = await lstat(checkpointPath, { bigint: true });
+      assert.equal([current.dev, current.ino, current.birthtimeNs].join(":"), checkpointIdentity);
+      assert.ok(current.isFile() && !current.isSymbolicLink() && current.nlink === 1n);
+      await unlink(checkpointPath);
+    };
+    const run = async (invocation, { allowLegacyFailure = false } = {}) => {
       await noProcess();
       await verifyFixture();
       const started = Date.now();
@@ -140,8 +206,10 @@ export async function runHistoricalStandardRecoveryStage(stage) {
       });
       trace("nsis-closed", { phase, ...result });
       assert.equal(result.signal, null);
-      assert.equal(result.code, 0);
+      if (allowLegacyFailure) assert.ok(result.code === 0 || result.code === 2);
+      else assert.equal(result.code, 0);
       await noProcess();
+      return result;
     };
     if (preparing) {
       phase = "seed-owned-data";
@@ -170,23 +238,91 @@ export async function runHistoricalStandardRecoveryStage(stage) {
       parseHistoricalRecoveryCheckpoint(encoded);
       await writeFile(checkpointPath, encoded, { flag: "wx", mode: 0o600 });
       trace("prepared-checkpoint", { userRecords: 9, projectRecords: 1, cleanupQualification: "pending" });
-    } else {
-      phase = "verify-prepared-input";
+    } else if (stage === "operator-upgrade") {
+      phase = "verify-automatic-replacement-input";
+      assert.equal(checkpoint.state, "installed");
       await noProcess();
       await verifyOld();
       await verifyRetained();
+      const input = await candidateInput();
+      const before = await captureInstallerSnapshot(installation);
+      phase = "attempt-automatic-replacement";
+      const result = await run(nsisInvocation(input.installer, installation), { allowLegacyFailure: true });
+      // This branch qualifies the actual failure/recovery path, not an automatic
+      // success, arbitrary error, timeout, signal or a simulated installer exit.
+      assert.equal(result.code, 2, "The operator-recovery fixture requires a real old-version replacement failure.");
+      await verifyOld();
+      await verifyRetained();
+      const after = await captureInstallerSnapshot(installation);
+      assert.deepEqual(after, before);
+      checkpoint.state = "upgrade-failed";
+      checkpoint.candidateInstallerSha256 = input.sha256;
+      checkpoint.installationTreeSha256 = after.sha256;
+      checkpoint.installationIdentity = [after.rootIdentity.dev, after.rootIdentity.ino, after.rootIdentity.birthtimeNs].join(":");
+      await persistCheckpoint();
+      trace("failed-replacement-preserved", { originalExitCode: 2, files: after.files.length,
+        installationTreeSha256: after.sha256, userRecords: 9, projectRecords: 1,
+        automaticUpgradeQualified: false, operatorRecoveryStarted: false, cleanupQualification: "pending" });
+    } else if (stage === "operator-reinstall") {
+      phase = "verify-reinstall-input";
+      assert.equal(checkpoint.state, "uninstalled");
+      const input = await candidateInput();
+      await noProcess();
+      await verifyFixture();
+      await verifyRetained();
+      assert.deepEqual(await queryInstallerRegistrations(), []);
+      assert.equal(await missing(installation), true);
+      phase = "operator-candidate-reinstall";
+      await run(nsisInvocation(input.installer, installation));
+      assert.deepEqual(await queryInstallerRegistrations(), [{ name: `SPS Desktop ${manifest.version}`, perUser: true,
+        uninstall: `"${uninstaller}" /currentuser`, version: manifest.version }]);
+      for (const [relative, sha256] of input.expected) assert.equal(await hash(path.join(installation, relative)), sha256);
+      await verifyRetained();
+      phase = "isolated-candidate-first-frame";
+      const { stdout } = await exec(process.execPath, [path.join(desktop, "scripts", "smoke-isolated-desktop-ui.mjs")], {
+        cwd: desktop, env: { ...process.env, SPS_DESKTOP_E2E_BINARY: path.join(installation, "SPS Desktop.exe") },
+        windowsHide: true, shell: false, timeout: 60_000, maxBuffer: 1024 * 1024,
+      });
+      assert.match(stdout, /Isolated packaged SPS Desktop sign-in smoke test passed with confirmed owned Job cleanup/);
+      await noProcess();
+      await verifyRetained();
+      await removeCheckpoint();
+      trace("operator-candidate-reinstall-preserved-data", { userRecords: 9, projectRecords: 1,
+        packageByteParity: input.expected.size, candidateInstallerSha256: input.sha256,
+        sourceRevision: input.baseline.sourceRevision, coreRevision: input.baseline.core.revision,
+        sdkRevision: input.baseline.pluginSdk.revision, operatorReinstallRecoveryQualified: true,
+        historicalInstallerUpgradeQualified: false, previousStableUpgradeQualified: false,
+        applicationDataMigrationQualified: false, normalUserProfileStartupQualified: false,
+        signedInstallerQualified: false, physicalTwoDeviceQualified: false, cleanupQualification: "pending" });
+    } else {
+      phase = "verify-prepared-input";
+      assert.ok(checkpoint.state === "installed" || checkpoint.state === "upgrade-failed");
+      await noProcess();
+      await verifyOld();
+      await verifyRetained();
+      if (checkpoint.state === "upgrade-failed") {
+        await candidateInput();
+        const snapshot = await captureInstallerSnapshot(installation);
+        assert.equal(snapshot.sha256, checkpoint.installationTreeSha256);
+        assert.equal([snapshot.rootIdentity.dev, snapshot.rootIdentity.ino, snapshot.rootIdentity.birthtimeNs].join(":"), checkpoint.installationIdentity);
+      }
       const copied = path.join(fixture, "owned-standard-uninstaller.exe");
       await copyFile(uninstaller, copied, constants.COPYFILE_EXCL);
       assert.equal(await hash(copied), checkpoint.uninstallerSha256);
       phase = "ordinary-uninstall";
       await run(nsisInvocation(copied, installation, { uninstall: true }));
       await verifyRetained();
-      assert.deepEqual(await queryInstallerRegistrations(), []);
-      assert.equal(await missing(installation), true);
-      const current = await lstat(checkpointPath, { bigint: true });
-      assert.equal([current.dev, current.ino, current.birthtimeNs].join(":"), checkpointIdentity);
-      assert.ok(current.isFile() && !current.isSymbolicLink() && current.nlink === 1n);
-      await unlink(checkpointPath);
+      phase = "verify-ordinary-removal";
+      const registrations = await queryInstallerRegistrations();
+      const installationAbsent = await missing(installation);
+      trace("ordinary-uninstall-postconditions", { registrations: registrations.length, installationAbsent });
+      if (!installationAbsent) trace("ordinary-uninstall-remaining-tree", await collectInstallerPathCensus(installation));
+      assert.deepEqual(registrations, []);
+      assert.equal(installationAbsent, true);
+      if (checkpoint.state === "upgrade-failed") {
+        checkpoint.state = "uninstalled";
+        await persistCheckpoint();
+      } else await removeCheckpoint();
       trace("ordinary-uninstall-preserved-data", { userRecords: 9, projectRecords: 1,
         historicalStandardUninstallDataPreservationQualified: true, candidateUpgradeQualified: false,
         operatorReinstallRecoveryQualified: false, previousStableUpgradeQualified: false,

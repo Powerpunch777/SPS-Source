@@ -41,6 +41,24 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Source9e06fca ordinary-prerequisite job124417311115 failed after old install0
+  (232631ms), ordinary uninstall0 (70045ms) and all ten retained hashes matched.
+  The post-removal assertion failed; that log cannot distinguish remaining
+  registration from remaining files. No complete-removal/reinstall pass is
+  claimed. Follow-up adds safe counts/census before unchanged assertions, not
+  automatic leftover deletion. Windows job124417311137 also failed before app
+  acceptance: harmless observer45s timeout and five snapshot cleanup-hook8.3
+  alias mismatches. TEMP canonicalization and actual-alias regression address
+  the latter; bounded observer phase/Job output aids diagnosis, not a timeout
+  waiver. Normal current-install/replacement/repair/uninstall/reinstall is now
+  a mandatory independent gate. A second mandatory clean-VM gate consumes the
+  same private run/attempt package and verifies actual legacy failure/preserved
+  tree/data, ordinary uninstall and exact candidate reinstall/first frame. Its
+  sequential stages keep8/18min native bounds within55min overall; the default
+  historical automatic test remains available and fatal. Actual new-HEAD
+  results remain required. Final local `npm run test:ci`:1730total/1727pass/three
+  unavailable-8.3-alias skips/zero failures; no local installer was executed.
+  See the [recovery policy](LEGACY-INSTALLER-RECOVERY-POLICY-2026-10-31.md).
 - Source397c014 standard recovery prerequisite41159578592/job124413905847
   failed480s after old installation0 took409347ms; ordinary uninstall had only
   about61s, with a policy child still pending. Forced cleanup124 is rejected,

@@ -24,27 +24,39 @@ make a failed old-version replacement successful.
 
 ## Required Evidence
 
-1. Build the actual recovery guidance through both supported NSIS hooks. Check
-   exact-version selection, silent/non-silent branches and original error exit.
-   Do not execute installers on the developer's installed profile.
-2. Keep normal current-package replacement, artifact hashes, installed first
-   frame, repair, default uninstall and retained-data reinstall checks. The
-   current-package replacement is measured before the withdrawn input, so it
-   can be distinguished from the old binary's outcome.
-3. Add a separate mandatory hosted clean-VM recovery acceptance: pinned old
-   input; captured automatic replacement failure; unchanged old program and
-   every inert user-data sentinel; explicit operator-recovery branch; actual
-   standard old uninstall without a delete-data flag; candidate installation;
-   exact installed artifact hashes; first frame and all retained bytes.
-4. A timeout, signal, unknown exit, missing file or changed byte is not an
-   accepted legacy failure. Failed/rejected recovery must leave diagnostics
-   distinct and must not claim automatic upgrade, previous Stable or real
-   application-data migration. Never launch the withdrawn old Main.
-5. Preserve hosted-only checks, canonical owned paths, restricted token/private
-   desktop/owned Job and natural process-tree closure. Do not shorten the
-   original path, increase its deadline or bypass the old process guard.
+1. Keep two separate, mandatory hosted Windows gates. The existing `desktop`
+   job runs `installer-current-preservation`: install the current package,
+   replace it with the same package, verify repair, perform ordinary uninstall
+   and reinstall, and check package hashes, isolated first frame and retained
+   data. It does not use the withdrawn installer as its current-package test.
+2. The separate clean-hosted-VM `legacy-installer-recovery` job consumes the
+   private installer inputs uploaded by the same workflow run and attempt. It
+   requires the real pinned old installation, an actual candidate NSIS
+   replacement exit 2, byte-for-byte unchanged complete old program tree and
+   all ten inert sentinels, ordinary old uninstall, then same-candidate
+   reinstall with five installed-artifact hashes, isolated first frame and
+   retained-data checks. The ordinary uninstall prerequisite and time-bound
+   schema-2 checkpoint are stages of this recovery gate, not a substitute for
+   its upgrade-failure and reinstall checks.
+3. Either gate failing is a workflow failure. The recovery job uses
+   `needs: desktop` with `if: !cancelled()` so it still gathers independent recovery
+   diagnostics when the desktop gate fails; a missing same-attempt artifact
+   also fails the job. Timeouts, signals, unexpected exits, missing files or
+   changed bytes never count as the required old-installer exit-2 preservation.
+4. Keep native runner guards and their original per-step 8/18-minute bounds;
+   do not raise them. The new recovery job has a 55-minute overall bound for
+   separately bounded prepare (10), replacement (20), ordinary uninstall
+   (10), and reinstall (10) workflow steps, plus setup. Retain hosted-only
+   checks, canonical owned paths, restricted token/private desktop/owned Job
+   and natural process-tree closure.
+5. No automatic fallback is permitted. These gates do not qualify a signed
+   installer, a previous-Stable/default-profile upgrade, application-data
+   migration, physical-device behavior or production recovery. Never launch
+   the withdrawn old Main or run installers on a developer's installed
+   profile. Building guidance or passing a prerequisite alone is not release
+   evidence.
 
-## Current Status
+## Earlier Evidence (Chronological)
 
 Both supported NSIS hooks compile with the exact-version recovery guidance
 (38967-byte compile-only fixture, no warnings, never executed). Silent mode
@@ -74,7 +86,7 @@ separate recovery flow, retained-installation hash proof and actual hosted
 recovery outcome are not yet qualified. No installed local app/profile was used.
 Merely approving this policy or compiling guidance is not release evidence.
 
-## Two-Stage Prerequisite Follow-Up
+## Two-Stage Prerequisite Follow-Up (Earlier Evidence)
 
 Source397c014 diagnostic41159578592/job124413905847 failed its480-second total
 bound. Old installation returned0 after409347ms, and all nine user sentinels plus
@@ -111,3 +123,59 @@ hosted results and the subsequent full reinstall flow remain required.
 
 Related evidence: [historical failure](../reviews/INSTALLER-CIM-DIAGNOSTIC-2026-10-31.md),
 [completion checklist](CORE-FINAL-VALIDATION-2026-10-30.md).
+
+## Latest Policy and Status (2026-10-31)
+
+The two gates above are mandatory and independent. The desktop job now names its
+existing current-package gate `installer-current-preservation`. The new
+`legacy-installer-recovery` job is a separate clean hosted VM and downloads the
+exact private installer-input artifact named with this workflow's run ID and
+attempt. GitHub documents artifacts as a way to pass data between jobs in one
+workflow ([workflow artifact documentation](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-what-your-workflow-does/storing-and-sharing-data-from-a-workflow)).
+That documents artifact transport only; it does not establish authenticity,
+release signing, physical-device evidence or production qualification.
+
+The recovery stages share a private, time-bound schema-2 checkpoint with
+explicit `installed` -> `upgrade-failed` -> `uninstalled` transitions. The
+upgrade stage must observe the real candidate NSIS process exit 2 and verify
+the complete old program snapshot plus ten sentinels is unchanged before
+ordinary uninstall. Reinstall must use the same candidate, verify five
+installed artifact hashes, an isolated first frame and retained bytes. Missing
+artifact or any failed gate remains a failure; `needs: desktop` with
+`!cancelled()` allows the separate recovery diagnostics to run after a desktop
+failure.
+
+Current execution status: the ordinary-prerequisite hosted job
+`124417311115` for `9e06fca` completed **FAILED**. Prepare installed the pinned
+input with exit 0 after 232631ms, verified all ten retained records and closed
+its Job naturally. Complete observed ordinary uninstall exit 0 after 70045ms
+and all ten unchanged records, then failed a post-removal assertion. That log
+does not distinguish a remaining registration from a remaining program tree;
+neither complete removal nor recovery is qualified. Both owners closed their
+Jobs naturally. The follow-up reports only registration count, directory
+absence and a bounded path-free remaining-tree census before the unchanged
+post-removal assertions. It does not delete leftovers or turn exit 0 into a
+complete-removal pass.
+
+The same-Source desktop job `124417311137` failed before app acceptance: its
+harmless PowerShell observer exceeded the unchanged 45-second native bound,
+and five snapshot cleanup hooks confused Windows 8.3 TEMP aliases with their
+long canonical names. The fixture now canonicalizes TEMP before creation and
+retains its root identity/link checks; an actual-alias regression runs when
+the OS exposes one. Observer failures retain safe fixed phase and owned-Job
+diagnostics without logging the raw command or changing the deadline. Local
+success does not establish the hosted timeout's cause.
+
+The new workflow and runner changes have not been hosted-validated. Both gates
+remain pending qualification. No automatic fallback is enabled, and none of
+the excluded signed/previous-Stable/default-profile/migration/physical-device/
+production cases is qualified.
+
+Local final validation: `npm run test:ci` completed with 1730 total, 1727 pass,
+three unavailable-Windows-8.3-alias skips, zero failures (41812ms). The focused
+recovery/native/snapshot/observer selection completed with 42 total, 41 pass,
+one unavailable-alias skip, zero failures. YAML parsing, JavaScript syntax and
+`git diff --check` passed. These include harmless native process probes, not a
+local installer invocation. An earlier full run exposed an existing literal
+8-minute timeout-expression contract mismatch; its original expression was
+restored before the final successful run, without changing its bound or test.

@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import os from "node:os";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rename, rm, rmdir, symlink, link, realpath, lstat } from "node:fs/promises";
 import { captureInstallerSnapshot, assertInstallerSnapshot } from "../scripts/installer-retained-snapshot.mjs";
 
-async function fixture(t) {
-  const parent = await mkdtemp(path.join(os.tmpdir(), "sps-installer-snapshot-"));
+async function fixture(t, temporaryDirectory = os.tmpdir()) {
+  const canonicalTemporaryDirectory = await realpath(temporaryDirectory);
+  const parent = await mkdtemp(path.join(canonicalTemporaryDirectory, "sps-installer-snapshot-"));
   const owned = await lstat(parent, { bigint: true });
   const root = path.join(parent, "root");
   await mkdir(root);
@@ -21,6 +23,29 @@ async function fixture(t) {
   });
   return { parent, root };
 }
+
+test("fixture canonicalizes an available Windows 8.3 temporary-directory alias", {
+  skip: process.platform !== "win32",
+}, async t => {
+  const temporaryDirectory = await realpath(os.tmpdir());
+  if (!/^[A-Za-z]:\\[A-Za-z0-9 ._\\-]+$/.test(temporaryDirectory)) {
+    t.skip("The temp path is not safe ASCII for the read-only short-path command.");
+    return;
+  }
+  const alias = execFileSync("cmd.exe", ["/d", "/c", `for %I in ("${temporaryDirectory}") do @echo %~sI`], {
+    encoding: "utf8", windowsHide: true, timeout: 5_000, maxBuffer: 4096,
+  }).trim();
+  assert.equal(alias.includes("\n") || alias.includes("\r"), false);
+  assert.equal(path.isAbsolute(alias), true);
+  if (!/\b[A-Za-z0-9_-]+~[0-9]+\b/.test(alias) || alias.toLowerCase() === temporaryDirectory.toLowerCase()) {
+    t.skip("No distinct Windows 8.3 alias is available for the temp directory.");
+    return;
+  }
+
+  const { parent } = await fixture(t, alias);
+  assert.equal(path.dirname(parent), temporaryDirectory);
+  assert.equal(await realpath(alias), temporaryDirectory);
+});
 
 test("unchanged trees pass and digest is independent of directory enumeration order", async t => {
   const { root } = await fixture(t);

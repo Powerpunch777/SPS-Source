@@ -20,7 +20,8 @@ assert.ok(pathVariant === undefined || pathVariant === "compact-control", "Unkno
 const compactControl = pathVariant === "compact-control";
 const recoveryVariant = process.env.SPS_INSTALLER_DIAGNOSTIC_RECOVERY;
 assert.ok(recoveryVariant === undefined || recoveryVariant === "standard-uninstall-prepare"
-  || recoveryVariant === "standard-uninstall-complete", "Unknown historical recovery diagnostic.");
+  || recoveryVariant === "standard-uninstall-complete" || recoveryVariant === "operator-upgrade"
+  || recoveryVariant === "operator-reinstall", "Unknown historical recovery diagnostic.");
 const standardRecovery = recoveryVariant !== undefined;
 assert.equal(standardRecovery && compactControl, false, "Recovery must retain the original installed path.");
 if (standardRecovery) {

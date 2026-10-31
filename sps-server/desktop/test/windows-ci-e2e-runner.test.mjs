@@ -254,7 +254,7 @@ test("Owner Vault modes require a GitHub-hosted runner before helper compilation
 
 test("all Owner-Host-dependent Windows CI E2Es including installer use the reduced-token wrapper and guards", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
-  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "owner-vault-transfer", "owner-vault-crash-recovery", "owner-vault-state-migration", "historical-core-migration", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle", "installer-data-preservation"]) {
+  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "owner-vault-transfer", "owner-vault-crash-recovery", "owner-vault-state-migration", "historical-core-migration", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle", "installer-current-preservation"]) {
     assert.match(workflow, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
   }
   const source = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
@@ -383,8 +383,10 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   assert.ok(installerBuildStep > 0 && installerVerifyStep > installerBuildStep && nodeSigningStep > installerVerifyStep);
   const installerBuildBlock = workflow.slice(installerBuildStep, installerVerifyStep);
   const installerVerifyBlock = workflow.slice(installerVerifyStep, nodeSigningStep);
+  const recoveryJob = workflow.slice(workflow.indexOf("  legacy-installer-recovery:"));
+  assert.match(recoveryJob, /needs: desktop[\s\S]*?installer-operator-upgrade[\s\S]*?installer-operator-reinstall/);
   assert.match(installerBuildBlock, /working-directory: sps-server\/desktop[\s\S]*?run: npx --no-install electron-builder --prepackaged dist\/win-unpacked --win nsis --publish never/);
-  assert.match(installerVerifyBlock, /timeout-minutes: 20[\s\S]*?shell: powershell[\s\S]*?working-directory: sps-server\/desktop[\s\S]*?run: \.\\scripts\\run-windows-ci-e2e\.ps1 -Mode installer-data-preservation/);
+  assert.match(installerVerifyBlock, /timeout-minutes: 20[\s\S]*?shell: powershell[\s\S]*?working-directory: sps-server\/desktop[\s\S]*?run: \.\\scripts\\run-windows-ci-e2e\.ps1 -Mode installer-current-preservation/);
   assert.doesNotMatch(installerBuildBlock + installerVerifyBlock, /(?:^|\n)\s*RUNNER_(?:ENVIRONMENT|OS)\s*:/);
   const sourceExecutionControlStep = workflow.indexOf("- name: Verify Workspace execution control across Desktop restart");
   const sourceExecutionControlEnd = workflow.indexOf("- name: Build unpacked Windows Desktop for E2E", sourceExecutionControlStep);

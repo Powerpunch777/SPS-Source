@@ -23,7 +23,7 @@ test("historical NSIS upgrade is exercised before candidate repair and never lau
   assert.ok(oldInstall > uninstall && oldCheck > oldInstall);
   assert.ok(newInstall > oldCheck && newCheck > newInstall && launch > newCheck && repair > launch);
   assert.doesNotMatch(source.slice(oldInstall, newInstall), /electron\.launch|checkInstalledFirstFrame/);
-  assert.match(source, /historicalInstallerUpgradeQualified: true/);
+  assert.match(source, /historicalInstallerUpgradeQualified: !currentOnly/);
   for (const field of ["previousStableUpgradeQualified", "applicationDataMigrationQualified", "normalUserProfileStartupQualified", "signedInstallerQualified"]) {
     assert.match(source, new RegExp(`${field}: false`));
   }
@@ -73,7 +73,28 @@ test("current package replacement is independently measured before the withdrawn
   assert.match(handoff, /traceInstallerStage\("current-package-replacement-verified"\)/);
   assert.doesNotMatch(handoff, /uninstallOwnedCandidate|copyFile|rm\(|--updated|catch/);
   assert.match(source, /currentPackageReplacementQualified: true/);
-  assert.match(source, /historicalInstallerUpgradeQualified: true/);
+  assert.match(source, /historicalInstallerUpgradeQualified: !currentOnly/);
+});
+
+test("explicit current-only mode retains all modern phases and never claims a historical upgrade", async () => {
+  const source = await readFile(new URL("../scripts/smoke-installer-data-preservation.mjs", import.meta.url), "utf8");
+  const guard = source.indexOf("assertHostedInstallerCi();");
+  const mode = source.indexOf("const validationKind = process.env.SPS_INSTALLER_VALIDATION_KIND");
+  const data = source.indexOf("const appData =");
+  assert.ok(guard >= 0 && mode > guard && data > mode);
+  assert.match(source, /validationKind === undefined \|\| validationKind === "current"/);
+  assert.match(source, /const currentOnly = validationKind === "current"/);
+  assert.match(source, /if \(!currentOnly\) \{\s+traceInstallerStage\("historical-download-start"\)/);
+  assert.match(source, /if \(!currentOnly\) \{\s+phase = "uninstall-before-historical-input"/);
+  assert.match(source, /historicalInstaller: currentOnly \? null :/);
+  assert.match(source, /historicalInstallerUpgradeQualified: !currentOnly/);
+  const ordinary = source.slice(source.indexOf("async function uninstallOwnedCandidate("), source.indexOf('phase = "fresh-install"'));
+  assert.match(ordinary, /await runNsis\(copiedUninstaller, true\)/);
+  assert.match(ordinary, /assert\.deepEqual\(await registryInstallations\(\), \[\]\)/);
+  assert.match(ordinary, /assert\.equal\(await missing\(installation\), true/);
+  for (const phase of ["fresh-install", "current-package-replacement", "in-place-reinstall", "uninstall-preserve-data", "reinstall-retained-data"]) {
+    assert.ok(source.includes(`phase = "${phase}"`));
+  }
 });
 
 test("failed automatic replacement requires complete historical bytes and user data, then still fails", async () => {

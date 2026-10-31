@@ -16,6 +16,9 @@ import { captureInstallerSnapshot, assertInstallerSnapshot } from "./installer-r
 
 // Fail before even reading a profile, creating a fixture, or querying registry.
 assertHostedInstallerCi();
+const validationKind = process.env.SPS_INSTALLER_VALIDATION_KIND;
+assert.ok(validationKind === undefined || validationKind === "current", "Unknown installer preservation validation kind.");
+const currentOnly = validationKind === "current";
 let phase = "prerequisites";
 function traceInstallerStage(stage, detail = {}) {
   console.log(JSON.stringify({ installerPhase: phase, installerStage: stage, ...detail }));
@@ -87,9 +90,13 @@ assertContained(fixture, installation);
 await mkdir(installation);
 // This withdrawn, unsigned input is only a pinned historical compatibility
 // fixture. Never launch its Main or treat it as an approved Stable baseline.
-traceInstallerStage("historical-download-start");
-const { path: historicalInstaller } = await stageHistoricalInstaller(fixture);
-traceInstallerStage("historical-download-verified");
+let historicalInstaller;
+if (!currentOnly) {
+  traceInstallerStage("historical-download-start");
+  const stagedHistorical = await stageHistoricalInstaller(fixture);
+  historicalInstaller = stagedHistorical.path;
+  traceInstallerStage("historical-download-verified");
+}
 const sentinels = [];
 for (const root of dataRoots) {
   await mkdir(root);
@@ -182,6 +189,7 @@ async function uninstallOwnedCandidate(name) {
   await runNsis(copiedUninstaller, true);
   assert.deepEqual(await registryInstallations(), []);
   assert.equal(await missing(path.join(installation, "resources/app.asar")), true);
+  assert.equal(await missing(installation), true, "An ordinary uninstall must remove the complete owned program directory.");
 }
 phase = "fresh-install";
 traceInstallerStage("begin");
@@ -197,32 +205,34 @@ try {
   await checkInstalledPackage();
   await checkInstalledFirstFrame();
   traceInstallerStage("current-package-replacement-verified");
-  phase = "uninstall-before-historical-input";
-  traceInstallerStage("begin");
-  await uninstallOwnedCandidate("owned-uninstaller-before-historical.exe");
-  phase = "historical-install";
-  traceInstallerStage("begin");
-  await runNsis(historicalInstaller);
-  await checkHistoricalInstallation();
-  const historicalSnapshot = await captureInstallerSnapshot(installation);
-  phase = "historical-version-upgrade";
-  traceInstallerStage("begin");
-  try {
-    await runNsis(installer);
-  } catch (error) {
-    // Preservation evidence never converts a failed replacement into success.
-    await assertNoDesktopProcess();
-    await checkRetainedData();
+  if (!currentOnly) {
+    phase = "uninstall-before-historical-input";
+    traceInstallerStage("begin");
+    await uninstallOwnedCandidate("owned-uninstaller-before-historical.exe");
+    phase = "historical-install";
+    traceInstallerStage("begin");
+    await runNsis(historicalInstaller);
     await checkHistoricalInstallation();
-    await assertInstallerSnapshot(installation, historicalSnapshot);
-    traceInstallerStage("failed-replacement-preserved-historical-installation", {
-      retainedRecords: sentinels.length, installationTreeSha256: historicalSnapshot.sha256,
-      automaticUpgradeQualified: false, operatorRecoveryStarted: false,
-    });
-    throw error;
+    const historicalSnapshot = await captureInstallerSnapshot(installation);
+    phase = "historical-version-upgrade";
+    traceInstallerStage("begin");
+    try {
+      await runNsis(installer);
+    } catch (error) {
+      // Preservation evidence never converts a failed replacement into success.
+      await assertNoDesktopProcess();
+      await checkRetainedData();
+      await checkHistoricalInstallation();
+      await assertInstallerSnapshot(installation, historicalSnapshot);
+      traceInstallerStage("failed-replacement-preserved-historical-installation", {
+        retainedRecords: sentinels.length, installationTreeSha256: historicalSnapshot.sha256,
+        automaticUpgradeQualified: false, operatorRecoveryStarted: false,
+      });
+      throw error;
+    }
+    await checkInstalledPackage();
+    await checkInstalledFirstFrame();
   }
-  await checkInstalledPackage();
-  await checkInstalledFirstFrame();
   phase = "in-place-reinstall";
   traceInstallerStage("begin");
   // Prove this is a real replacement/repair, rather than a no-op whose files
@@ -243,13 +253,16 @@ try {
   await checkInstalledPackage();
   await checkInstalledFirstFrame();
   console.log(JSON.stringify({ installerDataPreservation: true, sourceRevision: baseline.sourceRevision,
-    installerSha256: await hashFile(installer), phases: ["fresh-install", "current-package-replacement", "uninstall-before-historical-input", "historical-install", "historical-version-upgrade", "in-place-reinstall", "uninstall-preserve-data", "reinstall-retained-data"],
-    historicalInstaller: { version: HISTORICAL_INSTALLER_BASELINE.version, sha256: HISTORICAL_INSTALLER_BASELINE.sha256,
+    installerSha256: await hashFile(installer), phases: ["fresh-install", "current-package-replacement",
+      ...(!currentOnly ? ["uninstall-before-historical-input", "historical-install", "historical-version-upgrade"] : []),
+      "in-place-reinstall", "uninstall-preserve-data", "reinstall-retained-data"],
+    validationKind: currentOnly ? "current" : "historical-automatic",
+    historicalInstaller: currentOnly ? null : { version: HISTORICAL_INSTALLER_BASELINE.version, sha256: HISTORICAL_INSTALLER_BASELINE.sha256,
       withdrawn: true, signingTrustQualified: false, applicationLaunched: false },
     retainedRecords: sentinels.length, packageByteParity: artifacts.length, silentInstaller: true,
     desktopProcessAbsentAtInstallerBoundaries: true, isolatedInstalledFirstFrames: installedFirstFrames,
     repairedFixturePackage: true, inertPreservationSentinels: true, currentPackageReplacementQualified: true,
-    historicalInstallerUpgradeQualified: true,
+    historicalInstallerUpgradeQualified: !currentOnly,
     previousStableUpgradeQualified: false, applicationDataMigrationQualified: false,
     normalUserProfileStartupQualified: false, signedInstallerQualified: false,
     cleanupQualification: "pending" }));
