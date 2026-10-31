@@ -12,6 +12,7 @@ import { createWorkspaceE2eChildTracker } from "./workspace-e2e-child-tracker.mj
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 import { projectLegacyDesktopStateV11 } from "./legacy-desktop-state-fixture.mjs";
 import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
+import { observeTransferWindows } from "./owner-vault-window-observation.mjs";
 import { readSpsOwnerVaultRestoreReceipt } from "../src/owner-vault-restore-receipt.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { assertWorkspaceOpenAccountFence } from "./workspace-open-account-fence-acceptance.mjs";
@@ -106,13 +107,19 @@ async function signIn(page, origin) {
 }
 
 async function workspace(app, setup) {
-  return await waitFor(async () => {
-    const status = await setup.evaluate(() => window.spsDesktop.getStatus());
-    if (status.ownerHost.lastError && status.ownerHost.state === "stopped") {
-      throw new Error(`Owner Host startup failed: ${status.ownerHost.lastError}`);
-    }
-    return app.windows().find(page => /^http:\/\/127\.0\.0\.1:\d+\//.test(page.url()));
-  }, "authenticated Workspace");
+  try {
+    return await waitFor(async () => {
+      const status = await setup.evaluate(() => window.spsDesktop.getStatus());
+      if (status.ownerHost.lastError && status.ownerHost.state === "stopped") {
+        throw new Error(`Owner Host startup failed: ${status.ownerHost.lastError}`);
+      }
+      return app.windows().find(page => /^http:\/\/127\.0\.0\.1:\d+\//.test(page.url()));
+    }, "authenticated Workspace");
+  } catch (error) {
+    console.error(`[vault-transfer-window-observation] ${JSON.stringify({ stage: "wait-failed",
+      ...await observeTransferWindows(app) })}`);
+    throw error;
+  }
 }
 
 async function readyHost(setup) {
@@ -497,6 +504,8 @@ try {
     await signIn(restarted.page, origin);
     await readyHost(restarted.page);
     await bounded(restarted.page.evaluate(() => window.spsDesktop.openWorkspace()), "reopen restored Workspace");
+    console.log(`[vault-transfer-window-observation] ${JSON.stringify({ stage: "restart-before-wait",
+      ...await observeTransferWindows(restarted.app) })}`);
     const reopened = await workspace(restarted.app, restarted.page);
     const afterRestart = await api(reopened, `/api/companies/${company.id}/projects`);
     assert.ok(afterRestart.some(row => row.id === project.id));

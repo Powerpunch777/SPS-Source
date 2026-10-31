@@ -19,7 +19,18 @@ deferred Native development are excluded.
 ## Current Evidence Summary
 
 This summary supersedes the historical observations below; it does not declare
-Core or Stable completion. Latest completed PR Verify `41169709122` at Source
+Core or Stable completion. Source `d8a6c699` push Verify `41176105464` passed
+all17 non-Windows jobs and the new joined Runner/No-AI source acceptance, but
+Windows `124463887020` then failed ordinary Main transfer at the post-restore
+restart Workspace wait. Job cleanup was natural; no installer was built.
+PR Verify `41176116088` passed that transfer step and remains live in packaged
+tests at this observation; it cannot waive the push failure. Native-versus-
+Playwright window observations now preserve this failure for diagnosis without
+changing Main, waits, permissions or success conditions. Actual local Main
+transfer passes, including a normal native/tracked snapshot, do not reproduce
+or resolve it. See [restart observation](../reviews/OWNER-VAULT-WINDOW-OBSERVATION-2026-10-31.md).
+
+Earlier completed PR Verify `41169709122` at Source
 `a0c04af12a6b6bcbfbf0bede41672139cc347eee` passed all17 non-Windows jobs,
 including all9 Linux shards/full Core typecheck/build, public SDK, Identity and
 bundle/security-policy checks. Its Windows job `124444808130` passed source
@@ -45,8 +56,8 @@ See [scope and commands](../reviews/RUNNER-RECOVERY-COMPONENT-2026-10-31.md).
 Actual installed old-version recovery remains incomplete. The prior current
 unsigned package lifecycle success below is separate; it cannot qualify the
 new helper path, signed update, physical PCs or installed default-profile DB.
-Local stable-tree `npm run test:ci` exited0: serial2/2 plus1801total/1798pass/
-three unavailable-8.3-alias skips, aggregate1803total/1800pass/three skips and
+Local stable-tree `npm run test:ci` exited0: serial2/2 plus1807total/1804pass/
+three unavailable-8.3-alias skips, aggregate1809total/1806pass/three skips and
 zero failures. This does not replace a new final-HEAD Windows installer gate.
 
 ## Historical Work Log
