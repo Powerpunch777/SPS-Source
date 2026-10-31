@@ -277,15 +277,6 @@ jobs:
           cache: npm
           cache-dependency-path: sps-server/sps-plugin-discovery/package-lock.json
 
-      - name: Install pinned pnpm
-        run: npm install --global pnpm@11.9.0
-
-      - name: Prepare pinned Core Worker SDK for first-party package builds
-        working-directory: external/sps-core
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm --filter @paperclipai/plugin-sdk run build
-
       - name: Install public SDK build tools
         working-directory: external/sps-plugin-sdk
         run: npm ci

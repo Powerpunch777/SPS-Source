@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { inspectPluginDirectory, packagePluginDirectory } from "@sonparkserver/plugin-sdk/authoring/plugin-package-v1.mjs";
-import { stageSpsPluginArchive } from "./registry-staging.mjs";
+import { describeSpsPluginArchive, stageSpsPluginArchive } from "./registry-staging.mjs";
+
+const pendingStages = new Map();
 
 function restoredRecord(records, pluginId) {
   return records.find(record => record.pluginKey === pluginId
@@ -37,11 +39,26 @@ export async function listRestoredBundledPluginReviews({ bundles, records }) {
 }
 
 /** Explicit staging, not approval. Existing Registry confirmation starts code. */
-export async function stageRestoredBundledPluginReview({ bundles, records, pluginId, vaultRoot, registerStage, assertCurrent }) {
+export async function stageRestoredBundledPluginReview(input) {
+  const { bundles, records, pluginId, vaultRoot, assertCurrent } = input;
   const bundle = bundles.find(candidate => candidate.pluginId === pluginId);
   if (!bundle || !restoredRecord(records, pluginId)) throw new Error("This current app bundle is not waiting for new Host review.");
   assertCurrent();
-  await inspectBundle(bundle);
+  const key = JSON.stringify([path.resolve(vaultRoot), pluginId]);
+  let operation = pendingStages.get(key);
+  if (!operation) {
+    operation = stageBundle({ ...input, bundle });
+    pendingStages.set(key, operation);
+  }
+  try {
+    const result = await operation;
+    assertCurrent();
+    return result;
+  } finally { if (pendingStages.get(key) === operation) pendingStages.delete(key); }
+}
+
+async function stageBundle({ bundle, pluginId, vaultRoot, registerStage, listStages, assertCurrent }) {
+  const metadata = await inspectBundle(bundle);
   assertCurrent();
   const archives = path.join(vaultRoot, "registry-staging", "bundle-review-archives");
   await fs.mkdir(archives, { recursive: true, mode: 0o700 });
@@ -51,8 +68,17 @@ export async function stageRestoredBundledPluginReview({ bundles, records, plugi
   try {
     await packagePluginDirectory({ sourceDirectory: bundle.directory, archivePath: archive });
     assertCurrent();
+    const described = await describeSpsPluginArchive(archive);
+    const stages = await listStages();
+    assertCurrent();
+    if (!Array.isArray(stages)) throw new Error("Owner Host returned an invalid review queue.");
+    const existing = stages.find(stage => stage.pluginId === pluginId && stage.version === metadata.version
+      && stage.artifactSha256 === described.artifact.sha256 && stage.status === "staged"
+      && stage.source?.registryId === "io.sps.current-app-bundles");
+    if (existing) return { staged: true, artifact: described.artifact, stage: existing, reused: true };
     const result = await stageSpsPluginArchive({
       vaultRoot, archivePath: archive,
+      expectedArtifact: described.artifact,
       // Local app provenance is not a publisher signature or old-Host approval.
       source: { kind: "local", registryId: "io.sps.current-app-bundles", releaseLocator: `bundled:${pluginId}` },
       registerStage: async body => { assertCurrent(); return registerStage(body); },

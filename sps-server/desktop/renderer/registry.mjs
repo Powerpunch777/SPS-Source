@@ -310,12 +310,15 @@ async function loadBundledReviews() {
 $("#refresh-bundled-reviews").addEventListener("click", () => void loadBundledReviews());
 $("#bundled-review-list").addEventListener("click", async event => {
   const button = event.target.closest(".stage-bundled-review");
-  if (!button) return;
+  if (!button || button.disabled) return;
   button.disabled = true;
   try {
-    await window.spsRegistry.stageBundledReview({ pluginId: button.dataset.pluginId });
+    const staged = await window.spsRegistry.stageBundledReview({ pluginId: button.dataset.pluginId });
     if (!await loadStages()) throw new Error("Could not load the staged package. Refresh the review queue.");
-    setNotice("Current app copy staged without running code. Review its exact version and capabilities before enabling it.");
+    await loadBundledReviews();
+    setNotice(staged.reused
+      ? "This exact current app copy is already in the review queue. Review it before enabling."
+      : "Current app copy staged without running code. Review its exact version and capabilities before enabling it.");
   } catch {
     setNotice("Could not stage this current app copy. Refresh and try again.", true);
   } finally { if (button.isConnected) button.disabled = false; }

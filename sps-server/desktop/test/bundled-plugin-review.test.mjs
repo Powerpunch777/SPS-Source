@@ -41,12 +41,35 @@ test("current-app bundle inspection and explicit staging never import code or ap
   await assert.rejects(lstat(context.marker), { code: "ENOENT" });
   let registered;
   const result = await stageRestoredBundledPluginReview({ ...context, vaultRoot: path.join(context.owned.directory, "vault"),
+    listStages: async () => [],
     assertCurrent: () => {}, registerStage: async body => { registered = body; return { stageId: "fixture-stage", status: "staged" }; },
   });
   assert.equal(result.stage.status, "staged");
   assert.equal(registered.source.kind, "local");
   assert.equal(registered.source.registryId, "io.sps.current-app-bundles");
   assert.equal(registered.artifactSha256, result.artifact.sha256);
+  await assert.rejects(lstat(context.marker), { code: "ENOENT" });
+});
+
+test("repeated and overlapping requests reuse the exact staged archive without replacing its path", async t => {
+  const context = await fixture(t);
+  let stage, registrations = 0;
+  const input = { ...context, pluginId: context.pluginId, vaultRoot: path.join(context.owned.directory, "vault"),
+    assertCurrent: () => {}, listStages: async () => stage ? [stage] : [],
+    registerStage: async body => {
+      registrations++;
+      stage = { ...body, pluginId: context.pluginId, version: "0.1.0", status: "staged", stageId: "same-stage" };
+      return stage;
+    },
+  };
+  const concurrent = await Promise.all([stageRestoredBundledPluginReview(input), stageRestoredBundledPluginReview(input)]);
+  const packageRoot = concurrent[0].stage.packageRoot;
+  assert.equal(concurrent[1].stage.packageRoot, packageRoot);
+  assert.equal(registrations, 1);
+  const repeated = await stageRestoredBundledPluginReview(input);
+  assert.equal(repeated.reused, true);
+  assert.equal(repeated.stage.packageRoot, packageRoot);
+  assert.equal(registrations, 1);
   await assert.rejects(lstat(context.marker), { code: "ENOENT" });
 });
 

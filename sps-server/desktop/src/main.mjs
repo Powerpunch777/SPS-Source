@@ -2700,11 +2700,14 @@ async function listDesktopBundledPluginReviews() {
 
 async function stageDesktopBundledPluginReview(pluginId) {
   const context = await currentAppBundleReviewContext();
-  return stageRestoredBundledPluginReview({ ...context, pluginId,
+  const result = await stageRestoredBundledPluginReview({ ...context, pluginId,
+    listStages: () => ownerHostApi("/plugins/registry/stages", { ownerBootstrap: true, assertCurrent: context.assertCurrent }),
     registerStage: body => ownerHostApi("/plugins/registry/stages", {
       method: "POST", ownerBootstrap: true, assertCurrent: context.assertCurrent, body,
     }),
   });
+  context.assertCurrent();
+  return { staged: true, reused: result.reused === true, stageId: result.stage.stageId };
 }
 
 async function addDesktopRegistrySource(input) {

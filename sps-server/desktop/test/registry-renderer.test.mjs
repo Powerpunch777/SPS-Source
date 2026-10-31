@@ -133,7 +133,7 @@ test("restored current-app copies stage without implicit confirmation or enablem
   await h.click("#bundled-review-list", button);
   assert.deepEqual(h.calls, [{ method: "stageBundledReview", pluginId: review.pluginId }]);
   assert.match(h.get("#notice").textContent, /without running code/);
-  assert.equal(button.disabled, false);
+  assert.equal(button.isConnected, false);
 });
 
 test("restored bundle review failures stay stopped and support refresh", async () => {

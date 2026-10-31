@@ -29,9 +29,9 @@ for (const eventType of expectedEvents) {
   assert.ok(worker.includes(`"${eventType}"`), `Worker is missing lifecycle handler ${eventType}.`);
 }
 assert.match(source, /const MEMORY_LIFECYCLE_EVENTS/);
-assert.match(worker, /for \(const eventType of MEMORY_LIFECYCLE_EVENTS\)/);
+assert.match(worker, /events: \[\.\.\.MEMORY_LIFECYCLE_EVENTS\]\.map/);
 assert.doesNotMatch(worker, /from ["']@paperclipai\/plugin-sdk["']/);
-assert.match(worker, /ctx\.events\.on\(eventType/);
+assert.match(source, /handler: event => recordLifecycleCandidate\(context, event\)/);
 assert.match(worker, /idempotencyKey: `lifecycle:\$\{event\.eventId\}`/);
 assert.match(worker, /issueId: taskId/);
 console.log("SPS Default Memory lifecycle contract verification passed.");

@@ -27,13 +27,17 @@ a directory. Main rechecks the current account/Host scope. Static SDK inspection
 packing and staging do not import code or approve anything. The normal exact-
 version Registry confirmation remains required to start it. These copies are
 labelled local current-app provenance, not falsely publisher-signed releases.
+Repeated/overlapping requests serialize per Vault/plugin and reuse only an
+exact archive SHA already staged by this current-app flow. They do not replace
+the existing staged package path or reset review. Staging replies expose only
+the staged acknowledgement, reuse flag and stage ID to the Registry renderer.
 
 Build-time sidecars bind current metadata to manifest bytes. Main never invokes
 their generator or imports executable manifests to populate the review list.
 Packaging regenerates sidecars after trusted builds. The Room digest was also
 corrected to the public SDK's sorted-capabilities digest. A real reapproval
 attempt exposed Default Memory's external SDK import after relocation; its
-existing Worker protocol is now bundled from the pinned Core SDK at build time.
+existing tools/events use the pinned public Worker/Platform SDK, bundled at build time.
 The production runtime no longer depends on a former source-tree SDK link.
 
 ## Local Evidence
@@ -52,7 +56,17 @@ The production runtime no longer depends on a former source-tree SDK link.
   in that output. This global check is not reported as passing.
 - `npm run check` in Default Memory and static sidecar validation passed.
 - Production dependency policy: two Low findings, zero Critical/High, no
-  exceptions. This is not a claim of zero vulnerabilities.
+  exceptions. Full development/build graph: three Low, zero Critical/High,
+  no exceptions. This is not a claim of zero vulnerabilities.
+- Full Desktop `node --test --test-reporter=spec test/*.test.mjs`: 1677 total,
+  1675 passed, two unavailable-8.3-alias skips, zero failures. The first full
+  attempt correctly rejected the unstaged Core pin; another rejected the
+  initial private-SDK coupling. Neither failure was hidden or counted as pass.
+- Relocated public-SDK Memory Worker test: real Node initialization/event
+  subscriptions, invalid recall without networking, missing-tenant event no-op,
+  loopback synthetic sidecar lifecycle/proposal payloads, shutdown and EOF all
+  passed outside the source tree without node_modules. It uses an identity-
+  checked temporary fixture and removes it only after owned processes close.
 
 `SPS_DESKTOP_E2E_SOURCE=1 node scripts/smoke-owner-vault-transfer-desktop.mjs`
 exited 0 after four real isolated Main processes. It exported and restored a
@@ -72,6 +86,9 @@ of Core's pretty-log metadata; the first positive attempt found the actual
 external-SDK dependency; a later final assertion lacked its `lstat` import.
 All were corrected before the successful run. Native picker fixtures are now
 restored after export/restore so later approvals use their real dialog path.
+The full product-boundary suite also rejected an initial build-time reference
+to the private Core SDK. It was removed by using the public Worker/Platform
+contract; the boundary checker was not relaxed or allowlisted for Memory.
 
 Exact final-HEAD Linux/Windows/packaged CI remains required. No installed app,
 real user Vault, Production Identity, signing key or physical PC was changed.

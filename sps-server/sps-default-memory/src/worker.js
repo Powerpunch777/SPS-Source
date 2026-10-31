@@ -1,4 +1,5 @@
-import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
+import { defineSpsPlatformContract } from "@sonparkserver/plugin-sdk/platform";
+import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";
 import manifest from "../dist/manifest.js";
 
 const DEFAULT_SIDECAR_URL = "http://127.0.0.1:3188";
@@ -234,19 +235,20 @@ function safeTool(ctx, handler) {
   };
 }
 
-const declarations = new Map(manifest.tools.map((tool) => [tool.name, tool]));
-
-const plugin = definePlugin({
-  async setup(ctx) {
-    ctx.tools.register("memory-recall", declarations.get("memory-recall"), safeTool(ctx, recall));
-    ctx.tools.register("memory-propose", declarations.get("memory-propose"), safeTool(ctx, propose));
-    for (const eventType of MEMORY_LIFECYCLE_EVENTS) {
-      ctx.events.on(eventType, async (event) => {
-        await recordLifecycleCandidate(ctx, event);
-      });
-    }
-  },
+const logger = Object.fromEntries(["info", "warn"].map(level => [level,
+  (message, details) => process.stderr.write(`${JSON.stringify({ level, message, ...details })}\n`),
+]));
+const context = { logger };
+const handlers = { "memory-recall": recall, "memory-propose": propose };
+const platform = defineSpsPlatformContract({
+  capabilities: ["agent.tools.register", "events.subscribe"],
+  tools: manifest.tools.map(declaration => ({
+    name: declaration.name, declaration, handler: safeTool(context, handlers[declaration.name]),
+  })),
+  events: [...MEMORY_LIFECYCLE_EVENTS].map(name => ({
+    name, handler: event => recordLifecycleCandidate(context, event),
+  })),
 });
-
+const plugin = defineSpsPlugin({ platform });
 export default plugin;
-runWorker(plugin, import.meta.url);
+runSpsWorker(plugin);
