@@ -2,6 +2,7 @@
 export function createSpsDesktopQuitCoordinator({
   isComplete,
   isInstalling,
+  consumeFailedUpdateQuit = () => false,
   drain,
   setQuitting,
   setShutdownComplete,
@@ -14,6 +15,11 @@ export function createSpsDesktopQuitCoordinator({
   let pending = null;
 
   function handle(event) {
+    if (consumeFailedUpdateQuit()) {
+      event.preventDefault();
+      consumeQuitRequest();
+      return Promise.resolve(false);
+    }
     const complete = isComplete();
     trace(complete ? "before_quit_complete" : "before_quit_start");
     if (complete) return Promise.resolve(false);

@@ -16,9 +16,10 @@ test("repairs a stale private-team Owner membership through a narrow local proof
   assert.match(main, /headers\[SPS_DESKTOP_OWNER_BOOTSTRAP_HEADER\] = ownerHostDesktopAccessToken/);
   assert.match(main, /async function listCurrentOwnerIdentityCompanies\(\)/);
   assert.match(main, /async function ensurePrivateTeamOwnerMembership\(\)/);
-  assert.match(main, /await reconcileSpsTailscaleServe\(\{[\s\S]*?hostname: state\.teamAccess\.hostname/);
-  assert.match(main, /humanRole: "owner"/);
-  assert.match(main, /SPS Desktop Owner membership recovery\./);
-  assert.match(main, /await acceptSpsIdentityInvite\(state\.teamAccess\.url, recoveryInvitation\.token\)/);
+  assert.match(main, /const \{ companyId, url: hubUrl, hostname \} = state\.teamAccess;[\s\S]*?await reconcileSpsTailscaleServe\(\{\s*hostname,/);
+  assert.match(main, /humanRole: "operator",[\s\S]*?expiresInMinutes: 15,[\s\S]*?agentMessage: null/);
+  assert.doesNotMatch(main, /humanRole: "owner"/);
+  assert.match(main, /acceptInvitation: token => acceptSpsIdentityInvite\(hubUrl, token\)/);
+  assert.match(main, /listMemberships: \(\) => listCurrentOwnerIdentityCompanies\(\)/);
   assert.match(main, /Private team access is already enabled for another company/);
 });

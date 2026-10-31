@@ -159,11 +159,9 @@ export function createSpsUpdateService({
         message: "The SPS Desktop update is ready to install when you choose to restart.",
       });
     });
-    updater.on("error", () => publish({
-      state: "error",
-      percent: null,
-      message: safeErrorMessage(),
-    }));
+    updater.on("error", () => status.state === "installing"
+      ? publish({ state: "ready", percent: 100, message: safeInstallErrorMessage() })
+      : publish({ state: "error", percent: null, message: safeErrorMessage() }));
   }
 
   async function check() {

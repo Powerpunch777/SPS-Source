@@ -43,6 +43,9 @@ jobs:
           npm run audit:development
           npm run docs:security:check
 
+      - name: Verify patched Storybook docgen glob compatibility
+        run: node --test scripts/storybook-glob-compat.test.mjs
+
       - name: Typecheck SPS Core server
         run: pnpm --filter @paperclipai/server run typecheck
 
@@ -277,6 +280,10 @@ jobs:
           cache: npm
           cache-dependency-path: sps-server/sps-plugin-discovery/package-lock.json
 
+      - name: Install public SDK build tools
+        working-directory: external/sps-plugin-sdk
+        run: npm ci
+
       - name: Verify SPS Default Memory
         working-directory: sps-server/sps-default-memory
         run: npm run check
@@ -384,7 +391,7 @@ jobs:
 
       - name: Test SPS Desktop invite and update flow
         working-directory: sps-server/desktop
-        run: npm test
+        run: npm run test:ci
 
       - name: Run isolated Desktop bootstrap E2E
         working-directory: sps-server/desktop
@@ -406,6 +413,10 @@ jobs:
 
       - name: Install SPS Room Chat dependencies for Desktop runtime packaging
         working-directory: sps-server/sps-room-chat
+        run: npm ci
+
+      - name: Install public Plugin SDK build tools for Desktop runtime packaging
+        working-directory: external/sps-plugin-sdk
         run: npm ci
 
       - name: Prepare Owner Host runtime for Desktop E2E
@@ -450,6 +461,48 @@ jobs:
           SPS_DESKTOP_E2E_SOURCE: "1"
           SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode execution-control
+
+      - name: Verify Owner Vault transfer through source Desktop Main
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_SOURCE: "1"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode owner-vault-transfer
+
+      - name: Verify Owner Vault crash recovery through source Desktop Main
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_SOURCE: "1"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode owner-vault-crash-recovery
+
+      - name: Verify legacy Desktop state migration through source Main
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_SOURCE: "1"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode owner-vault-state-migration
+
+      - name: Verify pinned historical Core schema upgrade and backup recovery
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-core-migration
+
+      - name: Verify historical Core backup through actual Desktop Main restore
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        env:
+          SPS_DESKTOP_E2E_SOURCE: "1"
+          SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode owner-vault-historical-core
 
       - name: Build unpacked Windows Desktop for E2E
         working-directory: sps-server/desktop
@@ -507,16 +560,87 @@ jobs:
           SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode host-plugin-lifecycle
 
+      - name: Build explicit legacy program recovery helper
+        working-directory: sps-server/desktop
+        run: npm run build:legacy-recovery
+
       - name: Build unsigned Windows installer for data preservation E2E
         working-directory: sps-server/desktop
         run: npx --no-install electron-builder --prepackaged dist/win-unpacked --win nsis --publish never
+
+      - name: Preserve private installer inputs for mandatory recovery E2E
+        uses: actions/upload-artifact@v4
+        with:
+          name: sps-installer-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            sps-server/desktop/dist/SPS-Desktop-Setup-*.exe
+            sps-server/desktop/dist/win-unpacked/**
+            sps-server/desktop/.owner-host-runtime/sps-release-baseline.json
+            sps-server/desktop/.legacy-recovery/SpsLegacyRecovery.exe
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Verify installed Windows package and retained user data
         timeout-minutes: 20
         shell: powershell
         working-directory: sps-server/desktop
-        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-data-preservation
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-current-preservation
 
       - name: Test SPS node signing, command lease, and capability flow
         working-directory: sps-server/desktop-node
         run: npm test
+
+  legacy-installer-recovery:
+    name: SPS Legacy Installer Recovery
+    needs: desktop
+    if: ${{ !cancelled() }}
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SPS_SOURCE_READ_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Download exact private installer inputs from this workflow attempt
+        uses: actions/download-artifact@v5
+        with:
+          name: sps-installer-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: sps-server/desktop
+
+      - name: Install SPS Desktop dependencies
+        working-directory: sps-server/desktop
+        run: npm ci
+
+      - name: Sync Desktop Node runtime for installer recovery
+        working-directory: sps-server/desktop
+        run: npm run sync:desktop-node
+
+      - name: Prepare standard historical uninstall recovery
+        timeout-minutes: 10
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-standard-recovery-prepare
+
+      - name: Verify installer operator upgrade recovery
+        timeout-minutes: 20
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-operator-upgrade
+
+      - name: Verify ordinary uninstall and explicitly confirmed program residue recovery
+        timeout-minutes: 10
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-standard-recovery
+
+      - name: Verify installer operator reinstall recovery
+        timeout-minutes: 10
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-operator-reinstall

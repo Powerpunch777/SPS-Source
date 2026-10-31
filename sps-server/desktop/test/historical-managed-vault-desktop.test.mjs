@@ -1,0 +1,128 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+import { OWNED_JOB_CLEANUP_ARGUMENT } from "../scripts/preview-e2e-cleanup-contract.mjs";
+
+const scriptPath = fileURLToPath(new URL("../scripts/smoke-historical-managed-vault-desktop.mjs", import.meta.url));
+const runFile = promisify(execFile);
+const read = relative => readFile(new URL(relative, import.meta.url), "utf8");
+
+function localEnvironment(overrides = {}) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("SPS_") || key.startsWith("PAPERCLIP_") || key === "DATABASE_URL"
+      || key === "ELECTRON_RUN_AS_NODE") delete env[key];
+  }
+  return { ...env, GITHUB_ACTIONS: "false", ...overrides };
+}
+
+async function assertRefused(overrides, args, message) {
+  await assert.rejects(runFile(process.execPath, [scriptPath, ...args], {
+    env: localEnvironment(overrides), windowsHide: true, timeout: 10_000,
+  }), error => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, message);
+    assert.doesNotMatch(error.stderr, /prepareHistoricalManagedVault|createWorkspaceE2eFixture|createMockIdentityServer/);
+    assert.doesNotMatch(error.stdout, /historicalMigrations|installedHistoricalFixtureInPlaceMigrationQualified/);
+    return true;
+  });
+}
+
+test("the real Node entry refuses missing, conflicting, and malformed modes before setup", async () => {
+  await assertRefused({}, [], /exactly one isolated Windows source or hosted installed mode/);
+  await assertRefused({ SPS_DESKTOP_E2E_SOURCE: "1" }, ["--unexpected"], /exactly one isolated Windows source or hosted installed mode/);
+  await assertRefused({ SPS_DESKTOP_E2E_SOURCE: "1" }, [OWNED_JOB_CLEANUP_ARGUMENT], /exactly one isolated Windows source or hosted installed mode/);
+  await assertRefused({ SPS_DESKTOP_E2E_SOURCE: "1", SPS_DESKTOP_E2E_BINARY: "C:\\untrusted\\SPS Desktop.exe" }, [],
+    /exactly one isolated Windows source or hosted installed mode/);
+});
+
+test("a local installed-binary invocation is rejected before fixture or account setup", { skip: process.platform !== "win32" }, async () => {
+  await assertRefused({ SPS_DESKTOP_E2E_BINARY: "C:\\untrusted\\SPS Desktop.exe" }, [],
+    /owned GitHub-hosted Windows CI launcher/);
+});
+
+test("the source smoke preserves the pinned historical migration and restart proof without migration shortcuts", async () => {
+  const source = await read("../scripts/smoke-historical-managed-vault-desktop.mjs");
+  const prepare = source.indexOf("await prepareHistoricalManagedVault({ fixture, profile })");
+  const rewrite = source.indexOf("await rewriteAsLegacyV11State(profile, fixture, credentials)");
+  const firstMain = source.indexOf("const migrated = await launch(origin)");
+  const firstVerify = source.indexOf('const firstHistory = await verifyMain(migrated, expected, prepared, "migration")');
+  const verifyData = source.indexOf("const historySha256 = await verifyData(prepared)");
+  const verifyWorkspace = source.indexOf("const workspace = await waitFor(() => running.app.windows()");
+  const restart = source.indexOf("const restarted = await launch(origin)");
+  const restartVerify = source.indexOf('assert.equal(await verifyMain(restarted, expected, prepared, "restart"), firstHistory)');
+  assert.ok(prepare >= 0 && prepare < rewrite && rewrite < firstMain && firstMain < firstVerify
+    && firstVerify < restart && restart < restartVerify && verifyData < verifyWorkspace,
+  "must prepare the pinned fixture, project v11, run real Main, verify data, then restart and verify again");
+  assert.match(source, /assert\.equal\(prepared\.currentMigrationsApplied, false\)/);
+  assert.match(source, /assert\.equal\(persisted\.version, 13\)/);
+  assert.match(source, /history\.length, 176/);
+  assert.match(source, /historicalMigrations: 157, currentMigrations: 176/);
+  assert.match(source, /restoreUsed: false/);
+  assert.match(source, /installedHistoricalFixtureInPlaceMigrationQualified: Boolean\(binary\)/);
+  assert.match(source, /sourceHistoricalFixtureInPlaceMigrationQualified: !binary/);
+  assert.match(source, /signedInstallerQualified: false/);
+  assert.match(source, /previousStableUpgradeQualified: false/);
+  assert.match(source, /normalUserProfileStartupQualified: false/);
+  assert.match(source, /physicalTwoDeviceQualified: false/);
+  assert.match(source, /status\.desktopAccount\.signedIn, true/);
+  assert.match(source, /realDpapiCredentialsAndKeyPreserved: true/);
+  const hostedGuard = source.indexOf("if (binary && !unpacked) assertHostedInstallerCi()");
+  assert.ok(hostedGuard >= 0 && hostedGuard < source.indexOf("const fixture = await createWorkspaceE2eFixture()"),
+    "installed mode must pass its hosted guard before fixture creation");
+  assert.match(source, /const app = await electron\.launch\(/);
+  assert.match(source, /captureLegacyStateEvidence\(initial\.app, "sps-desktop-e2e-owner"\)/);
+  assert.match(source, /captureLegacyStateEvidence\(running\.app, expected\.accountSubject\)/);
+  const cleared = ["DATABASE_URL", "PAPERCLIP_CONFIG", "PAPERCLIP_HOME", "PAPERCLIP_INSTANCE_ID",
+    "PAPERCLIP_MIGRATION_AUTO_APPLY", "PAPERCLIP_MIGRATION_PROMPT"];
+  for (const key of cleared) assert.ok(source.includes(JSON.stringify(key)), `${key} is cleared from the real Main environment`);
+  assert.match(source, /for \(const key of \["DATABASE_URL",\s*"PAPERCLIP_CONFIG",\s*"PAPERCLIP_HOME",\s*"PAPERCLIP_INSTANCE_ID",\s*"PAPERCLIP_MIGRATION_AUTO_APPLY",\s*"PAPERCLIP_MIGRATION_PROMPT"\]\) delete env\[key\]/);
+  assert.doesNotMatch(source, /(?:PAPERCLIP_MIGRATION_AUTO_APPLY|PAPERCLIP_MIGRATION_PROMPT)\s*[:=]\s*["']?true/i);
+  assert.doesNotMatch(source, /restore(?:Database|Profile|Vault)|force(?:d)?Migration|skipMigration/i);
+});
+
+test("local unpacked diagnostics cannot substitute a caller's installed application", { skip: process.platform !== "win32" }, async () => {
+  const expected = { desktopVersion: "0.4.137", sourceRevision: "1".repeat(40), coreRevision: "2".repeat(40), sdkRevision: "3".repeat(40) };
+  await assertRefused({ SPS_DESKTOP_E2E_BINARY: "C:\\untrusted\\SPS Desktop.exe",
+    SPS_DESKTOP_E2E_CANDIDATE_TUPLE: JSON.stringify(expected) }, ["--owned-unpacked-candidate"], /owned name format/);
+  await assertRefused({ SPS_DESKTOP_E2E_SOURCE: "1" }, ["--owned-unpacked-candidate"],
+    /exactly one isolated Windows source or hosted installed mode/);
+});
+
+test("historical account evidence reuses Main safeStorage helpers without substituting authentication", async () => {
+  const acceptance = await read("../scripts/legacy-desktop-state-acceptance.mjs");
+  const projection = await read("../scripts/legacy-desktop-state-fixture.mjs");
+  const smoke = await read("../scripts/smoke-historical-managed-vault-desktop.mjs");
+  assert.match(smoke, /import \{ captureLegacyStateEvidence, rewriteAsLegacyV11State \} from "\.\/legacy-desktop-state-acceptance\.mjs"/);
+  assert.match(acceptance, /app\.evaluate\(\(\{ app, safeStorage \}/);
+  assert.match(acceptance, /safeStorage\.isEncryptionAvailable\(\)/);
+  assert.match(acceptance, /safeStorage\.decryptString\(Buffer\.from\(value, "base64"\)\)/);
+  assert.match(acceptance, /safeStorage\.encryptString\(privateKeyPem\)/);
+  assert.match(projection, /projectLegacyDesktopStateV11/);
+  assert.match(projection, /HISTORICAL_DESKTOP_STATE_VERSION = 11/);
+  assert.match(acceptance, /assert\.equal\(legacy\.encryptedDesktopAccount, current\.encryptedDesktopAccount\)/);
+  assert.match(smoke, /await initial\.setup\.locator\("#start-sps-account"\)\.click\(\)/);
+  assert.match(smoke, /await fetch\(authorization,/);
+  assert.match(smoke, /status\.desktopAccount\.signedIn && !status\.desktopAccount\.pending/);
+  assert.match(smoke, /assert\.equal\(status\.desktopAccount\.signedIn, true\)/);
+  assert.doesNotMatch(smoke, /encryptedDesktopAccount\s*[:=]\s*["'`]|encryptedDesktopAccount\s*=\s*Buffer|\b(?:fake|mock|stub)Account(?:Token|Credential|Session)/);
+});
+
+test("installed migration keeps its original deadline and replays only fixed safe progress on failure", async () => {
+  const source = await read("../scripts/smoke-historical-managed-vault-desktop.mjs");
+  const parent = await read("../scripts/smoke-installer-data-preservation.mjs");
+  assert.match(source, /createHistoricalProfileProgress\(\{ write: line => process\.stderr\.write\(line\) \}\)/);
+  assert.match(source, /progress\("historical-db-start"\);\s*observation = "historical-preparation";\s*const prepared = await prepareHistoricalManagedVault/);
+  assert.match(source, /progress\("migration-main-start"\);\s*const migrated = await launch\(origin\);\s*progress\("migration-main-ready"\)/);
+  assert.match(source, /progress\("restart-data-verified"\);\s*await stop\(restarted\.app\);\s*progress\("restart-main-closed"\)/);
+  assert.match(parent, /timeout: 300_000, maxBuffer: 1024 \* 1024/);
+  assert.match(parent, /for \(const record of parseHistoricalProfileProgress\(String\(error\.stderr \?\? ""\)\)\) \{\s*console\.error\(JSON\.stringify\(record\)\)/);
+  assert.match(parent, /assert\.equal\(error\.code, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
+  assert.match(parent, /assert\.ok\(!error\.signal && !error\.killed/);
+  assert.doesNotMatch(parent, /console\.(?:log|error)\(error\.(?:stderr|stdout)/);
+  assert.match(source, /installedHistoricalFixtureInPlaceMigrationQualified: Boolean\(binary\) && !unpacked/);
+  assert.match(source, /unpackedHistoricalFixtureInPlaceMigrationQualified: unpacked/);
+});

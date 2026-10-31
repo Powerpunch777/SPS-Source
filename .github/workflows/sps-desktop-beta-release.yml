@@ -71,6 +71,10 @@ jobs:
         working-directory: sps-server/desktop
         run: npm test -- --test-concurrency=1
 
+      - name: Install public Plugin SDK build tools for Desktop runtime packaging
+        working-directory: external/sps-plugin-sdk
+        run: npm ci
+
       - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
         working-directory: sps-server/sps-plugin-discovery
         run: npm ci

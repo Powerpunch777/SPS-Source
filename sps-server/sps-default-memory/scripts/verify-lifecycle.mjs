@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [{ default: manifest }, worker] = await Promise.all([
+const [{ default: manifest }, worker, source] = await Promise.all([
   import(new URL("../dist/manifest.js", import.meta.url)),
   readFile(new URL("../dist/worker.js", import.meta.url), "utf8"),
+  readFile(new URL("../src/worker.js", import.meta.url), "utf8"),
 ]);
 
 const expectedEvents = [
@@ -27,8 +28,10 @@ assert.deepEqual(
 for (const eventType of expectedEvents) {
   assert.ok(worker.includes(`"${eventType}"`), `Worker is missing lifecycle handler ${eventType}.`);
 }
-assert.match(worker, /const MEMORY_LIFECYCLE_EVENTS/);
-assert.match(worker, /ctx\.events\.on\(eventType/);
+assert.match(source, /const MEMORY_LIFECYCLE_EVENTS/);
+assert.match(worker, /events: \[\.\.\.MEMORY_LIFECYCLE_EVENTS\]\.map/);
+assert.doesNotMatch(worker, /from ["']@paperclipai\/plugin-sdk["']/);
+assert.match(source, /handler: event => recordLifecycleCandidate\(context, event\)/);
 assert.match(worker, /idempotencyKey: `lifecycle:\$\{event\.eventId\}`/);
 assert.match(worker, /issueId: taskId/);
 console.log("SPS Default Memory lifecycle contract verification passed.");

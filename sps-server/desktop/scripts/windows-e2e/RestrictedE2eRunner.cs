@@ -265,18 +265,20 @@ public static class RestrictedE2eRunner
     }
     static bool Mode(string value)
     {
-        return value == "probe" || value == "probe-registry" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
-            || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
+        return value == "probe" || value == "probe-registry" || value == "probe-installer-processes" || value == "probe-installer-dialog" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
+            || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76" || value == "probe-cross-device-control"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
-            || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation";
+            || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "installer-current-preservation" || value == "installer-operator-upgrade" || value == "installer-operator-reinstall" || value == "historical-uninstaller-diagnostic" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery"
+            || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core";
     }
     static bool OwnedJobGateMode(string value)
     {
-        return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
-            || value == "probe-preview-pending"
+        return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "installer-current-preservation" || value == "installer-operator-upgrade" || value == "installer-operator-reinstall" || value == "historical-uninstaller-diagnostic" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
+            || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core"
+            || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery" || value == "probe-installer-command-exit" || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
-            || value == "probe-preview-zeroexit" || value == "workspace-pending"
+            || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "workspace-pending" || value == "probe-cross-device-control"
             || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit";
     }
     static int OwnedJobWaitMilliseconds(string mode)
@@ -294,7 +296,7 @@ public static class RestrictedE2eRunner
             "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)",
             "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432",
             "HOME", "HOMEDRIVE", "HOMEPATH", "GITHUB_ACTIONS", "RUNNER_OS", "RUNNER_ENVIRONMENT", "CI",
-            "SPS_DESKTOP_E2E_SOURCE", "SPS_DESKTOP_E2E_BINARY", "SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS"
+            "SPS_DESKTOP_E2E_SOURCE", "SPS_DESKTOP_E2E_BINARY", "SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS", "SPS_INSTALLER_CIM_PROBE_ARCH"
         })
         {
             string value = Environment.GetEnvironmentVariable(name);
@@ -311,6 +313,14 @@ public static class RestrictedE2eRunner
     }
     static int RunNodeFile(string node, string workingDirectory, string entrypoint, params string[] args)
     {
+        return RunNodeCore(node, workingDirectory, entrypoint, false, args);
+    }
+    static int RunNodeFileForwardInput(string node, string workingDirectory, string entrypoint, params string[] args)
+    {
+        return RunNodeCore(node, workingDirectory, entrypoint, true, args);
+    }
+    static int RunNodeCore(string node, string workingDirectory, string entrypoint, bool forwardInput, params string[] args)
+    {
         stage = "child_script";
         var arguments = new StringBuilder(Quote(entrypoint));
         foreach (string arg in args) arguments.Append(' ').Append(Quote(arg));
@@ -325,8 +335,34 @@ public static class RestrictedE2eRunner
             process.StartInfo = start;
             process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs value) { if (value.Data != null) Console.Out.WriteLine(value.Data); };
             process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs value) { if (value.Data != null) Console.Error.WriteLine(value.Data); };
-            process.Start(); process.StandardInput.Close(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
-            process.WaitForExit(); return process.ExitCode;
+            process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
+            if (!forwardInput) process.StandardInput.Close();
+            else
+            {
+                Stream source = Console.OpenStandardInput();
+                Stream destination = process.StandardInput.BaseStream;
+                var forwarder = new System.Threading.Thread(delegate()
+                {
+                    try
+                    {
+                        byte[] buffer = new byte[4096];
+                        int count;
+                        while ((count = source.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            destination.Write(buffer, 0, count);
+                            destination.Flush();
+                        }
+                    }
+                    catch (IOException) { }
+                    catch (ObjectDisposedException) { }
+                    finally { try { process.StandardInput.Close(); } catch (ObjectDisposedException) { } catch (InvalidOperationException) { } catch (IOException) { } }
+                });
+                forwarder.IsBackground = true;
+                forwarder.Start();
+            }
+            process.WaitForExit();
+            if (forwardInput) { try { process.StandardInput.Close(); } catch (ObjectDisposedException) { } catch (InvalidOperationException) { } catch (IOException) { } }
+            return process.ExitCode;
         }
     }
     static int RunNativePluginSdk(string node, string desktopDirectory)
@@ -352,16 +388,33 @@ public static class RestrictedE2eRunner
         if (!administratorDenied || !userDefaultDacl) throw new InvalidOperationException("Child token security checks failed");
         Console.WriteLine("{\"restrictedE2eChild\":true,\"administratorEnabled\":false,\"powerUsersEnabled\":false,\"privilegesReduced\":true,\"sameUserToken\":true,\"administratorDenied\":" + (administratorDenied ? "true" : "false") + ",\"userDefaultDacl\":" + (userDefaultDacl ? "true" : "false") + "}");
         if (mode == "probe") return 0;
+        if (mode == "probe-legacy-driver-component")
+            return RunNode(node, directory, "windows-e2e/probe-legacy-driver-component.mjs", OwnedJobCleanupArgument);
+        if (mode == "probe-historical-managed-vault")
+            return RunNodeFile(node, directory, Path.Combine(directory, "test", "fixtures", "historical-managed-vault-native.mjs"), OwnedJobCleanupArgument);
         if (mode == "probe-registry")
         {
             Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
                 System.Reflection.Assembly.GetExecutingAssembly().Location);
             return RunNode(node, directory, "windows-e2e/probe-installer-registry.mjs");
         }
+        if (mode == "probe-installer-processes")
+        {
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            return RunNode(node, directory, "windows-e2e/probe-installer-processes.mjs", OwnedJobCleanupArgument);
+        }
+        if (mode == "probe-installer-cim-startup" || mode == "probe-installer-cim-legacy" || mode == "probe-installer-cim-current")
+            return RunNode(node, directory, "windows-e2e/probe-installer-cim.mjs", mode.Substring("probe-installer-cim-".Length), OwnedJobCleanupArgument);
         if (mode == "probe-exit") return 7;
         if (mode == "probe-exit-76") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-native-exit") return unchecked((int)0xC0000142);
         if (mode == "probe-timeout") { System.Threading.Thread.Sleep(60000); return 1; }
+        if (mode == "probe-installer-dialog") { InstallerWindowDiagnostics.ShowProbeDialog(); return 1; }
+        if (mode == "probe-installer-command")
+            return RunNode(node, directory, "windows-e2e/probe-installer-command.mjs", OwnedJobCleanupArgument);
+        if (mode == "probe-installer-command-exit")
+            return RunNode(node, directory, "windows-e2e/probe-installer-command-exit.mjs", OwnedJobCleanupArgument);
         if (mode == "probe-preview-pending") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-preview-zeroexit") return 0;
         if (mode == "workspace-pending") return unchecked((int)OwnedJobCleanupPendingExitCode);
@@ -381,9 +434,61 @@ public static class RestrictedE2eRunner
             return mode == "probe-preview-failure-descendant" || mode == "workspace-failure-descendant" ? 7 : 0;
         }
         if (mode == "probe-node") return RunNode(node, directory, "windows-e2e/probe-node.mjs", "a \"quoted\" value", "tail\\", "unicode-\uD55C\uAE00");
+        if (mode == "probe-cross-device-control")
+            return RunNodeFileForwardInput(node, directory, Path.Combine(directory, "scripts", "cross-device-control.mjs"), OwnedJobCleanupArgument);
         if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true"
             || Environment.GetEnvironmentVariable("RUNNER_OS") != "Windows")
             throw new InvalidOperationException("Desktop launch mode is restricted to Windows CI");
+        if (mode == "installer-current-preservation" || mode == "installer-operator-upgrade" || mode == "installer-operator-reinstall")
+        {
+            if (Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
+                throw new InvalidOperationException("Installer preservation and recovery E2Es require a GitHub-hosted runner");
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            if (mode == "installer-current-preservation")
+            {
+                foreach (string script in new[] { "sync-local-desktop-node.mjs", "sync-local-plugin-sdk.mjs" })
+                {
+                    int code = RunNode(node, directory, script, "--check");
+                    if (code != 0) return code;
+                }
+                Environment.SetEnvironmentVariable("SPS_INSTALLER_VALIDATION_KIND", "current");
+                return RunNode(node, directory, "smoke-installer-data-preservation.mjs", OwnedJobCleanupArgument);
+            }
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_DIAGNOSTIC_RECOVERY",
+                mode == "installer-operator-upgrade" ? "operator-upgrade" : "operator-reinstall");
+            return RunNode(node, directory, "smoke-historical-uninstaller-diagnostic.mjs", OwnedJobCleanupArgument);
+        }
+        if (mode == "historical-uninstaller-diagnostic")
+        {
+            if (Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
+                throw new InvalidOperationException("Historical uninstaller diagnostics require a GitHub-hosted runner");
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            return RunNode(node, directory, "smoke-historical-uninstaller-diagnostic.mjs", OwnedJobCleanupArgument);
+        }
+        if (mode == "historical-uninstaller-compact-control")
+        {
+            if (Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
+                throw new InvalidOperationException("Historical uninstaller compact control requires a GitHub-hosted runner");
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_DIAGNOSTIC_PATH_VARIANT", "compact-control");
+            return RunNode(node, directory, "smoke-historical-uninstaller-diagnostic.mjs", OwnedJobCleanupArgument);
+        }
+        if (mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery")
+        {
+            if (Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
+                throw new InvalidOperationException("Historical standard recovery requires a GitHub-hosted runner");
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_DIAGNOSTIC_RECOVERY",
+                mode == "historical-standard-recovery-prepare" ? "standard-uninstall-prepare" : "standard-uninstall-complete");
+            return RunNode(node, directory, "smoke-historical-uninstaller-diagnostic.mjs", OwnedJobCleanupArgument);
+        }
+        if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery" || mode == "owner-vault-state-migration" || mode == "historical-core-migration" || mode == "owner-vault-historical-core")
+            && Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
+            throw new InvalidOperationException("Owner Vault E2E requires a GitHub-hosted runner");
         foreach (string script in new[] { "sync-local-desktop-node.mjs", "sync-local-plugin-sdk.mjs" })
         {
             // The normal build stage prepares these copies and native helpers.
@@ -397,6 +502,11 @@ public static class RestrictedE2eRunner
         if (mode == "native-plugin-sdk") return RunNativePluginSdk(node, directory);
         if (mode == "execution-control") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", "--execution-control", OwnedJobCleanupArgument);
         if (mode == "workspace-surfaces") return RunNode(node, directory, "smoke-workspace-surfaces-desktop.mjs", OwnedJobCleanupArgument);
+        if (mode == "owner-vault-transfer") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", OwnedJobCleanupArgument);
+        if (mode == "owner-vault-crash-recovery") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", "--crash-after-promotion", OwnedJobCleanupArgument);
+        if (mode == "owner-vault-state-migration") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", "--legacy-desktop-state", OwnedJobCleanupArgument);
+        if (mode == "owner-vault-historical-core") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", "--historical-core-backup", OwnedJobCleanupArgument);
+        if (mode == "historical-core-migration") return RunNode(node, directory, "smoke-historical-core-migration.mjs", OwnedJobCleanupArgument);
         if (mode == "plugin-preview") return RunNode(node, directory, "smoke-plugin-preview-desktop.mjs", OwnedJobCleanupArgument);
         if (mode == "installer-data-preservation")
         {
@@ -573,6 +683,27 @@ public static class RestrictedE2eRunner
         for (int index = 0; index < left.Count; index++) if (left[index] != right[index]) return false;
         return true;
     }
+    static uint WaitWithOwnedCommandObservations(IntPtr job, IntPtr process, uint timeout)
+    {
+        var deadline = Stopwatch.StartNew();
+        using (var observations = new InstallerProcessCommandDiagnostics.Observations())
+        {
+            for (;;)
+            {
+                uint total;
+                bool truncated, readOK;
+                var ids = ReadOwnedJobProcessIds(job, out total, out truncated, out readOK);
+                observations.Poll(job, ids, readOK && !truncated);
+                long remaining = (long)timeout - deadline.ElapsedMilliseconds;
+                uint wait = WaitForSingleObject(process, remaining <= 0 ? 0u : (uint)Math.Min(250, remaining));
+                if (wait != 258 || remaining <= 0)
+                {
+                    observations.Finish();
+                    return wait;
+                }
+            }
+        }
+    }
     static void WriteOwnedJobProcessDiagnostics(IntPtr job, uint exitedRunnerChildProcessId, int collectionAttempt = 0)
     {
         uint total = 0, bounded = 0;
@@ -584,6 +715,7 @@ public static class RestrictedE2eRunner
         int openProcessAccessDenied = 0, openProcessInvalidParameter = 0, openProcessOtherError = 0;
         bool parentSnapshotOK = false;
         var unknownImages = new List<string>();
+        var commandDiagnostics = new List<string>();
         bool truncated = false, readOK = true;
         uint initialTotal, finalTotal;
         bool initialTruncated, initialReadOK, finalTruncated, finalReadOK;
@@ -634,6 +766,8 @@ public static class RestrictedE2eRunner
                                 : unchecked((uint)Marshal.ReadInt32(buffer, offset));
                             workingIds.Add(processId);
                             category = OwnedProcessCategory(job, processId, exitedRunnerChildProcessId, out processReadOK, out imageName, out readFailureStage, out openProcessError);
+                            if (processReadOK && String.Equals(imageName, "powershell.exe", StringComparison.OrdinalIgnoreCase))
+                                commandDiagnostics.Add(InstallerProcessCommandDiagnostics.ReadOwnedPowerShell(job, processId));
                             if (readFailureStage == 1) { openProcessFailed = true; failedOpenProcessIds.Add(processId); }
                             if (category == 4 && unknownImages.Count < OwnedProcessDiagnosticLimit)
                             {
@@ -716,6 +850,7 @@ public static class RestrictedE2eRunner
                 + ",\"total\":" + total + ",\"bounded\":" + bounded + ",\"truncated\":"
                 + (truncated ? "true" : "false") + ",\"readOK\":" + (readOK ? "true" : "false")
                 + ",\"unknownImages\":[" + String.Join(",", unknownImages.ToArray()) + "]}");
+            Console.WriteLine("{\"ownedInstallerCommandDiagnostics\":true,\"commands\":[" + String.Join(",", commandDiagnostics.ToArray()) + "]}");
         }
         catch { }
     }
@@ -872,7 +1007,11 @@ public static class RestrictedE2eRunner
 
             stage = "handle_setup";
             var security = new SecurityAttributes { Size = Marshal.SizeOf(typeof(SecurityAttributes)), Inherit = 1 };
-            input = CreateFileW("NUL", 0x80000000, 3, ref security, 3, 0, IntPtr.Zero); Require(Valid(input), "Open empty stdin");
+            if (mode == "probe-cross-device-control")
+                Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(-10), GetCurrentProcess(), out input, 0, true, 2), "Duplicate actual stdin");
+            else
+                input = CreateFileW("NUL", 0x80000000, 3, ref security, 3, 0, IntPtr.Zero);
+            Require(Valid(input), mode == "probe-cross-device-control" ? "Duplicate actual stdin" : "Open empty stdin");
             Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(-11), GetCurrentProcess(), out output, 0, true, 2), "Duplicate stdout");
             Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(-12), GetCurrentProcess(), out error, 0, true, 2), "Duplicate stderr");
             IntPtr bytes = IntPtr.Zero;
@@ -901,9 +1040,19 @@ public static class RestrictedE2eRunner
             Require(AssignProcessToJobObject(job, child.Process), "Assign suspended child to cleanup job"); assigned = true;
             Require(ResumeThread(child.Thread) != 0xFFFFFFFF, "Resume E2E child");
             stage = "child_wait";
-            uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : 18u * 60u * 1000u);
+            uint timeout = mode == "probe-legacy-driver-component" ? 90u * 1000u : mode == "probe-historical-managed-vault" ? 75u * 1000u : mode == "probe-timeout" ? 1500u : mode == "probe-installer-dialog" || mode == "probe-installer-command" ? 4000u : mode == "probe-installer-processes" ? 45u * 1000u : mode == "probe-installer-command-exit" ? 45u * 1000u : mode.StartsWith("probe-installer-cim-", StringComparison.Ordinal) ? 90u * 1000u : mode == "installer-operator-reinstall" ? 8u * 60u * 1000u : mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" ? 8u * 60u * 1000u : mode == "historical-uninstaller-diagnostic" ? 8u * 60u * 1000u : 18u * 60u * 1000u;
+            uint wait = mode == "installer-data-preservation" || mode == "installer-current-preservation" || mode == "installer-operator-upgrade" || mode == "installer-operator-reinstall" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" || mode == "probe-installer-command-exit"
+                ? WaitWithOwnedCommandObservations(job, child.Process, timeout)
+                : WaitForSingleObject(child.Process, timeout);
             if (wait == 258)
             {
+                // Inspect only this Job before its timeout cleanup destroys the
+                // installer/uninstaller relationship. Counts and sanitized image
+                // names are diagnostic, never permission to accept a timeout.
+                if (mode == "installer-data-preservation" || mode == "installer-current-preservation" || mode == "installer-operator-upgrade" || mode == "installer-operator-reinstall" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" || mode == "probe-timeout" || mode == "probe-installer-command" || mode == "probe-installer-command-exit")
+                    WriteOwnedJobProcessDiagnostics(job, 0);
+                if (mode == "installer-data-preservation" || mode == "installer-current-preservation" || mode == "installer-operator-upgrade" || mode == "installer-operator-reinstall" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" || mode == "probe-installer-dialog")
+                    InstallerWindowDiagnostics.Write(job, desktop);
                 Require(TerminateJobObject(job, 124), "Terminate timed-out E2E job");
                 cleanupWasForced = true;
                 Require(WaitForSingleObject(child.Process, 10000) == 0, "Confirm timed-out child exit");
@@ -999,6 +1148,12 @@ public static class RestrictedE2eRunner
             {
                 stage = "installer_registry_query";
                 Console.WriteLine(InstallerRegistryReader.ReadJson());
+                return 0;
+            }
+            if (args.Length == 1 && args[0] == "--read-installer-processes")
+            {
+                stage = "installer_process_query";
+                Console.WriteLine(InstallerProcessReader.ReadJson());
                 return 0;
             }
             if (args.Length == 1 && args[0] == "--probe-leaf")

@@ -122,6 +122,26 @@ async function flushAccountWork(controller) {
   }
 }
 
+test("Identity invite acceptance preserves its HTTP status for scoped membership recovery", async () => {
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const status of [403, 409]) {
+      const { controller } = createHarness({ state: activeAccountState(), cookies: [{
+        name: "sps_identity_session", value: "fixture-session", domain: "host.example.test", path: "/", secure: true,
+      }] });
+      globalThis.fetch = async url => {
+        if (new URL(url).pathname === "/api/sps-identity/session") {
+          return new Response(null, { headers: { "set-cookie": "sps_identity_session=fixture-session; Path=/; HttpOnly" } });
+        }
+        assert.equal(new URL(url).pathname, "/api/invites/sps2-code/accept");
+        return new Response(JSON.stringify({ error: "Fixture invitation rejected" }), { status });
+      };
+      await assert.rejects(controller.acceptIdentityInvite("https://host.example.test", "SPS2-code"), error =>
+        error.status === status && error.message === "Fixture invitation rejected");
+    }
+  } finally { globalThis.fetch = previousFetch; }
+});
+
 test("coalesces concurrent token refreshes and persists the rotated account", async () => {
   let refreshCalls = 0;
   let releaseRefresh;

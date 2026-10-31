@@ -16,6 +16,7 @@ function initialStatus(app, message = "Desktop update service is starting.") {
 export function createSpsDesktopUpdateController({
   app,
   isolatedE2e = false,
+  updateQuitEvents = null,
   dialog,
   getMainWindow,
   stopDesktopRuntimeGracefully,
@@ -31,6 +32,33 @@ export function createSpsDesktopUpdateController({
   let suppressInstallFailurePrompt = false;
   let lastPromptedUpdateVersion = null;
   let updateStatus = initialStatus(app);
+  let installAttempt = null;
+  let pendingUpdateQuitAttempt = null;
+  let nativeQuitAttempt = null;
+
+  function failInstallAttempt(attempt) {
+    if (!attempt || attempt.recovered) return;
+    attempt.failed = true;
+    suppressInstallFailurePrompt = true;
+    // A provider error cannot prove the concurrent runtime drain has ended.
+    if (attempt.draining) return;
+    attempt.recovered = true;
+    if (attempt.invoking && pendingUpdateQuitAttempt === attempt) pendingUpdateQuitAttempt = null;
+    if (installAttempt !== attempt) return;
+    if (attempt.ownsShutdown) {
+      setShutdownComplete(false);
+      setQuitting(false);
+      attempt.ownsShutdown = false;
+    }
+    if (updateInstallPromise === attempt.promise) updateInstallPromise = null;
+    installAttempt = null;
+  }
+
+  function consumeFailedUpdateQuit() {
+    const attempt = nativeQuitAttempt;
+    nativeQuitAttempt = null;
+    return attempt?.failed === true;
+  }
 
   const publishStatus = (nextStatus) => {
     updateStatus = { ...nextStatus };
@@ -38,6 +66,7 @@ export function createSpsDesktopUpdateController({
   };
 
   async function initialize() {
+    if (updateService) return getStatus();
     if (!app.isPackaged || isolatedE2e) {
       return publishStatus({
         state: "disabled",
@@ -59,6 +88,13 @@ export function createSpsDesktopUpdateController({
       const autoUpdater = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater;
       if (!autoUpdater) throw new Error("electron-updater did not expose autoUpdater");
       desktopAutoUpdater = autoUpdater;
+      // Recover before the service publishes readiness, without prompting a
+      // second install. The native event identifies only updater-owned quits.
+      autoUpdater.on("error", () => failInstallAttempt(installAttempt));
+      updateQuitEvents?.on("before-quit-for-update", () => {
+        nativeQuitAttempt = pendingUpdateQuitAttempt;
+        pendingUpdateQuitAttempt = null;
+      });
       updateService = createSpsUpdateService({
         app,
         updater: autoUpdater,
@@ -139,32 +175,50 @@ export function createSpsDesktopUpdateController({
     if (updateInstallPromise) return updateInstallPromise;
     const updater = desktopAutoUpdater;
     if (!updater) throw new Error("Desktop updates are unavailable in this SPS installation.");
+    if (pendingUpdateQuitAttempt?.failed) {
+      suppressInstallFailurePrompt = true;
+      throw new Error("SPS is finishing a failed update handoff. Retry when it has settled.");
+    }
 
+    const attempt = { ownsShutdown: false, failed: false, recovered: false, draining: false, invoking: false, promise: null };
+    installAttempt = attempt;
     const installPromise = Promise.resolve().then(async () => {
       // electron-updater launches the NSIS installer before it schedules app.quit().
       // Stop the embedded Owner Host first so the installer never races the
       // asynchronous before-quit shutdown hook.
-      let ownsShutdown = false;
       try {
+        if (attempt.failed || installAttempt !== attempt) throw new Error("Update attempt was superseded.");
         if (!canInstall()) throw new Error("Desktop is already closing.");
-        ownsShutdown = true;
+        attempt.ownsShutdown = true;
         setQuitting(true);
-        await stopDesktopRuntimeGracefully();
+        attempt.draining = true;
+        try { await stopDesktopRuntimeGracefully(); }
+        finally { attempt.draining = false; }
+        if (attempt.failed || installAttempt !== attempt) throw new Error("Update shutdown was superseded.");
         setShutdownComplete(true);
-        updater.quitAndInstall();
+        // NSIS can report immediate handoff failure as an event while its
+        // void quitAndInstall() returns normally. Preserve the retry path.
+        pendingUpdateQuitAttempt = attempt;
+        attempt.invoking = true;
+        try {
+          updater.quitAndInstall();
+          if (attempt.failed) throw new Error("Update handoff failed.");
+        } catch (error) {
+          if (pendingUpdateQuitAttempt === attempt) pendingUpdateQuitAttempt = null;
+          throw error;
+        } finally {
+          attempt.invoking = false;
+        }
       } catch {
         // A failed drain or updater handoff must leave quit/install retryable.
         // Main owns making these setters reversible; no failure detail crosses
         // this boundary because shutdown errors may contain local paths/tokens.
-        if (ownsShutdown) {
-          setShutdownComplete(false);
-          setQuitting(false);
-        }
-        if (updateInstallPromise === installPromise) updateInstallPromise = null;
+        failInstallAttempt(attempt);
         suppressInstallFailurePrompt = true;
         throw new Error("SPS could not close safely for the update. The update remains downloaded; retry Restart and install when ready.");
       }
     });
+    attempt.promise = installPromise;
     updateInstallPromise = installPromise;
     return installPromise;
   }
@@ -185,6 +239,7 @@ export function createSpsDesktopUpdateController({
     },
     getStatus,
     isInstalling: () => updateInstallPromise !== null,
+    consumeFailedUpdateQuit,
     initialize,
     install: async () => {
       const status = await requireService().install();

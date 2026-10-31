@@ -28,7 +28,7 @@ const staticManifest = {
     manifestSha256: sha256(manifestSource),
   },
   capabilities: manifest.capabilities,
-  permissionsDigest: sha256(JSON.stringify(manifest.capabilities)),
+  permissionsDigest: sha256(JSON.stringify([...manifest.capabilities].sort())),
 };
 
 await writeFile(

@@ -406,7 +406,7 @@ export function createSpsDesktopAccountController({
     assertCurrent();
     const payload = await response.json().catch(() => null);
     assertCurrent();
-    if (!response.ok) throw new Error(payload?.error || "SPS Server could not accept this team invitation.");
+    if (!response.ok) throw Object.assign(new Error(payload?.error || "SPS Server could not accept this team invitation."), { status: response.status });
     return payload;
   }
 

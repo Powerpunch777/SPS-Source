@@ -286,6 +286,44 @@ async function loadStages() {
   }
 }
 
+async function loadBundledReviews() {
+  const list = $("#bundled-review-list");
+  list.innerHTML = '<p class="empty-state">Loading restored built-in plugins...</p>';
+  try {
+    const reviews = await window.spsRegistry.listBundledReviews();
+    if (!Array.isArray(reviews)) throw new Error("Invalid bundle review list.");
+    list.innerHTML = reviews.length ? reviews.map(review => `
+      <article class="stage-card"><div>
+        <h2>${escapeHtml(review.pluginId)} <span>v${escapeHtml(review.version)}</span></h2>
+        <p>${escapeHtml(review.packageName)} / Current app copy, not a publisher signature</p>
+        <p>Capabilities: ${escapeHtml(review.capabilities.join(", ") || "No declared capabilities")}</p>
+        <code>${escapeHtml(review.manifestSha256.slice(0, 12))}...</code>
+      </div><button class="primary stage-bundled-review" type="button" data-plugin-id="${escapeHtml(review.pluginId)}">Stage for review</button></article>
+    `).join("") : '<p class="empty-state">No restored built-in plugins await approval.</p>';
+    return true;
+  } catch {
+    renderLoadError("#bundled-review-list", "Could not load restored built-in plugins.");
+    return false;
+  }
+}
+
+$("#refresh-bundled-reviews").addEventListener("click", () => void loadBundledReviews());
+$("#bundled-review-list").addEventListener("click", async event => {
+  const button = event.target.closest(".stage-bundled-review");
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  try {
+    const staged = await window.spsRegistry.stageBundledReview({ pluginId: button.dataset.pluginId });
+    if (!await loadStages()) throw new Error("Could not load the staged package. Refresh the review queue.");
+    await loadBundledReviews();
+    setNotice(staged.reused
+      ? "This exact current app copy is already in the review queue. Review it before enabling."
+      : "Current app copy staged without running code. Review its exact version and capabilities before enabling it.");
+  } catch {
+    setNotice("Could not stage this current app copy. Refresh and try again.", true);
+  } finally { if (button.isConnected) button.disabled = false; }
+});
+
 async function loadSources() {
   const revision = ++sourceListRevision;
   resetCatalog();
@@ -582,6 +620,7 @@ $("#stage-list").addEventListener("click", async (event) => {
       if (loaded) renderStages(registryStages.map((entry) => entry.stageId === stageId ? { ...entry, status: "review_pending" } : entry));
       setNotice("This update is awaiting Host review. Open SPS Workspace > Settings > Plugins to approve or reject it.");
     } else if (enabled.plugin?.status === "ready") {
+      await loadBundledReviews();
       setNotice(`${enabled.plugin.pluginKey ?? "Plugin"} v${enabled.plugin.version ?? ""} is ready.`);
     } else {
       setNotice("Package applied. Check its status in SPS Workspace > Settings > Plugins.");
@@ -688,4 +727,4 @@ $("#developer-project-list").addEventListener("click", async (event) => {
   }
 });
 
-await Promise.allSettled([loadDeveloperProjects(), loadPreviewState(), loadPreviewDiagnostics(), loadSources(), loadStages()]);
+await Promise.allSettled([loadDeveloperProjects(), loadPreviewState(), loadPreviewDiagnostics(), loadSources(), loadStages(), loadBundledReviews()]);

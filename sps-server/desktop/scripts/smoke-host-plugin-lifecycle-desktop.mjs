@@ -229,6 +229,45 @@ async function clickText(cdp, texts, label, { exact = false, scopeText = null } 
   assert.equal(result?.ok, true, `${label} could not be clicked: ${result?.reason || "unknown"}. ${result?.body || result?.text || ""}`);
   return result;
 }
+async function waitForSignInReadiness(cdp, { timeoutMs = 45_000, pollMs = 250 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let state = "loading";
+  while (Date.now() < deadline) {
+    try {
+      state = await cdp.evaluate(`(async () => {
+        const status = await window.spsDesktop.getStatus();
+        const account = status.desktopAccount;
+        if (account?.signedIn === true && account.pending === false) return "signed-in";
+        if (account?.pending === true) return "pending";
+        const button = document.querySelector("#start-sps-account");
+        if (!button) return "loading";
+        const visible = button.getClientRects().length > 0 && !button.closest("[hidden]")
+          && getComputedStyle(button).visibility !== "hidden" && getComputedStyle(button).display !== "none";
+        if (!visible || button.disabled || button.getAttribute("aria-disabled") === "true"
+          || button.getAttribute("aria-busy") === "true") return "loading";
+        const before = button.getBoundingClientRect();
+        await new Promise(requestAnimationFrame);
+        if (!button.isConnected) return "loading";
+        const after = button.getBoundingClientRect();
+        const stable = before.x === after.x && before.y === after.y
+          && before.width === after.width && before.height === after.height;
+        return stable && !button.disabled && button.getAttribute("aria-disabled") !== "true"
+          && button.getAttribute("aria-busy") !== "true" ? "ready" : "loading";
+      })()`, true);
+      if (state === "ready" || state === "signed-in") return state;
+    } catch {
+      state = "loading";
+    }
+    await delay(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+  throw new Error(`Timed out waiting for SPS sign-in readiness (last state: ${state}).`);
+}
+async function startSignInWhenReady(cdp) {
+  const state = await waitForSignInReadiness(cdp);
+  if (state === "signed-in") return state;
+  await clickText(cdp, "#start-sps-account", "SPS sign-in");
+  return "clicked";
+}
 async function waitForPluginManager(cdp) {
   return await waitPage(cdp, (current) =>
     /Plugins|Extensions|SPS Extensions/.test(current.text)
@@ -333,9 +372,11 @@ try {
 
   setup = await cdpFor(await waitTarget(debugPort, child, (entry) => entry.title === "SPS Desktop", "SPS sign-in window"));
   await waitPage(setup, (current) => current.text.includes("SPS"), "SPS sign-in UI");
-  await clickText(setup, ["#start-sps-account", "Sign in", "Continue with Google"], "SPS sign-in");
-  await identity.followAuthorization();
-  await waitPage(setup, () => identityState.signIns > 0, "mock Identity callback", 35000);
+  const signInState = await startSignInWhenReady(setup);
+  if (signInState === "clicked") {
+    await identity.followAuthorization();
+    await waitPage(setup, () => identityState.signIns > 0, "mock Identity callback", 35000);
+  }
   await waitPage(setup, (current) => /Create|Server/.test(current.text), "Owner Host choice");
   await clickText(setup, ["#create-owner-server", "Create Owner Host", "Create Server", "Create"], "Create Owner Host");
 

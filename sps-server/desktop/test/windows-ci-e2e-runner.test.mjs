@@ -69,7 +69,13 @@ test("Windows CI E2E timeout terminates and confirms the job before failing", { 
   await assert.rejects(run("probe-timeout"), failure => {
     assert.equal(failure.code, 124);
     assert.match(failure.stderr, /restricted_e2e_timeout/);
-    assertCleanup(failure.stdout);
+    const output = assertCleanup(failure.stdout);
+    const diagnosticIndex = output.findIndex(record => Object.hasOwn(record, "readOK"));
+    const emptyIndex = output.findIndex(record => record.ownedJobEmpty === true);
+    assert.ok(diagnosticIndex >= 0 && emptyIndex > diagnosticIndex, "Live owned-process evidence must precede forced timeout cleanup");
+    assert.equal(output[diagnosticIndex].readOK, true);
+    assert.ok(output[diagnosticIndex].total > 0);
+    assert.doesNotMatch(JSON.stringify(output[diagnosticIndex]), /[A-Za-z]:[\\/]|\\\\|"(?:pid|processId|commandLine)"/i);
     return true;
   });
 });
@@ -222,18 +228,33 @@ test("Windows CI E2E forwards Node output and exact quoted, trailing-slash and U
 });
 
 test("Desktop execution modes are unavailable outside Windows CI", { skip: process.platform !== "win32" }, async () => {
-  await assert.rejects(exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Mode", "runtime-discovery"], {
-    env: { ...process.env, GITHUB_ACTIONS: "false", RUNNER_OS: "Windows" }, windowsHide: true, timeout: 10_000,
-  }), failure => {
-    assert.match(failure.stderr, /restricted to Windows CI/);
-    assert.doesNotMatch(failure.stdout, /restrictedE2eChild/);
-    return true;
-  });
+  for (const mode of ["runtime-discovery", "owner-vault-transfer", "owner-vault-crash-recovery", "historical-core-migration"]) {
+    await assert.rejects(exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Mode", mode], {
+      env: { ...process.env, GITHUB_ACTIONS: "false", RUNNER_OS: "Windows", RUNNER_ENVIRONMENT: "self-hosted" }, windowsHide: true, timeout: 10_000,
+    }), failure => {
+      assert.match(failure.stderr, /restricted to Windows CI/);
+      assert.doesNotMatch(failure.stdout, /restrictedE2eChild/);
+      return true;
+    });
+  }
+});
+
+test("Owner Vault modes require a GitHub-hosted runner before helper compilation", { skip: process.platform !== "win32" }, async () => {
+  for (const mode of ["owner-vault-transfer", "owner-vault-crash-recovery"]) {
+    await assert.rejects(exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Mode", mode], {
+      env: { ...process.env, GITHUB_ACTIONS: "true", RUNNER_OS: "Windows", RUNNER_ENVIRONMENT: "self-hosted" }, windowsHide: true, timeout: 10_000,
+    }), failure => {
+      assert.match(failure.stderr, /Owner Vault E2E requires a GitHub-hosted runner/);
+      assert.doesNotMatch(failure.stderr, /restricted_e2e_compile_exit/);
+      assert.doesNotMatch(failure.stdout, /restrictedE2eChild/);
+      return true;
+    });
+  }
 });
 
 test("all Owner-Host-dependent Windows CI E2Es including installer use the reduced-token wrapper and guards", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8");
-  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle", "installer-data-preservation"]) {
+  for (const mode of ["runtime-discovery", "native-management", "native-plugin-sdk", "execution-control", "owner-vault-transfer", "owner-vault-crash-recovery", "owner-vault-state-migration", "historical-core-migration", "workspace-surfaces", "plugin-preview", "host-plugin-lifecycle", "installer-current-preservation"]) {
     assert.match(workflow, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
   }
   const source = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
@@ -250,12 +271,17 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
     assert.match(source, new RegExp(`value == "${mode}"`));
   }
   assert.match(source, /if \(mode == "plugin-preview"\) return RunNode\(node, directory, "smoke-plugin-preview-desktop\.mjs", OwnedJobCleanupArgument\);/);
+  assert.match(source, /if \(mode == "owner-vault-transfer"\) return RunNode\(node, directory, "smoke-owner-vault-transfer-desktop\.mjs", OwnedJobCleanupArgument\);/);
+  assert.match(source, /if \(mode == "owner-vault-crash-recovery"\) return RunNode\(node, directory, "smoke-owner-vault-transfer-desktop\.mjs", "--crash-after-promotion", OwnedJobCleanupArgument\);/);
   assert.match(source, /return RunNode\(node, directory, "smoke-host-plugin-lifecycle-desktop\.mjs", OwnedJobCleanupArgument\);/);
   const gateStart = source.indexOf("    static bool OwnedJobGateMode(");
   const gateEnd = source.indexOf("    static int OwnedJobWaitMilliseconds(", gateStart);
   assert.ok(gateStart >= 0 && gateEnd > gateStart);
   assert.match(source.slice(gateStart, gateEnd), /value == "host-plugin-lifecycle"/);
   assert.match(source.slice(gateStart, gateEnd), /value == "installer-data-preservation"/);
+  assert.match(source.slice(gateStart, gateEnd), /value == "owner-vault-transfer"/);
+  assert.match(source.slice(gateStart, gateEnd), /value == "historical-core-migration"/);
+  assert.match(source.slice(gateStart, gateEnd), /value == "owner-vault-crash-recovery"/);
   assert.match(source, /WaitForNaturalJobEmpty\(job, OwnedJobWaitMilliseconds\(mode\)\)/);
   assert.match(source, /const int OwnedProcessDiagnosticLimit = 256;/);
   assert.match(source, /QueryInformationJobObject\(job, 3, buffer/);
@@ -314,8 +340,13 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   assert.doesNotMatch(source, /SANDBOX_INERT|CREATE_BREAKAWAY_FROM_JOB|LogonUser|SetUserObjectSecurity|SetSecurityInfo|net user|New-LocalUser/);
   assert.match(wrapper, /ValidateSet\([^)]*'native-management'/);
   assert.match(wrapper, /ValidateSet\([^)]*'installer-data-preservation'/);
+  assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-transfer'/);
+  assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-crash-recovery'/);
+  assert.match(wrapper, /ValidateSet\([^)]*'owner-vault-state-migration'/);
+  const ownerVaultHostedGuard = wrapper.indexOf("if (($Mode -ceq 'owner-vault-transfer' -or $Mode -ceq 'owner-vault-crash-recovery' -or $Mode -ceq 'owner-vault-state-migration' -or $Mode -ceq 'owner-vault-historical-core') -and");
   const hostedInstallerGuard = wrapper.indexOf("if ($Mode -ceq 'installer-data-preservation' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted')");
   const helperCompile = wrapper.indexOf("$phase = 'compile'");
+  assert.ok(ownerVaultHostedGuard >= 0 && helperCompile > ownerVaultHostedGuard);
   assert.ok(hostedInstallerGuard >= 0 && helperCompile > hostedInstallerGuard);
   assert.match(wrapper, /\$workspaceProbeModes = @\('workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit'\)/);
   assert.match(wrapper, /\$workspaceProbeModes -ccontains \$Mode/);
@@ -328,6 +359,10 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   assert.match(source, /return code == 0 \? unchecked\(\(int\)OwnedJobCleanupPendingExitCode\) : code;/);
   assert.match(source, /if \(mode == "workspace-surfaces"\) return RunNode\(node, directory, "smoke-workspace-surfaces-desktop\.mjs", OwnedJobCleanupArgument\);/);
   assert.match(source, /return RunNode\(node, directory, "smoke-installer-data-preservation\.mjs", OwnedJobCleanupArgument\);/);
+  const ownerVaultCiGuard = source.indexOf('if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery" || mode == "owner-vault-state-migration" || mode == "historical-core-migration" || mode == "owner-vault-historical-core")');
+  const ownerVaultHostedGuardInChild = source.indexOf('Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted"', ownerVaultCiGuard);
+  const ownerVaultTransferDispatch = source.indexOf('if (mode == "owner-vault-transfer")', ownerVaultHostedGuardInChild);
+  assert.ok(ownerVaultCiGuard >= 0 && ownerVaultHostedGuardInChild > ownerVaultCiGuard && ownerVaultTransferDispatch > ownerVaultHostedGuardInChild);
   assert.match(source, /Environment\.GetEnvironmentVariable\("RUNNER_ENVIRONMENT"\) != "github-hosted"/);
   const environmentBlockStart = source.indexOf("    static IntPtr EnvironmentBlock()");
   const runNodeStart = source.indexOf("    static int RunNode(", environmentBlockStart);
@@ -348,7 +383,29 @@ test("all Owner-Host-dependent Windows CI E2Es including installer use the reduc
   assert.ok(installerBuildStep > 0 && installerVerifyStep > installerBuildStep && nodeSigningStep > installerVerifyStep);
   const installerBuildBlock = workflow.slice(installerBuildStep, installerVerifyStep);
   const installerVerifyBlock = workflow.slice(installerVerifyStep, nodeSigningStep);
+  const recoveryJob = workflow.slice(workflow.indexOf("  legacy-installer-recovery:"));
+  assert.match(recoveryJob, /needs: desktop[\s\S]*?installer-operator-upgrade[\s\S]*?installer-operator-reinstall/);
   assert.match(installerBuildBlock, /working-directory: sps-server\/desktop[\s\S]*?run: npx --no-install electron-builder --prepackaged dist\/win-unpacked --win nsis --publish never/);
-  assert.match(installerVerifyBlock, /timeout-minutes: 20[\s\S]*?shell: powershell[\s\S]*?working-directory: sps-server\/desktop[\s\S]*?run: \.\\scripts\\run-windows-ci-e2e\.ps1 -Mode installer-data-preservation/);
+  assert.match(installerVerifyBlock, /timeout-minutes: 20[\s\S]*?shell: powershell[\s\S]*?working-directory: sps-server\/desktop[\s\S]*?run: \.\\scripts\\run-windows-ci-e2e\.ps1 -Mode installer-current-preservation/);
   assert.doesNotMatch(installerBuildBlock + installerVerifyBlock, /(?:^|\n)\s*RUNNER_(?:ENVIRONMENT|OS)\s*:/);
+  const sourceExecutionControlStep = workflow.indexOf("- name: Verify Workspace execution control across Desktop restart");
+  const sourceExecutionControlEnd = workflow.indexOf("- name: Build unpacked Windows Desktop for E2E", sourceExecutionControlStep);
+  assert.ok(sourceExecutionControlStep >= 0 && sourceExecutionControlEnd > sourceExecutionControlStep);
+  const ownerVaultSteps = workflow.slice(sourceExecutionControlStep, sourceExecutionControlEnd);
+  const ownerVaultTransferStep = ownerVaultSteps.indexOf("- name: Verify Owner Vault transfer through source Desktop Main");
+  const ownerVaultCrashStep = ownerVaultSteps.indexOf("- name: Verify Owner Vault crash recovery through source Desktop Main");
+  const ownerVaultMigrationStep = ownerVaultSteps.indexOf("- name: Verify legacy Desktop state migration through source Main");
+  assert.ok(ownerVaultTransferStep > 0 && ownerVaultCrashStep > ownerVaultTransferStep);
+  assert.ok(ownerVaultMigrationStep > ownerVaultCrashStep);
+  assert.match(source, /if \(mode == "owner-vault-state-migration"\) return RunNode\(node, directory, "smoke-owner-vault-transfer-desktop\.mjs", "--legacy-desktop-state", OwnedJobCleanupArgument\);/);
+  for (const [step, mode] of [[ownerVaultTransferStep, "owner-vault-transfer"], [ownerVaultCrashStep, "owner-vault-crash-recovery"], [ownerVaultMigrationStep, "owner-vault-state-migration"]]) {
+    const nextStep = ownerVaultSteps.indexOf("\n      - name:", step + 1);
+    const block = ownerVaultSteps.slice(step, nextStep < 0 ? undefined : nextStep);
+    assert.match(block, /timeout-minutes: 20/);
+    assert.match(block, /shell: powershell/);
+    assert.match(block, /working-directory: sps-server\/desktop/);
+    assert.match(block, /SPS_DESKTOP_E2E_SOURCE: "1"/);
+    assert.match(block, /SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS: "360000"/);
+    assert.match(block, new RegExp(`run: \\.\\\\scripts\\\\run-windows-ci-e2e\\.ps1 -Mode ${mode}`));
+  }
 });

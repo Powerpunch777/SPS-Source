@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("spsRegistry", {
   listSources: () => ipcRenderer.invoke("desktop:registry-list-sources"),
+  listBundledReviews: () => ipcRenderer.invoke("desktop:registry-list-bundled-reviews"),
+  stageBundledReview: (input) => ipcRenderer.invoke("desktop:registry-stage-bundled-review", input),
   chooseLocalSource: () => ipcRenderer.invoke("desktop:registry-choose-local-source"),
   addSource: (input) => ipcRenderer.invoke("desktop:registry-add-source", input),
   removeSource: (input) => ipcRenderer.invoke("desktop:registry-remove-source", input),
