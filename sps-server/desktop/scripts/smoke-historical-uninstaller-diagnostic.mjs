@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { lstat, mkdir, mkdtemp, copyFile, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, copyFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,9 +19,14 @@ const pathVariant = process.env.SPS_INSTALLER_DIAGNOSTIC_PATH_VARIANT;
 assert.ok(pathVariant === undefined || pathVariant === "compact-control", "Unknown historical diagnostic path variant.");
 const compactControl = pathVariant === "compact-control";
 const recoveryVariant = process.env.SPS_INSTALLER_DIAGNOSTIC_RECOVERY;
-assert.ok(recoveryVariant === undefined || recoveryVariant === "standard-uninstall", "Unknown historical recovery diagnostic.");
-const standardRecovery = recoveryVariant === "standard-uninstall";
+assert.ok(recoveryVariant === undefined || recoveryVariant === "standard-uninstall-prepare"
+  || recoveryVariant === "standard-uninstall-complete", "Unknown historical recovery diagnostic.");
+const standardRecovery = recoveryVariant !== undefined;
 assert.equal(standardRecovery && compactControl, false, "Recovery must retain the original installed path.");
+if (standardRecovery) {
+  const { runHistoricalStandardRecoveryStage } = await import("./historical-standard-recovery-stages.mjs");
+  process.exit(await runHistoricalStandardRecoveryStage(recoveryVariant));
+}
 const manifest = JSON.parse(await readFile(path.join(desktop, "package.json"), "utf8"));
 assert.equal(manifest.build.productName, "SPS Desktop");
 assert.equal(manifest.name, "@sps/desktop");
@@ -107,50 +111,6 @@ try {
   await verifyFixture();
   trace("historical-download-verified");
 
-  const retained = [];
-  async function retainFile(file) {
-    const bytes = randomBytes(128);
-    await mkdir(path.dirname(file), { recursive: true });
-    await assertPlainDirectory(path.dirname(file));
-    await writeFile(file, bytes, { flag: "wx" });
-    retained.push({ file, sha256: createHash("sha256").update(bytes).digest("hex") });
-  }
-  async function verifyRetainedData() {
-    for (const item of retained) {
-      await assertPlainDirectory(path.dirname(item.file));
-      const details = await lstat(item.file);
-      assert.equal(details.isFile() && !details.isSymbolicLink() && details.nlink === 1 && details.size === 128, true);
-      assert.equal(createHash("sha256").update(await readFile(item.file)).digest("hex"), item.sha256,
-        "The historical uninstaller changed retained fixture data.");
-    }
-    if (standardRecovery) trace("standard-recovery-data-verified", { userRecords: 9, projectRecords: 1 });
-  }
-  if (standardRecovery) {
-    phase = "recovery-sentinels";
-    await verifyFixture();
-    for (const alias of dataAliases) {
-      assert.equal(await missing(alias), true);
-      const parent = path.dirname(alias);
-      if (parent !== appData && await missing(parent)) {
-        assert.equal(path.dirname(parent), appData);
-        await mkdir(parent);
-      }
-      await assertPlainDirectory(parent);
-      await mkdir(alias);
-      await assertPlainDirectory(alias);
-      for (const relative of ["sps-desktop-state.json", "workspaces/retained/data.bin", "secrets/retained-opaque-record.bin"]) {
-        const file = path.join(alias, relative);
-        assertContained(alias, file);
-        await retainFile(file);
-      }
-    }
-    const project = path.join(fixture, "retained-project", "source.txt");
-    assertContained(fixture, project);
-    await retainFile(project);
-    assert.equal(retained.length, 10);
-    await verifyRetainedData();
-  }
-
   phase = "historical-install";
   await verifyFixture();
   await assertPlainDirectory(installation);
@@ -169,7 +129,6 @@ try {
   assert.equal(installResult.signal, null);
   assert.equal(installResult.code, 0);
   await assertNoSpsProcess();
-  await verifyRetainedData();
 
   phase = "historical-install-check";
   await verifyFixture();
@@ -205,7 +164,7 @@ try {
   assert.equal(copiedDetails.isFile() && !copiedDetails.isSymbolicLink() && copiedDetails.nlink === 1n && copiedDetails.size > 0n, true);
   await assertNoSpsProcess();
   const baseInvocation = nsisInvocation(copiedUninstaller, installation, { uninstall: true });
-  const invocation = standardRecovery ? baseInvocation : {
+  const invocation = {
     ...baseInvocation,
     args: ["/S", "/KEEP_APP_DATA", "/currentuser", "--updated", baseInvocation.args.at(-1)],
   };
@@ -224,19 +183,14 @@ try {
   }
   assert.equal(uninstallResult.signal, null);
   assert.equal(uninstallResult.code, 0);
-  await verifyRetainedData();
 
   phase = "post-uninstall-check";
   assert.deepEqual(await registrations(), []);
   assert.equal(await missing(path.join(installation, "resources/app.asar")), true);
-  if (standardRecovery) assert.equal(await missing(installation), true, "Ordinary recovery uninstall left program files behind.");
   await assertNoSpsProcess();
   console.log(JSON.stringify({ diagnosticOnly: true, applicationLaunched: false,
     candidateUpgradeQualified: false, previousStableUpgradeQualified: false,
     longPathQualified: false, pathVariant: compactControl ? "compact-control" : "original",
-    historicalStandardUninstallDataPreservationQualified: standardRecovery,
-    operatorReinstallRecoveryQualified: false,
-    ...(standardRecovery ? { retainedUserRecords: 9, retainedProjectRecords: 1 } : {}),
     historicalVersion: HISTORICAL_INSTALLER_BASELINE.version, cleanupQualification: "pending" }));
   process.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE;
 } catch (error) {

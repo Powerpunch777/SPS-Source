@@ -1,48 +1,65 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { runInNewContext } from "node:vm";
+import { promisify } from "node:util";
 import test from "node:test";
-import { nsisInvocation } from "../scripts/installer-ci-safety.mjs";
+import { parseHistoricalRecoveryCheckpoint } from "../scripts/historical-standard-recovery-stages.mjs";
 
-const source = await readFile(new URL("../scripts/smoke-historical-uninstaller-diagnostic.mjs", import.meta.url), "utf8");
+const now = Date.now();
+const checkpoint = () => ({ version: 1, createdAt: now,
+  fixtureName: "sps-installer-data-uninstaller-diagnostic-aB12Cd", fixtureIdentity: "12:34:56",
+  installerSha256: "d65da55e0e326e65ed0b9b5c21a015b1d8cc2c79bfea589626a50288b00e0c56",
+  uninstallerSha256: "a".repeat(64), asarSha256: "b".repeat(64), retained: Array(10).fill("c".repeat(64)) });
+const encode = value => `${JSON.stringify(value)}\n`;
 
-test("ordinary legacy recovery uses the standard uninstaller without changing the automatic diagnostic", () => {
-  const start = source.indexOf("const baseInvocation = nsisInvocation(");
-  const end = source.indexOf("const uninstallStarted =", start);
-  assert.ok(start >= 0 && end > start);
-  const executable = "C:\\owned fixture\\old uninstaller.exe";
-  const installation = "C:\\owned fixture\\SPS Desktop";
-  for (const standardRecovery of [false, true]) {
-    const result = runInNewContext(`${source.slice(start, end)}\ninvocation;`, {
-      nsisInvocation, copiedUninstaller: executable, installation, standardRecovery,
-    });
-    assert.equal(result.executable, executable);
-    assert.deepEqual([...result.args], standardRecovery
-      ? ["/S", "/currentuser", `_?=${installation}`]
-      : ["/S", "/KEEP_APP_DATA", "/currentuser", "--updated", `_?=${installation}`]);
-    assert.equal(result.options.shell, false);
-    assert.equal(result.options.windowsVerbatimArguments, true);
+test("checkpoint is exact, time-bound, pinned and contains no configurable absolute paths", () => {
+  const value = checkpoint();
+  assert.deepEqual(parseHistoricalRecoveryCheckpoint(encode(value), now), value);
+  for (const changes of [{ version: 2 }, { createdAt: now + 1 }, { createdAt: now - 30 * 60_000 - 1 },
+    { fixtureName: "../outside" }, { fixtureName: "C:\\outside" }, { fixtureIdentity: "12:-34:56" },
+    { installerSha256: "d".repeat(64) }, { uninstallerSha256: "invalid" }, { asarSha256: "A".repeat(64) },
+    { retained: [] }, { retained: Array(10).fill(null) }, { extra: true }]) {
+    assert.throws(() => parseHistoricalRecoveryCheckpoint(encode({ ...value, ...changes }), now),
+      { message: "Historical recovery checkpoint is invalid." });
+  }
+  for (const raw of [JSON.stringify(value), JSON.stringify(value, null, 2), `${encode(value)}\n`,
+    `{"version":2,${JSON.stringify(value).slice(1)}\n`, "x".repeat(4097), "null", "[]"]) {
+    assert.throws(() => parseHistoricalRecoveryCheckpoint(raw, now));
   }
 });
 
-test("recovery refuses combined shortened paths and proves all inert retained bytes and full program removal", () => {
+test("stages preserve original path, ordinary flags, exact bytes and separately pending Job evidence", async () => {
+  const source = await readFile(new URL("../scripts/historical-standard-recovery-stages.mjs", import.meta.url), "utf8");
   const guard = source.indexOf("assertHostedInstallerCi();");
-  const mode = source.indexOf("const recoveryVariant = process.env.SPS_INSTALLER_DIAGNOSTIC_RECOVERY;");
-  const data = source.indexOf("const appData =");
-  assert.ok(guard >= 0 && mode > guard && data > mode);
-  assert.match(source, /recoveryVariant === undefined \|\| recoveryVariant === "standard-uninstall"/);
-  assert.match(source, /assert\.equal\(standardRecovery && compactControl, false/);
-  assert.match(source, /assert\.equal\(retained\.length, 10\)/);
-  assert.match(source, /details\.isFile\(\) && !details\.isSymbolicLink\(\) && details\.nlink === 1 && details\.size === 128/);
-  assert.match(source, /createHash\("sha256"\)\.update\(await readFile\(item\.file\)\)\.digest\("hex"\), item\.sha256/);
-  const uninstall = source.indexOf('trace("historical-uninstall-start")');
-  const exit = source.indexOf("assert.equal(uninstallResult.code, 0)", uninstall);
-  const retained = source.indexOf("await verifyRetainedData()", exit);
-  const removed = source.indexOf("assert.equal(await missing(installation), true", retained);
-  const qualified = source.indexOf("historicalStandardUninstallDataPreservationQualified: standardRecovery", removed);
-  assert.ok(uninstall >= 0 && exit > uninstall && retained > exit && removed > retained && qualified > removed);
-  assert.match(source, /operatorReinstallRecoveryQualified: false/);
-  assert.match(source, /candidateUpgradeQualified: false, previousStableUpgradeQualified: false/);
-  assert.match(source, /process\.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
-  assert.doesNotMatch(source, /taskkill|Stop-Process|unlink\(|\brm\(/);
+  const temp = source.indexOf("const temporaryRoot =");
+  assert.ok(guard >= 0 && temp > guard);
+  assert.match(source, /mkdtemp\(path\.join\(temporaryRoot, "sps-installer-data-uninstaller-diagnostic-"\)\)/);
+  assert.match(source, /const installation = path\.join\(fixture, "SPS Desktop"\)/);
+  assert.match(source, /assert\.equal\(await identity\(fixture\), checkpoint\.fixtureIdentity\)/);
+  assert.match(source, /assert\.equal\(await hash\(uninstaller\), checkpoint\.uninstallerSha256\)/);
+  assert.match(source, /assert\.equal\(await hash\(asar\), checkpoint\.asarSha256\)/);
+  assert.match(source, /await writeFile\(checkpointPath, encoded, \{ flag: "wx", mode: 0o600 \}\)/);
+  assert.match(source, /await run\(nsisInvocation\(copied, installation, \{ uninstall: true \}\)\)/);
+  assert.doesNotMatch(source, /--updated|KEEP_APP_DATA|delete-app-data|Stop-Process|taskkill|\brm\(/);
+  assert.match(source, /assert\.equal\(result\.signal, null\)/);
+  assert.match(source, /assert\.equal\(result\.code, 0\)/);
+  assert.match(source, /assert\.equal\(await missing\(installation\), true\)/);
+  assert.match(source, /historicalStandardUninstallDataPreservationQualified: true, candidateUpgradeQualified: false/);
+  assert.match(source, /operatorReinstallRecoveryQualified: false, previousStableUpgradeQualified: false/);
+  assert.match(source, /return OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
+});
+
+test("stage entry rejects real local invocation before checkpoint, profile or process access", async () => {
+  const script = new URL("../scripts/historical-standard-recovery-stages.mjs", import.meta.url).href;
+  for (const stage of ["standard-uninstall-prepare", "standard-uninstall-complete"]) {
+    await assert.rejects(promisify(execFile)(process.execPath, ["--input-type=module", "-e",
+      `const {runHistoricalStandardRecoveryStage}=await import(${JSON.stringify(script)}); await runHistoricalStandardRecoveryStage(${JSON.stringify(stage)});`], {
+      env: { ...process.env, GITHUB_ACTIONS: "false", RUNNER_OS: "", RUNNER_ENVIRONMENT: "" },
+      windowsHide: true, timeout: 10_000, maxBuffer: 32_768,
+    }), error => {
+      assert.equal(error.stdout, "");
+      assert.match(error.stderr, /Installer data preservation requires the owned GitHub-hosted Windows CI launcher/);
+      return true;
+    });
+  }
 });

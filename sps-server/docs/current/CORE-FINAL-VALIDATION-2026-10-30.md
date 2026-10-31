@@ -41,6 +41,16 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Source397c014 standard recovery prerequisite41159578592/job124413905847
+  failed480s after old installation0 took409347ms; ordinary uninstall had only
+  about61s, with a policy child still pending. Forced cleanup124 is rejected,
+  not preservation or recovery success. A separate two-step same-VM prerequisite
+  now fences prepare/complete via a bounded private canonical checkpoint and
+  each step's natural owned-Job closure. Each child remains8min/step10min;
+  the new recovery job is explicitly20min, original diagnostic/full installer
+  gates remain8/18min. Full local Desktop1724total/1722pass/two environment skips/
+  zero failures; focused13/13. Actual new hosted results and complete candidate
+  reinstall remain pending; see the [recovery policy](LEGACY-INSTALLER-RECOVERY-POLICY-2026-10-31.md).
 - Follow-up adds complete bounded old-program snapshot comparison on failed
   replacement; an unchanged tree/data/registration is required before reporting
   preservation, and the failure is still rethrown. Restored bytes are not inferred

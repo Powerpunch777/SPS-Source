@@ -13,6 +13,8 @@ on:
       - sps-server/desktop/scripts/windows-e2e/probe-installer-command-exit.mjs
       - sps-server/desktop/test/installer-command-exit-observation.test.mjs
       - sps-server/desktop/scripts/smoke-historical-uninstaller-diagnostic.mjs
+      - sps-server/desktop/scripts/historical-standard-recovery-stages.mjs
+      - sps-server/desktop/test/historical-standard-recovery.test.mjs
       - sps-server/desktop/test/historical-uninstaller-diagnostic.test.mjs
       - sps-server/desktop/test/historical-uninstaller-compact-control.test.mjs
       - sps-server/desktop/test/historical-standard-recovery-wiring.test.mjs
@@ -57,16 +59,22 @@ jobs:
   historical-standard-recovery:
     name: User-guided historical standard uninstall recovery only
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           package-manager-cache: false
-      - name: Diagnose the fixed withdrawn installer with standard uninstall semantics
+      - name: Prepare same-VM standard uninstall recovery
         shell: powershell
         working-directory: sps-server/desktop
+        timeout-minutes: 10
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-standard-recovery-prepare
+      - name: Complete same-VM standard uninstall recovery
+        shell: powershell
+        working-directory: sps-server/desktop
+        timeout-minutes: 10
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-standard-recovery
 
   owned-command-classification:

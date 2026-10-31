@@ -269,14 +269,14 @@ public static class RestrictedE2eRunner
             || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
-            || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "historical-uninstaller-diagnostic" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery"
+            || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "historical-uninstaller-diagnostic" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery"
             || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core";
     }
     static bool OwnedJobGateMode(string value)
     {
         return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "historical-uninstaller-diagnostic" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core"
-            || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery" || value == "probe-installer-command-exit" || value == "probe-preview-pending"
+            || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery" || value == "probe-installer-command-exit" || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "workspace-pending"
             || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit";
@@ -416,13 +416,14 @@ public static class RestrictedE2eRunner
             Environment.SetEnvironmentVariable("SPS_INSTALLER_DIAGNOSTIC_PATH_VARIANT", "compact-control");
             return RunNode(node, directory, "smoke-historical-uninstaller-diagnostic.mjs", OwnedJobCleanupArgument);
         }
-        if (mode == "historical-standard-recovery")
+        if (mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery")
         {
             if (Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") != "github-hosted")
                 throw new InvalidOperationException("Historical standard recovery requires a GitHub-hosted runner");
             Environment.SetEnvironmentVariable("SPS_INSTALLER_REGISTRY_QUERY_HELPER",
                 System.Reflection.Assembly.GetExecutingAssembly().Location);
-            Environment.SetEnvironmentVariable("SPS_INSTALLER_DIAGNOSTIC_RECOVERY", "standard-uninstall");
+            Environment.SetEnvironmentVariable("SPS_INSTALLER_DIAGNOSTIC_RECOVERY",
+                mode == "historical-standard-recovery-prepare" ? "standard-uninstall-prepare" : "standard-uninstall-complete");
             return RunNode(node, directory, "smoke-historical-uninstaller-diagnostic.mjs", OwnedJobCleanupArgument);
         }
         if ((mode == "owner-vault-transfer" || mode == "owner-vault-crash-recovery" || mode == "owner-vault-state-migration" || mode == "historical-core-migration" || mode == "owner-vault-historical-core")
@@ -975,8 +976,8 @@ public static class RestrictedE2eRunner
             Require(AssignProcessToJobObject(job, child.Process), "Assign suspended child to cleanup job"); assigned = true;
             Require(ResumeThread(child.Thread) != 0xFFFFFFFF, "Resume E2E child");
             stage = "child_wait";
-            uint timeout = mode == "probe-timeout" ? 1500u : mode == "probe-installer-dialog" || mode == "probe-installer-command" ? 4000u : mode == "probe-installer-processes" ? 45u * 1000u : mode == "probe-installer-command-exit" ? 45u * 1000u : mode.StartsWith("probe-installer-cim-", StringComparison.Ordinal) ? 90u * 1000u : mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery" ? 8u * 60u * 1000u : mode == "historical-uninstaller-diagnostic" ? 8u * 60u * 1000u : 18u * 60u * 1000u;
-            uint wait = mode == "installer-data-preservation" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery" || mode == "probe-installer-command-exit"
+            uint timeout = mode == "probe-timeout" ? 1500u : mode == "probe-installer-dialog" || mode == "probe-installer-command" ? 4000u : mode == "probe-installer-processes" ? 45u * 1000u : mode == "probe-installer-command-exit" ? 45u * 1000u : mode.StartsWith("probe-installer-cim-", StringComparison.Ordinal) ? 90u * 1000u : mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" ? 8u * 60u * 1000u : mode == "historical-uninstaller-diagnostic" ? 8u * 60u * 1000u : 18u * 60u * 1000u;
+            uint wait = mode == "installer-data-preservation" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" || mode == "probe-installer-command-exit"
                 ? WaitWithOwnedCommandObservations(job, child.Process, timeout)
                 : WaitForSingleObject(child.Process, timeout);
             if (wait == 258)
@@ -984,9 +985,9 @@ public static class RestrictedE2eRunner
                 // Inspect only this Job before its timeout cleanup destroys the
                 // installer/uninstaller relationship. Counts and sanitized image
                 // names are diagnostic, never permission to accept a timeout.
-                if (mode == "installer-data-preservation" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery" || mode == "probe-timeout" || mode == "probe-installer-command")
+                if (mode == "installer-data-preservation" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" || mode == "probe-timeout" || mode == "probe-installer-command")
                     WriteOwnedJobProcessDiagnostics(job, 0);
-                if (mode == "installer-data-preservation" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery" || mode == "probe-installer-dialog")
+                if (mode == "installer-data-preservation" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" || mode == "probe-installer-dialog")
                     InstallerWindowDiagnostics.Write(job, desktop);
                 Require(TerminateJobObject(job, 124), "Terminate timed-out E2E job");
                 cleanupWasForced = true;
