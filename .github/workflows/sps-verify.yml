@@ -391,7 +391,7 @@ jobs:
 
       - name: Test SPS Desktop invite and update flow
         working-directory: sps-server/desktop
-        run: npm test
+        run: npm run test:ci
 
       - name: Run isolated Desktop bootstrap E2E
         working-directory: sps-server/desktop

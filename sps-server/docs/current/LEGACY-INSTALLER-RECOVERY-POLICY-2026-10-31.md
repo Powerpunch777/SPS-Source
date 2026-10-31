@@ -60,8 +60,16 @@ desktop, owned Job and natural-cleanup requirement remain intact. This is only
 the ordinary-uninstall prerequisite, explicitly not a completed reinstall or
 automatic-upgrade proof. Hosted execution is still pending.
 
-Focused installer/safety/recovery contracts20/20 and full local Desktop1713total/
-1711pass/two unavailable-8.3-alias skips/zero failures passed. The complete
+The historical replacement test now captures a bounded complete program-tree
+content digest before the attempt. On error it requires the same canonical root
+identity, names, regular-file bytes, empty directories, historical registration
+and all user sentinels before reporting preservation; it then rethrows the
+original failure. Links/hardlinks, filesystem races, incomplete inventories or
+exceeded bounds fail rather than qualify. There is still no automatic recovery.
+
+Focused installer/safety/recovery contracts20/20, snapshot/flow9/9 and full local
+Desktop1723total/1721pass/two unavailable-8.3-alias skips/zero failures passed.
+The complete
 separate recovery flow, retained-installation hash proof and actual hosted
 recovery outcome are not yet qualified. No installed local app/profile was used.
 Merely approving this policy or compiling guidance is not release evidence.

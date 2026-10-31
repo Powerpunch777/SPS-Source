@@ -12,6 +12,7 @@ import { queryInstallerRegistrations } from "./installer-registry-query.mjs";
 import { queryInstallerProcesses } from "./installer-process-query.mjs";
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./historical-installer-baseline.mjs";
+import { captureInstallerSnapshot, assertInstallerSnapshot } from "./installer-retained-snapshot.mjs";
 
 // Fail before even reading a profile, creating a fixture, or querying registry.
 assertHostedInstallerCi();
@@ -203,9 +204,23 @@ try {
   traceInstallerStage("begin");
   await runNsis(historicalInstaller);
   await checkHistoricalInstallation();
+  const historicalSnapshot = await captureInstallerSnapshot(installation);
   phase = "historical-version-upgrade";
   traceInstallerStage("begin");
-  await runNsis(installer);
+  try {
+    await runNsis(installer);
+  } catch (error) {
+    // Preservation evidence never converts a failed replacement into success.
+    await assertNoDesktopProcess();
+    await checkRetainedData();
+    await checkHistoricalInstallation();
+    await assertInstallerSnapshot(installation, historicalSnapshot);
+    traceInstallerStage("failed-replacement-preserved-historical-installation", {
+      retainedRecords: sentinels.length, installationTreeSha256: historicalSnapshot.sha256,
+      automaticUpgradeQualified: false, operatorRecoveryStarted: false,
+    });
+    throw error;
+  }
   await checkInstalledPackage();
   await checkInstalledFirstFrame();
   phase = "in-place-reinstall";

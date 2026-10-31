@@ -41,6 +41,15 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Follow-up adds complete bounded old-program snapshot comparison on failed
+  replacement; an unchanged tree/data/registration is required before reporting
+  preservation, and the failure is still rethrown. Restored bytes are not inferred
+  from counts alone. Host-plugin acceptance now waits for the actual enabled
+  sign-in control before one click; source functional lifecycle and local cleanup
+  passed, but its standalone pending-Job exit is not an overall E2E pass. Exact
+  full local Desktop at concurrency4:1723total/1721pass/two environment skips/
+  zero failures; no native deadline changed. See the
+  [fixture verification](../reviews/HOST-PLUGIN-SIGN-IN-READINESS-2026-10-31.md).
 - User decision2026-10-31 permits explicitly user-guided, data-preserving
   reinstall recovery for withdrawn0.4.86 after automatic replacement failure.
   Failure stays nonzero and no fallback/deletion starts automatically. Supported

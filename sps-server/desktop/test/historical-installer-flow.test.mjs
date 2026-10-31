@@ -75,3 +75,20 @@ test("current package replacement is independently measured before the withdrawn
   assert.match(source, /currentPackageReplacementQualified: true/);
   assert.match(source, /historicalInstallerUpgradeQualified: true/);
 });
+
+test("failed automatic replacement requires complete historical bytes and user data, then still fails", async () => {
+  const source = await readFile(new URL("../scripts/smoke-installer-data-preservation.mjs", import.meta.url), "utf8");
+  const oldCheck = source.indexOf("await checkHistoricalInstallation();");
+  const snapshot = source.indexOf("await captureInstallerSnapshot(installation)", oldCheck);
+  const upgrade = source.indexOf('phase = "historical-version-upgrade"', snapshot);
+  const catchStart = source.indexOf("} catch (error) {", upgrade);
+  const rethrow = source.indexOf("throw error;", catchStart);
+  assert.ok(oldCheck >= 0 && snapshot > oldCheck && upgrade > snapshot && catchStart > upgrade && rethrow > catchStart);
+  const failed = source.slice(catchStart, rethrow);
+  assert.match(failed, /await assertNoDesktopProcess\(\)/);
+  assert.match(failed, /await checkRetainedData\(\)/);
+  assert.match(failed, /await checkHistoricalInstallation\(\)/);
+  assert.match(failed, /await assertInstallerSnapshot\(installation, historicalSnapshot\)/);
+  assert.match(failed, /automaticUpgradeQualified: false, operatorRecoveryStarted: false/);
+  assert.doesNotMatch(failed, /uninstallOwnedCandidate|runNsis\(|rm\(|writeFile\(|copyFile\(/);
+});
