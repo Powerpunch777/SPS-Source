@@ -15,6 +15,9 @@ import { collectInstallerPathCensus } from "./installer-path-census.mjs";
 assertHostedInstallerCi();
 
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const pathVariant = process.env.SPS_INSTALLER_DIAGNOSTIC_PATH_VARIANT;
+assert.ok(pathVariant === undefined || pathVariant === "compact-control", "Unknown historical diagnostic path variant.");
+const compactControl = pathVariant === "compact-control";
 const manifest = JSON.parse(await readFile(path.join(desktop, "package.json"), "utf8"));
 assert.equal(manifest.build.productName, "SPS Desktop");
 assert.equal(manifest.name, "@sps/desktop");
@@ -69,7 +72,9 @@ try {
 
   phase = "fixture-create";
   const temporaryRoot = await assertPlainDirectory(os.tmpdir());
-  const fixture = await mkdtemp(path.join(temporaryRoot, "sps-installer-data-uninstaller-diagnostic-"));
+  const fixture = compactControl
+    ? await mkdtemp(path.join(temporaryRoot, "sps-installer-data-"))
+    : await mkdtemp(path.join(temporaryRoot, "sps-installer-data-uninstaller-diagnostic-"));
   assertContained(temporaryRoot, fixture);
   const canonicalFixture = await assertPlainDirectory(fixture);
   assert.equal(canonicalFixture.toLowerCase(), path.resolve(fixture).toLowerCase());
@@ -85,7 +90,7 @@ try {
     assert.equal([details.dev, details.ino, details.birthtimeNs].join(":"), fixtureIdentity);
   }
 
-  const installation = path.join(fixture, "SPS Desktop");
+  const installation = path.join(fixture, compactControl ? "SPS" : "SPS Desktop");
   assertContained(fixture, installation);
   await verifyFixture();
   await mkdir(installation);
@@ -134,7 +139,13 @@ try {
   }
 
   phase = "historical-uninstall";
-  trace("pre-uninstall-path-census", await collectInstallerPathCensus(installation));
+  const preUninstallCensus = await collectInstallerPathCensus(installation);
+  trace("pre-uninstall-path-census", { ...preUninstallCensus,
+    pathVariant: compactControl ? "compact-control" : "original" });
+  if (compactControl) {
+    assert.equal(preUninstallCensus.complete, true, "Compact control requires a complete installed-file census.");
+    assert.equal(preUninstallCensus.over259Paths, 0, "Compact control still contains paths beyond the comparison bound.");
+  }
   const copiedUninstaller = path.join(fixture, "owned-historical-uninstaller.exe");
   assertContained(fixture, copiedUninstaller);
   await verifyFixture();
@@ -170,6 +181,7 @@ try {
   await assertNoSpsProcess();
   console.log(JSON.stringify({ diagnosticOnly: true, applicationLaunched: false,
     candidateUpgradeQualified: false, previousStableUpgradeQualified: false,
+    longPathQualified: false, pathVariant: compactControl ? "compact-control" : "original",
     historicalVersion: HISTORICAL_INSTALLER_BASELINE.version, cleanupQualification: "pending" }));
   process.exitCode = OWNED_JOB_CLEANUP_PENDING_EXIT_CODE;
 } catch (error) {

@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('probe', 'probe-registry', 'probe-installer-processes', 'probe-installer-dialog', 'probe-installer-command', 'probe-installer-command-exit', 'probe-installer-cim-startup', 'probe-installer-cim-legacy', 'probe-installer-cim-current', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation', 'historical-uninstaller-diagnostic', 'owner-vault-transfer', 'owner-vault-crash-recovery', 'owner-vault-state-migration', 'historical-core-migration', 'owner-vault-historical-core')]
+  [ValidateSet('probe', 'probe-registry', 'probe-installer-processes', 'probe-installer-dialog', 'probe-installer-command', 'probe-installer-command-exit', 'probe-installer-cim-startup', 'probe-installer-cim-legacy', 'probe-installer-cim-current', 'probe-exit', 'probe-native-exit', 'probe-timeout', 'probe-descendant', 'probe-node', 'probe-preview-pending', 'probe-preview-pending-descendant', 'probe-preview-failure-descendant', 'probe-preview-zeroexit', 'workspace-pending', 'workspace-pending-descendant', 'workspace-failure-descendant', 'workspace-zeroexit', 'probe-exit-76', 'runtime-discovery', 'native-management', 'native-plugin-sdk', 'execution-control', 'workspace-surfaces', 'plugin-preview', 'host-plugin-lifecycle', 'installer-data-preservation', 'historical-uninstaller-diagnostic', 'historical-uninstaller-compact-control', 'owner-vault-transfer', 'owner-vault-crash-recovery', 'owner-vault-state-migration', 'historical-core-migration', 'owner-vault-historical-core')]
   [string] $Mode
 )
 
@@ -18,6 +18,9 @@ if ($Mode -ceq 'installer-data-preservation' -and $env:RUNNER_ENVIRONMENT -cne '
 }
 if ($Mode -ceq 'historical-uninstaller-diagnostic' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
   throw 'Historical uninstaller diagnostics require a GitHub-hosted runner.'
+}
+if ($Mode -ceq 'historical-uninstaller-compact-control' -and $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
+  throw 'Historical uninstaller compact control requires a GitHub-hosted runner.'
 }
 if (($Mode -ceq 'owner-vault-transfer' -or $Mode -ceq 'owner-vault-crash-recovery' -or $Mode -ceq 'owner-vault-state-migration' -or $Mode -ceq 'owner-vault-historical-core') -and
     $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {

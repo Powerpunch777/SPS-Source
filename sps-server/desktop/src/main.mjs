@@ -286,6 +286,7 @@ const opensCoreSettingsOnLaunch = process.argv.includes("--sps-core-settings");
 let mainWindow = null;
 let ownerCreationInProgress = false;
 let workspaceWindow = null;
+let workspaceOpenTraceSequence = 0;
 let registryWindow = null;
 let registryDeveloperContext = null;
 let pluginPreviewWindow = null;
@@ -4877,6 +4878,14 @@ async function showOfficialExtensionsWindow() {
 }
 
 async function openWorkspace() {
+  // Fixed phase names help isolated acceptance locate a hang without logging
+  // account, URL, cookie, source or runtime data. No production tracing.
+  const operation = process.env.SPS_DESKTOP_E2E === "1"
+    ? (workspaceOpenTraceSequence = workspaceOpenTraceSequence % 65535 + 1) : 0;
+  const trace = phase => {
+    if (operation) console.error(`[workspace-open] operation=${operation},phase=${phase}`);
+  };
+  trace("begin");
   if (!currentDesktopAccount()) throw new Error("Sign in to SPS before opening SPS Workspace.");
   if (!state.profile) throw new Error("Save an SPS team connection first");
   if (isOwnerHostProfile() && !currentAccountOwnsOwnerHost()) {
@@ -4891,16 +4900,21 @@ async function openWorkspace() {
   // Every SPS Desktop Host and Member has a signed-in SPS Identity account.
   // The Desktop-only header protects the loopback transport as an additional
   // proof, while the Core session identifies the actual user.
+  trace("identity-session-start");
   const usesIdentitySession = await establishSpsIdentityCoreSession(hubOrigin);
+  trace("identity-session-complete");
   if (!currentBoardToken() && !usesIdentitySession) {
     throw new Error("SPS could not establish this Desktop account's Workspace session. Sign in to SPS Desktop again and retry.");
   }
+  trace("node-registration-start");
   await ensureJoinedDesktopNode();
+  trace("node-registration-complete");
   if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
     if (workspaceWindow.isMinimized()) workspaceWindow.restore();
     workspaceWindow.show();
     workspaceWindow.focus();
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+    trace("existing-window-reused");
     return;
   }
   closeWorkspaceWindow();
@@ -4931,7 +4945,9 @@ async function openWorkspace() {
     createApplicationMenu();
     refreshTrayMenu();
   });
+  trace("workspace-load-start");
   await currentWindow.loadURL(`${hubOrigin}/`);
+  trace("workspace-load-complete");
 }
 
 async function maybeOpenWorkspaceForCurrentAccount() {

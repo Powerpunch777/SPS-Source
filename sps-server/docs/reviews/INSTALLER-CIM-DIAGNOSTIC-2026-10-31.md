@@ -230,3 +230,41 @@ references. The old26.15.3 upstream template can abort its pre-delete process
 guard or roll back failed atomic renames. Its pinned historical artifact was
 dirty, so source inspection cannot identify its actual branch. The next hosted
 observation must distinguish those possibilities without bypassing either guard.
+
+## Observed Exit Sequence And Separate Path Control
+
+Exact Source7e462f2, run41153852056/job124396202101, failed naturally. The old
+installer exited0 after344837ms. Its updated uninstaller's captured availability
+and execution-policy commands both exited0; its process-query exited1 after an
+observed32411ms. The uninstaller returned2 after103197ms, about4.9seconds later.
+All six captured commands exited; none were pending/unavailable, and enumeration
+was complete and untruncated. The pre/post censuses stayed29314files/3051dirs,
+maxabsolute282/relative181,46paths over259. A captured query did not remain stuck
+in that attempt. Exact subsequent initialization/file failure is still unknown;
+short-lived commands can be missed. Five separate architecture probes passed;
+x86-current timed out60092ms/SIGTERM. Whole Job/Desktop/station closed naturally.
+
+A separate `historical-uninstaller-compact-control` mode now compares that exact
+pinned installer with only shorter fixed temporary path components. The baseline
+keeps `sps-installer-data-uninstaller-diagnostic-*` / `SPS Desktop` unchanged;
+control uses `sps-installer-data-*` / `SPS`. Native dispatch alone sets its fixed
+variant after the same hosted checks; it is not an arbitrary input path or local
+force option. Control refuses to run the handoff unless its complete census has
+zero paths beyond259characters. Both use the same silent/current-user/updated/
+keep-data flags, regular copied uninstaller and original final unquoted `_?=`.
+
+The original diagnostic's8-minute and full gate's18-minute bounds are unchanged;
+control has its own8-minute bound and disposable hosted VM. Its outcome always
+leaves candidate-upgrade, previous-Stable and long-path qualification false.
+It cannot replace the unchanged full installer test. This is a causal comparison,
+not a product path restriction, a successful long-path fix or a new support policy.
+Microsoft's [path-limit contract](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
+is the hypothesis reference, not proof that this binary hit that limit.
+
+Original hosted-first/read-only contracts remain unchanged. The first compact
+selection exposed a moved fixed prefix assertion; parent restored the original
+default literal call/guard ordering rather than weakening that existing test.
+Final compact/original/safety/real harmless exit selection:13/13. Full local
+Desktop1696total/1694pass/two environment skips/zero failures, exit0. Actual
+installer execution remains forbidden locally. Hosted baseline/control results
+at the new revision are still required.

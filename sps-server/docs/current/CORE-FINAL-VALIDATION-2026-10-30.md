@@ -41,6 +41,17 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Source7e462f2's short diagnostic41153852056 failed after actual captured
+  availability0/policy0/process-query1, followed about4.9s later by uninstall2.
+  Census stayed unchanged; a stuck captured query is not that attempt's cause,
+  but the later file/initialization failure remains unknown. A separate fixed
+  compact-path control is prepared without changing the original full gate or
+  its path/deadline. Sourcea8529be Windows failed a fourth-Main Workspace reopen;
+  7e462f2 later passed normal/crash/historical source restore, but its whole
+  Windows job remains live. Fixed E2E-only open phases are now instrumented, not
+  claimed as a hang fix. Real local assertion-bearing transfer/reapproval/restart
+  passed; full Desktop1696total/1694pass/two environment skips/zero failures.
+  See [Workspace observation](../reviews/WORKSPACE-OPEN-OBSERVATION-2026-10-31.md).
 - Sourcea8529be push41153008422 has completed all17 non-Windows jobs, including
   all nine Linux shards, full Core typecheck/build and both security policies at
   Coreb17fb83. Its Windows job is still live at this observation; no complete

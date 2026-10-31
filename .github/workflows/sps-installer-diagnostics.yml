@@ -14,6 +14,7 @@ on:
       - sps-server/desktop/test/installer-command-exit-observation.test.mjs
       - sps-server/desktop/scripts/smoke-historical-uninstaller-diagnostic.mjs
       - sps-server/desktop/test/historical-uninstaller-diagnostic.test.mjs
+      - sps-server/desktop/test/historical-uninstaller-compact-control.test.mjs
       - sps-server/desktop/scripts/installer-path-census.mjs
       - sps-server/desktop/test/installer-path-census.test.mjs
   workflow_dispatch:
@@ -36,6 +37,21 @@ jobs:
         shell: powershell
         working-directory: sps-server/desktop
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-uninstaller-diagnostic
+
+  historical-compact-control:
+    name: Historical uninstall compact-path control (not qualification)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Compare identical withdrawn input without weakening the baseline gate
+        shell: powershell
+        working-directory: sps-server/desktop
+        run: .\scripts\run-windows-ci-e2e.ps1 -Mode historical-uninstaller-compact-control
 
   owned-command-classification:
     name: Read-only owned command classification

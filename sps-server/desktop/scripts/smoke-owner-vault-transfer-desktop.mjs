@@ -537,6 +537,9 @@ try {
       await stop(approvedRestart.app);
     }
   }
+  assert.match(applicationOutput, /\[workspace-open\] operation=\d+,phase=workspace-load-complete/,
+    "Real Main did not emit the fixed isolated Workspace navigation diagnostic.");
+  phases.push("fixed-workspace-open-phase-diagnostics-observed");
 } catch (error) {
   failure = error;
   // Keep diagnostics in the failed command output, never in public release assets.
