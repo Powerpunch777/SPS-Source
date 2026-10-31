@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { link, lstat, mkdir, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { inspectCrossDeviceCandidate } from "../scripts/cross-device-candidate-guards.mjs";
+import { assertPlainDirectory } from "../scripts/installer-ci-safety.mjs";
 
 const expected = {
   desktopVersion: "1.2.3",
@@ -14,9 +15,25 @@ const expected = {
 };
 
 async function fixture(t, { name = `sps-workspace-surfaces-e2e-${Math.random().toString(36).slice(2, 12)}`, baseline } = {}) {
-  const root = path.join(os.tmpdir(), name);
+  const canonicalTemp = await realpath(os.tmpdir());
+  assert.equal(await assertPlainDirectory(canonicalTemp), canonicalTemp);
+  assert.match(name, /^sps-workspace-surfaces-e2e-[A-Za-z0-9]+$/);
+  const root = path.join(canonicalTemp, name);
   await mkdir(root);
-  t.after(() => rm(root, { recursive: true, force: true }));
+  assert.equal(await assertPlainDirectory(root), root);
+  const ownedIdentity = await lstat(root, { bigint: true }).then(({ dev, ino, birthtimeNs }) => ({ dev, ino, birthtimeNs }));
+  t.after(async () => {
+    assert.equal(path.dirname(root), canonicalTemp, "fixture cleanup must remain under the canonical temporary directory");
+    assert.match(path.basename(root), /^sps-workspace-surfaces-e2e-[A-Za-z0-9]+$/);
+    const current = await lstat(root, { bigint: true });
+    assert.ok(current.isDirectory() && !current.isSymbolicLink(), "fixture root must remain a plain directory until cleanup");
+    assert.deepEqual(
+      { dev: current.dev, ino: current.ino, birthtimeNs: current.birthtimeNs },
+      ownedIdentity,
+      "fixture cleanup must retain the originally created directory identity",
+    );
+    await rm(root, { recursive: true });
+  });
   const candidate = path.join(root, "candidate");
   await mkdir(path.join(candidate, "resources", "sps-owner-host-runtime-package"), { recursive: true });
   const contents = {
@@ -99,16 +116,24 @@ test("rejects tuple mismatches and dirty or malformed baselines", async t => {
 });
 
 test("rejects roots outside the exact plain temporary child and rejects directory junctions", async t => {
-  const { root, candidate } = await fixture(t);
+  const { root } = await fixture(t);
+  const outside = await fixture(t);
   await assert.rejects(inspectCrossDeviceCandidate({ fixtureRoot: path.dirname(root), expected }), /absolute direct temporary-directory child/);
-  await assert.rejects(inspectCrossDeviceCandidate({ fixtureRoot: path.join(os.tmpdir(), "sps-workspace-surfaces-e2e-bad-name!"), expected }), /absolute direct temporary-directory child/);
-  const linkedRoot = path.join(os.tmpdir(), `sps-workspace-surfaces-e2e-${Math.random().toString(36).slice(2, 12)}`);
+  const canonicalTemp = await realpath(os.tmpdir());
+  await assert.rejects(inspectCrossDeviceCandidate({ fixtureRoot: path.join(canonicalTemp, "sps-workspace-surfaces-e2e-bad-name!"), expected }), /absolute direct temporary-directory child/);
+  const linkedRoot = path.join(canonicalTemp, `sps-workspace-surfaces-e2e-${Math.random().toString(36).slice(2, 12)}`);
   await symlink(root, linkedRoot, process.platform === "win32" ? "junction" : "dir");
-  t.after(() => rm(linkedRoot, { recursive: true, force: true }));
+  const linkedIdentity = await lstat(linkedRoot, { bigint: true });
+  t.after(async () => {
+    const current = await lstat(linkedRoot, { bigint: true });
+    assert.ok(current.isSymbolicLink() && current.dev === linkedIdentity.dev && current.ino === linkedIdentity.ino);
+    await rm(linkedRoot);
+  });
   await assert.rejects(inspectCrossDeviceCandidate({ fixtureRoot: linkedRoot, expected }), /linked or non-directory/);
   await rm(path.join(root, "candidate"), { recursive: true });
-  await symlink(candidate, path.join(root, "candidate"), process.platform === "win32" ? "junction" : "dir");
+  await symlink(outside.candidate, path.join(root, "candidate"), process.platform === "win32" ? "junction" : "dir");
   await assert.rejects(inspectCrossDeviceCandidate({ fixtureRoot: root, expected }), /linked or non-directory/);
+  assert.equal(await lstat(path.join(outside.candidate, "SPS Desktop.exe")).then(stats => stats.isFile()), true);
 });
 
 test("rejects linked, hard-linked, and empty candidate files", async t => {

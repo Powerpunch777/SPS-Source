@@ -18,6 +18,25 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
+### 8eb Follow-Up: Canonical Test Fixture Preparation
+
+Source `8eb01ec` push `41214641791`/Windows `124576508843` and PR
+`41214646631`/Windows `124576524838` failed the newly added candidate-guard
+unit fixtures before source acceptance or packaging. All six push failures
+report that the test-created root is not a direct child of canonical Temp:
+the fixture used raw `os.tmpdir()` while the guard correctly requires its
+realpath. The fixture now creates below canonical Temp, captures its directory
+identity for cleanup, and checks an existing external junction target without
+deleting it. The actual guard, candidate access policy and original bounds
+are unchanged. Focused fixture tests8/8 pass. No new installer was built, so
+downstream missing-input failures are not recovery execution evidence.
+
+The older e35 push legacy `124570961416` is now terminal failed at the same
+`decline-confirm` as its PR sibling; initial real Form/checkbox/Cancel and
+ordinary uninstall completed, forced cleanup rejected, reinstall skipped.
+New detailed migration and safety-status diagnostics still await a successful
+test/preparation gate and actual complete Windows recovery run.
+
 ### Latest e35 Failures And Isolated Cross-Device Preparation
 
 The latest terminal Windows gates are NOT green. Source `e35c900` PR run
