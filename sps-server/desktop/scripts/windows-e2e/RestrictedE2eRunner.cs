@@ -266,7 +266,7 @@ public static class RestrictedE2eRunner
     static bool Mode(string value)
     {
         return value == "probe" || value == "probe-registry" || value == "probe-installer-processes" || value == "probe-installer-dialog" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
-            || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
+            || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "historical-uninstaller-diagnostic"
@@ -276,7 +276,7 @@ public static class RestrictedE2eRunner
     {
         return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "historical-uninstaller-diagnostic" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core"
-            || value == "probe-preview-pending"
+            || value == "probe-installer-command-exit" || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "workspace-pending"
             || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit";
@@ -375,6 +375,8 @@ public static class RestrictedE2eRunner
         if (mode == "probe-installer-dialog") { InstallerWindowDiagnostics.ShowProbeDialog(); return 1; }
         if (mode == "probe-installer-command")
             return RunNode(node, directory, "windows-e2e/probe-installer-command.mjs", OwnedJobCleanupArgument);
+        if (mode == "probe-installer-command-exit")
+            return RunNode(node, directory, "windows-e2e/probe-installer-command-exit.mjs", OwnedJobCleanupArgument);
         if (mode == "probe-preview-pending") return unchecked((int)OwnedJobCleanupPendingExitCode);
         if (mode == "probe-preview-zeroexit") return 0;
         if (mode == "workspace-pending") return unchecked((int)OwnedJobCleanupPendingExitCode);
@@ -601,6 +603,27 @@ public static class RestrictedE2eRunner
         right.Sort();
         for (int index = 0; index < left.Count; index++) if (left[index] != right[index]) return false;
         return true;
+    }
+    static uint WaitWithOwnedCommandObservations(IntPtr job, IntPtr process, uint timeout)
+    {
+        var deadline = Stopwatch.StartNew();
+        using (var observations = new InstallerProcessCommandDiagnostics.Observations())
+        {
+            for (;;)
+            {
+                uint total;
+                bool truncated, readOK;
+                var ids = ReadOwnedJobProcessIds(job, out total, out truncated, out readOK);
+                observations.Poll(job, ids, readOK && !truncated);
+                long remaining = (long)timeout - deadline.ElapsedMilliseconds;
+                uint wait = WaitForSingleObject(process, remaining <= 0 ? 0u : (uint)Math.Min(250, remaining));
+                if (wait != 258 || remaining <= 0)
+                {
+                    observations.Finish();
+                    return wait;
+                }
+            }
+        }
     }
     static void WriteOwnedJobProcessDiagnostics(IntPtr job, uint exitedRunnerChildProcessId, int collectionAttempt = 0)
     {
@@ -934,7 +957,10 @@ public static class RestrictedE2eRunner
             Require(AssignProcessToJobObject(job, child.Process), "Assign suspended child to cleanup job"); assigned = true;
             Require(ResumeThread(child.Thread) != 0xFFFFFFFF, "Resume E2E child");
             stage = "child_wait";
-            uint wait = WaitForSingleObject(child.Process, mode == "probe-timeout" ? 1500u : mode == "probe-installer-dialog" || mode == "probe-installer-command" ? 4000u : mode == "probe-installer-processes" ? 45u * 1000u : mode.StartsWith("probe-installer-cim-", StringComparison.Ordinal) ? 90u * 1000u : mode == "historical-uninstaller-diagnostic" ? 8u * 60u * 1000u : 18u * 60u * 1000u);
+            uint timeout = mode == "probe-timeout" ? 1500u : mode == "probe-installer-dialog" || mode == "probe-installer-command" ? 4000u : mode == "probe-installer-processes" ? 45u * 1000u : mode == "probe-installer-command-exit" ? 45u * 1000u : mode.StartsWith("probe-installer-cim-", StringComparison.Ordinal) ? 90u * 1000u : mode == "historical-uninstaller-diagnostic" ? 8u * 60u * 1000u : 18u * 60u * 1000u;
+            uint wait = mode == "installer-data-preservation" || mode == "historical-uninstaller-diagnostic" || mode == "probe-installer-command-exit"
+                ? WaitWithOwnedCommandObservations(job, child.Process, timeout)
+                : WaitForSingleObject(child.Process, timeout);
             if (wait == 258)
             {
                 // Inspect only this Job before its timeout cleanup destroys the

@@ -185,3 +185,48 @@ probe passed in the prior run, so an always-broken architecture claim remains
 unsupported. No installer-success gate, path, timeout or cleanup requirement
 has been relaxed. Source04f1cda Windows verification stopped earlier at a missing
 public-SDK build prerequisite and did not reach candidate installer qualification.
+
+## Passive Command Exit Observation
+
+The owned helper now samples its existing Job process list during only installer
+qualification, the short historical diagnosis and a fixed harmless probe. It
+retains at most64 query/synchronize handles for exact Windows PowerShell images
+that also pass the existing Job-membership and bounded command-metadata checks.
+Metadata and exit observations use the same retained process handle. No PID,
+path, account, command text, environment, output stream or memory content is
+published. The observer does not launch, stop or alter an installer process.
+
+Polling reports a fixed command category, architecture, profile/interactive
+markers, sequence, observation time and exit status. An exit code is read only
+after the handle is signaled; code259 is not treated as a liveness test. An
+unsignaled handle at the deadline is explicitly pending, and a failed status
+query is unavailable. Duration starts at first observation, not actual process
+creation. Short-lived/unreadable processes can be missed; bounded enumeration
+failure/truncation stays explicit. This is diagnostic evidence, never an
+exhaustive trace, process-exit authority or a cleanup acceptance substitute.
+
+The original8/18-minute owning deadlines, restricted token, private desktop,
+pending-exit protocol, natural whole-Job closure and fatal forced cleanup remain
+unchanged. Handles are released before the existing cleanup path. The new probe
+only checks command availability, sleeps briefly and returns7; it never queries
+CIM processes, executes an installer or touches a user Vault. Its Node owner
+requires actual7/EOF before returning the existing pending76 protocol.
+
+Parent real Windows probe and fixed-fixture checks passed2/2, including exact
+public fields, absent private comment markers and natural Job/Desktop/station
+closure. Existing ownership/cleanup selections passed33/33 and original
+installer safety/command/CIM selections15/15. An initial full suite rejected a
+format-only change to the existing45-second probe expression; that original
+contract was restored without weakening the test. Final full Desktop passed:
+1682 total,1680 passed,two unavailable-8.3-alias skips,zero failures, exit0
+(`node --test --test-reporter=tap test/*.test.mjs`). Exact hosted observation
+and successful complete candidate replacement remain required evidence.
+
+Native contracts follow Microsoft's
+[Job query](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-queryinformationjobobject),
+[zero-time wait](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject)
+and [exit-code](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess)
+references. The old26.15.3 upstream template can abort its pre-delete process
+guard or roll back failed atomic renames. Its pinned historical artifact was
+dirty, so source inspection cannot identify its actual branch. The next hosted
+observation must distinguish those possibilities without bypassing either guard.

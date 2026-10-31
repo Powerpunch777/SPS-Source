@@ -41,6 +41,13 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Sourcea8529be push41153008422 has completed all17 non-Windows jobs, including
+  all nine Linux shards, full Core typecheck/build and both security policies at
+  Coreb17fb83. Its Windows job is still live at this observation; no complete
+  Windows pass is claimed. A separate passive owned-command exit observer is
+  prepared for the unchanged installer deadlines. Actual harmless Windows exit7
+  and natural Job closure passed; full local Desktop1682total/1680pass/two
+  environment skips/zero failures. These diagnostics do not qualify replacement.
 - Source04f1cda push41151544581 is terminal failure, despite successful nine
   Linux shards/full Core build and1675/1677 Desktop tests (two environment
   skips). Core compatibility rejected a newly visible unreviewed Moderate;
