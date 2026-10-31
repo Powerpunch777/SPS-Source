@@ -18,6 +18,44 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
+### Latest5a Hosted Results And Startup Follow-Up
+
+Source `5a2692a` PR run `41195626905`/Windows `124521096935`
+completed all source/packaged/current-installer gates, including the new actual
+installed historical-profile acceptance:157-to176 migrations, v11-to13 state,
+same real DPAPI credential/signing key, both Workspace projects/files and
+restart, without import/restore. Installed Source merge
+`9070e0ab09606e91d326f0df09b366ae3d89f7cf`, installer SHA256
+`7db481cbcb96b849d134da96b46cf75139b8354c8820efaf506f47509a67c94d`;
+loaded Core/SDK are the pinned revisions above. Nine retained opaque records,
+five package artifacts, three first frames and natural whole-Job closure also
+passed. This is unsigned/mock-Identity/owned-profile evidence, not normal user
+profile, signed/previous-Stable upgrade, Production or two-device proof.
+
+The same-HEAD push `41195623911`/Windows `124521088235` failed the new
+installed migration's300-second child bound after candidate replacement;
+forced Job cleanup was rejected. It does not invalidate the PR artifact's
+observed pass, but is a real unresolved failed gate, not a flaky-test waiver.
+Fixed allowlisted phase/elapsed progress now survives this parent failure
+without publishing raw app output or extending the bound.
+
+Mandatory legacy PR job `124529803949` failed at `initial-window` in2ms;
+ordinary uninstall did not begin and reinstall was skipped. A new harmless
+private-desktop/reduced-token component reproduces `FindTopWindows` failing
+before the owned child's UI exists. Explicit desktop enumeration plus a
+message-loop startup wait inside the original15-second deadline now passes
+the local actual-Form/Cancel/interlock tests and natural-Job probe. Hosted
+complete recovery and a new exact-HEAD Windows gate are still required. See
+[driver evidence](LEGACY-RECOVERY-UI-DRIVER-2026-10-31.md).
+
+After progress instrumentation, actual source Main acceptance reran in33seconds
+through all19 fixed progress phases, normal Main/PG closure, account/key and
+project/file/restart assertions and owned temporary-data removal. The local
+full Desktop selection passed1849total/1846pass/3unavailable-alias skips/0fail.
+Production policy audit reran with zero Critical/High, two Low and one reviewed
+Moderate (2026-11-07 expiry); it is not a zero-advisory statement. None of this
+relabels the failed hosted push or qualifies new-HEAD installed/legacy recovery.
+
 The following correction supersedes the earlier d8 snapshot below. Intermediate
 Source `d9e58b9` push `41182439329` and PR `41182443867` both completed their
 Windows source/packaged/current-installer gates with natural Job closure.
@@ -43,8 +81,8 @@ fence/restart/natural-exit/EOF/temporary-cleanup workflow. This does **not**
 attribute the earlier pending-navigation CI hang to this rejected-load defect.
 See [retry evidence](../reviews/WORKSPACE-NAVIGATION-RETRY-2026-10-31.md).
 
-Latest full local `npm run test:ci`: serial2/2 plus1839total/1836pass/three
-unavailable-8.3-alias skips, aggregate1841total/1838pass/3skip/0fail, exit0.
+Latest full local `npm run test:ci`: serial2/2 plus1847total/1844pass/three
+unavailable-8.3-alias skips, aggregate1849total/1846pass/3skip/0fail, exit0.
 Production dependency policy: two Low and one reviewed Moderate; full graph:
 three Low and two reviewed Moderate. Both have zero Critical/High, with no High
 exception; minimatch reviews expire 2026-11-07. Syntax and diff-check pass.
@@ -63,8 +101,9 @@ natural whole-Job closure. Its installed Source merge is
 `a0418d624e807d78613068114f3bbdbfe38fab87`, installer SHA256
 `ac26827e8c5eecbbc47996d88fd66e2d1923517690a97ec48b46420f18a7ada5`.
 Nine opaque records/five package artifacts/three isolated first frames passed;
-the mandatory legacy job124517885192 is still live in operator-upgrade recovery
-at observation. This is the earlier e33 merge candidate, not the new
+the mandatory legacy job124517885192 later failed at initial-window in2ms,
+before ordinary uninstall, with forced cleanup rejected and reinstall skipped.
+This is the earlier e33 merge candidate, not the new
 uncommitted in-place-migration acceptance. It is not an overall/recovery pass.
 
 Same-profile **source** Main acceptance now passes without import/restore:

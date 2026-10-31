@@ -48,9 +48,9 @@
 설치 모드는 GitHub-hosted 전용 기존 installer gate에서만 허용한다. 현재 후보
 교체 후 설치된 실행 파일·ASAR·runtime archive 해시와 로딩한 runtime의 정확한
 baseline tuple을 대조하고, 이 시나리오가 실패하면 gate도 실패하도록 연결했다.
-전체 Job 자연 종료는 기존 제한 토큰 launcher가 최종 확인한다. **이 새 설치
-모드는 아직 실행 결과가 없으므로 설치본 공백은 미해결이다.** 기존 `e33ac03`
-실행에는 이 새 시험이 없으므로 그 결과로 이를 통과 처리할 수 없다.
+전체 Job 자연 종료는 기존 제한 토큰 launcher가 최종 확인한다. 기존 `e33ac03`
+실행에는 이 새 시험이 없으므로 그 결과로 이를 통과 처리할 수 없다. 아래의
+`5a2692a` PR 설치 결과가 처음으로 이 추가된 설치 시나리오를 실제 실행했다.
 
 이 시험도 사용자 기본 AppData 프로필, 이전 Stable 실행, 서명 설치본 또는
 실제 두 PC의 증거는 아니다. 각 qualification은 계속 별도로 `false`를 유지한다.
@@ -78,10 +78,30 @@ Job launcher의 고정 `probe-historical-managed-vault` 진입점으로 실행�
 변경하지 않는다. 157개 스키마·PID/datadir·정상 Postgres 종료·DB 보존 확인은
 생략하지 않고, pending76 이후 **전체 Job의 자연 종료까지** 추가로 요구한다.
 실패·강제 종료를 통과로 바꾸지 않는다. 로컬의 실제 제한 토큰 실행은 통과했으며
-새 정확한 HEAD의 hosted 결과가 여전히 필요하다.
+`5a2692a`의 두 hosted unit 단계도 이 제한 토큰 준비 시험을 통과했다.
 
 시작 단계는 pidfile/identity/datadir/DB 생성으로 구분해 고정 진단을 남긴다.
 시작 로그의 비공개 tail은4096바이트로 제한하고, 공식 Windows 관리자 거부
 문구 전체가 관측된 경우에만 `administrator_unsupported`, 그 외에는
 `unclassified`를 반환한다. 원문·계정·PID·포트·절대경로는 결과에 내보내지 않는다.
 참고: [PostgreSQL 공식 Windows 권한 검사](https://raw.githubusercontent.com/postgres/postgres/REL_18_STABLE/src/backend/main/main.c).
+
+## Actual Installed Candidate Result
+
+Source `5a2692a` PR run `41195626905`, Windows job `124521096935`는
+새 필수 설치 시험까지 통과했다. 실제 설치된 Source는 PR merge
+`9070e0ab09606e91d326f0df09b366ae3d89f7cf`, 설치본 SHA256은
+`7db481cbcb96b849d134da96b46cf75139b8354c8820efaf506f47509a67c94d`다.
+설치된 EXE/ASAR/runtime archive와 로딩한 baseline의 Source/Core/SDK를
+대조했고,157-to176/v11-to13/같은 DPAPI credential 및 키/프로젝트·파일/
+재시작을 import·restore 없이 확인했다. 부모의 전체 Job 자연 종료도 통과했다.
+이 결과는 격리된 과거 fixture 프로필의 실제 설치 Main 인플레이스 공백을
+메우지만, 위에서 별도로 열거한 기본 사용자·서명·과거 Stable·두 PC·운영
+Google 로그인 증거까지 확대되지 않는다.
+
+반면 같은 HEAD push `41195623911`/Windows `124521088235`는 동일 시험의
+300초 자식 상한에 걸렸고, 잔여 소유 프로세스의 강제 정리는 통과로 인정하지
+않았다. 새 진단은 고정 phase와 경과시간만 내보내고 부모가 실패해도 보존한다.
+원문 앱 출력·경로·계정정보를 내보내거나 제한시간을 늘리지 않는다. 이 push
+실패의 구체적인 지연 단계는 아직 미확정이며, 새로운 정확한 HEAD의 재검증이
+필요하다. 별도 legacy recovery 실패도 계속 필수 미완료로 남아 있다.

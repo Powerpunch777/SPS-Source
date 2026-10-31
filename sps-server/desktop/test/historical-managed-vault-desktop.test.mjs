@@ -101,3 +101,17 @@ test("historical account evidence reuses Main safeStorage helpers without substi
   assert.match(smoke, /assert\.equal\(status\.desktopAccount\.signedIn, true\)/);
   assert.doesNotMatch(smoke, /encryptedDesktopAccount\s*[:=]\s*["'`]|encryptedDesktopAccount\s*=\s*Buffer|\b(?:fake|mock|stub)Account(?:Token|Credential|Session)/);
 });
+
+test("installed migration keeps its original deadline and replays only fixed safe progress on failure", async () => {
+  const source = await read("../scripts/smoke-historical-managed-vault-desktop.mjs");
+  const parent = await read("../scripts/smoke-installer-data-preservation.mjs");
+  assert.match(source, /createHistoricalProfileProgress\(\{ write: line => process\.stderr\.write\(line\) \}\)/);
+  assert.match(source, /progress\("historical-db-start"\);\s*const prepared = await prepareHistoricalManagedVault/);
+  assert.match(source, /progress\("migration-main-start"\);\s*const migrated = await launch\(origin\);\s*progress\("migration-main-ready"\)/);
+  assert.match(source, /progress\("restart-data-verified"\);\s*await stop\(restarted\.app\);\s*progress\("restart-main-closed"\)/);
+  assert.match(parent, /timeout: 300_000, maxBuffer: 1024 \* 1024/);
+  assert.match(parent, /for \(const record of parseHistoricalProfileProgress\(String\(error\.stderr \?\? ""\)\)\) \{\s*console\.error\(JSON\.stringify\(record\)\)/);
+  assert.match(parent, /assert\.equal\(error\.code, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
+  assert.match(parent, /assert\.ok\(!error\.signal && !error\.killed/);
+  assert.doesNotMatch(parent, /console\.(?:log|error)\(error\.(?:stderr|stdout)/);
+});

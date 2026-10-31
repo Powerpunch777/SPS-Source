@@ -4,6 +4,39 @@ Status as of 2026-10-31. This records a test-only Windows UI-driver correction
 and the current hosted evidence. It does not qualify complete legacy recovery,
 enable automatic cleanup, or change production recovery behavior.
 
+## Latest: Empty Desktop Startup
+
+Source `5a2692a` PR run `41195626905`/legacy job `124529803949`
+repeated the immediate `initial-window` failure in about2ms. The original
+install and unchanged29314-file failed-replacement preservation passed; the
+ordinary uninstall never began, forced helper cleanup was rejected and
+reinstall was skipped. This is still a failed complete-recovery gate.
+
+A new non-destructive component probe reproduces the same failure under the
+existing reduced same-user token and owned private desktop. The exact failing
+operation is `FindTopWindows`, before the child creates a window. Switching to
+`EnumDesktopWindows(GetThreadDesktop(GetCurrentThreadId()))` alone did not
+resolve it. The driver now first waits for the owned child's message-loop
+readiness **inside the same original15-second deadline**, then enumerates only
+that thread's desktop. Enumeration failure still fails; a borrowed desktop
+handle is not closed and the driver never switches to the user's desktop.
+
+The real Form fixture deliberately waits300ms before creating its UI, checks
+the actual checkbox enable/disable interlocks and Cancel, and verifies an
+unchanged sentinel with no cleanup attempted. The new fixed probe requires
+both real component tests, no skips, reduced-token checks and natural whole-Job
+closure. The local probe and regular components pass4/4; the existing
+driver/protocol/launcher selection passes28/28. These do not install/register a
+product or qualify actual residue cleanup. Hosted complete recovery at the new
+HEAD remains mandatory; no old8/18-minute,45-second or15-second bound changes.
+Full local Desktop validation after this correction:1849total/1846pass/three
+unavailable8.3-alias skips/0fail, exit0. No caller's installed app or data was
+opened or modified by the harmless component probe.
+
+References: [EnumDesktopWindows](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumdesktopwindows),
+[GetThreadDesktop](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getthreaddesktop),
+[bounded WaitForInputIdle](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.waitforinputidle?view=netframework-4.8.1).
+
 ## Source and UI-driver change
 
 Before this test-driver patch, the local source HEAD was `021ad5e`; the remote

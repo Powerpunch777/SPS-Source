@@ -13,6 +13,7 @@ import { queryInstallerProcesses } from "./installer-process-query.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./historical-installer-baseline.mjs";
 import { captureInstallerSnapshot, assertInstallerSnapshot } from "./installer-retained-snapshot.mjs";
+import { parseHistoricalProfileProgress } from "./historical-profile-progress.mjs";
 
 // Fail before even reading a profile, creating a fixture, or querying registry.
 assertHostedInstallerCi();
@@ -194,6 +195,9 @@ async function checkInstalledHistoricalProfile() {
     });
     assert.fail("Installed historical profile must leave whole-Job qualification to its existing CI parent.");
   } catch (error) {
+      for (const record of parseHistoricalProfileProgress(String(error.stderr ?? ""))) {
+        console.error(JSON.stringify(record));
+      }
     assert.equal(error.code, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE, "Installed historical profile did not reach its owned cleanup handoff.");
     assert.ok(!error.signal && !error.killed, "Timed out or killed migration cannot qualify.");
     pending = JSON.parse(error.stdout.trim());

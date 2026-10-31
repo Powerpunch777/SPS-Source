@@ -142,7 +142,20 @@ internal static class LegacyRecoveryUiDriverFixture
             }
             string code = error is TargetInvocationException && error.InnerException != null
                 ? error.InnerException.GetType().Name : error.GetType().Name;
-            Console.WriteLine("{\"ok\":false,\"phase\":\"" + phase + "\",\"failure\":\"" + code + "\"}");
+            string operation = "unclassified";
+            if (error is TargetInvocationException && error.InnerException != null)
+            {
+                foreach (StackFrame frame in new StackTrace(error.InnerException, false).GetFrames() ?? new StackFrame[0])
+                {
+                    string name = frame.GetMethod().Name;
+                    if (name == "FindTopWindows" || name == "WindowClass" || name == "ReadWindowText"
+                        || name == "WaitForRecoveryWindow" || name == "RemainingMilliseconds")
+                    { operation = name; break; }
+                }
+            }
+            FieldInfo enumerationError = typeof(LegacyRecoveryUiDriver).GetField("windowEnumerationError", BindingFlags.Static | BindingFlags.NonPublic);
+            int nativeCode = enumerationError == null ? -1 : (int)enumerationError.GetValue(null);
+            Console.WriteLine("{\"ok\":false,\"phase\":\"" + phase + "\",\"failure\":\"" + code + "\",\"operation\":\"" + operation + "\",\"nativeCode\":" + nativeCode + "}");
             return 1;
         }
         finally
@@ -201,6 +214,9 @@ internal static class LegacyRecoveryUiDriverFixture
         bool sentinelUnchanged = false;
         try
         {
+            // Guarantee an initial empty-desktop interval before the real form
+            // exists, as on an otherwise empty isolated Windows CI desktop.
+            Thread.Sleep(300);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             string root = Path.GetFullPath(rootArgument);

@@ -11,6 +11,7 @@ import { setSpsAccountConnection } from "../src/account-connections.mjs";
 import { createMockIdentityServer } from "./desktop-e2e-identity.mjs";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { prepareHistoricalManagedVault } from "./historical-managed-vault-fixture.mjs";
+import { createHistoricalProfileProgress } from "./historical-profile-progress.mjs";
 import { assertHostedInstallerCi, assertPlainDirectory } from "./installer-ci-safety.mjs";
 import { captureLegacyStateEvidence, rewriteAsLegacyV11State } from "./legacy-desktop-state-acceptance.mjs";
 import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
@@ -65,6 +66,7 @@ const phases = [];
 let applicationOutput = "";
 let failure;
 let evidence;
+const progress = createHistoricalProfileProgress({ write: line => process.stderr.write(line) });
 
 async function waitFor(check, description, limit = timeout) {
   const deadline = Date.now() + limit;
@@ -181,8 +183,11 @@ async function verifyMain(running, expected, prepared) {
 }
 
 try {
+  progress("fixture-ready");
   const { origin } = await identity.start();
+  progress("initial-main-start");
   const initial = await launch(origin);
+  progress("initial-main-ready");
   await initial.setup.locator("#start-sps-account").click();
   const authorization = await waitFor(() => identity.capturedAuthorizationUrls.shift(), "sign-in capture", 30_000);
   assert.equal(new URL(authorization).origin, origin);
@@ -194,9 +199,13 @@ try {
   }, "sign-in", 30_000);
   const credentials = await captureLegacyStateEvidence(initial.app, "sps-desktop-e2e-owner");
   const initialStatus = await initial.setup.evaluate(() => window.spsDesktop.getStatus());
+  progress("initial-account-stored");
   await stop(initial.app);
+  progress("initial-main-closed");
   phases.push("actual-main-account-encrypted-and-closed-before-historical-preparation");
+  progress("historical-db-start");
   const prepared = await prepareHistoricalManagedVault({ fixture, profile });
+  progress("historical-db-prepared");
   assert.equal(prepared.currentMigrationsApplied, false);
   assert.equal(prepared.ownedPostgresStopped, true);
   const statePath = path.join(profile, "sps-desktop-state.json");
@@ -213,15 +222,24 @@ try {
   await fixture.assertCurrent();
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, { flag: "w" });
   await rewriteAsLegacyV11State(profile, fixture, credentials);
+  progress("legacy-state-prepared");
   const expected = { ...credentials.snapshot, ownerHostOwnerSubject: state.ownerHostOwnerSubject };
   phases.push("same-profile-pinned-157-schema-and-v11-state-prepared-without-current-migrations-or-restore");
+  progress("migration-main-start");
   const migrated = await launch(origin);
+  progress("migration-main-ready");
   const firstHistory = await verifyMain(migrated, expected, prepared);
+  progress("migration-data-verified");
   await stop(migrated.app);
+  progress("migration-main-closed");
   phases.push("actual-main-in-place-migrates-to-176-and-v13-without-sign-in-or-restore");
+  progress("restart-main-start");
   const restarted = await launch(origin);
+  progress("restart-main-ready");
   assert.equal(await verifyMain(restarted, expected, prepared), firstHistory);
+  progress("restart-data-verified");
   await stop(restarted.app);
+  progress("restart-main-closed");
   phases.push("same-data-account-and-signing-key-preserved-after-restart");
   let candidate = null;
   if (binary) {
@@ -232,6 +250,7 @@ try {
     assert.equal(baseline.sourceDirty || baseline.core.dirty || baseline.pluginSdk.dirty, false);
     candidate = { baseline, installedArtifacts };
   }
+  progress("candidate-verified");
   evidence = { kind: binary ? "installed-historical-profile-in-place-acceptance" : "source-historical-profile-in-place-acceptance",
     candidate, phases, mockIdentity: true, historicalMigrations: 157, currentMigrations: 176,
     installedHistoricalFixtureInPlaceMigrationQualified: Boolean(binary),
@@ -242,6 +261,7 @@ try {
   failure = error;
   console.error(applicationOutput.slice(-10_000));
 } finally {
+  progress("cleanup-start");
   const errors = [];
   for (const app of owned) await stop(app).catch(error => errors.push(error));
   let identityClosed = false;
@@ -261,6 +281,7 @@ try {
     fixtureProcessesAbsent, identityClosed, delegatedJobCleanup: delegated }); } catch (error) { errors.push(error); }
   if (!failure && !errors.length) await fixture.remove().catch(error => errors.push(error));
   if (failure || errors.length) throw new AggregateError([...(failure ? [failure] : []), ...errors], "Historical in-place Main acceptance did not qualify; preserve its owned fixture.");
+  progress("cleanup-complete");
 }
 await new Promise((resolve, reject) => process.stdout.write(`${JSON.stringify({ ...evidence,
   ownedMainOutputAndTemporaryDataCleanup: true, wholeDescendantJobQualification: false,

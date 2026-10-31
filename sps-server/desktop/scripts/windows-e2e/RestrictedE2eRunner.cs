@@ -266,7 +266,7 @@ public static class RestrictedE2eRunner
     static bool Mode(string value)
     {
         return value == "probe" || value == "probe-registry" || value == "probe-installer-processes" || value == "probe-installer-dialog" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
-            || value == "probe-historical-managed-vault" || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
+            || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "installer-current-preservation" || value == "installer-operator-upgrade" || value == "installer-operator-reinstall" || value == "historical-uninstaller-diagnostic" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery"
@@ -276,7 +276,7 @@ public static class RestrictedE2eRunner
     {
         return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "installer-current-preservation" || value == "installer-operator-upgrade" || value == "installer-operator-reinstall" || value == "historical-uninstaller-diagnostic" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core"
-            || value == "probe-historical-managed-vault" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery" || value == "probe-installer-command-exit" || value == "probe-preview-pending"
+            || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery" || value == "probe-installer-command-exit" || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "workspace-pending"
             || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit";
@@ -354,6 +354,8 @@ public static class RestrictedE2eRunner
         if (!administratorDenied || !userDefaultDacl) throw new InvalidOperationException("Child token security checks failed");
         Console.WriteLine("{\"restrictedE2eChild\":true,\"administratorEnabled\":false,\"powerUsersEnabled\":false,\"privilegesReduced\":true,\"sameUserToken\":true,\"administratorDenied\":" + (administratorDenied ? "true" : "false") + ",\"userDefaultDacl\":" + (userDefaultDacl ? "true" : "false") + "}");
         if (mode == "probe") return 0;
+        if (mode == "probe-legacy-driver-component")
+            return RunNode(node, directory, "windows-e2e/probe-legacy-driver-component.mjs", OwnedJobCleanupArgument);
         if (mode == "probe-historical-managed-vault")
             return RunNodeFile(node, directory, Path.Combine(directory, "test", "fixtures", "historical-managed-vault-native.mjs"), OwnedJobCleanupArgument);
         if (mode == "probe-registry")
@@ -998,7 +1000,7 @@ public static class RestrictedE2eRunner
             Require(AssignProcessToJobObject(job, child.Process), "Assign suspended child to cleanup job"); assigned = true;
             Require(ResumeThread(child.Thread) != 0xFFFFFFFF, "Resume E2E child");
             stage = "child_wait";
-            uint timeout = mode == "probe-historical-managed-vault" ? 75u * 1000u : mode == "probe-timeout" ? 1500u : mode == "probe-installer-dialog" || mode == "probe-installer-command" ? 4000u : mode == "probe-installer-processes" ? 45u * 1000u : mode == "probe-installer-command-exit" ? 45u * 1000u : mode.StartsWith("probe-installer-cim-", StringComparison.Ordinal) ? 90u * 1000u : mode == "installer-operator-reinstall" ? 8u * 60u * 1000u : mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" ? 8u * 60u * 1000u : mode == "historical-uninstaller-diagnostic" ? 8u * 60u * 1000u : 18u * 60u * 1000u;
+            uint timeout = mode == "probe-legacy-driver-component" ? 90u * 1000u : mode == "probe-historical-managed-vault" ? 75u * 1000u : mode == "probe-timeout" ? 1500u : mode == "probe-installer-dialog" || mode == "probe-installer-command" ? 4000u : mode == "probe-installer-processes" ? 45u * 1000u : mode == "probe-installer-command-exit" ? 45u * 1000u : mode.StartsWith("probe-installer-cim-", StringComparison.Ordinal) ? 90u * 1000u : mode == "installer-operator-reinstall" ? 8u * 60u * 1000u : mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" ? 8u * 60u * 1000u : mode == "historical-uninstaller-diagnostic" ? 8u * 60u * 1000u : 18u * 60u * 1000u;
             uint wait = mode == "installer-data-preservation" || mode == "installer-current-preservation" || mode == "installer-operator-upgrade" || mode == "installer-operator-reinstall" || mode == "historical-uninstaller-diagnostic" || mode == "historical-uninstaller-compact-control" || mode == "historical-standard-recovery-prepare" || mode == "historical-standard-recovery" || mode == "probe-installer-command-exit"
                 ? WaitWithOwnedCommandObservations(job, child.Process, timeout)
                 : WaitForSingleObject(child.Process, timeout);

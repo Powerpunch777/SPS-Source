@@ -107,7 +107,10 @@ test("actual recovery UI driver exercises only the initial real form in an owned
     assert.deepEqual(failureLines, [`LEGACY_UI_FAILURE:${record.phase}`]);
     const failureKind = ["DriverFailure", "CheckObservationDeadlineFailure", "AggregateException", "COMException",
       "ElementNotAvailableException", "InvalidOperationException"].includes(record.failure) ? record.failure : "unclassified";
-    assert.fail(`Legacy recovery UI driver failed at ${record.phase} (${failureKind}).`);
+    const operation = ["FindTopWindows", "WindowClass", "ReadWindowText", "WaitForRecoveryWindow", "RemainingMilliseconds"]
+      .includes(record.operation) ? record.operation : "unclassified";
+    const nativeCode = Number.isInteger(record.nativeCode) && record.nativeCode >= -1 && record.nativeCode <= 65535 ? record.nativeCode : -1;
+    assert.fail(`Legacy recovery UI driver failed at ${record.phase} (${failureKind}; ${operation}; native-${nativeCode}).`);
   }
   const trace = result.stderr.trim().split(/\r?\n/).filter(Boolean);
   assert.deepEqual(trace, driverPhases.map(phase => `LEGACY_UI_PHASE:${phase}`));

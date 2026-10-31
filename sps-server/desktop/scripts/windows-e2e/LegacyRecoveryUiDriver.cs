@@ -33,7 +33,16 @@ internal static class LegacyRecoveryUiDriver
     static class Native
     {
         [DllImport("user32.dll", SetLastError = true)]
-        internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+        internal static extern bool EnumDesktopWindows(IntPtr desktop, EnumWindowsProc callback, IntPtr parameter);
+
+        [DllImport("kernel32.dll")]
+        internal static extern uint GetCurrentThreadId();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        internal static extern void SetLastError(uint code);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern IntPtr GetThreadDesktop(uint threadId);
 
         [DllImport("user32.dll", SetLastError = true)]
         internal static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr parameter);
@@ -68,6 +77,7 @@ internal static class LegacyRecoveryUiDriver
 
     static Stopwatch clock;
     static string phase = "entry";
+    static int windowEnumerationError = -1;
 
     static void EnterPhase(string value)
     {
@@ -156,7 +166,14 @@ internal static class LegacyRecoveryUiDriver
             if (OwnsWindow(window, processId)) windows.Add(window);
             return true;
         };
-        Require(Native.EnumWindows(callback, IntPtr.Zero));
+        // Enumerate only this thread's desktop, including a non-interactive
+        // owned test desktop. The handle is borrowed and must not be closed.
+        IntPtr desktop = Native.GetThreadDesktop(Native.GetCurrentThreadId());
+        Require(desktop != IntPtr.Zero && desktop != new IntPtr(-1));
+        Native.SetLastError(0);
+        bool enumerated = Native.EnumDesktopWindows(desktop, callback, IntPtr.Zero);
+        windowEnumerationError = enumerated ? 0 : Marshal.GetLastWin32Error();
+        Require(enumerated);
         return windows.ToArray();
     }
 
@@ -210,6 +227,9 @@ internal static class LegacyRecoveryUiDriver
     {
         int budget = UiWaitBudget();
         long deadline = clock.ElapsedMilliseconds + budget;
+        // Startup readiness consumes the same original window deadline; an
+        // empty private desktop is not evidence that the child failed to start.
+        if (!helper.WaitForInputIdle(budget)) throw new RecoveryWindowDeadlineFailure();
         while (clock.ElapsedMilliseconds < deadline)
         {
             Require(!helper.HasExited);
