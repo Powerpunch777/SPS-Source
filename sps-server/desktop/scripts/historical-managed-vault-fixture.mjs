@@ -13,6 +13,36 @@ import { HISTORICAL_CORE_FIXTURE_ATTACHMENT, historicalCoreFixtureRecords, seedH
 const coreRoot = path.resolve(import.meta.dirname, "../../../external/sps-core");
 const digest = value => createHash("sha256").update(value).digest("hex");
 const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+const postgresAdminRefusal = /Execution of PostgreSQL by a user with administrative permissions is not\s+permitted\.\s+The server must be started under an unprivileged user ID to prevent\s+possible system security compromises\.\s+See the documentation for\s+more information on how to properly start the server\./;
+
+export function createHistoricalPostgresStartupObserver() {
+  const tail = Buffer.alloc(4096);
+  let length = 0;
+  let collecting = false;
+  let recognized = false;
+  return {
+    begin() { tail.fill(0); length = 0; recognized = false; collecting = true; },
+    observe(chunk) {
+      if (!collecting || recognized) return;
+      if (typeof chunk !== "string" && !Buffer.isBuffer(chunk)) return;
+      const bytes = Buffer.isBuffer(chunk) ? chunk.subarray(-4096) : Buffer.from(chunk.slice(-4096)).subarray(-4096);
+      if (bytes.length >= tail.length) {
+        bytes.copy(tail, 0, bytes.length - tail.length);
+        length = tail.length;
+      } else {
+        const overflow = Math.max(0, length + bytes.length - tail.length);
+        if (overflow) tail.copy(tail, 0, overflow, length);
+        const kept = length - overflow;
+        bytes.copy(tail, kept);
+        length = kept + bytes.length;
+      }
+      recognized = postgresAdminRefusal.test(tail.subarray(0, length).toString("utf8"));
+    },
+    end() { collecting = false; },
+    failureCategory() { return recognized ? "administrator_unsupported" : "unclassified"; },
+    dispose() { collecting = false; recognized = false; length = 0; tail.fill(0); },
+  };
+}
 
 async function identity(directory) {
   assert.equal(await assertPlainDirectory(directory), directory);
@@ -70,13 +100,14 @@ export async function prepareHistoricalManagedVault({ fixture, profile } = {}) {
   const db = await tsImport(pathToFileURL(path.join(coreRoot, "packages/db/src/index.ts")).href, import.meta.url);
   const lifecycle = await tsImport(pathToFileURL(path.join(coreRoot, "packages/db/src/test-embedded-postgres.ts")).href, import.meta.url);
   await db.prepareEmbeddedPostgresNativeRuntime();
+  const startupObserver = createHistoricalPostgresStartupObserver();
   const EmbeddedPostgres = require("embedded-postgres").default;
   const postgres = require("postgres");
   const { drizzle } = require("drizzle-orm/postgres-js");
   const { migrate } = require("drizzle-orm/postgres-js/migrator");
   const instance = new EmbeddedPostgres({ databaseDir, user: "paperclip", password: "paperclip",
     port: ports.databasePort, persistent: true, initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
-    onLog() {}, onError() {} });
+    onLog(message) { startupObserver.observe(message); }, onError() {} });
   const connectionString = `postgres://paperclip:paperclip@127.0.0.1:${ports.databasePort}/paperclip`;
   const adminUrl = new URL(connectionString);
   adminUrl.pathname = "/postgres";
@@ -91,13 +122,19 @@ export async function prepareHistoricalManagedVault({ fixture, profile } = {}) {
     await checkVault();
     await assertIdentity(databaseDir, databaseIdentity);
     stage = "postgres-start";
+    startupObserver.begin();
     await instance.start();
+    startupObserver.end();
+    stage = "postmaster-pidfile";
     const pidFile = path.join(databaseDir, "postmaster.pid");
     const pidInfo = await lstat(pidFile);
     assert.ok(pidInfo.isFile() && !pidInfo.isSymbolicLink() && pidInfo.size <= 4096);
+    stage = "postmaster-identity";
     databaseIdentity.postmaster = await lifecycle.validateOwnedPostmasterPidFile(await readFile(pidFile, "utf8"),
       ports.databasePort, databaseDir, undefined, instance.process?.pid);
+    stage = "postgres-data-directory";
     assert.ok(samePath(await realpath(await db.getPostgresDataDirectory(adminUrl.toString())), databaseDir));
+    stage = "create-fixture-database";
     await db.ensurePostgresDatabase(adminUrl.toString(), "paperclip");
     sql = postgres(connectionString, { max: 1, connect_timeout: 5, onnotice() {} });
     stage = "pinned-historical-migrations";
@@ -119,6 +156,7 @@ export async function prepareHistoricalManagedVault({ fixture, profile } = {}) {
     await mkdir(path.dirname(attachmentPath));
     await writeFile(attachmentPath, HISTORICAL_CORE_FIXTURE_ATTACHMENT.content, { flag: "wx" });
   } catch (error) {
+    startupObserver.end();
     failure = new Error(`Historical managed Vault failed during ${stage}.`, { cause: error });
   } finally {
     if (sql) await sql.end({ timeout: 5 }).catch(error => cleanupErrors.push(error));
@@ -126,10 +164,13 @@ export async function prepareHistoricalManagedVault({ fixture, profile } = {}) {
       .catch(error => cleanupErrors.push(error));
   }
   if (failure || cleanupErrors.length) {
+    const failureCategory = startupObserver.failureCategory();
+    startupObserver.dispose();
     throw Object.assign(new AggregateError([...(failure ? [failure] : []), ...cleanupErrors],
       "Historical managed Vault is not qualified; preserve its owned fixture."),
-    { stage: failure ? stage : "owned-postgres-stop" });
+    { stage: failure ? stage : "owned-postgres-stop", failureCategory });
   }
+  startupObserver.dispose();
   await checkVault();
   await assertIdentity(databaseDir, databaseIdentity);
   assert.equal(await absent(path.join(databaseDir, "postmaster.pid")), true);

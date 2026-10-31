@@ -50,25 +50,51 @@ test("managed historical preparation uses only its own cluster and the pinned ol
   assert.doesNotMatch(source, /process\.env|resolveMigrationConnection\(|runDatabaseRestore\(|applyPendingMigrations\(|(?:rm|unlink|rename)\(/);
 });
 
+test("historical native preparation uses the fixed reduced-token entry and requires natural Job closure", async () => {
+  const runner = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
+  const gates = runner.slice(runner.indexOf("static bool OwnedJobGateMode"), runner.indexOf("static int OwnedJobWaitMilliseconds"));
+  assert.ok(gates.includes('value == "probe-historical-managed-vault"'));
+  assert.ok(runner.includes('return RunNodeFile(node, directory, Path.Combine(directory, "test", "fixtures", "historical-managed-vault-native.mjs"), OwnedJobCleanupArgument);'));
+  assert.ok(runner.includes('mode == "probe-historical-managed-vault" ? 75u * 1000u'));
+  const entry = new URL("./fixtures/historical-managed-vault-native.mjs", import.meta.url);
+  for (const args of [[], ["--not-owned"], ["--owned-job-cleanup-pending", "extra"]]) {
+    await assert.rejects(exec(process.execPath, [fileURLToPath(entry), ...args], { windowsHide: true, timeout: 5_000 }), error => {
+      assert.equal(error.code, 1);
+      const record = JSON.parse(error.stdout.trim());
+      assert.equal(record.fixtureName, null);
+      assert.equal(record.preparedHistoricalManagedVault, false);
+      return true;
+    });
+  }
+});
+
 test("actual owned historical cluster stops normally and retains its 157-migration data files", {
   skip: process.platform !== "win32", timeout: 100_000,
 }, async () => {
   let result;
   try {
-    result = await exec(process.execPath, [fileURLToPath(new URL("./fixtures/historical-managed-vault-native.mjs", import.meta.url))],
-      { cwd: path.resolve(import.meta.dirname, ".."), windowsHide: true, timeout: 90_000, maxBuffer: 16_384 });
+    result = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+      fileURLToPath(new URL("../scripts/run-windows-ci-e2e.ps1", import.meta.url)), "-Mode", "probe-historical-managed-vault"],
+      { cwd: path.resolve(import.meta.dirname, ".."), windowsHide: true, timeout: 90_000, maxBuffer: 32_768 });
   } catch (error) {
     let value;
-    try { value = JSON.parse(error.stdout.trim()); } catch { value = null; }
-    const phase = ["initdb", "postgres-start", "pinned-historical-migrations", "historical-records", "snapshot-historical-records",
+    try { value = error.stdout.trim().split(/\r?\n/).map(line => JSON.parse(line)).find(record => record.preparedHistoricalManagedVault === false); } catch { value = null; }
+    const phase = ["initdb", "postgres-start", "postmaster-pidfile", "postmaster-identity", "postgres-data-directory", "create-fixture-database", "pinned-historical-migrations", "historical-records", "snapshot-historical-records",
       "write-historical-file", "owned-postgres-stop", "preparation-or-postconditions"]
       .includes(value?.failureStage) ? value.failureStage : "unavailable";
     const fixtureName = /^sps-workspace-surfaces-e2e-[A-Za-z0-9]+$/.test(value?.fixtureName ?? "") ? value.fixtureName : "unavailable";
-    assert.fail(`Historical managed Vault native preparation failed: ${phase}; retained fixture ${fixtureName}.`);
+    const category = value?.failureCategory === "administrator_unsupported" ? "administrator_unsupported" : "unclassified";
+    assert.fail(`Historical managed Vault native preparation failed: ${phase}; ${category}; retained fixture ${fixtureName}.`);
   }
   const lines = result.stdout.trim().split(/\r?\n/);
-  assert.equal(lines.length, 1);
-  assert.deepEqual(JSON.parse(lines[0]), { preparedHistoricalManagedVault: true, oldMigrations: 157,
+  const output = lines.map(line => JSON.parse(line));
+  assert.equal(output[0].restrictedE2eDesktop, true);
+  assert.deepEqual(output[1], { restrictedE2eChild: true, administratorEnabled: false, powerUsersEnabled: false,
+    privilegesReduced: true, sameUserToken: true, administratorDenied: true, userDefaultDacl: true });
+  assert.deepEqual(output.find(record => record.preparedHistoricalManagedVault === true), { preparedHistoricalManagedVault: true, oldMigrations: 157,
     currentMigrationsApplied: false, ownedPostgresStopped: true, databasePreservedBeforeCleanup: true,
-    fixtureRemoved: true, installedMainExecuted: false });
+    fixtureRemoved: true, installedMainExecuted: false, ownedJobCleanup: "pending-external-observation" });
+  assert.deepEqual(output.find(record => record.ownedJobCleanup === "natural"), { ownedJobEmpty: true, ownedJobCleanup: "natural" });
+  assert.deepEqual(output.at(-1), { ownedDesktopClose: "closed",
+    ownedWindowStationClose: output[0].privateWindowStation ? "closed" : "not_owned" });
 });

@@ -43,8 +43,8 @@ fence/restart/natural-exit/EOF/temporary-cleanup workflow. This does **not**
 attribute the earlier pending-navigation CI hang to this rejected-load defect.
 See [retry evidence](../reviews/WORKSPACE-NAVIGATION-RETRY-2026-10-31.md).
 
-Latest full local `npm run test:ci`: serial2/2 plus1836total/1833pass/three
-unavailable-8.3-alias skips, aggregate1838total/1835pass/3skip/0fail, exit0.
+Latest full local `npm run test:ci`: serial2/2 plus1839total/1836pass/three
+unavailable-8.3-alias skips, aggregate1841total/1838pass/3skip/0fail, exit0.
 Production dependency policy: two Low and one reviewed Moderate; full graph:
 three Low and two reviewed Moderate. Both have zero Critical/High, with no High
 exception; minimatch reviews expire 2026-11-07. Syntax and diff-check pass.
@@ -58,8 +58,13 @@ cleanup passed again after this test-only correction and helper extraction.
 PR run `41190996517`/Windows `124507591880` passed all17 non-Windows jobs,
 including all9 Core Linux shards/full typecheck/build. Its Windows job passed
 source acceptances and packaged execution/Workspace/Preview/Host lifecycle,
-built its unsigned candidate, and was live in current installer preservation
-at the last observation. This is the earlier e33 merge candidate, not the new
+built its unsigned candidate, and completed the current installer gate with
+natural whole-Job closure. Its installed Source merge is
+`a0418d624e807d78613068114f3bbdbfe38fab87`, installer SHA256
+`ac26827e8c5eecbbc47996d88fd66e2d1923517690a97ec48b46420f18a7ada5`.
+Nine opaque records/five package artifacts/three isolated first frames passed;
+the mandatory legacy job124517885192 is still live in operator-upgrade recovery
+at observation. This is the earlier e33 merge candidate, not the new
 uncommitted in-place-migration acceptance. It is not an overall/recovery pass.
 
 Same-profile **source** Main acceptance now passes without import/restore:
@@ -70,6 +75,15 @@ mandatory inside the hosted current-installer gate after candidate replacement,
 bound to installed EXE/ASAR/archive hashes and loaded runtime baseline. Its
 **installed mode has not run yet** and cannot be credited to earlier e33 CI.
 Local installed invocations are refused; no user profile is a test target.
+
+Source4d8f324 push41194200983 and PR41194205284 then failed their new regular-Node
+native preparation at postgres-start; all17 non-Windows jobs completed but no
+installer was built. That failure is not waived. The test now uses the existing
+same-user/non-admin reduced-token launcher with the full native preparation and
+additional natural-Job-closure requirement. Fixed phase/admin-banner diagnostics
+do not change failure to success. Local actual reduced-token test passes; final
+new-HEAD hosted confirmation is required. Original admin-refusal causality is
+unproved because the earlier raw output was not retained.
 
 New exact-HEAD hosted validation remains required. Real installed in-place
 DB/state/credential migration is still an evidence gap until that gate passes;

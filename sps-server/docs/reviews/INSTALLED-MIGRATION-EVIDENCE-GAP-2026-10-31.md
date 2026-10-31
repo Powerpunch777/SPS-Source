@@ -62,3 +62,26 @@ baseline tuple을 대조하고, 이 시나리오가 실패하면 gate도 실패�
 공통 helper의 전체 routing/DPAPI 비교·v11 변환·두 번의 재시작까지 다시 통과했다.
 독립적인 코드 검토에서 발견한 잘못된 source-mode cleanup 위임 입력은
 진입점에서 거부한다. 위임된 정리 완료 주장은 hosted 설치 부모만 사용할 수 있다.
+
+## Hosted native fixture follow-up
+
+Source `4d8f324` push `41194200983`/Windows `124516958510`와 PR
+`41194205284`/Windows `124516972146`는 새 native 준비 시험의
+`postgres-start` 단계에서 실패했다. 나머지17개 non-Windows job은 완료됐지만,
+Windows 통과나 새 설치본 생성으로 계산하지 않는다. 원래 원문은 수집하지
+않았으므로 관리자 실행 거부가 실제 원인이었다고 단정하지 않는다.
+
+기존 직접 Node 호출 대신, 같은 준비 시나리오를 기존 Windows 제한 토큰/소유
+Job launcher의 고정 `probe-historical-managed-vault` 진입점으로 실행한다.
+제품과 같은 사용자이되 Administrator/PowerUser 권한을 제거했음을 실제 검사한다.
+새 native75초·호출90초·시험100초 상한을 두며 기존8/18분·45초·15초 상한은
+변경하지 않는다. 157개 스키마·PID/datadir·정상 Postgres 종료·DB 보존 확인은
+생략하지 않고, pending76 이후 **전체 Job의 자연 종료까지** 추가로 요구한다.
+실패·강제 종료를 통과로 바꾸지 않는다. 로컬의 실제 제한 토큰 실행은 통과했으며
+새 정확한 HEAD의 hosted 결과가 여전히 필요하다.
+
+시작 단계는 pidfile/identity/datadir/DB 생성으로 구분해 고정 진단을 남긴다.
+시작 로그의 비공개 tail은4096바이트로 제한하고, 공식 Windows 관리자 거부
+문구 전체가 관측된 경우에만 `administrator_unsupported`, 그 외에는
+`unclassified`를 반환한다. 원문·계정·PID·포트·절대경로는 결과에 내보내지 않는다.
+참고: [PostgreSQL 공식 Windows 권한 검사](https://raw.githubusercontent.com/postgres/postgres/REL_18_STABLE/src/backend/main/main.c).
