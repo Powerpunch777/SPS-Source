@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -34,9 +34,12 @@ test("both production recovery hooks compile with the actual x64 helper without 
   assert.match(compiler.path, /makensis\.exe$/i);
   const output = path.join(owned, "compile-only.exe");
   const desktop = path.resolve(import.meta.dirname, "..");
-  await promisify(execFile)(compiler.path, ["/V2", "/INPUTCHARSET", "UTF8", `/DPROJECT_DIR=${owned}`,
+  const installUtil = await readFile(path.join(desktop, "node_modules", "app-builder-lib", "templates", "nsis", "include", "installUtil.nsh"), "utf8");
+  assert.match(installUtil, /^\s*Var \/GLOBAL installationDir\s*$/m, "fixture must preserve electron-builder's late prior-install path declaration");
+  const compileInput = path.join(desktop, "test", "fixtures", "nsis-uninstall-result.nsi");
+  await promisify(execFile)(compiler.path, ["-WX", "/V2", "/INPUTCHARSET", "UTF8", `/DPROJECT_DIR=${owned}`,
     `/DSPS_UNINSTALL_INCLUDE=${path.join(desktop, "build", "installer.nsh")}`,
-    `/DSPS_COMPILE_OUTPUT=${output}`, path.join(desktop, "test", "fixtures", "nsis-uninstall-result.nsi")],
+    `/DSPS_COMPILE_OUTPUT=${output}`, compileInput],
   { cwd: owned, env: { ...process.env, ...compiler.env }, shell: false, windowsHide: true,
     timeout: 60_000, maxBuffer: 1024 * 1024 });
   const result = await lstat(output);

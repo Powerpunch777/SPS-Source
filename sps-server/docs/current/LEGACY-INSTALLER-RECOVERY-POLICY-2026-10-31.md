@@ -331,8 +331,16 @@ targets. This is not transactional rollback if a later step fails. Parent
 wiring of the recovery GUI/helper does not change those limits or establish
 full product recovery.
 
-The current remote Verify `41167836732` is still live and is **not a pass**.
-Earlier failure evidence above remains unchanged. See [final validation](CORE-FINAL-VALIDATION-2026-10-30.md).
+Completed PR Verify `41169709122` at Source `a0c04af` is **not a pass**:
+all17 non-Windows jobs and source/packaged Desktop scenarios passed, but NSIS
+assembly failed before the installer preservation/recovery phases. Both hooks
+referenced `$installationDir` before electron-builder declared that variable.
+The hook now uses the existing registry/path helpers to resolve the old target,
+and refuses an absent target. A declaration-order fixture compiles with `-WX`
+so unknown-variable warnings are fatal. The original failed-uninstall result,
+silent failure and confirmation requirements are unchanged. No Setup was run
+locally. New-HEAD hosted assembly and full GUI/reinstall evidence remain
+required. See [final validation](CORE-FINAL-VALIDATION-2026-10-30.md).
 
 The mandatory recovery fixture now retains its registered target in the actual
 helper GUI while ordinary Windows uninstall runs. It checks initial Cancel

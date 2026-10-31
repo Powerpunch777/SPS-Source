@@ -4,8 +4,10 @@ import { createNodeIdentity, createSignedHeartbeat } from "@sps/desktop-node";
 import { createChecklistPackage } from "./no-ai-checklist-package.mjs";
 import { runAgentExecutionAcceptance } from "./agent-execution-acceptance.mjs";
 import { runModelRequestAcceptance } from "./model-request-acceptance.mjs";
+import { runRunnerRecoveryAcceptance } from "./runner-recovery-acceptance.mjs";
 
-/** Simulated Node protocol, real Desktop/Core/SDK bridge; no CLI process starts. */
+/** Discovery uses a simulated heartbeat; the final recovery acceptance runs
+ * isolated native fixture CLIs, never a real AI/provider command. */
 export async function runRuntimeDiscoveryAcceptance({ cdp, company, secondCompany, api, temporaryRoot }) {
   const call = (url, options) => api(cdp, url, options);
   const fixture = await createChecklistPackage(path.join(temporaryRoot, "reference-plugins", "runtime-discovery"), {
@@ -79,4 +81,5 @@ export async function runRuntimeDiscoveryAcceptance({ cdp, company, secondCompan
   console.log("[runtime-discovery] public SDK/Core bridge: signed simulated heartbeat, recent observation != CLI login/grant, A/B scope and revoke projection passed; no CLI command dispatched");
   await runAgentExecutionAcceptance({ call, plugin, temporaryRoot, unrelatedCompanyId: secondCompany.id });
   await runModelRequestAcceptance({ call, temporaryRoot, unrelatedCompanyId: secondCompany.id });
+  await runRunnerRecoveryAcceptance({ call, temporaryRoot, unrelatedCompanyId: secondCompany.id });
 }

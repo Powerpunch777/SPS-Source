@@ -16,7 +16,43 @@ deferred Native development are excluded.
   changes in the original checkout remain untouched. Tests use owned temporary
   profiles, not the installed user profile.
 
-## Ordered Work
+## Current Evidence Summary
+
+This summary supersedes the historical observations below; it does not declare
+Core or Stable completion. Latest completed PR Verify `41169709122` at Source
+`a0c04af12a6b6bcbfbf0bede41672139cc347eee` passed all17 non-Windows jobs,
+including all9 Linux shards/full Core typecheck/build, public SDK, Identity and
+bundle/security-policy checks. Its Windows job `124444808130` passed source
+Main/No-AI/Native/transfer/historical restore and packaged execution, Workspace,
+Preview and Host plugin lifecycle. It then **failed NSIS assembly** with warning
+6000 (`installationDir` used before its declaration), so current installer
+preservation was not run and the downstream legacy job failed missing input.
+
+The hook now reads the old target using electron-builder's existing registry
+helpers and refuses an absent target. The original failed uninstall code,
+silent failure and explicit default-No confirmation remain unchanged. A fixture
+with the actual declaration order and NSIS `-WX` compiles both production hooks
+with the actual recovery helper, without executing Setup. Only a new hosted
+installer/recovery result can qualify that correction.
+
+Runner response-loss recovery now also has actual Core/public-SDK + Electron
+DPAPI/state-file restart + native harmless CLI component evidence. Both lost
+claim/final responses recover without duplicate execution; independent Node
+keys, exit-7 failure, cancellation and foreign-Workspace denial are checked.
+This invokes the exact Main poll routine, **not Main startup or a Member UI**.
+See [scope and commands](../reviews/RUNNER-RECOVERY-COMPONENT-2026-10-31.md).
+
+Actual installed old-version recovery remains incomplete. The prior current
+unsigned package lifecycle success below is separate; it cannot qualify the
+new helper path, signed update, physical PCs or installed default-profile DB.
+Local stable-tree `npm run test:ci` exited0: serial2/2 plus1801total/1798pass/
+three unavailable-8.3-alias skips, aggregate1803total/1800pass/three skips and
+zero failures. This does not replace a new final-HEAD Windows installer gate.
+
+## Historical Work Log
+
+The table and observations below preserve earlier failures and intermediate
+evidence. Their earlier next-step labels are not current completion claims.
 
 | Area | Status | Next Required Evidence |
 | --- | --- | --- |
@@ -39,7 +75,7 @@ deferred Native development are excluded.
 
 ## Execution Rules
 
-### Latest Hosted Observations
+### Earlier Hosted Observations
 
 - Sourcebe40e0c push124428172046 now confirms first restarted-window retirement
   at the existing `scope-host-instance-changed` fence; a later current opening
@@ -299,8 +335,9 @@ Native pinned-catalog/session and WinForms GUI code compiles. NSIS/payload
 wiring now offers explicit default-No interactive recovery, preserves the
 original failed Setup result and never opens recovery in silent mode. Both
 production hooks compile against the actual x64 helper. The actual GUI against
-an installed historical fixture remains unverified. Remote Verify
-`41167836732` is still live, not passed. No signed-build, physical-device,
+an installed historical fixture remains unverified. Latest completed Verify
+`41169709122` failed installer assembly before that fixture could run; see the
+current summary above. No signed-build, physical-device,
 previous-Stable or default-profile migration claim is made. See the
 [recovery policy](LEGACY-INSTALLER-RECOVERY-POLICY-2026-10-31.md) for the
 acceptance scope and security limits; full product recovery is not claimed.

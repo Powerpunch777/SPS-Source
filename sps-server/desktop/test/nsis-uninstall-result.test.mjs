@@ -36,8 +36,12 @@ test("production NSIS hooks fail closed on old-uninstaller errors without changi
   assert.match(customInclude, /Back up your SPS data and move any work saved inside the program installation folder before cleanup\./);
   assert.match(customInclude, /AppData, Host Vault and external project folders are not cleanup targets\./);
   assert.match(customInclude, /Setup will still stop; run the latest Setup again after recovery\./);
-  assert.match(customInclude, /spsLegacyRecoveryOpen_\$\{TAG\}:\s+Push \$R0\s+InitPluginsDir\s+ClearErrors\s+File \/oname=\$PLUGINSDIR\\SpsLegacyRecovery\.exe "\$\{PROJECT_DIR\}\\\.legacy-recovery\\SpsLegacyRecovery\.exe"\s+IfErrors spsLegacyRecoveryUnavailable_\$\{TAG\}\s+ExecWait '"\$PLUGINSDIR\\SpsLegacyRecovery\.exe" --recover "\$installationDir"' \$R1\s+IfErrors spsLegacyRecoveryUnavailable_\$\{TAG\}/);
-  assert.match(customInclude, /spsLegacyRecoveryFinished_\$\{TAG\}:\s+Pop \$R0[\s\S]*?Goto spsUninstallFailed_\$\{TAG\}/);
+  assert.match(customInclude, /spsLegacyRecoveryOpen_\$\{TAG\}:\s+Push \$R0\s+Push \$R2\s+Push \$R3/);
+  assert.match(customInclude, /!insertmacro readReg \$R2 "\$\{TAG\}" "\$\{INSTALL_REGISTRY_KEY\}" InstallLocation/);
+  assert.match(customInclude, /!insertmacro readReg \$R3 "\$\{TAG\}" "\$\{UNINSTALL_REGISTRY_KEY\}" UninstallString[\s\S]*?!insertmacro GetInQuotes \$R3 "\$R3"[\s\S]*?Call GetFileParent[\s\S]*?Pop \$R2/);
+  assert.match(customInclude, /File \/oname=\$PLUGINSDIR\\SpsLegacyRecovery\.exe "\$\{PROJECT_DIR\}\\\.legacy-recovery\\SpsLegacyRecovery\.exe"\s+IfErrors spsLegacyRecoveryUnavailable_\$\{TAG\}\s+ExecWait '"\$PLUGINSDIR\\SpsLegacyRecovery\.exe" --recover "\$R2"' \$R1\s+IfErrors spsLegacyRecoveryUnavailable_\$\{TAG\}/);
+  assert.match(customInclude, /spsLegacyRecoveryFinished_\$\{TAG\}:\s+Pop \$R3\s+Pop \$R2\s+Pop \$R0[\s\S]*?Goto spsUninstallFailed_\$\{TAG\}/);
+  assert.doesNotMatch(customInclude, /\$installationDir/);
   assert.match(customInclude, /SetErrorLevel \$R0\s+Quit/);
 
   const silentFailure = customInclude.match(/spsUninstallSilentFailure_\$\{TAG\}:([\s\S]*?)spsUninstallFailed_\$\{TAG\}:/);

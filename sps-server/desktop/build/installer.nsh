@@ -17,11 +17,29 @@
 
     spsLegacyRecoveryOpen_${TAG}:
     Push $R0
+    Push $R2
+    Push $R3
+    ; electron-builder expands customUnInstallCheck before declaring installationDir.
+    !insertmacro readReg $R2 "${TAG}" "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ${if} $R2 == ""
+      !insertmacro readReg $R3 "${TAG}" "${UNINSTALL_REGISTRY_KEY}" UninstallString
+      ${if} $R3 != ""
+        !insertmacro GetInQuotes $R3 "$R3"
+        ${if} $R3 != ""
+          Push $R3
+          Call GetFileParent
+          Pop $R2
+        ${endif}
+      ${endif}
+    ${endif}
+    ${if} $R2 == ""
+      Goto spsLegacyRecoveryUnavailable_${TAG}
+    ${endif}
     InitPluginsDir
     ClearErrors
     File /oname=$PLUGINSDIR\SpsLegacyRecovery.exe "${PROJECT_DIR}\.legacy-recovery\SpsLegacyRecovery.exe"
     IfErrors spsLegacyRecoveryUnavailable_${TAG}
-    ExecWait '"$PLUGINSDIR\SpsLegacyRecovery.exe" --recover "$installationDir"' $R1
+    ExecWait '"$PLUGINSDIR\SpsLegacyRecovery.exe" --recover "$R2"' $R1
     IfErrors spsLegacyRecoveryUnavailable_${TAG}
     Goto spsLegacyRecoveryFinished_${TAG}
 
@@ -29,6 +47,8 @@
     MessageBox MB_OK|MB_ICONEXCLAMATION "SPS recovery could not start. Keep your data backup and use Windows Installed Apps. Do not delete SPS data folders."
 
     spsLegacyRecoveryFinished_${TAG}:
+    Pop $R3
+    Pop $R2
     Pop $R0
     DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
     Goto spsUninstallFailed_${TAG}
