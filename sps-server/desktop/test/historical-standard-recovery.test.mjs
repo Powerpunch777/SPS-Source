@@ -47,6 +47,11 @@ test("stages preserve original path, ordinary flags, exact bytes and separately 
   assert.match(source, /historicalStandardUninstallDataPreservationQualified: true, candidateUpgradeQualified: false/);
   assert.match(source, /operatorReinstallRecoveryQualified: false, previousStableUpgradeQualified: false/);
   assert.match(source, /return OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
+  const entry = await readFile(new URL("../scripts/smoke-historical-uninstaller-diagnostic.mjs", import.meta.url), "utf8");
+  const stage = entry.indexOf("const exitCode = await runHistoricalStandardRecoveryStage(recoveryVariant)");
+  const flush = entry.indexOf('process.stdout.write("", error => error ? reject(error) : resolve())', stage);
+  const exit = entry.indexOf("process.exit(exitCode)", flush);
+  assert.ok(stage >= 0 && flush > stage && exit > flush);
 });
 
 test("stage entry rejects real local invocation before checkpoint, profile or process access", async () => {

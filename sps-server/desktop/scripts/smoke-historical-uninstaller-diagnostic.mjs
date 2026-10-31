@@ -25,7 +25,9 @@ const standardRecovery = recoveryVariant !== undefined;
 assert.equal(standardRecovery && compactControl, false, "Recovery must retain the original installed path.");
 if (standardRecovery) {
   const { runHistoricalStandardRecoveryStage } = await import("./historical-standard-recovery-stages.mjs");
-  process.exit(await runHistoricalStandardRecoveryStage(recoveryVariant));
+  const exitCode = await runHistoricalStandardRecoveryStage(recoveryVariant);
+  await new Promise((resolve, reject) => process.stdout.write("", error => error ? reject(error) : resolve()));
+  process.exit(exitCode);
 }
 const manifest = JSON.parse(await readFile(path.join(desktop, "package.json"), "utf8"));
 assert.equal(manifest.build.productName, "SPS Desktop");
