@@ -179,3 +179,47 @@ one unavailable-alias skip, zero failures. YAML parsing, JavaScript syntax and
 local installer invocation. An earlier full run exposed an existing literal
 8-minute timeout-expression contract mismatch; its original expression was
 restored before the final successful run, without changing its bound or test.
+
+## Hosted Residue and CI Follow-Up
+
+Source `c3c79c3` diagnostic41161957975/job124421238310 is terminal failure.
+Prepare installed the old package with exit0 after313403ms, verified all ten
+records and closed naturally. Ordinary uninstall returned0 after109288ms and
+preserved all ten records. The new postconditions confirmed zero registrations
+but a remaining program directory:46 regular files,61 directories, no links or
+hardlinks, complete census, maximum absolute/relative length282/181 and46paths
+over259characters. The complete-removal assertion correctly failed; the Job
+closed naturally. These measurements do not identify the exact failed NSIS
+instruction and do not qualify reinstall or permit leftover deletion.
+
+The user is being asked separately whether to add explicitly confirmed removal
+of only the old program residue, after backing up any work kept inside that
+folder. No such feature, local cleanup or product-policy waiver has been
+implemented while that decision is pending. AppData, Host Vault and external
+projects remain outside any proposed program-residue scope.
+
+The same Source's Verify41161958027 passed all17 non-Windows jobs, including
+all nine Linux shards, full Core typecheck/build and security policies. Its
+Windows job124421238364 failed two unit fixtures: a literal-LF search in the
+new workflow contract on CRLF checkout, and the unchanged45-second harmless
+PowerShell observer. That observer reached Node and created PowerShell; the
+actual x64 availability command remained pending at45013ms. Cleanup124 was
+forced and rejected. No timeout, app acceptance or installer pass is inferred.
+The mandatory recovery job124421935981 then failed its missing same-attempt
+artifact, because the failed desktop job had never built one. This is an
+expected fail-closed dependency outcome, not executed recovery evidence.
+
+Workflow contracts now use the installed YAML parser and test both LF/CRLF,
+missing/reordered gates, wrong timeouts, broad artifact paths, caller-supplied
+mode flags and conditional skips. The CI test command first runs the unchanged
+observer file alone, then every other discovered test at file concurrency4.
+The exact partition is tested against the full directory, with duplicates,
+missing mandatory files, invalid names and either child failure rejected.
+This removes competing test processes from that observation, not tests or
+deadlines; whether contention caused the hosted delay remains unproven.
+
+Final local `npm run test:ci` exited0: the serial stage passed2/2 and the full
+remaining241-file stage had1730total/1727pass/three unavailable-8.3-alias skips/
+zero failures (41455ms). Aggregate1732total/1729pass/three skips. Focused CI/YAML
+contracts5/5 and `git diff --check` passed. No installer or installed user
+profile was used. New-HEAD hosted validation remains required.

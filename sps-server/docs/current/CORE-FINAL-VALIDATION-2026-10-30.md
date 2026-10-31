@@ -41,6 +41,24 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- Sourcec3c79c3 Verify41161958027 passed all17 non-Windows jobs, including nine
+  Linux shards/full Core build/security policies. Windows job124421238364
+  failed literal-LF workflow inspection on CRLF and a real harmless PowerShell
+  command still pending at45013ms. The separate legacy job correctly failed
+  missing input after Windows never built its artifact. YAML contracts now
+  parse structurally and reject equivalent negative cases; the unchanged45s
+  observer runs alone before ALL other tests at concurrency4. Partition and
+  child-failure tests forbid silent omissions/retries/deadline changes. Final
+  local CI stages2/2 plus1730total/1727pass/three unavailable-alias skips gave
+  aggregate1732total/1729pass/three skips/zero failures. Actual new-HEAD hosted
+  results remain required, not a proven contention fix.
+- Sourcec3c79c3 diagnostic41161957975/job124421238310 now proves the ordinary
+  uninstall residue category: exit0, all10 records unchanged, zero registration,
+  but46files/61dirs remain, maxabsolute282/relative181 with46paths over259.
+  Complete-removal assertion FAILED; Job cleanup was natural. This is not a
+  successful recovery. User confirmation is requested before any feature that
+  removes residual program files; nothing was deleted or relaxed. See the
+  [recovery policy](LEGACY-INSTALLER-RECOVERY-POLICY-2026-10-31.md).
 - Source9e06fca ordinary-prerequisite job124417311115 failed after old install0
   (232631ms), ordinary uninstall0 (70045ms) and all ten retained hashes matched.
   The post-removal assertion failed; that log cannot distinguish remaining

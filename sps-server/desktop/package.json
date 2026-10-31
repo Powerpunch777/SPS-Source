@@ -23,7 +23,7 @@
     "pretest": "npm run sync:desktop-node && npm run sync:plugin-sdk",
     "test": "node --test test/*.test.mjs",
     "pretest:ci": "npm run sync:desktop-node && npm run sync:plugin-sdk",
-    "test:ci": "node --test --test-concurrency=4 test/*.test.mjs",
+    "test:ci": "node scripts/run-desktop-ci-tests.mjs",
     "test:e2e:bootstrap": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-isolated-desktop-ui.mjs",
     "test:e2e:native-identity-storage": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-native-identity-storage.mjs",
     "test:e2e:core-settings": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-core-settings-desktop.mjs && node scripts/smoke-core-settings-desktop.mjs --corrupt-recovery && node scripts/smoke-core-settings-desktop.mjs --corrupt-desktop-state && node scripts/smoke-core-settings-desktop.mjs --unwritable-desktop-state && node scripts/smoke-core-settings-desktop.mjs --malformed-routing-state && node scripts/smoke-core-settings-desktop.mjs --malformed-native-member-index && node scripts/smoke-core-settings-desktop.mjs --unverified-legacy-adoption && node scripts/smoke-core-settings-desktop.mjs --deferred-owner",
