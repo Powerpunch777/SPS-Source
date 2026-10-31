@@ -113,3 +113,25 @@ test("failed automatic replacement requires complete historical bytes and user d
   assert.match(failed, /automaticUpgradeQualified: false, operatorRecoveryStarted: false/);
   assert.doesNotMatch(failed, /uninstallOwnedCandidate|runNsis\(|rm\(|writeFile\(|copyFile\(/);
 });
+
+test("installed historical migration is mandatory after current replacement and retains the whole-Job gate", async () => {
+  const source = await readFile(new URL("../scripts/smoke-installer-data-preservation.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function checkInstalledHistoricalProfile()");
+  const end = source.indexOf("async function uninstallOwnedCandidate", start);
+  const proof = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  for (const expected of ['scripts/smoke-historical-managed-vault-desktop.mjs', 'OWNED_JOB_CLEANUP_ARGUMENT',
+    'assert.equal(error.code, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE', '!error.signal && !error.killed',
+    'pending.installedHistoricalFixtureInPlaceMigrationQualified, true', 'pending.realDpapiCredentialsAndKeyPreserved, true',
+    'pending.restoreUsed, false', 'assert.deepEqual(pending.candidate.baseline, baseline)',
+    'assert.deepEqual(pending.candidate.installedArtifacts,', 'await assertNoDesktopProcess()', 'await checkRetainedData()',
+    'await checkInstalledPackage()', 'historicalProfileMigration = pending']) assert.ok(proof.includes(expected), expected);
+  const replacement = source.indexOf('traceInstallerStage("current-package-replacement-verified")');
+  const inPlace = source.indexOf('await checkInstalledHistoricalProfile()', replacement);
+  const historical = source.indexOf('if (!currentOnly)', replacement);
+  assert.ok(replacement > 0 && inPlace > replacement && historical > inPlace);
+  assert.match(source, /isolatedInstalledHistoricalProfileMigration: historicalProfileMigration/);
+  assert.match(proof, /normalUserProfileStartupQualified/);
+  assert.match(proof, /previousStableUpgradeQualified/);
+  assert.doesNotMatch(proof, /continue-on-error|catch\s*\{\s*\}/);
+});

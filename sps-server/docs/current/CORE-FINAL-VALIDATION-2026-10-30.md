@@ -43,14 +43,37 @@ fence/restart/natural-exit/EOF/temporary-cleanup workflow. This does **not**
 attribute the earlier pending-navigation CI hang to this rejected-load defect.
 See [retry evidence](../reviews/WORKSPACE-NAVIGATION-RETRY-2026-10-31.md).
 
-Latest full local `npm run test:ci`: serial2/2 plus1820total/1817pass/three
-unavailable-8.3-alias skips, aggregate1822total/1819pass/3skip/0fail, exit0.
+Latest full local `npm run test:ci`: serial2/2 plus1836total/1833pass/three
+unavailable-8.3-alias skips, aggregate1838total/1835pass/3skip/0fail, exit0.
 Production dependency policy: two Low and one reviewed Moderate; full graph:
 three Low and two reviewed Moderate. Both have zero Critical/High, with no High
 exception; minimatch reviews expire 2026-11-07. Syntax and diff-check pass.
+Push `41190991746` at `e33ac03` failed the native-socket acceptance because
+Chromium returned real `ERR_SOCKET_NOT_CONNECTED` (`-15`); its test predicate
+only knew `-101`/`-324`. The fixture now recognizes only these three explicit
+native variants; cancellation/unknown/forged rejections still fail. The actual
+source transfer, full preceding review/restart/account-fence stages and natural
+cleanup passed again after this test-only correction and helper extraction.
+
+PR run `41190996517`/Windows `124507591880` passed all17 non-Windows jobs,
+including all9 Core Linux shards/full typecheck/build. Its Windows job passed
+source acceptances and packaged execution/Workspace/Preview/Host lifecycle,
+built its unsigned candidate, and was live in current installer preservation
+at the last observation. This is the earlier e33 merge candidate, not the new
+uncommitted in-place-migration acceptance. It is not an overall/recovery pass.
+
+Same-profile **source** Main acceptance now passes without import/restore:
+the owned historical157 cluster and v11 Desktop state become176/v13, both
+Workspace projects/JSON/timestamps/file hashes survive, and the existing real
+DPAPI account/signing key still decrypt after restart. The same test is now
+mandatory inside the hosted current-installer gate after candidate replacement,
+bound to installed EXE/ASAR/archive hashes and loaded runtime baseline. Its
+**installed mode has not run yet** and cannot be credited to earlier e33 CI.
+Local installed invocations are refused; no user profile is a test target.
+
 New exact-HEAD hosted validation remains required. Real installed in-place
-DB/state/credential migration is also still an evidence gap, not proved by
-opaque installer canaries plus source fresh-Host restore; see
+DB/state/credential migration is still an evidence gap until that gate passes;
+opaque installer canaries plus source scenarios cannot close it. See
 [installed migration audit](../reviews/INSTALLED-MIGRATION-EVIDENCE-GAP-2026-10-31.md).
 No installed app/profile, original dirty Native checkout, Production, Core or
 SDK was changed by this follow-up. Core completion remains unproven.

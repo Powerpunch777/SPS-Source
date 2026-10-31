@@ -34,6 +34,7 @@
     "test:e2e:owner-vault-state-migration": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-owner-vault-transfer-desktop.mjs --legacy-desktop-state",
     "test:db:historical-core-migration": "node scripts/smoke-historical-core-migration.mjs",
     "test:e2e:owner-vault-historical-core": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-owner-vault-transfer-desktop.mjs --historical-core-backup",
+    "test:e2e:historical-profile-in-place": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-historical-managed-vault-desktop.mjs",
     "test:e2e:execution-control": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --execution-control",
     "test:e2e:no-ai-checklist": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --no-ai-checklist",
     "test:e2e:native-management": "npm run sync:desktop-node && npm run sync:plugin-sdk && node scripts/smoke-workspace-surfaces-desktop.mjs --native-management",

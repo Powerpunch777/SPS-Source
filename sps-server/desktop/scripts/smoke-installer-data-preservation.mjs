@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { assertHostedInstallerCi, assertPlainDirectory, assertContained, nsisInvocation } from "./installer-ci-safety.mjs";
 import { queryInstallerRegistrations } from "./installer-registry-query.mjs";
 import { queryInstallerProcesses } from "./installer-process-query.mjs";
-import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
+import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./historical-installer-baseline.mjs";
 import { captureInstallerSnapshot, assertInstallerSnapshot } from "./installer-retained-snapshot.mjs";
 
@@ -171,6 +171,7 @@ async function checkHistoricalInstallation() {
   traceInstallerStage("historical-package-verified");
 }
 let installedFirstFrames = 0;
+let historicalProfileMigration = null;
 async function checkInstalledFirstFrame() {
   traceInstallerStage("isolated-first-frame-start");
   const { stdout } = await exec(process.execPath, [path.join(desktop, "scripts/smoke-isolated-desktop-ui.mjs")], {
@@ -182,6 +183,38 @@ async function checkInstalledFirstFrame() {
   await checkRetainedData();
   installedFirstFrames += 1;
   traceInstallerStage("isolated-first-frame-verified");
+}
+async function checkInstalledHistoricalProfile() {
+  traceInstallerStage("isolated-historical-profile-start");
+  let pending;
+  try {
+    await exec(process.execPath, [path.join(desktop, "scripts/smoke-historical-managed-vault-desktop.mjs"), OWNED_JOB_CLEANUP_ARGUMENT], {
+      cwd: desktop, env: { ...process.env, SPS_DESKTOP_E2E_SOURCE: "0", SPS_DESKTOP_E2E_BINARY: path.join(installation, "SPS Desktop.exe") },
+      windowsHide: true, timeout: 300_000, maxBuffer: 1024 * 1024,
+    });
+    assert.fail("Installed historical profile must leave whole-Job qualification to its existing CI parent.");
+  } catch (error) {
+    assert.equal(error.code, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE, "Installed historical profile did not reach its owned cleanup handoff.");
+    assert.ok(!error.signal && !error.killed, "Timed out or killed migration cannot qualify.");
+    pending = JSON.parse(error.stdout.trim());
+  }
+  assert.equal(pending.kind, "installed-historical-profile-in-place-acceptance");
+  assert.equal(pending.installedHistoricalFixtureInPlaceMigrationQualified, true);
+  assert.equal(pending.realDpapiCredentialsAndKeyPreserved, true);
+  assert.equal(pending.restoreUsed, false);
+  assert.equal(pending.ownedJobCleanup, "pending-external-observation");
+  assert.deepEqual(pending.candidate.baseline, baseline);
+  assert.deepEqual(pending.candidate.installedArtifacts, { executable: expected.get("SPS Desktop.exe"),
+    appAsar: expected.get("resources/app.asar"), runtimeArchive: expected.get("resources/sps-owner-host-runtime-package/sps-owner-host-runtime.tgz") });
+  for (const field of ["signedInstallerQualified", "normalUserProfileStartupQualified", "previousStableUpgradeQualified", "physicalTwoDeviceQualified"]) {
+    assert.equal(pending[field], false);
+  }
+  await assertNoDesktopProcess();
+  await checkRetainedData();
+  await checkInstalledPackage();
+  historicalProfileMigration = pending;
+  traceInstallerStage("isolated-historical-profile-verified", { historicalMigrations: pending.historicalMigrations,
+    currentMigrations: pending.currentMigrations, wholeJobQualification: "pending" });
 }
 async function uninstallOwnedCandidate(name) {
   const copiedUninstaller = path.join(fixture, name);
@@ -205,6 +238,7 @@ try {
   await checkInstalledPackage();
   await checkInstalledFirstFrame();
   traceInstallerStage("current-package-replacement-verified");
+  await checkInstalledHistoricalProfile();
   if (!currentOnly) {
     phase = "uninstall-before-historical-input";
     traceInstallerStage("begin");
@@ -261,6 +295,7 @@ try {
       withdrawn: true, signingTrustQualified: false, applicationLaunched: false },
     retainedRecords: sentinels.length, packageByteParity: artifacts.length, silentInstaller: true,
     desktopProcessAbsentAtInstallerBoundaries: true, isolatedInstalledFirstFrames: installedFirstFrames,
+    isolatedInstalledHistoricalProfileMigration: historicalProfileMigration,
     repairedFixturePackage: true, inertPreservationSentinels: true, currentPackageReplacementQualified: true,
     historicalInstallerUpgradeQualified: !currentOnly,
     previousStableUpgradeQualified: false, applicationDataMigrationQualified: false,

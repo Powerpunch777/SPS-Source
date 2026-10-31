@@ -5,6 +5,7 @@ import test from "node:test";
 import { prepareHistoricalOwnerTransfer } from "../scripts/historical-owner-transfer-fixture.mjs";
 
 const helperPath = new URL("../scripts/historical-owner-transfer-fixture.mjs", import.meta.url);
+const coreFixturePath = new URL("../scripts/historical-core-records-fixture.mjs", import.meta.url);
 
 test("rejects invalid and external fixture destinations before database setup", async () => {
   let asserted = false;
@@ -30,6 +31,7 @@ test("rejects invalid and external fixture destinations before database setup", 
 
 test("keeps the helper bounded to the pinned historical backup and production export flow", async () => {
   const source = await readFile(helperPath, "utf8");
+  const coreFixture = await readFile(coreFixturePath, "utf8");
   const validation = source.indexOf("const { fixtureRoot, destination } = validateInputs(fixture, destinationRoot);");
   const fixtureCheck = source.indexOf("await fixture.assertCurrent();", validation);
   const databaseRuntime = source.indexOf('createRequire(path.join(coreRoot, "packages", "db", "package.json"))');
@@ -40,8 +42,8 @@ test("keeps the helper bounded to the pinned historical backup and production ex
   assert.match(source, /backupEngine: "javascript"/);
   assert.match(source, /filenamePrefix: "historical-main"/);
   assert.match(source, /exportSpsOwnerVaultTransfer\(/);
-  assert.match(source, /principal_type, principal_id, status, membership_role/);
-  assert.match(source, /membershipId, companyId/);
-  assert.match(source, /storage.*historical-main-attachment\.txt/);
   assert.doesNotMatch(source, /runDatabaseRestore\(/);
+  assert.match(coreFixture, /principal_type, principal_id, status, membership_role/);
+  assert.match(coreFixture, /membershipId, companyId/);
+  assert.match(coreFixture, /storage.*historical-main-attachment\.txt/);
 });

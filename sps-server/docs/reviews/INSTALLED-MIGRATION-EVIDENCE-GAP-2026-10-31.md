@@ -18,3 +18,47 @@
 미검증인 것은 같은 기존 소유 프로필 안의 유효한 과거 DB와 Desktop 상태를, 실제 설치된 새 후보 Main이 인플레이스로 열어 마이그레이션하고 기존 행·파일·credential을 복호화해 보존하는지, 그리고 재시작 후에도 보존되는지다. 이 시나리오의 실제 바이너리 SHA-256과 Source/Core/SDK/Desktop 식별 tuple을 증거에 묶고, 앱의 자연 종료 및 임시 fixture 소유권 정리까지 확인해야 한다. 임시 프로필 첫 화면, signed/previous-stable 설치, physical 기기 검증으로 이 공백을 대신하거나 확대 해석하지 않는다.
 
 이는 회귀나 데이터 손실의 버그 입증이 아니라, 현재 보유 증거로 해당 필수 동작을 아직 입증하지 못했다는 증거 공백이다. 이 문서는 필수 범위를 축소하거나 완료를 선언하지 않는다.
+
+## 추가된 시험과 현재 상태
+
+`desktop/scripts/smoke-historical-managed-vault-desktop.mjs`에 같은 소유 시험
+프로필의 인플레이스 경로를 추가했다. Core/SDK와 제품 Main은 이 작업으로
+변경하지 않는다. 공통 SQL fixture는 기존 과거 백업 시험과 같은 두 Workspace,
+두 프로젝트, Unicode 설명·JSON·타임스탬프 및 두 membership을 사용한다.
+
+1. 실제 Main에서 격리 Identity의 정상 state/PKCE 로그인을 완료하고 DPAPI
+   credential을 저장한 후 앱을 정상 종료한다. 운영 Google 로그인 증거는 아니다.
+2. 같은 `migration-profile` 안에 정확한 157개 과거 스키마의 새 클러스터를
+   준비하고 실제 PID·datadir 소유권을 검증해 정상 종료한다. 기존 Vault는
+   덮어쓰지 않으며 현재 migration, import/restore, 외부 DB는 사용하지 않는다.
+3. credential 및 기기 signing key를 보존한 v11 상태를 기록한다. 현 Main의
+   기본 Owner 연결 형상을 사용하며, 새로운 Node ID나 승인을 만들어 넣지 않는다.
+4. 실제 Main이 같은 DB를 176개 migration으로, 상태를 v13으로 올리는지 확인한다.
+   자동으로 열린 Workspace에서 두 프로젝트를 읽고, 원래 행·JSON·설명·시간·파일
+   해시와 DPAPI 복호화 값 및 signing key 해시가 일치해야 한다.
+5. 정상 종료·재시작 후 같은 확인을 반복한다. 회사 선택/Node 연결의 정상 초기화와
+   인증정보의 보존을 구분하며, 기존 별도 v11 시험의 전체 routing 비교는 유지한다.
+
+소스 모드의 전체 시나리오는 실제 Windows/Electron에서 통과했다. 명령은
+`SPS_DESKTOP_E2E_SOURCE=1 node scripts/smoke-historical-managed-vault-desktop.mjs`
+이며 출력은 `sourceHistoricalFixtureInPlaceMigrationQualified:true`,
+`installedHistoricalFixtureInPlaceMigrationQualified:false`이다. 자연 Main 종료,
+출력 EOF, 소유 프로세스 부재와 임시 데이터 정리까지 확인했다.
+
+설치 모드는 GitHub-hosted 전용 기존 installer gate에서만 허용한다. 현재 후보
+교체 후 설치된 실행 파일·ASAR·runtime archive 해시와 로딩한 runtime의 정확한
+baseline tuple을 대조하고, 이 시나리오가 실패하면 gate도 실패하도록 연결했다.
+전체 Job 자연 종료는 기존 제한 토큰 launcher가 최종 확인한다. **이 새 설치
+모드는 아직 실행 결과가 없으므로 설치본 공백은 미해결이다.** 기존 `e33ac03`
+실행에는 이 새 시험이 없으므로 그 결과로 이를 통과 처리할 수 없다.
+
+이 시험도 사용자 기본 AppData 프로필, 이전 Stable 실행, 서명 설치본 또는
+실제 두 PC의 증거는 아니다. 각 qualification은 계속 별도로 `false`를 유지한다.
+초기 개발 중 실패한 시험 폴더는 불확실한 상태에서 일괄 삭제하지 않았으며,
+완료·정상 종료가 확인된 이번 성공 fixture만 정리했다.
+
+최종 소스 명령 `SPS_DESKTOP_E2E_SOURCE=1 npm run test:e2e:historical-profile-in-place`
+재실행도 통과했다. 기존 실제 Main의 `test:e2e:owner-vault-state-migration`도
+공통 helper의 전체 routing/DPAPI 비교·v11 변환·두 번의 재시작까지 다시 통과했다.
+독립적인 코드 검토에서 발견한 잘못된 source-mode cleanup 위임 입력은
+진입점에서 거부한다. 위임된 정리 완료 주장은 hosted 설치 부모만 사용할 수 있다.
