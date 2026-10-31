@@ -24,6 +24,7 @@ test("driver traces and ordered parent protocol match while retaining every orig
   assert.match(driver, /element\.Current\.ProcessId == processId/);
   assert.match(driver, /TryGetCurrentPattern\(TogglePattern\.Pattern, out pattern\)/);
   assert.match(driver, /state == ToggleState\.On \|\| state == ToggleState\.Off/);
+  assert.match(driver, /Require\(read\.Wait\(Math\.Min\(MessageTimeoutMs, RemainingMilliseconds\(\)\)\)\)/);
   assert.doesNotMatch(driver, /BM_SETCHECK|\.Toggle\(\)|\.SetValue\(/);
   const host = await readFile(new URL("../scripts/confirmed-legacy-recovery-ui.mjs", import.meta.url), "utf8");
   assert.match(host, /assert\.deepEqual\(phases, LEGACY_RECOVERY_UI_PHASES\)/);

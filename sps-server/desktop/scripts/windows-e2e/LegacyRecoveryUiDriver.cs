@@ -240,13 +240,19 @@ internal static class LegacyRecoveryUiDriver
         Require(OwnsWindow(checkBox, processId));
         // WinForms owner-drawn checks do not expose a valid BM_GETCHECK state.
         // Read the real accessibility toggle state; never set it directly.
-        AutomationElement element = AutomationElement.FromHandle(checkBox);
-        Require(element != null && element.Current.ProcessId == processId);
-        object pattern;
-        Require(element.TryGetCurrentPattern(TogglePattern.Pattern, out pattern));
-        ToggleState state = ((TogglePattern)pattern).Current.ToggleState;
-        Require(OwnsWindow(checkBox, processId) && (state == ToggleState.On || state == ToggleState.Off));
-        return state == ToggleState.On;
+        Task<bool> read = Task.Run(delegate
+        {
+            Require(OwnsWindow(checkBox, processId));
+            AutomationElement element = AutomationElement.FromHandle(checkBox);
+            Require(element != null && element.Current.ProcessId == processId);
+            object pattern;
+            Require(element.TryGetCurrentPattern(TogglePattern.Pattern, out pattern));
+            ToggleState state = ((TogglePattern)pattern).Current.ToggleState;
+            Require(OwnsWindow(checkBox, processId) && (state == ToggleState.On || state == ToggleState.Off));
+            return state == ToggleState.On;
+        });
+        Require(read.Wait(Math.Min(MessageTimeoutMs, RemainingMilliseconds())));
+        return read.Result;
     }
 
     static bool ReadDefaultId(IntPtr dialog, uint processId, out int controlId)

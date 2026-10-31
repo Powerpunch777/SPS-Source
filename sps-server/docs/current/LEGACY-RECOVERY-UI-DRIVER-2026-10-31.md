@@ -23,6 +23,11 @@ the distinction between the documented button-message state interface and the
 WinForms owner-drawn control implementation; it is a test-driver correction,
 not a product change.
 
+The cross-process accessibility query runs on a background MTA thread and is
+observed within the existing one-second message bound and remaining overall
+budget. A timeout fails the driver; it does not retry, extend the UI budget,
+perform cleanup, or wait indefinitely for the accessibility provider.
+
 The actual Form component fixture then completed its initial workflow in 718ms:
 all check/uncheck interlocks, disabled/enabled state, and Cancel were exercised.
 This is local component evidence only. It did not register or install a
