@@ -16,6 +16,7 @@ import { observeTransferWindows } from "./owner-vault-window-observation.mjs";
 import { readSpsOwnerVaultRestoreReceipt } from "../src/owner-vault-restore-receipt.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { assertWorkspaceOpenAccountFence } from "./workspace-open-account-fence-acceptance.mjs";
+import { assertWorkspaceNavigationRetry } from "./workspace-navigation-retry-acceptance.mjs";
 import { seedReviewedTransferPlugin, resetTransferPluginImportProbe, reviewRestoredTransferPlugin, assertRestoredTransferPluginData, seedBundledTransferReviewCanary, assertBundledTransferReviewPending, approveRestoredCurrentAppBundle } from "./owner-vault-plugin-acceptance.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -549,6 +550,12 @@ try {
         expectedWorkspaceOrigin: new URL(approvedWorkspace.url()).origin }), "real Workspace account lifecycle fence");
       assert.ok(Object.values(fence).every(value => value === true));
       phases.push("real-sign-out-sign-in-discards-only-stale-unload-vetoing-workspace");
+      const retryStatus = await approvedRestart.page.evaluate(() => window.spsDesktop.getStatus());
+      const retry = await bounded(assertWorkspaceNavigationRetry({ app: approvedRestart.app, setup: approvedRestart.page,
+        waitFor, api, company, project, expectedUserData: targetProfile,
+        expectedWorkspaceOrigin: new URL(retryStatus.profile.hubUrl).origin }), "explicit Workspace navigation retry");
+      assert.ok(Object.values(retry).every(value => value === true));
+      phases.push("real-native-navigation-failure-explicit-retry-retains-authenticated-data");
       await stop(approvedRestart.app);
     }
   }

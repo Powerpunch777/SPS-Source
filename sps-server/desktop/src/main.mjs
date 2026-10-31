@@ -286,6 +286,7 @@ const opensCoreSettingsOnLaunch = process.argv.includes("--sps-core-settings");
 let mainWindow = null;
 let ownerCreationInProgress = false;
 let workspaceWindow = null;
+const failedWorkspaceNavigations = new WeakMap();
 let workspaceOpenTraceSequence = 0;
 let registryWindow = null;
 let registryDeveloperContext = null;
@@ -4925,6 +4926,11 @@ async function openWorkspace() {
   await ensureJoinedDesktopNode();
   trace("node-registration-complete");
   scope.assertCurrent();
+  const discardFailedNavigation = failedWorkspaceNavigations.get(workspaceWindow);
+  if (discardFailedNavigation) {
+    failedWorkspaceNavigations.delete(workspaceWindow);
+    discardFailedNavigation();
+  }
   if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
     if (workspaceWindow.isMinimized()) workspaceWindow.restore();
     workspaceWindow.show();
@@ -4992,6 +4998,8 @@ async function openWorkspace() {
     if (!scope.isCurrent() || workspaceWindow !== currentWindow || currentWindow.isDestroyed()) {
       traceScopeRejection();
       discardCapturedWindow();
+    } else {
+      failedWorkspaceNavigations.set(currentWindow, discardCapturedWindow);
     }
     throw error;
   }

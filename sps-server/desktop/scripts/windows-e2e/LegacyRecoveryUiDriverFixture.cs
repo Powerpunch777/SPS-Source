@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Sps.LegacyRecovery;
 
@@ -19,9 +21,63 @@ internal static class LegacyRecoveryUiDriverFixture
     [STAThread]
     public static int Main(string[] args)
     {
+        if (args != null && args.Length == 1 && args[0] == "--probe-check-observation")
+            return ExerciseCheckObservation();
         if (args != null && args.Length == 3 && args[0] == ChildMode)
             return ShowForm(args[1], args[2]);
         return ExerciseDriver(args);
+    }
+
+    static int ExerciseCheckObservation()
+    {
+        try
+        {
+            var watch = Stopwatch.StartNew();
+            var flags = BindingFlags.Static | BindingFlags.NonPublic;
+            FieldInfo clock = typeof(LegacyRecoveryUiDriver).GetField("clock", flags);
+            MethodInfo observe = typeof(LegacyRecoveryUiDriver).GetMethod("ObserveCheck", flags);
+            MethodInfo budget = typeof(LegacyRecoveryUiDriver).GetMethod("UiWaitBudget", flags);
+            Require(clock != null && observe != null && budget != null, "observer_entry");
+            clock.SetValue(null, watch);
+            Require((int)budget.Invoke(null, null) == 15000, "original_ui_budget");
+
+            int queries = 0;
+            Task<bool> delayed = Task.Run(delegate
+            {
+                Interlocked.Increment(ref queries);
+                Thread.Sleep(1500);
+                return true;
+            });
+            Require((bool)observe.Invoke(null, new object[] { delayed, watch.ElapsedMilliseconds + 15000 }), "delayed_value");
+            Require(queries == 1, "single_query");
+            Require(!(bool)observe.Invoke(null, new object[] { Task.FromResult(false), watch.ElapsedMilliseconds + 15000 }), "false_value");
+
+            bool unfinishedRejected = false;
+            var unfinished = new TaskCompletionSource<bool>();
+            long shortDeadline = watch.ElapsedMilliseconds + 300;
+            try { observe.Invoke(null, new object[] { unfinished.Task, shortDeadline }); }
+            catch (TargetInvocationException error) { unfinishedRejected = error.InnerException.GetType().Name == "CheckObservationDeadlineFailure"; }
+            Require(unfinishedRejected && watch.ElapsedMilliseconds < shortDeadline + 3000, "unfinished_bound");
+
+            bool expiredRejected = false;
+            try { observe.Invoke(null, new object[] { Task.FromResult(true), watch.ElapsedMilliseconds - 1 }); }
+            catch (TargetInvocationException error) { expiredRejected = error.InnerException.GetType().Name == "CheckObservationDeadlineFailure"; }
+            Require(expiredRejected, "expired_deadline");
+
+            var faulted = new TaskCompletionSource<bool>();
+            faulted.SetException(new InvalidOperationException("fixture"));
+            bool faultRejected = false;
+            try { observe.Invoke(null, new object[] { faulted.Task, watch.ElapsedMilliseconds + 15000 }); }
+            catch (TargetInvocationException error) { faultRejected = error.InnerException is InvalidOperationException; }
+            Require(faultRejected, "query_fault");
+            Console.WriteLine("{\"ok\":true,\"oneQuery\":true,\"delayedValue\":true,\"falseValueRetained\":true,\"unfinishedRejected\":true,\"expiredRejected\":true,\"faultRejected\":true,\"uiBudgetMs\":15000}");
+            return 0;
+        }
+        catch
+        {
+            Console.WriteLine("{\"ok\":false,\"phase\":\"check-observation\"}");
+            return 1;
+        }
     }
 
     static int ExerciseDriver(string[] args)

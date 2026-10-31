@@ -26,6 +26,9 @@ internal static class LegacyRecoveryUiDriver
     delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
 
     sealed class DriverFailure : Exception { }
+    sealed class CheckObservationDeadlineFailure : Exception { }
+    sealed class RecoveryUnavailableFailure : Exception { }
+    sealed class RecoveryWindowDeadlineFailure : Exception { }
 
     static class Native
     {
@@ -213,12 +216,16 @@ internal static class LegacyRecoveryUiDriver
             foreach (IntPtr candidate in FindTopWindows((uint)helper.Id))
             {
                 if (OwnsWindow(candidate, (uint)helper.Id) &&
+                    WindowClass(candidate, (uint)helper.Id) == "#32770" &&
+                    ReadWindowText(candidate, (uint)helper.Id) == "SPS Recovery unavailable")
+                    throw new RecoveryUnavailableFailure();
+                if (OwnsWindow(candidate, (uint)helper.Id) &&
                     ClassMatches(WindowClass(candidate, (uint)helper.Id), "Window") &&
                     ReadWindowText(candidate, (uint)helper.Id) == RecoveryTitle) return candidate;
             }
             Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
         }
-        throw new DriverFailure();
+        throw new RecoveryWindowDeadlineFailure();
     }
 
     static IntPtr WaitForRecoveryChild(IntPtr form, uint processId, string text, string className)
@@ -235,12 +242,12 @@ internal static class LegacyRecoveryUiDriver
         throw new DriverFailure();
     }
 
-    static bool ReadCheck(IntPtr checkBox, uint processId)
+    static Task<bool> ReadCheck(IntPtr checkBox, uint processId)
     {
         Require(OwnsWindow(checkBox, processId));
         // WinForms owner-drawn checks do not expose a valid BM_GETCHECK state.
         // Read the real accessibility toggle state; never set it directly.
-        Task<bool> read = Task.Run(delegate
+        return Task.Run(delegate
         {
             Require(OwnsWindow(checkBox, processId));
             AutomationElement element = AutomationElement.FromHandle(checkBox);
@@ -251,8 +258,23 @@ internal static class LegacyRecoveryUiDriver
             Require(OwnsWindow(checkBox, processId) && (state == ToggleState.On || state == ToggleState.Off));
             return state == ToggleState.On;
         });
-        Require(read.Wait(Math.Min(MessageTimeoutMs, RemainingMilliseconds())));
-        return read.Result;
+    }
+
+    static bool ObserveCheck(Task<bool> read, long deadline)
+    {
+        while (clock.ElapsedMilliseconds < deadline)
+        {
+            int remaining = (int)Math.Min(deadline - clock.ElapsedMilliseconds, RemainingMilliseconds());
+            if (remaining <= 0) throw new CheckObservationDeadlineFailure();
+            bool completed;
+            try { completed = read.Wait(Math.Min(MessageTimeoutMs, remaining)); }
+            catch (AggregateException) { completed = true; }
+            if (!completed) continue;
+            if (clock.ElapsedMilliseconds >= deadline) throw new CheckObservationDeadlineFailure();
+            // Unwrap a provider failure instead of treating it as a pending read.
+            return read.GetAwaiter().GetResult();
+        }
+        throw new CheckObservationDeadlineFailure();
     }
 
     static bool ReadDefaultId(IntPtr dialog, uint processId, out int controlId)
@@ -301,7 +323,7 @@ internal static class LegacyRecoveryUiDriver
         long deadline = clock.ElapsedMilliseconds + budget;
         while (clock.ElapsedMilliseconds < deadline)
         {
-            if (ReadCheck(checkBox, processId) == expected) return;
+            if (ObserveCheck(ReadCheck(checkBox, processId), deadline) == expected) return;
             Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
         }
         throw new DriverFailure();
@@ -498,8 +520,11 @@ internal static class LegacyRecoveryUiDriver
             Console.Out.Flush();
             return 0;
         }
-        catch
+        catch (Exception error)
         {
+            if (error is RecoveryUnavailableFailure) Console.Error.WriteLine("LEGACY_UI_REASON:recovery-unavailable");
+            else if (error is RecoveryWindowDeadlineFailure) Console.Error.WriteLine("LEGACY_UI_REASON:recovery-window-deadline");
+            else if (error is CheckObservationDeadlineFailure) Console.Error.WriteLine("LEGACY_UI_REASON:check-observation-deadline");
             Console.Error.WriteLine("LEGACY_UI_FAILURE:" + phase);
             Console.Error.Flush();
             return 2;

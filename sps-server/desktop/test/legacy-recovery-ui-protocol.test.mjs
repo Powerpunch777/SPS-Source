@@ -9,9 +9,13 @@ test("recovery driver trace permits only fixed phase and failure labels", () => 
     assert.deepEqual(parseLegacyRecoveryUiTrace(`LEGACY_UI_FAILURE:${phase}`), { kind: "failure", phase });
   }
   assert.deepEqual(parseLegacyRecoveryUiTrace("LEGACY_UI_FAILURE:entry"), { kind: "failure", phase: "entry" });
+  for (const phase of ["recovery-unavailable", "recovery-window-deadline", "check-observation-deadline"]) {
+    assert.deepEqual(parseLegacyRecoveryUiTrace(`LEGACY_UI_REASON:${phase}`), { kind: "reason", phase });
+  }
   for (const value of [null, {}, "LEGACY_UI_PHASE:entry", "LEGACY_UI_PHASE:unknown", "LEGACY_UI_FAILURE:unknown",
     "LEGACY_UI_PHASE:initial-window\nprivate@example.invalid", "LEGACY_UI_PHASE:initial-window\n",
-    "LEGACY_UI_PHASE:initial-window\r\n", "LEGACY_UI_PHASE:C:\\private", "x".repeat(81)]) {
+    "LEGACY_UI_PHASE:initial-window\r\n", "LEGACY_UI_REASON:unknown", "LEGACY_UI_REASON:recovery-unavailable\n",
+    "LEGACY_UI_PHASE:C:\\private", "x".repeat(81)]) {
     assert.throws(() => parseLegacyRecoveryUiTrace(value), /Invalid legacy recovery UI trace/);
   }
 });
@@ -24,7 +28,10 @@ test("driver traces and ordered parent protocol match while retaining every orig
   assert.match(driver, /element\.Current\.ProcessId == processId/);
   assert.match(driver, /TryGetCurrentPattern\(TogglePattern\.Pattern, out pattern\)/);
   assert.match(driver, /state == ToggleState\.On \|\| state == ToggleState\.Off/);
-  assert.match(driver, /Require\(read\.Wait\(Math\.Min\(MessageTimeoutMs, RemainingMilliseconds\(\)\)\)\)/);
+  assert.match(driver, /ObserveCheck\(ReadCheck\(checkBox, processId\), deadline\)/);
+  assert.match(driver, /read\.Wait\(Math\.Min\(MessageTimeoutMs, remaining\)\)/);
+  assert.match(driver, /if \(!completed\) continue;/);
+  assert.match(driver, /return read\.GetAwaiter\(\)\.GetResult\(\);/);
   assert.doesNotMatch(driver, /BM_SETCHECK|\.Toggle\(\)|\.SetValue\(/);
   const host = await readFile(new URL("../scripts/confirmed-legacy-recovery-ui.mjs", import.meta.url), "utf8");
   assert.match(host, /assert\.deepEqual\(phases, LEGACY_RECOVERY_UI_PHASES\)/);

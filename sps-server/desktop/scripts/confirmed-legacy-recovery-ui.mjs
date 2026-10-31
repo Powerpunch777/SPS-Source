@@ -52,7 +52,7 @@ export async function observeConfirmedLegacyRecovery({ desktop, fixture, install
   traceLines.on("line", line => {
     try {
       const trace = parseLegacyRecoveryUiTrace(line);
-      if (trace.kind === "failure") {
+      if (trace.kind === "failure" || trace.kind === "reason") {
         failure = new Error(`Legacy recovery UI driver failed at ${trace.phase}.`);
       } else {
         assert.equal(trace.phase, LEGACY_RECOVERY_UI_PHASES[phases.length]);

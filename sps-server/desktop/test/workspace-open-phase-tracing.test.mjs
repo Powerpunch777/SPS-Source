@@ -79,6 +79,7 @@ function fixture({ e2e = true, existingWindow = null, sequence = 0, overrides = 
     },
     ensureJoinedDesktopNode: async () => calls.push("node-registration"),
     workspaceWindow: existingWindow,
+    failedWorkspaceNavigations: new WeakMap(),
     workspaceOrigin: existingWindow ? workspaceUrl : null,
     closeWorkspaceWindow: () => calls.push("close-workspace-window"),
     BrowserWindow: class FakeBrowserWindow {
@@ -454,4 +455,103 @@ test("E2E operation ids wrap from 65535 to 1", async () => {
 
   assert.deepEqual(parseTraceLines(harness.output).map(({ operation }) => operation), Array(7).fill(1));
   assert.equal(harness.scope.workspaceOpenTraceSequence, 1);
+});
+
+test("an explicit retry replaces only the failed workspace window despite an unload veto", async () => {
+  const failure = new Error("first workspace navigation failed");
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => Promise.reject(failure));
+
+  await assert.rejects(harness.scope.openWorkspace(), error => error === failure);
+
+  const failedWindow = harness.createdWindows[0];
+  assert.ok(failedWindow);
+  assert.equal(harness.createdWindows.length, 1);
+  assert.equal(harness.calls.filter(call => Array.isArray(call) && call[0] === "load-url").length, 1);
+  assert.equal(failedWindow.destroyed, false);
+  assert.equal(failedWindow.destroyCalls, 0);
+
+  failedWindow.webContents.willPreventUnload = true;
+  await harness.scope.openWorkspace();
+
+  const readyWindow = harness.createdWindows[1];
+  assert.ok(readyWindow);
+  assert.equal(harness.createdWindows.length, 2);
+  assert.equal(harness.calls.filter(call => Array.isArray(call) && call[0] === "load-url").length, 2);
+  assert.equal(failedWindow.closeCalls, 0);
+  assert.equal(failedWindow.destroyCalls, 1);
+  assert.equal(failedWindow.destroyed, true);
+  assert.equal(readyWindow.destroyed, false);
+  assert.equal(harness.scope.workspaceWindow, readyWindow);
+
+  eventHandler(harness, readyWindow, "ready-to-show")();
+  assert.equal(readyWindow.shown, true);
+  assert.equal(readyWindow.destroyed, false);
+});
+
+test("a signed-out retry is rejected before the failed workspace window is touched", async () => {
+  const failure = new Error("workspace navigation failed before sign-out");
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => Promise.reject(failure));
+
+  await assert.rejects(harness.scope.openWorkspace(), error => error === failure);
+  const failedWindow = harness.createdWindows[0];
+  assert.ok(failedWindow);
+  harness.scope.currentDesktopAccount = () => null;
+
+  await assert.rejects(harness.scope.openWorkspace(), /Sign in to SPS/);
+
+  assert.equal(harness.createdWindows.length, 1);
+  assert.equal(harness.calls.filter(call => Array.isArray(call) && call[0] === "load-url").length, 1);
+  assert.equal(failedWindow.closeCalls, 0);
+  assert.equal(failedWindow.destroyCalls, 0);
+  assert.equal(failedWindow.destroyed, false);
+  assert.equal(harness.scope.workspaceWindow, failedWindow);
+});
+
+test("repeated navigation failures replace only the prior failed window before success and reuse", async () => {
+  const firstFailure = new Error("first workspace navigation failed");
+  const secondFailure = new Error("second workspace navigation failed");
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(
+    () => Promise.reject(firstFailure),
+    () => Promise.reject(secondFailure),
+  );
+
+  await assert.rejects(harness.scope.openWorkspace(), error => error === firstFailure);
+  const firstWindow = harness.createdWindows[0];
+  assert.ok(firstWindow);
+  assert.equal(firstWindow.destroyed, false);
+
+  await assert.rejects(harness.scope.openWorkspace(), error => error === secondFailure);
+  const secondWindow = harness.createdWindows[1];
+  assert.ok(secondWindow);
+  assert.equal(harness.createdWindows.length, 2);
+  assert.equal(firstWindow.destroyCalls, 1);
+  assert.equal(firstWindow.destroyed, true);
+  assert.equal(secondWindow.destroyCalls, 0);
+  assert.equal(secondWindow.destroyed, false);
+  assert.equal(harness.scope.workspaceWindow, secondWindow);
+
+  await harness.scope.openWorkspace();
+  const successfulWindow = harness.createdWindows[2];
+  assert.ok(successfulWindow);
+  assert.equal(harness.createdWindows.length, 3);
+  assert.equal(harness.calls.filter(call => Array.isArray(call) && call[0] === "load-url").length, 3);
+  assert.equal(firstWindow.destroyCalls, 1);
+  assert.equal(secondWindow.destroyCalls, 1);
+  assert.equal(secondWindow.destroyed, true);
+  assert.equal(successfulWindow.destroyed, false);
+  assert.equal(harness.scope.workspaceWindow, successfulWindow);
+
+  eventHandler(harness, successfulWindow, "ready-to-show")();
+  const loadsBeforeReuse = harness.calls.filter(call => Array.isArray(call) && call[0] === "load-url").length;
+  await harness.scope.openWorkspace();
+
+  assert.equal(harness.createdWindows.length, 3);
+  assert.equal(harness.calls.filter(call => Array.isArray(call) && call[0] === "load-url").length, loadsBeforeReuse);
+  assert.equal(successfulWindow.destroyCalls, 0);
+  assert.equal(successfulWindow.destroyed, false);
+  assert.equal(successfulWindow.shown, true);
+  assert.equal(harness.scope.workspaceWindow, successfulWindow);
 });

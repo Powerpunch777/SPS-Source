@@ -18,6 +18,45 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
+The following correction supersedes the earlier d8 snapshot below. Intermediate
+Source `d9e58b9` push `41182439329` and PR `41182443867` both completed their
+Windows source/packaged/current-installer gates with natural Job closure.
+Their separate mandatory legacy jobs failed at `initial-window`, before
+ordinary uninstall; forced cleanup was rejected and reinstall skipped. These
+are not complete recovery passes. Source `01695d2` push `41183095007` and PR
+`41183097779` then failed the new local-Form component at `initial-backup` after
+the one-second provider-read bound was made terminal too early. All17
+non-Windows jobs passed on that push. A new compiled delayed-query regression
+first reproduced the premature failure and now passes while observing the same
+query inside the original 15-second UI/overall deadline, without retries or a
+longer budget. Known unavailable-dialog/window-deadline/query-deadline reasons
+are fixed non-sensitive diagnostics, never passing outcomes.
+
+A separate real Main defect is now reproduced and corrected: a rejected
+Workspace navigation previously remained permanently reused on later open
+requests. Existing authentication/session/Host fences now run before replacing
+only that failed window. Two new regressions failed before the fix. Actual
+isolated Main transfer additionally passed a native owned-socket navigation
+failure, retained failed window, requested retry and authenticated persisted
+project recovery. It still passes the full preceding transfer/review/account
+fence/restart/natural-exit/EOF/temporary-cleanup workflow. This does **not**
+attribute the earlier pending-navigation CI hang to this rejected-load defect.
+See [retry evidence](../reviews/WORKSPACE-NAVIGATION-RETRY-2026-10-31.md).
+
+Latest full local `npm run test:ci`: serial2/2 plus1820total/1817pass/three
+unavailable-8.3-alias skips, aggregate1822total/1819pass/3skip/0fail, exit0.
+Production dependency policy: two Low and one reviewed Moderate; full graph:
+three Low and two reviewed Moderate. Both have zero Critical/High, with no High
+exception; minimatch reviews expire 2026-11-07. Syntax and diff-check pass.
+New exact-HEAD hosted validation remains required. Real installed in-place
+DB/state/credential migration is also still an evidence gap, not proved by
+opaque installer canaries plus source fresh-Host restore; see
+[installed migration audit](../reviews/INSTALLED-MIGRATION-EVIDENCE-GAP-2026-10-31.md).
+No installed app/profile, original dirty Native checkout, Production, Core or
+SDK was changed by this follow-up. Core completion remains unproven.
+
+### Earlier d8 Snapshot
+
 This summary supersedes the historical observations below; it does not declare
 Core or Stable completion. Source `d8a6c699` push Verify `41176105464` passed
 all17 non-Windows jobs and the new joined Runner/No-AI source acceptance, but

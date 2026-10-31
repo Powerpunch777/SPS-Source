@@ -46,6 +46,28 @@ async function ownedTemp(t) {
   return owned;
 }
 
+async function compileFixture(owned) {
+  const executable = path.join(owned, "LegacyRecoveryUiDriverFixture.exe");
+  const sources = ["VerifiedResidue.cs", "PinnedProgramCatalog.cs", "LegacyRecoverySession.cs", "LegacyRecoveryApp.cs"]
+    .map(name => path.join(sourceRoot, name));
+  const compileArgs = ["/nologo", "/target:winexe", "/main:LegacyRecoveryUiDriverFixture", `/out:${executable}`,
+    "/reference:System.Runtime.Serialization.dll", "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll",
+    ...["UIAutomationClient.dll", "UIAutomationTypes.dll", "WindowsBase.dll"]
+      .map(name => `/reference:${path.join(path.dirname(compilerPath()), "WPF", name)}`),
+    `/resource:${inventory},Sps.LegacyProgramInventory`, ...sources, driver, fixture];
+  try {
+    await execFileAsync(compilerPath(), compileArgs, {
+      cwd: owned, windowsHide: true, shell: false, timeout: 30_000, maxBuffer: 1_048_576,
+    });
+  } catch (error) {
+    const compilerOutput = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
+    const diagnostics = [...compilerOutput.matchAll(/(?:^|\r?\n)[^\r\n]*?\((\d+),(\d+)\): error (CS\d+):/g)]
+      .map(match => `${match[3]}@${match[1]}:${match[2]}`);
+    assert.fail(`Legacy recovery driver component fixture compilation failed${diagnostics.length ? ` (${diagnostics.join(",")})` : "."}`);
+  }
+  return executable;
+}
+
 test("actual recovery UI driver exercises only the initial real form in an owned child", {
   skip: process.platform !== "win32",
   timeout: 90_000,
@@ -62,28 +84,10 @@ test("actual recovery UI driver exercises only the initial real form in an owned
   const owned = await ownedTemp(t);
   const root = path.join(owned, "caller-owned-program-root");
   const sentinel = path.join(root, "keep.txt");
-  const executable = path.join(owned, "LegacyRecoveryUiDriverFixture.exe");
-  const sources = ["VerifiedResidue.cs", "PinnedProgramCatalog.cs", "LegacyRecoverySession.cs", "LegacyRecoveryApp.cs"]
-    .map(name => path.join(sourceRoot, name));
   await mkdir(root);
   const sentinelBytes = Buffer.from("caller-owned sentinel\n", "utf8");
   await writeFile(sentinel, sentinelBytes, { flag: "wx" });
-
-  const compileArgs = ["/nologo", "/target:winexe", "/main:LegacyRecoveryUiDriverFixture", `/out:${executable}`,
-    "/reference:System.Runtime.Serialization.dll", "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll",
-    ...["UIAutomationClient.dll", "UIAutomationTypes.dll", "WindowsBase.dll"]
-      .map(name => `/reference:${path.join(path.dirname(compilerPath()), "WPF", name)}`),
-    `/resource:${inventory},Sps.LegacyProgramInventory`, ...sources, driver, fixture];
-  try {
-    await execFileAsync(compilerPath(), compileArgs, {
-      cwd: owned, windowsHide: true, shell: false, timeout: 30_000, maxBuffer: 1_048_576,
-    });
-  } catch (error) {
-    const compilerOutput = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
-    const diagnostics = [...compilerOutput.matchAll(/(?:^|\r?\n)[^\r\n]*?\((\d+),(\d+)\): error (CS\d+):/g)]
-      .map(match => `${match[3]}@${match[1]}:${match[2]}`);
-    assert.fail(`Legacy recovery driver component fixture compilation failed${diagnostics.length ? ` (${diagnostics.join(",")})` : "."}`);
-  }
+  const executable = await compileFixture(owned);
 
   let result;
   try {
@@ -101,7 +105,9 @@ test("actual recovery UI driver exercises only the initial real form in an owned
     assert.ok(phaseLines.every(line => driverPhases.some(phase => line === `LEGACY_UI_PHASE:${phase}`)),
       "Legacy recovery driver emitted an unrecognized phase trace.");
     assert.deepEqual(failureLines, [`LEGACY_UI_FAILURE:${record.phase}`]);
-    assert.fail(`Legacy recovery UI driver failed at ${record.phase}.`);
+    const failureKind = ["DriverFailure", "CheckObservationDeadlineFailure", "AggregateException", "COMException",
+      "ElementNotAvailableException", "InvalidOperationException"].includes(record.failure) ? record.failure : "unclassified";
+    assert.fail(`Legacy recovery UI driver failed at ${record.phase} (${failureKind}).`);
   }
   const trace = result.stderr.trim().split(/\r?\n/).filter(Boolean);
   assert.deepEqual(trace, driverPhases.map(phase => `LEGACY_UI_PHASE:${phase}`));
@@ -113,4 +119,22 @@ test("actual recovery UI driver exercises only the initial real form in an owned
     sentinelUnchanged: true,
   });
   assert.deepEqual(await readFile(sentinel), sentinelBytes);
+});
+
+test("checkbox observation retains one pending query within the original UI deadline", {
+  skip: process.platform !== "win32", timeout: 45_000,
+}, async t => {
+  const owned = await ownedTemp(t);
+  const executable = await compileFixture(owned);
+  let result;
+  try {
+    result = await execFileAsync(executable, ["--probe-check-observation"], {
+      cwd: owned, windowsHide: true, shell: false, timeout: 20_000, maxBuffer: 4096, encoding: "utf8",
+    });
+  } catch {
+    assert.fail("Recovery checkbox observation failed its pending/deadline contract.");
+  }
+  assert.equal(result.stderr, "");
+  assert.deepEqual(JSON.parse(result.stdout), { ok: true, oneQuery: true, delayedValue: true,
+    falseValueRetained: true, unfinishedRejected: true, expiredRejected: true, faultRejected: true, uiBudgetMs: 15000 });
 });
