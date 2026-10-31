@@ -1942,7 +1942,11 @@ async function materializeCurrentSpsOwnerHostRuntime() {
     if (app.isPackaged) {
       const packageRoot = path.join(process.resourcesPath, "sps-owner-host-runtime-package");
       if (existsSync(path.join(packageRoot, "sps-owner-host-runtime-package.json"))) {
-        return await materializeSpsOwnerHostRuntimePackage({ packageRoot, targetRuntimeRoot });
+        return await materializeSpsOwnerHostRuntimePackage({ packageRoot, targetRuntimeRoot,
+          onProgress: phase => {
+            if (process.env.SPS_DESKTOP_E2E === "1") console.error(`[owner-host-runtime] phase=${phase}`);
+          },
+        });
       }
       // Keep in-place update compatibility with pre-archive Desktop packages.
       return await materializeSpsOwnerHostRuntime({

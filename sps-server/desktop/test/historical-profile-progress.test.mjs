@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createHistoricalProfileProgress,
+  createHistoricalRuntimeObserver,
   HISTORICAL_PROFILE_PROGRESS_PHASES,
   parseHistoricalProfileProgress,
 } from "../scripts/historical-profile-progress.mjs";
@@ -20,7 +21,10 @@ const expectedPhases = ["fixture-ready", "initial-main-start", "initial-main-rea
   "app-node-registration-complete", "app-workspace-load-start", "app-workspace-load-complete",
   "app-window-ready-to-show", "app-window-shown", "app-captured-window-discarded", "app-scope-account-changed",
   "app-scope-host-context-changed", "app-scope-host-instance-changed", "app-scope-connection-changed",
-  "app-scope-rejection-unclassified", "app-existing-window-reused", "app-window-closed"];
+  "app-scope-rejection-unclassified", "app-existing-window-reused", "app-window-closed",
+  ...["package-verify-start", "package-verified", "cache-ready", "archive-preflight-start", "archive-preflight-complete",
+    "extraction-start", "extraction-complete", "expanded-verification-start", "expanded-verification-complete", "runtime-promoted"].map(phase => `runtime-${phase}`),
+  ...["resolve-runtime-start", "resolve-runtime-complete", "prepare-job-start", "prepare-job-complete", "core-spawned", "core-ready"].map(phase => `host-${phase}`)];
 
 test("historical profile progress emits only fixed fields and elapsed integer time", () => {
   let time = 250;
@@ -96,4 +100,27 @@ test("historical profile progress parser ignores private app output and oversize
   assert.deepEqual(parseHistoricalProfileProgress(`${valid}${"x".repeat(1024 * 1024)}`), []);
   assert.deepEqual(parseHistoricalProfileProgress(""), []);
   assert.deepEqual(parseHistoricalProfileProgress(null), []);
+});
+
+test("runtime observation forwards only complete fixed phases across chunk boundaries", () => {
+  const phases = [];
+  const observe = createHistoricalRuntimeObserver(phase => phases.push(phase));
+  observe("private path and token\n[owner-host-run");
+  observe(Buffer.from("time] phase=extraction-start\r\n[owner-host-job] core-spawned\n"));
+  observe("[owner-host-runtime] phase=secret-path\n[owner-host-job] user@example.test\n");
+  observe("[owner-host-runtime] phase=runtime-promoted");
+  assert.deepEqual(phases, ["runtime-extraction-start", "host-core-spawned"]);
+  observe("\n");
+  assert.deepEqual(phases, ["runtime-extraction-start", "host-core-spawned", "runtime-runtime-promoted"]);
+});
+
+test("runtime observation drops oversized/private frames and stops after its total bound", () => {
+  const phases = [];
+  const observe = createHistoricalRuntimeObserver(phase => phases.push(phase));
+  observe(`${"x".repeat(513)}[owner-host-job] core-ready\n`);
+  observe("[owner-host-job] core-ready\n");
+  observe("x".repeat(1024 * 1024));
+  observe("\n[owner-host-job] core-ready\n");
+  assert.deepEqual(phases, ["host-core-ready"]);
+  assert.throws(() => createHistoricalRuntimeObserver(null), /requires a writer/);
 });

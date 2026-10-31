@@ -57,9 +57,22 @@ test("legacy recovery GUI retains its explicit cleanup and privacy safeguards", 
   assert.doesNotMatch(session, /RegistryKey\s*\.\s*(?:CreateSubKey|SetValue|DeleteSubKey|DeleteValue)\s*\(/);
   assert.doesNotMatch(app, /(?:File|Directory)\s*\.\s*(?:Delete|Move|Copy)\s*\(|RegistryKey\s*\.\s*(?:CreateSubKey|SetValue|DeleteSubKey|DeleteValue)\s*\(/);
   assert.match(app, /AppData, Host Vault and external project folders are not cleanup targets\./);
+  assert.match(app, /Name = "legacy-recovery-diagnostic"/);
+  assert.match(app, /diagnostic\.Text = failure == null \? "\[code:unknown; native:0\]" : failure\.Diagnostic/);
+  assert.doesNotMatch(app, /error\.(?:Message|StackTrace|ToString|Source)|Console\./);
+  assert.match(session, /catch \(Exception error\) \{ throw new LegacyRecoveryException\(stage, error\); \}/);
+  const cleanup = session.slice(session.indexOf("public bool CleanAfterUserUninstalled"));
+  assert.match(cleanup, /stage = LegacyRecoveryStage\.ProcessCheck;\s*NoDesktopProcess\(binding\.CanonicalPath\);\s*stage = LegacyRecoveryStage\.RegistrationCheck;\s*if \(Registrations\(\)\.Count != 0\) throw Failure\(\);\s*stage = LegacyRecoveryStage\.ResidueValidation;\s*using \(VerifiedResidue residue = VerifiedResidue\.Open/);
+  assert.match(cleanup, /stage = LegacyRecoveryStage\.Confirmation;\s*if \(!confirm\(residue\.FileCount, residue\.DirectoryCount\)\) return false;\s*stage = LegacyRecoveryStage\.ProcessCheck;\s*NoDesktopProcess\(binding\.CanonicalPath\);\s*stage = LegacyRecoveryStage\.RegistrationCheck;\s*if \(Registrations\(\)\.Count != 0\) throw Failure\(\);\s*CleanupAttempted = true;\s*stage = LegacyRecoveryStage\.Removal;/);
+  const driver = await readFile(path.join(desktop, "scripts", "windows-e2e", "LegacyRecoveryUiDriver.cs"), "utf8");
+  const safetyStatus = /const string UnsafeCleanupStatus = "([^"]+)"/.exec(driver)?.[1];
+  assert.ok(safetyStatus);
+  assert.ok(app.includes(`: "${safetyStatus}";`));
+  const stages = await readFile(path.join(desktop, "scripts", "historical-standard-recovery-stages.mjs"), "utf8");
+  assert.match(stages, /trace\("residue-content-verified-before-gui-confirmation",[\s\S]*?cleanupAuthorized: false \}\);\s*phase = "explicit-original-residue-recovery";/);
 });
 
-test("compiled legacy recovery session matches only the exact per-user 0.4.86 registration", {
+test("compiled recovery session retains exact registration and bounded native diagnostics", {
   skip: process.platform !== "win32",
   timeout: 30_000,
 }, async t => {
@@ -80,9 +93,10 @@ test("compiled legacy recovery session matches only the exact per-user 0.4.86 re
       .map(match => `${match[3]}@${match[1]}:${match[2]}`);
     assert.fail(`Legacy recovery fixture compilation failed${diagnostics.length ? ` (${diagnostics.join(",")})` : "."}`);
   }
-  const result = await execFileAsync(executable, [], {
+  const result = await execFileAsync(executable, [owned], {
     cwd: owned, windowsHide: true, shell: false, timeout: 30_000, maxBuffer: 32_768, encoding: "utf8",
   });
   assert.equal(result.stderr, "");
-  assert.deepEqual(JSON.parse(result.stdout), { ok: true, accepted: 3, rejected: 11 });
+  assert.deepEqual(JSON.parse(result.stdout), { ok: true, accepted: 3, rejected: 11,
+    fixedStagesVerified: true, nativeRangeVerified: true, realNativeFailureVerified: true, safeStatusPreserved: true });
 });

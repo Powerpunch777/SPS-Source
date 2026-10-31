@@ -7,6 +7,10 @@ export const LEGACY_RECOVERY_UI_PHASES = Object.freeze([
 
 export function parseLegacyRecoveryUiTrace(line) {
   if (typeof line !== "string" || line.length > 80) throw new Error("Invalid legacy recovery UI trace.");
+  const safety = /^LEGACY_UI_SAFETY:(unknown|preconditions|process-check|registration-check|residue-validation|confirmation|removal):(0|[1-9][0-9]{0,4})$/.exec(line);
+  if (safety && safety[0] === line && Number(safety[2]) <= 65535) {
+    return { kind: "safety", stage: safety[1], nativeError: Number(safety[2]) };
+  }
   const reason = /^LEGACY_UI_REASON:(recovery-unavailable|recovery-window-deadline|check-observation-deadline|cleanup-safety-rejected)$/.exec(line);
   if (reason && reason[0] === line) return { kind: "reason", phase: reason[1] };
   const match = /^LEGACY_UI_(PHASE|FAILURE):([a-z-]+)$/.exec(line);

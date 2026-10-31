@@ -461,7 +461,9 @@ export function createSpsOwnerHostManager({
     const current = await inspect();
     if (generation !== lifecycleGeneration) return inspect();
     if (current.state !== "stopped") return current;
+    reportOwnerHostEvent(baseEnvironment, "resolve-runtime-start");
     const runtime = await resolveRuntime();
+    reportOwnerHostEvent(baseEnvironment, "resolve-runtime-complete");
     if (generation !== lifecycleGeneration) return inspect();
     if (!runtime) {
       lastError = "SPS Owner Host runtime is not installed on this computer.";
@@ -472,10 +474,12 @@ export function createSpsOwnerHostManager({
       if (generation !== lifecycleGeneration) return inspect();
       let job = null;
       if (prepareOwnedJob) {
+        reportOwnerHostEvent(baseEnvironment, "prepare-job-start");
         const preparing = Promise.resolve().then(() => prepareOwnedJob());
         jobPreparation = preparing;
         try { job = preparedJob = await preparing; }
         finally { if (jobPreparation === preparing) jobPreparation = null; }
+        reportOwnerHostEvent(baseEnvironment, "prepare-job-complete");
         if (generation !== lifecycleGeneration) {
           await job.dispose();
           if (preparedJob === job) preparedJob = null;
@@ -509,6 +513,7 @@ export function createSpsOwnerHostManager({
       child.once("disconnect", () => reportOwnerHostEvent(baseEnvironment, "core-ipc-disconnect"));
       child.once("close", () => reportOwnerHostEvent(baseEnvironment, "core-close"));
       ownedChild = child;
+      reportOwnerHostEvent(baseEnvironment, "core-spawned");
       if (preparedJob === job) preparedJob = null;
       let childChannel = null;
       let childWorkspace = null;
@@ -618,7 +623,10 @@ export function createSpsOwnerHostManager({
       if (generation !== lifecycleGeneration) return inspect();
       const state = await inspect();
       if (generation !== lifecycleGeneration) return inspect();
-      if (state.state === "running") return state;
+      if (state.state === "running") {
+        reportOwnerHostEvent(baseEnvironment, "core-ready");
+        return state;
+      }
       if (state.state === "stopped") return state;
     }
     if (generation !== lifecycleGeneration) return inspect();

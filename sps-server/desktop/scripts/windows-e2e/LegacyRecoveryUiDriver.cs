@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
@@ -225,10 +226,35 @@ internal static class LegacyRecoveryUiDriver
             IntPtr dialog = FindWindow(processId, ConfirmTitle, "#32770");
             if (dialog != IntPtr.Zero) return dialog;
             if (FindChildByText(form, processId, UnsafeCleanupStatus, "Static") != IntPtr.Zero)
+            {
+                WriteSafetyDiagnostic(form, processId);
                 throw new CleanupSafetyRejectedFailure();
+            }
             Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
         }
         throw new DriverFailure();
+    }
+
+    static void WriteSafetyDiagnostic(IntPtr form, uint processId)
+    {
+        // Never serialize arbitrary window text, even when owned by this test.
+        const string pattern = @"\A\[code:(unknown|preconditions|process-check|registration-check|residue-validation|confirmation|removal); native:(0|[1-9][0-9]{0,4})\]\z";
+        string stage = "unknown";
+        int native = 0;
+        int matches = 0;
+        foreach (IntPtr child in FindChildren(form, processId))
+        {
+            if (!ClassMatches(WindowClass(child, processId), "Static")) continue;
+            Match match = Regex.Match(ReadWindowText(child, processId), pattern, RegexOptions.CultureInvariant);
+            int code;
+            if (!match.Success || !Int32.TryParse(match.Groups[2].Value, out code) || code > 65535) continue;
+            stage = match.Groups[1].Value;
+            native = code;
+            matches++;
+        }
+        if (matches != 1) { stage = "unknown"; native = 0; }
+        Console.Error.WriteLine("LEGACY_UI_SAFETY:" + stage + ":" + native.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Console.Error.Flush();
     }
 
     static IntPtr FindChildByText(IntPtr parent, uint processId, string text, string requiredClass)

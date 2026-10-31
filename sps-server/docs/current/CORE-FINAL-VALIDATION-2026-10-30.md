@@ -18,6 +18,23 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
+### 71c Results: Host Readiness Delay And Actual Safety Rejection
+
+Source71c push41215783644 and PR41215788311 are terminal failures. All17
+non-Windows jobs, including nine Linux shards and full Core typecheck/build,
+passed. Both installed historical-profile children exceeded their original
+300-second bound. The PR did verify migration/data and close Main by289168ms
+but could not finish its restart. The long Host-readiness interval remains
+unexplained. Both mandatory legacy jobs passed pre-GUI residue content checks
+then received the real helper's immediate `cleanup-safety-rejected`, not a
+dialog timeout. Cleanup was forced/rejected; reinstall was skipped.
+
+The current follow-up adds bounded fixed runtime and safety-stage diagnostics,
+not weaker checks or longer deadlines. Full local Desktop1875total/1872pass/
+3unavailable-alias skips/0fail. Actual revised-HEAD Windows gates, cause fixes
+and complete recovery remain required. See the
+[readiness/rejection evidence](../reviews/HOST-COLD-START-AND-RECOVERY-REJECTION-2026-11-01.md).
+
 ### 8eb Follow-Up: Canonical Test Fixture Preparation
 
 Source `8eb01ec` push `41214641791`/Windows `124576508843` and PR

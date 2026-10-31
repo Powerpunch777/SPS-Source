@@ -10,7 +10,7 @@ namespace Sps.LegacyRecovery
         readonly LegacyRecoverySession session;
         readonly CheckBox backup, inside;
         readonly Button inspect, cancel;
-        readonly Label status;
+        readonly Label status, diagnostic;
         public LegacyRecoveryForm(LegacyRecoverySession session)
         {
             this.session = session;
@@ -35,7 +35,13 @@ namespace Sps.LegacyRecovery
             panel.Controls.Add(inside);
             status = new Label { AutoSize = true, MaximumSize = new Size(620, 0), Text = "AppData, Host Vault and external project folders are not cleanup targets.",
                 Margin = new Padding(0, 12, 0, 12), Name = "legacy-recovery-status" };
-            panel.Controls.Add(status);
+            diagnostic = new Label { AutoSize = true, MaximumSize = new Size(620, 0), Visible = false,
+                Margin = new Padding(0, 0, 0, 12), Name = "legacy-recovery-diagnostic" };
+            var statusPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown,
+                WrapContents = false, Margin = Padding.Empty, Dock = DockStyle.Top };
+            statusPanel.Controls.Add(status);
+            statusPanel.Controls.Add(diagnostic);
+            panel.Controls.Add(statusPanel);
             var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
             inspect = new Button { Text = "Check remaining files", AutoSize = true, Enabled = false, Name = "legacy-recovery-check" };
             cancel = new Button { Text = "Cancel", AutoSize = true, Name = "legacy-recovery-cancel" };
@@ -52,6 +58,8 @@ namespace Sps.LegacyRecovery
         {
             inspect.Enabled = false;
             cancel.Enabled = false;
+            diagnostic.Text = "";
+            diagnostic.Visible = false;
             try
             {
                 bool removed = session.CleanAfterUserUninstalled(backup.Checked, inside.Checked, delegate(int files, int directories) {
@@ -64,11 +72,14 @@ namespace Sps.LegacyRecovery
                     : "Cleanup cancelled. No program files were deleted.";
                 if (removed) { backup.Enabled = false; inside.Enabled = false; inspect.Visible = false; cancel.Text = "Close"; }
             }
-            catch
+            catch (Exception error)
             {
                 status.Text = session.CleanupAttempted
                     ? "Recovery stopped before it could confirm complete removal. Some verified program files may have been removed. Keep your backup and do not delete SPS data folders."
                     : "Cannot safely clean this folder. Make sure Windows uninstall finished and SPS is closed. Unknown, changed or linked files require manual review. No cleanup was started.";
+                var failure = error as LegacyRecoveryException;
+                diagnostic.Text = failure == null ? "[code:unknown; native:0]" : failure.Diagnostic;
+                diagnostic.Visible = true;
             }
             finally
             {

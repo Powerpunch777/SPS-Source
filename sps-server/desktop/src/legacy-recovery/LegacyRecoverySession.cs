@@ -16,6 +16,45 @@ namespace Sps.LegacyRecovery
         { Name = name; Version = version; Uninstall = uninstall; PerUser = perUser; }
     }
 
+    public enum LegacyRecoveryStage
+    {
+        Unknown, Preconditions, ProcessCheck, RegistrationCheck, ResidueValidation, Confirmation, Removal
+    }
+
+    public sealed class LegacyRecoveryException : InvalidOperationException
+    {
+        public LegacyRecoveryStage Stage { get; private set; }
+        public int NativeResidueError { get; private set; }
+        public string Code
+        {
+            get
+            {
+                switch (Stage)
+                {
+                    case LegacyRecoveryStage.Preconditions: return "preconditions";
+                    case LegacyRecoveryStage.ProcessCheck: return "process-check";
+                    case LegacyRecoveryStage.RegistrationCheck: return "registration-check";
+                    case LegacyRecoveryStage.ResidueValidation: return "residue-validation";
+                    case LegacyRecoveryStage.Confirmation: return "confirmation";
+                    case LegacyRecoveryStage.Removal: return "removal";
+                    default: return "unknown";
+                }
+            }
+        }
+        public string Diagnostic
+        {
+            get { return "[code:" + Code + "; native:" + NativeResidueError.ToString(System.Globalization.CultureInfo.InvariantCulture) + "]"; }
+        }
+        internal LegacyRecoveryException(LegacyRecoveryStage stage, Exception cause)
+            : base("The old SPS installation cannot be safely recovered.", cause)
+        {
+            Stage = stage;
+            var residue = cause as ResidueVerificationException;
+            NativeResidueError = residue != null && residue.NativeError >= 0 && residue.NativeError <= 65535
+                ? residue.NativeError : 0;
+        }
+    }
+
     // Never writes registry, executes an old binary or deletes a profile.
     public sealed class LegacyRecoverySession
     {
@@ -120,25 +159,34 @@ namespace Sps.LegacyRecovery
 
         public bool CleanAfterUserUninstalled(bool backupConfirmed, bool insideWorkConfirmed, Func<int, int, bool> confirm)
         {
+            LegacyRecoveryStage stage = LegacyRecoveryStage.Preconditions;
             try
             {
                 if (CleanupAttempted || !backupConfirmed || !insideWorkConfirmed || confirm == null) throw Failure();
+                stage = LegacyRecoveryStage.ProcessCheck;
                 NoDesktopProcess(binding.CanonicalPath);
+                stage = LegacyRecoveryStage.RegistrationCheck;
                 if (Registrations().Count != 0) throw Failure();
+                stage = LegacyRecoveryStage.ResidueValidation;
                 using (VerifiedResidue residue = VerifiedResidue.Open(binding.CanonicalPath, binding.Identity, catalog.Files, catalog.Directories))
                 {
+                    stage = LegacyRecoveryStage.Removal;
                     bool removed = residue.Remove(delegate {
+                        stage = LegacyRecoveryStage.Confirmation;
                         if (!confirm(residue.FileCount, residue.DirectoryCount)) return false;
+                        stage = LegacyRecoveryStage.ProcessCheck;
                         NoDesktopProcess(binding.CanonicalPath);
+                        stage = LegacyRecoveryStage.RegistrationCheck;
                         if (Registrations().Count != 0) throw Failure();
                         CleanupAttempted = true;
+                        stage = LegacyRecoveryStage.Removal;
                         return true;
                     });
                     CleanupCompleted = removed;
                     return removed;
                 }
             }
-            catch { throw Failure(); }
+            catch (Exception error) { throw new LegacyRecoveryException(stage, error); }
         }
     }
 }

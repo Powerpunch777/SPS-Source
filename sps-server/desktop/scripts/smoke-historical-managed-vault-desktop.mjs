@@ -11,7 +11,7 @@ import { setSpsAccountConnection } from "../src/account-connections.mjs";
 import { createMockIdentityServer } from "./desktop-e2e-identity.mjs";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { prepareHistoricalManagedVault } from "./historical-managed-vault-fixture.mjs";
-import { createHistoricalProfileProgress, HISTORICAL_PROFILE_PROGRESS_PHASES } from "./historical-profile-progress.mjs";
+import { createHistoricalProfileProgress, createHistoricalRuntimeObserver, HISTORICAL_PROFILE_PROGRESS_PHASES } from "./historical-profile-progress.mjs";
 import { inspectCrossDeviceCandidate } from "./cross-device-candidate-guards.mjs";
 import { assertHostedInstallerCi, assertPlainDirectory } from "./installer-ci-safety.mjs";
 import { captureLegacyStateEvidence, rewriteAsLegacyV11State } from "./legacy-desktop-state-acceptance.mjs";
@@ -103,9 +103,13 @@ async function launch(origin) {
     args: [...(binary ? [] : ["."]), `--user-data-dir=${profile}`], cwd: root, env, timeout: 60_000 });
   owned.add(app);
   tracker.track(app.process());
-  for (const stream of [app.process().stdout, app.process().stderr]) stream?.on("data", chunk => {
-    applicationOutput = `${applicationOutput}${chunk}`.slice(-24_000);
-  });
+  for (const stream of [app.process().stdout, app.process().stderr]) {
+    const observeRuntime = createHistoricalRuntimeObserver(progress);
+    stream?.on("data", chunk => {
+      observeRuntime(chunk);
+      applicationOutput = `${applicationOutput}${chunk}`.slice(-24_000);
+    });
+  }
   const setup = await waitFor(() => app.windows().find(page => page.url().startsWith("file:")), "setup");
   await setup.waitForFunction(() => Boolean(window.spsDesktop), { timeout: 30_000 });
   const actual = await app.evaluate(({ app }, profile) => ({ packaged: app.isPackaged,

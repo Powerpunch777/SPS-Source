@@ -43,3 +43,16 @@ test("driver traces and ordered parent protocol match while retaining every orig
   assert.match(host, /assert\.deepEqual\(received, expected\)/);
   assert.match(host, /assert\.deepEqual\(result, \{ code: 0, signal: null \}\)/);
 });
+
+test("safety diagnostics accept only fixed stages and bounded native codes", () => {
+  for (const stage of ["unknown", "preconditions", "process-check", "registration-check", "residue-validation", "confirmation", "removal"]) {
+    for (const nativeError of [0, 5, 32, 65535]) {
+      assert.deepEqual(parseLegacyRecoveryUiTrace(`LEGACY_UI_SAFETY:${stage}:${nativeError}`), { kind: "safety", stage, nativeError });
+    }
+  }
+  for (const value of ["LEGACY_UI_SAFETY:private@example.test:5", "LEGACY_UI_SAFETY:residue-validation:65536",
+    "LEGACY_UI_SAFETY:process-check:-1", "LEGACY_UI_SAFETY:process-check:05", "LEGACY_UI_SAFETY:process-check:5\n",
+    "LEGACY_UI_SAFETY:removal:5:extra", "LEGACY_UI_SAFETY:C:\\private:5"]) {
+    assert.throws(() => parseLegacyRecoveryUiTrace(value), /Invalid legacy recovery UI trace/);
+  }
+});

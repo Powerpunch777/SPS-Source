@@ -353,6 +353,7 @@ export async function runHistoricalStandardRecoveryStage(stage) {
             trace("residue-content-verified-before-gui-confirmation", { files: plan.files.length,
               directories: plan.directories.length, bytes: plan.bytes, rootIdentityPreserved: true,
               contentAllowlistOnly: true, cleanupAuthorized: false });
+            phase = "explicit-original-residue-recovery";
           },
           declined: async () => {
             assert.deepEqual(await captureInstallerSnapshot(installation), residueSnapshot);
