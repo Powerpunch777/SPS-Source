@@ -1,12 +1,24 @@
 # SPS 구현 로드맵
 
-최종 갱신: 2026-10-28
+최종 갱신: 2026-11-01
 
 **확정 범위:** [Core 완성 정책](CORE-COMPLETION-POLICY-ko.md)이 아래 이전 단계 기록보다
-우선한다. 공개 Marketplace는 운영하지 않고 전용 Builder 신규 개발은 핸드오프까지
-보류한다. AppContainer 연구는 보존하되 완전한 비신뢰 OS 격리는 1차 필수 조건에서
-제외한다. 내부 Registry·검증·설치·업데이트, SDK·Runner와 기존 보안은 유지한다.
-현재 유일한 최우선 목표는 독립적으로 운영 가능한 SPS Core 완성이다.
+우선한다. Core는 AI 선택형·워크플로 중립 기반이며 공개 Marketplace 탐색·추천과
+Marketplace Assistant는 정상 시작 경로로 제공하지 않는다. AppContainer 연구는 보존하되 완전한
+비신뢰 OS 격리는 1차 필수 조건에서 제외한다. 내부 Registry·검증·설치·업데이트,
+SDK·Runner와 기존 보안은 유지한다. Core 작업의 최우선 목표는 독립 운영 가능한
+SPS Core 완성이다.
+
+2026-11-01 사용자 승인으로 Builder는 별도 공개 저장소
+[`Powerpunch777/SPS-MY-PluginBuilder`](https://github.com/Powerpunch777/SPS-MY-PluginBuilder)와
+작업 폴더에서 고정된 공개 SDK·v15 설계로 병행 개발한다. 이전의 핸드오프까지 보류·
+Core 완료 후 착수 문구는 이 추가 지시로 대체된다. Builder 신규 기능을 Core 완성
+목표·선행조건으로 추가하거나 Core 필수 검증·미해결 실패를 대체하지 않는다.
+비공개 Core 소스·사용자 데이터·자격증명은 공개 저장소에 복사하지 않는다.
+
+Source `9e903d3`의 필수 Windows·legacy recovery·물리 Runner 검증은 아직 미통과다.
+진행 중인 CI를 통과로 기록하지 않으며, Core 완료 여부와 현재 근거는
+[최종 검증 기록](CORE-FINAL-VALIDATION-2026-10-30.md)을 따른다.
 
 ## 현재 우선순위
 
@@ -149,7 +161,8 @@ CLI/Gateway/OCE의 후속 확장보다 위 Windows 연결 작업을 먼저 진�
    당시 내부 기반의 증거로만 유지한다. CLI 사례도 승인된 시험 범위에서 구현한다.
    실키·고객 데이터·유료 API 및 실제 게임 빌드 환경은 별도 확인.
 4. 기존 Gateway adapter의 고정 버전 호환을 검증하고 OCE는 별도 read-only Connector부터.
-5. 기존 Builder/Preview를 소비자로 연결하고 게임 개발 워크스테이션의 실제 사용을 실증.
+5. 기존 SDK·Plugin·Preview 호환성을 보존한다. 승인된 Builder 병행 개발은 별도
+   저장소에서 진행하며 Core 완성의 필수 검증이나 목표에 포함하지 않는다.
 
 선택적 Primary/Extension·UI 자유, Native 복구, OS/renderer 보호, Workspace stop·
 데이터 수명주기는 기존 [비파괴 이전 계획](../reviews/CORE_PLUGIN_ARCH_MIGRATION_PLAN.md)을
@@ -207,12 +220,14 @@ CLI/Gateway/OCE의 후속 확장보다 위 Windows 연결 작업을 먼저 진�
 완료 기준: 플러그인 작성자가 SPS Core를 수정하지 않고 외부 폴더에서 개발, 검사,
 설치, 활성화, 비활성화, 업데이트, 복구, 삭제를 할 수 있다.
 
-## 3단계: 기존 Discovery/Builder 구현 기록 — 신규 개발 보류
+## 3단계: 기존 Discovery/Builder 구현 기록과 현재 개발 경계
 
-기존 코드는 SDK/Core 호환성을 유지한다. 공개 탐색·추천과 Builder 신규 설계는
-Core 완성의 선행 조건이 아니다. 새 Workspace가 특정 Plugin이나 AI Runtime을
-필수로 요구해서는 안 된다. 내부 패키지의 검증·승인·설치·업데이트 관리는
-Core 관리 인터페이스에 남긴다. Builder의 향후 요구사항은 별도 핸드오프를 따른다.
+기존 코드는 SDK/Core 호환성을 유지한다. 공개 탐색·추천과 Marketplace Assistant는
+제품에서 철회됐으며 내부 Registry 관리와 구분한다. 새 Workspace가 특정 Plugin이나
+AI Runtime을 필수로 요구해서는 안 된다. 내부 패키지의 검증·승인·설치·업데이트 관리는
+Core 관리 인터페이스에 남긴다. Builder는 위의 2026-11-01 사용자 승인에 따라
+별도 공개 저장소에서 병행 개발하며, Core 필수 검증을 대신하거나 Core 완성 목표를
+확장하지 않는다. 이 문서는 Builder UI·Plugin·역할의 새 설계를 결정하지 않는다.
 
 ## 4단계: 베타 준비 — 다음 단계
 

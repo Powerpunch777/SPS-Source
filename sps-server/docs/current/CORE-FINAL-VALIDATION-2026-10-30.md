@@ -18,6 +18,43 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
+### Local Host Controller: Explicit Workspace Open
+
+The isolated controller now performs both existing public setup actions:
+create the Host, verify its loaded runtime baseline, then open the Workspace.
+Creating the Host alone does not open its HTTP renderer. Focused tests9/9 pass.
+An actual fresh-profile local trial of the previously recorded exact e35
+unpacked candidate reached authenticated Workspace API at78273ms and normal
+native whole-Job exit0/zero processes at79750ms; only its owned temporary data
+was removed. Sharing, installed profiles and notebook state were unchanged.
+This is not new-HEAD CI, installed migration, real Google or two-PC acceptance.
+See the [exact local scope and hashes](../reviews/CROSS-DEVICE-PREPARATION-2026-11-01.md#local-host-controller-follow-up).
+
+### Evidence Gaps Retained During The Checklist Review
+
+The independent checklist review did not establish another new runtime defect,
+but the following older open evidence cannot disappear behind the installed
+migration, legacy cleanup and physical Runner blockers:
+
+- The Windows process-tree review still distinguishes actual Core loss from
+  packaged Desktop loss through the new per-worker nested-Job path. Ordinary
+  packaged startup/shutdown is not the latter scenario's evidence.
+- Package crash-journal recovery between renames and staging/old-artifact
+  collection remain separately tracked in the package recovery reviews; a
+  handled activation error/explicit rollback does not prove every crash window.
+- At pinned Coreb17, `node scripts/check-token-gates.mjs` was rerun on
+  2026-11-01KST and exited1:576files scanned,79color-literal,36arbitrary-value
+  and1raw-font-size findings, zero loaded allowlist entries. These include UI,
+  tests and UX-lab files; this is not a demonstrated authentication bypass, but
+  it is still an unresolved style-gate failure, not an all-checks pass. No
+  allowlist expansion, skipped input or UI rewrite was made to hide it.
+- Reviewed Moderate dependency exceptions expire2026-11-07. A past policy
+  pass does not replace a fresh final-candidate audit before that expiry.
+
+Core remains incomplete. The running9e Windows jobs and17 completed non-Windows
+jobs are separate observations; the latter do not qualify the former or any
+future Source revision.
+
 ### 71c Results: Host Readiness Delay And Actual Safety Rejection
 
 Source71c push41215783644 and PR41215788311 are terminal failures. All17

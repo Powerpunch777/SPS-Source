@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const entry = fileURLToPath(new URL("../scripts/cross-device-control.mjs", import.meta.url));
@@ -24,6 +25,23 @@ test("cross-device control rejects direct unowned invocation before readiness", 
   assert.equal(result.code, 1);
   assert.equal(result.timedOut, false);
   assert.doesNotMatch(result.stdout, /crossDeviceControlReady/);
+});
+
+test("Host control performs both public setup actions before any Workspace API observation", async () => {
+  const source = await readFile(entry, "utf8");
+  const renderer = await readFile(new URL("../renderer/renderer.mjs", import.meta.url), "utf8");
+  const start = source.indexOf('if (request.action === "create-host")');
+  const end = source.indexOf('if (request.action === "api")', start);
+  assert.ok(start >= 0 && end > start);
+  const operation = source.slice(start, end);
+  assert.match(operation, /assert\.equal\(role, "host"\)/);
+  assert.match(operation, /await session\.setupAction\("createOwnerServer"\);\s*await session\.verifyLoadedRuntime\(\);[\s\S]*?await session\.setupAction\("openWorkspace"\)/);
+  const rendererStart = renderer.indexOf('$("#create-owner-server").addEventListener');
+  const rendererEnd = renderer.indexOf('\n$("#', rendererStart + 1);
+  const actualHandler = renderer.slice(rendererStart, rendererEnd < 0 ? undefined : rendererEnd);
+  assert.match(actualHandler, /await window\.spsDesktop\.createOwnerServer\(\)/);
+  assert.doesNotMatch(actualHandler, /openWorkspace\(/, "Host creation alone must not be mistaken for opening a Workspace");
+  assert.match(renderer, /\$\("#owner-open-workspace"\)\.addEventListener\("click",[\s\S]*?await window\.spsDesktop\.openWorkspace\(\)/);
 });
 
 test("an empty owned operator session closes without starting an app or listener", { skip: process.platform !== "win32" }, async () => {

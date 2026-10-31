@@ -141,6 +141,8 @@ async function action(request) {
     assert.equal(role, "host");
     await session.setupAction("createOwnerServer");
     await session.verifyLoadedRuntime();
+    // Match the actual setup renderer: creating the Host does not open its UI.
+    await session.setupAction("openWorkspace");
     return { hostCreated: true, loadedBaselineMatchesCandidate: true };
   }
   if (request.action === "api") {

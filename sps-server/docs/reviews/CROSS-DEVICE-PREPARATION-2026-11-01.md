@@ -96,12 +96,42 @@ be uploaded as public evidence. A later sanitized result must bind the exact
 candidate, both actual PCs, actual scenario outcomes and route/process cleanup.
 Any timeout, unknown ownership, changed Serve snapshot or forced cleanup fails.
 
+## Local Host Controller Follow-Up
+
+The controller omitted the second public setup action: `createOwnerServer`
+creates the Host, while `openWorkspace` is a separate setup button/action. An
+API observation cannot assume that Host creation has opened an HTTP renderer.
+The Host control now verifies the loaded baseline and explicitly opens the
+Workspace before any API request. Focused controller/session tests passed9/9
+with `node --test test/cross-device-control.test.mjs
+test/cross-device-desktop-session.test.mjs` from the Desktop directory.
+
+An actual local fresh-profile trial used the exact unpacked candidate and
+EXE/ASAR/runtime hashes recorded above. Main was ready at2734ms, mock account
+sign-in at3173ms, isolated Host running at77861ms, and authenticated
+`GET /api/companies` at78273ms. The supported Core Settings Quit button then
+produced native whole-Job natural exit0/zero active processes at79750ms.
+Identity and only the recorded owned temporary tree were closed/removed by
+82562ms; an independent process check found zero remaining owned executables.
+The trial ended2026-10-31T21:22Z (2026-11-01KST).
+
+Sharing remained disabled and the Host origin was loopback. This uses a mock
+account, an older exact unpacked artifact and one physical computer. It is
+NOT current-HEAD CI, installed historical-profile migration, real Google,
+remote Runner, Serve or two-PC acceptance. No notebook file/app/route or
+existing installation/profile was changed. The separate failed fixture was
+preserved rather than adopted or deleted by the successful retry.
+
+Reference: [Playwright Electron application lifecycle](https://playwright.dev/docs/api/class-electronapplication).
+Closing a browser/window is not substituted for SPS's supported normal Quit
+and native Job termination acceptance.
+
 ## Remaining Work
 
-1. Diagnose and fix e35 installed historical-profile and legacy confirmation
+1. Diagnose and fix the latest installed historical-profile and legacy confirmation
    failures; run exact revised-HEAD Windows gates. Retain original bounds.
-2. Exercise the test controller's actual candidate startup/sign-in/normal close
-   locally before copying it to the notebook.
+2. Local candidate startup/sign-in/Host creation/Workspace API/normal close has
+   passed as scoped above; qualify the revised candidate in CI before remote use.
 3. Once CI permits, stage exact candidate bytes in recorded owned Temp roots;
    verify hashes again on both machines. Never replace installed apps.
 4. Verify actual remote Runner registration, scoped execution, exit/failure,
