@@ -560,6 +560,10 @@ jobs:
           SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode host-plugin-lifecycle
 
+      - name: Build explicit legacy program recovery helper
+        working-directory: sps-server/desktop
+        run: npm run build:legacy-recovery
+
       - name: Build unsigned Windows installer for data preservation E2E
         working-directory: sps-server/desktop
         run: npx --no-install electron-builder --prepackaged dist/win-unpacked --win nsis --publish never
@@ -572,6 +576,7 @@ jobs:
             sps-server/desktop/dist/SPS-Desktop-Setup-*.exe
             sps-server/desktop/dist/win-unpacked/**
             sps-server/desktop/.owner-host-runtime/sps-release-baseline.json
+            sps-server/desktop/.legacy-recovery/SpsLegacyRecovery.exe
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 2
@@ -628,7 +633,7 @@ jobs:
         working-directory: sps-server/desktop
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode installer-operator-upgrade
 
-      - name: Complete standard historical uninstall recovery
+      - name: Verify ordinary uninstall and explicitly confirmed program residue recovery
         timeout-minutes: 10
         shell: powershell
         working-directory: sps-server/desktop

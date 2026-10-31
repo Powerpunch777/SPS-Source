@@ -32,11 +32,29 @@ test("production NSIS hooks fail closed on old-uninstaller errors without changi
   assert.match(customInclude, /MessageBox MB_OK\|MB_ICONEXCLAMATION "\$\(uninstallFailed\): \$R0"/);
   assert.match(customInclude, /IfSilent spsUninstallSilentFailure_\$\{TAG\}/);
   assert.match(customInclude, /ReadRegStr \$R1 \$\{TAG\} "\$\{UNINSTALL_REGISTRY_KEY\}" "DisplayVersion"[\s\S]*?StrCmp \$R1 "0\.4\.86" spsLegacyUninstallRecovery_\$\{TAG\}/);
-  assert.match(customInclude, /spsLegacyUninstallRecovery_\$\{TAG\}:[\s\S]*?Automatic replacement failed; no recovery was started\.[\s\S]*?Back up your SPS data\.[\s\S]*?Windows Installed Apps without deleting app data[\s\S]*?latest Setup\.[\s\S]*?Do not delete SPS AppData or project folders\.[\s\S]*?back up or move projects saved inside the program installation folder\./);
+  assert.match(customInclude, /spsLegacyUninstallRecovery_\$\{TAG\}:\s+MessageBox MB_YESNO\|MB_ICONEXCLAMATION\|MB_DEFBUTTON2[\s\S]*?\/SD IDNO IDYES spsLegacyRecoveryOpen_\$\{TAG\}\s+Goto spsUninstallFailed_\$\{TAG\}/);
+  assert.match(customInclude, /Back up your SPS data and move any work saved inside the program installation folder before cleanup\./);
+  assert.match(customInclude, /AppData, Host Vault and external project folders are not cleanup targets\./);
+  assert.match(customInclude, /Setup will still stop; run the latest Setup again after recovery\./);
+  assert.match(customInclude, /spsLegacyRecoveryOpen_\$\{TAG\}:\s+Push \$R0\s+InitPluginsDir\s+ClearErrors\s+File \/oname=\$PLUGINSDIR\\SpsLegacyRecovery\.exe "\$\{PROJECT_DIR\}\\\.legacy-recovery\\SpsLegacyRecovery\.exe"\s+IfErrors spsLegacyRecoveryUnavailable_\$\{TAG\}\s+ExecWait '"\$PLUGINSDIR\\SpsLegacyRecovery\.exe" --recover "\$installationDir"' \$R1\s+IfErrors spsLegacyRecoveryUnavailable_\$\{TAG\}/);
+  assert.match(customInclude, /spsLegacyRecoveryFinished_\$\{TAG\}:\s+Pop \$R0[\s\S]*?Goto spsUninstallFailed_\$\{TAG\}/);
   assert.match(customInclude, /SetErrorLevel \$R0\s+Quit/);
 
   const silentFailure = customInclude.match(/spsUninstallSilentFailure_\$\{TAG\}:([\s\S]*?)spsUninstallFailed_\$\{TAG\}:/);
   assert.ok(silentFailure, "silent failures must have a dedicated path");
-  assert.doesNotMatch(silentFailure[1], /MessageBox/);
-  assert.doesNotMatch(customInclude, /^\s*(?:Delete|RMDir|Exec|ExecWait|nsExec|WriteReg|DeleteReg|taskkill|Retry|Sleep)\b/im);
+  assert.doesNotMatch(silentFailure[1], /MessageBox|Exec|File\s|spsLegacyRecoveryOpen/);
+  const silentJump = customInclude.indexOf("IfSilent spsUninstallSilentFailure_${TAG}");
+  assert.ok(silentJump < customInclude.indexOf('ReadRegStr $R1 ${TAG}'));
+  assert.equal([...customInclude.matchAll(/^\s*ExecWait\b/gm)].length, 1);
+  assert.doesNotMatch(customInclude, /^\s*(?:Delete|RMDir|Exec|ExecShell|nsExec|WriteReg|DeleteReg|taskkill|Retry|Sleep)\b/im);
+});
+
+test("every NSIS package path builds the recovery helper before the installer", async () => {
+  const scripts = JSON.parse(await readDesktopFile("package.json")).scripts;
+  for (const name of ["package:win", "release:win", "package:candidate:win"]) {
+    const parts = scripts[name].split(" && ");
+    assert.ok(parts.indexOf("npm run build:legacy-recovery") >= 0, name);
+    assert.ok(parts.indexOf("npm run build:legacy-recovery") < parts.findIndex(part => part.startsWith("electron-builder ")), name);
+  }
+  assert.equal(scripts["build:legacy-recovery"], "node scripts/build-legacy-recovery-helper.mjs");
 });

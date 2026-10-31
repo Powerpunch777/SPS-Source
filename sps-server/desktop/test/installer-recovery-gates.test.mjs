@@ -27,6 +27,7 @@ function validateWorkflow(source) {
     "sps-server/desktop/dist/SPS-Desktop-Setup-*.exe",
     "sps-server/desktop/dist/win-unpacked/**",
     "sps-server/desktop/.owner-host-runtime/sps-release-baseline.json",
+    "sps-server/desktop/.legacy-recovery/SpsLegacyRecovery.exe",
   ]);
   assert.equal(uploadStep.with["include-hidden-files"], true);
   assert.equal(uploadStep.with["if-no-files-found"], "error");

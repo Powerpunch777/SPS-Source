@@ -282,3 +282,37 @@ ownership/recovery must have current evidence. Failed, skipped, unavailable,
 and historical evidence stay distinct. External release gates and deferred
 features are reported separately, never silently removed. At Core completion,
 report the remaining release conditions and stop before new plugin development.
+
+## Current Recovery Follow-Up (2026-10-31)
+
+The prior `be40` branch PR Verify `41164225978`, Windows job `124428183760`,
+completed **SUCCESS** for current-package fresh install, replacement, repair,
+ordinary uninstall and reinstall, with nine retained records, five installed
+artifacts, isolated first frames and natural Job closure. The actual built
+Source was merge `e29417790642139b0d9cde31918bce5be8004efe` (parents main
+`d3777c155632f23349ac2243f3fc615cb8759643` and branch
+`be40e0cf3290c8e5b9462d8b12e43c45f3af3910`), not the branch SHA. Installer
+SHA256 was `317c63b9d525751dde2b0e39d5887f9c16d863f66658a47cef7825d935221eb5`.
+This successful current-package gate does not establish full legacy recovery.
+
+Native pinned-catalog/session and WinForms GUI code compiles. NSIS/payload
+wiring now offers explicit default-No interactive recovery, preserves the
+original failed Setup result and never opens recovery in silent mode. Both
+production hooks compile against the actual x64 helper. The actual GUI against
+an installed historical fixture remains unverified. Remote Verify
+`41167836732` is still live, not passed. No signed-build, physical-device,
+previous-Stable or default-profile migration claim is made. See the
+[recovery policy](LEGACY-INSTALLER-RECOVERY-POLICY-2026-10-31.md) for the
+acceptance scope and security limits; full product recovery is not claimed.
+
+The stable-tree full local rerun passed: serial2/2 plus1797total/1794pass/three
+unavailable-8.3-alias skips/zero failures, aggregate1799total/1796pass/three skips.
+Actual form layout, checkbox interlocks and Cancel were checked in a temporary
+component fixture without registry/process/cleanup access; its inspected PNG
+and sentinel fixture were then safely removed. A preceding in-development
+form-fixture layout failure is retained in the recovery policy, not reclassified
+as a pass. The same-attempt hosted recovery now requires real GUI Cancel and
+default-No/decline preservation, ordinary uninstall0, explicit residue cleanup,
+complete program absence and the existing same-candidate reinstall/first-frame
+checks, without changing any native observation deadline. No hosted execution
+of this new recovery path is claimed before its exact-HEAD result completes.

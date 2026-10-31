@@ -1,0 +1,470 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+internal static class LegacyRecoveryUiDriver
+{
+    const int OverallTimeoutMs = 450000;
+    const int UiWaitTimeoutMs = 15000;
+    const int MessageTimeoutMs = 1000;
+    const int PollIntervalMs = 100;
+    const uint BmClick = 0x00F5;
+    const uint BmGetCheck = 0x00F0;
+    const uint WmGetText = 0x000D;
+    const uint DmGetDefId = 0x0400;
+    const uint SmtoAbortIfHung = 0x0002;
+    const ushort HasDefaultId = 0x534B;
+    const string RecoveryTitle = "SPS 0.4.86 Recovery";
+    const string ConfirmTitle = "Confirm program residue cleanup";
+    const string CancelledStatus = "Cleanup cancelled. No program files were deleted.";
+    const string RemovedStatus = "Verified program residue was removed. Close this window and run the latest SPS Setup again.";
+
+    delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
+
+    sealed class DriverFailure : Exception { }
+
+    static class Native
+    {
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr parameter);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        internal static extern int GetClassName(IntPtr window, StringBuilder className, int maxCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        internal static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wParam,
+            StringBuilder lParam, uint flags, uint timeout, out IntPtr result);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wParam,
+            IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool IsWindowEnabled(IntPtr window);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetWindowLongW", SetLastError = true)]
+        internal static extern int GetWindowStyle(IntPtr window, int index);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern int GetDlgCtrlID(IntPtr window);
+    }
+
+    static Stopwatch clock;
+
+    static void Require(bool condition)
+    {
+        if (!condition) throw new DriverFailure();
+    }
+
+    static int RemainingMilliseconds()
+    {
+        long remaining = OverallTimeoutMs - clock.ElapsedMilliseconds;
+        Require(remaining > 0);
+        return remaining > Int32.MaxValue ? Int32.MaxValue : (int)remaining;
+    }
+
+    static int UiWaitBudget()
+    {
+        return Math.Min(UiWaitTimeoutMs, RemainingMilliseconds());
+    }
+
+    static string QuoteArgument(string value)
+    {
+        Require(value != null && value.IndexOf('"') < 0);
+        for (int index = 0; index < value.Length; index++) Require(!Char.IsControl(value[index]));
+        return "\"" + value + "\"";
+    }
+
+    static string ValidateLocalAbsolutePath(string path, bool executable)
+    {
+        Require(!String.IsNullOrEmpty(path));
+        Require(Path.IsPathRooted(path));
+        Require(path.Length >= 3 && Char.IsLetter(path[0]) && path[1] == ':' &&
+            (path[2] == '\\' || path[2] == '/'));
+        Require(!path.StartsWith("\\\\", StringComparison.Ordinal));
+        string full = Path.GetFullPath(path);
+        Require(String.Equals(full, path, StringComparison.OrdinalIgnoreCase));
+        if (executable) Require(File.Exists(full));
+        else Require(Directory.Exists(full));
+        QuoteArgument(full);
+        return full;
+    }
+
+    static string WindowClass(IntPtr window, uint processId)
+    {
+        Require(OwnsWindow(window, processId));
+        StringBuilder name = new StringBuilder(256);
+        int length = Native.GetClassName(window, name, name.Capacity);
+        Require(length > 0 && length < name.Capacity);
+        return name.ToString();
+    }
+
+    static bool ClassMatches(string actual, string expected)
+    {
+        return String.Equals(actual, expected, StringComparison.OrdinalIgnoreCase) ||
+            actual.StartsWith("WindowsForms10." + expected + ".", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool OwnsWindow(IntPtr window, uint processId)
+    {
+        uint actualProcessId;
+        return window != IntPtr.Zero && Native.GetWindowThreadProcessId(window, out actualProcessId) != 0
+            && actualProcessId == processId;
+    }
+
+    static string ReadWindowText(IntPtr window, uint processId)
+    {
+        Require(OwnsWindow(window, processId));
+        StringBuilder text = new StringBuilder(4096);
+        IntPtr result;
+        IntPtr sent = Native.SendMessageTimeout(window, WmGetText, new IntPtr(text.Capacity), text,
+            SmtoAbortIfHung, MessageTimeoutMs, out result);
+        Require(sent != IntPtr.Zero && OwnsWindow(window, processId));
+        return text.ToString();
+    }
+
+    static IntPtr[] FindTopWindows(uint processId)
+    {
+        var windows = new System.Collections.Generic.List<IntPtr>();
+        EnumWindowsProc callback = delegate(IntPtr window, IntPtr parameter)
+        {
+            if (OwnsWindow(window, processId)) windows.Add(window);
+            return true;
+        };
+        Require(Native.EnumWindows(callback, IntPtr.Zero));
+        return windows.ToArray();
+    }
+
+    static IntPtr[] FindChildren(IntPtr parent, uint processId)
+    {
+        var windows = new System.Collections.Generic.List<IntPtr>();
+        EnumWindowsProc callback = delegate(IntPtr window, IntPtr parameter)
+        {
+            if (OwnsWindow(window, processId)) windows.Add(window);
+            return true;
+        };
+        Require(OwnsWindow(parent, processId));
+        Require(Native.EnumChildWindows(parent, callback, IntPtr.Zero));
+        return windows.ToArray();
+    }
+
+    static IntPtr FindWindow(uint processId, string title, string className)
+    {
+        foreach (IntPtr window in FindTopWindows(processId))
+        {
+            if (OwnsWindow(window, processId) && WindowClass(window, processId) == className &&
+                ReadWindowText(window, processId) == title) return window;
+        }
+        return IntPtr.Zero;
+    }
+
+    static IntPtr WaitForWindow(uint processId, string title, string className)
+    {
+        int budget = UiWaitBudget();
+        long deadline = clock.ElapsedMilliseconds + budget;
+        while (clock.ElapsedMilliseconds < deadline)
+        {
+            IntPtr window = FindWindow(processId, title, className);
+            if (window != IntPtr.Zero) return window;
+            Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
+        }
+        throw new DriverFailure();
+    }
+
+    static IntPtr FindChildByText(IntPtr parent, uint processId, string text, string requiredClass)
+    {
+        foreach (IntPtr child in FindChildren(parent, processId))
+        {
+            if (OwnsWindow(child, processId) && ClassMatches(WindowClass(child, processId), requiredClass) &&
+                ReadWindowText(child, processId) == text) return child;
+        }
+        return IntPtr.Zero;
+    }
+
+    static IntPtr WaitForRecoveryWindow(Process helper)
+    {
+        int budget = UiWaitBudget();
+        long deadline = clock.ElapsedMilliseconds + budget;
+        while (clock.ElapsedMilliseconds < deadline)
+        {
+            Require(!helper.HasExited);
+            foreach (IntPtr candidate in FindTopWindows((uint)helper.Id))
+            {
+                if (OwnsWindow(candidate, (uint)helper.Id) &&
+                    ClassMatches(WindowClass(candidate, (uint)helper.Id), "Window") &&
+                    ReadWindowText(candidate, (uint)helper.Id) == RecoveryTitle) return candidate;
+            }
+            Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
+        }
+        throw new DriverFailure();
+    }
+
+    static IntPtr WaitForRecoveryChild(IntPtr form, uint processId, string text, string className)
+    {
+        int budget = UiWaitBudget();
+        long deadline = clock.ElapsedMilliseconds + budget;
+        while (clock.ElapsedMilliseconds < deadline)
+        {
+            Require(OwnsWindow(form, processId));
+            IntPtr child = FindChildByText(form, processId, text, className);
+            if (child != IntPtr.Zero) return child;
+            Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
+        }
+        throw new DriverFailure();
+    }
+
+    static bool ReadCheck(IntPtr checkBox, uint processId)
+    {
+        Require(OwnsWindow(checkBox, processId));
+        IntPtr result;
+        IntPtr sent = Native.SendMessageTimeout(checkBox, BmGetCheck, IntPtr.Zero, IntPtr.Zero,
+            SmtoAbortIfHung, MessageTimeoutMs, out result);
+        Require(sent != IntPtr.Zero && OwnsWindow(checkBox, processId));
+        Require(result.ToInt32() == 0 || result.ToInt32() == 1);
+        return result.ToInt32() == 1;
+    }
+
+    static bool ReadDefaultId(IntPtr dialog, uint processId, out int controlId)
+    {
+        Require(OwnsWindow(dialog, processId));
+        IntPtr result;
+        IntPtr sent = Native.SendMessageTimeout(dialog, DmGetDefId, IntPtr.Zero, IntPtr.Zero,
+            SmtoAbortIfHung, MessageTimeoutMs, out result);
+        Require(sent != IntPtr.Zero && OwnsWindow(dialog, processId));
+        long packed = result.ToInt64();
+        controlId = (int)(packed & 0xFFFF);
+        return (ushort)((packed >> 16) & 0xFFFF) == HasDefaultId;
+    }
+
+    static void Click(IntPtr control, uint processId)
+    {
+        Require(IsEnabled(control, processId));
+        Require(Native.PostMessage(control, BmClick, IntPtr.Zero, IntPtr.Zero));
+    }
+
+    static bool IsEnabled(IntPtr control, uint processId)
+    {
+        Require(OwnsWindow(control, processId));
+        bool enabled = Native.IsWindowEnabled(control);
+        Require(OwnsWindow(control, processId));
+        return enabled;
+    }
+
+    static IntPtr FindEnabledButton(IntPtr parent, uint processId, string text)
+    {
+        IntPtr button = FindChildByText(parent, processId, text, "Button");
+        Require(button != IntPtr.Zero && IsEnabled(button, processId));
+        return button;
+    }
+
+    static IntPtr FindCheckBox(IntPtr form, uint processId, string text)
+    {
+        IntPtr checkBox = FindChildByText(form, processId, text, "Button");
+        Require(checkBox != IntPtr.Zero && OwnsWindow(checkBox, processId));
+        return checkBox;
+    }
+
+    static void WaitCheckState(IntPtr checkBox, uint processId, bool expected)
+    {
+        int budget = UiWaitBudget();
+        long deadline = clock.ElapsedMilliseconds + budget;
+        while (clock.ElapsedMilliseconds < deadline)
+        {
+            if (ReadCheck(checkBox, processId) == expected) return;
+            Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
+        }
+        throw new DriverFailure();
+    }
+
+    static void WaitEnabled(IntPtr control, uint processId, bool expected)
+    {
+        int budget = UiWaitBudget();
+        long deadline = clock.ElapsedMilliseconds + budget;
+        while (clock.ElapsedMilliseconds < deadline)
+        {
+            Require(OwnsWindow(control, processId));
+            if (IsEnabled(control, processId) == expected) return;
+            Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
+        }
+        throw new DriverFailure();
+    }
+
+    static void VerifyTarget(IntPtr form, uint processId, string root)
+    {
+        IntPtr target = WaitForRecoveryChild(form, processId, root, "Edit");
+        Require(ReadWindowText(target, processId) == root);
+        Require((Native.GetWindowStyle(target, -16) & 0x0800) != 0);
+    }
+
+    static void WaitForHelperExit(Process helper, int expectedExitCode)
+    {
+        Require(helper.WaitForExit(Math.Min(UiWaitTimeoutMs, RemainingMilliseconds())));
+        Require(helper.ExitCode == expectedExitCode);
+    }
+
+    static void ExerciseInitialForm(Process helper, string root)
+    {
+        uint processId = (uint)helper.Id;
+        IntPtr form = WaitForRecoveryWindow(helper);
+        Require(OwnsWindow(form, processId));
+        VerifyTarget(form, processId, root);
+        IntPtr inspect = WaitForRecoveryChild(form, processId, "Check remaining files", "Button");
+        IntPtr backup = FindCheckBox(form, processId, "I have backed up my SPS data.");
+        IntPtr inside = FindCheckBox(form, processId, "Work inside this program folder has been backed up or moved.");
+        Require(!IsEnabled(inspect, processId));
+        Click(backup, processId);
+        WaitCheckState(backup, processId, true);
+        WaitEnabled(inspect, processId, false);
+        Click(inside, processId);
+        WaitCheckState(inside, processId, true);
+        WaitEnabled(inspect, processId, true);
+        Click(inside, processId);
+        WaitCheckState(inside, processId, false);
+        WaitEnabled(inspect, processId, false);
+        Click(inside, processId);
+        WaitCheckState(inside, processId, true);
+        WaitEnabled(inspect, processId, true);
+        Click(FindEnabledButton(form, processId, "Cancel"), processId);
+        WaitForHelperExit(helper, 1);
+    }
+
+    static void RequireProtocolLine(string expected)
+    {
+        Task<string> read = Console.In.ReadLineAsync();
+        Require(read.Wait(RemainingMilliseconds()));
+        Require(read.Result == expected);
+    }
+
+    static Process Launch(string helperPath, string root)
+    {
+        var start = new ProcessStartInfo();
+        start.FileName = helperPath;
+        start.Arguments = "--recover " + QuoteArgument(root);
+        start.UseShellExecute = false;
+        start.CreateNoWindow = false;
+        Process process = Process.Start(start);
+        Require(process != null);
+        return process;
+    }
+
+    static void ToggleOn(IntPtr form, uint processId, string firstText, string secondText)
+    {
+        IntPtr inspect = WaitForRecoveryChild(form, processId, "Check remaining files", "Button");
+        IntPtr first = FindCheckBox(form, processId, firstText);
+        IntPtr second = FindCheckBox(form, processId, secondText);
+        Require(!IsEnabled(inspect, processId));
+        Click(first, processId);
+        WaitCheckState(first, processId, true);
+        WaitEnabled(inspect, processId, false);
+        Click(second, processId);
+        WaitCheckState(second, processId, true);
+        WaitEnabled(inspect, processId, true);
+    }
+
+    static void ConfirmDialog(IntPtr form, uint processId, string root, int expectedId)
+    {
+        Require(expectedId == 6 || expectedId == 7);
+        IntPtr dialog = WaitForWindow(processId, ConfirmTitle, "#32770");
+        Require(OwnsWindow(dialog, processId));
+        var text = new StringBuilder();
+        foreach (IntPtr child in FindChildren(dialog, processId))
+        {
+            string part = ReadWindowText(child, processId);
+            if (part.Length != 0) text.Append(part).Append('\n');
+        }
+        Require(text.ToString().IndexOf(root, StringComparison.Ordinal) >= 0);
+        int defaultId;
+        Require(ReadDefaultId(dialog, processId, out defaultId) && defaultId == 7);
+        IntPtr button = IntPtr.Zero;
+        foreach (IntPtr child in FindChildren(dialog, processId))
+        {
+            if (!ClassMatches(WindowClass(child, processId), "Button")) continue;
+            Require(OwnsWindow(child, processId));
+            if (Native.GetDlgCtrlID(child) == expectedId) { button = child; break; }
+        }
+        Require(button != IntPtr.Zero);
+        Click(button, processId);
+        Require(OwnsWindow(form, processId));
+    }
+
+    static void WaitStatus(IntPtr form, uint processId, string expected)
+    {
+        IntPtr status = WaitForRecoveryChild(form, processId, expected, "Static");
+        Require(ReadWindowText(status, processId) == expected);
+    }
+
+    static void ExerciseCleanup(Process helper, string root)
+    {
+        uint processId = (uint)helper.Id;
+        IntPtr form = WaitForRecoveryWindow(helper);
+        VerifyTarget(form, processId, root);
+        ToggleOn(form, processId, "I have backed up my SPS data.",
+            "Work inside this program folder has been backed up or moved.");
+        Console.Out.WriteLine("READY");
+        Console.Out.Flush();
+        RequireProtocolLine("UNINSTALLED");
+
+        Click(FindEnabledButton(form, processId, "Check remaining files"), processId);
+        ConfirmDialog(form, processId, root, 7);
+        WaitStatus(form, processId, CancelledStatus);
+        Console.Out.WriteLine("DECLINED");
+        Console.Out.Flush();
+        RequireProtocolLine("CLEANUP");
+
+        Click(FindEnabledButton(form, processId, "Check remaining files"), processId);
+        ConfirmDialog(form, processId, root, 6);
+        WaitStatus(form, processId, RemovedStatus);
+        Click(FindEnabledButton(form, processId, "Close"), processId);
+        WaitForHelperExit(helper, 0);
+    }
+
+    public static int Main(string[] args)
+    {
+        Process helper = null;
+        try
+        {
+            clock = Stopwatch.StartNew();
+            Require(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true");
+            Require(Environment.GetEnvironmentVariable("RUNNER_OS") == "Windows");
+            Require(Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT") == "github-hosted");
+            Require(args != null && args.Length == 2);
+            string helperPath = ValidateLocalAbsolutePath(args[0], true);
+            string root = ValidateLocalAbsolutePath(args[1], false);
+
+            helper = Launch(helperPath, root);
+            ExerciseInitialForm(helper, root);
+            helper.Dispose();
+            helper = null;
+
+            helper = Launch(helperPath, root);
+            ExerciseCleanup(helper, root);
+            Console.Out.WriteLine("PASSED");
+            Console.Out.Flush();
+            return 0;
+        }
+        catch
+        {
+            Console.Error.WriteLine("Legacy recovery UI driver failed.");
+            Console.Error.Flush();
+            return 2;
+        }
+        finally
+        {
+            if (helper != null) helper.Dispose();
+        }
+    }
+}

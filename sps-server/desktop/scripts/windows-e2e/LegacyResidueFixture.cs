@@ -251,9 +251,11 @@ internal static class LegacyResidueFixture
         string relative = scenario == "long-path" ? LongRelativePath() : "resources\\sps-owner-host-runtime\\payload.bin";
         string file = Path.Combine(root, relative);
         if (scenario != "long-path" && !File.Exists(file)) WritePayload(file);
-        RootIdentity identity = VerifiedResidue.Identify(root);
+        RootBinding binding = VerifiedResidue.InspectRoot(root);
+        RootIdentity identity = binding.Identity;
         CatalogFile[] validCatalog = Catalog(relative, false);
         string[] directories = Directories(relative);
+        VerifiedResidue.VerifyOriginalFile(binding, validCatalog[0]);
         using (VerifiedResidue control = VerifiedResidue.Open(root, identity, validCatalog, directories))
             Require(control.FileCount == 1);
 
@@ -289,6 +291,8 @@ internal static class LegacyResidueFixture
                     throw new InvalidOperationException(FailureMessage);
             }
             Require(OpenIsRejected(() => VerifiedResidue.Open(root, identity, catalog, directories)));
+            if (scenario == "changed" || scenario == "root-replaced" || scenario == "ads" || scenario == "hardlink" || scenario == "wrong-digest")
+                Require(OperationIsRejected(() => VerifiedResidue.VerifyOriginalFile(binding, catalog[0])));
             if (scenario == "root-replaced")
             {
                 Require(File.Exists(Path.Combine(owned, "moved-root", relative)));

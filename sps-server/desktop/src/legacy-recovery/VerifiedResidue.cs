@@ -27,6 +27,13 @@ namespace Sps.LegacyRecovery
         { VolumeSerialNumber = volume; FileIndex = index; CreationTime = created; }
     }
 
+    public sealed class RootBinding
+    {
+        public readonly string CanonicalPath;
+        public readonly RootIdentity Identity;
+        internal RootBinding(string path, RootIdentity identity) { CanonicalPath = path; Identity = identity; }
+    }
+
     public sealed class ResidueVerificationException : InvalidOperationException
     {
         public int NativeError { get; private set; }
@@ -220,11 +227,45 @@ namespace Sps.LegacyRecovery
             ProtectRoot(root);
         }
         public static RootIdentity Identify(string directory)
+        { return InspectRoot(directory).Identity; }
+        public static RootBinding InspectRoot(string directory)
         {
             using (var scope = new VerifiedResidue())
             {
                 scope.OpenRoot(directory, false);
-                return Identity(scope.entries[0].Original);
+                return new RootBinding(scope.TargetPath, Identity(scope.entries[0].Original));
+            }
+        }
+        public static void VerifyOriginalFile(RootBinding binding, CatalogFile expected)
+        {
+            if (binding == null || expected == null) throw Failure();
+            Relative(expected.RelativePath, false);
+            if (expected.Size < 0 || expected.Size > MaximumBytes || expected.Sha256 == null || !Digest.IsMatch(expected.Sha256)) throw Failure();
+            using (var scope = new VerifiedResidue())
+            {
+                scope.OpenRoot(binding.CanonicalPath, false);
+                Information rootInfo = scope.entries[0].Original;
+                if (rootInfo.Volume != binding.Identity.VolumeSerialNumber || Index(rootInfo) != binding.Identity.FileIndex
+                    || Stamp(rootInfo.Created) != binding.Identity.CreationTime) throw Failure();
+                string[] parts = expected.RelativePath.Split('/');
+                string full = scope.root;
+                for (int index = 0; index < parts.Length - 1; index++)
+                {
+                    full += "\\" + parts[index];
+                    scope.ancestors.Add(OpenEntry(full, "", true, false));
+                }
+                using (var entry = OpenEntry(full + "\\" + parts[parts.Length - 1], expected.RelativePath, false, true))
+                {
+                    if (Length(entry.Original) != expected.Size) throw Failure();
+                    CheckStreams(entry);
+                    using (var wrapper = new SafeFileHandle(entry.Handle, false))
+                    using (var stream = new FileStream(wrapper, FileAccess.Read, 65536, false))
+                    using (var sha = SHA256.Create())
+                    {
+                        string actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                        if (actual != expected.Sha256) throw Failure();
+                    }
+                }
             }
         }
         public static VerifiedResidue Open(string directory, RootIdentity expected, IEnumerable<CatalogFile> files, IEnumerable<string> directories)

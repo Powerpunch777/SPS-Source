@@ -318,13 +318,49 @@ export async function runHistoricalStandardRecoveryStage(stage) {
       const copied = path.join(fixture, "owned-standard-uninstaller.exe");
       await copyFile(uninstaller, copied, constants.COPYFILE_EXCL);
       assert.equal(await hash(copied), checkpoint.uninstallerSha256);
-      phase = "ordinary-uninstall";
-      await run(nsisInvocation(copied, installation, { uninstall: true }));
+      let recoveryEvidence;
+      const confirmingResidue = checkpoint.state === "upgrade-failed";
+      if (confirmingResidue) {
+        const { observeConfirmedLegacyRecovery } = await import("./confirmed-legacy-recovery-ui.mjs");
+        let residueSnapshot;
+        phase = "explicit-original-residue-recovery";
+        recoveryEvidence = await observeConfirmedLegacyRecovery({ desktop, fixture, installation,
+          ready: async () => {
+            // The first GUI session was cancelled. The second remains open to
+            // retain the registered target identity while Windows uninstalls it.
+            await verifyOld();
+            await verifyRetained();
+            const unchanged = await captureInstallerSnapshot(installation);
+            assert.equal(unchanged.sha256, checkpoint.installationTreeSha256);
+            assert.equal([unchanged.rootIdentity.dev, unchanged.rootIdentity.ino, unchanged.rootIdentity.birthtimeNs].join(":"), checkpoint.installationIdentity);
+            phase = "ordinary-uninstall-before-confirmed-cleanup";
+            await run(nsisInvocation(copied, installation, { uninstall: true }));
+            await verifyRetained();
+            assert.deepEqual(await queryInstallerRegistrations(), []);
+            await noProcess();
+            assert.equal(await missing(installation), false, "This fixture must observe actual old-program residue, not waive the absence check.");
+            residueSnapshot = await captureInstallerSnapshot(installation);
+            const census = await collectInstallerPathCensus(installation);
+            trace("ordinary-uninstall-residue-before-explicit-recovery", { ...census,
+              standaloneCompleteRemovalQualified: false, retainedDataVerified: true });
+            assert.equal(census.complete, true);
+          },
+          declined: async () => {
+            assert.deepEqual(await captureInstallerSnapshot(installation), residueSnapshot);
+            await verifyRetained();
+            await noProcess();
+            trace("residue-decline-preserved", { completeProgramSnapshotUnchanged: true, userRecords: 9, projectRecords: 1 });
+          },
+        });
+      } else {
+        phase = "ordinary-uninstall";
+        await run(nsisInvocation(copied, installation, { uninstall: true }));
+      }
       await verifyRetained();
-      phase = "verify-ordinary-removal";
+      phase = confirmingResidue ? "verify-confirmed-recovery-removal" : "verify-ordinary-removal";
       const registrations = await queryInstallerRegistrations();
       const installationAbsent = await missing(installation);
-      trace("ordinary-uninstall-postconditions", { registrations: registrations.length, installationAbsent });
+      trace(confirmingResidue ? "confirmed-recovery-postconditions" : "ordinary-uninstall-postconditions", { registrations: registrations.length, installationAbsent });
       if (!installationAbsent) trace("ordinary-uninstall-remaining-tree", await collectInstallerPathCensus(installation));
       assert.deepEqual(registrations, []);
       assert.equal(installationAbsent, true);
@@ -332,7 +368,8 @@ export async function runHistoricalStandardRecoveryStage(stage) {
         checkpoint.state = "uninstalled";
         await persistCheckpoint();
       } else await removeCheckpoint();
-      trace("ordinary-uninstall-preserved-data", { userRecords: 9, projectRecords: 1,
+      trace(confirmingResidue ? "confirmed-original-residue-recovery-preserved-data" : "ordinary-uninstall-preserved-data", { userRecords: 9, projectRecords: 1,
+        ...(recoveryEvidence ?? {}),
         historicalStandardUninstallDataPreservationQualified: true, candidateUpgradeQualified: false,
         operatorReinstallRecoveryQualified: false, previousStableUpgradeQualified: false,
         applicationLaunched: false, cleanupQualification: "pending" });

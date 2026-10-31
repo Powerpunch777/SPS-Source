@@ -293,3 +293,71 @@ open handles in postorder. Decline/throw do not delete. It is not yet wired to
 an installer executable, real registry/process authorization or real user UI.
 Native20/20 plus catalog2/2 actual local tests pass; full recovery remains open.
 See [native evidence and limitations](../reviews/LEGACY-RESIDUE-NATIVE-2026-10-31.md).
+
+## Current GUI and Hosted Follow-Up (2026-10-31)
+
+The prior `be40` branch PR's Verify `41164225978`, Windows job
+`124428183760`, completed **SUCCESS** for the current-package fresh install,
+replacement, repair, ordinary uninstall and reinstall. It verified nine
+retained records, five installed artifacts, isolated first frames and natural
+Job closure. The actual built Source was PR merge
+`e29417790642139b0d9cde31918bce5be8004efe`, with parents main
+`d3777c155632f23349ac2243f3fc615cb8759643` and branch
+`be40e0cf3290c8e5b9462d8b12e43c45f3af3910`; the built Source was the merge,
+not the branch SHA. Installer SHA256:
+`317c63b9d525751dde2b0e39d5887f9c16d863f66658a47cef7825d935221eb5`.
+This is current-package lifecycle evidence, not proof that legacy-product
+recovery was exercised through the GUI or hosted installer. It makes no claim
+for signed builds, physical devices, previous-Stable upgrades, default-profile
+migration or full product recovery.
+
+The native pinned-catalog/session and WinForms GUI compile. The checks require exactly one
+per-user `0.4.86` registration and the original uninstaller, Desktop and ASAR
+hashes plus root identity before user uninstall; two backup checkboxes; and no
+final confirmation accepted by default. After uninstall they require zero SPS
+registrations, no Desktop process and no target-owned node, permitting only the
+original runtime residue. Unknown, linked or changed targets are refused. There
+is no automatic fallback, process killing, elevation or profile deletion. The
+GUI has not yet been verified against an installed historical fixture on the
+hosted runner. NSIS now embeds the compiled helper and offers a default-No
+recovery choice only after an interactive `0.4.86` uninstall failure. Silent
+failure never opens it, and even completed recovery restores the original
+nonzero Setup result: the user must explicitly run Setup again.
+
+Local processes running as the same user are trusted for this operation; this
+is not an OS sandbox against malicious same-user code. Process and registry
+checks are not cryptographic attestation; exact open handles protect deletion
+targets. This is not transactional rollback if a later step fails. Parent
+wiring of the recovery GUI/helper does not change those limits or establish
+full product recovery.
+
+The current remote Verify `41167836732` is still live and is **not a pass**.
+Earlier failure evidence above remains unchanged. See [final validation](CORE-FINAL-VALIDATION-2026-10-30.md).
+
+The mandatory recovery fixture now retains its registered target in the actual
+helper GUI while ordinary Windows uninstall runs. It checks initial Cancel
+against the complete old-program snapshot, ordinary uninstall0 and all ten
+retained records, final default-No/decline against the complete residue snapshot,
+then explicit Yes, total program-directory absence and same-candidate reinstall.
+The old ordinary-uninstall-only diagnostic still fails if residue survives; it
+has no automatic cleanup. The same-attempt private artifact includes only the
+compiled helper alongside the already bounded installer/runtime inputs. No
+existing 8/18-minute native or 10/20-minute workflow deadline was extended.
+
+Local checks compiled the actual x64 GUI and both NSIS hook instantiations
+without running Setup. A separate temporary fixture showed the actual form,
+checked layout/backup-checkbox interlocks and Cancel, and preserved its sentinel;
+its session was constructed only by the test entry point, not registered as an
+installation, and never entered registry/process checks or cleanup. The private
+PNG was inspected then removed with the owned fixture. This is GUI-component
+evidence, not an installed historical-product recovery pass. The new hosted UI
+driver compiles and rejects a real local invocation before launching any helper.
+
+Final local `npm run test:ci` exited0: serial2/2 plus1797total/1794pass/three
+unavailable-8.3-alias skips/zero failures in the remaining stage; aggregate1799
+total/1796pass/three skips. An earlier in-development run had a new form-fixture
+layout failure; bounded diagnostics and PNG capture were added without relaxing
+its assertions, and the stable-tree full rerun passed. Exact new-HEAD hosted
+GUI/reinstall evidence remains required. No installed local SPS or real profile
+was altered. Code signing, physical devices and Production release remain
+separate uncompleted gates.
