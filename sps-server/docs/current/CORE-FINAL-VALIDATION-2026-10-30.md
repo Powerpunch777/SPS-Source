@@ -41,6 +41,22 @@ deferred Native development are excluded.
 
 ### Latest Hosted Observations
 
+- User decision2026-10-31 permits explicitly user-guided, data-preserving
+  reinstall recovery for withdrawn0.4.86 after automatic replacement failure.
+  Failure stays nonzero and no fallback/deletion starts automatically. Supported
+  NSIS hooks compile with guidance; normal current-package replacement is now
+  measured independently before the old input. A separate guarded hosted
+  ordinary-uninstall/data-preservation prerequisite is prepared, not qualified.
+  Full local Desktop1713total/1711pass/two environment skips/zero failures.
+  See the [recovery policy](LEGACY-INSTALLER-RECOVERY-POLICY-2026-10-31.md).
+- Exact Source0c6c68d push41158119102 has passed all17 non-Windows jobs and actual
+  normal Main transfer (including the account-lifecycle fence), crash recovery
+  and legacy state migration at observation; Windows remains live. PR41158123651
+  instead failed the harmless PowerShell observation fixture's45-second bound,
+  before app acceptance. No timeout is accepted as a pass. Source766e7ff Windows
+  failed a packaged Host plugin fixture's attempt to click the still-disabled
+  sign-in control; source tracing alone did not correct that acceptance race.
+  These remain distinct from the actual legacy-uninstaller failure.
 - A separate reproduced async Workspace-open race is corrected using the
   existing account/session/profile/Host read scope. Six regressions failed
   before correction; focused18/18 and related55/55 now pass. Actual isolated

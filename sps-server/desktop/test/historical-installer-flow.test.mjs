@@ -59,3 +59,19 @@ test("installer diagnostics identify blocking boundaries without printing fixtur
   assert.match(source, /assert\.equal\(result\.count, 0, "An SPS Desktop process is present; refusing installer mutation\."\)/);
   assert.doesNotMatch(source, /Get-CimInstance/);
 });
+
+test("current package replacement is independently measured before the withdrawn predecessor", async () => {
+  const source = await readFile(new URL("../scripts/smoke-installer-data-preservation.mjs", import.meta.url), "utf8");
+  const fresh = source.indexOf('phase = "fresh-install"');
+  const replacement = source.indexOf('phase = "current-package-replacement"', fresh);
+  const historical = source.indexOf('phase = "uninstall-before-historical-input"', replacement);
+  assert.ok(fresh >= 0 && replacement > fresh && historical > replacement);
+  const handoff = source.slice(replacement, historical);
+  assert.match(handoff, /await runNsis\(installer\)/);
+  assert.match(handoff, /await checkInstalledPackage\(\)/);
+  assert.match(handoff, /await checkInstalledFirstFrame\(\)/);
+  assert.match(handoff, /traceInstallerStage\("current-package-replacement-verified"\)/);
+  assert.doesNotMatch(handoff, /uninstallOwnedCandidate|copyFile|rm\(|--updated|catch/);
+  assert.match(source, /currentPackageReplacementQualified: true/);
+  assert.match(source, /historicalInstallerUpgradeQualified: true/);
+});

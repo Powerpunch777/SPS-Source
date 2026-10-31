@@ -188,6 +188,14 @@ try {
   await runNsis(installer);
   await checkInstalledPackage();
   await checkInstalledFirstFrame();
+  phase = "current-package-replacement";
+  traceInstallerStage("begin");
+  // Qualify the current uninstaller's update handoff independently of the
+  // withdrawn predecessor, without removing the existing historical test.
+  await runNsis(installer);
+  await checkInstalledPackage();
+  await checkInstalledFirstFrame();
+  traceInstallerStage("current-package-replacement-verified");
   phase = "uninstall-before-historical-input";
   traceInstallerStage("begin");
   await uninstallOwnedCandidate("owned-uninstaller-before-historical.exe");
@@ -220,12 +228,13 @@ try {
   await checkInstalledPackage();
   await checkInstalledFirstFrame();
   console.log(JSON.stringify({ installerDataPreservation: true, sourceRevision: baseline.sourceRevision,
-    installerSha256: await hashFile(installer), phases: ["fresh-install", "uninstall-before-historical-input", "historical-install", "historical-version-upgrade", "in-place-reinstall", "uninstall-preserve-data", "reinstall-retained-data"],
+    installerSha256: await hashFile(installer), phases: ["fresh-install", "current-package-replacement", "uninstall-before-historical-input", "historical-install", "historical-version-upgrade", "in-place-reinstall", "uninstall-preserve-data", "reinstall-retained-data"],
     historicalInstaller: { version: HISTORICAL_INSTALLER_BASELINE.version, sha256: HISTORICAL_INSTALLER_BASELINE.sha256,
       withdrawn: true, signingTrustQualified: false, applicationLaunched: false },
     retainedRecords: sentinels.length, packageByteParity: artifacts.length, silentInstaller: true,
     desktopProcessAbsentAtInstallerBoundaries: true, isolatedInstalledFirstFrames: installedFirstFrames,
-    repairedFixturePackage: true, inertPreservationSentinels: true, historicalInstallerUpgradeQualified: true,
+    repairedFixturePackage: true, inertPreservationSentinels: true, currentPackageReplacementQualified: true,
+    historicalInstallerUpgradeQualified: true,
     previousStableUpgradeQualified: false, applicationDataMigrationQualified: false,
     normalUserProfileStartupQualified: false, signedInstallerQualified: false,
     cleanupQualification: "pending" }));

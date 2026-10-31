@@ -31,10 +31,12 @@ test("production NSIS hooks fail closed on old-uninstaller errors without changi
   assert.match(customInclude, /IfErrors spsUninstallLaunchFailed_\$\{TAG\}[\s\S]*?SetErrorLevel 2\s+Quit/);
   assert.match(customInclude, /MessageBox MB_OK\|MB_ICONEXCLAMATION "\$\(uninstallFailed\): \$R0"/);
   assert.match(customInclude, /IfSilent spsUninstallSilentFailure_\$\{TAG\}/);
+  assert.match(customInclude, /ReadRegStr \$R1 \$\{TAG\} "\$\{UNINSTALL_REGISTRY_KEY\}" "DisplayVersion"[\s\S]*?StrCmp \$R1 "0\.4\.86" spsLegacyUninstallRecovery_\$\{TAG\}/);
+  assert.match(customInclude, /spsLegacyUninstallRecovery_\$\{TAG\}:[\s\S]*?Automatic replacement failed; no recovery was started\.[\s\S]*?Back up your SPS data\.[\s\S]*?Windows Installed Apps without deleting app data[\s\S]*?latest Setup\.[\s\S]*?Do not delete SPS AppData or project folders\.[\s\S]*?back up or move projects saved inside the program installation folder\./);
   assert.match(customInclude, /SetErrorLevel \$R0\s+Quit/);
 
   const silentFailure = customInclude.match(/spsUninstallSilentFailure_\$\{TAG\}:([\s\S]*?)spsUninstallFailed_\$\{TAG\}:/);
   assert.ok(silentFailure, "silent failures must have a dedicated path");
   assert.doesNotMatch(silentFailure[1], /MessageBox/);
-  assert.doesNotMatch(customInclude, /\b(?:Delete|RMDir|Exec|ExecWait|nsExec|WriteReg|DeleteReg|taskkill)\b/i);
+  assert.doesNotMatch(customInclude, /^\s*(?:Delete|RMDir|Exec|ExecWait|nsExec|WriteReg|DeleteReg|taskkill|Retry|Sleep)\b/im);
 });
