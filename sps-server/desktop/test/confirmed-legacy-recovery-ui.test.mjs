@@ -56,13 +56,15 @@ test("Windows GUI driver compiles and its hosted guard rejects a local launch wi
   const compiler = path.join(process.env.WINDIR, "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe");
   const exec = promisify(execFile);
   await exec(compiler, ["/nologo", "/target:exe", "/platform:x64", `/out:${executable}`,
+    ...["UIAutomationClient.dll", "UIAutomationTypes.dll", "WindowsBase.dll"]
+      .map(name => `/reference:${path.join(path.dirname(compiler), "WPF", name)}`),
     path.join(desktop, "scripts", "windows-e2e", "LegacyRecoveryUiDriver.cs")],
   { cwd: owned, shell: false, windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024 });
   await assert.rejects(exec(executable, [], { cwd: owned, shell: false, windowsHide: true,
     env: { ...process.env, GITHUB_ACTIONS: "false" }, timeout: 5000, maxBuffer: 32768 }), error => {
     assert.equal(error.code, 2);
     assert.equal(error.stdout, "");
-    assert.equal(error.stderr.trim(), "Legacy recovery UI driver failed.");
+    assert.equal(error.stderr.trim(), "LEGACY_UI_FAILURE:entry");
     return true;
   });
 });

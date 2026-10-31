@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Automation;
 
 internal static class LegacyRecoveryUiDriver
 {
@@ -13,7 +14,6 @@ internal static class LegacyRecoveryUiDriver
     const int MessageTimeoutMs = 1000;
     const int PollIntervalMs = 100;
     const uint BmClick = 0x00F5;
-    const uint BmGetCheck = 0x00F0;
     const uint WmGetText = 0x000D;
     const uint DmGetDefId = 0x0400;
     const uint SmtoAbortIfHung = 0x0002;
@@ -64,6 +64,14 @@ internal static class LegacyRecoveryUiDriver
     }
 
     static Stopwatch clock;
+    static string phase = "entry";
+
+    static void EnterPhase(string value)
+    {
+        phase = value;
+        Console.Error.WriteLine("LEGACY_UI_PHASE:" + value);
+        Console.Error.Flush();
+    }
 
     static void Require(bool condition)
     {
@@ -230,12 +238,15 @@ internal static class LegacyRecoveryUiDriver
     static bool ReadCheck(IntPtr checkBox, uint processId)
     {
         Require(OwnsWindow(checkBox, processId));
-        IntPtr result;
-        IntPtr sent = Native.SendMessageTimeout(checkBox, BmGetCheck, IntPtr.Zero, IntPtr.Zero,
-            SmtoAbortIfHung, MessageTimeoutMs, out result);
-        Require(sent != IntPtr.Zero && OwnsWindow(checkBox, processId));
-        Require(result.ToInt32() == 0 || result.ToInt32() == 1);
-        return result.ToInt32() == 1;
+        // WinForms owner-drawn checks do not expose a valid BM_GETCHECK state.
+        // Read the real accessibility toggle state; never set it directly.
+        AutomationElement element = AutomationElement.FromHandle(checkBox);
+        Require(element != null && element.Current.ProcessId == processId);
+        object pattern;
+        Require(element.TryGetCurrentPattern(TogglePattern.Pattern, out pattern));
+        ToggleState state = ((TogglePattern)pattern).Current.ToggleState;
+        Require(OwnsWindow(checkBox, processId) && (state == ToggleState.On || state == ToggleState.Off));
+        return state == ToggleState.On;
     }
 
     static bool ReadDefaultId(IntPtr dialog, uint processId, out int controlId)
@@ -319,26 +330,35 @@ internal static class LegacyRecoveryUiDriver
     static void ExerciseInitialForm(Process helper, string root)
     {
         uint processId = (uint)helper.Id;
+        EnterPhase("initial-window");
         IntPtr form = WaitForRecoveryWindow(helper);
         Require(OwnsWindow(form, processId));
+        EnterPhase("initial-target");
         VerifyTarget(form, processId, root);
+        EnterPhase("initial-controls");
         IntPtr inspect = WaitForRecoveryChild(form, processId, "Check remaining files", "Button");
         IntPtr backup = FindCheckBox(form, processId, "I have backed up my SPS data.");
         IntPtr inside = FindCheckBox(form, processId, "Work inside this program folder has been backed up or moved.");
         Require(!IsEnabled(inspect, processId));
+        EnterPhase("initial-backup");
         Click(backup, processId);
         WaitCheckState(backup, processId, true);
         WaitEnabled(inspect, processId, false);
+        EnterPhase("initial-inside");
         Click(inside, processId);
         WaitCheckState(inside, processId, true);
         WaitEnabled(inspect, processId, true);
+        EnterPhase("initial-uncheck");
         Click(inside, processId);
         WaitCheckState(inside, processId, false);
         WaitEnabled(inspect, processId, false);
+        EnterPhase("initial-recheck");
         Click(inside, processId);
         WaitCheckState(inside, processId, true);
         WaitEnabled(inspect, processId, true);
+        EnterPhase("initial-cancel");
         Click(FindEnabledButton(form, processId, "Cancel"), processId);
+        EnterPhase("initial-exit");
         WaitForHelperExit(helper, 1);
     }
 
@@ -410,25 +430,38 @@ internal static class LegacyRecoveryUiDriver
     static void ExerciseCleanup(Process helper, string root)
     {
         uint processId = (uint)helper.Id;
+        EnterPhase("cleanup-window");
         IntPtr form = WaitForRecoveryWindow(helper);
+        EnterPhase("cleanup-target");
         VerifyTarget(form, processId, root);
+        EnterPhase("cleanup-controls");
         ToggleOn(form, processId, "I have backed up my SPS data.",
             "Work inside this program folder has been backed up or moved.");
         Console.Out.WriteLine("READY");
         Console.Out.Flush();
+        EnterPhase("await-uninstalled");
         RequireProtocolLine("UNINSTALLED");
 
+        EnterPhase("decline-check");
         Click(FindEnabledButton(form, processId, "Check remaining files"), processId);
+        EnterPhase("decline-confirm");
         ConfirmDialog(form, processId, root, 7);
+        EnterPhase("decline-status");
         WaitStatus(form, processId, CancelledStatus);
         Console.Out.WriteLine("DECLINED");
         Console.Out.Flush();
+        EnterPhase("await-cleanup");
         RequireProtocolLine("CLEANUP");
 
+        EnterPhase("cleanup-check");
         Click(FindEnabledButton(form, processId, "Check remaining files"), processId);
+        EnterPhase("cleanup-confirm");
         ConfirmDialog(form, processId, root, 6);
+        EnterPhase("cleanup-status");
         WaitStatus(form, processId, RemovedStatus);
+        EnterPhase("cleanup-close");
         Click(FindEnabledButton(form, processId, "Close"), processId);
+        EnterPhase("cleanup-exit");
         WaitForHelperExit(helper, 0);
     }
 
@@ -445,20 +478,23 @@ internal static class LegacyRecoveryUiDriver
             string helperPath = ValidateLocalAbsolutePath(args[0], true);
             string root = ValidateLocalAbsolutePath(args[1], false);
 
+            EnterPhase("initial-launch");
             helper = Launch(helperPath, root);
             ExerciseInitialForm(helper, root);
             helper.Dispose();
             helper = null;
 
+            EnterPhase("cleanup-launch");
             helper = Launch(helperPath, root);
             ExerciseCleanup(helper, root);
+            EnterPhase("done");
             Console.Out.WriteLine("PASSED");
             Console.Out.Flush();
             return 0;
         }
         catch
         {
-            Console.Error.WriteLine("Legacy recovery UI driver failed.");
+            Console.Error.WriteLine("LEGACY_UI_FAILURE:" + phase);
             Console.Error.Flush();
             return 2;
         }

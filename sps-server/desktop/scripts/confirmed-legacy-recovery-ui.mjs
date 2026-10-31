@@ -6,6 +6,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { assertContained, assertHostedInstallerCi, assertPlainDirectory } from "./installer-ci-safety.mjs";
+import { LEGACY_RECOVERY_UI_PHASES, parseLegacyRecoveryUiTrace } from "./legacy-recovery-ui-protocol.mjs";
 
 // Test-only orchestration. Production has no confirmation or cleanup bypass.
 export async function observeConfirmedLegacyRecovery({ desktop, fixture, installation, ready, declined }) {
@@ -23,6 +24,8 @@ export async function observeConfirmedLegacyRecovery({ desktop, fixture, install
   const executable = path.join(fixture, "owned-legacy-ui-driver.exe");
   const compiler = path.join(process.env.WINDIR, "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe");
   await promisify(execFile)(compiler, ["/nologo", "/target:exe", "/platform:x64", `/out:${executable}`,
+    ...["UIAutomationClient.dll", "UIAutomationTypes.dll", "WindowsBase.dll"]
+      .map(name => `/reference:${path.join(path.dirname(compiler), "WPF", name)}`),
     path.join(desktop, "scripts", "windows-e2e", "LegacyRecoveryUiDriver.cs")],
   { cwd: fixture, shell: false, windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024 });
   const child = spawn(executable, [helper, installation], { cwd: fixture, shell: false,
@@ -30,6 +33,7 @@ export async function observeConfirmedLegacyRecovery({ desktop, fixture, install
   const deadline = Date.now() + 450_000;
   const expected = ["READY", "DECLINED", "PASSED"];
   const received = [];
+  const phases = [];
   let failure;
   let stderrBytes = 0;
   let finished = false;
@@ -39,7 +43,23 @@ export async function observeConfirmedLegacyRecovery({ desktop, fixture, install
   });
   child.stderr.on("data", chunk => {
     stderrBytes += chunk.length;
-    failure = new Error("Legacy recovery UI driver reported an error.");
+    if (stderrBytes > 4096) {
+      failure = new Error("Legacy recovery UI driver trace exceeded its bound.");
+      traceLines.close();
+    }
+  });
+  const traceLines = createInterface({ input: child.stderr, crlfDelay: Infinity });
+  traceLines.on("line", line => {
+    try {
+      const trace = parseLegacyRecoveryUiTrace(line);
+      if (trace.kind === "failure") {
+        failure = new Error(`Legacy recovery UI driver failed at ${trace.phase}.`);
+      } else {
+        assert.equal(trace.phase, LEGACY_RECOVERY_UI_PHASES[phases.length]);
+        phases.push(trace.phase);
+      }
+      console.log(JSON.stringify({ legacyRecoveryUiTrace: true, ...trace }));
+    } catch { failure = new Error("Legacy recovery UI driver trace is invalid."); }
   });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   lines.on("line", line => {
@@ -71,7 +91,8 @@ export async function observeConfirmedLegacyRecovery({ desktop, fixture, install
       })]);
     if (failure) throw failure;
     assert.deepEqual(result, { code: 0, signal: null });
-    assert.equal(stderrBytes, 0);
+    assert.ok(stderrBytes > 0 && stderrBytes <= 4096);
+    assert.deepEqual(phases, LEGACY_RECOVERY_UI_PHASES);
     assert.deepEqual(received, expected);
     const after = await lstat(helper, { bigint: true });
     for (const key of ["dev", "ino", "birthtimeNs", "size", "mtimeNs", "ctimeNs"]) assert.equal(after[key], before[key]);
@@ -80,6 +101,7 @@ export async function observeConfirmedLegacyRecovery({ desktop, fixture, install
       defaultNoVerified: true, residueDeclineVerified: true, originalResidueCleanupVerified: true };
   } finally {
     lines.close();
+    traceLines.close();
     // Never turn a failed observation into a pass by killing an owned process.
     // The outer restricted Job reports and rejects any forced cleanup.
     if (!child.stdin.destroyed) child.stdin.end();

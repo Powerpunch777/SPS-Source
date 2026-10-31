@@ -23,8 +23,17 @@ Core or Stable completion. Source `d8a6c699` push Verify `41176105464` passed
 all17 non-Windows jobs and the new joined Runner/No-AI source acceptance, but
 Windows `124463887020` then failed ordinary Main transfer at the post-restore
 restart Workspace wait. Job cleanup was natural; no installer was built.
-PR Verify `41176116088` passed that transfer step and remains live in packaged
-tests at this observation; it cannot waive the push failure. Native-versus-
+PR Verify `41176116088` passed that transfer and the complete Windows job
+`124463917330`, including current-package install/replacement/repair/uninstall/
+reinstall and retained-data checks. Its actual installer is unsigned merge
+`a689e4bc44637212ceb1004ec9920c75f90a89e6`, tree
+`2928a5cff57d17c42b54b6147c13985ff9e9318a` (equal to the `d8a6c699` tree), SHA256
+`9e2bfed1892d7f4903fd21dbd00a44e5539f3ca07fed1427ed2c40785995fd8f`.
+The downstream legacy job `124474167470` passed historical installation and
+automatic-replacement-failure preservation, then failed the explicit recovery
+GUI before ordinary uninstall; forced cleanup was rejected and reinstall
+skipped. Thus the overall PR run failed and cannot waive the push failure.
+Native-versus-
 Playwright window observations now preserve this failure for diagnosis without
 changing Main, waits, permissions or success conditions. Actual local Main
 transfer passes, including a normal native/tracked snapshot, do not reproduce
@@ -43,8 +52,9 @@ The hook now reads the old target using electron-builder's existing registry
 helpers and refuses an absent target. The original failed uninstall code,
 silent failure and explicit default-No confirmation remain unchanged. A fixture
 with the actual declaration order and NSIS `-WX` compiles both production hooks
-with the actual recovery helper, without executing Setup. Only a new hosted
-installer/recovery result can qualify that correction.
+with the actual recovery helper, without executing Setup. The completed Windows
+build above qualifies this assembly correction; complete legacy recovery still
+requires a successful new hosted result.
 
 Runner response-loss recovery now also has actual Core/public-SDK + Electron
 DPAPI/state-file restart + native harmless CLI component evidence. Both lost
@@ -56,9 +66,14 @@ See [scope and commands](../reviews/RUNNER-RECOVERY-COMPONENT-2026-10-31.md).
 Actual installed old-version recovery remains incomplete. The prior current
 unsigned package lifecycle success below is separate; it cannot qualify the
 new helper path, signed update, physical PCs or installed default-profile DB.
-Local stable-tree `npm run test:ci` exited0: serial2/2 plus1807total/1804pass/
-three unavailable-8.3-alias skips, aggregate1809total/1806pass/three skips and
-zero failures. This does not replace a new final-HEAD Windows installer gate.
+The actual initial Form component reproduced a test-driver failure reading a
+WinForms owner-drawn checkbox through `BM_GETCHECK`. Reading accessibility
+`TogglePattern` instead, with the original click and all button interlocks,
+passed the real check/uncheck/Cancel workflow. Production cleanup is unchanged.
+Local `npm run test:ci` exited0: serial2/2 plus1810total/1807pass/three
+unavailable-8.3-alias skips, aggregate1812total/1809pass/three skips and zero
+failures. This does not replace a new final-HEAD Windows installer gate. See
+[UI-driver scope and failed hosted recovery](LEGACY-RECOVERY-UI-DRIVER-2026-10-31.md).
 
 ## Historical Work Log
 
