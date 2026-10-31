@@ -13,7 +13,7 @@ import { HISTORICAL_INSTALLER_BASELINE, stageHistoricalInstaller } from "./histo
 import { OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { captureInstallerSnapshot } from "./installer-retained-snapshot.mjs";
 import { collectInstallerPathCensus } from "./installer-path-census.mjs";
-import { encodeLegacyProgramInventory } from "../src/legacy-installer-residue-plan.mjs";
+import { encodeLegacyProgramInventory, planLegacyInstallerResidue } from "../src/legacy-installer-residue-plan.mjs";
 
 const relativeRecords = ["sps-desktop-state.json", "workspaces/retained/data.bin", "secrets/retained-opaque-record.bin"];
 const checkpointName = "sps-standard-recovery-checkpoint.json";
@@ -323,6 +323,7 @@ export async function runHistoricalStandardRecoveryStage(stage) {
       if (confirmingResidue) {
         const { observeConfirmedLegacyRecovery } = await import("./confirmed-legacy-recovery-ui.mjs");
         let residueSnapshot;
+        let originalSnapshot;
         phase = "explicit-original-residue-recovery";
         recoveryEvidence = await observeConfirmedLegacyRecovery({ desktop, fixture, installation,
           ready: async () => {
@@ -333,6 +334,7 @@ export async function runHistoricalStandardRecoveryStage(stage) {
             const unchanged = await captureInstallerSnapshot(installation);
             assert.equal(unchanged.sha256, checkpoint.installationTreeSha256);
             assert.equal([unchanged.rootIdentity.dev, unchanged.rootIdentity.ino, unchanged.rootIdentity.birthtimeNs].join(":"), checkpoint.installationIdentity);
+            originalSnapshot = unchanged;
             phase = "ordinary-uninstall-before-confirmed-cleanup";
             await run(nsisInvocation(copied, installation, { uninstall: true }));
             await verifyRetained();
@@ -344,6 +346,13 @@ export async function runHistoricalStandardRecoveryStage(stage) {
             trace("ordinary-uninstall-residue-before-explicit-recovery", { ...census,
               standaloneCompleteRemovalQualified: false, retainedDataVerified: true });
             assert.equal(census.complete, true);
+            phase = "verify-residue-content-before-gui-confirmation";
+            const plan = planLegacyInstallerResidue({ version: "0.4.86", automaticReplacementFailed: true,
+              ordinaryUninstallExitCode: 0, registrationCount: 0, desktopProcessCount: 0,
+              before: originalSnapshot, remaining: residueSnapshot });
+            trace("residue-content-verified-before-gui-confirmation", { files: plan.files.length,
+              directories: plan.directories.length, bytes: plan.bytes, rootIdentityPreserved: true,
+              contentAllowlistOnly: true, cleanupAuthorized: false });
           },
           declined: async () => {
             assert.deepEqual(await captureInstallerSnapshot(installation), residueSnapshot);

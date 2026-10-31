@@ -10,7 +10,17 @@ const expectedPhases = ["fixture-ready", "initial-main-start", "initial-main-rea
   "initial-main-closed", "historical-db-start", "historical-db-prepared", "legacy-state-prepared",
   "migration-main-start", "migration-main-ready", "migration-data-verified", "migration-main-closed",
   "restart-main-start", "restart-main-ready", "restart-data-verified", "restart-main-closed",
-  "candidate-verified", "cleanup-start", "cleanup-complete"];
+  "candidate-verified", "cleanup-start", "cleanup-complete",
+  "migration-host-ready", "migration-db-verified", "migration-workspace-seen", "migration-workspace-ready",
+  "restart-host-ready", "restart-db-verified", "restart-workspace-seen", "restart-workspace-ready",
+  "failed-setup", "failed-host-readiness", "failed-state-data", "failed-workspace-window",
+  "failed-workspace-visibility", "failed-projects", "failed-historical-preparation", "failed-sign-in",
+  "failed-shutdown", "failed-candidate",
+  "app-begin", "app-identity-session-start", "app-identity-session-complete", "app-node-registration-start",
+  "app-node-registration-complete", "app-workspace-load-start", "app-workspace-load-complete",
+  "app-window-ready-to-show", "app-window-shown", "app-captured-window-discarded", "app-scope-account-changed",
+  "app-scope-host-context-changed", "app-scope-host-instance-changed", "app-scope-connection-changed",
+  "app-scope-rejection-unclassified", "app-existing-window-reused", "app-window-closed"];
 
 test("historical profile progress emits only fixed fields and elapsed integer time", () => {
   let time = 250;

@@ -11,7 +11,8 @@ import { setSpsAccountConnection } from "../src/account-connections.mjs";
 import { createMockIdentityServer } from "./desktop-e2e-identity.mjs";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
 import { prepareHistoricalManagedVault } from "./historical-managed-vault-fixture.mjs";
-import { createHistoricalProfileProgress } from "./historical-profile-progress.mjs";
+import { createHistoricalProfileProgress, HISTORICAL_PROFILE_PROGRESS_PHASES } from "./historical-profile-progress.mjs";
+import { inspectCrossDeviceCandidate } from "./cross-device-candidate-guards.mjs";
 import { assertHostedInstallerCi, assertPlainDirectory } from "./installer-ci-safety.mjs";
 import { captureLegacyStateEvidence, rewriteAsLegacyV11State } from "./legacy-desktop-state-acceptance.mjs";
 import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
@@ -24,13 +25,22 @@ import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 const binary = process.env.SPS_DESKTOP_E2E_BINARY;
 const source = process.env.SPS_DESKTOP_E2E_SOURCE === "1";
 const delegated = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
+const unpacked = process.argv.includes("--owned-unpacked-candidate");
 if (process.platform !== "win32" || Boolean(binary) === source
   || source && delegated
-  || process.argv.slice(2).some(arg => arg !== OWNED_JOB_CLEANUP_ARGUMENT)
+  || unpacked && (!binary || source || delegated)
+  || process.argv.slice(2).some(arg => arg !== OWNED_JOB_CLEANUP_ARGUMENT && arg !== "--owned-unpacked-candidate")
   || process.argv.slice(2).length > 1) {
   throw new Error("Historical in-place Main acceptance requires exactly one isolated Windows source or hosted installed mode.");
 }
-if (binary) assertHostedInstallerCi();
+if (binary && !unpacked) assertHostedInstallerCi();
+let inspectedCandidate;
+if (unpacked) {
+  const expected = JSON.parse(process.env.SPS_DESKTOP_E2E_CANDIDATE_TUPLE ?? "null");
+  inspectedCandidate = await inspectCrossDeviceCandidate({ fixtureRoot: path.dirname(path.dirname(binary)), expected });
+  assert.equal(path.basename(binary), "SPS Desktop.exe");
+  assert.equal(path.basename(path.dirname(binary)), "candidate");
+}
 const root = path.resolve(import.meta.dirname, "..");
 const core = path.resolve(root, "../../external/sps-core");
 const exec = promisify(execFile);
@@ -43,8 +53,8 @@ if (binary) {
   assert.equal(path.basename(binary), "SPS Desktop.exe");
   const installation = await assertPlainDirectory(path.dirname(binary));
   const installationFixture = path.dirname(installation);
-  assert.equal(path.basename(installation), "SPS Desktop");
-  assert.match(path.basename(installationFixture), /^sps-installer-data-[A-Za-z0-9]+$/);
+  assert.equal(path.basename(installation), unpacked ? "candidate" : "SPS Desktop");
+  assert.match(path.basename(installationFixture), unpacked ? /^sps-workspace-surfaces-e2e-[A-Za-z0-9]+$/ : /^sps-installer-data-[A-Za-z0-9]+$/);
   assert.ok(samePath(path.dirname(installationFixture), await realpath(os.tmpdir())));
   const files = { executable: binary, appAsar: path.join(installation, "resources/app.asar"),
     runtimeArchive: path.join(installation, "resources/sps-owner-host-runtime-package/sps-owner-host-runtime.tgz") };
@@ -66,6 +76,7 @@ const phases = [];
 let applicationOutput = "";
 let failure;
 let evidence;
+let observation = "setup";
 const progress = createHistoricalProfileProgress({ write: line => process.stderr.write(line) });
 
 async function waitFor(check, description, limit = timeout) {
@@ -79,6 +90,7 @@ async function waitFor(check, description, limit = timeout) {
 }
 
 async function launch(origin) {
+  observation = "setup";
   await fixture.assertCurrent();
   const env = { ...process.env, SPS_IDENTITY_URL: origin, SPS_DESKTOP_E2E: "1",
     SPS_DESKTOP_E2E_USER_DATA_DIR: profile, SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
@@ -105,6 +117,7 @@ async function launch(origin) {
 }
 
 async function stop(app) {
+  observation = "shutdown";
   const child = app.process();
   const outcome = await shutdownPreviewE2eDesktop({ child,
     requestBrowserClose: () => app.evaluate(({ app }) => app.quit()),
@@ -143,12 +156,15 @@ async function verifyData(prepared) {
   } finally { await sql.end({ timeout: 5 }); }
 }
 
-async function verifyMain(running, expected, prepared) {
+async function verifyMain(running, expected, prepared, prefix) {
+  observation = "host-readiness";
   const status = await waitFor(async () => {
     const result = await running.setup.evaluate(() => window.spsDesktop.getStatus());
     if (result.ownerHost.state === "stopped" && result.ownerHost.lastError) throw new Error(result.ownerHost.lastError);
     return result.ownerHost.state === "running" ? result : null;
   }, "Host readiness");
+  progress(`${prefix}-host-ready`);
+  observation = "state-data";
   assert.equal(status.desktopAccount.signedIn, true);
   assert.equal(status.profile.connectionKind, "owner-host");
   assert.ok(samePath(status.ownerHost.vaultPath, prepared.vaultRoot));
@@ -163,13 +179,19 @@ async function verifyMain(running, expected, prepared) {
   const persisted = JSON.parse(await readFile(path.join(profile, "sps-desktop-state.json"), "utf8"));
   assert.equal(persisted.version, 13);
   const historySha256 = await verifyData(prepared);
+  progress(`${prefix}-db-verified`);
+  observation = "workspace-window";
   const workspace = await waitFor(() => running.app.windows().find(page => /^http:\/\/127\.0\.0\.1:\d+\//.test(page.url())), "Workspace");
+  progress(`${prefix}-workspace-seen`);
+  observation = "workspace-visibility";
   await workspace.waitForFunction(async email => {
     if (document.readyState !== "complete" || document.visibilityState !== "visible" || !document.body?.childElementCount
       || typeof window.spsDesktopWorkspace?.getDesktopAccount !== "function") return false;
     const account = await window.spsDesktopWorkspace.getDesktopAccount();
     return account?.signedIn === true && account.email === email;
   }, status.desktopAccount.email, { timeout: 30_000 });
+  progress(`${prefix}-workspace-ready`);
+  observation = "projects";
   for (const [company, project] of [[prepared.company, prepared.project], [prepared.secondCompany, prepared.secondProject]]) {
     const rows = await workspace.evaluate(async id => {
       const response = await fetch(`/api/companies/${id}/projects`, { credentials: "include" });
@@ -188,6 +210,7 @@ try {
   progress("initial-main-start");
   const initial = await launch(origin);
   progress("initial-main-ready");
+  observation = "sign-in";
   await initial.setup.locator("#start-sps-account").click();
   const authorization = await waitFor(() => identity.capturedAuthorizationUrls.shift(), "sign-in capture", 30_000);
   assert.equal(new URL(authorization).origin, origin);
@@ -204,6 +227,7 @@ try {
   progress("initial-main-closed");
   phases.push("actual-main-account-encrypted-and-closed-before-historical-preparation");
   progress("historical-db-start");
+  observation = "historical-preparation";
   const prepared = await prepareHistoricalManagedVault({ fixture, profile });
   progress("historical-db-prepared");
   assert.equal(prepared.currentMigrationsApplied, false);
@@ -228,7 +252,7 @@ try {
   progress("migration-main-start");
   const migrated = await launch(origin);
   progress("migration-main-ready");
-  const firstHistory = await verifyMain(migrated, expected, prepared);
+  const firstHistory = await verifyMain(migrated, expected, prepared, "migration");
   progress("migration-data-verified");
   await stop(migrated.app);
   progress("migration-main-closed");
@@ -236,30 +260,42 @@ try {
   progress("restart-main-start");
   const restarted = await launch(origin);
   progress("restart-main-ready");
-  assert.equal(await verifyMain(restarted, expected, prepared), firstHistory);
+  assert.equal(await verifyMain(restarted, expected, prepared, "restart"), firstHistory);
   progress("restart-data-verified");
   await stop(restarted.app);
   progress("restart-main-closed");
   phases.push("same-data-account-and-signing-key-preserved-after-restart");
   let candidate = null;
+  observation = "candidate";
   if (binary) {
     const materialized = path.join(profile, "owner-host-runtime", JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).version);
     const baseline = JSON.parse(await readFile(path.join(materialized, "sps-release-baseline.json"), "utf8"));
-    const expectedBaseline = JSON.parse(await readFile(path.join(root, ".owner-host-runtime/sps-release-baseline.json"), "utf8"));
+    const expectedBaseline = inspectedCandidate?.baseline
+      ?? JSON.parse(await readFile(path.join(root, ".owner-host-runtime/sps-release-baseline.json"), "utf8"));
     assert.deepEqual(baseline, expectedBaseline);
     assert.equal(baseline.sourceDirty || baseline.core.dirty || baseline.pluginSdk.dirty, false);
     candidate = { baseline, installedArtifacts };
+    if (inspectedCandidate) assert.deepEqual(installedArtifacts, inspectedCandidate.installedArtifacts);
   }
   progress("candidate-verified");
-  evidence = { kind: binary ? "installed-historical-profile-in-place-acceptance" : "source-historical-profile-in-place-acceptance",
+  evidence = { kind: unpacked ? "unpacked-historical-profile-in-place-acceptance"
+    : binary ? "installed-historical-profile-in-place-acceptance" : "source-historical-profile-in-place-acceptance",
     candidate, phases, mockIdentity: true, historicalMigrations: 157, currentMigrations: 176,
-    installedHistoricalFixtureInPlaceMigrationQualified: Boolean(binary),
+    installedHistoricalFixtureInPlaceMigrationQualified: Boolean(binary) && !unpacked,
+    unpackedHistoricalFixtureInPlaceMigrationQualified: unpacked,
     sourceHistoricalFixtureInPlaceMigrationQualified: !binary, realDpapiCredentialsAndKeyPreserved: true,
     restoreUsed: false, signedInstallerQualified: false, previousStableUpgradeQualified: false,
     normalUserProfileStartupQualified: false, physicalTwoDeviceQualified: false };
 } catch (error) {
   failure = error;
-  console.error(applicationOutput.slice(-10_000));
+  // Replay only the product's existing fixed E2E phase labels, never raw app
+  // output. These are observed diagnostics, not a successful navigation proof.
+  const allowed = new Set(HISTORICAL_PROFILE_PROGRESS_PHASES);
+  for (const match of applicationOutput.matchAll(/^\[workspace-open\] operation=(\d+),phase=([a-z-]+)$/gm)) {
+    const phase = `app-${match[2]}`;
+    if (Number(match[1]) >= 1 && Number(match[1]) <= 65535 && allowed.has(phase)) progress(phase);
+  }
+  progress(`failed-${observation}`);
 } finally {
   progress("cleanup-start");
   const errors = [];

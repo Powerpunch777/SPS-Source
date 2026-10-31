@@ -18,6 +18,16 @@ export const HISTORICAL_PROFILE_PROGRESS_PHASES = Object.freeze([
   "candidate-verified",
   "cleanup-start",
   "cleanup-complete",
+  "migration-host-ready", "migration-db-verified", "migration-workspace-seen", "migration-workspace-ready",
+  "restart-host-ready", "restart-db-verified", "restart-workspace-seen", "restart-workspace-ready",
+  "failed-setup", "failed-host-readiness", "failed-state-data", "failed-workspace-window",
+  "failed-workspace-visibility", "failed-projects", "failed-historical-preparation", "failed-sign-in",
+  "failed-shutdown", "failed-candidate",
+  "app-begin", "app-identity-session-start", "app-identity-session-complete", "app-node-registration-start",
+  "app-node-registration-complete", "app-workspace-load-start", "app-workspace-load-complete",
+  "app-window-ready-to-show", "app-window-shown", "app-captured-window-discarded", "app-scope-account-changed",
+  "app-scope-host-context-changed", "app-scope-host-instance-changed", "app-scope-connection-changed",
+  "app-scope-rejection-unclassified", "app-existing-window-reused", "app-window-closed",
 ]);
 
 const phaseSet = new Set(HISTORICAL_PROFILE_PROGRESS_PHASES);

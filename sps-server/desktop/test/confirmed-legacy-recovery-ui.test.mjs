@@ -20,6 +20,9 @@ test("confirmed recovery keeps the ordinary-removal diagnostic and adds real can
   assert.match(stages, /ready: async \(\) =>[\s\S]*?assert\.equal\(unchanged\.sha256, checkpoint\.installationTreeSha256\)[\s\S]*?await run\(nsisInvocation\(copied, installation, \{ uninstall: true \}\)\)[\s\S]*?await verifyRetained\(\)/);
   assert.match(stages, /declined: async \(\) =>[\s\S]*?assert\.deepEqual\(await captureInstallerSnapshot\(installation\), residueSnapshot\)/);
   assert.match(stages, /standaloneCompleteRemovalQualified: false/);
+  assert.match(stages, /planLegacyInstallerResidue\(\{ version: "0\.4\.86", automaticReplacementFailed: true/);
+  assert.match(stages, /before: originalSnapshot, remaining: residueSnapshot/);
+  assert.match(stages, /contentAllowlistOnly: true, cleanupAuthorized: false/);
   assert.match(stages, /assert\.equal\(installationAbsent, true\)/);
   const driver = await readFile(path.join(desktop, "scripts", "windows-e2e", "LegacyRecoveryUiDriver.cs"), "utf8");
   assert.match(driver, /const int OverallTimeoutMs = 450000/);
@@ -28,6 +31,9 @@ test("confirmed recovery keeps the ordinary-removal diagnostic and adds real can
   assert.match(driver, /WaitForHelperExit\(helper, 1\)/);
   assert.match(driver, /ConfirmDialog\(form, processId, root, 7\)/);
   assert.match(driver, /ConfirmDialog\(form, processId, root, 6\)/);
+  assert.match(driver, /WaitForConfirmDialog\(form, processId\)/);
+  assert.match(driver, /FindChildByText\(form, processId, UnsafeCleanupStatus, "Static"\)/);
+  assert.match(driver, /CleanupSafetyRejectedFailure\) Console\.Error\.WriteLine\("LEGACY_UI_REASON:cleanup-safety-rejected"\)/);
   assert.match(driver, /WaitForHelperExit\(helper, 0\)/);
   assert.doesNotMatch(driver, /\.Kill\(|TerminateProcess|TerminateJobObject|File\.(?:Delete|Write)|Directory\.Delete|RegistryKey/);
 });

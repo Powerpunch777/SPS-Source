@@ -49,11 +49,11 @@ test("the source smoke preserves the pinned historical migration and restart pro
   const prepare = source.indexOf("await prepareHistoricalManagedVault({ fixture, profile })");
   const rewrite = source.indexOf("await rewriteAsLegacyV11State(profile, fixture, credentials)");
   const firstMain = source.indexOf("const migrated = await launch(origin)");
-  const firstVerify = source.indexOf("const firstHistory = await verifyMain(migrated, expected, prepared)");
+  const firstVerify = source.indexOf('const firstHistory = await verifyMain(migrated, expected, prepared, "migration")');
   const verifyData = source.indexOf("const historySha256 = await verifyData(prepared)");
   const verifyWorkspace = source.indexOf("const workspace = await waitFor(() => running.app.windows()");
   const restart = source.indexOf("const restarted = await launch(origin)");
-  const restartVerify = source.indexOf("assert.equal(await verifyMain(restarted, expected, prepared), firstHistory)");
+  const restartVerify = source.indexOf('assert.equal(await verifyMain(restarted, expected, prepared, "restart"), firstHistory)');
   assert.ok(prepare >= 0 && prepare < rewrite && rewrite < firstMain && firstMain < firstVerify
     && firstVerify < restart && restart < restartVerify && verifyData < verifyWorkspace,
   "must prepare the pinned fixture, project v11, run real Main, verify data, then restart and verify again");
@@ -70,7 +70,8 @@ test("the source smoke preserves the pinned historical migration and restart pro
   assert.match(source, /physicalTwoDeviceQualified: false/);
   assert.match(source, /status\.desktopAccount\.signedIn, true/);
   assert.match(source, /realDpapiCredentialsAndKeyPreserved: true/);
-  assert.ok(source.indexOf("if (binary) assertHostedInstallerCi()") < source.indexOf("const fixture = await createWorkspaceE2eFixture()"),
+  const hostedGuard = source.indexOf("if (binary && !unpacked) assertHostedInstallerCi()");
+  assert.ok(hostedGuard >= 0 && hostedGuard < source.indexOf("const fixture = await createWorkspaceE2eFixture()"),
     "installed mode must pass its hosted guard before fixture creation");
   assert.match(source, /const app = await electron\.launch\(/);
   assert.match(source, /captureLegacyStateEvidence\(initial\.app, "sps-desktop-e2e-owner"\)/);
@@ -81,6 +82,14 @@ test("the source smoke preserves the pinned historical migration and restart pro
   assert.match(source, /for \(const key of \["DATABASE_URL",\s*"PAPERCLIP_CONFIG",\s*"PAPERCLIP_HOME",\s*"PAPERCLIP_INSTANCE_ID",\s*"PAPERCLIP_MIGRATION_AUTO_APPLY",\s*"PAPERCLIP_MIGRATION_PROMPT"\]\) delete env\[key\]/);
   assert.doesNotMatch(source, /(?:PAPERCLIP_MIGRATION_AUTO_APPLY|PAPERCLIP_MIGRATION_PROMPT)\s*[:=]\s*["']?true/i);
   assert.doesNotMatch(source, /restore(?:Database|Profile|Vault)|force(?:d)?Migration|skipMigration/i);
+});
+
+test("local unpacked diagnostics cannot substitute a caller's installed application", { skip: process.platform !== "win32" }, async () => {
+  const expected = { desktopVersion: "0.4.137", sourceRevision: "1".repeat(40), coreRevision: "2".repeat(40), sdkRevision: "3".repeat(40) };
+  await assertRefused({ SPS_DESKTOP_E2E_BINARY: "C:\\untrusted\\SPS Desktop.exe",
+    SPS_DESKTOP_E2E_CANDIDATE_TUPLE: JSON.stringify(expected) }, ["--owned-unpacked-candidate"], /owned name format/);
+  await assertRefused({ SPS_DESKTOP_E2E_SOURCE: "1" }, ["--owned-unpacked-candidate"],
+    /exactly one isolated Windows source or hosted installed mode/);
 });
 
 test("historical account evidence reuses Main safeStorage helpers without substituting authentication", async () => {
@@ -106,7 +115,7 @@ test("installed migration keeps its original deadline and replays only fixed saf
   const source = await read("../scripts/smoke-historical-managed-vault-desktop.mjs");
   const parent = await read("../scripts/smoke-installer-data-preservation.mjs");
   assert.match(source, /createHistoricalProfileProgress\(\{ write: line => process\.stderr\.write\(line\) \}\)/);
-  assert.match(source, /progress\("historical-db-start"\);\s*const prepared = await prepareHistoricalManagedVault/);
+  assert.match(source, /progress\("historical-db-start"\);\s*observation = "historical-preparation";\s*const prepared = await prepareHistoricalManagedVault/);
   assert.match(source, /progress\("migration-main-start"\);\s*const migrated = await launch\(origin\);\s*progress\("migration-main-ready"\)/);
   assert.match(source, /progress\("restart-data-verified"\);\s*await stop\(restarted\.app\);\s*progress\("restart-main-closed"\)/);
   assert.match(parent, /timeout: 300_000, maxBuffer: 1024 \* 1024/);
@@ -114,4 +123,6 @@ test("installed migration keeps its original deadline and replays only fixed saf
   assert.match(parent, /assert\.equal\(error\.code, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
   assert.match(parent, /assert\.ok\(!error\.signal && !error\.killed/);
   assert.doesNotMatch(parent, /console\.(?:log|error)\(error\.(?:stderr|stdout)/);
+  assert.match(source, /installedHistoricalFixtureInPlaceMigrationQualified: Boolean\(binary\) && !unpacked/);
+  assert.match(source, /unpackedHistoricalFixtureInPlaceMigrationQualified: unpacked/);
 });

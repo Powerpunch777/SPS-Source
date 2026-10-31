@@ -22,6 +22,7 @@ internal static class LegacyRecoveryUiDriver
     const string ConfirmTitle = "Confirm program residue cleanup";
     const string CancelledStatus = "Cleanup cancelled. No program files were deleted.";
     const string RemovedStatus = "Verified program residue was removed. Close this window and run the latest SPS Setup again.";
+    const string UnsafeCleanupStatus = "Cannot safely clean this folder. Make sure Windows uninstall finished and SPS is closed. Unknown, changed or linked files require manual review. No cleanup was started.";
 
     delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
 
@@ -29,6 +30,7 @@ internal static class LegacyRecoveryUiDriver
     sealed class CheckObservationDeadlineFailure : Exception { }
     sealed class RecoveryUnavailableFailure : Exception { }
     sealed class RecoveryWindowDeadlineFailure : Exception { }
+    sealed class CleanupSafetyRejectedFailure : Exception { }
 
     static class Native
     {
@@ -208,6 +210,22 @@ internal static class LegacyRecoveryUiDriver
         {
             IntPtr window = FindWindow(processId, title, className);
             if (window != IntPtr.Zero) return window;
+            Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
+        }
+        throw new DriverFailure();
+    }
+
+    static IntPtr WaitForConfirmDialog(IntPtr form, uint processId)
+    {
+        int budget = UiWaitBudget();
+        long deadline = clock.ElapsedMilliseconds + budget;
+        while (clock.ElapsedMilliseconds < deadline)
+        {
+            Require(OwnsWindow(form, processId));
+            IntPtr dialog = FindWindow(processId, ConfirmTitle, "#32770");
+            if (dialog != IntPtr.Zero) return dialog;
+            if (FindChildByText(form, processId, UnsafeCleanupStatus, "Static") != IntPtr.Zero)
+                throw new CleanupSafetyRejectedFailure();
             Thread.Sleep(Math.Min(PollIntervalMs, Math.Max(1, RemainingMilliseconds())));
         }
         throw new DriverFailure();
@@ -446,7 +464,7 @@ internal static class LegacyRecoveryUiDriver
     static void ConfirmDialog(IntPtr form, uint processId, string root, int expectedId)
     {
         Require(expectedId == 6 || expectedId == 7);
-        IntPtr dialog = WaitForWindow(processId, ConfirmTitle, "#32770");
+        IntPtr dialog = WaitForConfirmDialog(form, processId);
         Require(OwnsWindow(dialog, processId));
         var text = new StringBuilder();
         foreach (IntPtr child in FindChildren(dialog, processId))
@@ -545,6 +563,7 @@ internal static class LegacyRecoveryUiDriver
             if (error is RecoveryUnavailableFailure) Console.Error.WriteLine("LEGACY_UI_REASON:recovery-unavailable");
             else if (error is RecoveryWindowDeadlineFailure) Console.Error.WriteLine("LEGACY_UI_REASON:recovery-window-deadline");
             else if (error is CheckObservationDeadlineFailure) Console.Error.WriteLine("LEGACY_UI_REASON:check-observation-deadline");
+            else if (error is CleanupSafetyRejectedFailure) Console.Error.WriteLine("LEGACY_UI_REASON:cleanup-safety-rejected");
             Console.Error.WriteLine("LEGACY_UI_FAILURE:" + phase);
             Console.Error.Flush();
             return 2;

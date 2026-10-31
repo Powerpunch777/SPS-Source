@@ -266,7 +266,7 @@ public static class RestrictedE2eRunner
     static bool Mode(string value)
     {
         return value == "probe" || value == "probe-registry" || value == "probe-installer-processes" || value == "probe-installer-dialog" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
-            || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76"
+            || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76" || value == "probe-cross-device-control"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "installer-current-preservation" || value == "installer-operator-upgrade" || value == "installer-operator-reinstall" || value == "historical-uninstaller-diagnostic" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery"
@@ -278,7 +278,7 @@ public static class RestrictedE2eRunner
             || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core"
             || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery" || value == "probe-installer-command-exit" || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
-            || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "workspace-pending"
+            || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "workspace-pending" || value == "probe-cross-device-control"
             || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit";
     }
     static int OwnedJobWaitMilliseconds(string mode)
@@ -313,6 +313,14 @@ public static class RestrictedE2eRunner
     }
     static int RunNodeFile(string node, string workingDirectory, string entrypoint, params string[] args)
     {
+        return RunNodeCore(node, workingDirectory, entrypoint, false, args);
+    }
+    static int RunNodeFileForwardInput(string node, string workingDirectory, string entrypoint, params string[] args)
+    {
+        return RunNodeCore(node, workingDirectory, entrypoint, true, args);
+    }
+    static int RunNodeCore(string node, string workingDirectory, string entrypoint, bool forwardInput, params string[] args)
+    {
         stage = "child_script";
         var arguments = new StringBuilder(Quote(entrypoint));
         foreach (string arg in args) arguments.Append(' ').Append(Quote(arg));
@@ -327,8 +335,34 @@ public static class RestrictedE2eRunner
             process.StartInfo = start;
             process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs value) { if (value.Data != null) Console.Out.WriteLine(value.Data); };
             process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs value) { if (value.Data != null) Console.Error.WriteLine(value.Data); };
-            process.Start(); process.StandardInput.Close(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
-            process.WaitForExit(); return process.ExitCode;
+            process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
+            if (!forwardInput) process.StandardInput.Close();
+            else
+            {
+                Stream source = Console.OpenStandardInput();
+                Stream destination = process.StandardInput.BaseStream;
+                var forwarder = new System.Threading.Thread(delegate()
+                {
+                    try
+                    {
+                        byte[] buffer = new byte[4096];
+                        int count;
+                        while ((count = source.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            destination.Write(buffer, 0, count);
+                            destination.Flush();
+                        }
+                    }
+                    catch (IOException) { }
+                    catch (ObjectDisposedException) { }
+                    finally { try { process.StandardInput.Close(); } catch (ObjectDisposedException) { } catch (InvalidOperationException) { } catch (IOException) { } }
+                });
+                forwarder.IsBackground = true;
+                forwarder.Start();
+            }
+            process.WaitForExit();
+            if (forwardInput) { try { process.StandardInput.Close(); } catch (ObjectDisposedException) { } catch (InvalidOperationException) { } catch (IOException) { } }
+            return process.ExitCode;
         }
     }
     static int RunNativePluginSdk(string node, string desktopDirectory)
@@ -400,6 +434,8 @@ public static class RestrictedE2eRunner
             return mode == "probe-preview-failure-descendant" || mode == "workspace-failure-descendant" ? 7 : 0;
         }
         if (mode == "probe-node") return RunNode(node, directory, "windows-e2e/probe-node.mjs", "a \"quoted\" value", "tail\\", "unicode-\uD55C\uAE00");
+        if (mode == "probe-cross-device-control")
+            return RunNodeFileForwardInput(node, directory, Path.Combine(directory, "scripts", "cross-device-control.mjs"), OwnedJobCleanupArgument);
         if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true"
             || Environment.GetEnvironmentVariable("RUNNER_OS") != "Windows")
             throw new InvalidOperationException("Desktop launch mode is restricted to Windows CI");
@@ -971,7 +1007,11 @@ public static class RestrictedE2eRunner
 
             stage = "handle_setup";
             var security = new SecurityAttributes { Size = Marshal.SizeOf(typeof(SecurityAttributes)), Inherit = 1 };
-            input = CreateFileW("NUL", 0x80000000, 3, ref security, 3, 0, IntPtr.Zero); Require(Valid(input), "Open empty stdin");
+            if (mode == "probe-cross-device-control")
+                Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(-10), GetCurrentProcess(), out input, 0, true, 2), "Duplicate actual stdin");
+            else
+                input = CreateFileW("NUL", 0x80000000, 3, ref security, 3, 0, IntPtr.Zero);
+            Require(Valid(input), mode == "probe-cross-device-control" ? "Duplicate actual stdin" : "Open empty stdin");
             Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(-11), GetCurrentProcess(), out output, 0, true, 2), "Duplicate stdout");
             Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(-12), GetCurrentProcess(), out error, 0, true, 2), "Duplicate stderr");
             IntPtr bytes = IntPtr.Zero;

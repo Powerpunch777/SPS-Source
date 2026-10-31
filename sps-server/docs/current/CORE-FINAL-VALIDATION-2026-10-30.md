@@ -1,6 +1,6 @@
 # SPS Core final validation checklist
 
-Updated: 2026-10-31. This is a working checklist, not a Core completion or Stable
+Updated: 2026-11-01. This is a working checklist, not a Core completion or Stable
 release declaration. The scope is set by
 [Core completion policy](CORE-COMPLETION-POLICY-ko.md). Core remains private,
 SDK public; AI is optional. New Builder features, public Marketplace, and
@@ -17,6 +17,45 @@ deferred Native development are excluded.
   profiles, not the installed user profile.
 
 ## Current Evidence Summary
+
+### Latest e35 Failures And Isolated Cross-Device Preparation
+
+The latest terminal Windows gates are NOT green. Source `e35c900` PR run
+`41209034863`/Windows `124559947575` failed its installed historical-profile
+child naturally after `migration-main-ready`; the same-HEAD push
+`41209030050`/Windows `124559933369` exceeded the original300-second child
+bound and its forced Job cleanup was rejected. Both passed all17 non-Windows
+jobs, including all9 Linux Core shards and full typecheck/build. Prior5a
+installed acceptance below is valid only for that older artifact, not e35.
+
+The e35 PR mandatory legacy job `124568557287` passed the original replacement
+failure/preservation step and the real helper's initial Form/checks/Cancel.
+Ordinary uninstall left46 files/61 directories, all46 file paths over259
+characters. It failed at `decline-confirm`; forced helper cleanup was rejected
+and reinstall skipped. No cause is yet established. New fixed diagnostics
+distinguish the helper's exact safety-rejection status from a missing dialog;
+the read-only content plan independently checks the same actual remaining
+snapshot before requesting the real GUI confirmation. Neither authorizes
+cleanup, bypasses helper checks, nor extends the UI/child/Job deadlines.
+
+The exact downloaded PR unpacked candidate (loaded Source merge
+`845be9724241583d038d6e2f7abe51fcccd1f3e9`, pinned Core/SDK above) passed local
+same-profile157-to176/v11-to13 acceptance in87seconds, including real DPAPI
+account/key, both Workspace projects/files, restart and natural cleanup. Its
+first cold Host readiness took about59seconds after Main readiness. This
+explicit owned-Temp diagnostic is NOT installed/default-profile, signed,
+previous-Stable, Production or two-PC proof and does not waive either CI failure.
+
+The user approved isolated two-PC preparation: notebook test Host, main-PC test
+Runner, fresh temporary profiles/files, and a temporary private HTTPS Serve
+route only on the notebook's previously empty Serve configuration, removed
+afterward. Existing installation/login/data/projects, main-PC Serve, public
+Funnel, administrator installation and firewall changes are excluded. Read-only
+inspection found a usable notebook; remote files, apps and Serve have not been
+changed. Actual cross-device execution waits for the new CI result. The new
+candidate guard, owned-session controller and restricted JSONL launcher are
+test preparation, not acceptance evidence. See
+[cross-device preparation and reproduction](../reviews/CROSS-DEVICE-PREPARATION-2026-11-01.md).
 
 ### Latest5a Hosted Results And Startup Follow-Up
 

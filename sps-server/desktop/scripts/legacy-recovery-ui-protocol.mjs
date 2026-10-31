@@ -7,7 +7,7 @@ export const LEGACY_RECOVERY_UI_PHASES = Object.freeze([
 
 export function parseLegacyRecoveryUiTrace(line) {
   if (typeof line !== "string" || line.length > 80) throw new Error("Invalid legacy recovery UI trace.");
-  const reason = /^LEGACY_UI_REASON:(recovery-unavailable|recovery-window-deadline|check-observation-deadline)$/.exec(line);
+  const reason = /^LEGACY_UI_REASON:(recovery-unavailable|recovery-window-deadline|check-observation-deadline|cleanup-safety-rejected)$/.exec(line);
   if (reason && reason[0] === line) return { kind: "reason", phase: reason[1] };
   const match = /^LEGACY_UI_(PHASE|FAILURE):([a-z-]+)$/.exec(line);
   if (!match || match[0] !== line || (!LEGACY_RECOVERY_UI_PHASES.includes(match[2])
