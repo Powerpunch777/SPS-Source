@@ -25,8 +25,10 @@ discovery or the Settings confirmation/removal flow.
 The [retained runtime-input follow-up](../reviews/OWNER-RUNTIME-ARTIFACT-REFERENCES-2026-11-01.md)
 adds per-launch immutable inputs and uncertain-close retention. Its actual
 Host/Preview test exposed pnpm hardlinks; the private parent observer permits
-stable read-only hardlinks without changing ownership/removal rules. Main's
-unresolved development executable, full discovery and Settings remain incomplete.
+stable read-only hardlinks without changing ownership/removal rules. The official
+[development launcher now supplies its actual Node path](../reviews/DEVELOPMENT-NODE-ARTIFACT-REFERENCES-2026-11-01.md)
+to Main's Host/Preview resolution. Unhinted source launch coverage, full discovery
+and Settings remain incomplete; this does not provide removal authority.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is

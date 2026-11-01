@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { runInNewContext } from "node:vm";
 
-async function loadPreviewRuntimeResolver({ isPackaged, materializeRuntime, materializeStableNode } = {}) {
+async function loadPreviewRuntimeResolver({ isPackaged, materializeRuntime, materializeStableNode, developmentNodeCommand } = {}) {
   const source = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
   const start = source.indexOf("async function resolveDesktopPluginPreviewRuntime(");
   const end = source.indexOf("\nasync function startDesktopPluginPreview(", start);
@@ -23,6 +23,7 @@ async function loadPreviewRuntimeResolver({ isPackaged, materializeRuntime, mate
     path,
     __dirname: "C:\\app\\resources\\app.asar\\src",
     process: { execPath: "C:\\Electron\\electron.exe" },
+    developmentNodeCommand,
     resolveSpsOwnerHostRuntime: async options => {
       resolvedOptions = options;
       return options;
@@ -92,8 +93,10 @@ test("local Owner Host transport proof does not depend on profile activation ord
 
 test("source preview resolves the checked-out Core without materializing an Owner Host runtime", async () => {
   let materializeCalls = 0;
+  const launcherNode = path.resolve("fixture-launcher", "node.exe");
   const resolver = await loadPreviewRuntimeResolver({
     isPackaged: false,
+    developmentNodeCommand: launcherNode,
     materializeRuntime: async () => {
       materializeCalls += 1;
       throw new Error("source preview must not copy the packaged runtime");
@@ -107,8 +110,16 @@ test("source preview resolves the checked-out Core without materializing an Owne
   assert.deepEqual(Array.from(options.packagedRuntimeRoots), []);
   assert.deepEqual(Array.from(options.coreRoots), [developmentCoreRoot]);
   assert.equal(options.packagedNodeCommand, "C:\\Electron\\electron.exe");
+  assert.equal(options.nodeCommand, launcherNode);
   assert.equal(options.stableNodeCommand, null);
   assert.equal(resolver.resolvedOptions, options);
+});
+
+test("Main captures the development launcher's Node once and passes it to Host and Preview", async () => {
+  const source = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
+  assert.match(source, /const developmentNodeCommand = resolveDesktopDevelopmentNodeCommand\(\{\s*packaged: app\.isPackaged,\s*command: process\.env\.SPS_DESKTOP_DEVELOPMENT_NODE,\s*\}\);/);
+  assert.equal((source.match(/nodeCommand: developmentNodeCommand,/g) ?? []).length, 2);
+  assert.ok(source.indexOf("const developmentNodeCommand =") < source.indexOf("const developmentMode ="));
 });
 
 test("packaged preview uses only its materialized runtime and stable Node", async () => {

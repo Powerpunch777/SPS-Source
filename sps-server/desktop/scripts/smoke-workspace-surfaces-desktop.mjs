@@ -513,6 +513,7 @@ try {
     cwd: packagedBinary ? path.dirname(binary) : path.resolve(scriptDirectory, ".."),
     env: {
       ...process.env,
+      ...(packagedBinary ? {} : { SPS_DESKTOP_DEVELOPMENT_NODE: process.execPath }),
       SPS_IDENTITY_URL: identityUrl,
       SPS_DESKTOP_E2E_USER_DATA_DIR: userDataDirectory,
       SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",

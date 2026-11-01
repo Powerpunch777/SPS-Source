@@ -82,6 +82,8 @@ Current product decisions live in [sps-server/docs/current](sps-server/docs/curr
 
 ## Development
 
+Development coordination and agent delegation follow [AGENTS.md](AGENTS.md).
+
 The current tree contains an SPS migration layer over the existing Paperclip-compatible runtime. Do not treat compatibility package names as the permanent SPS public API. Run the focused package checks before changing a package.
 
 The product runtime lives in the private `SPS-Core` repository. The public

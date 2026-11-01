@@ -11,6 +11,7 @@ import { ensurePluginPreviewConfig } from "../src/plugin-preview-runtime.mjs";
 import { createSpsOwnerHostManager, resolveSpsOwnerHostRuntime } from "../src/owner-host.mjs";
 import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
 import { createSpsPluginArtifactObservation } from "../src/plugin-artifact-observation.mjs";
+import { resolveDesktopDevelopmentNodeCommand } from "../src/development-mode.mjs";
 import { readDeveloperProjectArtifactReferences } from "../src/developer-project-store.mjs";
 import { readRegistrySourceArtifactReferences, saveRegistrySources } from "../src/registry-source-catalog.mjs";
 
@@ -72,12 +73,13 @@ test("actual Windows owned Core retains its private reference scope across Main-
     findPorts: async () => ({ serverPort: await freePort(), databasePort: await freePort() }),
   });
   const coreRoot = path.resolve(import.meta.dirname, "../../../external/sps-core");
+  const nodeCommand = resolveDesktopDevelopmentNodeCommand({ packaged: false, command: process.execPath });
   const environment = Object.fromEntries(["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP"]
     .filter(key => typeof process.env[key] === "string").map(key => [key, process.env[key]]));
   manager = createSpsOwnerHostManager({ url: preview.url, baseEnvironment: environment,
     artifactReferences: true, onArtifactUncertainty: () => activity.retainUncertainty(), startupAttempts: 150,
     resolveRuntime: () => resolveSpsOwnerHostRuntime({ coreRoots: [coreRoot], configPath: preview.configPath,
-      nodeCommand: process.execPath, instanceId: "sps-preview-artifact-test", environment: {
+      nodeCommand, instanceId: "sps-preview-artifact-test", environment: {
         PAPERCLIP_HOME: preview.previewVault, PAPERCLIP_TELEMETRY_DISABLED: "1", PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
         SPS_CORE_BASELINE_MODE: "true", SPS_BASIC_MODE: "true", SPS_BUNDLED_PLUGIN_PATHS: "", PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
       } }),
@@ -93,7 +95,7 @@ test("actual Windows owned Core retains its private reference scope across Main-
   previewManager = createSpsOwnerHostManager({ url: second.url, baseEnvironment: environment,
     artifactReferences: true, onArtifactUncertainty: () => activity.retainUncertainty(), startupAttempts: 150,
     resolveRuntime: () => resolveSpsOwnerHostRuntime({ coreRoots: [coreRoot], configPath: second.configPath,
-      nodeCommand: process.execPath, instanceId: "sps-preview-artifact-second", environment: {
+      nodeCommand, instanceId: "sps-preview-artifact-second", environment: {
         PAPERCLIP_HOME: second.previewVault, PAPERCLIP_TELEMETRY_DISABLED: "1", PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
         SPS_CORE_BASELINE_MODE: "true", SPS_BASIC_MODE: "true", SPS_BUNDLED_PLUGIN_PATHS: "", PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
       } }),
@@ -135,7 +137,7 @@ test("actual Windows owned Core retains its private reference scope across Main-
     assert.ok(scope.references.some(reference => reference.source === "desktop-owned-runtime"
       && reference.path === coreRoot && reference.kind === "directory" && reference.processOwner === "desktop"));
     assert.ok(scope.references.some(reference => reference.source === "desktop-owned-runtime"
-      && reference.path === process.execPath && reference.kind === "file"));
+      && reference.path === nodeCommand && reference.kind === "file"));
     await assert.rejects(manager.withPluginArtifactReferences(async () => assert.fail("Host scope must remain held.")));
     await assert.rejects(previewManager.withPluginArtifactReferences(async () => assert.fail("Preview scope must remain held.")));
     await scope.assertCurrent();

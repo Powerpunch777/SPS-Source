@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveSpsE2eUserDataDirectory } from "./e2e-user-data.mjs";
-import { resolveDesktopDevelopment, watchDevelopmentSurfaces } from "./development-mode.mjs";
+import { resolveDesktopDevelopment, resolveDesktopDevelopmentNodeCommand, watchDevelopmentSurfaces } from "./development-mode.mjs";
 import { coreRecoveryEnvironment, loadCoreRecoverySettings, saveCoreRecoverySettings } from "./core-recovery-store.mjs";
 import { createCoreSettingsController } from "./core-settings-controller.mjs";
 import { createSpsNativeHostIdentityStore } from "./native-identity-store.mjs";
@@ -252,6 +252,10 @@ import { synchronizeSpsTeamWorkplaneConfig } from "./bundled-workplane-config.mj
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isolatedE2e = process.env.SPS_DESKTOP_E2E === "1";
+const developmentNodeCommand = resolveDesktopDevelopmentNodeCommand({
+  packaged: app.isPackaged,
+  command: process.env.SPS_DESKTOP_DEVELOPMENT_NODE,
+});
 const developmentMode = resolveDesktopDevelopment({
   packaged: app.isPackaged,
   enabled: process.env.SPS_DESKTOP_DEV === "1",
@@ -2211,6 +2215,7 @@ async function ensureOwnerHostManager() {
         // masks source changes during Desktop verification.
         packagedRuntimeRoots: app.isPackaged && materializedRuntime ? [materializedRuntime] : [],
         coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
+        nodeCommand: developmentNodeCommand,
         packagedNodeCommand: process.execPath,
         stableNodeCommand,
         configPath: ownerHost.layout.configPath,
@@ -3265,6 +3270,7 @@ async function resolveDesktopPluginPreviewRuntime(preview) {
   return await resolveSpsOwnerHostRuntime({
     packagedRuntimeRoots: app.isPackaged && materializedRuntime ? [materializedRuntime] : [],
     coreRoots: app.isPackaged ? [] : [developmentCoreRoot],
+    nodeCommand: developmentNodeCommand,
     packagedNodeCommand: process.execPath,
     stableNodeCommand,
     configPath: preview.configPath,
