@@ -30,6 +30,9 @@ const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT)
 let cleanupDisposition;
 const liveTeam = process.argv.includes("--live-team");
 const liveAuthoring = liveTeam || process.argv.includes("--live-authoring");
+const verifyMemory = process.env.SPS_DESKTOP_E2E_VERIFY_MEMORY === "1";
+if (process.env.SPS_DESKTOP_E2E_VERIFY_MEMORY !== undefined
+  && !["0", "1"].includes(process.env.SPS_DESKTOP_E2E_VERIFY_MEMORY)) throw new Error("Memory acceptance must be explicitly enabled with 1.");
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const sdkRoot = path.join(desktopRoot, "node_modules", "@sonparkserver", "plugin-sdk");
@@ -474,6 +477,7 @@ let liveRunId = null;
 let authoredFiles = null;
 let liveArtifact = null;
 let acceptanceFailure = null;
+let observedMemory = null;
 
 try {
   if (liveAuthoring) await makePlugin(pluginDirectory, { withUi: false });
@@ -481,12 +485,15 @@ try {
   const identityState = await identity.start();
   const binary = packagedBinary || sourceElectron;
   step(`launching ${packagedBinary ? "packaged" : "source"} Desktop`, "desktop_launch");
+  const inheritedEnvironment = { ...process.env };
+  if (verifyMemory) delete inheritedEnvironment.SPS_ENABLE_BUNDLED_EXTENSIONS;
   child = spawn(binary, [`--user-data-dir=${userData}`, `--remote-debugging-port=${debugPort}`, "--remote-allow-origins=*", ...(packagedBinary ? [] : ["."])], {
     cwd: packagedBinary ? path.dirname(binary) : desktopRoot,
     env: {
-      ...process.env,
+      ...inheritedEnvironment,
       SPS_IDENTITY_URL: identityState.origin,
       SPS_ENABLE_PLUGIN_DISCOVERY: "true",
+      ...(verifyMemory ? { SPS_ENABLE_DEFAULT_MEMORY: "true", SPS_ENABLE_ROOM_WORKPLANE: "false" } : {}),
       SPS_DESKTOP_E2E: "1",
       SPS_DESKTOP_E2E_USER_DATA_DIR: userData,
       SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
@@ -510,6 +517,20 @@ try {
   workspaceTarget = await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", hostReadyTimeoutMs);
   workspace = await cdpFor(workspaceTarget);
   await waitPage(workspace, (page) => page.text.includes("Workspace") || page.text.includes("Dashboard"), "Workspace UI", 90_000);
+  if (verifyMemory) {
+    const memory = await setup.evaluate("(async () => (await window.spsDesktop.getStatus()).ownerHost.defaultMemory)()", true);
+    assert.equal(memory.state, "running", "The isolated Desktop must own the Memory sidecar, not adopt an existing listener.");
+    assert.ok(memory.startedAt);
+    const address = new URL(memory.url);
+    assert.equal(address.protocol, "http:");
+    assert.equal(address.hostname, "127.0.0.1");
+    assert.ok(address.port);
+    assert.equal(address.href, `${address.origin}/`);
+    assert.equal(path.resolve(memory.vaultPath), path.join(userData, "owner-vault", "memory"));
+    observedMemory = { origin: address.origin, configPath: path.join(memory.vaultPath, "config.json") };
+    await access(observedMemory.configPath);
+    step("actual Desktop owns the enabled isolated Memory sidecar", "memory_owned");
+  }
   const companies = await workspaceApi(workspace, "/api/companies");
   const company = Array.isArray(companies) ? companies[0] : null;
   assert.ok(company?.id && company?.issuePrefix, `Owner Host did not create a Workspace: ${JSON.stringify(companies)}`);
@@ -1321,6 +1342,16 @@ try {
     forceStop: stopTree,
   });
   step(`Desktop exit confirmed=${desktopStopped.exitConfirmed}, graceful=${desktopStopped.graceful}`);
+  let memoryClosed = !verifyMemory;
+  let memoryConfigPreserved = !verifyMemory;
+  if (verifyMemory && observedMemory && desktopStopped.graceful) {
+    try { await fetch(`${observedMemory.origin}/health`, { signal: AbortSignal.timeout(1000) }); }
+    catch (error) { memoryClosed = error?.cause?.code === "ECONNREFUSED"; }
+    if (memoryClosed) {
+      try { await access(observedMemory.configPath); memoryConfigPreserved = true; } catch {}
+    }
+    step(`enabled Memory listener closure confirmed=${memoryClosed}; config preserved=${memoryConfigPreserved}`);
+  }
   await cleanupTimeout(
     Promise.all([setup, workspace, registry, preview].filter(Boolean).map((cdp) => cdp.close().catch(() => undefined))),
     "CDP sessions",
@@ -1334,10 +1365,13 @@ try {
     : postgresStopped ? "temporary PostgreSQL processes stopped" : "temporary PostgreSQL process cleanup could not be confirmed");
   await cleanupTimeout(identity.close(), "mock Identity server").catch((error) => console.warn(errorText(error)));
   step("mock Identity server closed");
-  const dataRemoved = await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
+  // Unknown Memory closure preserves the isolated fixture for recovery instead
+  // of deleting data still used by a possibly live sidecar.
+  const dataRemoved = verifyMemory && (!memoryClosed || !memoryConfigPreserved) ? false : await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
     .then(() => true)
     .catch((error) => { console.warn(`Could not remove Preview Desktop E2E temp data: ${errorText(error)}`); return false; });
   try {
+    if (!memoryClosed || !memoryConfigPreserved) throw new Error("Enabled Memory cleanup qualification failed.");
     cleanupDisposition = previewE2eCleanupDisposition({ delegated: ownedJobCleanupPending,
       desktopExitConfirmed: desktopStopped.exitConfirmed, desktopGraceful: desktopStopped.graceful,
       postgresCleanupConfirmed: postgresStopped, temporaryDataRemoved: dataRemoved });

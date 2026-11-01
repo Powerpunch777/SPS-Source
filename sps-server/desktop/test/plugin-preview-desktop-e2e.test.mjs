@@ -3,10 +3,23 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import yaml from "js-yaml";
 
 const desktopRoot = path.resolve(import.meta.dirname, "..");
 const harnessPath = path.join(desktopRoot, "scripts", "smoke-plugin-preview-desktop.mjs");
 const packagePath = path.join(desktopRoot, "package.json");
+
+test("packaged Preview CI qualifies the enabled Memory listener and preserves an uncertain fixture", async () => {
+  const workflow = yaml.load(await readFile(path.resolve(desktopRoot, "../..", ".github/workflows/sps-verify.yml"), "utf8"));
+  const step = workflow.jobs.desktop.steps.find(value => value.name === "Run packaged Desktop plugin preview E2E");
+  assert.equal(step.env.SPS_DESKTOP_E2E_VERIFY_MEMORY, "1");
+  const harness = await readFile(harnessPath, "utf8");
+  assert.match(harness, /memory\.state, "running"/);
+  assert.match(harness, /memory\.startedAt/);
+  assert.match(harness, /error\?\.cause\?\.code === "ECONNREFUSED"/);
+  assert.match(harness, /verifyMemory && \(!memoryClosed \|\| !memoryConfigPreserved\) \? false/);
+  assert.match(harness, /if \(!memoryClosed \|\| !memoryConfigPreserved\) throw/);
+});
 
 test("Plugin Preview Desktop E2E harness preserves the real Phase 4 evidence contract", async () => {
   const [harness, packageJson] = await Promise.all([readFile(harnessPath, "utf8"), readFile(packagePath, "utf8")]);

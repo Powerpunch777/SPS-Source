@@ -556,6 +556,7 @@ jobs:
         working-directory: sps-server/desktop
         env:
           SPS_DESKTOP_E2E_BINARY: ${{ github.workspace }}\sps-server\desktop\dist\win-unpacked\SPS Desktop.exe
+          SPS_DESKTOP_E2E_VERIFY_MEMORY: "1"
         run: .\scripts\run-windows-ci-e2e.ps1 -Mode plugin-preview
 
       - name: Run packaged Desktop Host plugin lifecycle E2E

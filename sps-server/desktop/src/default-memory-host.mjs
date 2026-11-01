@@ -14,14 +14,21 @@ function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
 }
 
-function waitForChildExit(child, timeoutMs) {
-  if (!child || child.exitCode != null) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    child.once("exit", () => {
+function childHasExited(child) {
+  return Boolean(child && (child.exitCode != null || child.signalCode != null));
+}
+
+function waitForChildClose(owner, timeoutMs) {
+  if (owner.closed) return Promise.resolve(true);
+  return new Promise(resolve => {
+    const finish = () => {
       clearTimeout(timer);
-      resolve();
-    });
+      owner.child.removeListener("close", finish);
+      resolve(owner.closed);
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    owner.child.once("close", finish);
+    if (owner.closed) finish();
   });
 }
 
@@ -151,36 +158,71 @@ export function createSpsDefaultMemoryManager({
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   startupAttempts = 80,
   terminateTree = terminateWindowsProcessTree,
+  gracefulStopMs = 5_000,
+  exitConfirmationMs = 5_000,
 } = {}) {
   if (!url || !token || !configPath) throw new Error("SPS Default Memory requires URL, token, and config path.");
-  let ownedChild = null;
+  if (![gracefulStopMs, exitConfirmationMs].every(value => Number.isSafeInteger(value) && value >= 1 && value <= 15_000)) {
+    throw new TypeError("SPS Default Memory stop waits must be bounded integers.");
+  }
+  let owner = null;
   let startedAt = null;
   let lastError = null;
+  let observedUnowned = false;
+  let generation = 0;
+  let starting = null;
+  const stopping = new Set();
+  const emptyReferences = Object.freeze({ available: true, references: Object.freeze([]) });
+  const unavailableReferences = Object.freeze({ available: false, references: Object.freeze([]) });
+
+  function referencesFor(command, entry) {
+    const paths = [["command", command, "file"], ["entry", entry, "file"],
+      ["cwd", path.dirname(entry), "directory"], ["config", configPath, "file"]];
+    if (paths.some(([, value]) => typeof value !== "string" || !path.isAbsolute(value)
+      || path.resolve(value) !== value || /[\u0000-\u001f\u007f]/.test(value)
+      || (process.platform === "win32" ? !/^[A-Za-z]:\\$/.test(path.parse(value).root) : path.parse(value).root !== "/"))) {
+      return unavailableReferences;
+    }
+    const id = crypto.randomUUID();
+    return Object.freeze({ available: true, references: Object.freeze(paths.map(([label, value, kind]) => Object.freeze({
+      source: "desktop-memory-runtime", ownerId: `${id}:${label}`, state: "retained", path: value, kind,
+    }))) });
+  }
 
   async function inspect() {
-    const health = await healthAt(url, token, fetchImpl);
-    if (health) {
-      lastError = null;
-      return { state: ownedChild ? "running" : "running-existing", url, health, startedAt, lastError };
+    const observed = owner;
+    const observedGeneration = generation;
+    let health = await healthAt(url, token, fetchImpl);
+    if (observed !== owner || observedGeneration !== generation) health = null;
+    if (owner) {
+      if (childHasExited(owner.child) || owner.uncertainStop || stopping.size) return { state: "stopping", url, health: null, startedAt, lastError };
+      return { state: health ? "running" : "starting", url, health, startedAt, lastError };
     }
-    if (ownedChild && ownedChild.exitCode == null) return { state: "starting", url, health: null, startedAt, lastError };
+    if (health) {
+      observedUnowned = true;
+      return { state: "running-existing", url, health, startedAt: null, lastError };
+    }
     return { state: "stopped", url, health: null, startedAt: null, lastError };
   }
 
-  async function start() {
+  async function startOwned(expectedGeneration) {
     const current = await inspect();
+    if (generation !== expectedGeneration) return inspect();
     if (current.state !== "stopped") return current;
-    const entry = await resolveEntry();
-    if (!entry) {
-      lastError = "SPS Default Memory runtime is not installed on this computer.";
-      return inspect();
-    }
     try {
+      const entry = await resolveEntry();
+      if (generation !== expectedGeneration) return inspect();
+      if (!entry) {
+        lastError = "SPS Default Memory runtime is not installed on this computer.";
+        return inspect();
+      }
       const command = await resolveNodeCommand();
+      if (generation !== expectedGeneration) return inspect();
       if (!command) {
         lastError = "SPS Default Memory Node runtime is not installed on this computer.";
         return inspect();
       }
+      const references = referencesFor(command, entry);
       const child = spawn(command, [entry, "--config", configPath], {
         cwd: path.dirname(entry),
         stdio: "ignore",
@@ -192,45 +234,96 @@ export function createSpsDefaultMemoryManager({
           MEMORY_SIDECAR_TOKEN: token,
         },
       });
-      ownedChild = child;
+      const launched = { child, closed: false, uncertainStop: false, references };
+      owner = launched;
       startedAt = new Date().toISOString();
       lastError = null;
-      child.once("error", (error) => { lastError = asMessage(error); });
+      child.once("error", error => { if (owner === launched) lastError = asMessage(error); });
       child.once("exit", (code) => {
+        if (owner !== launched) return;
         if (code && code !== 0) lastError = `SPS Default Memory exited with code ${code}.`;
-        ownedChild = null;
+      });
+      child.once("close", () => {
+        launched.closed = true;
+        if (owner !== launched) return;
+        owner = null;
         startedAt = null;
+        if (launched.uncertainStop && (child.exitCode === 0 || child.signalCode != null)) lastError = null;
       });
     } catch (error) {
-      lastError = asMessage(error);
+      if (generation === expectedGeneration) lastError = asMessage(error);
       return inspect();
     }
 
     for (let attempt = 0; attempt < startupAttempts; attempt += 1) {
       await delay(250);
+      if (generation !== expectedGeneration) return inspect();
       const state = await inspect();
+      if (generation !== expectedGeneration) return inspect();
       if (state.state === "running") return state;
-      if (state.state === "stopped") return state;
+      if (state.state === "stopped" || state.state === "stopping") return state;
     }
     lastError = "SPS Default Memory did not become ready in time.";
     return inspect();
   }
 
-  async function stop({ force = false } = {}) {
-    const child = ownedChild;
-    if (child && child.exitCode == null) {
-      if (force) {
-        await terminateTree(child.pid);
-      } else {
-        child.kill("SIGINT");
-        await waitForChildExit(child, 5_000);
-        if (child.exitCode == null) await terminateTree(child.pid);
+  function start() {
+    if (stopping.size) return Promise.all([...stopping]).then(inspect);
+    if (starting) return starting;
+    const operation = startOwned(generation);
+    starting = operation;
+    const clear = () => { if (starting === operation) starting = null; };
+    void operation.then(clear, clear);
+    return operation;
+  }
+
+  async function stopOwned(force, pendingStart) {
+    // Start continuations are generation-fenced after every await. Join their
+    // preparation before a caller can discard this manager or its paths.
+    if (pendingStart) await pendingStart;
+    const retained = owner;
+    if (!retained) return inspect();
+    const { child } = retained;
+    try {
+      if (!childHasExited(child)) {
+        if (!force) {
+          child.kill("SIGINT");
+          await waitForChildClose(retained, gracefulStopMs);
+        }
+        if (!retained.closed && !childHasExited(child)) {
+          if (!Number.isInteger(child.pid) || child.pid <= 0) throw new Error("Memory PID is unavailable.");
+          await terminateTree(child.pid);
+        }
+      }
+      if (!await waitForChildClose(retained, exitConfirmationMs)) throw new Error("Memory close was not observed.");
+    } catch {
+      if (!retained.closed) {
+        if (owner === retained) retained.uncertainStop = true;
+        lastError = "SPS Default Memory process closure has not been confirmed; its runtime remains retained.";
+        throw Object.assign(new Error(lastError), { code: "default_memory_stop_unconfirmed" });
       }
     }
-    ownedChild = null;
-    startedAt = null;
+    if (owner === retained) owner = null;
+    if (!owner) startedAt = null;
+    if (child.exitCode === 0 || child.signalCode != null) lastError = null;
     return inspect();
   }
 
-  return { inspect, start, stop };
+  function stop({ force = false } = {}) {
+    if (!force && stopping.size) return Promise.all([...stopping]).then(inspect);
+    generation += 1;
+    const operation = stopOwned(force, starting);
+    stopping.add(operation);
+    const clear = () => stopping.delete(operation);
+    void operation.then(clear, clear);
+    return operation;
+  }
+
+  function readRuntimeArtifactReferences() {
+    if (observedUnowned) return unavailableReferences;
+    if (owner) return owner.references;
+    return starting || stopping.size ? unavailableReferences : emptyReferences;
+  }
+
+  return { inspect, start, stop, readRuntimeArtifactReferences };
 }
