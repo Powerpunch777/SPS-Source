@@ -7,7 +7,7 @@ const directory = "C:/fixtures/navigation-retry";
 const origin = "http://127.0.0.1:4317";
 
 test("owned socket failure accepts only the observed Chromium connection error variants", () => {
-  for (const value of [-15, -101, -324]) assert.equal(isOwnedSocketFailureCode(value), true);
+  for (const value of [-15, -101, -103, -324]) assert.equal(isOwnedSocketFailureCode(value), true);
   for (const value of [undefined, null, false, 0, 15, -3, -20, -104, -102, NaN, Infinity, "-15", {}, [-15]]) {
     assert.equal(isOwnedSocketFailureCode(value), false);
   }
@@ -54,7 +54,9 @@ for (const scenario of [
 
 test("native retry retains the real loadURL promise and socket failure rather than inventing a rejection", async () => {
   const helper = await readFile(new URL("../scripts/workspace-navigation-retry-acceptance.mjs", import.meta.url), "utf8");
-  assert.match(helper, /createServer\(socket => socket\.destroy\(\)\)/);
+  assert.match(helper, /createServer\(socket => \{\s*acceptedConnections\+\+;\s*socket\.destroy\(\);\s*\}\)/);
+  assert.match(helper, /socketAccepted: acceptedConnections > 0/);
+  assert.match(helper, /retained: true, socketAccepted: true/);
   assert.match(helper, /failingServer\.listen\(0, "127\.0\.0\.1", resolve\)/);
   assert.match(helper, /return control\.original\.call\(this, failingUrl, \.\.\.args\)/);
   assert.match(helper, /on\("did-fail-load", listener\)/);

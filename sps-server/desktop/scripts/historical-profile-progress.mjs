@@ -35,7 +35,7 @@ export const HISTORICAL_PROFILE_PROGRESS_PHASES = Object.freeze([
   "app-node-registration-complete", "app-workspace-load-start", "app-workspace-load-complete",
   "app-window-ready-to-show", "app-window-shown", "app-captured-window-discarded", "app-scope-account-changed",
   "app-scope-host-context-changed", "app-scope-host-instance-changed", "app-scope-connection-changed",
-  "app-scope-rejection-unclassified", "app-existing-window-reused", "app-window-closed",
+  "app-scope-rejection-unclassified", "app-existing-window-reused", "app-existing-open-awaited", "app-stale-window-discarded", "app-window-closed",
   ...RUNTIME_PHASES.map(phase => `runtime-${phase}`),
   ...HOST_PHASES.map(phase => `host-${phase}`),
 ]);

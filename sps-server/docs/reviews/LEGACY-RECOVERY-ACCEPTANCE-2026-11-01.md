@@ -3,7 +3,36 @@
 2026-11-01 KST. A scoped, unsigned hosted Windows acceptance result. This is
 not Core completion, a historical automatic-upgrade pass or Stable release.
 
-## Exact Inputs
+## Latest Exact-Tuple Repeat
+
+The complete [Source38fb workflow41277553485](https://github.com/Powerpunch777/SPS-Source/actions/runs/41277553485)
+is terminal success. Its [mandatory legacy job124771069937](https://github.com/Powerpunch777/SPS-Source/actions/runs/41277553485/job/124771069937)
+finished at2026-11-01T06:51:05Z and repeated the real confirmation/residue/reinstall
+acceptance with:
+
+- Source:`38fb3849e2b7b409e087f0b3926b858bf6e04a76`.
+- Core:`491794820c23f956912d69eba271c1ef07ba36a1`.
+- SDK:`61a929f6c783f78e5af603682de1543c7e24abc0`.
+- Installer SHA256:`1f4866b03d42be2c0f3d3ecac7529f7b77f88256233aa7447bfe1d467483b1b0`.
+- Recovery helper SHA256:`ca5d73f4ef82c85feb6400c253e5aaeba1c3de5f0d214985ac496989cdd51044`.
+
+The old automatic replacement still exited2 after625245ms. The original29314-file
+installation and9user/1project records were preserved, not relabeled as successful
+automatic upgrade. Ordinary old uninstall left46files/61directories/26804bytes,
+with all46files over259characters. Independent content/root verification passed
+before GUI authorization. Real initial Cancel/default No and declined residue
+confirmation preserved the complete original residue and data. Explicit Yes then
+removed only the validated program residues. Same-path candidate reinstall
+preserved all records, matched5package artifacts, displayed the isolated first
+frame and returned natural whole-Job closure.
+
+Unlike the earlier b361 run below, this exact Source's separate installed
+historical DB157-to176/Desktopv11-to13 migration also passed. See the
+[installed acceptance](INSTALLED-CORE-ACCEPTANCE-2026-11-01.md). Neither result
+establishes signing, normal user-profile startup, direct old-version automatic
+upgrade or physical two-PC acceptance. New Core changes require new-tuple CI.
+
+## Earlier b361 Inputs
 
 - Source:`b36107b3ed12f8a51b98c04f1dcfcab7430c6846`
 - Core:`b17fb830138b4acde96aa7b5c911f7e8cccfa698`

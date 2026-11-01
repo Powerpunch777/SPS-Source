@@ -68,7 +68,7 @@ test("a blocked read-only Main observation settles at its fixed five-second boun
 test("the actual transfer wait preserves its failure and deadline after observing the two window inventories", async () => {
   const source = await readFile(new URL("../scripts/smoke-owner-vault-transfer-desktop.mjs", import.meta.url), "utf8");
   const start = source.indexOf("async function workspace(app, setup) {");
-  const end = source.indexOf("async function readyHost(setup)", start);
+  const end = source.indexOf("async function openTransferredWorkspace(app, setup, description)", start);
   assert.ok(start >= 0 && end > start);
   const original = new Error("Original transfer wait did not qualify.");
   const logs = [];
@@ -89,4 +89,39 @@ test("the actual transfer wait preserves its failure and deadline after observin
     error => error === original);
   assert.equal(logs.length, 1);
   assert.match(logs[0], /^\[vault-transfer-window-observation\] /);
+});
+
+test("a rejected or timed-out open is observed without replaying the request or replacing its failure", async () => {
+  const source = await readFile(new URL("../scripts/smoke-owner-vault-transfer-desktop.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function openTransferredWorkspace(app, setup, description) {");
+  const end = source.indexOf("async function readyHost(setup)", start);
+  assert.ok(start >= 0 && end > start);
+  for (const rejectedRequest of [false, true]) {
+    const original = new Error(rejectedRequest ? "Original open failure" : "Original open deadline");
+    const request = rejectedRequest ? Promise.reject(original) : Promise.resolve();
+    request.catch(() => {});
+    const app = {};
+    const logs = [];
+    let calls = 0;
+    const sandbox = {
+      console: { error: value => logs.push(value) },
+      bounded: async (operation, description) => {
+        assert.equal(operation, request);
+        assert.equal(description, "reopen restored Workspace");
+        if (rejectedRequest) await operation;
+        throw original;
+      },
+      observeTransferWindows: async actual => {
+        assert.equal(actual, app);
+        return { native: { state: "unavailable" }, tracked: { state: "unavailable" } };
+      },
+    };
+    sandbox.globalThis = sandbox;
+    vm.runInNewContext(`${source.slice(start, end)}\nglobalThis.run = openTransferredWorkspace;`, sandbox);
+    await assert.rejects(sandbox.run(app, { evaluate: () => { calls++; return request; } }, "reopen restored Workspace"),
+      error => error === original);
+    assert.equal(calls, 1);
+    assert.deepEqual(logs.map(line => JSON.parse(line.slice(line.indexOf("{")).trim())),
+      [{ stage: "open-failed", native: { state: "unavailable" }, tracked: { state: "unavailable" } }]);
+  }
 });

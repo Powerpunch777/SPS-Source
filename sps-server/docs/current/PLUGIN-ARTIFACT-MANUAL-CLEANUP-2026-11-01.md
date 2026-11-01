@@ -1,7 +1,8 @@
 # Host-Reviewed Plugin Artifact Cleanup
 
-Status: user-approved policy; allocation/inventory foundation implemented,
-reference/fence/API/confirmation/removal/Settings composition pending. 2026-11-01 KST.
+Status: user-approved policy; allocation/inventory enumeration and private Worker
+launch references implemented. Composed references/fence/API/confirmation/removal/
+Settings remain pending. 2026-11-01 KST.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
@@ -100,3 +101,29 @@ been entered: a lost response cannot prove the server did not commit its path.
 Known pre-registration validation rejection still cleans its own extraction.
 The focused Registry/transfer/bundle/controller/cross-device-fixture selection
 passed34/34; this does not establish a live database crash or two-PC lease test.
+
+## Read-Only Follow-Up
+
+Ownership `listAllocatedIds()` now reads the existing private record directory
+without creating it, returns allocation-only and paired IDs, and rejects unknown
+names, orphan verification, links/hardlinks, oversized entry sets and changing
+identities/membership. IDs alone do not certify current bytes or grant cleanup.
+
+The actual Core Worker manager now captures a private immutable launch path and
+owner ID for each registered handle before startup. Its optional private reader
+keeps Host/Workspace, starting, stopped-but-restartable and uncertain-close
+references; ordinary HTTP diagnostics and the public SDK gain no file paths.
+Only the path is frozen, preserving the original behavior of other startup
+options. The caller must resolve those paths and recheck every source under the
+future shared fence. This does not implement that fence, eligibility, deletion
+or the Settings screen.
+
+Focused Worker reference, closure and ownership tests include actual Node
+start/stop/restart and controlled uncertain-close cases. The ownership observer
+uses actual owned temporary files. Final exact-tuple CI and complete Settings
+acceptance remain separate requirements.
+
+Core follow-up `673466ea3dce0512adae59f8f00bc5b4ba8aa9bc` contains this read
+model. The final combined ten-file selection passed90/90 (31 ownership/inventory,
+59 Worker), with no skips. Typecheck and build of all30 Core workspace projects
+passed locally. No artifact removal or existing user package mutation occurred.

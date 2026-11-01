@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 
 export function isOwnedSocketFailureCode(value) {
-  return value === -15 || value === -101 || value === -324;
+  return value === -15 || value === -101 || value === -103 || value === -324;
 }
 
 export async function assertWorkspaceNavigationRetry({ app, setup, expectedUserData, expectedWorkspaceOrigin,
@@ -18,7 +18,11 @@ export async function assertWorkspaceNavigationRetry({ app, setup, expectedUserD
   assert.equal(initial.desktopAccount.pending, false);
   assert.equal(new URL(initial.profile.hubUrl).origin, expectedWorkspaceOrigin);
   const token = randomUUID();
-  const failingServer = createServer(socket => socket.destroy());
+  let acceptedConnections = 0;
+  const failingServer = createServer(socket => {
+    acceptedConnections++;
+    socket.destroy();
+  });
   let listening = false;
   try {
     await app.evaluate(({ app }, directory) => {
@@ -84,10 +88,11 @@ export async function assertWorkspaceNavigationRetry({ app, setup, expectedUserD
         errorCode: control.errorCode, retained: Boolean(control.failed && !control.failed.isDestroyed()) };
     });
     const failure = { attempted: observation.attempted, created: observation.created,
-      nativeFailure: isOwnedSocketFailureCode(observation.errorCode), retained: observation.retained };
+      nativeFailure: isOwnedSocketFailureCode(observation.errorCode), retained: observation.retained,
+      socketAccepted: acceptedConnections > 0 };
     if (!rejected || !failure.nativeFailure) console.error(`[workspace-retry-observation] ${JSON.stringify({ rejected, ...failure })}`);
     assert.equal(rejected, true, "The real failed socket navigation must reject its Main IPC.");
-    assert.deepEqual(failure, { attempted: 1, created: 1, nativeFailure: true, retained: true });
+    assert.deepEqual(failure, { attempted: 1, created: 1, nativeFailure: true, retained: true, socketAccepted: true });
 
     await setup.evaluate(() => window.spsDesktop.openWorkspace());
     const replaced = await app.evaluate(() => {

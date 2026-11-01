@@ -45,10 +45,13 @@ All nine Linux partitions, full Core Linux typecheck/build, three Identity Node
 versions, SDK/Registry, compatibility and bundled-plugin jobs completed successfully
 on this Source SHA.
 
-The mandatory legacy-installer recovery job of this same run was still active
-when this record was written. The previous b361 legacy success remains valid only
-for its older bytes; see [the separate acceptance](LEGACY-RECOVERY-ACCEPTANCE-2026-11-01.md).
-Do not infer overall workflow completion from the successful Windows job.
+The same run's mandatory legacy recovery job124771069937 subsequently completed
+successfully at `2026-11-01T06:51:05Z`; the entire nineteen-job workflow is now
+terminal success for this exact Source SHA. Actual initial Cancel/default No/
+decline, original-residue validation and explicit cleanup preserved9 user and1
+project record. Reinstall matched5 artifacts and used this exact installer hash.
+See [the separate exact acceptance](LEGACY-RECOVERY-ACCEPTANCE-2026-11-01.md).
+This does not qualify changed Core/Source revisions or physical Runner scenarios.
 
 ## SSH Operator Trial Did Not Qualify
 

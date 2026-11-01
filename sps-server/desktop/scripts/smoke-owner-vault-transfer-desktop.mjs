@@ -123,6 +123,16 @@ async function workspace(app, setup) {
   }
 }
 
+async function openTransferredWorkspace(app, setup, description) {
+  try {
+    await bounded(setup.evaluate(() => window.spsDesktop.openWorkspace()), description);
+  } catch (error) {
+    console.error(`[vault-transfer-window-observation] ${JSON.stringify({ stage: "open-failed",
+      ...await observeTransferWindows(app) })}`);
+    throw error;
+  }
+}
+
 async function readyHost(setup) {
   await waitFor(async () => {
     const { ownerHost } = await setup.evaluate(() => window.spsDesktop.getStatus());
@@ -358,7 +368,7 @@ try {
   assert.equal(restored.ownerHost.state, "running");
   assert.equal(restored.ownerHost.restoreAttempts.length, crashAfterPromotion ? 1 : 0);
   assert.equal(restored.profile.connectionKind, "owner-host");
-  await bounded(restoredApp.page.evaluate(() => window.spsDesktop.openWorkspace()), "open restored Workspace");
+  await openTransferredWorkspace(restoredApp.app, restoredApp.page, "open restored Workspace");
   const restoredWorkspace = await workspace(restoredApp.app, restoredApp.page);
   const projects = await api(restoredWorkspace, `/api/companies/${company.id}/projects`);
   assert.ok(projects.some(row => row.id === project.id && row.name === project.name));
@@ -395,7 +405,7 @@ try {
     phases.push("closed-profile-projected-to-authentic-v11-state");
     const migrated = await launch(targetProfile, origin);
     await assertMigratedMain(migrated.app, legacyEvidence.snapshot);
-    await bounded(migrated.page.evaluate(() => window.spsDesktop.openWorkspace()), "open migrated Workspace");
+    await openTransferredWorkspace(migrated.app, migrated.page, "open migrated Workspace");
     const migratedWorkspace = await workspace(migrated.app, migrated.page);
     const migratedProjects = await api(migratedWorkspace, `/api/companies/${company.id}/projects`);
     assert.ok(migratedProjects.some(row => row.id === project.id && row.name === project.name));
@@ -405,7 +415,7 @@ try {
 
     const stable = await launch(targetProfile, origin);
     await assertMigratedMain(stable.app, legacyEvidence.snapshot);
-    await bounded(stable.page.evaluate(() => window.spsDesktop.openWorkspace()), "reopen migrated Workspace");
+    await openTransferredWorkspace(stable.app, stable.page, "reopen migrated Workspace");
     const stableWorkspace = await workspace(stable.app, stable.page);
     const stableProjects = await api(stableWorkspace, `/api/companies/${company.id}/projects`);
     assert.ok(stableProjects.some(row => row.id === project.id && row.name === project.name));
@@ -416,7 +426,7 @@ try {
     const restarted = await launch(targetProfile, origin);
     await signIn(restarted.page, origin);
     await readyHost(restarted.page);
-    await bounded(restarted.page.evaluate(() => window.spsDesktop.openWorkspace()), "reopen restored Workspace");
+    await openTransferredWorkspace(restarted.app, restarted.page, "reopen restored Workspace");
     console.log(`[vault-transfer-window-observation] ${JSON.stringify({ stage: "restart-before-wait",
       ...await observeTransferWindows(restarted.app) })}`);
     const reopened = await workspace(restarted.app, restarted.page);
@@ -448,7 +458,7 @@ try {
       const approvedRestart = await launch(targetProfile, origin);
       await signIn(approvedRestart.page, origin);
       await readyHost(approvedRestart.page);
-      await bounded(approvedRestart.page.evaluate(() => window.spsDesktop.openWorkspace()), "reopen explicitly approved bundle Host");
+      await openTransferredWorkspace(approvedRestart.app, approvedRestart.page, "reopen explicitly approved bundle Host");
       const approvedWorkspace = await workspace(approvedRestart.app, approvedRestart.page);
       const record = await api(approvedWorkspace, `/api/plugins/${bundledReviewEvidence.pluginId}`);
       assert.equal(record.status, "ready");

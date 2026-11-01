@@ -287,6 +287,8 @@ let mainWindow = null;
 let ownerCreationInProgress = false;
 let workspaceWindow = null;
 const failedWorkspaceNavigations = new WeakMap();
+const workspaceWindowScopes = new WeakMap();
+let pendingWorkspaceOpen = null;
 let workspaceOpenTraceSequence = 0;
 let registryWindow = null;
 let registryDeveloperContext = null;
@@ -4915,97 +4917,121 @@ async function openWorkspace() {
       }
     }
   };
-  setupMode = false;
-  // Every SPS Desktop Host and Member has a signed-in SPS Identity account.
-  // The Desktop-only header protects the loopback transport as an additional
-  // proof, while the Core session identifies the actual user.
-  trace("identity-session-start");
-  const usesIdentitySession = await establishSpsIdentityCoreSession(hubOrigin);
-  trace("identity-session-complete");
-  scope.assertCurrent();
-  if (!currentBoardToken() && !usesIdentitySession) {
-    throw new Error("SPS could not establish this Desktop account's Workspace session. Sign in to SPS Desktop again and retry.");
-  }
-  trace("node-registration-start");
-  await ensureJoinedDesktopNode();
-  trace("node-registration-complete");
-  scope.assertCurrent();
-  const discardFailedNavigation = failedWorkspaceNavigations.get(workspaceWindow);
-  if (discardFailedNavigation) {
-    failedWorkspaceNavigations.delete(workspaceWindow);
-    discardFailedNavigation();
-  }
-  if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
-    if (workspaceWindow.isMinimized()) workspaceWindow.restore();
-    workspaceWindow.show();
-    workspaceWindow.focus();
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
-    trace("existing-window-reused");
+  if (pendingWorkspaceOpen?.scope.isCurrent()) {
+    trace("existing-open-awaited");
+    await pendingWorkspaceOpen.promise;
+    scope.assertCurrent();
     return;
   }
-  closeWorkspaceWindow();
-  workspaceOrigin = hubOrigin;
-  const currentWindow = new BrowserWindow({
-    width: 1280,
-    height: 840,
-    minWidth: 900,
-    minHeight: 640,
-    show: false,
-    icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
-    webPreferences: createSpsWorkspaceWindowPreferences(
-      isOwnerHostProfile() ? path.join(__dirname, "workspace-preload.cjs") : undefined,
-    ),
-  });
-  workspaceWindow = currentWindow;
-  const discardCapturedWindow = () => {
-    trace("captured-window-discarded");
-    if (workspaceWindow === currentWindow) {
+  const opening = { scope, promise: null };
+  const performOpen = async () => {
+    scope.assertCurrent();
+    setupMode = false;
+    // One account/Host scope shares its in-flight session and navigation.
+    // Reuse must not report success before that original navigation settles.
+    trace("identity-session-start");
+    const usesIdentitySession = await establishSpsIdentityCoreSession(hubOrigin);
+    trace("identity-session-complete");
+    scope.assertCurrent();
+    if (!currentBoardToken() && !usesIdentitySession) {
+      throw new Error("SPS could not establish this Desktop account's Workspace session. Sign in to SPS Desktop again and retry.");
+    }
+    trace("node-registration-start");
+    await ensureJoinedDesktopNode();
+    trace("node-registration-complete");
+    scope.assertCurrent();
+    const discardFailedNavigation = failedWorkspaceNavigations.get(workspaceWindow);
+    if (discardFailedNavigation) {
+      failedWorkspaceNavigations.delete(workspaceWindow);
+      discardFailedNavigation();
+    }
+    const previousWindow = workspaceWindow;
+    if (previousWindow && !workspaceWindowScopes.get(previousWindow)?.isCurrent()) {
+      workspaceWindow = null;
+      workspaceOrigin = null;
+      trace("stale-window-discarded");
+      if (!previousWindow.isDestroyed()) previousWindow.destroy();
+    }
+    if (workspaceWindow && !workspaceWindow.isDestroyed() && workspaceOrigin === hubOrigin) {
+      if (workspaceWindow.isMinimized()) workspaceWindow.restore();
+      workspaceWindow.show();
+      workspaceWindow.focus();
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+      trace("existing-window-reused");
+      return;
+    }
+    closeWorkspaceWindow();
+    workspaceOrigin = hubOrigin;
+    const currentWindow = new BrowserWindow({
+      width: 1280,
+      height: 840,
+      minWidth: 900,
+      minHeight: 640,
+      show: false,
+      icon: path.join(__dirname, "..", "assets", "sps-logo.png"),
+      webPreferences: createSpsWorkspaceWindowPreferences(
+        isOwnerHostProfile() ? path.join(__dirname, "workspace-preload.cjs") : undefined,
+      ),
+    });
+    workspaceWindow = currentWindow;
+    workspaceWindowScopes.set(currentWindow, scope);
+    const discardCapturedWindow = () => {
+      trace("captured-window-discarded");
+      if (workspaceWindow === currentWindow) {
+        workspaceWindow = null;
+        workspaceOrigin = null;
+        createApplicationMenu();
+        refreshTrayMenu();
+      }
+      // A renderer's beforeunload must not retain another account's stale view.
+      if (!currentWindow.isDestroyed()) currentWindow.destroy();
+    };
+    createApplicationMenu();
+    refreshTrayMenu();
+    configureWorkspaceNavigation(currentWindow, hubOrigin);
+    currentWindow.once("ready-to-show", () => {
+      trace("window-ready-to-show");
+      if (!scope.isCurrent() || workspaceWindow !== currentWindow) {
+        traceScopeRejection();
+        discardCapturedWindow();
+        return;
+      }
+      currentWindow.show();
+      trace("window-shown");
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+    });
+    currentWindow.on("closed", () => {
+      trace("window-closed");
+      if (workspaceWindow !== currentWindow) return;
       workspaceWindow = null;
       workspaceOrigin = null;
       createApplicationMenu();
       refreshTrayMenu();
+    });
+    trace("workspace-load-start");
+    try {
+      await currentWindow.loadURL(`${hubOrigin}/`);
+      trace("workspace-load-complete");
+      scope.assertCurrent();
+      if (workspaceWindow !== currentWindow || currentWindow.isDestroyed()) {
+        throw new Error("SPS Workspace window changed while it was opening.");
+      }
+    } catch (error) {
+      if (!scope.isCurrent() || workspaceWindow !== currentWindow || currentWindow.isDestroyed()) {
+        traceScopeRejection();
+        discardCapturedWindow();
+      } else {
+        failedWorkspaceNavigations.set(currentWindow, discardCapturedWindow);
+      }
+      throw error;
     }
-    // A renderer's beforeunload must not retain another account's stale view.
-    if (!currentWindow.isDestroyed()) currentWindow.destroy();
   };
-  createApplicationMenu();
-  refreshTrayMenu();
-  configureWorkspaceNavigation(currentWindow, hubOrigin);
-  currentWindow.once("ready-to-show", () => {
-    trace("window-ready-to-show");
-    if (!scope.isCurrent() || workspaceWindow !== currentWindow) {
-      traceScopeRejection();
-      discardCapturedWindow();
-      return;
-    }
-    currentWindow.show();
-    trace("window-shown");
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
-  });
-  currentWindow.on("closed", () => {
-    trace("window-closed");
-    if (workspaceWindow !== currentWindow) return;
-    workspaceWindow = null;
-    workspaceOrigin = null;
-    createApplicationMenu();
-    refreshTrayMenu();
-  });
-  trace("workspace-load-start");
+  opening.promise = Promise.resolve().then(performOpen);
+  pendingWorkspaceOpen = opening;
   try {
-    await currentWindow.loadURL(`${hubOrigin}/`);
-    trace("workspace-load-complete");
-    scope.assertCurrent();
-    if (workspaceWindow !== currentWindow || currentWindow.isDestroyed()) {
-      throw new Error("SPS Workspace window changed while it was opening.");
-    }
-  } catch (error) {
-    if (!scope.isCurrent() || workspaceWindow !== currentWindow || currentWindow.isDestroyed()) {
-      traceScopeRejection();
-      discardCapturedWindow();
-    } else {
-      failedWorkspaceNavigations.set(currentWindow, discardCapturedWindow);
-    }
-    throw error;
+    await opening.promise;
+  } finally {
+    if (pendingWorkspaceOpen === opening) pendingWorkspaceOpen = null;
   }
 }
 

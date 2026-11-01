@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `491794820c23f956912d69eba271c1ef07ba36a1`; Source38fb's installed acceptance below carries this exact revision. Earlier b17 installed evidence remains separate.
+- Current Core: `673466ea3dce0512adae59f8f00bc5b4ba8aa9bc`; read-only artifact references and Windows token-gate fixes. Source38fb's installed acceptance below carries previous Core `491794820c23f956912d69eba271c1ef07ba36a1`, not this revision. Earlier b17 evidence also remains separate.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -20,13 +20,41 @@ deferred Native development are excluded.
 
 ### Latest Progress And Still-Incomplete Final Acceptance
 
+Current follow-up: artifact ownership/inventory and Worker selection90/90,
+Windows LF/CRLF token-gate contracts8/8, all three UI token gates clean, and
+Core all30 workspace typechecks/build passed locally. New Main regressions
+reproduced overlapping-open early success/duplicate sessions and same-origin
+cross-account window reuse. Scoped pending opens and per-window scope checks
+now pass the focused77/77 selection. Actual final-source Electron transfer,
+restored-plugin approval, restart, account fence and explicit navigation retry
+also exited0 with owned temporary cleanup. Full local Desktop CI runner exited0:
+serial2/2 plus1919total/1916pass/3unavailable8.3-alias skips/0fail, aggregate
+1921total/1918pass/3skips. Production audit3advisories and
+full-graph audit5advisories passed their policies with zero Critical/High;
+respectively one and two Moderate reviews expire2026-11-07, not zero
+vulnerabilities. These are not final hosted/installed or two-device acceptance.
+See [Workspace observation](../reviews/WORKSPACE-OPEN-OBSERVATION-2026-10-31.md#2026-11-01-concurrent-opens-and-retained-window-scope).
+
+The newer Sourcefc56 [Verify41281563181](https://github.com/Powerpunch777/SPS-Source/actions/runs/41281563181)
+is terminal failure. Its [Windows job124774354651](https://github.com/Powerpunch777/SPS-Source/actions/runs/41281563181/job/124774354651)
+completed actual Owner Vault transfer restore and data-preservation assertions,
+then timed out reopening the restored Workspace. This is not a complete transfer
+acceptance pass, and this record does not establish the timeout's cause. Its
+[mandatory legacy job124777610395](https://github.com/Powerpunch777/SPS-Source/actions/runs/41281563181/job/124777610395)
+failed before the recovery test, with recovery inputs skipped. That unexecuted
+test is neither a regression of the earlier actual recovery acceptance nor new
+recovery success. The all19-job success below belongs only to the previous exact
+Source38fb candidate; fc56 cannot inherit it. Core remains incomplete.
+
 Source38fb push41277553485/Windows124762686223 is terminal success. The real
 installed candidate passed same-profile157-to176/v11-to13 migration, actual
 DPAPI account/key preservation, Workspace display/restart, retained-data
 reinstall and natural whole-Job closure. All17 non-Windows jobs also passed,
 including all nine Linux partitions and Core full typecheck/build. The exact
 installer SHA is1f4866b03d42be2c0f3d3ecac7529f7b77f88256233aa7447bfe1d467483b1b0.
-Its mandatory legacy job remains active, so overall acceptance is not claimed.
+Its mandatory legacy124771069937 also completed successfully; all19jobs passed
+on38fb. This is exact development-candidate evidence, not Core completion or
+proof of signing, normal user data/profile operation or physical two-PC use.
 See [exact installed evidence and SSH trial limits](../reviews/INSTALLED-CORE-ACCEPTANCE-2026-11-01.md).
 
 The b361 Source's mandatory legacy job124756513295 completed successfully:
@@ -44,9 +72,11 @@ and native Job closure do not establish real Google, signed or two-PC acceptance
 The private preliminary SSH control trial did not reach app launch; a local
 late-input regression now proves its own duplex behavior, not remote acceptance.
 
-The manual artifact cleanup foundation now captures new owned allocations and
-complete file inventories, but Settings/reference/fence/confirmation/removal
-composition is not implemented. [Approved plan and limits](PLUGIN-ARTIFACT-MANUAL-CLEANUP-2026-11-01.md).
+The manual artifact cleanup foundation captures new owned allocations and
+complete file inventories. The current follow-up adds read-only allocation-ID
+enumeration and private tracked Worker launch references, but Settings/composed
+references/fence/confirmation/removal are not implemented.
+[Approved plan and limits](PLUGIN-ARTIFACT-MANUAL-CLEANUP-2026-11-01.md).
 Actual packaged Main-loss/per-Worker descendant closure, real Plugin SQL crash
 windows, two-PC Runner and fresh final UI/security gates remain mandatory.
 
@@ -642,7 +672,17 @@ and historical evidence stay distinct. External release gates and deferred
 features are reported separately, never silently removed. At Core completion,
 report the remaining release conditions and stop before new plugin development.
 
-## Current Recovery Follow-Up (2026-10-31)
+## Historical Recovery Follow-Up (2026-10-31; Superseded)
+
+This section preserves the 2026-10-31 observation, not the current acceptance
+status. Its unverified-GUI and then-latest-failure statements were superseded by
+the actual b361 recovery acceptance and the exact Source38fb repeat, whose
+installed and mandatory legacy jobs both passed in Verify41277553485 (all19jobs).
+See the [installed acceptance](../reviews/INSTALLED-CORE-ACCEPTANCE-2026-11-01.md)
+and [latest exact-tuple recovery acceptance](../reviews/LEGACY-RECOVERY-ACCEPTANCE-2026-11-01.md#latest-exact-tuple-repeat).
+Those results qualify only their recorded candidates. The newer fc56 terminal
+failure is recorded above; its pre-test legacy failure supplies no new recovery
+result. Historical failed attempts below remain failures, not erased or waived.
 
 The prior `be40` branch PR Verify `41164225978`, Windows job `124428183760`,
 completed **SUCCESS** for current-package fresh install, replacement, repair,
@@ -654,14 +694,15 @@ Source was merge `e29417790642139b0d9cde31918bce5be8004efe` (parents main
 SHA256 was `317c63b9d525751dde2b0e39d5887f9c16d863f66658a47cef7825d935221eb5`.
 This successful current-package gate does not establish full legacy recovery.
 
-Native pinned-catalog/session and WinForms GUI code compiles. NSIS/payload
-wiring now offers explicit default-No interactive recovery, preserves the
-original failed Setup result and never opens recovery in silent mode. Both
-production hooks compile against the actual x64 helper. The actual GUI against
-an installed historical fixture remains unverified. Latest completed Verify
-`41169709122` failed installer assembly before that fixture could run; see the
-current summary above. No signed-build, physical-device,
-previous-Stable or default-profile migration claim is made. See the
+At that observation, native pinned-catalog/session and WinForms GUI code
+compiled. NSIS/payload wiring offered explicit default-No interactive recovery,
+preserved the original failed Setup result and never opened recovery in silent
+mode. Both production hooks compiled against the actual x64 helper. The actual
+GUI against an installed historical fixture had not yet been verified. The
+then-latest completed [Verify41169709122](https://github.com/Powerpunch777/SPS-Source/actions/runs/41169709122)
+failed installer assembly before that fixture could run. This is a historical
+failure, not the latest run or current GUI-verification status. No signed-build,
+physical-device, previous-Stable or default-profile migration claim is made. See the
 [recovery policy](LEGACY-INSTALLER-RECOVERY-POLICY-2026-10-31.md) for the
 acceptance scope and security limits; full product recovery is not claimed.
 
@@ -671,8 +712,10 @@ Actual form layout, checkbox interlocks and Cancel were checked in a temporary
 component fixture without registry/process/cleanup access; its inspected PNG
 and sentinel fixture were then safely removed. A preceding in-development
 form-fixture layout failure is retained in the recovery policy, not reclassified
-as a pass. The same-attempt hosted recovery now requires real GUI Cancel and
-default-No/decline preservation, ordinary uninstall0, explicit residue cleanup,
+as a pass. At that snapshot, the same-attempt hosted recovery required real GUI
+Cancel and default-No/decline preservation, ordinary uninstall0, explicit residue cleanup,
 complete program absence and the existing same-candidate reinstall/first-frame
 checks, without changing any native observation deadline. No hosted execution
-of this new recovery path is claimed before its exact-HEAD result completes.
+of that recovery path had been claimed at that observation; the later exact
+acceptance records linked above supersede that evidence gap, not the historical
+failed attempts or the remaining Core goals.

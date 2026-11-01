@@ -95,3 +95,76 @@ Window semantics follow the official
 ordinary close may be vetoed by a renderer, whereas destroy closes the captured
 window without emitting beforeunload. This does not change normal user close
 handling or independently prove every account-window lifecycle scenario.
+
+## 2026-11-01 Concurrent Opens And Retained Window Scope
+
+Source `fc56bca60559df950a81124470e04e3d88018296`, Verify `41281563181`,
+Windows job `124774354651`, is terminal failure. Actual Main export/fresh-Host
+restore retained the typed row and attachment. After restart an explicit
+`openWorkspace()` reached the unchanged 360-second bound. Fixed phases show
+operation 2 starting navigation while operations 1 and 3 reuse that in-flight
+window; they do not establish why the native navigation never completed.
+Cleanup reported natural Job emptiness. The dependent legacy job failed before
+execution because this failed Windows attempt produced no installer inputs.
+It is neither a new legacy acceptance nor a reversal of the previous exact
+Source `38fb384` installed/recovery success.
+
+The initial local rerun passed the original transfer/review/restart/account-
+fence/retry assertions. That does not explain or erase the CI failure. A new
+read-only observation wraps failed explicit opens, not just the later window
+lookup, so another failure reports bounded native/tracked window state. It
+retains the original open request, error and deadline without replaying it.
+Locations, account details and raw error payloads are excluded.
+
+Independent deterministic tests reproduced three incorrect behaviors: a second
+open could return success before the first navigation completed, miss its
+failure, and create duplicate Core sessions. One valid account/Host scope now
+shares its pending open promise through the actual navigation outcome. Every
+caller still passes the original sign-in/ownership checks. An obsolete scope
+cannot join or clear a newer pending operation, and failure still requires an
+explicit retry rather than automatic navigation replay.
+
+A same-origin account-change regression then exposed retained-window reuse
+across scopes. Main now records the scope of each Workspace window. Only a
+still-current window is reusable; an obsolete captured window is destroyed
+before the newer scope opens, including when its renderer vetoes ordinary
+close. This is not a change to normal user close behavior or a relaxation of
+the existing Desktop/Core session proof.
+
+The first three regressions failed before coalescing. The new cross-account
+regression failed before window-scope tracking. After correction the focused
+eight-file selection passed 77/77 with no skips. These are unit/VM tests,
+including real extracted Main functions, not physical or installed evidence.
+Actual final-source Electron and exact-tuple hosted verification remain
+required; this correction is not a proven root-cause fix for the CI timeout.
+
+The final local source Electron transfer exited0 after the window-scope
+correction. It retained both Workspace states and the Vault attachment,
+required independent approval for restored Registry/current-app bundle code,
+survived two target restarts, and exercised real sign-out/sign-in with an unload
+veto and an explicit failed-navigation retry. All four owned Main processes and
+their output closed, and the exact temporary fixture was removed after the
+existing cleanup checks. Identity was a local fixture; this is not signed,
+installed, physical two-device or external whole-Job acceptance.
+
+An intermediate actual run remained a failure: its deliberately destroyed
+local test socket produced native `ERR_CONNECTION_ABORTED` (-103), outside
+the test's previously observed code variants. The retry helper now recognizes
+that specific observed native connection error and additionally requires the
+owned failing server to have accepted a connection. It still requires the
+exact main-frame URL failure, IPC rejection, preserved failed window, and
+subsequent explicit successful authenticated retry; generic abort/timeouts,
+DNS and unrelated errors remain rejected. The
+[Chromium error contract](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/net/base/net_error_list.h)
+identifies -103 as a connection failure, distinct from generic user abort -3.
+The corrected final run passed all those assertions. No failed attempt is
+reclassified as a pass and the original 360-second open bound is unchanged.
+
+Final `node scripts/run-desktop-ci-tests.mjs` exited0: isolated serial native
+probe2/2, remaining274files1919total/1916pass/3unavailable8.3-alias skips/0fail;
+aggregate1921total/1918pass/3skips. The focused eight-file command was
+`node --test test/workspace-open-phase-tracing.test.mjs test/owner-vault-window-observation.test.mjs test/historical-profile-progress.test.mjs test/workspace-open-account-fence-acceptance.test.mjs test/workspace-navigation-retry-acceptance.test.mjs test/workspace-auth-ipc-lifecycle.test.mjs test/workspace-read-scope.test.mjs test/desktop-account-controller.test.mjs`.
+The actual UI command was `SPS_DESKTOP_E2E_SOURCE=1 SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS=360000 node scripts/smoke-owner-vault-transfer-desktop.mjs`
+(environment syntax is platform-specific). All tests used isolated fixtures,
+not an existing user installation. Exact new Source/Core hosted acceptance is
+still required.

@@ -23,6 +23,8 @@ const phases = [
   "identity-session-complete",
   "node-registration-start",
   "node-registration-complete",
+  "existing-open-awaited",
+  "stale-window-discarded",
   "existing-window-reused",
   "workspace-load-start",
   "workspace-load-complete",
@@ -80,6 +82,7 @@ function fixture({ e2e = true, existingWindow = null, sequence = 0, overrides = 
     ensureJoinedDesktopNode: async () => calls.push("node-registration"),
     workspaceWindow: existingWindow,
     failedWorkspaceNavigations: new WeakMap(),
+    workspaceWindowScopes: new WeakMap(existingWindow ? [[existingWindow, { isCurrent: () => true }]] : []),
     workspaceOrigin: existingWindow ? workspaceUrl : null,
     closeWorkspaceWindow: () => calls.push("close-workspace-window"),
     BrowserWindow: class FakeBrowserWindow {
@@ -136,6 +139,7 @@ function fixture({ e2e = true, existingWindow = null, sequence = 0, overrides = 
     configureWorkspaceNavigation: (window, origin) => calls.push(["configure-navigation", window, origin]),
     mainWindow: null,
     workspaceOpenTraceSequence: sequence,
+    pendingWorkspaceOpen: null,
     ...overrides,
   };
   runInNewContext(`${workspaceReadScopeSource}\n${openWorkspaceSource}\nthis.captureWorkspaceReadScope = captureWorkspaceReadScope; this.openWorkspace = openWorkspace;`, scope);
@@ -446,6 +450,109 @@ test("existing workspace window is reused without another load", async () => {
     "node-registration-complete",
     "existing-window-reused",
   ]);
+});
+
+test("overlapping opens wait for one real navigation instead of reporting an unfinished window as open", async () => {
+  const loading = deferred();
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => loading.promise);
+  let firstSettled = false;
+  let secondSettled = false;
+  const first = harness.scope.openWorkspace().finally(() => { firstSettled = true; });
+  await waitFor(() => harness.createdWindows.length === 1);
+  const second = harness.scope.openWorkspace().finally(() => { secondSettled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(firstSettled, false);
+  assert.equal(secondSettled, false, "A pending load must not be reported as a successful open");
+  assert.equal(harness.createdWindows.length, 1);
+  assert.equal(harness.calls.filter(call => Array.isArray(call) && call[0] === "identity-session").length, 1);
+  assert.equal(harness.calls.filter(call => call === "node-registration").length, 1);
+  loading.resolve();
+  await Promise.all([first, second]);
+  assert.equal(harness.scope.pendingWorkspaceOpen, null);
+  assert.ok(parseTraceLines(harness.output).some(row => row.operation === 2 && row.phase === "existing-open-awaited"));
+});
+
+test("overlapping opens share an original navigation failure and retain explicit retry", async () => {
+  const loading = deferred();
+  const failure = new Error("Original shared navigation failure");
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => loading.promise);
+  const first = harness.scope.openWorkspace();
+  const firstRejected = assert.rejects(first, error => error === failure);
+  await waitFor(() => harness.createdWindows.length === 1);
+  const second = harness.scope.openWorkspace();
+  const secondRejected = assert.rejects(second, error => error === failure);
+  await new Promise(resolve => setImmediate(resolve));
+  loading.reject(failure);
+  await Promise.all([firstRejected, secondRejected]);
+  assert.equal(harness.scope.pendingWorkspaceOpen, null);
+  assert.equal(harness.createdWindows.length, 1);
+  await harness.scope.openWorkspace();
+  assert.equal(harness.createdWindows.length, 2);
+  assert.equal(harness.createdWindows[0].destroyed, true);
+});
+
+test("overlapping authentication-phase opens do not establish duplicate sessions", async () => {
+  const identity = deferred();
+  let sessionCalls = 0;
+  const harness = fixture({ overrides: { establishSpsIdentityCoreSession: () => { sessionCalls++; return identity.promise; } } });
+  const first = harness.scope.openWorkspace();
+  await waitFor(() => sessionCalls === 1);
+  const second = harness.scope.openWorkspace();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(sessionCalls, 1);
+  assert.equal(harness.createdWindows.length, 0);
+  identity.resolve(true);
+  await Promise.all([first, second]);
+  assert.equal(harness.createdWindows.length, 1);
+});
+
+test("a stale open cannot share or clear a newer account's in-flight navigation", async () => {
+  const oldLoad = deferred();
+  const newLoad = deferred();
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => oldLoad.promise, () => newLoad.promise);
+  const oldOpening = harness.scope.openWorkspace();
+  const oldRejected = assert.rejects(oldOpening, /account changed during a Workspace read/);
+  await waitFor(() => harness.createdWindows.length === 1);
+  harness.runtime.sessionEpoch++;
+  harness.account.subject = "new-account-subject";
+  const newOpening = harness.scope.openWorkspace();
+  await waitFor(() => harness.createdWindows.length === 2);
+  const newPending = harness.scope.pendingWorkspaceOpen;
+  oldLoad.resolve();
+  await oldRejected;
+  assert.equal(harness.scope.pendingWorkspaceOpen, newPending);
+  const joined = harness.scope.openWorkspace();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.createdWindows.length, 2);
+  assert.equal(harness.calls.filter(call => Array.isArray(call) && call[0] === "identity-session").length, 2);
+  newLoad.resolve();
+  await Promise.all([newOpening, joined]);
+  assert.equal(harness.scope.pendingWorkspaceOpen, null);
+  assert.equal(harness.createdWindows[0].destroyed, true);
+  assert.equal(harness.createdWindows[1].destroyed, false);
+});
+
+test("an unauthorized caller cannot join a valid open and account expiry still rejects both pending callers", async () => {
+  const loading = deferred();
+  const harness = fixture();
+  harness.runtime.loadHandlers.push(() => loading.promise);
+  const first = harness.scope.openWorkspace();
+  const firstRejected = assert.rejects(first, /account changed during a Workspace read/);
+  await waitFor(() => harness.createdWindows.length === 1);
+  const second = harness.scope.openWorkspace();
+  const secondRejected = assert.rejects(second, /account changed during a Workspace read/);
+  const pending = harness.scope.pendingWorkspaceOpen;
+  harness.scope.currentDesktopAccount = () => null;
+  await assert.rejects(harness.scope.openWorkspace(), /Sign in to SPS/);
+  assert.equal(harness.scope.pendingWorkspaceOpen, pending);
+  harness.runtime.sessionEpoch++;
+  loading.resolve();
+  await Promise.all([firstRejected, secondRejected]);
+  assert.equal(harness.createdWindows[0].destroyed, true);
+  assert.equal(harness.createdWindows.length, 1);
 });
 
 test("E2E operation ids wrap from 65535 to 1", async () => {
