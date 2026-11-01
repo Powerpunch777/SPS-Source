@@ -18,6 +18,10 @@ adds strict Desktop developer references, the optional private Core path capture
 and a held Host/Preview composition helper with actual two-local-Core coverage.
 It is not yet mounted in Main/Settings and does not establish complete Desktop
 discovery, eligibility, Host confirmation or removal.
+The [private Registry-input follow-up](../reviews/PLUGIN-ARTIFACT-REGISTRY-INPUTS-2026-11-01.md)
+adds the retained source index and configured local Registry folders, including
+an actual two-owned-Core scope test. It still does not supply complete Main
+discovery or the Settings confirmation/removal flow.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is

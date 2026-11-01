@@ -8,6 +8,9 @@
 2026-11-01 사용자 추가 지시: Core 안정화와 별도로
 [`Powerpunch777/SPS-MY-PluginBuilder`](https://github.com/Powerpunch777/SPS-MY-PluginBuilder)의
 v15 설계에 따른 Builder 개발을 별도 레포에서 병행한다.
+같은 날 장기목표도 Core 필수 완성 범위를 유지하면서 해당 Builder의 구현과
+실제 앱 검증을 병행하는 것으로 다시 설정했다. Core 완료와 Builder 완료는
+각각의 증거로 판정하며, 어느 쪽의 통과도 다른 쪽의 미완성을 대체하지 않는다.
 별도 저장소·작업 폴더와 고정된 공개 SDK를 사용하며, Builder의 신규 기능을
 Core 완성의 선행조건에 추가하거나 미해결 Core 실패를 완료로 바꾸지 않는다.
 공개 Builder 저장소에 비공개 Core 소스·사용자 데이터·자격증명을 복사하지 않는다.

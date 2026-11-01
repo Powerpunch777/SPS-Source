@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, promises as fs } from "node:fs";
+import { constants as fsConstants, createReadStream, promises as fs } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 import {
   inspectLocalRegistry,
 } from "@sonparkserver/plugin-sdk/registry/local-registry-v1.mjs";
@@ -17,6 +18,7 @@ import {
 
 const REGISTRY_SOURCES_SCHEMA_VERSION = 1;
 const MAX_METADATA_BYTES = 1024 * 1024;
+const MAX_REGISTRY_SOURCE_REFERENCES = 4096;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 
 // This key is intentionally compiled into SPS Desktop. Remote Registry data
@@ -112,6 +114,230 @@ function mergeBundledRegistrySources(sources) {
 
 export function ownerVaultRegistrySourcesPath(vaultRoot) {
   return path.join(sourceDirectory(vaultRoot), "sources.json");
+}
+
+function sameFileIdentity(left, right) {
+  if (!left.isFile() || !right.isFile() || left.isSymbolicLink() || right.isSymbolicLink()
+    || left.nlink !== 1n || right.nlink !== 1n || left.dev !== right.dev || left.ino !== right.ino
+    || left.birthtimeNs !== right.birthtimeNs) {
+    throw new Error("Registry source configuration is unavailable.");
+  }
+}
+
+function identitySnapshot(stats) {
+  return {
+    dev: stats.dev,
+    ino: stats.ino,
+    birthtimeNs: stats.birthtimeNs,
+    size: stats.size,
+    mtimeNs: stats.mtimeNs,
+    ctimeNs: stats.ctimeNs,
+  };
+}
+
+function identitiesMatch(left, right) {
+  return ["dev", "ino", "birthtimeNs", "size", "mtimeNs", "ctimeNs"]
+    .every((key) => left[key] === right[key]);
+}
+
+function sameLocalDirectoryIdentity(left, right) {
+  return ["dev", "ino", "birthtimeNs", "mtimeNs", "ctimeNs"]
+    .every((key) => left[key] === right[key]);
+}
+
+function normalizedPathKey(value) {
+  const normalized = path.normalize(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function assertRegistryText(value) {
+  if (typeof value === "string") {
+    if (value.includes("\0") || value.includes("\uFFFD")) {
+      throw new Error("Registry source configuration contains invalid text.");
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) assertRegistryText(entry);
+    return;
+  }
+  if (isPlainObject(value)) {
+    for (const [key, entry] of Object.entries(value)) {
+      assertRegistryText(key);
+      assertRegistryText(entry);
+    }
+  }
+}
+
+async function assertRegistryPathParents(filePath, fsApi) {
+  const resolved = path.dirname(path.resolve(filePath));
+  const parsed = path.parse(resolved);
+  let current = parsed.root;
+  const rootStats = await fsApi.lstat(current);
+  if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
+    throw new Error("Registry source configuration parent is unavailable.");
+  }
+  for (const component of resolved.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    let stats;
+    try {
+      stats = await fsApi.lstat(current);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error("Registry source configuration parent is unavailable.");
+    }
+  }
+}
+
+async function readRegistrySourceSnapshot(filePath, fsApi) {
+  await assertRegistryPathParents(filePath, fsApi);
+  let before;
+  try {
+    before = await fsApi.lstat(filePath, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return { exists: false, sources: [], bytes: null, identity: null };
+    throw error;
+  }
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size > BigInt(MAX_METADATA_BYTES)) {
+    throw new Error("Registry source configuration is unavailable.");
+  }
+
+  const handle = await fsApi.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  let bytes;
+  let identity;
+  try {
+    const opened = await handle.stat({ bigint: true });
+    sameFileIdentity(before, opened);
+    if (opened.size > BigInt(MAX_METADATA_BYTES)) throw new Error("Registry source configuration exceeds the size limit.");
+    const buffer = Buffer.alloc(MAX_METADATA_BYTES + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      offset += bytesRead;
+      if (bytesRead === 0) break;
+    }
+    if (offset > MAX_METADATA_BYTES) throw new Error("Registry source configuration exceeds the size limit.");
+    bytes = buffer.subarray(0, offset);
+    const afterRead = await handle.stat({ bigint: true });
+    sameFileIdentity(opened, afterRead);
+    if (opened.size !== BigInt(offset) || opened.size !== afterRead.size
+      || opened.mtimeNs !== afterRead.mtimeNs || opened.ctimeNs !== afterRead.ctimeNs) {
+      throw new Error("Registry source configuration changed while being read.");
+    }
+    identity = identitySnapshot(afterRead);
+  } finally {
+    await handle.close();
+  }
+
+  const after = await fsApi.lstat(filePath, { bigint: true });
+  sameFileIdentity(before, after);
+  await assertRegistryPathParents(filePath, fsApi);
+  if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+    throw new Error("Registry source configuration changed while being read.");
+  }
+
+  let raw;
+  try {
+    raw = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new Error("Registry source configuration is not valid UTF-8.");
+  }
+  if (raw.includes("\0") || raw.includes("\uFFFD")) {
+    throw new Error("Registry source configuration contains invalid text.");
+  }
+  if (raw.startsWith("\uFEFF")) raw = raw.slice(1);
+  if (raw.startsWith("\uFEFF")) throw new Error("Registry source configuration has multiple byte-order marks.");
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Registry source configuration is not valid JSON.");
+  }
+  assertSourceList(parsed);
+  assertRegistryText(parsed);
+  if (Object.keys(parsed).some((key) => !["schemaVersion", "sources"].includes(key))) {
+    throw new Error("Registry source configuration has unknown fields.");
+  }
+  const sources = parsed.sources.map((source) => {
+    if (Object.keys(source).some((key) => !["id", "kind", "displayName", "localPath"].includes(key))) {
+      throw new Error("Registry source configuration has unknown fields.");
+    }
+    return source;
+  });
+  if (sources.length + 1 > MAX_REGISTRY_SOURCE_REFERENCES) {
+    throw new Error("Registry source reference limit exceeded.");
+  }
+  const canonical = `${JSON.stringify({ schemaVersion: REGISTRY_SOURCES_SCHEMA_VERSION, sources }, null, 2)}\n`;
+  const comparable = raw.replace(/\r\n/g, "\n");
+  if (comparable !== canonical && comparable !== canonical.slice(0, -1)) {
+    throw new Error("Registry source configuration is not in canonical format.");
+  }
+
+  return { exists: true, sources, bytes, identity };
+}
+
+async function inspectLocalSourceDirectory(localPath, fsApi) {
+  const directoryPath = path.resolve(localPath);
+  await assertRegistryPathParents(path.join(directoryPath, "__registry-source-reference"), fsApi);
+  const stats = await fsApi.lstat(directoryPath, { bigint: true });
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error("Configured local Registry path must be an existing unlinked directory.");
+  }
+  const canonicalPath = await fsApi.realpath(directoryPath);
+  if (normalizedPathKey(canonicalPath) !== normalizedPathKey(directoryPath)) {
+    throw new Error("Configured local Registry path is not canonical.");
+  }
+  return {
+    path: directoryPath,
+    identity: { dev: stats.dev, ino: stats.ino, birthtimeNs: stats.birthtimeNs, mtimeNs: stats.mtimeNs, ctimeNs: stats.ctimeNs },
+  };
+}
+
+/** Captures private, read-only artifact references for configured local Registries. */
+export async function readRegistrySourceArtifactReferences({ vaultRoot, fsApi = fs } = {}) {
+  if (!vaultRoot) throw new Error("Owner Vault root is required.");
+  const filePath = ownerVaultRegistrySourcesPath(vaultRoot);
+  const initial = await readRegistrySourceSnapshot(filePath, fsApi);
+  const localDirectories = [];
+  for (const source of initial.sources) {
+    if (source.kind !== "local") throw new Error("Only local Registry sources may be referenced.");
+    localDirectories.push({ source, ...await inspectLocalSourceDirectory(source.localPath, fsApi) });
+  }
+  const references = [Object.freeze({
+    source: "desktop-registry-source-index",
+    ownerId: "sources",
+    state: "retained",
+    path: filePath,
+    kind: "file",
+  }), ...localDirectories.map(({ source, path: directoryPath }) => Object.freeze({
+    source: "desktop-registry-source",
+    ownerId: source.id,
+    state: "retained",
+    path: directoryPath,
+    kind: "directory",
+  }))];
+  return Object.freeze({
+    references: Object.freeze(references),
+    async assertCurrent() {
+      const current = await readRegistrySourceSnapshot(filePath, fsApi);
+      if (current.exists !== initial.exists
+        || (current.exists && (!identitiesMatch(current.identity, initial.identity) || !current.bytes.equals(initial.bytes)))) {
+        throw new Error("Registry source configuration changed after artifact references were captured.");
+      }
+      for (const captured of localDirectories) {
+        const present = await inspectLocalSourceDirectory(captured.source.localPath, fsApi);
+        if (normalizedPathKey(present.path) !== normalizedPathKey(captured.path)
+          || !sameLocalDirectoryIdentity(captured.identity, present.identity)) {
+          throw new Error("Configured local Registry directory changed after artifact references were captured.");
+        }
+      }
+      return true;
+    },
+  });
 }
 
 export async function loadRegistrySources({ vaultRoot, fsApi = fs } = {}) {

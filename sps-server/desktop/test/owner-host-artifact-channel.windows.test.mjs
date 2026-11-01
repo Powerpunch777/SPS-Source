@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:net";
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,6 +12,7 @@ import { createSpsOwnerHostManager, resolveSpsOwnerHostRuntime } from "../src/ow
 import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
 import { createSpsPluginArtifactObservation } from "../src/plugin-artifact-observation.mjs";
 import { readDeveloperProjectArtifactReferences } from "../src/developer-project-store.mjs";
+import { readRegistrySourceArtifactReferences, saveRegistrySources } from "../src/registry-source-catalog.mjs";
 
 async function freePort() {
   const server = createServer();
@@ -27,8 +28,16 @@ test("actual Windows owned Core retains its private reference scope across Main-
 }, async t => {
   if (!process.argv.includes("--sps-artifact-observation-child")) {
     const wrapper = fileURLToPath(new URL("../scripts/run-windows-ci-e2e.ps1", import.meta.url));
-    const { stdout } = await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-      "-File", wrapper, "-Mode", "probe-artifact-observation"], { windowsHide: true, timeout: 110_000, maxBuffer: 256 * 1024 });
+    let stdout;
+    try {
+      ({ stdout } = await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        "-File", wrapper, "-Mode", "probe-artifact-observation"], { windowsHide: true, timeout: 110_000, maxBuffer: 256 * 1024 }));
+    } catch (error) {
+      // execFile's default error omits stdout, which contains the nested TAP
+      // assertion. Keep bounded fixture diagnostics without changing failure.
+      t.diagnostic(String(error.stdout ?? "").slice(-24 * 1024));
+      throw error;
+    }
     const records = stdout.split(/\r?\n/).filter(line => line.startsWith("{")).map(line => JSON.parse(line));
     assert.equal(records.some(item => item.restrictedE2eChild === true && item.privilegesReduced === true
       && item.administratorEnabled === false && item.administratorDenied === true), true);
@@ -90,8 +99,20 @@ test("actual Windows owned Core retains its private reference scope across Main-
       } }),
   });
   assert.equal((await previewManager.start()).state, "running");
+  const registryPath = path.join(root, "local-registry");
+  await mkdir(registryPath);
+  await saveRegistrySources({ vaultRoot: root, sources: [{
+    id: "io.sps.artifact-test", kind: "local", displayName: "Artifact test", localPath: registryPath,
+  }] });
   const observation = createSpsPluginArtifactObservation({ activity, capture: () => ({
-    assertCurrent() {}, readInputs: () => readDeveloperProjectArtifactReferences({ vaultRoot: root }),
+    assertCurrent() {}, async readInputs() {
+      const developer = await readDeveloperProjectArtifactReferences({ vaultRoot: root });
+      const registry = await readRegistrySourceArtifactReferences({ vaultRoot: root });
+      return { references: [...developer.references, ...registry.references], async assertCurrent() {
+        await developer.assertCurrent();
+        await registry.assertCurrent();
+      } };
+    },
     participants: [{ id: "host", manager }, { id: "preview", manager: previewManager }],
   }) });
   let oldScope;
@@ -101,6 +122,10 @@ test("actual Windows owned Core retains its private reference scope across Main-
     assert.match(scope.fingerprint, /^[a-f0-9]{64}$/);
     assert.ok(scope.references.some(reference => reference.source === "desktop-developer-index"
       && reference.processOwner === "desktop"));
+    assert.ok(scope.references.some(reference => reference.source === "desktop-registry-source-index"
+      && reference.processOwner === "desktop"));
+    assert.ok(scope.references.some(reference => reference.source === "desktop-registry-source"
+      && reference.path === registryPath && reference.processOwner === "desktop"));
     await assert.rejects(manager.withPluginArtifactReferences(async () => assert.fail("Host scope must remain held.")));
     await assert.rejects(previewManager.withPluginArtifactReferences(async () => assert.fail("Preview scope must remain held.")));
     await scope.assertCurrent();
