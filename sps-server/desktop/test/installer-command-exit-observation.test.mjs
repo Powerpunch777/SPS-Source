@@ -22,6 +22,9 @@ test("installer command-exit probe is a fixed, passive fixture with fail-closed 
   assert.match(source, /\["-NoProfile", "-NonInteractive", "-Command", command\]/);
   assert.match(source, /Get-Command Get-CimInstance \| Out-Null/);
   assert.match(source, /Start-Sleep -Milliseconds 1200; exit 7/);
+  assert.match(source, /powershell-command-entered/);
+  assert.match(source, /powershell-command-available/);
+  assert.match(source, /phases !== 2 \|\| stderrBytes !== 0/);
   assert.match(source, /assert\.equal\(result\.code, 7/);
   assert.match(source, /JSON\.stringify\(\{ ownedInstallerCommandExitFixture: true \}\)/);
   assert.match(source, /OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
@@ -53,6 +56,9 @@ test("owned Windows wrapper observes the naturally exited PowerShell command and
     throw error;
   });
   const output = records(result.stdout);
+  assert.deepEqual(output.filter(record => record.ownedInstallerCommandExitProbePhase).map(record => record.ownedInstallerCommandExitProbePhase), [
+    "node-ready", "powershell-created", "powershell-command-entered", "powershell-command-available",
+  ]);
   assert.deepEqual(output.filter(record => record.ownedInstallerCommandExitFixture === true), [
     { ownedInstallerCommandExitFixture: true },
   ]);

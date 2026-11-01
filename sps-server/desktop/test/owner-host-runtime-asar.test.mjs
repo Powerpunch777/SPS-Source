@@ -12,9 +12,9 @@ import { assertPlainDirectory } from "../scripts/installer-ci-safety.mjs";
 const desktop = path.resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
 const prefix = "sps-runtime-asar-test-";
-const sourceNames = ["owner-host-runtime-extract.mjs", "owner-host-runtime-extract-worker.mjs", "owner-host-runtime-archive-path.mjs"];
+const sourceNames = ["owner-host-runtime-extract.mjs", "owner-host-runtime-extract-worker.mjs", "owner-host-runtime-archive-path.mjs", "owner-host-runtime-native-extract.mjs"];
 const fixtureFiles = ["a.txt", "node_modules/pkg/data.txt", "node_modules/@scope/lib/data.txt"];
-const expected = { asarRuntimeWorkerSmoke: true, fromAsar: true, actualElectron: true, passed: true };
+const expected = { asarRuntimeWorkerSmoke: true, nativeArchiveSmoke: true, fromAsar: true, actualElectron: true, passed: true };
 
 async function copyTarDependencies(appRoot) {
   const copied = new Map();
@@ -45,7 +45,7 @@ async function copyTarDependencies(appRoot) {
   assert.deepEqual([...copied.keys()].sort(), ["@isaacs/fs-minipass", "chownr", "minipass", "minizlib", "tar", "yallist"].sort());
 }
 
-test("actual Electron ASAR loads the unchanged runtime extractor and its default four Workers", {
+test("actual Electron ASAR loads the runtime fallback Workers and native extractor with real nested Job closure", {
   skip: process.platform !== "win32", timeout: 60_000,
 }, async t => {
   const parent = await realpath(os.tmpdir());
@@ -85,6 +85,14 @@ test("actual Electron ASAR loads the unchanged runtime extractor and its default
       assert.deepEqual(await bounded(readFile(original)), bytes);
     }
     await bounded(copyTarDependencies(appRoot));
+    const nodePackage = path.join(desktop, "node_modules", "@sps", "desktop-node");
+    const copiedNode = path.join(appRoot, "node_modules", "@sps", "desktop-node");
+    await bounded(mkdir(copiedNode, { recursive: true }));
+    await bounded(cp(path.join(nodePackage, "src"), path.join(copiedNode, "src"), { recursive: true, errorOnExist: true, force: false }));
+    await bounded(cp(path.join(nodePackage, "package.json"), path.join(copiedNode, "package.json"), { errorOnExist: true, force: false }));
+    const helperSource = path.join(nodePackage, "native", "windows-job-supervisor", "bin", "SpsWindowsJobSupervisor.exe");
+    const helperBytes = await bounded(readFile(helperSource));
+    await bounded(writeFile(path.join(root, "SpsWindowsJobSupervisor.exe"), helperBytes, { flag: "wx" }));
     await bounded(writeFile(path.join(appRoot, "package.json"), JSON.stringify({
       name: "sps-owned-runtime-asar-test", type: "module", main: "main.mjs",
     }), { flag: "wx" }));
@@ -94,6 +102,8 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { extractSpsOwnerRuntimeArchive } from './src/owner-host-runtime-extract.mjs';
+import { createSpsWindowsRuntimeArchiveExtractor } from './src/owner-host-runtime-native-extract.mjs';
+import { spawnWindowsJobSupervisor } from '@sps/desktop-node';
 import { RUNTIME_EXTRACTION_PARTITIONS } from './src/owner-host-runtime-archive-path.mjs';
 const root = process.argv.find(value => value.startsWith('--owned-fixture-root=')).slice('--owned-fixture-root='.length);
 app.setPath('userData', path.join(root, 'profile'));
@@ -106,6 +116,13 @@ async function run() {
     await extractSpsOwnerRuntimeArchive({ file: path.join(root, 'fixture.tgz'), cwd: path.join(root, 'output'), strict: true, preservePaths: false });
     for (const file of ${JSON.stringify(fixtureFiles)})
       assert.deepEqual(await readFile(path.join(root, 'output', file)), Buffer.from('known ' + file));
+    const native = await createSpsWindowsRuntimeArchiveExtractor({
+      spawn: invocation => spawnWindowsJobSupervisor(invocation, { helperPath: path.join(root, 'SpsWindowsJobSupervisor.exe') })
+    });
+    assert.equal(typeof native, 'function');
+    await native({ file: path.join(root, 'fixture.tgz'), cwd: path.join(root, 'native-output'), strict: true, preservePaths: false });
+    for (const file of ${JSON.stringify(fixtureFiles)})
+      assert.deepEqual(await readFile(path.join(root, 'native-output', file)), Buffer.from('known ' + file));
     console.log(JSON.stringify(${JSON.stringify(expected)}));
     app.quit();
   } catch {
@@ -119,7 +136,7 @@ void run();
     const archive = path.join(root, "fixture.asar");
     await bounded(createPackage(appRoot, archive));
     for (const [name, bytes] of sourceBytes) assert.deepEqual(extractFile(archive, `src/${name}`), bytes);
-    for (const name of ["input", "output", "profile"]) await bounded(mkdir(path.join(root, name)));
+    for (const name of ["input", "output", "native-output", "profile"]) await bounded(mkdir(path.join(root, name)));
     for (const file of fixtureFiles) {
       const target = path.join(root, "input", file);
       await bounded(mkdir(path.dirname(target), { recursive: true }));

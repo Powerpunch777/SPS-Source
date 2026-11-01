@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { c as createTar, t as listTar } from "tar";
 import { normalizeArchiveEntry } from "./owner-host-runtime-archive-path.mjs";
-import { extractSpsOwnerRuntimeArchive } from "./owner-host-runtime-extract.mjs";
+import { extractSpsPackagedOwnerRuntimeArchive } from "./owner-host-runtime-native-extract.mjs";
 
 export const SPS_OWNER_HOST_RUNTIME_ARCHIVE = "sps-owner-host-runtime.tgz";
 export const SPS_OWNER_HOST_RUNTIME_PACKAGE_MANIFEST = "sps-owner-host-runtime-package.json";
@@ -290,7 +290,7 @@ export async function materializeSpsOwnerHostRuntimePackage({
   targetRuntimeRoot,
   fsApi = fs,
   tarList = listTar,
-  tarExtract = extractSpsOwnerRuntimeArchive,
+  tarExtract = extractSpsPackagedOwnerRuntimeArchive,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   onProgress = () => {},
 } = {}) {

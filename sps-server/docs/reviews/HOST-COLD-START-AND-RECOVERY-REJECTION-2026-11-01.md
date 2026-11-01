@@ -7,6 +7,71 @@ not Core completion, successful legacy cleanup or Stable qualification.
 
 ## Latest Hosted Results And Follow-Up
 
+### Native Extractor Follow-Up (Not Yet Hosted Qualification)
+
+Source6fb/Core4917948 push41275795353 passed all Linux regression partitions
+and full Linux typecheck/build. Its Windows124757599521 stopped in the serial
+command-observer fixture, before the remaining Desktop suite or packaging:
+the observed x64 availability PowerShell remained pending at the original45s
+native deadline. Node-ready and process-created were observed; exit7 was not.
+Forced cleanup was rejected. The follow-up retains all deadlines and adds only
+two fixed, parsed output phase labels around the unchanged Get-Command call;
+neither raw commands nor unknown shell output are forwarded. This is not yet
+a diagnosed PowerShell startup/module failure or a waived test.
+
+The exact current source Main in-place fixture passed locally in35106ms:
+DB157-to176, Desktopv11-to13, DPAPI/key and data preservation, visible
+authenticated Workspace, restart and owned fixture cleanup. It is source-mode,
+mock-Identity evidence, not installed or whole-descendant-Job qualification.
+The b292 hosted run independently reached both migration and restart visible
+Workspaces but expired at the unchanged300000ms parent limit near the final
+project/cleanup checks. Its extraction interval was240588ms. These observations
+contradict treating every missing early Workspace observation as an automatic
+navigation defect; they do not excuse the failed installed gate.
+
+The packaged runtime materializer now prefers the exact Windows System32
+`tar.exe`, through SPS's existing native Job supervisor. It never searches PATH,
+runs a shell, chooses a user command, expands privileges, changes a timer in
+the acceptance gate, or changes archive SHA/manifest/preflight/post-checks.
+An independent code-free scan rejects unsafe/duplicate/case/Windows aliases,
+links/special files and expansion-limit violations before launch. Staging must
+be empty and plain, and archive/root/system-file identities are rechecked.
+Windows servicing hardlinks for the exact System32 binary are allowed; archive
+inputs still require one link. OS components remain part of the same-user
+trusted platform, not a newly established OS security boundary.
+
+The fixed arguments suppress archived owner/permissions and timestamp
+restoration (`-m`), so tar cannot reset the captured staging creation timestamp.
+The native process must exit0, report the owned Job empty and confirm helper
+close. Nonzero exit, excess output,180second extraction timeout or uncertainty
+is failure; failed termination or a lost launch handle preserves staging and
+the preparation lock. Only a missing system binary before launch selects the
+existing four-Worker Node extractor. An entered native failure never retries
+using a second extractor. Non-Windows retains the existing Node path.
+
+The hardened module materialized the same recorded9e archive in11605ms locally,
+including both preflights and expanded verification (extraction8664ms). All
+28771files/575905190bytes matched the recorded tree digest, input bytes were
+unchanged and exact temporary trees were removed. This does not predict hosted
+timing. Nine focused native checks passed, including actual OS extraction,
+malformed/link/ADS inputs, fixed invocation, failure/timeout and unknown-close
+preservation. Runtime/package/crash/fallback selection passed42/42. Actual
+Electron ASAR loaded both unchanged fallback Workers and the native module,
+used a real nested native Job and exited naturally with exact bytes and EOF:
+1/1passed. This test injects only its copied helper location; final installed
+packaging still must qualify the default bundled helper lookup.
+
+Local full Desktop after native integration passed1912total/1909pass/
+3unchanged unavailable8.3-alias skips/0fail (serial2plus1910remaining).
+The subsequent fixed PowerShell phase-only follow-up passed its real owned
+wrapper2/2 and related focused selection19/19. Production dependency policy
+was refreshed:3advisories,0Critical/High,2reported Low and1reviewed Moderate
+through2026-11-07. This is policy compliance, not zero vulnerabilities.
+
+References: [Microsoft Windows tar](https://learn.microsoft.com/en-us/windows/tar/),
+[bsdtar flags](https://man.freebsd.org/cgi/man.cgi?query=bsdtar&sektion=1),
+[native owned Job lifecycle](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
 Source `b36107b3ed12f8a51b98c04f1dcfcab7430c6846` push41272650851/
 Windows124748415208 failed installed historical-profile acceptance after passing
 packaged Workspace, Preview and Host lifecycle gates. The four-Worker extractor
