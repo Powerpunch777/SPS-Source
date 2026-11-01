@@ -639,14 +639,22 @@ async function requireSpsCoreRequestAccess(hubUrl, profile = state.profile) {
   return access;
 }
 
-function captureWorkspaceReadScope(profile = state.profile) {
+function captureWorkspaceReadScope(profile = state.profile, { ownerWorkspaceWindow = false } = {}) {
+  const ownerHostScope = isOwnerHostProfile(profile);
+  const fingerprintProfile = value => {
+    if (!value) return null;
+    if (!ownerWorkspaceWindow || !ownerHostScope) return JSON.stringify(value);
+    // The Host-wide window is not a company-scoped data read. Startup can
+    // select its company while navigation is pending; all authority stays bound.
+    const { companyId: _selection, ...connection } = value;
+    return JSON.stringify(connection);
+  };
   let profileSnapshot = profile ? structuredClone(profile) : null;
-  let profileFingerprint = profileSnapshot ? JSON.stringify(profileSnapshot) : null;
+  let profileFingerprint = fingerprintProfile(profileSnapshot);
   const teamAccessSnapshot = state.teamAccess ? structuredClone(state.teamAccess) : null;
   const teamAccessFingerprint = JSON.stringify(teamAccessSnapshot);
   const accountSubject = currentDesktopAccountSubject();
   const sessionEpoch = currentDesktopSessionEpoch();
-  const ownerHostScope = isOwnerHostProfile(profileSnapshot);
   const hostInstanceGeneration = ownerHostInstanceGeneration;
   const hostManager = ownerHostScope ? ownerHostManager : null;
   const hostUrl = ownerHostScope ? ownerHostStatus.url : null;
@@ -672,7 +680,7 @@ function captureWorkspaceReadScope(profile = state.profile) {
   };
   const assertCurrent = () => {
     assertOwner();
-    if ((state.profile ? JSON.stringify(state.profile) : null) !== profileFingerprint) {
+    if (fingerprintProfile(state.profile) !== profileFingerprint) {
       throw new Error("SPS Desktop connection changed during a Workspace read.");
     }
   };
@@ -690,7 +698,7 @@ function captureWorkspaceReadScope(profile = state.profile) {
       assertOwner();
       if (!state.profile) throw new Error("SPS Desktop connection is unavailable.");
       profileSnapshot = structuredClone(state.profile);
-      profileFingerprint = JSON.stringify(profileSnapshot);
+      profileFingerprint = fingerprintProfile(profileSnapshot);
     },
   });
 }
@@ -4903,7 +4911,7 @@ async function openWorkspace() {
   }
   const hubOrigin = workspaceHubUrl();
   if (!hubOrigin) throw new Error("Save an SPS team connection first");
-  const scope = captureWorkspaceReadScope();
+  const scope = captureWorkspaceReadScope(state.profile, { ownerWorkspaceWindow: true });
   const traceScopeRejection = () => {
     if (!operation) return;
     try { scope.assertCurrent(); }

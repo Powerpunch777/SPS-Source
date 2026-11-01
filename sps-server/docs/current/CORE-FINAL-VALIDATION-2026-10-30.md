@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `673466ea3dce0512adae59f8f00bc5b4ba8aa9bc`; read-only artifact references and Windows token-gate fixes. Source38fb's installed acceptance below carries previous Core `491794820c23f956912d69eba271c1ef07ba36a1`, not this revision. Earlier b17 evidence also remains separate.
+- Current Core: `7952a33fa721b3bef3c30c0e7958a0f70f92b844`; prepared-candidate and strict Registry artifact references extend the earlier Worker/ownership read models. Source38fb's installed acceptance below carries previous Core `491794820c23f956912d69eba271c1ef07ba36a1`, not this revision. Earlier b17 evidence also remains separate.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -19,6 +19,28 @@ deferred Native development are excluded.
 ## Current Evidence Summary
 
 ### Latest Progress And Still-Incomplete Final Acceptance
+
+Source2c9338d Verify41284190569 has17 successful non-Windows jobs, but its
+Windows124782040958 is a terminal failure: installed historical DB/data migration
+succeeded, then normal Owner company selection invalidated the retained window
+scope before visibility. Natural Job cleanup does not turn this into acceptance.
+The follow-up now excludes only `companyId` from the Host-wide window fingerprint;
+Member windows and all default company-scoped reads remain strict. Account,
+session epoch, Host instance, team context and every other connection field stay
+bound. A new regression failed before that correction. Focused Main/controller
+tests passed38/38, including ready-Host manager/start-time invalidation after
+selection. Full Desktop CI runner passed serial2/2 plus1924total/1921pass/
+3unavailable8.3 skips/0fail (aggregate1926total/1923pass/3skips).
+Actual source historical in-place157-to176/v11-to13 migration, visible Workspace,
+DPAPI account/key preservation and restart exited0 in33071ms with owned cleanup.
+Mock Identity/source execution is not a new installed, signed or two-PC pass.
+
+Core7952 preparation/Registry/lifecycle selection passed151/152 with one actual
+8.3-unavailable skip; all30 workspace typechecks/build passed locally. The
+controller now subscribes its readline iterator before readiness yields; a real
+local child proves the first frame is received before stdin EOF, with native
+cleanup exit76 still requiring external Job qualification. This does not prove
+the prior remote SSH trial fixed. Exact new-HEAD hosted acceptance remains open.
 
 Current follow-up: artifact ownership/inventory and Worker selection90/90,
 Windows LF/CRLF token-gate contracts8/8, all three UI token gates clean, and

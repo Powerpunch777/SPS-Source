@@ -41,6 +41,8 @@ process.stdin.on("data", chunk => {
   }
 });
 input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+// Subscribe before readiness yields so an early control frame stays queued.
+const inputLines = input[Symbol.asyncIterator]();
 const write = value => new Promise((resolve, reject) => process.stdout.write(`${JSON.stringify(value)}\n`,
   error => error ? reject(error) : resolve()));
 const wait = async (check, limit = 30_000) => {
@@ -214,7 +216,7 @@ async function action(request) {
 
 await write({ crossDeviceControlReady: true });
 try {
-  for await (const line of input) {
+  for await (const line of inputLines) {
     let request;
     try {
       assert.equal(failed, false);

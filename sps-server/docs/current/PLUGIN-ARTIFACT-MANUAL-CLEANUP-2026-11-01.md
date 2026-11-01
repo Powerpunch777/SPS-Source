@@ -127,3 +127,33 @@ Core follow-up `673466ea3dce0512adae59f8f00bc5b4ba8aa9bc` contains this read
 model. The final combined ten-file selection passed90/90 (31 ownership/inventory,
 59 Worker), with no skips. Typecheck and build of all30 Core workspace projects
 passed locally. No artifact removal or existing user package mutation occurred.
+
+## Preparation And Registry Follow-Up
+
+The next read-model increment retains loader upgrade preparations before their
+first await, unresolved allocations, returned candidates, actual commit inputs,
+and uncertain original/attempted paths. A normal lifecycle return is not treated
+as a commit or abandonment. A generic scoped-release experiment was removed
+after review; typed abandonment/review handoff and durable restart reconstruction
+remain unfinished. The existing lifecycle coordinator itself is unchanged.
+
+The Registry stage service now has a separate strict private reference reader.
+All staged, pending-review and registered roots remain references, including
+missing managed package paths. Reads create no files/imports, reject malformed,
+duplicate, unknown-field, nonregular/linked, oversized or changing indexes, and
+are limited to8MiB/10,000records. Only the current pretty-JSON writer spelling
+with optional BOM/LF/CRLF/final newline is accepted; ordinary list/write paths
+retain their existing behavior. Windows case aliases are supported only with
+matching plain-directory identities in both original and canonical ancestries;
+missing descendants stay protected. Unsupported paths remain unavailable, never
+silently omitted from cleanup protection. Actual 8.3 coverage is skipped when
+the filesystem supplies no short alias.
+
+The final fourteen-file selection passed151 tests with one unavailable-8.3 skip
+(152 total). All30 Core workspace typechecks and the full build passed locally.
+This is not final packaged or full Linux acceptance of the new Core revision.
+
+These additions do not supply the actual Settings list, a coherent reference
+snapshot, cross-process Preview protection, shared non-draining maintenance
+fencing, review-bound confirmation or removal. They are not complete cleanup
+acceptance and do not authorize touching existing user packages.

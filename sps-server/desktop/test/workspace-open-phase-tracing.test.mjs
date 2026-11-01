@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 
 const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
-const scopeStartMarker = "function captureWorkspaceReadScope(profile = state.profile)";
+const scopeStartMarker = "function captureWorkspaceReadScope(profile = state.profile,";
 const scopeEndMarker = "function captureHostShareMutation";
 const startMarker = "async function openWorkspace()";
 const endMarker = "async function maybeOpenWorkspaceForCurrentAccount()";
@@ -471,6 +471,92 @@ test("overlapping opens wait for one real navigation instead of reporting an unf
   await Promise.all([first, second]);
   assert.equal(harness.scope.pendingWorkspaceOpen, null);
   assert.ok(parseTraceLines(harness.output).some(row => row.operation === 2 && row.phase === "existing-open-awaited"));
+});
+
+test("Owner Workspace selection during navigation keeps the same pending window and strict data scopes", async () => {
+  const loading = deferred();
+  const harness = fixture({ overrides: { isOwnerHostProfile: () => true } });
+  harness.scope.state.profile.connectionKind = "owner-host";
+  harness.scope.state.profile.companyId = "";
+  const dataScope = harness.scope.captureWorkspaceReadScope();
+  harness.runtime.loadHandlers.push(() => loading.promise);
+  const first = harness.scope.openWorkspace();
+  await waitFor(() => harness.createdWindows.length === 1);
+  const window = harness.createdWindows[0];
+
+  harness.scope.state.profile.companyId = "historical-owner-workspace";
+  assert.throws(() => dataScope.assertCurrent(), /connection changed/);
+  const second = harness.scope.openWorkspace();
+  await new Promise(resolve => setImmediate(resolve));
+  eventHandler(harness, window, "ready-to-show")();
+  assert.equal(window.shown, true);
+  assert.equal(window.destroyed, false);
+  assert.equal(harness.createdWindows.length, 1);
+  loading.resolve();
+  await Promise.all([first, second]);
+  await harness.scope.openWorkspace();
+  assert.equal(harness.createdWindows.length, 1);
+  assert.equal(harness.scope.workspaceWindow, window);
+});
+
+test("Member company changes still invalidate the pending Workspace window", async () => {
+  const loading = deferred();
+  const harness = fixture();
+  harness.scope.state.profile.companyId = "member-company-a";
+  harness.runtime.loadHandlers.push(() => loading.promise);
+  const opening = harness.scope.openWorkspace();
+  const rejected = assert.rejects(opening, /connection changed/);
+  await waitFor(() => harness.createdWindows.length === 1);
+  harness.scope.state.profile.companyId = "member-company-b";
+  eventHandler(harness, harness.createdWindows[0], "ready-to-show")();
+  assert.equal(harness.createdWindows[0].destroyed, true);
+  loading.resolve();
+  await rejected;
+});
+
+test("a ready Owner Host restart still invalidates its window after company selection", async () => {
+  for (const change of [
+    runtime => { runtime.ownerHostManager = {}; },
+    runtime => { runtime.ownerHostStatus.startedAt += 1; },
+  ]) {
+    const loading = deferred();
+    const harness = fixture({ overrides: { isOwnerHostProfile: () => true, ownerHostIsReady: () => true } });
+    harness.scope.state.profile.connectionKind = "owner-host";
+    harness.runtime.ownerHostManager = {};
+    harness.runtime.ownerHostStatus = { url: "http://127.0.0.1:4317", startedAt: 1 };
+    harness.runtime.loadHandlers.push(() => loading.promise);
+    const opening = harness.scope.openWorkspace();
+    const rejected = assert.rejects(opening, /Owner Host instance changed/);
+    await waitFor(() => harness.createdWindows.length === 1);
+    harness.scope.state.profile.companyId = "selected-owner-company";
+    change(harness.runtime);
+    eventHandler(harness, harness.createdWindows[0], "ready-to-show")();
+    assert.equal(harness.createdWindows[0].destroyed, true);
+    loading.resolve();
+    await rejected;
+  }
+});
+
+test("Owner routing, authentication and source changes still invalidate the pending window", async () => {
+  for (const change of [
+    profile => { profile.hubUrl = "https://other-owner.example.invalid"; },
+    profile => { profile.authMode = "changed-authentication"; },
+    profile => { profile.connectionKind = "remote"; },
+    profile => { profile.workspaceSources = [{ id: "different-source" }]; },
+  ]) {
+    const loading = deferred();
+    const harness = fixture({ overrides: { isOwnerHostProfile: () => true } });
+    harness.scope.state.profile.connectionKind = "owner-host";
+    harness.runtime.loadHandlers.push(() => loading.promise);
+    const opening = harness.scope.openWorkspace();
+    const rejected = assert.rejects(opening, /connection changed/);
+    await waitFor(() => harness.createdWindows.length === 1);
+    change(harness.scope.state.profile);
+    eventHandler(harness, harness.createdWindows[0], "ready-to-show")();
+    assert.equal(harness.createdWindows[0].destroyed, true);
+    loading.resolve();
+    await rejected;
+  }
 });
 
 test("overlapping opens share an original navigation failure and retain explicit retry", async () => {

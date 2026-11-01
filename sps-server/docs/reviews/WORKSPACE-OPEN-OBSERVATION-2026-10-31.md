@@ -168,3 +168,31 @@ The actual UI command was `SPS_DESKTOP_E2E_SOURCE=1 SPS_DESKTOP_E2E_HOST_READY_T
 (environment syntax is platform-specific). All tests used isolated fixtures,
 not an existing user installation. Exact new Source/Core hosted acceptance is
 still required.
+
+## 2026-11-01 Installed Company-Selection Regression
+
+Source2c9338d push Verify41284190569/Windows124782040958 is a new terminal
+failure, not the earlier fc56 navigation timeout. Fresh/replacement installs
+passed, and actual installed historical157-to176/v11-to13 migration/data checks
+completed. Before Workspace visibility, two opens reported stale-window and
+connection-scope rejection while startup selected the Owner company. Cleanup
+reported natural Job emptiness; the failed acceptance is retained as failure.
+
+The entire profile fingerprint was too strict for the Host-wide window. The
+correction omits only the Owner `companyId` selection from this window's scope;
+default data reads and Member company routing still bind that field. Account,
+epoch, Host manager/generation/readiness, team context and all other profile
+fields remain fenced. A deterministic Owner selection-during-load regression
+failed before correction. Additional Member and Owner routing/auth/source
+mutation regressions still reject stale windows; the Main/controller selection
+passed38/38, including ready-Host manager/start-time invalidation after selection.
+The final Desktop CI runner passed serial2/2 plus1921/1924 with three unavailable
+8.3 skips (aggregate1923/1926); no failure or cancellation occurred.
+
+Actual local source Main historical in-place acceptance then exited0 in33071ms:
+visible authenticated Workspace, both companies' retained projects, real DPAPI
+account/key preservation and restart all passed, followed by owned process and
+temporary-data cleanup. Command: `SPS_DESKTOP_E2E_SOURCE=1 node scripts/smoke-historical-managed-vault-desktop.mjs`
+(set the environment using the shell's native syntax). It uses mock Identity,
+does not install the app, and does not qualify a signed or physical candidate.
+No native deadline, authorization rule or failure classification was relaxed.
