@@ -78,12 +78,14 @@ test("actual Windows owned Core retains its private reference scope across Main-
   const nodeCommand = resolveDesktopDevelopmentNodeCommand({ packaged: false, command: process.execPath });
   const environment = Object.fromEntries(["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP"]
     .filter(key => typeof process.env[key] === "string").map(key => [key, process.env[key]]));
+  const hostAccessToken = "sps-owned-artifact-channel-test-token";
   manager = createSpsOwnerHostManager({ url: preview.url, baseEnvironment: environment,
     artifactReferences: true, onArtifactUncertainty: () => activity.retainUncertainty(), startupAttempts: 150,
     resolveRuntime: () => resolveSpsOwnerHostRuntime({ coreRoots: [coreRoot], configPath: preview.configPath,
       nodeCommand, instanceId: "sps-preview-artifact-test", environment: {
         PAPERCLIP_HOME: preview.previewVault, PAPERCLIP_TELEMETRY_DISABLED: "1", PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
         SPS_CORE_BASELINE_MODE: "true", SPS_BASIC_MODE: "true", SPS_BUNDLED_PLUGIN_PATHS: "", PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
+        SPS_DESKTOP_ACCESS_TOKEN: hostAccessToken,
       } }),
   });
   const status = await manager.start();
@@ -109,7 +111,46 @@ test("actual Windows owned Core retains its private reference scope across Main-
   await mkdir(sourcePath);
   const sourceMarker = path.join(sourcePath, "project-sentinel.txt");
   await writeFile(sourceMarker, "preserve-project-data");
-  const sourceState = { profile: {}, accountConnections: { saved: { projectWorkspaces: { project: sourcePath } } }, encryptedShareState: null };
+  const hostUrl = new URL(preview.url);
+  assert.equal(hostUrl.protocol, "http:");
+  assert.equal(hostUrl.hostname, "127.0.0.1");
+  assert.equal(hostUrl.origin, preview.url);
+  async function hostRequest(method, requestPath, body) {
+    const url = new URL(requestPath, preview.url);
+    assert.equal(url.origin, preview.url, "Host requests must stay on the exact owned loopback URL.");
+    const response = await fetch(url, {
+      method,
+      headers: {
+        "x-sps-desktop-access": hostAccessToken,
+        "x-sps-desktop-owner-bootstrap": hostAccessToken,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      redirect: "error",
+      signal: AbortSignal.timeout(5_000),
+    });
+    return { response, body: await response.json() };
+  }
+  const workspaceResponse = await hostRequest("POST", "/api/companies", { name: "Owned artifact Source test" });
+  assert.equal(workspaceResponse.response.status, 201, JSON.stringify(workspaceResponse.body));
+  const workspaceId = workspaceResponse.body.id;
+  assert.match(workspaceId, /^[0-9a-f-]{36}$/i);
+  const sourceResponse = await hostRequest("POST", `/api/companies/${workspaceId}/sps-workspace-sources`, {
+    displayName: "Owned artifact Source",
+  });
+  assert.equal(sourceResponse.response.status, 201, JSON.stringify(sourceResponse.body));
+  const source = sourceResponse.body;
+  const sourceName = source.displayName;
+  const sourceState = {
+    profile: {
+      connectionKind: "owner-host",
+      hubUrl: preview.url,
+      companyId: workspaceId,
+      workspaceSources: [{ id: source.id, name: sourceName, sourcePath }],
+    },
+    accountConnections: { saved: { projectWorkspaces: { project: sourcePath } } },
+    encryptedShareState: null,
+  };
   const shares = createSpsHostShareMutationCoordinator({ withArtifactActivity: activity.withActivity });
   await saveRegistrySources({ vaultRoot: root, sources: [{
     id: "io.sps.artifact-test", kind: "local", displayName: "Artifact test", localPath: registryPath,
@@ -130,12 +171,19 @@ test("actual Windows owned Core retains its private reference scope across Main-
   const result = await observation.withSnapshot(async scope => {
     oldScope = scope;
     assert.equal(scope.coverage, "desktop-and-owned-cores");
-    assert.deepEqual(scope.sourceReconciliation, { sourceCount: 0, grantCount: 0,
+    assert.deepEqual(scope.sourceReconciliation, { sourceCount: 1, grantCount: 0,
       fingerprint: scope.sourceInventories[0].inventory.fingerprint });
     assert.deepEqual(scope.sourceInventories.map(row => row.processOwner), ["host", "preview"]);
-    for (const { inventory } of scope.sourceInventories) {
-      assert.deepEqual(inventory.sources, []);
-      assert.deepEqual(inventory.grants, []);
+    const [hostInventory, previewInventory] = scope.sourceInventories.map(row => row.inventory);
+    assert.equal(hostInventory.sources.length, 1);
+    assert.equal(hostInventory.sources[0].id, source.id);
+    assert.equal(hostInventory.sources[0].workspaceId, workspaceId);
+    assert.equal(hostInventory.sources[0].status, "active");
+    assert.equal(hostInventory.sources[0].routeFingerprint, null);
+    assert.deepEqual(hostInventory.grants, []);
+    assert.deepEqual(previewInventory.sources, []);
+    assert.deepEqual(previewInventory.grants, []);
+    for (const inventory of [hostInventory, previewInventory]) {
       assert.match(inventory.fingerprint, /^[a-f0-9]{64}$/);
       assert.equal(Object.isFrozen(inventory), true);
     }
@@ -159,11 +207,24 @@ test("actual Windows owned Core retains its private reference scope across Main-
     await assert.rejects(shares.run(() => {}, async () => assert.fail("Source changes must not enter during observation.")), /maintenance/);
     await assert.rejects(manager.withPluginArtifactReferences(async () => assert.fail("Host scope must remain held.")));
     await assert.rejects(previewManager.withPluginArtifactReferences(async () => assert.fail("Preview scope must remain held.")));
+    const blockedSource = await hostRequest("POST", `/api/companies/${workspaceId}/sps-workspace-sources`, {
+      displayName: "Must be blocked during artifact observation",
+    });
+    assert.equal(blockedSource.response.status, 409, JSON.stringify(blockedSource.body));
+    assert.equal(blockedSource.body.details?.code, "SPS_PLUGIN_ARTIFACT_MAINTENANCE_BUSY");
+    const listedSources = await hostRequest("GET", `/api/companies/${workspaceId}/sps-workspace-sources`);
+    assert.equal(listedSources.response.status, 200, JSON.stringify(listedSources.body));
+    assert.deepEqual(listedSources.body.sources.map(row => row.id), [source.id]);
     await scope.assertCurrent();
     assert.throws(() => activity.withActivity(async () => {}), /maintenance/);
     return "main-work-complete";
   });
   assert.equal(result, "main-work-complete");
+  const renamedSource = await hostRequest("PATCH", `/api/companies/${workspaceId}/sps-workspace-sources/${source.id}`, {
+    displayName: "Owned artifact Source after observation",
+  });
+  assert.equal(renamedSource.response.status, 200, JSON.stringify(renamedSource.body));
+  assert.equal(renamedSource.body.displayName, "Owned artifact Source after observation");
   assert.equal(await readFile(sourceMarker, "utf8"), "preserve-project-data");
   await assert.rejects(observation.withSnapshot(async scope => {
     sourceState.accountConnections.saved.projectWorkspaces.project = path.join(root, "replacement-source");

@@ -64,6 +64,14 @@ Node sets. Nonempty Preview sources cannot borrow Host mappings. This remains a
 change detector, not complete mutation fencing; `cleanupReady:false`, eligibility,
 fresh Host confirmation, selective removal and Settings remain unfinished.
 
+The [Source mutation-admission increment](../reviews/SOURCE-ARTIFACT-MUTATION-ADMISSION-2026-11-02.md)
+joins actual Source/share/grant mutations, Node/member revocation and project/
+Workspace cascades to the same Core coordinator before effects begin. Existing
+authorization precedes admission; active SQL settlement blocks observation.
+This covers those application writers, not arbitrary DB sessions or unresolved
+Native claims. No deletion eligibility, confirmation, removal or Settings grant
+follows; Main still reports `cleanupReady:false`.
+
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
 authorized by this policy. This does not authorize cleaning any current user

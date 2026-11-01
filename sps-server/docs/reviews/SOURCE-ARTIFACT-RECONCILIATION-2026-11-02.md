@@ -4,6 +4,11 @@
 비공개 정리 관측 경로의 후속 구현이다.
 이 문서는 파일 삭제 승인이나 Core 완성 선언이 아니다.
 
+아래는 Core719/Source7ae의 기록이다. 이어진
+[Source mutation admission](SOURCE-ARTIFACT-MUTATION-ADMISSION-2026-11-02.md)이
+명시한 application writer의 동시 실행 차단을 추가한다. 이전 후보의 검사나
+빈 inventory 증거를 새 후보의 전체 검증으로 재사용하지 않는다.
+
 ## 구현 범위
 
 - 직접 소유한 Core 자식 프로세스에만 기존 비공개 IPC의

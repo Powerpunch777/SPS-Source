@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `7192377577230eb362417406a6579639b25d6d35`; Source runtime/pin `7ae5b7b14bbb5144f70add5aa2b3f4bc737251f2`. Prior `ffc9bc8a` and Source38fb/Core491 installed evidence below is historical, not qualification of this tuple. See the current Source-reconciliation increment below.
+- Current Core: `4c674b8c6baf7f065fc92262b8f6e66033ad9d39`; current Source pin/evidence is recorded in the Source mutation-admission increment below. Prior Core719/Source7ae, `ffc9bc8a` and Source38fb/Core491 installed evidence is historical, not qualification of this tuple.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -18,7 +18,21 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
-### Current Source Inventory And Desktop Reconciliation
+### Current Source Mutation Admission
+
+The [Source mutation-admission record](../reviews/SOURCE-ARTIFACT-MUTATION-ADMISSION-2026-11-02.md)
+joins Source/share/grant changes, Node/member revocation and project/Workspace
+cascade removal to the same actual Core coordinator after authorization. Pending
+SQL commit/rollback excludes observation; maintenance excludes new mutations
+without draining or cancelling work. Ordinary reads remain available. Private
+legacy factory callers without the coordinator are not coordinated coverage.
+Parent focused116/116, all30 workspace typechecks/build, compatibility and shard
+partition5/5 passed. Initial actual two-owned-Core test passed with a nonempty
+HTTP-created Source and required Desktop mapping; exact final pin evidence is
+still separate. No cleanup eligibility/Host confirmation/removal/Settings or
+Native uncertainty/physical/signed/full-Builder completion claim.
+
+### Previous Source Inventory And Desktop Reconciliation
 
 The [private Source reconciliation record](../reviews/SOURCE-ARTIFACT-RECONCILIATION-2026-11-02.md)
 supersedes earlier no-inventory/no-mapping limitations only for that bounded
