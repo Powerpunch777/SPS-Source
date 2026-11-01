@@ -65,6 +65,13 @@
 
 ## Engineering evidence
 
+- [2026-11-02 Workspace Agent Session increment](../reviews/WORKSPACE-AGENT-SESSIONS-2026-11-02.md):
+  invocation-bound session methods and bounded persisted answer output. Durable
+  send recovery and actual Builder AI remain unfinished.
+- [2026-11-02 previous-tuple CI verification](../reviews/CI-SOURCE-MUTATION-2026-11-02.md):
+  exact Source8a/457 Windows installation/data preservation, recovery and Linux
+  success, with explicit unqualified scenarios. Not evidence for newer changes.
+
 - [2026-10-25 Windows native connectivity audit](../reviews/WINDOWS-NATIVE-CONNECTIVITY-AUDIT-2026-10-25.md):
   current Host/Member/Node sequences, eleven dependency areas, Source/SMB and
   HTTP/WS/SDK trust gaps. Source inspection, not native LAN or two-PC acceptance.

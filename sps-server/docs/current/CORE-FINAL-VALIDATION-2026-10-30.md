@@ -9,14 +9,32 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `d0b99baef5d8422ab0473ea4b1909e55ab6518b8` (runtime4c674b8 plus audit-scope documentation clarification); current Source pin/evidence is recorded in the Source mutation-admission increment below. Prior Core719/Source7ae, `ffc9bc8a` and Source38fb/Core491 installed evidence is historical, not qualification of this tuple.
-- SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
+- Current Core: `db37ee1a444db577b01ee9cba754e882c5cf659b` (Workspace Agent Session admission/output). Prior Core d0b/Source8a/457 CI is verified below but not qualification of this new tuple. Earlier Core719/Source7ae, `ffc9bc8a` and Source38fb/Core491 evidence remains historical.
+- SDK: `e58138e6e153c31b813f62a88932abf5d4cd495c` (unreleased source additions, package version0.11.0).
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
   changes in the original checkout remain untouched. Tests use owned temporary
   profiles, not the installed user profile.
 
 ## Current Evidence Summary
+
+### Workspace Agent Session Increment
+
+The [session admission/output record](../reviews/WORKSPACE-AGENT-SESSIONS-2026-11-02.md)
+connects the existing five session capabilities to an exact live Workspace/plugin
+invocation and adds optional bounded successful-summary output. No workflow roles
+or new execution server are added. Parent final focused10files155/155 includes37
+isolated PostgreSQL tests, rollback after cancellation-marker write and no insert
+after revoked Agent lookup. Actual child RPC liveness, capability/result limits
+and existing cancellation/Workspace regressions pass. All30 typechecks/build and
+public SDK184/184 pass. Existing build warnings remain. Production audit policy
+passes with0critical/high, two low and one reviewed moderate advisory, not zero
+vulnerabilities. Current Desktop/app/remote acceptance is recorded in the linked
+increment when observed; previous-tuple successes are not inherited. Builder
+still cannot send: durable session ensure/message receipts and real AI are pending.
+Invocation checks do not undo an admitted wakeup or prove that an ambiguous send
+never started. Core cleanup/ownership/Native uncertainty and final qualification
+scope remains intact.
 
 ### Current Source Mutation Admission
 
@@ -33,7 +51,11 @@ Desktop test:ci passed2215total/2212pass/3unavailable8.3skips/0fail including th
 test. Actual source Builder1d5b884/SDK61 on this tuple also exited0: real bridge/
 save/A-B/restart/Settings,4orderly Main/8ended streams/exact temp cleanup. Mock
 Identity, not actual AI/physical/signed/whole-descendant or cleanup UI evidence.
-Linux/Windows CI41331913743/41331919075 is queued, not passed. No cleanup eligibility/Host confirmation/removal/Settings or
+Linux/Windows CI41331913743/41331919075 is now terminal success,19/19 jobs each;
+docs457 CI41332392279/41332398577 also passes19/19 each. The
+[exact CI record](../reviews/CI-SOURCE-MUTATION-2026-11-02.md) distinguishes
+installation/data preservation, operator recovery and explicit false/pending
+qualifications. Those results do not qualify newer Core db37/SDK e581. No cleanup eligibility/Host confirmation/removal/Settings or
 Native uncertainty/physical/signed/full-Builder completion claim.
 
 ### Previous Source Inventory And Desktop Reconciliation
