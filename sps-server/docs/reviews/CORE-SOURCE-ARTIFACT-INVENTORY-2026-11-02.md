@@ -74,6 +74,32 @@ matrix required Corebeb. Remaining tests passed except three unavailable8.3
 aliases. This is not an accepted whole-suite pass. Commit the gitlink/matrix
 together and rerun the exact full selection; do not relax baseline validation.
 
+After Source `0f34b37438bf3ef51947d3372630853f673a60e0` committed the matching
+Core gitlink and matrix, the full Node24.22.1 Desktop `npm run test:ci` exited0:
+serialized4/4 and remaining2169/2172, aggregate2176 total,2173 passed,3 unavailable
+Windows8.3 aliases,0 failed. The real two-owned-Core IPC/path observation test is
+included and passed with the new Core DB reader. Final ignored log:
+`desktop/dist/core-source-inventory-final-desktop-node24-20261102.log`.
+
+Actual isolated source Electron/Builder acceptance on that Source/Core and SDK61,
+Builder docs0a4c54c/runtime1d5b884, exited0. System's Workspace-scoped wording,
+no duplicate activity rail, existing Lead binding/config preservation, explicit
+package lifecycle, real bridge/save, A/B isolation and restart/Settings recovery
+passed. Four Main exited0, eight output streams ended with zero failures, and
+exact temporary data removal completed. UI index remained
+`e6f37705ebdfa27f496c5a52641635b399f9dbf4e66ebb29fa25beb39dc23e5a`.
+Builder's ignored local log is `artifacts/core-host-source-inventory-20261102.log`.
+Mock Identity; not live Google/AI, cleanup Settings, Main Preview, whole-descendant,
+physical2PC or installed/signed acceptance. No user app was updated.
+
+Production dependency policy audit passed with3 advisories:0 Critical/High,
+2 reported Low and1 reviewed Moderate (minimatch1244012, expires2026-11-07).
+This is not a vulnerability-free claim. The Core branch's optional inherited
+commitperclip review workflow41326702067 failed because COMMITPERCLIP_KEY is not
+configured; it did not run product regression tests. Source's separate exact-
+candidate workflow is authoritative for those tests and remains pending as
+recorded in the PR; neither workflow is silently counted as passing.
+
 Reference consulted, not copied code:
 [Drizzle read-only transaction options](https://orm.drizzle.team/docs/transactions),
 existing SPS Source/share schema and private artifact reader.
