@@ -42,8 +42,25 @@ test("installer command-exit probe is a fixed, passive fixture with fail-closed 
   assert.equal(OWNED_JOB_CLEANUP_PENDING_EXIT_CODE, 76);
 });
 
-test("owned Windows wrapper observes the naturally exited PowerShell command and closes its Job", { skip: process.platform !== "win32" }, async () => {
-  const result = await exec("powershell.exe", wrapperArguments, {
+test("station control is a fixed comparison and does not replace the original isolation or deadlines", async () => {
+  const runner = await readFile(new URL("../scripts/windows-e2e/RestrictedE2eRunner.cs", import.meta.url), "utf8");
+  const wrapperSource = await readFile(wrapper, "utf8");
+  assert.match(wrapperSource, /\[ValidateSet\('probe-installer-command-exit-same-station'/);
+  assert.match(runner, /if \(mode == "probe-installer-command-exit" \|\| mode == "probe-installer-command-exit-same-station"\)\s*return RunNode\(node, directory, "windows-e2e\/probe-installer-command-exit.mjs", OwnedJobCleanupArgument\);/);
+  assert.match(runner, /CreatePrivateDesktop\(out windowStation, out desktop, out desktopPath, out privateWindowStation,\s*mode == "probe-installer-command-exit-same-station"\)/);
+  assert.match(runner, /station = keepOriginalStation \? IntPtr.Zero : CreateWindowStationW/);
+  assert.match(runner, /if \(!keepOriginalStation && nativeError != 5\)/);
+  assert.match(runner, /mode == "probe-installer-command-exit-same-station" \? 45u \* 1000u/);
+  assert.match(runner, /mode == "probe-installer-command-exit" \? 45u \* 1000u/);
+  const start = runner.indexOf("static void CreatePrivateDesktop(");
+  const end = runner.indexOf("static bool CloseOwnedWindowObjects", start);
+  const desktopCreation = runner.slice(start, end);
+  assert.match(desktopCreation, /desktop = CreateDesktopW\(desktopName/);
+  assert.doesNotMatch(desktopCreation, /\breturn\b/, "The control must still create its own Desktop.");
+});
+
+async function assertOwnedCommandExit(mode) {
+  const result = await exec("powershell.exe", [...wrapperArguments.slice(0, -1), mode], {
     cwd: desktop,
     windowsHide: true,
     timeout: 75_000,
@@ -110,10 +127,25 @@ test("owned Windows wrapper observes the naturally exited PowerShell command and
   });
   const desktopRecord = output.find(record => record.restrictedE2eDesktop === true);
   assert.ok(desktopRecord);
+  if (mode === "probe-installer-command-exit-same-station") {
+    assert.equal(desktopRecord.privateWindowStation, false, "The diagnostic control must keep the caller's station, not its desktop.");
+  }
+  assert.deepEqual(output.find(record => record.restrictedE2eChild === true), {
+    restrictedE2eChild: true, administratorEnabled: false, powerUsersEnabled: false,
+    privilegesReduced: true, sameUserToken: true, administratorDenied: true, userDefaultDacl: true,
+  });
   assert.deepEqual(output.at(-1), {
     ownedDesktopClose: "closed",
     ownedWindowStationClose: desktopRecord.privateWindowStation ? "closed" : "not_owned",
   });
   assert.equal(result.stderr, "");
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, privateOutput);
+}
+
+test("owned Windows wrapper observes the naturally exited PowerShell command and closes its Job", { skip: process.platform !== "win32" }, async () => {
+  await assertOwnedCommandExit("probe-installer-command-exit");
+});
+
+test("same-station diagnostic control keeps a private Desktop and the same restricted token and natural Job exit", { skip: process.platform !== "win32" }, async () => {
+  await assertOwnedCommandExit("probe-installer-command-exit-same-station");
 });

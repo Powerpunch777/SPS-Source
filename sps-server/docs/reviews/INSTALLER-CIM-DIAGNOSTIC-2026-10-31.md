@@ -292,3 +292,46 @@ the cause. Microsoft's [maximum path-length reference](https://learn.microsoft.c
 remains background, not proof of the failing operation. Neither run qualifies
 candidate replacement, previous-Stable upgrade or long paths; do not shorten
 any gates or declare a fix from this comparison.
+
+## Fixed Command Window-Station Comparison (2026-11-01)
+
+Source `e04ab794` push run `41314273989`, Windows job `124870907271`, failed
+the first serialized fixed-command probe. It reached Node readiness but not the
+PowerShell spawn/command markers before the unchanged45-second native deadline.
+One owned availability command remained pending. Forced Job cleanup was
+explicitly not accepted. No installer or application activation had run in that
+job; the new Node26 regression was skipped, not passed.
+
+The separate same-Source PR run `41314278230`, Windows job `124870919299`,
+subsequently passed the full Desktop tests, actual owned-Core Node26.13 test and
+Node22 restoration, then continued into Desktop E2E. This contrast means the
+failure cannot be assigned to a source regression or private station alone.
+Neither a timeout nor the later success erases the original failure.
+
+A fixed `probe-installer-command-exit-same-station` comparison now runs the exact
+same passive PowerShell fixture on a newly owned private Desktop under the
+caller's existing window station. The original probe still attempts a separate
+station and retains its existing non-admin fallback. Both preserve the reduced
+same-user token, deny Administrator access, use the same owned Job, bound command
+observations, require real exit7 and both command markers, and require natural
+Job/Desktop closure. Both retain45-second deadlines. Only that exact validated
+control mode may select the caller's station; normal application and installer
+acceptance modes have not been changed. No arbitrary path/command/desktop switch
+or environment override was introduced.
+
+Both tests run in the same already-serialized file, so CI still records the
+control even if the baseline test fails. The full stage still fails if either
+test fails. A successful control does not replace the baseline or establish
+product acceptance. Local non-admin runs pass the focused11-test selection, but
+the original station-creation fallback means they do not prove a distinct-station
+comparison. Exact hosted paired results are still required.
+
+Final local Node24.22.1 `npm run test:ci` passed: serialized4/4 and remaining
+2,079total/2,076passed/three unavailable Windows8.3-alias skips, aggregate
+2,083total/2,080passed/3skips/0fail. This is not hosted/installer qualification.
+
+Windows [process-creation flags](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags)
+and [window-station creation](https://learn.microsoft.com/en-us/windows/win32/winstation/window-station-and-desktop-creation)
+are mechanism references, not proof of the hang's cause. The comparison changes
+test infrastructure only; no production process guard, installer, user profile,
+global Node installation, Core/SDK contract or support policy was changed.
