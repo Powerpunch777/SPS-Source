@@ -1237,6 +1237,54 @@ try {
     }, null, 2)}\n`, { flag: "wx" });
     step(`retained verified development package in ${path.basename(retained)}`);
   }
+  if (!liveAuthoring) {
+    step("verifying real sign-out closes the prior account's Preview without deleting its data", "preview_account_fence");
+    const accountProject = await registryCall(registry, `window.spsRegistry.connectDeveloperProject(${JSON.stringify({
+      sourcePath: pluginDirectory, sourceLabel: "account-fence-plugin", displayName: "Preview account fence",
+    })})`);
+    const accountGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: accountProject.id })})`, 180_000);
+    assert.deepEqual(accountGates.reports.map(report => report.success), [true, true, true]);
+    const accountApplied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: accountProject.id })})`, 180_000);
+    assert.equal(accountApplied.isolated, true);
+    const accountPreview = await registryCall(registry, "window.spsRegistry.getPreviewState()");
+    assert.equal(accountPreview.active, true);
+    assert.match(accountPreview.buildId, /^build-[a-f0-9-]{36}$/i);
+    const target = await waitTarget(debugPort, child,
+      entry => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || "") && entry.id !== workspaceTarget.id,
+      "account-bound Preview target");
+    const previewOrigin = new URL(target.url).origin;
+    const preservedPreview = path.join(userData, "owner-vault", "developer-mode", "previews", accountPreview.buildId);
+    await access(path.join(preservedPreview, "config.json"));
+    try { await setup.evaluate("window.spsDesktop.signOutSpsAccount()", true, 60_000); }
+    catch (error) {
+      if (!/Execution context|Cannot find context|was destroyed|^Inspected target navigated or closed$/i.test(errorText(error))) throw error;
+    }
+    const signOutDeadline = Date.now() + 30_000;
+    let verified = false;
+    while (Date.now() < signOutDeadline) {
+      let current = null;
+      try {
+        current = await setup.evaluate("document.readyState === 'complete' && typeof window.spsDesktop?.getStatus === 'function' ? window.spsDesktop.getStatus() : null", true);
+      } catch (error) {
+        if (!/Execution context|Cannot find context|was destroyed|^Inspected target navigated or closed$/i.test(errorText(error))) throw error;
+      }
+      const liveTargets = await targets(debugPort);
+      let previewClosed = false;
+      try { await fetch(`${previewOrigin}/api/health`, { signal: AbortSignal.timeout(1000) }); }
+      catch (error) { previewClosed = error?.cause?.code === "ECONNREFUSED"; }
+      if (current?.desktopAccount?.signedIn === false && !liveTargets.some(entry => entry.id === target.id) && previewClosed) {
+        verified = true; break;
+      }
+      await delay(200);
+    }
+    assert.equal(verified, true, "Sign-out must await owned Preview closure, not merely hide its UI.");
+    await access(path.join(preservedPreview, "config.json"));
+    await Promise.all([workspace, registry, preview].filter(Boolean).map(cdp => cdp.close().catch(() => {})));
+    workspace = null;
+    registry = null;
+    preview = null;
+    step("real account sign-out confirmed Preview target and loopback server closure; Preview data retained");
+  }
   step("functional assertions passed; cleanup qualification is still pending");
 } catch (error) {
   const notes = [];
@@ -1269,7 +1317,7 @@ try {
   step("cleaning isolated E2E processes and data", "cleanup");
   const desktopStopped = await shutdownPreviewE2eDesktop({
     child,
-    requestBrowserClose: workspace || setup || registry ? () => (workspace ?? setup ?? registry).command("Browser.close") : undefined,
+    requestBrowserClose: setup || workspace || registry ? () => (setup ?? workspace ?? registry).command("Browser.close") : undefined,
     forceStop: stopTree,
   });
   step(`Desktop exit confirmed=${desktopStopped.exitConfirmed}, graceful=${desktopStopped.graceful}`);

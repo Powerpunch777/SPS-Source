@@ -228,3 +228,14 @@ passed, with3 normal Main exits,6 ended output streams and exact temporary-data
 cleanup. Focused journal DB/source callbacks are synthetic, not live SQL-crash
 evidence. Desktop cross-process Preview/restore references, inventory eligibility,
 fresh Host confirmation, removal and actual Settings UI remain incomplete.
+
+## Desktop Ownership Follow-Up
+
+Preview now retains its captured owner/Vault across uncertain start/stop and
+failed cleanup, excludes overlapping lifecycle operations, and awaits account,
+Host or quit invalidation. Restore privately retains immutable original helper
+references until confirmed Job/helper closure; malformed sources are unavailable.
+Actual source Preview sign-out/server closure/data retention and Main transfer/
+reapproval/restart passed. These are prerequisites, not complete Desktop/Core
+reference composition or cleanup permission. Exact commands, initial failures
+and remaining gates are in the [ownership acceptance](../reviews/PREVIEW-ACCOUNT-OWNERSHIP-2026-11-01.md).

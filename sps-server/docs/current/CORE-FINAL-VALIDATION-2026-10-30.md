@@ -761,6 +761,11 @@ evidence. Their earlier next-step labels are not current completion claims.
 
 ## Completion
 
+The latest private Preview/account and restore-reference source increment is
+recorded in [ownership acceptance](../reviews/PREVIEW-ACCOUNT-OWNERSHIP-2026-11-01.md).
+Actual source Preview and transfer E2Es passed; combined artifact maintenance,
+physical Runner, abnormal Main-loss and live SQL-crash evidence are still open.
+
 Required Core behavior, data preservation, scoped security, and actual process
 ownership/recovery must have current evidence. Failed, skipped, unavailable,
 and historical evidence stay distinct. External release gates and deferred

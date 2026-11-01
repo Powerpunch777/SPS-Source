@@ -199,6 +199,7 @@ import {
   ensurePluginPreviewFixture,
   updatePluginPreviewFixture,
 } from "./plugin-preview-runtime.mjs";
+import { createSpsPluginPreviewOperationGate } from "./plugin-preview-operation-gate.mjs";
 import {
   appendDeveloperDiagnostic,
   clearDeveloperDiagnostics,
@@ -294,6 +295,7 @@ let registryWindow = null;
 let registryDeveloperContext = null;
 let pluginPreviewWindow = null;
 let pluginPreviewRuntime = null;
+const pluginPreviewOperations = createSpsPluginPreviewOperationGate();
 let pluginPreviewClosing = false;
 const activeDeveloperProjectOperations = new Set();
 let officialExtensionsWindow = null;
@@ -316,7 +318,7 @@ const ownerVaultOperations = createSpsOwnerVaultOperationGate({
     const nodeCleanup = nativeNodeController?.invalidate();
     void nativeWorkspaceWindowController?.invalidate().catch(() => {});
     void nativePluginWindowController?.invalidate().catch(() => {});
-    return nodeCleanup;
+    return Promise.all([nodeCleanup, stopDesktopPluginPreviewForContextChange({ closeWindow: true })]);
   },
 });
 const ownerHostRestoreRunner = createSpsOwnerHostRestoreRunner();
@@ -3244,47 +3246,73 @@ async function resolveDesktopPluginPreviewRuntime(preview) {
 }
 
 async function startDesktopPluginPreview({ projectId, buildId }) {
-  await stopDesktopPluginPreview({ removeData: false, closeWindow: true });
+  const ownerSubject = currentDesktopAccountSubject();
+  const generation = ownerVaultOperations.connectionGeneration();
+  const ownerVault = ownerVaultRoot();
+  const assertCurrent = () => {
+    if (isQuitting || ownerVaultOperations.isRestoring() || ownerVaultOperations.isChangingConnection()
+      || !ownerSubject || currentDesktopAccountSubject() !== ownerSubject
+      || ownerVaultOperations.connectionGeneration() !== generation || ownerVaultRoot() !== ownerVault) {
+      throw new Error("SPS Desktop is closing or its account/Host context changed; a Plugin Preview cannot start.");
+    }
+  };
+  assertCurrent();
+  return pluginPreviewOperations.run(() => startDesktopPluginPreviewLocked({ projectId, buildId, ownerVault, assertCurrent }));
+}
+
+async function startDesktopPluginPreviewLocked({ projectId, buildId, ownerVault, assertCurrent }) {
+  await stopDesktopPluginPreviewLocked({ removeData: false, closeWindow: true });
+  assertCurrent();
   const fixtureState = await ensurePluginPreviewFixture({
-    ownerVault: ownerVaultRoot(),
+    ownerVault,
     buildId,
   });
   const preview = await createPluginPreviewRuntime({
-    ownerVault: ownerVaultRoot(),
+    ownerVault,
     buildId,
     resolveRuntime: resolveDesktopPluginPreviewRuntime,
     fetchImpl: fetch,
     spawn: spawnChildProcess,
     baseEnvironment: createDeveloperCommandEnvironment(process.env),
   });
-  const status = await preview.manager.start();
+  assertCurrent();
+  // Retain the owner before startup can spawn or await a process. A rejected
+  // startup/stop must not make an uncertain Preview disappear from shutdown.
+  pluginPreviewRuntime = { ...preview, projectId, fixture: fixtureState.fixture };
+  const retained = pluginPreviewRuntime;
+  let status;
+  try { status = await preview.manager.start(); }
+  catch (error) {
+    const stopped = await preview.manager.stop({ force: false }).catch(() => null);
+    if (stopped?.state === "stopped" && pluginPreviewRuntime === retained) pluginPreviewRuntime = null;
+    throw error;
+  }
+  try { assertCurrent(); }
+  catch (error) { await stopDesktopPluginPreviewLocked({ removeData: false, closeWindow: true }); throw error; }
   if (status.state === "running-existing" || status.owned !== true) {
-    await preview.manager.stop({ force: false }).catch(() => {});
-    await recordDesktopPluginPreviewDiagnostic({
+    try { await recordDesktopPluginPreviewDiagnostic({
       projectId,
       buildId,
       phase: "runtime",
       level: "error",
       code: "PREVIEW_RUNTIME_FOREIGN_PROCESS",
       message: "SPS rejected a Preview port owned by another process.",
-    });
+    }); } finally { await stopDesktopPluginPreviewLocked({ removeData: false, closeWindow: true }); }
     throw new Error(
       "The isolated Preview port is already owned by another process. Close the stale Preview or restart SPS before retrying.",
     );
   }
   if (status.state !== "running") {
-    await preview.manager.stop({ force: true }).catch(() => {});
-    await recordDesktopPluginPreviewDiagnostic({
+    try { await recordDesktopPluginPreviewDiagnostic({
       projectId,
       buildId,
       phase: "runtime",
       level: "error",
       code: "PREVIEW_RUNTIME_START_FAILED",
       message: status.lastError || "The isolated plugin Preview could not start.",
-    });
+    }); } finally { await stopDesktopPluginPreviewLocked({ removeData: false, closeWindow: true }); }
     throw new Error(status.lastError || "The isolated plugin Preview could not start.");
   }
-  pluginPreviewRuntime = { ...preview, projectId, fixture: fixtureState.fixture };
   await recordDesktopPluginPreviewDiagnostic({
     projectId,
     buildId,
@@ -3292,6 +3320,7 @@ async function startDesktopPluginPreview({ projectId, buildId }) {
     code: "PREVIEW_RUNTIME_STARTED",
     message: "The isolated plugin Preview runtime started.",
   });
+  assertCurrent();
   return pluginPreviewRuntime;
 }
 
@@ -3325,26 +3354,28 @@ async function ensurePluginPreviewWorkspace(preview, project) {
 }
 
 async function stopDesktopPluginPreview({ removeData = false, closeWindow = true } = {}) {
+  return pluginPreviewOperations.run(() => stopDesktopPluginPreviewLocked({ removeData, closeWindow }));
+}
+
+async function stopDesktopPluginPreviewLocked({ removeData = false, closeWindow = true } = {}) {
   const runtime = pluginPreviewRuntime;
   const window = pluginPreviewWindow;
   const stopped = runtime?.manager
-    ? await runtime.manager.stop({ force: false }).catch(() => null)
+    ? await runtime.manager.stop({ force: false })
     : null;
-  if (removeData && runtime && stopped?.state !== "stopped") {
+  if (runtime && stopped?.state !== "stopped") {
     throw new Error(
       "SPS kept the Preview data because its isolated process did not stop completely.",
     );
   }
-  pluginPreviewRuntime = null;
-  if (closeWindow && window && !window.isDestroyed()) {
+  if (closeWindow && window && pluginPreviewWindow === window && !window.isDestroyed()) {
     pluginPreviewClosing = true;
-    pluginPreviewWindow = null;
-    window.destroy();
-    pluginPreviewClosing = false;
+    try { window.destroy(); pluginPreviewWindow = null; }
+    finally { pluginPreviewClosing = false; }
   }
   if (removeData && runtime?.buildId) {
     await cleanupPluginPreview({
-      ownerVault: ownerVaultRoot(),
+      ownerVault: runtime.ownerVault,
       buildId: runtime.buildId,
     });
     await recordDesktopPluginPreviewDiagnostic({
@@ -3363,6 +3394,20 @@ async function stopDesktopPluginPreview({ removeData = false, closeWindow = true
       message: "The isolated Preview runtime stopped and its data was kept.",
     });
   }
+  if (pluginPreviewRuntime === runtime) pluginPreviewRuntime = null;
+}
+
+async function stopDesktopPluginPreviewForShutdown() {
+  return stopDesktopPluginPreviewForContextChange({ closeWindow: false });
+}
+
+async function stopDesktopPluginPreviewForContextChange({ closeWindow } = {}) {
+  // Cancel an already registered startup first, then join preparation before
+  // reading the final owner. Quit and connection/restore generations fence starts.
+  const current = pluginPreviewRuntime;
+  try { await current?.manager?.stop({ force: false }); }
+  finally { await pluginPreviewOperations.waitForIdle(); }
+  return stopDesktopPluginPreview({ removeData: false, closeWindow });
 }
 
 async function confirmPluginPreviewClose(window) {
@@ -6837,7 +6882,6 @@ const drainDesktopRuntime = createSpsDesktopRuntimeDrain({
   // normal Desktop exit into database crash recovery on the next start. Each
   // manager already escalates after its bounded graceful wait when necessary.
   getManagers: () => {
-    const preview = pluginPreviewRuntime;
     return [
       { name: "Native Workspace", stop: () => nativeWorkspaceWindowController?.dispose() },
       { name: "Native Plugin", stop: () => nativePluginWindowController?.dispose() },
@@ -6845,8 +6889,7 @@ const drainDesktopRuntime = createSpsDesktopRuntimeDrain({
       { name: "Memory", stop: () => defaultMemoryManager?.stop({ force: false }) },
       { name: "Owner Host", stop: () => ownerHostManager?.stop({ force: false }) },
       { name: "Owner Host restore", stop: () => ownerHostRestoreRunner.stop() },
-      { name: "Plugin preview", stop: () => preview?.manager?.stop({ force: false }),
-        onStopped: () => { if (pluginPreviewRuntime === preview) pluginPreviewRuntime = null; } },
+      { name: "Plugin preview", stop: stopDesktopPluginPreviewForShutdown },
     ];
   },
 });
