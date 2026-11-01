@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `491794820c23f956912d69eba271c1ef07ba36a1`; earlier installed evidence uses `b17fb830138b4acde96aa7b5c911f7e8cccfa698` and must not be reused as new-tuple proof.
+- Current Core: `491794820c23f956912d69eba271c1ef07ba36a1`; Source38fb's installed acceptance below carries this exact revision. Earlier b17 installed evidence remains separate.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -20,6 +20,15 @@ deferred Native development are excluded.
 
 ### Latest Progress And Still-Incomplete Final Acceptance
 
+Source38fb push41277553485/Windows124762686223 is terminal success. The real
+installed candidate passed same-profile157-to176/v11-to13 migration, actual
+DPAPI account/key preservation, Workspace display/restart, retained-data
+reinstall and natural whole-Job closure. All17 non-Windows jobs also passed,
+including all nine Linux partitions and Core full typecheck/build. The exact
+installer SHA is1f4866b03d42be2c0f3d3ecac7529f7b77f88256233aa7447bfe1d467483b1b0.
+Its mandatory legacy job remains active, so overall acceptance is not claimed.
+See [exact installed evidence and SSH trial limits](../reviews/INSTALLED-CORE-ACCEPTANCE-2026-11-01.md).
+
 The b361 Source's mandatory legacy job124756513295 completed successfully:
 real default-No/Cancel/decline preservation, explicit cleanup of the original
 long-path residues, exact-candidate reinstall,9user/1project retained records,
@@ -27,13 +36,13 @@ and natural owned Job closure. [Exact hashes and limits](../reviews/LEGACY-RECOV
 Its separate installed migration exceeded the existing deadline, so the whole
 workflow is still failed; neither result qualifies the newer Source/Core tuple.
 
-Core4917948's full Linux regression partitions and typecheck/build passed on
-Source6fb push41275795353. Current local actual Main157-to176/v11-to13 migration,
-DPAPI preservation, Workspace and restart passed; actual source export/fresh-
-Host restore/plugin reapproval/restart also passed. These mock-Identity source
-tests do not establish installed/signed/two-PC acceptance. The final exact
-Source Windows gates remain required, including a corrected Windows path-alias
-compatibility regression in the new owned-system-tar extractor.
+The new system-tar extractor's corrected Windows path-alias regression passed
+in that installed candidate, within the unchanged historical child deadline.
+The source export/empty-Host restore/plugin reapproval/restart also passed in
+the same Windows job. Mock Identity, isolated historical-profile acceptance
+and native Job closure do not establish real Google, signed or two-PC acceptance.
+The private preliminary SSH control trial did not reach app launch; a local
+late-input regression now proves its own duplex behavior, not remote acceptance.
 
 The manual artifact cleanup foundation now captures new owned allocations and
 complete file inventories, but Settings/reference/fence/confirmation/removal
@@ -112,9 +121,9 @@ migration, legacy cleanup and physical Runner blockers:
 - Reviewed Moderate dependency exceptions expire2026-11-07. A past policy
   pass does not replace a fresh final-candidate audit before that expiry.
 
-Core remains incomplete. The recorded installed passes and mandatory legacy
-failure are separate observations; neither past passes nor local improvements
-qualify the changed Source revision without its own required CI.
+Core remains incomplete. Earlier legacy failures and later exact-job passes
+are separate observations; changed Source revisions still require their own
+mandatory CI and cannot inherit physical Runner or unexecuted UI/crash evidence.
 
 ### 71c Results: Host Readiness Delay And Actual Safety Rejection
 
