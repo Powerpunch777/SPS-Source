@@ -50,6 +50,126 @@ function fakeChild(onKill = () => {}) {
   return child;
 }
 
+function artifactRuntime(cwd = path.resolve(os.tmpdir(), "sps-owned-runtime-reference-fixture")) {
+  return { kind: "packaged-owner-runtime", command: process.execPath, cwd,
+    args: ["sps-owner-host-bootstrap.mjs"], environment: { PAPERCLIP_CONFIG: path.join(cwd, "config.json") } };
+}
+
+test("private launch references are captured before Job preparation and retained through exact tree acknowledgement", async () => {
+  const entered = deferred(), prepared = deferred(), terminal = deferred();
+  const runtime = artifactRuntime();
+  const originalConfig = runtime.environment.PAPERCLIP_CONFIG;
+  const environment = { PATH: "original-path" };
+  let healthy = false, spawnArgs, spawnOptions;
+  const child = fakeChild();
+  child.waitForOwnedJobTermination = () => terminal.promise;
+  child.terminateOwnedJob = () => terminal.promise;
+  const manager = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", artifactReferences: true,
+    baseEnvironment: environment, delay: async () => {}, resolveRuntime: async () => runtime,
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    prepareOwnedJob: async () => { entered.resolve(); return prepared.promise; },
+  });
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), { available: true, references: [] });
+  const starting = manager.start();
+  assert.equal(manager.readRuntimeArtifactReferences().available, false);
+  await entered.promise;
+  const retained = manager.readRuntimeArtifactReferences();
+  assert.equal(retained.available, true);
+  assert.ok(retained.references.some(item => item.path === originalConfig));
+  runtime.args[0] = "different.mjs";
+  runtime.environment.PAPERCLIP_CONFIG = path.join(runtime.cwd, "different.json");
+  environment.PATH = "replacement-path";
+  environment.PAPERCLIP_PROJECTS_ROOT = path.join(runtime.cwd, "late-injected-projects");
+  prepared.resolve({ spawn: (_command, args, options) => { spawnArgs = args; spawnOptions = options; healthy = true; return child; }, dispose: async () => {} });
+  assert.equal((await starting).owned, true);
+  assert.equal(spawnArgs[0], "sps-owner-host-bootstrap.mjs");
+  assert.equal(spawnOptions.env.PAPERCLIP_CONFIG, originalConfig);
+  assert.equal(spawnOptions.env.PATH, "original-path");
+  assert.equal(Object.hasOwn(spawnOptions.env, "PAPERCLIP_PROJECTS_ROOT"), false);
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), retained);
+  healthy = false;
+  child.exitCode = 0;
+  child.emit("exit", 0);
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), retained);
+  const stopped = manager.stop();
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), retained);
+  terminal.resolve({ type: "exit", code: 0, activeProcesses: 0 });
+  assert.equal((await stopped).state, "stopped");
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), { available: true, references: [] });
+});
+
+test("an old child pending output closure retains only its own launch references beside a new child", async () => {
+  const runtimes = [artifactRuntime(path.resolve(os.tmpdir(), "sps-runtime-old")), artifactRuntime(path.resolve(os.tmpdir(), "sps-runtime-new"))];
+  const children = [];
+  let healthy = false;
+  const manager = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", artifactReferences: true,
+    baseEnvironment: {}, delay: async () => {}, prepareOwnedJob: null,
+    resolveRuntime: async () => runtimes[children.length],
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    spawn: () => { const child = fakeChild(value => { healthy = false; value.exitCode = 0; value.emit("exit", 0); });
+      children.push(child); healthy = true; return child; },
+  });
+  await manager.start();
+  healthy = false;
+  children[0].exitCode = 0;
+  children[0].emit("exit", 0);
+  await manager.start();
+  const both = manager.readRuntimeArtifactReferences();
+  assert.ok(both.references.some(item => item.path === runtimes[0].cwd));
+  assert.ok(both.references.some(item => item.path === runtimes[1].cwd));
+  children[0].emit("close", 0);
+  const current = manager.readRuntimeArtifactReferences();
+  assert.equal(current.references.some(item => item.path === runtimes[0].cwd), false);
+  assert.ok(current.references.some(item => item.path === runtimes[1].cwd));
+  await manager.stop();
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), current, "Leader exit alone cannot retire pending output references.");
+  children[1].emit("close", 0);
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), { available: true, references: [] });
+});
+
+test("unresolved runtime launch shape stays unavailable rather than becoming an empty safe snapshot", async () => {
+  let healthy = false;
+  const child = fakeChild(value => { healthy = false; value.exitCode = 0; value.emit("exit", 0); });
+  const manager = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", artifactReferences: true,
+    baseEnvironment: {}, delay: async () => {}, prepareOwnedJob: null,
+    resolveRuntime: async () => ({ command: "node", args: ["arbitrary.mjs"] }),
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    spawn: () => { healthy = true; return child; },
+  });
+  assert.equal((await manager.start()).state, "running");
+  assert.equal(manager.readRuntimeArtifactReferences().available, false);
+  await manager.stop();
+  assert.equal(manager.readRuntimeArtifactReferences().available, false);
+  child.emit("close", 0);
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), { available: true, references: [] });
+});
+
+test("lost owned-tree acknowledgement cannot retire captured runtime paths", async () => {
+  let healthy = false, canConfirm = false;
+  const child = fakeChild();
+  child.waitForOwnedJobTermination = async () => {
+    if (!canConfirm) throw new Error("Unconfirmed exact Job");
+    return { type: "exit", code: 0, activeProcesses: 0 };
+  };
+  child.terminateOwnedJob = child.waitForOwnedJobTermination;
+  const manager = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", artifactReferences: true,
+    baseEnvironment: {}, delay: async () => {}, resolveRuntime: async () => artifactRuntime(),
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    prepareOwnedJob: async () => ({ spawn: () => { healthy = true; return child; }, dispose: async () => {} }),
+  });
+  await manager.start();
+  const retained = manager.readRuntimeArtifactReferences();
+  assert.equal(retained.available, true);
+  healthy = false;
+  child.exitCode = 0;
+  child.emit("exit", 0);
+  await assert.rejects(manager.stop(), /not been confirmed/);
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), retained);
+  canConfirm = true;
+  await manager.stop();
+  assert.deepEqual(manager.readRuntimeArtifactReferences(), { available: true, references: [] });
+});
+
 test("private artifact uncertainty survives leader exit until the same owned Job is confirmed empty", async () => {
   const terminal = deferred();
   const child = fakeChild();

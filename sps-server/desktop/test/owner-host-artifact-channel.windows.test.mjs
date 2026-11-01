@@ -108,9 +108,15 @@ test("actual Windows owned Core retains its private reference scope across Main-
     assertCurrent() {}, async readInputs() {
       const developer = await readDeveloperProjectArtifactReferences({ vaultRoot: root });
       const registry = await readRegistrySourceArtifactReferences({ vaultRoot: root });
-      return { references: [...developer.references, ...registry.references], async assertCurrent() {
+      const runtimes = [manager, previewManager].map(owner => owner.readRuntimeArtifactReferences());
+      assert.ok(runtimes.every(value => value.available), "Actual owned launch references must be available.");
+      const runtimeSignature = JSON.stringify(runtimes);
+      return { references: [...developer.references, ...registry.references, ...runtimes.flatMap(value => value.references)], async assertCurrent() {
         await developer.assertCurrent();
         await registry.assertCurrent();
+        if (JSON.stringify([manager, previewManager].map(owner => owner.readRuntimeArtifactReferences())) !== runtimeSignature) {
+          throw new Error("Owned runtime reference generation changed.");
+        }
       } };
     },
     participants: [{ id: "host", manager }, { id: "preview", manager: previewManager }],
@@ -126,6 +132,10 @@ test("actual Windows owned Core retains its private reference scope across Main-
       && reference.processOwner === "desktop"));
     assert.ok(scope.references.some(reference => reference.source === "desktop-registry-source"
       && reference.path === registryPath && reference.processOwner === "desktop"));
+    assert.ok(scope.references.some(reference => reference.source === "desktop-owned-runtime"
+      && reference.path === coreRoot && reference.kind === "directory" && reference.processOwner === "desktop"));
+    assert.ok(scope.references.some(reference => reference.source === "desktop-owned-runtime"
+      && reference.path === process.execPath && reference.kind === "file"));
     await assert.rejects(manager.withPluginArtifactReferences(async () => assert.fail("Host scope must remain held.")));
     await assert.rejects(previewManager.withPluginArtifactReferences(async () => assert.fail("Preview scope must remain held.")));
     await scope.assertCurrent();
@@ -150,7 +160,8 @@ test("actual Windows owned Core retains its private reference scope across Main-
   assert.equal(stopped.state, "stopped");
   assert.equal(stopped.lastError, null);
   release();
-  await assert.rejects(interrupted, error => error.code === "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE");
+  await assert.rejects(interrupted, error => error.code === "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE"
+    || error.message === "Owned runtime reference generation changed.");
   await activity.withMaintenance(async () => {});
   await assert.rejects(manager.withPluginArtifactReferences(async () => {}));
 });

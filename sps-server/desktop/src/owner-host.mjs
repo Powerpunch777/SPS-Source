@@ -8,6 +8,7 @@ import { attachSpsNativeMemberSignerChannel } from "./native-member-signer-chann
 import { createSpsNativeParentIngressClient } from "./native-parent-ingress-client.mjs";
 import { attachSpsNativeWorkspaceParentChannel } from "./native-workspace-parent-channel.mjs";
 import { createSpsPluginArtifactParentClient } from "./plugin-artifact-parent-channel.mjs";
+import { captureSpsOwnerHostRuntimeReferences } from "./owner-host-runtime-references.mjs";
 
 function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
@@ -421,6 +422,9 @@ export function createSpsOwnerHostManager({
   let nativeIngress = null;
   let nativeWorkspace = null;
   let artifactChannel = null;
+  const artifactLaunches = new Set();
+  const noRuntimeReferences = Object.freeze({ available: true, references: Object.freeze([]) });
+  const runtimeReferencesUnavailable = Object.freeze({ available: false, references: Object.freeze([]) });
   let lifecycleGeneration = 0;
   let startPromise = null;
   let startPromiseGeneration = null;
@@ -466,13 +470,20 @@ export function createSpsOwnerHostManager({
     if (generation !== lifecycleGeneration) return inspect();
     if (current.state !== "stopped") return current;
     reportOwnerHostEvent(baseEnvironment, "resolve-runtime-start");
-    const runtime = await resolveRuntime();
+    const resolvedRuntime = await resolveRuntime();
     reportOwnerHostEvent(baseEnvironment, "resolve-runtime-complete");
     if (generation !== lifecycleGeneration) return inspect();
-    if (!runtime) {
+    if (!resolvedRuntime) {
       lastError = "SPS Owner Host runtime is not installed on this computer.";
       return inspect();
     }
+
+    const captured = artifactReferences
+      ? captureSpsOwnerHostRuntimeReferences(resolvedRuntime, baseEnvironment)
+      : { runtime: resolvedRuntime, snapshot: runtimeReferencesUnavailable };
+    const runtime = captured.runtime;
+    const launch = { snapshot: captured.snapshot, child: null, generation };
+    if (artifactReferences) artifactLaunches.add(launch);
 
     try {
       if (generation !== lifecycleGeneration) return inspect();
@@ -497,7 +508,7 @@ export function createSpsOwnerHostManager({
         stdio: ["ignore", "pipe", "pipe", "ipc", "pipe"],
         windowsHide: true,
         env: {
-          ...baseEnvironment,
+          ...(captured.copiedEnvironment ? {} : baseEnvironment),
           ...runtime.environment,
           PAPERCLIP_TELEMETRY_DISABLED: "1",
           SPS_DESKTOP_OWNED_SHUTDOWN_PIPE: "1",
@@ -518,6 +529,12 @@ export function createSpsOwnerHostManager({
       child.once("disconnect", () => reportOwnerHostEvent(baseEnvironment, "core-ipc-disconnect"));
       child.once("close", () => reportOwnerHostEvent(baseEnvironment, "core-close"));
       ownedChild = child;
+      launch.child = child;
+      child.once("close", () => {
+        // A non-Job owner still retains paths until the child's output closes.
+        // Owned Jobs require their separate whole-tree confirmation below.
+        if (!hasOwnedHostJob(child)) artifactLaunches.delete(launch);
+      });
       let releaseArtifactUncertainty = null;
       const childArtifactChannel = artifactReferences && hasOwnedHostJob(child) && typeof child.send === "function" && child.connected === true
         ? createSpsPluginArtifactParentClient(child, { isCurrent: () => ownedChild === child && !childHasExited(child),
@@ -611,6 +628,7 @@ export function createSpsOwnerHostManager({
           // remain outstanding. A leader exit must not permit a replacement Host.
           void child.waitForOwnedJobTermination().then(() => {
             releaseArtifactUncertainty?.();
+            artifactLaunches.delete(launch);
             if (ownedChild === child) { ownedChild = null; startedAt = null; }
           }).catch(() => {
             if (ownedChild === child) lastError = "SPS Owner Host process-tree termination has not been confirmed.";
@@ -663,6 +681,11 @@ export function createSpsOwnerHostManager({
     startPromise = operation;
     startPromiseGeneration = generation;
     const clearStart = () => {
+      if (!ownedChild && !preparedJob && !jobPreparation) {
+        for (const launch of artifactLaunches) {
+          if (launch.generation === generation && !launch.child) artifactLaunches.delete(launch);
+        }
+      }
       if (startPromise !== operation) return;
       startPromise = null;
       startPromiseGeneration = null;
@@ -754,6 +777,12 @@ export function createSpsOwnerHostManager({
       startedAt = null;
       if (child.exitCode === 0 || child.signalCode != null) lastError = null;
     }
+    if (hasOwnedHostJob(child)) {
+      for (const launch of artifactLaunches) if (launch.child === child) artifactLaunches.delete(launch);
+    }
+    if (!ownedChild && !preparedJob && !jobPreparation) {
+      for (const launch of artifactLaunches) if (!launch.child) artifactLaunches.delete(launch);
+    }
     return inspect();
   }
 
@@ -785,5 +814,16 @@ export function createSpsOwnerHostManager({
       new Error("The exact owned Core artifact observation is unavailable."), { code: "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE" }));
     return artifactChannel.withSnapshot(action, options);
   }
-  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace, withPluginArtifactReferences };
+  function readRuntimeArtifactReferences() {
+    if (!artifactReferences) return runtimeReferencesUnavailable;
+    if (artifactLaunches.size) {
+      if (artifactLaunches.size > 32 || [...artifactLaunches].some(launch => !launch.snapshot.available)) return runtimeReferencesUnavailable;
+      return Object.freeze({ available: true,
+        references: Object.freeze([...artifactLaunches].flatMap(launch => launch.snapshot.references)) });
+    }
+    if (ownedChild || startPromise || jobPreparation || preparedJob || stopsInFlight.size) return runtimeReferencesUnavailable;
+    return noRuntimeReferences;
+  }
+  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace,
+    withPluginArtifactReferences, readRuntimeArtifactReferences };
 }

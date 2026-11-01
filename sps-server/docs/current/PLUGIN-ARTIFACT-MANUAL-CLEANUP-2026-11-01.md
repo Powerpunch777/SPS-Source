@@ -22,6 +22,11 @@ The [private Registry-input follow-up](../reviews/PLUGIN-ARTIFACT-REGISTRY-INPUT
 adds the retained source index and configured local Registry folders, including
 an actual two-owned-Core scope test. It still does not supply complete Main
 discovery or the Settings confirmation/removal flow.
+The [retained runtime-input follow-up](../reviews/OWNER-RUNTIME-ARTIFACT-REFERENCES-2026-11-01.md)
+adds per-launch immutable inputs and uncertain-close retention. Its actual
+Host/Preview test exposed pnpm hardlinks; the private parent observer permits
+stable read-only hardlinks without changing ownership/removal rules. Main's
+unresolved development executable, full discovery and Settings remain incomplete.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
