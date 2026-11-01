@@ -1,3 +1,9 @@
+function admissionDenied(message) {
+  const error = new Error(message);
+  error.code = "sps_plugin_artifact_admission_denied";
+  return error;
+}
+
 export function createSpsDesktopPluginArtifactActivityGate() {
   // Process-local admission coordination only; this is not an authorization or OS/Core fence.
   let activeActivities = 0;
@@ -14,7 +20,7 @@ export function createSpsDesktopPluginArtifactActivityGate() {
 
   function assertUncertaintyResolved() {
     if (uncertainties.size !== 0) {
-      throw new Error("SPS Desktop plugin artifact activity is uncertain.");
+      throw admissionDenied("SPS Desktop plugin artifact activity is uncertain.");
     }
   }
 
@@ -51,7 +57,7 @@ export function createSpsDesktopPluginArtifactActivityGate() {
   function assertAdmissionAllowed() {
     assertUncertaintyResolved();
     if (maintaining) {
-      throw new Error("SPS Desktop plugin artifact maintenance is already active.");
+      throw admissionDenied("SPS Desktop plugin artifact maintenance is already active.");
     }
   }
 
@@ -69,7 +75,7 @@ export function createSpsDesktopPluginArtifactActivityGate() {
       throw new Error("SPS Desktop plugin artifact maintenance requires an action.");
     }
     if (maintaining || activeActivities !== 0) {
-      throw new Error("SPS Desktop plugin artifact activity is in progress.");
+      throw admissionDenied("SPS Desktop plugin artifact activity is in progress.");
     }
     return runTracked(action, () => { maintaining = true; }, () => { maintaining = false; });
   }

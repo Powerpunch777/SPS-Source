@@ -6070,7 +6070,7 @@ async function pollNodeCommands() {
   } catch (error) {
     // Maintenance refusal occurs before any recovery/network claim begins.
     // The existing timer retries after maintenance, without cancelling work.
-    if (admitted) throw error;
+    if (admitted || error?.code !== "sps_plugin_artifact_admission_denied") throw error;
   }
 }
 

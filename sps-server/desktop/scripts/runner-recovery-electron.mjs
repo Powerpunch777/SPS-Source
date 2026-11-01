@@ -61,6 +61,13 @@ try {
   const { createSpsNodeClaimJournal, SpsNodeClaimJournalError } = await import("../src/node-claim-journal.mjs");
   const { createSpsNodeCommandPollGate, claimNextSpsNodeWork, executionTransportForSpsNodeWork } = await import("../src/node-command-poller.mjs");
   const { createSpsNodeConnectionLifetime } = await import("../src/node-connection-lifecycle.mjs");
+  const { createSpsDesktopPluginArtifactActivityGate } = await import("../src/plugin-artifact-activity-gate.mjs");
+  const desktopPluginArtifactActivity = createSpsDesktopPluginArtifactActivityGate();
+  let preclaimAdmissionChecks = 0, executionAdmissionChecks = 0;
+  const assertPollOwnsArtifactAdmission = () => assert.throws(
+    () => desktopPluginArtifactActivity.withMaintenance(() => assert.fail("Runner poll admission was not held")),
+    error => error?.code === "sps_plugin_artifact_admission_denied",
+  );
   const client = await import("../../desktop-node/src/hub-client.mjs");
   const { createNodeIdentity } = await import("../../desktop-node/src/identity.mjs");
   const { executeSpsNodeCommand, cancelSpsNodeCommands } = await import("../../desktop-node/src/command-runner.mjs");
@@ -97,6 +104,10 @@ try {
     const target = new URL(url);
     assert.equal(target.origin, state.profile.hubUrl);
     assert.ok(target.pathname.startsWith(`/api/sps-nodes/${state.nodeId}/`));
+    if (/\/(?:commands|plugin-runs)\/claim-next$/.test(target.pathname)) {
+      assertPollOwnsArtifactAdmission();
+      preclaimAdmissionChecks++;
+    }
     return request({ kind: "request", role: path.basename(root), phase,
       method: options.method ?? "GET", path: target.pathname,
       body: options.body === undefined ? null : JSON.parse(options.body) });
@@ -125,6 +136,7 @@ try {
   const nodeRuntimeStatus = {};
   const sandbox = {
     state, nodeConnectionLifetime: connection, commandPollGate: createSpsNodeCommandPollGate(), nodeRuntimeStatus,
+    desktopPluginArtifactActivity,
     structuredClone, JSON, Date, Boolean, Error, SpsNodeCompletionOutboxError, SpsNodeClaimJournalError,
     SpsHubRequestError: client.SpsHubRequestError, nodeCompletionOutbox, nodeClaimJournal,
     canRunSpsNodeCommands: status => status === "active",
@@ -139,6 +151,8 @@ try {
     isSpsTechnicalMemberAccessRemoved: () => false,
     safeNodeCommandFailure: () => "The isolated Runner execution did not complete.",
     executeSpsNodeCommand: async options => {
+      assertPollOwnsArtifactAdmission();
+      executionAdmissionChecks++;
       executions++;
       return executeSpsNodeCommand({ ...options,
         hostEnvironment: { ...process.env, HOME: root, USERPROFILE: root, APPDATA: data, LOCALAPPDATA: data },
@@ -160,7 +174,15 @@ try {
   sandbox.globalThis = sandbox;
   vm.runInNewContext(`${routine}\nglobalThis.runPoll = pollNodeCommands;`, sandbox, { filename: "actual-main-runner-poll.mjs" });
   stage = "poll";
+  await desktopPluginArtifactActivity.withMaintenance(async () => {
+    await sandbox.runPoll();
+    assert.equal(preclaimAdmissionChecks, 0, "Busy maintenance dispatched a claim");
+    assert.equal(executions, 0);
+  });
   await sandbox.runPoll();
+  await desktopPluginArtifactActivity.withMaintenance(() => {});
+  assert.ok(preclaimAdmissionChecks > 0);
+  assert.equal(executionAdmissionChecks, executions);
   stage = "reload";
   state = await loadState(data, { strictVersion: true });
   const count = (value, key) => value ? JSON.parse(decrypt(value))[key].length : 0;
@@ -176,6 +198,8 @@ try {
   assert.equal(raw.includes(identity.privateKeyPem), false);
   clearTimeout(watchdog);
   const report = { runnerRecoveryComponent: true, phase, executions, claims, completions,
+    preclaimAdmissionChecks, executionAdmissionChecks, busyMaintenanceConsumedNoClaim: true,
+    pollAdmissionReleasedAfterSettlement: true,
     realWindowsSafeStorage: true, actualMainStartup: false, actualMainPollSha256: createHash("sha256").update(routine).digest("hex") };
   await new Promise(resolve => process.stdout.write(`${JSON.stringify(report)}\n`, resolve));
   app.quit();

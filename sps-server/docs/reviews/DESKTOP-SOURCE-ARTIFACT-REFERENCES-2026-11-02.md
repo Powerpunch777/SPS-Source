@@ -85,3 +85,21 @@ actual selective removal and Settings tests remain incomplete. Original
 Core/Builder, real AI, SQL-crash/abnormal-loss, installed/recovery, Linux and
 two-PC qualification requirements are unchanged. User apps/profiles/Vaults,
 external projects, original checkout and Production were preserved.
+
+### Required Source Reconciliation Contract
+
+Follow-up inspection confirmed that `loadCoreHostWorkspaceSources` and the
+ordinary Source list route cover only the selected Workspace. They are not a
+complete retained-Source inventory for artifact cleanup. Source synchronization
+may write metadata and therefore must not be used as a supposedly read-only
+cleanup check. Core's Source schema intentionally has no Host-local path.
+
+Before cleanup readiness, compose a private read-only inventory of retained Core
+Source handles/routes across the owned Host with Desktop's protected mapping
+receipt. An unmapped/restored handle or inconsistent share state must remain
+unavailable, not be matched by display name or assigned a new local folder by
+the cleanup flow. Recheck it under the same held scopes, including Core-side
+Source/grant mutation admission, rather than trusting a normal selected-Workspace
+HTTP list. Do not add Host paths to Core's DB or expose credentials through the
+private result. This reconciliation is not implemented by the current metadata
+projector or Runner idle scope; `cleanupReady:false` remains authoritative.

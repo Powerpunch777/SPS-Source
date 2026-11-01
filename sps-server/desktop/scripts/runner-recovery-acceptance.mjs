@@ -173,6 +173,10 @@ export async function runRunnerRecoveryAcceptance({ call, temporaryRoot, unrelat
     assert.equal(report.phase, name);
     assert.equal(report.realWindowsSafeStorage, true);
     assert.equal(report.actualMainStartup, false);
+    assert.ok(Number.isSafeInteger(report.preclaimAdmissionChecks) && report.preclaimAdmissionChecks > 0);
+    assert.equal(report.executionAdmissionChecks, report.executions);
+    assert.equal(report.busyMaintenanceConsumedNoClaim, true);
+    assert.equal(report.pollAdmissionReleasedAfterSettlement, true);
     assert.match(report.actualMainPollSha256, /^[a-f0-9]{64}$/);
     reports.push(report);
     return report;
@@ -228,6 +232,7 @@ export async function runRunnerRecoveryAcceptance({ call, temporaryRoot, unrelat
       actualNativeFixtureExecutions: 4, claimResponseLossRecovered: true, completionResponseLossRecovered: true,
       nonzeroProcessFailureConfirmed: true,
       duplicatedExecution: false, nativeCancellationConfirmed: true,
+      preclaimArtifactAdmissionConfirmed: true, busyMaintenanceConsumedNoClaim: true,
       actualMainPollSha256: reports[0].actualMainPollSha256,
       actualMainStartup: false, physicalComputersQualified: false, providerCliQualified: false,
       fixtureCliSha256: createHash("sha256").update(await readFile(executable)).digest("hex"), ...evidence }));

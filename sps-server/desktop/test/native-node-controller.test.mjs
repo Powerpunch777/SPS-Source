@@ -305,3 +305,17 @@ test("Native claim network preparation holds artifact admission before an execut
     await activity.withMaintenance(() => {});
   } finally { release.resolve(); await f.controller.dispose(); }
 });
+
+test("unexpected Native artifact admission errors fail closed instead of rescheduling silently", async () => {
+  const f = fixture({ withArtifactActivity() { throw new Error("fixture admission wiring error"); } });
+  try {
+    await f.controller.connect(selection);
+    const timers = f.timers.length;
+    f.timers.at(-1).callback();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.requests.filter(request => request.operation.startsWith("claim-")).length, 0);
+    assert.equal(f.controller.status(selection).state, "unavailable");
+    assert.equal(f.controller.status(selection).error, true);
+    assert.equal(f.timers.length, timers);
+  } finally { await f.controller.dispose(); }
+});

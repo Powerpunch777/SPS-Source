@@ -64,6 +64,29 @@ References consulted, not copied code:
 
 ## Still Incomplete
 
+### Runner Fixture Wiring Follow-Up
+
+Further source inspection found that the separate real Electron Runner recovery
+fixture extracts Main's poll routine but did not inject its newly required
+Desktop artifact gate. Unit Main harnesses had been updated; this fixture had
+not. The gate is now supplied there too. Admission refusals have a specific
+technical code: only that pre-callback refusal may defer a poll. Unexpected
+wiring errors are no longer silently treated as busy maintenance, and Native
+unexpected admission errors become unavailable rather than endlessly reschedule.
+
+The actual Runner recovery fixture now checks refusal before a claim, admission
+held at actual signed claim dispatch and actual fixture execution, and release
+only after the poll settles. Parent acceptance requires those observations in
+every phase. This is still a component integration using Main's actual routine,
+not full Member Main startup or physical-computer qualification.
+
+The focused follow-up selection passed52/52. Node24.22.1 Desktop `test:ci`
+exited0 again: serialized4/4 plus2169/2172, aggregate2176 total,2173 passed,
+3 unavailable Windows8.3 skips. Local ignored log:
+`desktop/dist/runner-admission-wiring-node24-20261102.log`. Actual Runner recovery
+and Builder source-Host acceptance must be run on the resulting code revision
+before this follow-up is treated as app-integration evidence.
+
 The command map is process-local. It does not prove the absence of standalone
 CLIs or processes left by a previous Desktop. The legacy durable journal is not
 an authoritative journal for the separate Native transport. Native restart and

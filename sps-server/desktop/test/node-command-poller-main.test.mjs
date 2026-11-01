@@ -562,3 +562,11 @@ test('a legacy preclaim request holds artifact admission until the entire poll s
   await poll;
   await harness.desktopPluginArtifactActivity.withMaintenance(() => {});
 });
+
+test('unexpected admission wiring errors are not silently treated as a busy maintenance scope', async () => {
+  const failure = new Error('fixture admission wiring error');
+  const harness = await createPollHarness({ desktopPluginArtifactActivity: { withActivity() { throw failure; } } });
+  await assert.rejects(harness.runPoll(), error => error === failure);
+  assert.deepEqual(harness.calls.agentClaims, []);
+  assert.deepEqual(harness.calls.executions, []);
+});

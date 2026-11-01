@@ -164,9 +164,9 @@ export function createSpsNativeNodeController({ getAuthority, getState, saveStat
         await failExecution(launch);
       }
       if (!launch.failed) launch.running = null;
-    })).catch(async () => {
+    })).catch(async error => {
       // A refusal before invoking the callback consumed no work; poll later.
-      if (admitted) await failExecution(launch);
+      if (admitted || error?.code !== "sps_plugin_artifact_admission_denied") await failExecution(launch);
     });
     launch.working = work;
     await work;
