@@ -23,6 +23,14 @@
 
 ## Maintainers and plugin authors
 
+- [Repository development instructions](../../../AGENTS.md):
+  the coordinating agent owns planning, integration, and final review. Delegate
+  bounded independent work to `gpt-6-luna` with `high` reasoning, research official
+  online references first, and parallelize only non-overlapping work. Preserve
+  unfinished work on quota exhaustion and resume it when available without quota
+  bypass or unapproved account/model changes. Use clear Korean progress reports.
+  These are development rules, not product permissions or an automatic guarantee
+  that a requested model is available.
 - [PLUGIN-COMPATIBILITY-AND-UPDATES.md](PLUGIN-COMPATIBILITY-AND-UPDATES.md):
   Desktop, Plugin API, and Extension Profile compatibility rules.
 - [CORE-PLUGIN-RUNTIME-CONTRACT.md](CORE-PLUGIN-RUNTIME-CONTRACT.md):

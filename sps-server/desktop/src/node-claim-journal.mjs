@@ -53,20 +53,24 @@ export function createSpsNodeClaimJournal({ readEncrypted, writeEncrypted, encry
     throw new TypeError("Invalid SPS Node claim journal configuration.");
   }
   let tail = Promise.resolve();
+  let pendingOperations = 0;
+  let artifactIdle = null;
   // Preflight can overlap connection-generation changes while still inside
   // this process. Keep it owned until that exact executor settles; after a
   // process restart only the durable entry marker determines replay safety.
   const executing = new Map();
   const serialize = action => {
-    const result = tail.then(action, action);
+    if (artifactIdle) return Promise.reject(new SpsNodeClaimJournalError("artifact-activity"));
+    pendingOperations += 1;
+    const result = tail.then(action, action).finally(() => { pendingOperations -= 1; });
     tail = result.catch(() => {});
     return result;
   };
-  async function read() {
+  async function readSnapshot() {
     let ciphertext, plaintext, parsed;
     try {
       ciphertext = await readEncrypted();
-      if (ciphertext === null || ciphertext === undefined) return [];
+      if (ciphertext === null || ciphertext === undefined) return { ciphertext, records: [] };
       if (!text(ciphertext, MAX_BYTES * 2)) fail("invalid");
       plaintext = await decrypt(ciphertext);
       if (typeof plaintext !== "string" || Buffer.byteLength(plaintext, "utf8") > MAX_BYTES) fail("invalid");
@@ -75,7 +79,43 @@ export function createSpsNodeClaimJournal({ readEncrypted, writeEncrypted, encry
       if (error instanceof SpsNodeClaimJournalError) throw error;
       fail("unavailable");
     }
-    return validate(parsed);
+    return { ciphertext, records: validate(parsed) };
+  }
+  async function read() {
+    return (await readSnapshot()).records;
+  }
+  async function withArtifactIdle(action) {
+    if (typeof action !== "function") throw new TypeError("SPS Node artifact observation requires an action.");
+    if (artifactIdle || pendingOperations !== 0 || executing.size !== 0) fail("artifact-activity");
+    const token = Symbol("Node claim artifact idle");
+    artifactIdle = token;
+    const assertHeld = () => {
+      if (artifactIdle !== token || pendingOperations !== 0 || executing.size !== 0) fail("artifact-activity");
+    };
+    const readIdleSnapshot = async () => {
+      assertHeld();
+      let snapshot;
+      try { snapshot = await readSnapshot(); }
+      catch { fail("artifact-activity"); }
+      assertHeld();
+      // Every retained connection and phase blocks cleanup, even an expired
+      // intent or a completion-pending record. This scope never rewrites them.
+      if (snapshot.records.length !== 0) fail("artifact-activity");
+      return snapshot;
+    };
+    try {
+      const captured = await readIdleSnapshot();
+      const assertCurrent = async () => {
+        const current = await readIdleSnapshot();
+        if (current.ciphertext !== captured.ciphertext) fail("artifact-activity");
+      };
+      await assertCurrent();
+      const result = await action(Object.freeze({ assertCurrent }));
+      await assertCurrent();
+      return result;
+    } finally {
+      if (artifactIdle === token) artifactIdle = null;
+    }
   }
   async function write(records) {
     const value = JSON.stringify({ version: 1, records });
@@ -190,5 +230,5 @@ export function createSpsNodeClaimJournal({ readEncrypted, writeEncrypted, encry
     });
   }
   return Object.freeze({ pending, begin, receive: input => change(input, "received"),
-    enter: input => change(input, "entered"), empty, finish, acquire, abort });
+    enter: input => change(input, "entered"), empty, finish, acquire, abort, withArtifactIdle });
 }

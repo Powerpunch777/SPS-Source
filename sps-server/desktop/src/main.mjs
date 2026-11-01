@@ -44,6 +44,7 @@ import {
   completeSpsPluginNodeRun,
   disconnectSpsNode,
   executeSpsNodeCommand,
+  withSpsNodeCommandArtifactMaintenance,
   getSpsDesktopAccount,
   listSpsCompanies,
   listSpsProjects,
@@ -1879,6 +1880,7 @@ function ensureNativeNodeController() {
     encrypt, decrypt, getMember: ensureNativeMemberController,
     displayName: "SPS Native Node", appVersion: app.getVersion(),
     cancelCommand: (commandId, ownership) => cancelSpsNodeCommand(commandId, "The Native Node connection stopped.", { ownership }),
+    withArtifactActivity: desktopPluginArtifactActivity.withActivity,
     confirm: async ({ hostId, workspaceId }) => {
       const choice = await dialog.showMessageBox(coreSettingsController?.getWindow?.() ?? mainWindow ?? undefined, {
         type: "question", title: "Connect this computer as a Native Node?",
@@ -2748,7 +2750,20 @@ async function withDesktopPluginArtifactReferences(action) {
   if (!await ensureDesktopIdentityAccessToken()) throw new Error("Sign in again before reviewing Plugin artifacts.");
   context.assertCurrent();
   return createSpsPluginArtifactObservation({ activity: desktopPluginArtifactActivity, capture: () => context }).withSnapshot(scope =>
-    action(Object.freeze({ ...scope, coverage: "desktop-known-inputs-and-owned-cores", cleanupReady: false })));
+    withSpsNodeCommandArtifactMaintenance(commandScope => nodeClaimJournal.withArtifactIdle(async claimScope => {
+      const assertCurrent = async () => {
+        await scope.assertCurrent();
+        commandScope.assertCurrent();
+        await claimScope.assertCurrent();
+        commandScope.assertCurrent();
+        await scope.assertCurrent();
+      };
+      await assertCurrent();
+      const result = await action(Object.freeze({ ...scope, assertCurrent,
+        coverage: "desktop-known-inputs-and-owned-cores", cleanupReady: false }));
+      await assertCurrent();
+      return result;
+    })));
 }
 
 function assertRegistryWindowEvent(event) {
@@ -6046,6 +6061,20 @@ function scheduleHeartbeat({ immediate = true, ticket = null } = {}) {
 }
 
 async function pollNodeCommands() {
+  let admitted = false;
+  try {
+    return await desktopPluginArtifactActivity.withActivity(() => {
+      admitted = true;
+      return pollNodeCommandsActive();
+    });
+  } catch (error) {
+    // Maintenance refusal occurs before any recovery/network claim begins.
+    // The existing timer retries after maintenance, without cancelling work.
+    if (admitted) throw error;
+  }
+}
+
+async function pollNodeCommandsActive() {
   const connectionTicket = nodeConnectionLifetime.current();
   const profileSnapshot = state.profile ? structuredClone(state.profile) : null;
   const profileFingerprint = state.profile ? JSON.stringify(state.profile) : null;

@@ -40,8 +40,15 @@ pending. No cleanup endpoint or deletion approval is exposed by this increment.
 The [Desktop Source follow-up](../reviews/DESKTOP-SOURCE-ARTIFACT-REFERENCES-2026-11-02.md)
 adds active/saved profile and encrypted-share path references without moving
 Host-local paths into Core. Source mutations now join Desktop artifact admission
-before their FIFO queue. Runner execution/uncertainty and incomplete route/share
-reconciliation still prevent a complete safety claim; `cleanupReady:false` stays.
+before their FIFO queue.
+
+The [Runner idle-admission follow-up](../reviews/RUNNER-ARTIFACT-IDLE-2026-11-02.md)
+now composes process-local command preflight/closure and all retained legacy
+claim records with Main's private observation. Legacy and existing Native polls
+join Desktop activity before network claims. No work is cancelled or drained.
+Native restart uncertainty and incomplete Source route/share reconciliation still
+prevent a complete safety claim; `cleanupReady:false` stays. This is not an
+inventory/confirmation/removal API or Settings activation.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is

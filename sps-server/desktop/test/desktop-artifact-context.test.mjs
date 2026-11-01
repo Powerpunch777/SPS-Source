@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import { withSpsNodeCommandArtifactMaintenance } from "../../desktop-node/src/command-runner.mjs";
+import { createSpsNodeClaimJournal } from "../src/node-claim-journal.mjs";
 
 const source = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
 const start = source.indexOf("function captureDesktopPluginArtifactContext(");
@@ -32,6 +34,9 @@ function fixture() {
     currentHostProjectShareSecrets: () => ({ projects: {} }),
     captureSpsDesktopSourceArtifactReferences: options => ({ capturedState: options.readState(), readShareState: options.readShareState }),
     ensureDesktopIdentityAccessToken: async () => "fixture-token",
+    withSpsNodeCommandArtifactMaintenance,
+    nodeClaimJournal: createSpsNodeClaimJournal({ readEncrypted: () => null, writeEncrypted: async () => {},
+      encrypt: value => value, decrypt: value => value }),
     desktopPluginArtifactActivity: {},
     createSpsPluginArtifactObservation: ({ capture }) => ({ async withSnapshot(action) { const context = capture(); context.assertCurrent(); return action(context); } }),
   };
@@ -140,4 +145,42 @@ test("Main known-input observation explicitly cannot qualify cleanup readiness",
 
 test("Main Source mutation queue uses the same Desktop artifact admission", () => {
   assert.match(source, /const hostShareMutationCoordinator = createSpsHostShareMutationCoordinator\(\{ withArtifactActivity: desktopPluginArtifactActivity\.withActivity \}\);/);
+});
+
+test("Main joins Runner and all-connection journal idle scopes before invoking the caller", async () => {
+  const f = fixture(), events = [];
+  f.scope.withSpsNodeCommandArtifactMaintenance = async action => {
+    events.push("runner-enter");
+    try { return await action({ assertCurrent() { events.push("runner-check"); } }); }
+    finally { events.push("runner-exit"); }
+  };
+  f.scope.nodeClaimJournal = { async withArtifactIdle(action) {
+    events.push("journal-enter");
+    try { return await action({ async assertCurrent() { events.push("journal-check"); } }); }
+    finally { events.push("journal-exit"); }
+  } };
+  await f.observe(async scope => { events.push("callback"); await scope.assertCurrent(); });
+  assert.ok(events.indexOf("runner-enter") < events.indexOf("journal-enter"));
+  assert.ok(events.indexOf("journal-check") < events.indexOf("callback"));
+  assert.ok(events.indexOf("journal-exit") > events.indexOf("callback"));
+  assert.ok(events.indexOf("runner-exit") > events.indexOf("journal-exit"));
+});
+
+test("Main refuses journal uncertainty without entering the caller and releases the Runner scope", async () => {
+  const f = fixture();
+  f.scope.nodeClaimJournal = { async withArtifactIdle() { throw new Error("journal uncertain"); } };
+  await assert.rejects(f.observe(() => assert.fail("Journal is uncertain")), /journal uncertain/);
+  await withSpsNodeCommandArtifactMaintenance(scope => scope.assertCurrent());
+});
+
+test("Main combined observation guard expires after the real Runner/journal scopes close", async () => {
+  const f = fixture(); let escaped;
+  await f.observe(async scope => { escaped = scope; await scope.assertCurrent(); });
+  await assert.rejects(escaped.assertCurrent(), error => error.code === "artifact-activity");
+});
+
+test("Main gives Native polls the same artifact activity admission", () => {
+  const nativeStart = source.indexOf("function ensureNativeNodeController()");
+  const nativeEnd = source.indexOf("function ensureNativeIdentityController()", nativeStart);
+  assert.match(source.slice(nativeStart, nativeEnd), /withArtifactActivity: desktopPluginArtifactActivity\.withActivity/);
 });

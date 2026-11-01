@@ -3,6 +3,7 @@ import test from "node:test";
 import { createNodeIdentity } from "@sps/desktop-node";
 import { createSpsNativeNodeController } from "../src/native-node-controller.mjs";
 import { readNativeNodeIdentityCapsule } from "../src/native-node-state.mjs";
+import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
 
 const AUTHORITY = Object.freeze({ identityIssuer: "https://identity.example", subject: "member-1",
   userDataDirectory: "C:/Users/member/AppData", vaultDirectory: "C:/Users/member/AppData/vault", generation: 1 });
@@ -19,7 +20,7 @@ function deferred() {
 }
 
 function fixture({ beforeInvoke, onRegister, confirm = async () => true, cancelCommand, recover,
-  execute = async () => {}, claimCommandId = null } = {}) {
+  execute = async () => {}, claimCommandId = null, withArtifactActivity } = {}) {
   let state = { v: 1, entries: [] };
   let authority = AUTHORITY;
   let identityCreations = 0;
@@ -50,6 +51,7 @@ function fixture({ beforeInvoke, onRegister, confirm = async () => true, cancelC
     createIdentity: () => { identityCreations += 1; return createNodeIdentity(); },
     scanCapabilities: async () => [], scanRunners: async () => [], execute,
     cancelCommand,
+    ...(withArtifactActivity ? { withArtifactActivity } : {}),
     setTimer: (callback, delayMs) => { const timer = { callback, delayMs, unref() {} }; timers.push(timer); return timer; },
     clearTimer: timer => { timer.cleared = true; },
   });
@@ -264,4 +266,42 @@ test("failed cancellation reports unavailable, hides the Node from other account
   assert.deepEqual(await reconnect, { nodeId: NODE, state: "active", activeRun: false, error: false });
   assert.equal(f.requests.filter(request => request.operation === "register").length, 2);
   await f.controller.dispose();
+});
+
+test("artifact maintenance declines Native polling before claim without failing the Node", async () => {
+  const activity = createSpsDesktopPluginArtifactActivityGate();
+  const f = fixture({ withArtifactActivity: activity.withActivity });
+  try {
+    await f.controller.connect(selection);
+    await activity.withMaintenance(async () => {
+      f.timers.at(-1).callback();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(f.requests.filter(request => request.operation.startsWith("claim-")).length, 0);
+      assert.equal(f.controller.status(selection).state, "active");
+      assert.equal(f.controller.status(selection).error, false);
+    });
+    f.timers.at(-1).callback();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.requests.filter(request => request.operation === "claim-command").length, 1);
+    assert.equal(f.requests.filter(request => request.operation === "claim-plugin-run").length, 1);
+  } finally { await f.controller.dispose(); }
+});
+
+test("Native claim network preparation holds artifact admission before an executor exists", async () => {
+  const activity = createSpsDesktopPluginArtifactActivityGate();
+  const started = deferred(), release = deferred();
+  const f = fixture({ withArtifactActivity: activity.withActivity,
+    beforeInvoke: async request => { if (request.operation === "claim-command") {
+      started.resolve(); await release.promise;
+    } } });
+  try {
+    await f.controller.connect(selection);
+    f.timers.at(-1).callback();
+    await started.promise;
+    assert.throws(() => activity.withMaintenance(() => assert.fail("Native claim still pending")));
+    assert.equal(f.controller.status(selection).activeRun, false);
+    release.resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    await activity.withMaintenance(() => {});
+  } finally { release.resolve(); await f.controller.dispose(); }
 });
