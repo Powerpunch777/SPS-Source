@@ -37,6 +37,12 @@ data remains protected. Its private result explicitly reports `cleanupReady:fals
 full Source/Runner discovery and eligibility/confirmation/removal/Settings remain
 pending. No cleanup endpoint or deletion approval is exposed by this increment.
 
+The [Desktop Source follow-up](../reviews/DESKTOP-SOURCE-ARTIFACT-REFERENCES-2026-11-02.md)
+adds active/saved profile and encrypted-share path references without moving
+Host-local paths into Core. Source mutations now join Desktop artifact admission
+before their FIFO queue. Runner execution/uncertainty and incomplete route/share
+reconciliation still prevent a complete safety claim; `cleanupReady:false` stays.
+
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
 authorized by this policy. This does not authorize cleaning any current user

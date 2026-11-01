@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
 import {
   createSpsHostShareMutationCoordinator,
   SpsHostShareReconciliationRequiredError,
@@ -106,6 +107,84 @@ test("closeAndDrain joins settled failures without treating them as a live child
   const operationResult = await operation;
   assert.match(operationResult.error.message, /private API or ACL failure/);
   await draining;
+});
+
+test("artifact activity covers admitted and queued share mutations", async () => {
+  const activity = createSpsDesktopPluginArtifactActivityGate();
+  const coordinator = createSpsHostShareMutationCoordinator({ withArtifactActivity: activity.withActivity });
+  const started = deferred();
+  const finish = deferred();
+  const first = coordinator.run(() => {}, async () => {
+    started.resolve();
+    await finish.promise;
+  });
+  await started.promise;
+
+  let secondStarted = false;
+  const second = coordinator.run(() => {}, async () => { secondStarted = true; });
+  assert.throws(() => activity.withMaintenance(async () => {}), /activity is in progress/);
+  assert.equal(secondStarted, false, "The second mutation is admitted but still queued.");
+
+  finish.resolve();
+  await Promise.all([first, second]);
+  assert.equal(secondStarted, true);
+  await activity.withMaintenance(async () => {});
+});
+
+test("held artifact maintenance rejects a share mutation before queueing or action", async () => {
+  const activity = createSpsDesktopPluginArtifactActivityGate();
+  const coordinator = createSpsHostShareMutationCoordinator({ withArtifactActivity: activity.withActivity });
+  const entered = deferred();
+  const finish = deferred();
+  let authorityChecks = 0;
+  let actionStarted = false;
+  const maintenance = activity.withMaintenance(async () => {
+    entered.resolve();
+    await finish.promise;
+  });
+  await entered.promise;
+
+  await assert.rejects(coordinator.run(() => { authorityChecks += 1; }, async () => { actionStarted = true; }),
+    /maintenance is already active/);
+  assert.equal(authorityChecks, 0);
+  assert.equal(actionStarted, false);
+
+  finish.resolve();
+  await maintenance;
+  await coordinator.run(() => { authorityChecks += 1; }, async () => { actionStarted = true; });
+  assert.equal(authorityChecks, 2);
+  assert.equal(actionStarted, true);
+});
+
+test("failed admitted work releases artifact activity and closeAndDrain still joins queued work", async () => {
+  const activity = createSpsDesktopPluginArtifactActivityGate();
+  const coordinator = createSpsHostShareMutationCoordinator({ withArtifactActivity: activity.withActivity });
+  const failure = new Error("private share mutation failure");
+  const started = deferred();
+  const fail = deferred();
+  const first = coordinator.run(() => {}, async () => {
+    started.resolve();
+    await fail.promise;
+    throw failure;
+  });
+  const firstObserved = first.then(() => ({ ok: true }), error => ({ error }));
+  await started.promise;
+
+  let secondFinished = false;
+  const second = coordinator.run(() => {}, async () => { secondFinished = true; });
+  const draining = coordinator.closeAndDrain();
+  fail.resolve();
+
+  const firstResult = await firstObserved;
+  assert.equal(firstResult.error, failure);
+  await second;
+  await draining;
+  assert.equal(secondFinished, true);
+  await activity.withMaintenance(async () => {});
+});
+
+test("artifact activity coordinator must be a function", () => {
+  assert.throws(() => createSpsHostShareMutationCoordinator({ withArtifactActivity: null }), /artifact activity coordinator/);
 });
 
 test("reconciliation errors expose only fixed status and uncertainty flags", () => {

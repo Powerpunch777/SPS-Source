@@ -29,6 +29,8 @@ function fixture() {
     ownerVaultOperations: { connectionGeneration: () => generation, isRestoring: () => false, isChangingConnection: () => false },
     ownerHostRestoreRunner: { generation: () => restoreGeneration, isActive: () => false, hasUnconfirmedTermination: () => false },
     readSpsDesktopPluginArtifactInputs: options => { options.assertCurrent(); input = options; return "private-inputs"; },
+    currentHostProjectShareSecrets: () => ({ projects: {} }),
+    captureSpsDesktopSourceArtifactReferences: options => ({ capturedState: options.readState(), readShareState: options.readShareState }),
     ensureDesktopIdentityAccessToken: async () => "fixture-token",
     desktopPluginArtifactActivity: {},
     createSpsPluginArtifactObservation: ({ capture }) => ({ async withSnapshot(action) { const context = capture(); context.assertCurrent(); return action(context); } }),
@@ -51,6 +53,9 @@ test("actual Main context binds the exact Host, optional Preview/Memory and priv
   assert.equal(f.input.runtimeOwners[2].manager, f.memory);
   assert.equal(f.input.preview.fixturePath, "/fixture/preview/fixture.json");
   assert.equal(f.input.configuredMemoryPath, "/fixture/vault/memory/config.json");
+  const sources = f.input.readSourceReferences();
+  assert.equal(sources.capturedState.profile, f.scope.state.profile);
+  assert.equal(sources.readShareState, f.scope.currentHostProjectShareSecrets);
 });
 
 test("Main discovery omits absent optional participants, never the required Host", () => {
@@ -131,4 +136,8 @@ test("Main known-input observation explicitly cannot qualify cleanup readiness",
     assert.equal(scope.cleanupReady, false);
     assert.equal(Object.isFrozen(scope), true);
   });
+});
+
+test("Main Source mutation queue uses the same Desktop artifact admission", () => {
+  assert.match(source, /const hostShareMutationCoordinator = createSpsHostShareMutationCoordinator\(\{ withArtifactActivity: desktopPluginArtifactActivity\.withActivity \}\);/);
 });

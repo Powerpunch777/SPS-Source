@@ -6,7 +6,7 @@ import { types } from "node:util";
 const failure = () => new Error("Desktop artifact inputs are incomplete or changed; preserve all package files.");
 
 /** A private input reader, not Host authorization, filesystem ownership or deletion. */
-export async function readSpsDesktopPluginArtifactInputs({ vaultRoot, runtimeOwners, preview = null, configuredMemoryPath = null, assertCurrent } = {}) {
+export async function readSpsDesktopPluginArtifactInputs({ vaultRoot, runtimeOwners, preview = null, configuredMemoryPath = null, readSourceReferences = null, assertCurrent } = {}) {
   if (!Array.isArray(runtimeOwners) || runtimeOwners.length < 1 || runtimeOwners.length > 3
     || typeof assertCurrent !== "function") throw failure();
   const owners = runtimeOwners.map(owner => {
@@ -31,6 +31,12 @@ export async function readSpsDesktopPluginArtifactInputs({ vaultRoot, runtimeOwn
   const runtimes = readRuntimes();
   const signature = JSON.stringify(runtimes);
   const readers = [];
+  if (readSourceReferences !== null) {
+    if (typeof readSourceReferences !== "function") throw failure();
+    const source = readSourceReferences();
+    if (!Array.isArray(source?.references) || typeof source.assertCurrent !== "function") throw failure();
+    readers.push(source); check();
+  }
   readers.push(await readDeveloperProjectArtifactReferences({ vaultRoot })); check();
   readers.push(await readRegistrySourceArtifactReferences({ vaultRoot })); check();
   const configs = new Map();

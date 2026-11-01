@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:net";
-import { lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,6 +14,8 @@ import { createSpsPluginArtifactObservation } from "../src/plugin-artifact-obser
 import { resolveDesktopDevelopmentNodeCommand } from "../src/development-mode.mjs";
 import { saveRegistrySources } from "../src/registry-source-catalog.mjs";
 import { readSpsDesktopPluginArtifactInputs } from "../src/desktop-artifact-inputs.mjs";
+import { captureSpsDesktopSourceArtifactReferences } from "../src/desktop-source-artifact-references.mjs";
+import { createSpsHostShareMutationCoordinator } from "../src/host-share-mutation.mjs";
 
 async function freePort() {
   const server = createServer();
@@ -103,12 +105,20 @@ test("actual Windows owned Core retains its private reference scope across Main-
   assert.equal((await previewManager.start()).state, "running");
   const registryPath = path.join(root, "local-registry");
   await mkdir(registryPath);
+  const sourcePath = path.join(root, "host-source");
+  await mkdir(sourcePath);
+  const sourceMarker = path.join(sourcePath, "project-sentinel.txt");
+  await writeFile(sourceMarker, "preserve-project-data");
+  const sourceState = { profile: {}, accountConnections: { saved: { projectWorkspaces: { project: sourcePath } } }, encryptedShareState: null };
+  const shares = createSpsHostShareMutationCoordinator({ withArtifactActivity: activity.withActivity });
   await saveRegistrySources({ vaultRoot: root, sources: [{
     id: "io.sps.artifact-test", kind: "local", displayName: "Artifact test", localPath: registryPath,
   }] });
   const observation = createSpsPluginArtifactObservation({ activity, capture: () => ({
     assertCurrent() {}, async readInputs() {
       return readSpsDesktopPluginArtifactInputs({ vaultRoot: root, preview: second, assertCurrent() {},
+        readSourceReferences: () => captureSpsDesktopSourceArtifactReferences({ readState: () => sourceState,
+          readShareState: () => assert.fail("The isolated source has no encrypted share credentials.") }),
         runtimeOwners: [{ kind: "core", manager }, { kind: "core", manager: previewManager }] });
     },
     participants: [{ id: "host", manager }, { id: "preview", manager: previewManager }],
@@ -132,6 +142,9 @@ test("actual Windows owned Core retains its private reference scope across Main-
       && reference.path === second.config.database.embeddedPostgresDataDir && reference.kind === "directory"));
     assert.ok(scope.references.some(reference => reference.source === "desktop-preview-data"
       && reference.path === second.accessTokenPath && reference.kind === "file"));
+    assert.ok(scope.references.some(reference => reference.source === "desktop-source"
+      && reference.path === sourcePath && reference.kind === "directory" && reference.processOwner === "desktop"));
+    await assert.rejects(shares.run(() => {}, async () => assert.fail("Source changes must not enter during observation.")), /maintenance/);
     await assert.rejects(manager.withPluginArtifactReferences(async () => assert.fail("Host scope must remain held.")));
     await assert.rejects(previewManager.withPluginArtifactReferences(async () => assert.fail("Preview scope must remain held.")));
     await scope.assertCurrent();
@@ -139,6 +152,14 @@ test("actual Windows owned Core retains its private reference scope across Main-
     return "main-work-complete";
   });
   assert.equal(result, "main-work-complete");
+  assert.equal(await readFile(sourceMarker, "utf8"), "preserve-project-data");
+  await assert.rejects(observation.withSnapshot(async scope => {
+    sourceState.accountConnections.saved.projectWorkspaces.project = path.join(root, "replacement-source");
+    await scope.assertCurrent();
+    assert.fail("Changed Source metadata must invalidate the held result.");
+  }), /Desktop Source references are unavailable or changed/);
+  sourceState.accountConnections.saved.projectWorkspaces.project = sourcePath;
+  assert.equal(await readFile(sourceMarker, "utf8"), "preserve-project-data");
   await assert.rejects(oldScope.assertCurrent());
   await manager.withPluginArtifactReferences(async scope => scope.assertCurrent());
   let entered;

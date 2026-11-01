@@ -204,6 +204,7 @@ import { createSpsPluginPreviewOperationGate } from "./plugin-preview-operation-
 import { createSpsDesktopPluginArtifactActivityGate } from "./plugin-artifact-activity-gate.mjs";
 import { createSpsPluginArtifactObservation } from "./plugin-artifact-observation.mjs";
 import { readSpsDesktopPluginArtifactInputs } from "./desktop-artifact-inputs.mjs";
+import { captureSpsDesktopSourceArtifactReferences } from "./desktop-source-artifact-references.mjs";
 import {
   appendDeveloperDiagnostic,
   clearDeveloperDiagnostics,
@@ -467,7 +468,7 @@ let ownerHostCompaniesResolvedGeneration = 0;
 let identityTeamContextRequestGeneration = 0;
 let workspaceProjectsRequestGeneration = 0;
 let desktopAuthPollRequestGeneration = 0;
-const hostShareMutationCoordinator = createSpsHostShareMutationCoordinator();
+const hostShareMutationCoordinator = createSpsHostShareMutationCoordinator({ withArtifactActivity: desktopPluginArtifactActivity.withActivity });
 let pluginRuntimeStatus = {
   state: "not-inspected",
   command: null,
@@ -2728,6 +2729,11 @@ function captureDesktopPluginArtifactContext() {
     participants: Object.freeze([Object.freeze({ id: "host", manager: host }),
       ...(preview ? [Object.freeze({ id: "preview", manager: previewManager })] : [])]),
     readInputs: () => readSpsDesktopPluginArtifactInputs({ vaultRoot: vault, preview: previewPaths, assertCurrent,
+      readSourceReferences: () => captureSpsDesktopSourceArtifactReferences({
+        readState: () => ({ profile: state.profile, accountConnections: state.accountConnections,
+          encryptedShareState: state.encryptedHostProjectShareSecrets }),
+        readShareState: currentHostProjectShareSecrets,
+      }),
       configuredMemoryPath: memory ? defaultMemoryVaultLayout(vault).configPath : null,
       runtimeOwners: [{ kind: "core", manager: host }, ...(preview ? [{ kind: "core", manager: previewManager }] : []),
         ...(memory ? [{ kind: "memory", manager: memory }] : [])] }),

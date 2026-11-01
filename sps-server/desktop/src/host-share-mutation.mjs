@@ -3,7 +3,10 @@
  * authority snapshot and must keep using the same assertion for the full
  * operation; this coordinator does not refresh or replace that authority.
  */
-export function createSpsHostShareMutationCoordinator() {
+export function createSpsHostShareMutationCoordinator({ withArtifactActivity = action => action() } = {}) {
+  if (typeof withArtifactActivity !== "function") {
+    throw new TypeError("SPS Host share mutations require an artifact activity coordinator.");
+  }
   let tail = Promise.resolve();
   let closed = false;
   let closeAndDrainPromise = null;
@@ -24,16 +27,20 @@ export function createSpsHostShareMutationCoordinator() {
       throw new TypeError("SPS Host share mutations require an authority check and an action.");
     }
 
-    // Reject already-stale work without putting it into the serialized queue.
-    assertCurrentNow(assertCurrent);
-    const operation = tail.then(async () => {
-      // Authority may have changed while a previous mutation was in progress.
+    // Admission starts before queueing so maintenance also sees accepted work
+    // while it waits behind an earlier share mutation.
+    return await withArtifactActivity(async () => {
+      // Reject already-stale work without putting it into the serialized queue.
       assertCurrentNow(assertCurrent);
-      return await action();
+      const operation = tail.then(async () => {
+        // Authority may have changed while a previous mutation was in progress.
+        assertCurrentNow(assertCurrent);
+        return await action();
+      });
+      // A rejected operation must not poison later queued work.
+      tail = operation.then(() => undefined, () => undefined);
+      return await operation;
     });
-    // A rejected operation must not poison later queued work.
-    tail = operation.then(() => undefined, () => undefined);
-    return await operation;
   }
 
   function closeAndDrain() {
