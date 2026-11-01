@@ -399,6 +399,25 @@ jobs:
         working-directory: sps-server/desktop
         run: npm run test:ci
 
+      - name: Select Node 26.13 for owned Core shutdown regression
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26.13.0
+          package-manager-cache: false
+
+      - name: Verify owned Core shutdown on Node 26.13
+        timeout-minutes: 3
+        working-directory: sps-server/desktop
+        run: |
+          node --version
+          node --test test/owner-host-artifact-channel.windows.test.mjs
+
+      - name: Restore Node 22 before Desktop E2E and packaging
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
       - name: Run isolated Desktop bootstrap E2E
         working-directory: sps-server/desktop
         run: npm run test:e2e:bootstrap

@@ -88,6 +88,11 @@ The product runtime lives in the private `SPS-Core` repository. The public
 `SPS-Core-Compat` repository is a Paperclip compatibility mirror only; it is
 not a product runtime, release channel, or support surface.
 
+Use a tested Node runtime for development. Windows owned-Core shutdown failed
+on Node26.4.0 and passed on Node24.22.1/26.13.0; a Node major number alone is not
+qualification. CI keeps Node22 packaging and separately checks Node26.13 shutdown.
+See the [runtime comparison and remaining limits](sps-server/docs/reviews/OWNED-CORE-NODE-RUNTIME-2026-11-01.md).
+
 ```powershell
 Set-Location .\external\sps-plugin-sdk
 npm test

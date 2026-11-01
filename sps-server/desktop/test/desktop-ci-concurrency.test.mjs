@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
+import { load } from "js-yaml";
 import { desktopCiTestPlan, runDesktopCiTests } from "../scripts/run-desktop-ci-tests.mjs";
 
 test("Windows CI bounds competing test files without dropping any Desktop tests or changing their deadlines", async () => {
@@ -32,6 +33,28 @@ test("CI stages include every discovered test exactly once and isolate only the 
     ["installer-command-exit-observation.test.mjs", "test/ordinary.test.mjs"]]) {
     assert.throws(() => desktopCiTestPlan(invalid));
   }
+});
+
+test("Windows CI checks the real owned Core on Node26.13 and restores the packaging runtime", async () => {
+  const workflow = load(await readFile(new URL("../../../.github/workflows/sps-verify.yml", import.meta.url), "utf8"));
+  const steps = workflow.jobs.desktop.steps;
+  const fullSuite = steps.findIndex(step => step.run === "npm run test:ci");
+  const select = steps.findIndex(step => step.name === "Select Node 26.13 for owned Core shutdown regression");
+  const regression = steps.findIndex(step => step.name === "Verify owned Core shutdown on Node 26.13");
+  const restore = steps.findIndex(step => step.name === "Restore Node 22 before Desktop E2E and packaging");
+  const bootstrap = steps.findIndex(step => step.name === "Run isolated Desktop bootstrap E2E");
+  const packaging = steps.findIndex(step => step.name === "Prepare Owner Host runtime for Desktop E2E");
+  assert.ok(fullSuite >= 0 && fullSuite < select && select < regression && regression < restore
+    && restore < bootstrap && bootstrap < packaging);
+  assert.equal(steps[select].uses, "actions/setup-node@v6");
+  assert.equal(String(steps[select].with["node-version"]), "26.13.0");
+  assert.equal(steps[regression]["working-directory"], "sps-server/desktop");
+  assert.equal(steps[regression]["timeout-minutes"], 3);
+  assert.equal(steps[regression].run.trim(), "node --version\nnode --test test/owner-host-artifact-channel.windows.test.mjs");
+  assert.equal(steps[regression]["continue-on-error"] ?? false, false);
+  assert.equal(steps[regression].if, undefined);
+  assert.equal(steps[restore].uses, "actions/setup-node@v6");
+  assert.equal(String(steps[restore].with["node-version"]), "22");
 });
 
 test("CI runs stages in sequence and never hides a first or second process failure", async () => {
