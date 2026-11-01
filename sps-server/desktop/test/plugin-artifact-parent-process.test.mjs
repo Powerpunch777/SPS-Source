@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -67,8 +67,25 @@ async function fixture(t, dropOperation) {
     let timer;
     return Promise.race([result, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Private fixture probe did not reply.")), 5000); })]).finally(() => clearTimeout(timer));
   }
-  return { child, client, artifacts, probe };
+  return { child, client, artifacts, probe, root };
 }
+
+test("real child captures parent-supplied files and denies a changed file without releasing uncertainty", { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
+  const file = path.join(f.root, "retained.spsplugin");
+  await writeFile(file, "original");
+  const parentPaths = [{ source: "desktop-developer-build", ownerId: "project-one", state: "retained", path: file, kind: "file" }];
+  await assert.rejects(f.artifacts.withMaintenance(() => f.client.withSnapshot(async scope => {
+    assert.equal(scope.coverage, "core-and-parent-paths");
+    assert.deepEqual(scope.parentPaths, [{ ...parentPaths[0], canonicalPath: await realpath(file) }]);
+    assert.equal(await f.probe(), false);
+    await writeFile(file, "changed bytes");
+    await scope.assertCurrent();
+    assert.fail("A changed parent path must not advance Main work.");
+  }, { parentPaths })));
+  assert.throws(() => f.artifacts.withActivity(async () => {}));
+  assert.throws(() => f.artifacts.withMaintenance(async () => {}));
+});
 
 test("real child Core reference scope excludes activity until callback and remote final validation finish", { timeout: 20_000 }, async t => {
   const f = await fixture(t);

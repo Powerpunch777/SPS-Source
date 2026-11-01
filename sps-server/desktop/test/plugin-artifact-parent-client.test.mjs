@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import test from "node:test";
 import { createSpsPluginArtifactParentClient } from "../src/plugin-artifact-parent-channel.mjs";
 
@@ -180,3 +181,69 @@ test("disposing an idle ready client does not report uncertainty", () => {
   f.client.dispose();
   assert.equal(f.uncertainCount(), 0);
 });
+
+const parentReference = () => ({ source: "desktop-developer-build", ownerId: "project-one", state: "retained",
+  path: path.resolve("retained.spsplugin"), kind: "file" });
+function parentResponse(response, request) {
+  return request.operation === "begin" ? { ...response, snapshot: { coverage: "core-and-parent-paths",
+    fingerprint: FINGERPRINT, references: [], parentPaths: request.parentPaths.map(item => ({ ...item, canonicalPath: item.path })) } } : response;
+}
+test("parent path inputs are captured before sending and exact observed paths remain immutable", async t => {
+  const f = fixture({ mutateResponse: parentResponse });
+  t.after(() => f.client.dispose());
+  const reference = parentReference();
+  const input = [reference];
+  const original = { ...reference };
+  const pending = f.client.withSnapshot(async scope => {
+    assert.equal(scope.coverage, "core-and-parent-paths");
+    assert.deepEqual(scope.parentPaths, [{ ...original, canonicalPath: original.path }]);
+    assert.equal(Object.isFrozen(scope.parentPaths), true);
+    assert.equal(Object.isFrozen(scope.parentPaths[0]), true);
+    await scope.assertCurrent();
+    return "retained";
+  }, { parentPaths: input });
+  reference.path = path.resolve("replacement.spsplugin");
+  input.length = 0;
+  assert.equal(await pending, "retained");
+  assert.deepEqual(f.requests[0].parentPaths, [original]);
+  assert.ok(f.requests.slice(1).every(request => !Object.hasOwn(request, "parentPaths")));
+});
+test("an explicit empty parent input remains distinguishable from Core-only coverage", async t => {
+  const f = fixture({ mutateResponse: parentResponse });
+  t.after(() => f.client.dispose());
+  await f.client.withSnapshot(async scope => {
+    assert.equal(scope.coverage, "core-and-parent-paths"); assert.deepEqual(scope.parentPaths, []);
+  }, { parentPaths: [] });
+});
+for (const [name, options] of [
+  ["unknown option", { parentPaths: [], extra: true }],
+  ["oversized list", { parentPaths: Array(4097).fill(parentReference()) }],
+  ["duplicate tuple", { parentPaths: [parentReference(), parentReference()] }],
+  ["relative path", { parentPaths: [{ ...parentReference(), path: "relative" }] }],
+  ["unknown path field", { parentPaths: [{ ...parentReference(), canonicalPath: path.resolve("wrong") }] }],
+  ["empty source", { parentPaths: [{ ...parentReference(), source: "" }] }],
+]) {
+  test(`invalid parent paths reject before sending: ${name}`, async t => {
+    const f = fixture(); t.after(() => f.client.dispose());
+    await assert.rejects(f.client.withSnapshot(async () => assert.fail("must not enter"), options), protocolError);
+    assert.equal(f.requests.length, 0); assert.equal(f.uncertainCount(), 0);
+    await f.client.withSnapshot(async () => {});
+  });
+}
+for (const mutation of ["omitted", "substituted", "extra"]) {
+  test(`parent-path response ${mutation} cannot qualify the requested input`, async t => {
+    const f = fixture({ mutateResponse(response, request) {
+      const result = parentResponse(response, request);
+      if (request.operation === "begin") {
+        if (mutation === "omitted") delete result.snapshot.parentPaths;
+        if (mutation === "substituted") result.snapshot.parentPaths[0].ownerId = "other-owner";
+        if (mutation === "extra") result.snapshot.parentPaths[0].hidden = "not accepted";
+      }
+      return result;
+    } });
+    t.after(() => f.client.dispose());
+    await assert.rejects(f.client.withSnapshot(async () => assert.fail("must not enter"), { parentPaths: [parentReference()] }), protocolError);
+    assert.equal(f.uncertainCount(), 1);
+    await assert.rejects(f.client.withSnapshot(async () => {}), protocolError);
+  });
+}

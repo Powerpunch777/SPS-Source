@@ -176,7 +176,10 @@ installation, activation, update, removal and rollback. Public Marketplace searc
 recommendations and Assistant sessions/tools are retired; old scoped credentials
 must not become ordinary Core credentials.
 
-New Plugin Builder work waits for its final handoff after Core completion. Existing
+New Plugin Builder design and implementation live in the separate
+[SPS-MY-PluginBuilder repository](https://github.com/Powerpunch777/SPS-MY-PluginBuilder),
+using its v15 design. Parallel Builder development is independent of this Core
+completion scope; its workflow must not be implemented in Core. Existing
 SDK authoring/validation/Preview/package and managed catalog metadata contracts
 remain compatible, but do not grant lifecycle, Source, Secret or environment access.
 See [confirmed Core scope](CORE-COMPLETION-POLICY-ko.md).

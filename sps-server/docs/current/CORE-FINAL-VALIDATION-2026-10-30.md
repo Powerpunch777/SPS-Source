@@ -761,6 +761,14 @@ evidence. Their earlier next-step labels are not current completion claims.
 
 ## Completion
 
+The parent-path follow-up pins Core431e2e6 and records actual restricted-token
+two-local-Core scope/stop verification and the strict Node26.4 exit failure in
+[parent-path qualification](../reviews/PLUGIN-ARTIFACT-PARENT-PATHS-2026-11-01.md).
+Node24.22.1 local Desktop2041total/2038pass/three unavailable8.3 skips, Core36/36,
+all30 workspace typechecks/build and production audit policy passed. The helper
+is not yet mounted with complete Main references/authority; review/removal/UI,
+physical devices, SQL/abnormal-Main and final tuple gates remain incomplete.
+
 The next private owned-Core IPC increment is recorded in
 [owned IPC observation](../reviews/PLUGIN-ARTIFACT-OWNED-IPC-2026-11-01.md).
 Core isd406621. Local Desktop2001total/1998pass/three unavailable8.3-alias

@@ -1,5 +1,10 @@
 # SPS 플러그인 플랫폼 구현 계획
 
+2026-11-01 경계 명시: 신규 Builder의 v15 설계·소스·UI·구현 계획은 별도
+[`SPS-MY-PluginBuilder`](https://github.com/Powerpunch777/SPS-MY-PluginBuilder)
+레포에서 관리한다. 아래는 기존 플랫폼·번들 Builder의 과거 구현 기록이며,
+신규 Builder를 Core에 구현하거나 보류된 공개 Marketplace를 재개하는 근거가 아니다.
+
 최종 갱신: 2026-08-02
 기준 후보: historical snapshot SPS Desktop `0.4.104` (see `CURRENT-CANDIDATE.md` for the current candidate)
 상태: 1~8단계의 계약·패키징·자동 검증과 두 컴퓨터 물리 E2E 기준 통과. 공개 릴리스 게이트는 별도.

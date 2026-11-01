@@ -6,8 +6,8 @@
 ## 제품과 현재 범위
 
 2026-11-01 사용자 추가 지시: Core 안정화와 별도로
-`Powerpunch777/SPS-MY-PluginBuilder`의 v15 설계에 따른 Builder 개발을 병행한다.
-아래의 Builder 보류/완료 후 착수 문구는 이 추가 지시 전의 순서 결정이다.
+[`Powerpunch777/SPS-MY-PluginBuilder`](https://github.com/Powerpunch777/SPS-MY-PluginBuilder)의
+v15 설계에 따른 Builder 개발을 별도 레포에서 병행한다.
 별도 저장소·작업 폴더와 고정된 공개 SDK를 사용하며, Builder의 신규 기능을
 Core 완성의 선행조건에 추가하거나 미해결 Core 실패를 완료로 바꾸지 않는다.
 공개 Builder 저장소에 비공개 Core 소스·사용자 데이터·자격증명을 복사하지 않는다.
@@ -21,13 +21,22 @@ Core는 Workspace, 데이터·설정·권한, 통신, Plugin 설치·실행·프
 무결성·승인, 설치·업데이트·제거·롤백은 유지한다. 공개 탐색 UI/API와 관리용
 Registry·패키지 검증을 같은 기능으로 취급하지 않는다.
 
-Plugin Builder의 최종 설계와 핸드오프는 Core 완성 확인 후 별도로 받는다.
-그때까지 신규 기능·내부 구조를 추정하거나 개발하지 않는다. 기존 코드 호환성,
-SDK·Plugin 계약과 실행·배포 연동 여지는 보존한다. Builder 없이도 Core와
+신규 Plugin Builder의 설계·코드·UI·구현 계획의 기준은 별도
+`SPS-MY-PluginBuilder` 레포다. `SPS-Source`와 비공개 `SPS-Core`에는
+Builder 전용 업무 흐름이나 신규 제품 기능을 추가하지 않는다. 이 레포의 기존
+`sps-plugin-discovery`는 호환성 유지 대상이며 신규 Builder의 설계 원본이 아니다.
+Builder 기능·역할·세션·기억·Runner·UI를 결정할 때는 해당 레포의
+`docs/design/README.md`가 안내하는 현행 통합 설계서를 먼저 따른다.
+현재 기준은 `docs/design/01_Design/SPS_Plugin_Builder_Codex_Final_Design_v15.md`이며,
+기술 조사와 UI 참조도 같은 레포의 연결 문서를 사용한다. 이 레포의 오래된 설명이나
+과거 대화로 Builder를 다시 설계하지 않는다. 통합 설계서가 명시한 실제 Core/SDK
+계약·보안 제약의 우선순위와 미검증 연동 구분은 유지한다.
+기존 코드 호환성, SDK·Plugin 계약과 실행·배포 연동 여지는 보존한다. Builder 없이도 Core와
 기존 SDK만으로 승인한 Plugin을 설치·실행·관리할 수 있어야 한다.
 
 Core·Desktop 완성 작업이 끝나면 플러그인 신규 개발에 들어가기 전에 멈추고 결과를 보고한다.
-솔루션 플러그인 또는 Plugin Builder 신규 개발은 사용자의 별도 시작 지시 후 진행한다.
+이 정지는 Core 완성 목표의 범위이며, 별도 지시된 Builder 레포의 병행 개발까지
+금지하는 뜻이 아니다. 추가 솔루션 개발은 사용자의 별도 시작 지시를 따른다.
 기존 Core 플러그인 실행·SDK·권한·복구 호환성 검증은 계속 유지한다.
 
 AI와 Agent는 필수가 아니다. Runner는 실제 작업을 수행하는 실행 컴퓨터이며

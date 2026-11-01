@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createServer } from "node:net";
 import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { ensurePluginPreviewConfig } from "../src/plugin-preview-runtime.mjs";
 import { createSpsOwnerHostManager, resolveSpsOwnerHostRuntime } from "../src/owner-host.mjs";
 import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
+import { createSpsPluginArtifactObservation } from "../src/plugin-artifact-observation.mjs";
+import { readDeveloperProjectArtifactReferences } from "../src/developer-project-store.mjs";
 
 async function freePort() {
   const server = createServer();
@@ -20,16 +25,29 @@ async function freePort() {
 test("actual Windows owned Core retains its private reference scope across Main-side work and clean shutdown", {
   skip: process.platform !== "win32", timeout: 120_000,
 }, async t => {
+  if (!process.argv.includes("--sps-artifact-observation-child")) {
+    const wrapper = fileURLToPath(new URL("../scripts/run-windows-ci-e2e.ps1", import.meta.url));
+    const { stdout } = await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+      "-File", wrapper, "-Mode", "probe-artifact-observation"], { windowsHide: true, timeout: 110_000, maxBuffer: 256 * 1024 });
+    const records = stdout.split(/\r?\n/).filter(line => line.startsWith("{")).map(line => JSON.parse(line));
+    assert.equal(records.some(item => item.restrictedE2eChild === true && item.privilegesReduced === true
+      && item.administratorEnabled === false && item.administratorDenied === true), true);
+    assert.equal(records.some(item => item.ownedJobEmpty === true && item.ownedJobCleanup === "natural"), true);
+    assert.match(stdout, /SPS_ARTIFACT_SCOPE_CLOSED/);
+    assert.equal(records.at(-1).ownedDesktopClose, "closed");
+    return;
+  }
   const root = await mkdtemp(path.join(os.tmpdir(), "sps-owned-artifact-channel-"));
   const identity = await lstat(root, { bigint: true });
   const temporaryRoot = await realpath(os.tmpdir());
   const activity = createSpsDesktopPluginArtifactActivityGate();
-  let manager;
+  let manager, previewManager;
   t.after(async () => {
-    if (manager) {
-      const status = await manager.stop();
+    for (const owner of [previewManager, manager].filter(Boolean)) {
+      const status = await owner.stop();
       assert.equal(status.state, "stopped", "Unconfirmed Core ownership must retain its temporary data.");
       assert.equal(status.owned, false);
+      assert.equal(status.lastError, null, "Normal Core shutdown must not conceal a failing exit.");
     }
     await activity.withMaintenance(async () => {});
     const current = await lstat(root, { bigint: true });
@@ -38,6 +56,7 @@ test("actual Windows owned Core retains its private reference scope across Main-
     assert.equal(path.dirname(await realpath(root)), temporaryRoot);
     assert.ok(path.basename(root).startsWith("sps-owned-artifact-channel-"));
     await rm(root, { recursive: true, force: true });
+    console.log("SPS_ARTIFACT_SCOPE_CLOSED");
   });
   const preview = await ensurePluginPreviewConfig({ ownerVault: root,
     buildId: "build-11111111-1111-4111-8111-111111111111",
@@ -58,15 +77,36 @@ test("actual Windows owned Core retains its private reference scope across Main-
   assert.equal(status.state, "running", status.lastError);
   assert.equal(status.owned, true);
   assert.equal(status.processTree, "windows_job");
+  const second = await ensurePluginPreviewConfig({ ownerVault: root,
+    buildId: "build-22222222-2222-4222-8222-222222222222",
+    findPorts: async () => ({ serverPort: await freePort(), databasePort: await freePort() }),
+  });
+  previewManager = createSpsOwnerHostManager({ url: second.url, baseEnvironment: environment,
+    artifactReferences: true, onArtifactUncertainty: () => activity.retainUncertainty(), startupAttempts: 150,
+    resolveRuntime: () => resolveSpsOwnerHostRuntime({ coreRoots: [coreRoot], configPath: second.configPath,
+      nodeCommand: process.execPath, instanceId: "sps-preview-artifact-second", environment: {
+        PAPERCLIP_HOME: second.previewVault, PAPERCLIP_TELEMETRY_DISABLED: "1", PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
+        SPS_CORE_BASELINE_MODE: "true", SPS_BASIC_MODE: "true", SPS_BUNDLED_PLUGIN_PATHS: "", PAPERCLIP_BUNDLED_PLUGIN_PATHS: "",
+      } }),
+  });
+  assert.equal((await previewManager.start()).state, "running");
+  const observation = createSpsPluginArtifactObservation({ activity, capture: () => ({
+    assertCurrent() {}, readInputs: () => readDeveloperProjectArtifactReferences({ vaultRoot: root }),
+    participants: [{ id: "host", manager }, { id: "preview", manager: previewManager }],
+  }) });
   let oldScope;
-  const result = await activity.withMaintenance(() => manager.withPluginArtifactReferences(async scope => {
+  const result = await observation.withSnapshot(async scope => {
     oldScope = scope;
-    assert.equal(scope.coverage, "core-only");
+    assert.equal(scope.coverage, "desktop-and-owned-cores");
     assert.match(scope.fingerprint, /^[a-f0-9]{64}$/);
+    assert.ok(scope.references.some(reference => reference.source === "desktop-developer-index"
+      && reference.processOwner === "desktop"));
+    await assert.rejects(manager.withPluginArtifactReferences(async () => assert.fail("Host scope must remain held.")));
+    await assert.rejects(previewManager.withPluginArtifactReferences(async () => assert.fail("Preview scope must remain held.")));
     await scope.assertCurrent();
     assert.throws(() => activity.withActivity(async () => {}), /maintenance/);
     return "main-work-complete";
-  }));
+  });
   assert.equal(result, "main-work-complete");
   await assert.rejects(oldScope.assertCurrent());
   await manager.withPluginArtifactReferences(async scope => scope.assertCurrent());
@@ -74,15 +114,16 @@ test("actual Windows owned Core retains its private reference scope across Main-
   const callbackEntered = new Promise(resolve => { entered = resolve; });
   let release;
   const callbackMayFinish = new Promise(resolve => { release = resolve; });
-  const interrupted = activity.withMaintenance(() => manager.withPluginArtifactReferences(async scope => {
+  const interrupted = observation.withSnapshot(async scope => {
     entered(); await callbackMayFinish;
     await scope.assertCurrent();
     throw new Error("The revoked scope must not reach further Main work.");
-  }));
+  });
   void interrupted.catch(() => {});
   await callbackEntered;
   const stopped = await manager.stop();
   assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.lastError, null);
   release();
   await assert.rejects(interrupted, error => error.code === "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE");
   await activity.withMaintenance(async () => {});

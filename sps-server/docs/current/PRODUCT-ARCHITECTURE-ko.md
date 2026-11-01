@@ -1,6 +1,6 @@
 # SPS Product Architecture
 
-Last updated: 2026-10-28
+Last updated: 2026-11-01
 
 ## Purpose
 
@@ -8,7 +8,9 @@ The confirmed [Core completion policy](CORE-COMPLETION-POLICY-ko.md) supersedes
 older Marketplace and Builder requirements below. SPS runs solutions developed,
 reviewed and approved through its own delivery business. It does not operate a
 public Plugin marketplace. Internal package management and SDK/Runner extensibility
-remain Core responsibilities; new Builder work waits for its separate handoff.
+remain Core responsibilities. New Builder work follows its v15 design in the
+separate [SPS-MY-PluginBuilder repository](https://github.com/Powerpunch777/SPS-MY-PluginBuilder),
+independently of this repository's Core completion work.
 Full untrusted-code OS containment is deferred, with research preserved.
 
 SPS is a customizable workstation platform for individuals, teams and
@@ -251,11 +253,13 @@ Public search/recommendations and Builder authoring are not prerequisites.
 
 ## Plugin Builder
 
-New Builder development is on hold until its final design/handoff is provided
-following Core completion. Do not infer its future architecture from the existing
-implementation. Existing Builder code and SDK integration remain compatibility
-constraints. The following implementation notes are historical source behavior,
-not new requirements or a Core release gate.
+New Builder design, implementation and UI belong to the separate
+[SPS-MY-PluginBuilder repository](https://github.com/Powerpunch777/SPS-MY-PluginBuilder),
+whose v15 design is authoritative for that plugin. The user authorized parallel
+development on2026-11-01. Do not implement its workflow in Core or infer its
+architecture from the older bundled `sps-plugin-discovery`. Existing bundled
+code and SDK integration remain compatibility constraints. The following notes
+are historical source behavior, not new Builder requirements or a Core release gate.
 
 ### Builder Agent Structure
 

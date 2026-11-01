@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 import { createSpsPluginConformanceReportV1 } from "@sonparkserver/plugin-sdk/conformance/v1.mjs";
 
 export const DEVELOPER_PROJECT_STORE_SCHEMA_VERSION = 1;
@@ -249,6 +250,154 @@ function assertState(value) {
 
 function emptyState() {
   return { schemaVersion: DEVELOPER_PROJECT_STORE_SCHEMA_VERSION, projects: [] };
+}
+
+function assertSameFileIdentity(left, right) {
+  if (!left.isFile() || !right.isFile() || left.isSymbolicLink() || right.isSymbolicLink()
+    || left.nlink !== 1n || right.nlink !== 1n || left.dev !== right.dev || left.ino !== right.ino
+    || left.birthtimeNs !== right.birthtimeNs) {
+    throw new Error("Developer project state is unavailable.");
+  }
+}
+
+async function assertUnlinkedParents(filePath, fsApi) {
+  const resolved = path.dirname(path.resolve(filePath));
+  const parsed = path.parse(resolved);
+  let current = parsed.root;
+  const rootStats = await fsApi.lstat(current);
+  if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
+    throw new Error("Developer project state parent is unavailable.");
+  }
+  for (const component of resolved.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    let stats;
+    try {
+      stats = await fsApi.lstat(current);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error("Developer project state parent is unavailable.");
+    }
+  }
+}
+
+async function readDeveloperProjectSnapshot(filePath, fsApi) {
+  await assertUnlinkedParents(filePath, fsApi);
+  let before;
+  try {
+    before = await fsApi.lstat(filePath, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return { exists: false, state: emptyState() };
+    throw error;
+  }
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size > BigInt(MAX_DEVELOPER_PROJECT_STORE_BYTES)) {
+    throw new Error("Developer project state is unavailable.");
+  }
+
+  const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+  const handle = await fsApi.open(filePath, fsConstants.O_RDONLY | noFollow);
+  let bytes;
+  let identity;
+  try {
+    const opened = await handle.stat({ bigint: true });
+    assertSameFileIdentity(before, opened);
+    if (opened.size > BigInt(MAX_DEVELOPER_PROJECT_STORE_BYTES)) {
+      throw new Error("Developer project state exceeds the size limit.");
+    }
+    const buffer = Buffer.alloc(MAX_DEVELOPER_PROJECT_STORE_BYTES + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      offset += bytesRead;
+      if (bytesRead === 0) break;
+    }
+    if (offset > MAX_DEVELOPER_PROJECT_STORE_BYTES) {
+      throw new Error("Developer project state exceeds the size limit.");
+    }
+    bytes = buffer.subarray(0, offset);
+    const afterRead = await handle.stat({ bigint: true });
+    assertSameFileIdentity(opened, afterRead);
+    if (opened.size !== BigInt(offset) || opened.size !== afterRead.size || opened.mtimeNs !== afterRead.mtimeNs || opened.ctimeNs !== afterRead.ctimeNs) {
+      throw new Error("Developer project state changed while being read.");
+    }
+    identity = { dev: afterRead.dev, ino: afterRead.ino, birthtimeNs: afterRead.birthtimeNs,
+      size: afterRead.size, mtimeNs: afterRead.mtimeNs, ctimeNs: afterRead.ctimeNs };
+  } finally {
+    await handle.close();
+  }
+
+  const after = await fsApi.lstat(filePath, { bigint: true });
+  assertSameFileIdentity(before, after);
+  await assertUnlinkedParents(filePath, fsApi);
+  if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) {
+    throw new Error("Developer project state changed while being read.");
+  }
+  let raw;
+  try {
+    raw = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new Error("Developer project state is not valid UTF-8.");
+  }
+  if (raw.startsWith("\uFEFF")) raw = raw.slice(1);
+  let state;
+  try {
+    state = assertState(JSON.parse(raw));
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error("Developer project state is not valid JSON.");
+    throw error;
+  }
+  const canonical = `${JSON.stringify(state, null, 2)}\n`;
+  const comparable = raw.replace(/\r\n/g, "\n");
+  if (comparable !== canonical && comparable !== canonical.slice(0, -1)) {
+    throw new Error("Developer project state is not in canonical format.");
+  }
+  return { exists: true, state, bytes, identity };
+}
+
+export async function readDeveloperProjectArtifactReferences({ vaultRoot, fsApi = fs } = {}) {
+  const layout = developerProjectStoreLayout(vaultRoot);
+  const initial = await readDeveloperProjectSnapshot(layout.projectsPath, fsApi);
+  const references = [Object.freeze({
+    source: "desktop-developer-index",
+    ownerId: "projects",
+    state: "retained",
+    path: layout.projectsPath,
+    kind: "file",
+  })];
+  for (const project of initial.state.projects) {
+    references.push(Object.freeze({
+      source: "desktop-developer-source",
+      ownerId: project.id,
+      state: "retained",
+      path: project.sourcePath,
+      kind: "directory",
+    }));
+    if (project.lastKnownGood) {
+      references.push(Object.freeze({
+        source: "desktop-developer-build",
+        ownerId: project.id,
+        state: "last-known-good",
+        path: path.resolve(vaultRoot, project.lastKnownGood.deployment.archiveRelativePath),
+        kind: "file",
+      }));
+    }
+  }
+  const frozenReferences = Object.freeze(references);
+  return Object.freeze({
+    references: frozenReferences,
+    async assertCurrent() {
+      const current = await readDeveloperProjectSnapshot(layout.projectsPath, fsApi);
+      if (current.exists !== initial.exists
+        || (current.exists && (["dev", "ino", "birthtimeNs", "size", "mtimeNs", "ctimeNs"]
+          .some(key => current.identity[key] !== initial.identity[key])
+          || !current.bytes.equals(initial.bytes)))) {
+        throw new Error("Developer project state changed after artifact references were captured.");
+      }
+      return true;
+    },
+  });
 }
 
 async function canonicalizeSourceDirectory(sourcePath, fsApi) {

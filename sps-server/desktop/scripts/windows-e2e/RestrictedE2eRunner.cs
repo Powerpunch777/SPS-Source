@@ -266,7 +266,7 @@ public static class RestrictedE2eRunner
     static bool Mode(string value)
     {
         return value == "probe" || value == "probe-registry" || value == "probe-installer-processes" || value == "probe-installer-dialog" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "probe-exit" || value == "probe-native-exit" || value == "probe-timeout" || value == "probe-descendant" || value == "probe-node"
-            || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76" || value == "probe-cross-device-control"
+            || value == "probe-artifact-observation" || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "probe-installer-command-exit" || value == "probe-preview-pending" || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant" || value == "probe-preview-zeroexit" || value == "probe-exit-76" || value == "probe-cross-device-control"
             || value == "workspace-pending" || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit"
             || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "installer-current-preservation" || value == "installer-operator-upgrade" || value == "installer-operator-reinstall" || value == "historical-uninstaller-diagnostic" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery"
@@ -276,7 +276,7 @@ public static class RestrictedE2eRunner
     {
         return value == "plugin-preview" || value == "host-plugin-lifecycle" || value == "installer-data-preservation" || value == "installer-current-preservation" || value == "installer-operator-upgrade" || value == "installer-operator-reinstall" || value == "historical-uninstaller-diagnostic" || value == "runtime-discovery" || value == "native-management" || value == "native-plugin-sdk" || value == "execution-control" || value == "workspace-surfaces"
             || value == "owner-vault-transfer" || value == "owner-vault-crash-recovery" || value == "owner-vault-state-migration" || value == "historical-core-migration" || value == "owner-vault-historical-core"
-            || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery" || value == "probe-installer-command-exit" || value == "probe-preview-pending"
+            || value == "probe-artifact-observation" || value == "probe-legacy-driver-component" || value == "probe-historical-managed-vault" || value == "historical-uninstaller-compact-control" || value == "historical-standard-recovery-prepare" || value == "historical-standard-recovery" || value == "probe-installer-command-exit" || value == "probe-preview-pending"
             || value == "probe-preview-pending-descendant" || value == "probe-preview-failure-descendant"
             || value == "probe-preview-zeroexit" || value == "probe-installer-processes" || value == "probe-installer-command" || value == "probe-installer-cim-startup" || value == "probe-installer-cim-legacy" || value == "probe-installer-cim-current" || value == "workspace-pending" || value == "probe-cross-device-control"
             || value == "workspace-pending-descendant" || value == "workspace-failure-descendant" || value == "workspace-zeroexit";
@@ -388,6 +388,11 @@ public static class RestrictedE2eRunner
         if (!administratorDenied || !userDefaultDacl) throw new InvalidOperationException("Child token security checks failed");
         Console.WriteLine("{\"restrictedE2eChild\":true,\"administratorEnabled\":false,\"powerUsersEnabled\":false,\"privilegesReduced\":true,\"sameUserToken\":true,\"administratorDenied\":" + (administratorDenied ? "true" : "false") + ",\"userDefaultDacl\":" + (userDefaultDacl ? "true" : "false") + "}");
         if (mode == "probe") return 0;
+        if (mode == "probe-artifact-observation")
+        {
+            int code = RunNodeFile(node, directory, Path.Combine(directory, "test", "owner-host-artifact-channel.windows.test.mjs"), "--sps-artifact-observation-child");
+            return code == 0 ? unchecked((int)OwnedJobCleanupPendingExitCode) : code;
+        }
         if (mode == "probe-legacy-driver-component")
             return RunNode(node, directory, "windows-e2e/probe-legacy-driver-component.mjs", OwnedJobCleanupArgument);
         if (mode == "probe-historical-managed-vault")

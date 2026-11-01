@@ -780,10 +780,10 @@ export function createSpsOwnerHostManager({
       new Error("The owned Native Workspace channel is unavailable."), { code: "native_workspace_unavailable" }));
     return nativeWorkspace.read(request, options);
   }
-  function withPluginArtifactReferences(action) {
+  function withPluginArtifactReferences(action, options) {
     if (!ownedChild || childHasExited(ownedChild) || !artifactChannel) return Promise.reject(Object.assign(
       new Error("The exact owned Core artifact observation is unavailable."), { code: "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE" }));
-    return artifactChannel.withSnapshot(action);
+    return artifactChannel.withSnapshot(action, options);
   }
   return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace, withPluginArtifactReferences };
 }

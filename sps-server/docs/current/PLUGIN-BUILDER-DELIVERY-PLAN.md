@@ -1,5 +1,11 @@
 # Plugin Builder Delivery Plan
 
+2026-11-01 ownership clarification: the new Builder's v15 design, source, UI and
+implementation plan live in the separate
+[SPS-MY-PluginBuilder repository](https://github.com/Powerpunch777/SPS-MY-PluginBuilder).
+This document records the older bundled `sps-plugin-discovery` compatibility
+implementation. It is not authority to develop the new Builder in SPS Core.
+
 Status: source implementation with bounded delivery work in progress,
 2026-10-24. This is not a claim that Plugin Builder is complete, a new SDK
 release, an installer, or a Stable release.

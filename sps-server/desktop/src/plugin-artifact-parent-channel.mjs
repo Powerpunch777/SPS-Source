@@ -17,20 +17,53 @@ function exact(value, names) {
     || names.some(key => !descriptors[key]?.enumerable || !("value" in descriptors[key]))) throw failure();
   return value;
 }
-function snapshot(value) {
-  const input = exact(value, ["coverage", "fingerprint", "references"]);
-  if (input.coverage !== "core-only" || !HASH.test(input.fingerprint) || !Array.isArray(input.references)
+const text = value => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
+const canonical = value => typeof value === "string" && value.length > 0 && value.length <= 32_768
+  && !/[\u0000-\u001f\u007f]/.test(value) && path.isAbsolute(value) && path.resolve(value) === value;
+function parentPaths(value) {
+  if (!Array.isArray(value) || value.length > 4096 || Reflect.ownKeys(value).length !== value.length + 1
+    || Object.keys(value).length !== value.length) throw failure();
+  const entries = Object.getOwnPropertyDescriptors(value);
+  for (let index = 0; index < value.length; index++) {
+    if (!entries[index]?.enumerable || !("value" in entries[index])) throw failure();
+  }
+  const seen = new Set();
+  const result = Object.freeze(Array.from({ length: value.length }, (_, index) => {
+    const value = entries[index].value;
+    const input = exact(value, ["source", "ownerId", "state", "path", "kind"]);
+    if (!text(input.source) || !text(input.ownerId) || !text(input.state) || !canonical(input.path)
+      || !["file", "directory"].includes(input.kind)) throw failure();
+    const reference = { source: input.source, ownerId: input.ownerId, state: input.state, path: input.path, kind: input.kind };
+    const key = JSON.stringify(reference);
+    if (seen.has(key)) throw failure();
+    seen.add(key);
+    return Object.freeze(reference);
+  }));
+  if (Buffer.byteLength(JSON.stringify(result), "utf8") > 4 * 1024 * 1024) throw failure();
+  return result;
+}
+function snapshot(value, expectedParent) {
+  const input = exact(value, ["coverage", "fingerprint", "references", ...(expectedParent === undefined ? [] : ["parentPaths"])]);
+  const coverage = expectedParent === undefined ? "core-only" : "core-and-parent-paths";
+  if (input.coverage !== coverage || typeof input.fingerprint !== "string" || !HASH.test(input.fingerprint) || !Array.isArray(input.references)
     || input.references.length > 60_000 || Buffer.byteLength(JSON.stringify(input), "utf8") > 8 * 1024 * 1024) throw failure();
-  const text = value => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f\u007f]/.test(value);
-  const canonical = value => typeof value === "string" && value.length > 0 && value.length <= 32_768
-    && !/[\u0000-\u001f\u007f]/.test(value) && path.isAbsolute(value) && path.resolve(value) === value;
   const references = input.references.map(value => {
     const reference = exact(value, ["source", "ownerId", "state", "path", "kind", "canonicalPath"]);
     if (!SOURCES.has(reference.source) || !text(reference.ownerId) || !text(reference.state)
       || !canonical(reference.path) || !canonical(reference.canonicalPath) || !["file", "directory"].includes(reference.kind)) throw failure();
     return Object.freeze({ ...reference });
   });
-  return Object.freeze({ coverage: "core-only", fingerprint: input.fingerprint, references: Object.freeze(references) });
+  let observedParent;
+  if (expectedParent !== undefined) {
+    if (!Array.isArray(input.parentPaths) || input.parentPaths.length !== expectedParent.length) throw failure();
+    observedParent = Object.freeze(input.parentPaths.map((value, index) => {
+      const entry = exact(value, ["source", "ownerId", "state", "path", "kind", "canonicalPath"]);
+      if (!canonical(entry.canonicalPath) || Object.keys(expectedParent[index]).some(key => entry[key] !== expectedParent[index][key])) throw failure();
+      return Object.freeze({ ...entry });
+    }));
+  }
+  return Object.freeze({ coverage, fingerprint: input.fingerprint, references: Object.freeze(references),
+    ...(expectedParent === undefined ? {} : { parentPaths: observedParent }) });
 }
 
 /** Only an exact directly owned ChildProcess supplies this private channel. */
@@ -71,21 +104,22 @@ export function createSpsPluginArtifactParentClient(channel, { isCurrent, onUnce
       if (value.v !== 1 || value.channelId !== channelId || value.transactionId !== item.transactionId
         || value.operation !== item.operation || typeof value.ok !== "boolean"
         || value.ok === false && value.errorCode !== "plugin_artifact_channel_unavailable") throw failure();
-      const result = value.ok && item.operation === "begin" ? snapshot(value.snapshot) : null;
+      const result = value.ok && item.operation === "begin" ? snapshot(value.snapshot, item.parentPaths) : null;
       clearTimeout(item.timer); pending.delete(value.id);
       if (value.ok) item.resolve(result);
       else item.reject(failure());
     } catch { fail(); }
   };
-  const request = (operation, transactionId) => {
+  const request = (operation, transactionId, parentPaths) => {
     assertCurrent();
     if (!channelId) throw failure();
     const id = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { fail(); }, timeoutMs);
-      pending.set(id, { operation, transactionId, timer, resolve, reject });
+      pending.set(id, { operation, transactionId, parentPaths, timer, resolve, reject });
       try {
-        channel.send({ v: 1, kind: REQUEST, channelId, id, transactionId, operation }, error => { if (error) fail(); });
+        channel.send({ v: 1, kind: REQUEST, channelId, id, transactionId, operation,
+          ...(parentPaths === undefined ? {} : { parentPaths }) }, error => { if (error) fail(); });
       } catch { fail(); }
     });
   };
@@ -94,14 +128,15 @@ export function createSpsPluginArtifactParentClient(channel, { isCurrent, onUnce
   channel.on("exit", fail);
   channel.on("error", fail);
   return Object.freeze({
-    async withSnapshot(action) {
+    async withSnapshot(action, options) {
       assertCurrent();
       if (active || typeof action !== "function") throw failure();
+      const paths = options === undefined ? undefined : parentPaths(exact(options, ["parentPaths"]).parentPaths);
       active = true;
       const transactionId = randomUUID();
       let begun = false, inScope = false;
       try {
-        const observation = await request("begin", transactionId);
+        const observation = await request("begin", transactionId, paths);
         assertCurrent(); begun = true; inScope = true;
         const scope = Object.freeze({ ...observation, async assertCurrent() {
           if (!inScope) throw failure();

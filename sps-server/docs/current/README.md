@@ -4,7 +4,8 @@
 
 | Need | Document |
 | --- | --- |
-| Confirmed Core completion scope; no public Marketplace, Builder handoff pending, untrusted OS containment deferred | [CORE-COMPLETION-POLICY-ko.md](CORE-COMPLETION-POLICY-ko.md) |
+| Confirmed Core completion scope; separate Builder repository, no public Marketplace, untrusted OS containment deferred | [CORE-COMPLETION-POLICY-ko.md](CORE-COMPLETION-POLICY-ko.md) |
+| New Builder v15 design, source, UI and parallel implementation plan (not Core work) | [SPS-MY-PluginBuilder](https://github.com/Powerpunch777/SPS-MY-PluginBuilder) |
 | Light UI direction, typography, shared surfaces, and Builder layout | [SPS-LIGHT-UI-PLAN-ko.md](SPS-LIGHT-UI-PLAN-ko.md) |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
 | Native development deferred by user request; current evidence and restart checklist | [NATIVE-DEVELOPMENT-DEFERRED-ko.md](NATIVE-DEVELOPMENT-DEFERRED-ko.md) |
@@ -32,8 +33,8 @@
   authoring-platform design. The public hands-on toolkit lives in
   [`sps-plugin-sdk`](https://github.com/Powerpunch777/sps-plugin-sdk).
 - [PLUGIN-BUILDER-DELIVERY-PLAN.md](PLUGIN-BUILDER-DELIVERY-PLAN.md):
-  current Builder delivery scope, verified source flows and remaining manual
-  project handoff; not a Stable acceptance report.
+  historical bundled Builder delivery/compatibility evidence, not the new
+  `SPS-MY-PluginBuilder` design or implementation plan and not Stable acceptance.
 - [PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md](PLUGIN-PLATFORM-IMPLEMENTATION-PLAN-ko.md):
   staged Core completion plan for the public Runtime SDK, Developer Mode,
   Preview, Diagnostics, Core Marketplace Assistant, Plugin Builder, and

@@ -13,6 +13,11 @@ grants no deletion authority. See the
 [Desktop admission and startup acceptance](../reviews/DESKTOP-ARTIFACT-ADMISSION-2026-11-01.md).
 The private [owned IPC observation](../reviews/PLUGIN-ARTIFACT-OWNED-IPC-2026-11-01.md)
 supplies the cross-process primitive, not a complete cleanup transaction.
+The next [parent-path composition increment](../reviews/PLUGIN-ARTIFACT-PARENT-PATHS-2026-11-01.md)
+adds strict Desktop developer references, the optional private Core path capture
+and a held Host/Preview composition helper with actual two-local-Core coverage.
+It is not yet mounted in Main/Settings and does not establish complete Desktop
+discovery, eligibility, Host confirmation or removal.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
