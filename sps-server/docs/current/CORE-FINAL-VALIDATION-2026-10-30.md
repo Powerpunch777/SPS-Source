@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `4c674b8c6baf7f065fc92262b8f6e66033ad9d39`; current Source pin/evidence is recorded in the Source mutation-admission increment below. Prior Core719/Source7ae, `ffc9bc8a` and Source38fb/Core491 installed evidence is historical, not qualification of this tuple.
+- Current Core: `d0b99baef5d8422ab0473ea4b1909e55ab6518b8` (runtime4c674b8 plus audit-scope documentation clarification); current Source pin/evidence is recorded in the Source mutation-admission increment below. Prior Core719/Source7ae, `ffc9bc8a` and Source38fb/Core491 installed evidence is historical, not qualification of this tuple.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native

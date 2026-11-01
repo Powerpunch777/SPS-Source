@@ -1,6 +1,7 @@
 # Source 변경과 정리 관측의 동시 실행 차단
 
-2026-11-02 KST. Core `4c674b8c6baf7f065fc92262b8f6e66033ad9d39`.
+2026-11-02 KST. Core runtime `4c674b8c6baf7f065fc92262b8f6e66033ad9d39`,
+문서 보정 포함 HEAD `d0b99baef5d8422ab0473ea4b1909e55ab6518b8`.
 기존 private maintenance coordinator를 실제 Source 변경 경로와
 연결하는 후속 구현이다. 삭제 승인·Core 완료·Stable 출시 선언이 아니다.
 
@@ -68,6 +69,16 @@ Host HTTP API로 Workspace와 Source1개를 만들고, 보호된 로컬 폴더�
 수정200을 확인했다. 두 프로세스의 정상 종료·정확한 임시 데이터 삭제와 외부
 작업물 sentinel 보존도 확인했다. 이 실행 당시 Source는 pin 커밋 전 worktree다.
 실제 SMB/물리 두 PC/서명 설치본 또는 Settings 정리 UI를 검증한 것은 아니다.
+
+Source `24c6e2364c3cf94b416f19086e47c01aab64d5bf` / Core4c의 Node24 전체 Desktop
+검사는 직렬4/4와 나머지2208/2211, 합계2212/2215·skip3·실패0·exit0이었다.
+위 nonempty Source 실제 두 owned Core 검사가 포함됐다. 무시된 로그는
+`desktop/dist/source-mutation-final-desktop-node24-20261102.log`다.
+
+독립 Luna 검수에서 새 runtime 결함은 발견하지 못했으며, project service 뒤의
+HTTP audit까지 잠금에 포함된 것처럼 읽힐 수 있는 Core 계약 문구를 지적했다.
+실제 범위를 Core 문서d0b99ba에서 명확히 했다. 기능 코드는4c와 같지만, 새 pin의
+정확한 전체 Desktop/실제 앱·CI 증거는 별도로 확인한다.
 
 ## 남은 범위
 
