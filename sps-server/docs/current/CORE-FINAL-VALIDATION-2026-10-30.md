@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `7952a33fa721b3bef3c30c0e7958a0f70f92b844`; prepared-candidate and strict Registry artifact references extend the earlier Worker/ownership read models. Source38fb's installed acceptance below carries previous Core `491794820c23f956912d69eba271c1ef07ba36a1`, not this revision. Earlier b17 evidence also remains separate.
+- Current Core: `ca7e9625215fb4b4c33e4b3417bcfd1f75020bd5`; private non-draining artifact activity admission extends prepared-candidate/Registry/Worker/ownership read models. Source38fb's installed acceptance below carries previous Core `491794820c23f956912d69eba271c1ef07ba36a1`, not this revision. Earlier b17 evidence also remains separate.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -19,6 +19,25 @@ deferred Native development are excluded.
 ## Current Evidence Summary
 
 ### Latest Progress And Still-Incomplete Final Acceptance
+
+Coreca7e adds shared process-local artifact activity admission across the actual
+Worker manager, loader, lifecycle/recovery, Workspace adapter preparation,
+Registry writers and whole authorized enable/upgrade route operations. Complete
+startup and direct bundle refresh are protected, including soft-uninstall to
+replacement/activation. Maintenance rejects instead of waiting or draining
+existing Workers. Private reads remain available; no cleanup route or UI exists.
+Focused25files passed348/349 with one unavailable8.3 skip; all30 Core workspace
+typechecks and full build passed. Actual source Desktop no-AI public install,
+update, failed-init/explicit rollback, state/events/Workspace jobs, A/B and
+capability isolation and Host restart exited0. All3 Main processes/6 output
+streams closed normally and exact temporary cleanup completed. This is not
+installed, two-device, SQL-crash or whole-descendant qualification.
+
+Prior Sourceb2b4475/Core7952 Verify41287168908 has17 successful non-Windows
+jobs. Windows124790707519 was still executing installed data preservation at
+this update; its package-based app E2Es had completed before installer assembly.
+No terminal Windows or legacy acceptance is inferred. Its results cannot
+qualify newer Coreca7e; exact new Source/Core hosted verification is required.
 
 Source2c9338d Verify41284190569 has17 successful non-Windows jobs, but its
 Windows124782040958 is a terminal failure: installed historical DB/data migration
@@ -96,8 +115,9 @@ late-input regression now proves its own duplex behavior, not remote acceptance.
 
 The manual artifact cleanup foundation captures new owned allocations and
 complete file inventories. The current follow-up adds read-only allocation-ID
-enumeration and private tracked Worker launch references, but Settings/composed
-references/fence/confirmation/removal are not implemented.
+enumeration, private tracked Worker launch references and Core process-local
+activity admission. Settings, coherent all-reference composition, cross-process
+fencing, confirmation and removal are not implemented.
 [Approved plan and limits](PLUGIN-ARTIFACT-MANUAL-CLEANUP-2026-11-01.md).
 Actual packaged Main-loss/per-Worker descendant closure, real Plugin SQL crash
 windows, two-PC Runner and fresh final UI/security gates remain mandatory.

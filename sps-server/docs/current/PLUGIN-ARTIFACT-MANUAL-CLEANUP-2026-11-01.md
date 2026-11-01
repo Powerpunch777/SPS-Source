@@ -1,8 +1,9 @@
 # Host-Reviewed Plugin Artifact Cleanup
 
-Status: user-approved policy; allocation/inventory enumeration and private Worker
-launch references implemented. Composed references/fence/API/confirmation/removal/
-Settings remain pending. 2026-11-01 KST.
+Status: user-approved policy; allocation/inventory, private preparation/Registry/
+Worker references and Core process-local activity admission implemented.
+Composed references, cross-process fencing, API/confirmation/removal/Settings
+remain pending. 2026-11-01 KST.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
@@ -153,7 +154,45 @@ The final fourteen-file selection passed151 tests with one unavailable-8.3 skip
 (152 total). All30 Core workspace typechecks and the full build passed locally.
 This is not final packaged or full Linux acceptance of the new Core revision.
 
-These additions do not supply the actual Settings list, a coherent reference
+These read-model additions by themselves do not supply the actual Settings list, a coherent reference
 snapshot, cross-process Preview protection, shared non-draining maintenance
 fencing, review-bound confirmation or removal. They are not complete cleanup
 acceptance and do not authorize touching existing user packages.
+
+## Non-Draining Admission Follow-Up
+
+The next Core increment connects a process-local activity/maintenance coordinator
+to the actual Worker manager, runtime loader, lifecycle/recovery, Workspace
+adapter preparation and Registry-stage writers. Activity is admitted before its
+first await. If any activity exists, maintenance rejects without draining or
+waiting; during maintenance new activity/start attempts reject, while existing
+Workers retain their process and read-only references remain observable.
+Results and errors propagate unchanged and both lanes release in `finally`.
+
+Authorized Registry enable and ordinary upgrade cover the whole route, including
+gaps between preview, Registry lookup, lifecycle and stage acknowledgement. This
+is not a replacement for existing package journals or lifecycle drain policy.
+It does not serialize ordinary writers against one another or grant deletion.
+The complete app startup chain and direct configured-bundle bootstrap are also
+admitted; a maintenance conflict cannot soft-uninstall the old bundle and then
+deny its replacement. Existing per-bundle logging/continuation is unchanged.
+
+The combined25-file selection passed348/349 with one unavailable8.3 skip. It
+includes real owned Worker process preservation, startup/retained restarts,
+HTTP admin/busy behavior, actual temporary Registry files and paused operation
+boundaries. Bundle Registry callback tests are synthetic, not live SQL crash
+acceptance. The initial integration exposed a route-parameter type error;
+the route helper now retains its explicit parameter contract, without a cast.
+All30 Core workspace typechecks and the full build then passed. Actual isolated
+source Desktop no-AI acceptance passed real install/update and failed-init/
+explicit rollback, state/events/Workspace jobs, A/B/capability separation and
+Host restart. All3 owned Main exits and6 output streams closed normally; exact
+temporary cleanup completed. It did not exercise the unfinished cleanup UI,
+installed bytes, SQL crash windows, two physical devices or full descendants.
+
+The coherent all-source snapshot, Desktop cross-process Preview/restore fence,
+current ownership/inventory recheck, typed review/abandonment, fresh Host-bound
+confirmation, actual removal and Settings UI remain mandatory and incomplete.
+Unsupported custom Worker owners must not be treated as fully fenced merely
+because the app created a fallback coordinator. Existing user packages remain
+untouched. Sourceb2b/Core7952 hosted results do not qualify this newer code.
