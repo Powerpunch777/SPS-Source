@@ -23,9 +23,130 @@ internal static class LegacyRecoveryUiDriverFixture
     {
         if (args != null && args.Length == 1 && args[0] == "--probe-check-observation")
             return ExerciseCheckObservation();
+        if (args != null && args.Length == 2 && args[0] == "--probe-confirmations")
+            return ExerciseConfirmations(args[1]);
+        if (args != null && args.Length == 2 && args[0] == "--show-confirmations")
+            return ShowConfirmations(args[1]);
         if (args != null && args.Length == 3 && args[0] == ChildMode)
             return ShowForm(args[1], args[2]);
         return ExerciseDriver(args);
+    }
+
+    static int ExerciseConfirmations(string root)
+    {
+        Process child = null;
+        string step = "start";
+        try
+        {
+            var start = new ProcessStartInfo
+            {
+                FileName = Assembly.GetExecutingAssembly().Location,
+                Arguments = "--show-confirmations \"" + Path.GetFullPath(root) + "\"",
+                UseShellExecute = false,
+                CreateNoWindow = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            child = Process.Start(start);
+            Require(child != null, "confirmation_child_start");
+            var flags = BindingFlags.Static | BindingFlags.NonPublic;
+            var clock = typeof(LegacyRecoveryUiDriver).GetField("clock", flags);
+            var wait = typeof(LegacyRecoveryUiDriver).GetMethod("WaitForRecoveryWindow", flags);
+            var confirm = typeof(LegacyRecoveryUiDriver).GetMethod("ConfirmDialog", flags);
+            var findClose = typeof(LegacyRecoveryUiDriver).GetMethod("FindEnabledButton", flags);
+            var click = typeof(LegacyRecoveryUiDriver).GetMethod("Click", flags);
+            Require(clock != null && wait != null && confirm != null && findClose != null && click != null, "confirmation_driver_entry");
+            clock.SetValue(null, Stopwatch.StartNew());
+            step = "window";
+            IntPtr form = (IntPtr)wait.Invoke(null, new object[] { child });
+            step = "decline";
+            confirm.Invoke(null, new object[] { form, (uint)child.Id, root, 7 });
+            step = "decline-result";
+            Require(child.StandardOutput.ReadLine() == "DECLINED", "confirmation_declined");
+            step = "accept";
+            confirm.Invoke(null, new object[] { form, (uint)child.Id, root, 6 });
+            step = "exit";
+            string result = child.StandardOutput.ReadLine();
+            Require(result == "{\"ok\":true,\"declined\":true,\"accepted\":true,\"defaultNo\":true,\"managedGuardRejected\":"
+                + (!SystemInformation.UserInteractive).ToString().ToLowerInvariant() + "}", "confirmation_result");
+            IntPtr close = (IntPtr)findClose.Invoke(null, new object[] { form, (uint)child.Id, "Close" });
+            click.Invoke(null, new object[] { close, (uint)child.Id });
+            Require(child.WaitForExit(5000) && child.ExitCode == 0, "confirmation_exit");
+            Require(child.StandardError.ReadToEnd().Length == 0, "confirmation_stderr");
+            Require(child.StandardOutput.ReadToEnd().Length == 0, "confirmation_eof");
+            Console.WriteLine(result);
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.WriteLine("{\"ok\":false,\"phase\":\"confirmation\",\"step\":\"" + step
+                + "\",\"failure\":\"" + (error is TargetInvocationException && error.InnerException != null
+                    ? error.InnerException.GetType().Name : error.GetType().Name)
+                + "\",\"interactive\":" + SystemInformation.UserInteractive.ToString().ToLowerInvariant() + "}");
+            return 1;
+        }
+        finally
+        {
+            if (child != null)
+            {
+                try
+                {
+                    if (!child.HasExited && child.CloseMainWindow()) child.WaitForExit(1000);
+                    if (!child.HasExited) { child.Kill(); child.WaitForExit(5000); }
+                }
+                catch { }
+                child.Dispose();
+            }
+        }
+    }
+
+    static int ShowConfirmations(string root)
+    {
+        try
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            using (var form = new Form { Text = "SPS 0.4.86 Recovery" })
+            {
+                Exception failure = null;
+                var close = new Button { Text = "Close", Enabled = false };
+                close.Click += delegate { form.Close(); };
+                form.Controls.Add(close);
+                form.Shown += delegate
+                {
+                    form.BeginInvoke((Action)delegate
+                    {
+                        try
+                        {
+                            bool rejected = false;
+                            if (!SystemInformation.UserInteractive)
+                            {
+                                try { MessageBox.Show(form, "Managed guard reproduction", "Managed guard reproduction"); }
+                                catch (InvalidOperationException) { rejected = true; }
+                                Require(rejected, "managed_guard_reproduction");
+                            }
+                            Require(!LegacyRecoveryDialogs.ConfirmResidue(form, root, 0), "confirmation_no");
+                            Console.WriteLine("DECLINED");
+                            Console.Out.Flush();
+                            Require(LegacyRecoveryDialogs.ConfirmResidue(form, root, 0), "confirmation_yes");
+                            Console.WriteLine("{\"ok\":true,\"declined\":true,\"accepted\":true,\"defaultNo\":true,\"managedGuardRejected\":"
+                                + rejected.ToString().ToLowerInvariant() + "}");
+                            Console.Out.Flush();
+                            close.Enabled = true;
+                        }
+                        catch (Exception error) { failure = error; form.Close(); }
+                    });
+                };
+                Application.Run(form);
+                if (failure != null) throw failure;
+            }
+            return 0;
+        }
+        catch
+        {
+            Console.WriteLine("{\"ok\":false,\"phase\":\"confirmation\"}");
+            return 1;
+        }
     }
 
     static int ExerciseCheckObservation()

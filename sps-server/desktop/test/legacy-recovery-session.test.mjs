@@ -51,7 +51,12 @@ test("legacy recovery GUI retains its explicit cleanup and privacy safeguards", 
   assert.doesNotMatch(app, /--(?:yes|force|confirm|cleanup)\b|Environment\.GetCommandLineArgs\s*\(/i);
   assert.match(app, /CheckBox\s+backup\s*,\s*inside/);
   assert.equal([...app.matchAll(/(?:backup|inside)\s*=\s*new\s+CheckBox\s*\{/g)].length, 2);
-  assert.match(app, /MessageBoxButtons\.YesNo[\s\S]*?MessageBoxDefaultButton\.Button2/);
+  assert.match(app, /YesNoWarningDefaultNo = 0x00000004 \| 0x00000030 \| 0x00000100/);
+  assert.match(app, /EntryPoint = "MessageBoxW"[\s\S]*?ShowOwnedMessageBox\(owner\.Handle,[\s\S]*?YesNoWarningDefaultNo\)/);
+  assert.match(app, /if \(result == 6\) return true;\s*if \(result == 7\) return false;\s*throw new InvalidOperationException\(\)/);
+  assert.match(app, /owner == null \|\| owner\.IsDisposed \|\| !owner\.IsHandleCreated \|\| owner\.InvokeRequired/);
+  assert.doesNotMatch(app, /0x00(?:020000|200000)|MessageBoxOptions\.(?:ServiceNotification|DefaultDesktopOnly)/);
+  assert.match(app, /return LegacyRecoveryDialogs\.ConfirmResidue\(this, session\.TargetPath, files\)/);
   assert.doesNotMatch(app, /Process\s*\.\s*(?:Start|Kill)\s*\(|\bVerb\s*=\s*"runas"|runas\b/i);
   assert.doesNotMatch(session, /Process\s*\.\s*(?:Start|Kill)\s*\(|\bVerb\s*=\s*"runas"|runas\b/i);
   assert.doesNotMatch(session, /RegistryKey\s*\.\s*(?:CreateSubKey|SetValue|DeleteSubKey|DeleteValue)\s*\(/);

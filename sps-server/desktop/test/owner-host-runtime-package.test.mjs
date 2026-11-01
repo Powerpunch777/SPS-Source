@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { assertPlainDirectory } from "../scripts/installer-ci-safety.mjs";
 import {
   createSpsOwnerHostRuntimePackage,
   inspectSpsOwnerHostRuntimeArchive,
@@ -34,6 +35,42 @@ async function createRuntime(root) {
     writeFile(root, SPS_REQUEST_HOSTNAME_RUNTIME_PATH, "export const requestHostname = () => 'localhost';\n"),
   ]);
 }
+
+test("unconfirmed extraction-thread cleanup preserves staging, its preparation lock and the previous runtime", async () => {
+  const parent = await fs.realpath(os.tmpdir());
+  assert.equal(await assertPlainDirectory(parent), parent);
+  const root = await fs.mkdtemp(path.join(parent, "sps-owner-thread-cleanup-"));
+  const owned = await fs.lstat(root, { bigint: true });
+  const runtimeRoot = path.join(root, "runtime");
+  const packageRoot = path.join(root, "package");
+  const targetRuntimeRoot = path.join(root, "previous");
+  let staging;
+  try {
+    await createRuntime(runtimeRoot);
+    await createSpsOwnerHostRuntimePackage({ runtimeRoot, packageRoot });
+    await fs.mkdir(targetRuntimeRoot);
+    await fs.writeFile(path.join(targetRuntimeRoot, "previous-sentinel"), "keep previous runtime");
+    await assert.rejects(materializeSpsOwnerHostRuntimePackage({ packageRoot, targetRuntimeRoot,
+      tarExtract: async ({ cwd }) => {
+        staging = cwd;
+        await fs.writeFile(path.join(cwd, "partial-sentinel"), "keep uncertain output");
+        // Fault injection only: no real thread remains to race fixture cleanup.
+        throw Object.assign(new Error("thread termination unconfirmed"), { runtimeStagingCleanupUnconfirmed: true });
+      },
+    }), error => error.runtimeStagingCleanupUnconfirmed === true);
+    assert.equal(await fs.readFile(path.join(staging, "partial-sentinel"), "utf8"), "keep uncertain output");
+    assert.equal(await fs.readFile(path.join(targetRuntimeRoot, "previous-sentinel"), "utf8"), "keep previous runtime");
+    assert.equal(JSON.parse(await fs.readFile(`${targetRuntimeRoot}.lock`, "utf8")).pid, process.pid);
+    assert.deepEqual((await fs.readdir(root)).filter(name => name.includes(".stale-")), []);
+    await assert.rejects(fs.lstat(path.join(targetRuntimeRoot, ".sps-runtime-materialized.json")), error => error.code === "ENOENT");
+  } finally {
+    assert.equal(await assertPlainDirectory(root), root);
+    assert.equal(path.dirname(root), parent);
+    const current = await fs.lstat(root, { bigint: true });
+    for (const field of ["dev", "ino", "birthtimeNs"]) assert.equal(current[field], owned[field]);
+    await fs.rm(root, { recursive: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
 
 test("packages, verifies, materializes, and reuses one Owner Host runtime archive", async () => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "sps-owner-package-"));

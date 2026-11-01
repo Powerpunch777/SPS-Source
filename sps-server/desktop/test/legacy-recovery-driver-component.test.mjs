@@ -141,3 +141,35 @@ test("checkbox observation retains one pending query within the original UI dead
   assert.deepEqual(JSON.parse(result.stdout), { ok: true, oneQuery: true, delayedValue: true,
     falseValueRetained: true, unfinishedRejected: true, expiredRejected: true, faultRejected: true, uiBudgetMs: 15000 });
 });
+
+test("real recovery confirmation retains default No and actual decline/accept buttons", {
+  skip: process.platform !== "win32", timeout: 45_000,
+}, async t => {
+  const owned = await ownedTemp(t);
+  const sentinel = path.join(owned, "keep.txt");
+  const bytes = Buffer.from("modal component never authorizes file cleanup\n");
+  await writeFile(sentinel, bytes, { flag: "wx" });
+  const executable = await compileFixture(owned);
+  let result;
+  try {
+    result = await execFileAsync(executable, ["--probe-confirmations", owned], {
+      cwd: owned, windowsHide: true, shell: false, timeout: 25_000, maxBuffer: 4096, encoding: "utf8",
+    });
+  } catch (error) {
+    let record;
+    try { record = JSON.parse(String(error.stdout ?? "").trim()); } catch {}
+    const step = ["start", "window", "decline", "decline-result", "accept", "exit"].includes(record?.step)
+      ? record.step : "unclassified";
+    const kind = ["DriverFailure", "InvalidOperationException", "RecoveryWindowDeadlineFailure"].includes(record?.failure)
+      ? record.failure : "unclassified";
+    assert.fail(`Real recovery confirmation failed its default-No/decline/accept contract (${step}; ${kind}; interactive-${record?.interactive === true}).`);
+  }
+  assert.equal(result.stderr, "");
+  const record = JSON.parse(result.stdout);
+  assert.equal(typeof record.managedGuardRejected, "boolean");
+  assert.deepEqual(record, { ok: true, declined: true, accepted: true, defaultNo: true,
+    managedGuardRejected: record.managedGuardRejected });
+  t.diagnostic(JSON.stringify({ legacyConfirmationComponent: true, managedGuardRejected: record.managedGuardRejected }));
+  await assertPlainDirectory(owned);
+  assert.deepEqual(await readFile(sentinel), bytes);
+});

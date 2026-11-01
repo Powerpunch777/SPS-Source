@@ -8,7 +8,7 @@ if (process.platform !== "win32" || process.argv.length !== 3 || process.argv[2]
 
 const testFile = "test/legacy-recovery-driver-component.test.mjs";
 const allowedPhases = new Set(["initial-window", "initial-target", "initial-controls", "initial-backup", "initial-inside",
-  "initial-uncheck", "initial-recheck", "initial-cancel", "initial-exit", "check-observation"]);
+  "initial-uncheck", "initial-recheck", "initial-cancel", "initial-exit", "check-observation", "confirmation"]);
 const allowedTypes = new Set(["DriverFailure", "CheckObservationDeadlineFailure", "AggregateException", "COMException",
   "ElementNotAvailableException", "InvalidOperationException", "TargetInvocationException"]);
 const allowedOperations = new Set(["FindTopWindows", "WindowClass", "ReadWindowText", "WaitForRecoveryWindow",
@@ -41,6 +41,8 @@ function safeFailure() {
   let type = "unclassified";
   let operation;
   let nativeCode;
+  let modalStep;
+  let interactive;
   const message = /Legacy recovery UI driver failed at ([a-z-]+) \(([A-Za-z]+)(?:; ([A-Za-z]+))?(?:; native-(-?\d+))?\)\./.exec(`${stdout}\n${stderr}`);
   if (message && allowedPhases.has(message[1]) && allowedTypes.has(message[2])) {
     phase = message[1];
@@ -54,6 +56,11 @@ function safeFailure() {
   } else if (/checkbox observation failed its pending\/deadline contract/i.test(`${stdout}\n${stderr}`)) {
     phase = "check-observation";
     type = "contract-failure";
+  } else if (/Real recovery confirmation failed its default-No\/decline\/accept contract/.test(`${stdout}\n${stderr}`)) {
+    phase = "confirmation";
+    type = "contract-failure";
+    const modal = /contract \((start|window|decline|decline-result|accept|exit|unclassified); (DriverFailure|InvalidOperationException|RecoveryWindowDeadlineFailure|unclassified); interactive-(true|false)\)/.exec(`${stdout}\n${stderr}`);
+    if (modal) { modalStep = modal[1]; operation = modal[2]; interactive = modal[3] === "true"; }
   } else if (timedOut) {
     phase = "child-timeout";
     type = "timeout";
@@ -74,7 +81,7 @@ function safeFailure() {
     }
   }
   return { legacyDriverPrivateDesktopComponent: false, phase, type, ...(operation ? { operation } : {}),
-    ...(nativeCode === undefined ? {} : { nativeCode }) };
+    ...(nativeCode === undefined ? {} : { nativeCode }), ...(modalStep ? { modalStep, interactive } : {}) };
 }
 
 function fail() {
@@ -111,14 +118,16 @@ if (child) {
     const match = new RegExp(`^# ${key} (\\d+)$`, "m").exec(stdout);
     return [key, match ? Number(match[1]) : null];
   }));
+  const confirmation = [...stdout.matchAll(/^# \{"legacyConfirmationComponent":true,"managedGuardRejected":(true|false)\}$/gm)];
   const passed = result.code === 0 && result.signal === null && !timedOut && !outputLimited && !spawnFailed
-    && outputBytes <= maximumOutputBytes && totals.tests === 2 && totals.pass === 2 && totals.fail === 0
-    && totals.cancelled === 0 && totals.skipped === 0 && totals.todo === 0;
+    && outputBytes <= maximumOutputBytes && totals.tests === 3 && totals.pass === 3 && totals.fail === 0
+    && totals.cancelled === 0 && totals.skipped === 0 && totals.todo === 0 && confirmation.length === 1;
 
   if (!passed) {
     fail();
   } else {
-    process.stdout.write('{"legacyDriverPrivateDesktopComponent":true,"tests":2,"passed":2,"skipped":0}\n', () => {
+    process.stdout.write(`${JSON.stringify({ legacyDriverPrivateDesktopComponent: true, tests: 3, passed: 3, skipped: 0,
+      managedGuardRejected: confirmation[0][1] === "true" })}\n`, () => {
       process.exit(OWNED_JOB_CLEANUP_PENDING_EXIT_CODE);
     });
   }

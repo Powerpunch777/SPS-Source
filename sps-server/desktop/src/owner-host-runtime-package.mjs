@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { c as createTar, t as listTar, x as extractTar } from "tar";
+import { c as createTar, t as listTar } from "tar";
+import { normalizeArchiveEntry } from "./owner-host-runtime-archive-path.mjs";
+import { extractSpsOwnerRuntimeArchive } from "./owner-host-runtime-extract.mjs";
 
 export const SPS_OWNER_HOST_RUNTIME_ARCHIVE = "sps-owner-host-runtime.tgz";
 export const SPS_OWNER_HOST_RUNTIME_PACKAGE_MANIFEST = "sps-owner-host-runtime-package.json";
@@ -30,18 +32,6 @@ function asPositiveInteger(value, label, maximum) {
     throw new Error(`SPS Owner Host runtime ${label} is outside the supported limit.`);
   }
   return value;
-}
-
-function normalizeArchiveEntry(value) {
-  const input = String(value || "").replaceAll("\\", "/");
-  if (!input || input.includes("\0") || input.startsWith("/") || input.startsWith("//") || /^[A-Za-z]:/.test(input)) {
-    throw new Error("SPS Owner Host runtime archive contains an unsafe path.");
-  }
-  const segments = input.split("/").filter((segment) => segment && segment !== ".");
-  if (segments.some((segment) => segment === "..")) {
-    throw new Error("SPS Owner Host runtime archive contains a path traversal.");
-  }
-  return segments.join("/") || ".";
 }
 
 async function sha256File(filePath) {
@@ -300,7 +290,7 @@ export async function materializeSpsOwnerHostRuntimePackage({
   targetRuntimeRoot,
   fsApi = fs,
   tarList = listTar,
-  tarExtract = extractTar,
+  tarExtract = extractSpsOwnerRuntimeArchive,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   onProgress = () => {},
 } = {}) {
@@ -331,6 +321,7 @@ export async function materializeSpsOwnerHostRuntimePackage({
   if (!lock) { progress("cache-ready"); return targetRuntimeRoot; }
   const stagingRoot = `${targetRuntimeRoot}.staging-${process.pid}-${Date.now()}`;
   let staleTarget = null;
+  let preservePreparation = false;
   try {
     if (await runtimeIsReady(targetRuntimeRoot, runtimePackage.manifest, { fsApi })) {
       progress("cache-ready");
@@ -380,6 +371,13 @@ export async function materializeSpsOwnerHostRuntimePackage({
     if (staleTarget) void fsApi.rm(staleTarget, { recursive: true, force: true }).catch(() => undefined);
     return targetRuntimeRoot;
   } catch (error) {
+    if (error?.runtimeStagingCleanupUnconfirmed === true) {
+      // Do not remove files or permit a new preparation while an extraction
+      // thread's termination is unknown. A later process can recover its lock
+      // only through the existing confirmed-dead-owner check.
+      preservePreparation = true;
+      throw error;
+    }
     if (staleTarget) {
       try {
         let destinationExists = false;
@@ -402,6 +400,6 @@ export async function materializeSpsOwnerHostRuntimePackage({
     throw error;
   } finally {
     await lock.close().catch(() => undefined);
-    await fsApi.rm(lockPath, { force: true }).catch(() => undefined);
+    if (!preservePreparation) await fsApi.rm(lockPath, { force: true }).catch(() => undefined);
   }
 }

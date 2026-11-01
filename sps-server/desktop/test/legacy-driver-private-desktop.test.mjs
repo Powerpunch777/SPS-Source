@@ -20,10 +20,11 @@ test("private-desktop component probe is fixed to the owned Windows launcher and
   assert.match(source, /const testFile = "test\/legacy-recovery-driver-component\.test\.mjs";/);
   assert.match(source, /maximumOutputBytes = 256 \* 1024/);
   assert.match(source, /}, 75_000\)/);
-  assert.match(source, /totals\.tests === 2 && totals\.pass === 2 && totals\.fail === 0/);
+  assert.match(source, /totals\.tests === 3 && totals\.pass === 3 && totals\.fail === 0/);
   assert.match(source, /totals\.skipped === 0/);
   assert.match(source, /OWNED_JOB_CLEANUP_PENDING_EXIT_CODE/);
-  assert.match(source, /legacyDriverPrivateDesktopComponent":true/);
+  assert.match(source, /legacyDriverPrivateDesktopComponent: true/);
+  assert.match(source, /confirmation\.length === 1/);
   assert.doesNotMatch(source, /process\.env|execFile\(|shell:\s*true/);
   assert.ok(wrapper.includes("'probe-legacy-driver-component'"));
   assert.equal(OWNED_JOB_CLEANUP_ARGUMENT, "--owned-job-cleanup-pending");
@@ -61,7 +62,7 @@ test("private-desktop component probe closes its restricted owned Job naturally"
       } catch {}
     }
     const phases = new Set(["initial-window", "initial-target", "initial-controls", "initial-backup", "initial-inside",
-      "initial-uncheck", "initial-recheck", "initial-cancel", "initial-exit", "check-observation", "fixture-compilation",
+      "initial-uncheck", "initial-recheck", "initial-cancel", "initial-exit", "check-observation", "confirmation", "fixture-compilation",
       "child-timeout", "child-output", "child-launch", "child-result"]);
     const types = new Set(["DriverFailure", "CheckObservationDeadlineFailure", "AggregateException", "COMException",
       "ElementNotAvailableException", "InvalidOperationException", "TargetInvocationException", "compilation-failure",
@@ -82,9 +83,11 @@ test("private-desktop component probe closes its restricted owned Job naturally"
   assert.equal(typeof records[0].privateWindowStation, "boolean");
   assert.deepEqual(records[1], { restrictedE2eChild: true, administratorEnabled: false, powerUsersEnabled: false,
     privilegesReduced: true, sameUserToken: true, administratorDenied: true, userDefaultDacl: true });
-  assert.deepEqual(records.find(record => Object.hasOwn(record, "legacyDriverPrivateDesktopComponent")), {
-    legacyDriverPrivateDesktopComponent: true, tests: 2, passed: 2, skipped: 0,
-  });
+  const component = records.find(record => Object.hasOwn(record, "legacyDriverPrivateDesktopComponent"));
+  assert.deepEqual(component, { legacyDriverPrivateDesktopComponent: true, tests: 3, passed: 3, skipped: 0,
+    managedGuardRejected: component.managedGuardRejected });
+  assert.equal(typeof component.managedGuardRejected, "boolean");
+  if (records[0].privateWindowStation) assert.equal(component.managedGuardRejected, true);
   assert.deepEqual(records.find(record => record.ownedJobCleanup), { ownedJobEmpty: true, ownedJobCleanup: "natural" });
   assert.deepEqual(records.at(-1), { ownedDesktopClose: "closed",
     ownedWindowStationClose: records[0].privateWindowStation ? "closed" : "not_owned" });

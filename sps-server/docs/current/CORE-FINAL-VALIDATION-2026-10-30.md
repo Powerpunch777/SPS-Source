@@ -18,6 +18,35 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
+### Latest Installed Passes And Remaining Confirmation Failure
+
+Source5117 push41243542548/Windows124662186605 passed the actual installed
+historical-profile157-to176/v11-to13 migration, DPAPI credential/key and all
+nine retained records, restart, reinstall and natural whole-Job acceptance.
+All17 non-Windows jobs passed. The mandatory legacy124674617274 still failed:
+after correct original residue validation the helper reports
+`stage:confirmation,nativeError:0`; cleanup is rejected and reinstall skipped.
+Therefore the overall workflow is failed, not a complete Core acceptance pass.
+The9e PR installed candidate also passed, while its same-branch push exceeded
+the original300-second bound during extraction. Source5117 extraction took
+182600ms, localizing the major cold-start delay to archive extraction.
+
+The current follow-up uses four fixed threads with the existing `tar` library
+and unchanged SHA/preflight/expanded-file/staging/rollback checks. A same-input
+local comparison reduced extraction from33623ms to12918ms; all28771 file hashes
+matched. Thread termination must be confirmed before staging cleanup. Actual
+Electron-ASAR Worker loading and protocol/failure regressions are included.
+The legacy confirmation now uses an actual owner-HWND `MessageBoxW`, default
+No, requiring exact Yes/No results; it never changes consent or residue guards.
+Related native component tests8/8 passed locally. This PC cannot create the
+non-interactive hosted WindowStation; hosted reproduction/complete recovery
+and exact revised-HEAD CI remain required. Full local Desktop validation is
+1895total/1892pass/3unavailable8.3-alias skips/0fail. Fresh production and full
+development dependency policies both passed with zero Critical/High, retaining
+respectively one and two reviewed Moderate advisories until2026-11-07.
+Native recovery helper compilation and diff checks passed. Details, hashes and limitations:
+[readiness/rejection evidence](../reviews/HOST-COLD-START-AND-RECOVERY-REJECTION-2026-11-01.md#latest-hosted-results-and-follow-up).
+
 ### Local Host Controller: Explicit Workspace Open
 
 The isolated controller now performs both existing public setup actions:
@@ -51,9 +80,9 @@ migration, legacy cleanup and physical Runner blockers:
 - Reviewed Moderate dependency exceptions expire2026-11-07. A past policy
   pass does not replace a fresh final-candidate audit before that expiry.
 
-Core remains incomplete. The running9e Windows jobs and17 completed non-Windows
-jobs are separate observations; the latter do not qualify the former or any
-future Source revision.
+Core remains incomplete. The recorded installed passes and mandatory legacy
+failure are separate observations; neither past passes nor local improvements
+qualify the changed Source revision without its own required CI.
 
 ### 71c Results: Host Readiness Delay And Actual Safety Rejection
 

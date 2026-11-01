@@ -1,10 +1,35 @@
 using System;
 using System.Drawing;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace Sps.LegacyRecovery
 {
+    internal static class LegacyRecoveryDialogs
+    {
+        const uint YesNoWarningDefaultNo = 0x00000004 | 0x00000030 | 0x00000100;
+
+        [DllImport("user32.dll", EntryPoint = "MessageBoxW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        static extern int ShowOwnedMessageBox(IntPtr owner, string text, string caption, uint flags);
+
+        internal static bool ConfirmResidue(Form owner, string targetPath, int files)
+        {
+            if (owner == null || owner.IsDisposed || !owner.IsHandleCreated || owner.InvokeRequired)
+                throw new InvalidOperationException();
+            // Stay on the owner's desktop, including a non-interactive test
+            // station. Never use service/default-desktop notification flags.
+            int result = ShowOwnedMessageBox(owner.Handle,
+                "Clean " + files + " verified original program files in this folder?\n\n" + targetPath
+                + "\n\nAppData, Host Vault and external projects will not be deleted. Unknown, changed or linked files stop cleanup.",
+                "Confirm program residue cleanup", YesNoWarningDefaultNo);
+            GC.KeepAlive(owner);
+            if (result == 6) return true;
+            if (result == 7) return false;
+            throw new InvalidOperationException();
+        }
+    }
+
     internal sealed class LegacyRecoveryForm : Form
     {
         readonly LegacyRecoverySession session;
@@ -63,10 +88,7 @@ namespace Sps.LegacyRecovery
             try
             {
                 bool removed = session.CleanAfterUserUninstalled(backup.Checked, inside.Checked, delegate(int files, int directories) {
-                    return MessageBox.Show(this,
-                        "Clean " + files + " verified original program files in this folder?\n\n" + session.TargetPath
-                        + "\n\nAppData, Host Vault and external projects will not be deleted. Unknown, changed or linked files stop cleanup.",
-                        "Confirm program residue cleanup", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+                    return LegacyRecoveryDialogs.ConfirmResidue(this, session.TargetPath, files);
                 });
                 status.Text = removed ? "Verified program residue was removed. Close this window and run the latest SPS Setup again."
                     : "Cleanup cancelled. No program files were deleted.";

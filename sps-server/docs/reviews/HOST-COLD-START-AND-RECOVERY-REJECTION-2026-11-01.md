@@ -1,10 +1,106 @@
 # Installed Host Readiness And Legacy Safety Rejection
 
-2026-11-01 KST. Development diagnosis only. Both required Windows gates remain
-failed; this record is not Core completion, a startup performance fix, successful
-legacy cleanup or Stable qualification.
+2026-11-01 KST. Development diagnosis only. Newer installed migration gates
+passed, while mandatory legacy recovery still fails. The extraction and modal
+changes below require their own exact-HEAD Windows acceptance; this record is
+not Core completion, successful legacy cleanup or Stable qualification.
 
-## Authoritative Runs
+## Latest Hosted Results And Follow-Up
+
+Source `9e903d3c7dfed8b4778dbf86c37ff202cd16cae4` push41242251600 failed
+installed historical-profile acceptance: archive preflight ended at19374ms and
+extraction started at19379ms, still unfinished when the unchanged300-second
+parent bound expired. Its PR41242256187/Windows124658384001 passed instead,
+building Source merge `d5a81f6abac14c390d615320f31f86e8aefe077e`. Extraction
+took181729ms; Host readiness followed at212399ms and full migration/restart/
+cleanup acceptance finished at234720ms. Installer SHA256:
+`14074aea9d1634d9d9100d05db7687a3bde2a3ddfe24c7fbd45570b17b0b1576`.
+
+Source `5117b29d089fccdeb15ed43930f044d831bc315e` push41243542548/
+Windows124662186605 also passed installed acceptance, including157-to176 DB
+migrations, v11-to13 Desktop state, actual DPAPI credential/key preservation,
+all nine retained records, normal restart and whole-Job cleanup. Extraction
+took182600ms; full historical-profile acceptance took242779ms. Installer
+SHA256: `4c76c421ef43904eda1c81d2e8f3adac8624aa744b4e83d7128de28c7ca4a013`.
+All17 non-Windows jobs passed on both revisions. These unsigned, isolated,
+mock-Identity installed tests are not signed-release or physical two-PC proof.
+
+Both newer mandatory legacy jobs124671070913 and124674617274 failed after
+successful process/registration/residue checks. Ordinary uninstall left46
+original files/61 directories/26804bytes, all46 file paths over259characters.
+The fixed diagnostic is `stage:confirmation,nativeError:0`; this is not a
+residue-validation failure or a dialog wait timeout. Forced cleanup was rejected
+and reinstall skipped. The whole workflow remains failed despite installed
+migration success.
+
+### Windows Runtime Extraction
+
+The new default retains the existing pinned `tar` library, package SHA,
+preflight, expanded-file verification, staging, lock and rollback checks. Four
+fixed Worker threads synchronously read the archive, with one deterministic
+package partition per file writer. All readers validate every path; only one
+preserves directory entries. Completion messages alone are insufficient:
+every thread must exit0. On failure all started threads must confirm termination
+before staging cleanup; unknown termination retains staging and its lock.
+Other platforms retain the original asynchronous extractor. No extra executable,
+administrator privilege, user-data path or longer timeout is introduced.
+
+A private local measurement used the exact9e PR archive SHA256
+`1153cbe03999c6201ce72806ab51b60d2d91f4969a90eb5f9a99ce4709287336`.
+The old async extractor took33623ms; the new actual default took12918ms.
+All28771 files/575905190bytes matched the original archive's per-file SHA256,
+content-tree digest `b914ed0ae76b8b932fcc6c7313165685e2bec1176da44c2825362762166af41c`.
+The input archive was unchanged; only the identity-checked temporary tree was
+removed. This same-machine comparison is not a new hosted startup result.
+
+Tracked tests cover actual small archives, empty directories, traversal,
+completion/exit/protocol failures and uncertain termination retaining staging.
+A real Electron ASAR test copies the unchanged three extractor modules, loads
+them from ASAR, runs the default four Workers, verifies exact output bytes and
+requires normal whole-Job exit0 plus output EOF before owned cleanup. It does
+not change ASAR packaging rules or rely on unpacked developer source fallback.
+
+### Owner-Desktop Confirmation
+
+Microsoft documents that managed WinForms `MessageBox.Show` throws when the
+process is not user-interactive. The non-visible WindowStation used by the
+hosted recovery fixture has that property. The confirmation wrapper now calls
+Win32 `MessageBoxW` on the live Form's own HWND with only YESNO, WARNING and
+DEFAULTBUTTON2 flags. Exactly IDYES authorizes consent; IDNO declines; zero or
+any unknown result throws. No service/default-desktop flag, automatic consent,
+window-station visibility change or safety-check bypass is added.
+
+The actual modal component drives the unchanged real UI driver's default-No,
+decline and accept checks. It never calls cleanup or registry APIs and its
+sentinel remains unchanged. Local related tests passed8/8, including the
+restricted private-desktop whole-Job probe. This non-admin PC uses a private
+desktop on its existing interactive station, so `managedGuardRejected:false`:
+it does NOT reproduce the hosted non-interactive station. On an actual private
+WindowStation the component also requires the old managed call to reject,
+and both real native modal responses to succeed. Hosted confirmation,
+original residue cleanup, data-preserving reinstall and final natural cleanup
+remain mandatory.
+
+### Follow-Up Local Validation
+
+- Runtime/archive/progress focused regression42/42; portable Runner/controller/
+  launch tests13/13; actual ASAR test1/1; modal/Form/session/probe tests8/8.
+- Full `npm run test:ci`: serial2/2 plus1893total/1890pass/three unavailable
+  Windows8.3-alias skips/0fail; aggregate1895total/1892pass/3skip/0fail.
+- Production audit policy: three advisories, zero Critical/High; two Low,
+  one reviewed Moderate through2026-11-07. Full development/build/Electron
+  graph: five advisories, zero Critical/High; three Low and two reviewed
+  Moderate through2026-11-07. This is not a zero-vulnerability statement.
+- Native recovery helper rebuilt; `git diff --check` passed. Core/SDK gitlinks
+  remain unchanged and their worktrees clean. Candidate packaging and all
+  hosted acceptance must run again after this Source revision is committed.
+
+References: [WinForms MessageBox exceptions](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.messagebox.show),
+[Win32 owner, flags and result contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-messageboxw),
+[Node Worker lifecycle](https://nodejs.org/api/worker_threads.html),
+[Electron ASAR](https://www.electronjs.org/docs/latest/tutorial/asar-archives).
+
+## Earlier71c Runs
 
 Source branch `71cddad300b48c75410725e63b39e0fc988095d8`, Core
 `b17fb830138b4acde96aa7b5c911f7e8cccfa698`, public SDK

@@ -126,10 +126,39 @@ Reference: [Playwright Electron application lifecycle](https://playwright.dev/do
 Closing a browser/window is not substituted for SPS's supported normal Quit
 and native Job termination acceptance.
 
+## Portable Reference Package Preparation
+
+The public-SDK Runner reference fixture now has an actual portability test. It
+copies exactly `package.json`, `dist/manifest.js` and `dist/worker.js` to a new
+owned temporary distribution, checks regular-file identities and equal SHA256,
+and removes the separate builder tree (including its development SDK junction)
+before starting the copy. Neither `node_modules` nor `src` exists in the copied
+distribution. Its child receives no inherited NODE_PATH/NODE_OPTIONS or SDK
+environment and runs from the copied working directory.
+
+The actual child initializes, exercises all eight declared runtime routes,
+accepts shutdown, closes stdin, ends both output streams and exits naturally0.
+The RPC host is a test responder, not a real Core or remote Runner. Both owned
+temporary roots are checked against their captured dev/ino/birth identity before
+cleanup; no product installation or external SDK target is deleted.
+
+On Windows/Node26.4.0 the reference file passed2/2. Parent verification ran
+`node --test test/runner-recovery-package.test.mjs
+test/cross-device-control.test.mjs test/cross-device-desktop-session.test.mjs
+test/runner-recovery-launch.test.mjs` from Desktop:13/13, no skips or failures.
+This adds transport-fixture confidence, NOT physical-PC, real model/provider,
+current installed migration or Host/Member acceptance.
+
+The notebook was rechecked read-only on2026-11-01KST: Windows11x64/Node24.16.0,
+Tailscale1.102.3, empty Serve, zero relevant SPS/Node/Postgres processes, about
+33GiB temporary free storage. This is readiness only. No remote candidate file,
+app, installation, login or Serve setting has been changed.
+
 ## Remaining Work
 
-1. Diagnose and fix the latest installed historical-profile and legacy confirmation
-   failures; run exact revised-HEAD Windows gates. Retain original bounds.
+1. Installed migration passed on5117; extraction optimization and the remaining
+   actual legacy confirmation fix still require exact revised-HEAD Windows
+   acceptance. Retain original bounds and complete cleanup/reinstall checks.
 2. Local candidate startup/sign-in/Host creation/Workspace API/normal close has
    passed as scoped above; qualify the revised candidate in CI before remote use.
 3. Once CI permits, stage exact candidate bytes in recorded owned Temp roots;

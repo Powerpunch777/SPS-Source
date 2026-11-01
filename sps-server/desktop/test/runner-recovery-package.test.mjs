@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants } from "node:fs";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import test from "node:test";
+import { assertPlainDirectory } from "../scripts/installer-ci-safety.mjs";
 import {
   createRunnerRecoveryReferencePackage,
   RUNNER_RECOVERY_CAPABILITIES,
@@ -30,14 +33,44 @@ const ROUTES = [
   ["performAction", "run-cancel", "sps.runs.cancel", { companyId: COMPANY_ID, runId: "run-1" }],
 ];
 
-function launchWorker(workerPath, cwd, signal) {
-  const child = spawn(process.execPath, [workerPath], { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], signal });
+async function createOwnedTemporaryRoot(label) {
+  const parent = await realpath(os.tmpdir());
+  assert.equal(await assertPlainDirectory(parent), parent);
+  const prefix = `${TEMP_PREFIX}${label}-`;
+  const root = await mkdtemp(path.join(parent, prefix));
+  assert.equal(await assertPlainDirectory(root), root);
+  const identity = await lstat(root, { bigint: true });
+  let removed = false;
+  return {
+    root,
+    async cleanup() {
+      if (removed) return;
+      assert.ok(path.isAbsolute(root) && path.resolve(root) === root);
+      assert.equal(path.dirname(root), parent);
+      assert.ok(path.basename(root).startsWith(prefix));
+      assert.equal(await assertPlainDirectory(root), root);
+      const current = await lstat(root, { bigint: true });
+      assert.ok(current.isDirectory() && !current.isSymbolicLink());
+      for (const field of ["dev", "ino", "birthtimeNs"]) {
+        assert.equal(current[field], identity[field], `Refuse cleanup after temporary root ${field} changed.`);
+      }
+      await rm(root, { recursive: true, maxRetries: 5, retryDelay: 100 });
+      removed = true;
+    },
+  };
+}
+
+function launchWorker(workerPath, cwd, signal, env = process.env) {
+  const child = spawn(process.execPath, [workerPath], { cwd, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], signal });
   const pending = new Map();
   const runtimeRequests = [];
   let stderr = "";
   let failure;
   let exit;
   let nextId = 0;
+  const outputEofs = { stdout: false, stderr: false };
+  child.stdout.once("end", () => { outputEofs.stdout = true; });
+  child.stderr.once("end", () => { outputEofs.stderr = true; });
   const diagnostic = message => new Error(`${message}\nWorker stderr:\n${stderr || "(empty)"}`);
   function fail(cause) {
     failure ??= cause;
@@ -96,6 +129,7 @@ function launchWorker(workerPath, cwd, signal) {
     invoke,
     runtimeRequests,
     exited,
+    outputEofs,
     closeInput() { child.stdin.end(); },
     async dispose() {
       if (!exit) {
@@ -108,8 +142,33 @@ function launchWorker(workerPath, cwd, signal) {
   };
 }
 
+async function assertWorkerRoutes(worker, manifest) {
+  assert.deepEqual(await worker.invoke("initialize", { manifest }), {
+    ok: true,
+    supportedMethods: ["executeTool", "onEvent", "runJob", "getData", "performAction"],
+  });
+  for (const [method, key, runtimeMethod, runtimeParams] of ROUTES) {
+    const params = method === "getData"
+      ? { key, companyId: COMPANY_ID, params: { runId: "run-1", grantId: "grant-1" } }
+      : { key, companyId: COMPANY_ID, params: {
+        companyId: COMPANY_ID, runId: "run-1", grantId: "grant-1", subjectKey: "agent:test",
+        nodeId: "node-1", runnerProfileId: "profile-1", executionGrantId: "grant-1", args: ["--version"], timeoutMs: 1000,
+      }, actorContext: { type: "user", companyId: COMPANY_ID, userId: "test-user" } };
+    const result = await worker.invoke(method, params, true);
+    assert.deepEqual(result, { method: runtimeMethod });
+    assert.deepEqual(worker.runtimeRequests.at(-1), { method: runtimeMethod, params: runtimeParams });
+  }
+
+  assert.deepEqual(await worker.invoke("shutdown"), null);
+  worker.closeInput();
+  assert.deepEqual(await worker.exited, { code: 0, signal: null });
+  assert.deepEqual(worker.outputEofs, { stdout: true, stderr: true });
+  assert.deepEqual(worker.runtimeRequests.map(({ method }) => method), ROUTES.map(([, , method]) => method));
+}
+
 test("generated Runner recovery package validates its manifest and routes public Worker data/actions through declared runtime RPCs", { timeout: 30_000 }, async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX));
+  const temporary = await createOwnedTemporaryRoot("generated");
+  const { root } = temporary;
   let worker;
   try {
     const { manifest } = await createRunnerRecoveryReferencePackage(root);
@@ -128,33 +187,60 @@ test("generated Runner recovery package validates its manifest and routes public
     const workerPath = path.resolve(root, packageJson.spsPlugin.worker);
     worker = launchWorker(workerPath, root, t.signal);
 
-    assert.deepEqual(await worker.invoke("initialize", { manifest }), {
-      ok: true,
-      supportedMethods: ["executeTool", "onEvent", "runJob", "getData", "performAction"],
-    });
-    for (const [method, key, runtimeMethod, runtimeParams] of ROUTES) {
-      const params = method === "getData"
-        ? { key, companyId: COMPANY_ID, params: { runId: "run-1", grantId: "grant-1" } }
-        : { key, companyId: COMPANY_ID, params: {
-          companyId: COMPANY_ID, runId: "run-1", grantId: "grant-1", subjectKey: "agent:test",
-          nodeId: "node-1", runnerProfileId: "profile-1", executionGrantId: "grant-1", args: ["--version"], timeoutMs: 1000,
-        }, actorContext: { type: "user", companyId: COMPANY_ID, userId: "test-user" } };
-      const result = await worker.invoke(method, params, true);
-      assert.deepEqual(result, { method: runtimeMethod });
-      assert.deepEqual(worker.runtimeRequests.at(-1), { method: runtimeMethod, params: runtimeParams });
+    await assertWorkerRoutes(worker, manifest);
+  } finally {
+    await worker?.dispose();
+    await temporary.cleanup();
+  }
+});
+
+test("copied Runner recovery distribution runs all eight routes without its builder tree or SDK junction", { timeout: 30_000 }, async t => {
+  const builder = await createOwnedTemporaryRoot("builder");
+  let distribution;
+  let worker;
+  try {
+    const { manifest } = await createRunnerRecoveryReferencePackage(builder.root);
+    distribution = await createOwnedTemporaryRoot("distribution");
+    assert.notEqual(distribution.root, builder.root);
+    await mkdir(path.join(distribution.root, "dist"));
+    for (const relative of ["package.json", "dist/manifest.js", "dist/worker.js"]) {
+      const source = path.join(builder.root, relative);
+      const destination = path.join(distribution.root, relative);
+      const sourceDetails = await lstat(source);
+      assert.ok(sourceDetails.isFile() && !sourceDetails.isSymbolicLink() && sourceDetails.nlink === 1);
+      await copyFile(source, destination, constants.COPYFILE_EXCL);
+      const copiedDetails = await lstat(destination);
+      assert.ok(copiedDetails.isFile() && !copiedDetails.isSymbolicLink() && copiedDetails.nlink === 1);
+      assert.equal(await realpath(destination), destination);
+      assert.equal(copiedDetails.size, sourceDetails.size);
+      const sourceHash = createHash("sha256").update(await readFile(source)).digest("hex");
+      const copiedHash = createHash("sha256").update(await readFile(destination)).digest("hex");
+      assert.equal(copiedHash, sourceHash, `${relative} must retain its exact SHA-256 after copying.`);
+    }
+    assert.deepEqual((await readdir(distribution.root)).sort(), ["dist", "package.json"]);
+    assert.deepEqual((await readdir(path.join(distribution.root, "dist"))).sort(), ["manifest.js", "worker.js"]);
+    assert.equal(await assertPlainDirectory(path.join(distribution.root, "dist")), path.join(distribution.root, "dist"));
+    for (const excluded of ["node_modules", "src"]) {
+      await assert.rejects(lstat(path.join(distribution.root, excluded)), error => error?.code === "ENOENT");
     }
 
-    assert.deepEqual(await worker.invoke("shutdown"), null);
-    worker.closeInput();
-    assert.deepEqual(await worker.exited, { code: 0, signal: null });
-    assert.deepEqual(worker.runtimeRequests.map(({ method }) => method), ROUTES.map(([, , method]) => method));
+    // Remove the owned builder and its SDK junction before executing the copy.
+    await builder.cleanup();
+    await assert.rejects(lstat(builder.root), error => error?.code === "ENOENT");
+    const packageJson = JSON.parse(await readFile(path.join(distribution.root, "package.json"), "utf8"));
+    assert.equal(packageJson.spsPlugin.manifest, "./dist/manifest.js");
+    assert.equal(packageJson.spsPlugin.worker, "./dist/worker.js");
+    const copiedManifest = await import(pathToFileURL(path.join(distribution.root, packageJson.spsPlugin.manifest)).href);
+    assert.deepEqual(copiedManifest.default, manifest);
+    const env = process.platform === "win32" ? {
+      SYSTEMROOT: process.env.SYSTEMROOT ?? process.env.SystemRoot ?? "C:\\Windows",
+      WINDIR: process.env.WINDIR ?? process.env.windir ?? process.env.SystemRoot ?? "C:\\Windows",
+    } : {};
+    worker = launchWorker(path.join(distribution.root, packageJson.spsPlugin.worker), distribution.root, t.signal, env);
+    await assertWorkerRoutes(worker, copiedManifest.default);
   } finally {
-    try {
-      await worker?.dispose();
-    } finally {
-      assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
-      assert.ok(path.basename(root).startsWith(TEMP_PREFIX));
-      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    }
+    await worker?.dispose();
+    await distribution?.cleanup();
+    await builder.cleanup();
   }
 });
