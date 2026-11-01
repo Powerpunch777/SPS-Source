@@ -91,6 +91,50 @@ indexes; there is no migration or user-data conversion in this increment.
 
 ## Not Yet Complete
 
+## Exact Source Desktop and Builder Recheck
+
+Source `51b98b4291480cda881f5da83c43b2cfe7220705`, Core83b9 and SDKbfd81 passed
+Node24 `npm run test:ci`: serial4/4 plus remaining2211total/2208pass/3skips/0fail;
+aggregate2215total/2212pass/3unavailable Windows8.3-alias skips/0fail, exit0.
+Ignored log: `desktop/dist/session-ensure-desktop-ci-20261102.log`.
+
+Builder5080333 `npm run test:core-host` exited0 on that exact clean tuple. Actual
+UI Bridge, explicit activation/Shell, TXT preview/manual save, invalid-file draft
+preservation, request idempotency, A/B storage isolation, Lead selection without
+Agent config mutation, binding persistence after restart and independent Settings
+recovery passed. All4 owned Main processes exited0,8output streams ended,0failed,
+and exact temporary cleanup completed. This is not whole-descendant qualification.
+The screenshot directory environment variable used for this run was not the
+supported screenshot-file option, so no fresh acceptance captures are claimed.
+UI code was unchanged; assertions are not a new visual inspection of Builder.
+Worker SHA256 is62a9dbbac8482bc364afd27c68176b6f787842f75beb440efdaa56f285ecf603;
+UI entry SHA256 remainse6f37705ebdfa27f496c5a52641635b399f9dbf4e66ebb29fa25beb39dc23e5a.
+No new ensure RPC was invoked by Builder, and no real Google/provider AI ran.
+
+The user then requested DEV launch. The desktop DEV shortcut now points to this
+validated checkout with Node24, using its own persistent development profile.
+The old shortcut was retained separately; original dirty checkout/profile/Vault
+were not copied, modified or deleted. First launch failed because the checkout's
+Room esbuild dependency was absent. Lockfile-based `npm ci` installed6packages;
+the failed process was terminal before retry. Sync of local Desktop Node/SDK then
+launch succeeded. Parent visually observed the real `[DEV] SPS Desktop` Google
+sign-in screen and left the requested DEV app running. No authentication UI was
+automated, no signed/installed release was changed, and no Builder install in
+that new user DEV profile is claimed.
+
+Previous Source de9 push Verify41357836961 now completed19/19SUCCESS, including
+Windows job125001628048 and mandatory recovery job125012868542. API logs confirm
+candidate installer SHAbe2414ddd6f9a08c40d3c68c58bb0c141235b444c2220d4f0552b8948f34e333,
+9user records/1project, five package-byte parity checks and explicit residue
+Cancel/default-No/decline/operator-reinstall preservation. Historical automatic
+upgrade remains unqualified, as do normal-user startup, historical application
+data migration, previousStable, signing and physical2PC. Artifact13104383559
+is private installer input, not public release evidence. This success qualifies
+de9/db37/e581 only, not the new83b9/bfd81 tuple. Current Source51 push41363820336
+was confirmed live; PR41363825838 queued. Neither is reported passed here.
+
+## Remaining Work
+
 Durable submission/message receipts and ambiguous-send recovery remain planned,
 not implemented. Builder Send remains disabled until that work is implemented
 and qualified. The ID comparison is not a tombstone and the row lock does not
