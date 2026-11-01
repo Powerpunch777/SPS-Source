@@ -6,7 +6,7 @@
 | --- | --- |
 | Confirmed Core completion scope; separate Builder repository, no public Marketplace, untrusted OS containment deferred | [CORE-COMPLETION-POLICY-ko.md](CORE-COMPLETION-POLICY-ko.md) |
 | New Builder v15 design, source, UI and parallel implementation plan (not Core work) | [SPS-MY-PluginBuilder](https://github.com/Powerpunch777/SPS-MY-PluginBuilder) |
-| Light UI direction, typography, shared surfaces, and Builder layout | [SPS-LIGHT-UI-PLAN-ko.md](SPS-LIGHT-UI-PLAN-ko.md) |
+| Core light UI, typography and historical bundled-plugin layout; new Builder follows its separate v15/v9 contract | [SPS-LIGHT-UI-PLAN-ko.md](SPS-LIGHT-UI-PLAN-ko.md) |
 | Product boundary, neutral Workspace, and Core versus Plugin responsibilities | [PRODUCT-ARCHITECTURE-ko.md](PRODUCT-ARCHITECTURE-ko.md) |
 | Native development deferred by user request; current evidence and restart checklist | [NATIVE-DEVELOPMENT-DEFERRED-ko.md](NATIVE-DEVELOPMENT-DEFERRED-ko.md) |
 | Windows-first native LAN design and remaining scope; execution currently deferred | [WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md) |
@@ -31,6 +31,14 @@
   bypass or unapproved account/model changes. Use clear Korean progress reports.
   These are development rules, not product permissions or an automatic guarantee
   that a requested model is available.
+- New Builder design and implementation follow the separate
+  [SPS-MY-PluginBuilder](https://github.com/Powerpunch777/SPS-MY-PluginBuilder)
+  repository's integrated design v15, UI v9, and latest UI implementation contract.
+  Its black and neutral-gray styling applies only inside the Builder plugin,
+  not to the Core global theme. Never copy private Core source, credentials, or
+  user data into the public repository. Builder progress does not establish
+  Core completion or successful real AI execution; record implementation,
+  automated checks, actual app checks, and physical-device checks separately.
 - [PLUGIN-COMPATIBILITY-AND-UPDATES.md](PLUGIN-COMPATIBILITY-AND-UPDATES.md):
   Desktop, Plugin API, and Extension Profile compatibility rules.
 - [CORE-PLUGIN-RUNTIME-CONTRACT.md](CORE-PLUGIN-RUNTIME-CONTRACT.md):
