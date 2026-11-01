@@ -422,10 +422,12 @@ public static class RestrictedE2eRunner
         if (mode == "probe-descendant" || mode == "probe-preview-pending-descendant" || mode == "probe-preview-failure-descendant"
             || mode == "workspace-pending-descendant" || mode == "workspace-failure-descendant")
         {
+            stage = "probe_descendant_start";
             var start = new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName, "--probe-leaf");
             start.UseShellExecute = false; start.CreateNoWindow = true;
             using (var descendant = Process.Start(start))
             {
+                stage = "probe_descendant_alive";
                 if (descendant.HasExited) throw new InvalidOperationException("Missing owned descendant");
                 Console.WriteLine("{\"ownedDescendantCreated\":true}");
             }

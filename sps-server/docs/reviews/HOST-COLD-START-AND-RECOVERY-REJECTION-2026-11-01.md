@@ -7,6 +7,23 @@ not Core completion, successful legacy cleanup or Stable qualification.
 
 ## Latest Hosted Results And Follow-Up
 
+Source `f3134472979a59721b12f48c5ecbff2ed33b1c97` push41273960465 passed
+all17 non-Windows jobs, including all Linux regression partitions and full
+typecheck/build. Windows124752243092 failed its Desktop unit step: the fixed
+Preview-failure descendant probe returned1 instead of the required7. The test
+previously asserted the code before retaining its diagnostic output. Therefore
+the exact failing phase is not established; no timeout, retry, expected exit,
+forced-cleanup rejection or acceptance rule is relaxed. The dependent legacy
+job failed without a new installer and is not a legacy-recovery result.
+
+The follow-up records only bounded, fixed phase/type/exit labels and selected
+boolean cleanup observations in the failing assertion. Child descendant start
+and alive checks have separate stages; PowerShell's identity-checked helper
+cleanup now emits its own fixed phase before preserving any thrown error.
+Raw shell output, paths, account details and token values are not forwarded by
+the summary. The same probe and wrapper suite passed21/21 locally, but that
+does not establish the hosted failure's cause or qualify the new candidate.
+
 Source `9e903d3c7dfed8b4778dbf86c37ff202cd16cae4` push41242251600 failed
 installed historical-profile acceptance: archive preflight ended at19374ms and
 extraction started at19379ms, still unfinished when the unchanged300-second

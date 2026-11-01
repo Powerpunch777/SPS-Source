@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
+import { summarizeWindowsProbeFailure } from "../scripts/windows-e2e/probe-failure-summary.mjs";
 
 const exec = promisify(execFile);
 const script = fileURLToPath(new URL("../scripts/run-windows-ci-e2e.ps1", import.meta.url));
@@ -145,7 +146,7 @@ test("Windows CI E2E rejects pending Preview after force-cleaning a live owned d
 
 test("Windows CI E2E preserves a failed Preview child exit after force-cleaning its descendant", { skip: process.platform !== "win32" }, async () => {
   await assert.rejects(run("probe-preview-failure-descendant"), failure => {
-    assert.equal(failure.code, 7);
+    assert.equal(failure.code, 7, JSON.stringify(summarizeWindowsProbeFailure(failure)));
     const output = assertCleanup(failure.stdout);
     assert.deepEqual(output.find(record => record.ownedJobCleanup), {
       ownedJobEmpty: true, ownedJobCleanup: "forced", accepted: false,

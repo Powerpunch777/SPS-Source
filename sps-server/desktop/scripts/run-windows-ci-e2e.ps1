@@ -99,17 +99,23 @@ catch {
 finally {
   [Console]::OutputEncoding = $previousConsoleEncoding
   # Delete only the exact temporary directory this invocation created.
-  if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($build)) -cne $temp -or
-      [IO.Path]::GetFileName($build) -cne $name) { throw 'Invalid E2E helper cleanup target.' }
-  Assert-PlainDirectoryChain $build
-  $current = Get-Item -LiteralPath $build -Force
-  if ($current.CreationTimeUtc.Ticks -ne $createdTicks) { throw 'E2E helper cleanup identity changed.' }
-  $entries = @(Get-ChildItem -LiteralPath $build -Force)
-  foreach ($entry in $entries) {
-    if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-        $entry.Name -cne 'RestrictedE2eRunner.exe') { throw 'Unexpected E2E helper cleanup entry.' }
+  try {
+    if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($build)) -cne $temp -or
+        [IO.Path]::GetFileName($build) -cne $name) { throw 'Invalid E2E helper cleanup target.' }
+    Assert-PlainDirectoryChain $build
+    $current = Get-Item -LiteralPath $build -Force
+    if ($current.CreationTimeUtc.Ticks -ne $createdTicks) { throw 'E2E helper cleanup identity changed.' }
+    $entries = @(Get-ChildItem -LiteralPath $build -Force)
+    foreach ($entry in $entries) {
+      if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+          $entry.Name -cne 'RestrictedE2eRunner.exe') { throw 'Unexpected E2E helper cleanup entry.' }
+    }
+    foreach ($entry in $entries) { Remove-Item -LiteralPath $entry.FullName -Force }
+    Remove-Item -LiteralPath $build -Force
   }
-  foreach ($entry in $entries) { Remove-Item -LiteralPath $entry.FullName -Force }
-  Remove-Item -LiteralPath $build -Force
+  catch {
+    [Console]::Error.WriteLine(('restricted_e2e_wrapper_error:phase=helper_cleanup,type={0}' -f $_.Exception.GetType().Name))
+    throw
+  }
 }
 exit $exitCode
