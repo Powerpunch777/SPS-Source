@@ -90,6 +90,50 @@ and Node's [child stdin](https://nodejs.org/api/child_process.html#subprocessstd
 and [readline](https://nodejs.org/api/readline.html#rlsymbolasynciterator)
 contracts informed the isolated experiments. No upstream source was copied.
 
+## Later Exact Installed Repeat: Sourceb2b
+
+[Verify41287168908](https://github.com/Powerpunch777/SPS-Source/actions/runs/41287168908)
+[Windows124790707519](https://github.com/Powerpunch777/SPS-Source/actions/runs/41287168908/job/124790707519)
+is terminal success. It qualifies only Source
+`b2b4475246ca2e818831a2742df5f5bdf2bb03f2`, Core
+`7952a33fa721b3bef3c30c0e7958a0f70f92b844`, SDK
+`61a929f6c783f78e5af603682de1543c7e24abc0`, Desktop0.4.137.
+The manifest reports all three repositories clean. Installer SHA256:
+`4f29baf179b5bf2ba2328be452a234e5a52387bca2a08d927027a77399f5490c`.
+
+Fresh install, current replacement, in-place reinstall, uninstall-preserve-data
+and retained-data reinstall all completed. Nine retained records, five package
+byte-parity artifacts and three installed first frames were reported. The actual
+installed historical same-profile DB157-to176/Desktopv11-to13 fixture passed
+visible authenticated Workspace, project metadata, real DPAPI account/signing
+key preservation and restart, without sign-in or restore. The enclosing owned
+native Job independently reported empty/natural closure after the child evidence.
+
+This confirms the b2b Owner-company-selection window correction in installed
+bytes; it does not qualify newer Coreca7/ffc9. All17 non-Windows jobs also passed.
+The mandatory legacy124797433917 subsequently completed successfully; the
+overall Verify41287168908 is now terminal success. Mock Identity, unsigned fixture
+migration and retained data do not prove real Google, normal-user profiles,
+previous-Stable automatic update, signing or two physical computers.
+
+### Later Private Control Retry (Not Accepted)
+
+The notebook was reachable for read-only checks with no SPS application or test
+processes and an empty private Serve configuration. Only the exact owned temporary
+operator's control module was mechanically refreshed after original/canonical
+file hashes and recorded directory identities matched. Candidate bytes and the
+installed app/profile were not changed. The restricted controller announced
+readiness but did not return its close receipt before stdin EOF. SSH subsequently
+became intermittently unreachable. The exact local probe-owned SSH child was
+stopped after matching parent, command line and creation identities; this is a
+failed trial, not natural cleanup or two-PC acceptance. No app or Serve start was
+requested. Remote idle-controller absence/cleanup remains unconfirmed until SSH
+is available; do not start another remote trial or remove its fixture first.
+
+Per the user's instruction, Builder-only work can proceed independently while
+this remote acceptance remains open. Its source-only Host tests do not qualify
+the missing physical Runner execute/cancel/reconnect/lease scenarios.
+
 ## Still Required
 
 Host-reviewed artifact cleanup reference/fence/removal/Settings composition;

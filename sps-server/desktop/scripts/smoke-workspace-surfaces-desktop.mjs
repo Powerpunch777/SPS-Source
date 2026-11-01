@@ -18,6 +18,7 @@ import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 import { annotatePreviewE2eCdpFailure, snapshotPreviewE2eFailure } from "./preview-e2e-failure-diagnostics.mjs";
 import { createMockIdentityServer } from "./desktop-e2e-identity.mjs";
 import { waitForCurrentWorkspaceTarget } from "./workspace-current-target-readiness.mjs";
+import { loadExternalPluginAcceptance, waitForPluginAcceptanceSelector } from "./external-plugin-acceptance.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,11 @@ const runtimeDiscovery = process.argv.includes("--runtime-discovery");
 const noAiChecklist = runtimeDiscovery || process.argv.includes("--no-ai-checklist");
 const nativeManagement = process.argv.includes("--native-management");
 const executionControlOnly = process.argv.includes("--execution-control");
+const externalPluginAcceptance = await loadExternalPluginAcceptance({
+  enabled: process.argv.includes("--external-plugin-acceptance"),
+  modulePath: process.env.SPS_DESKTOP_E2E_PLUGIN_ACCEPTANCE,
+  sourceOnly: Boolean(sourceElectron) && !packagedBinary && noAiChecklist && !nativeManagement && !executionControlOnly,
+});
 const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT);
 const launched = createWorkspaceE2eChildTracker();
 let cleanupDisposition;
@@ -891,6 +897,7 @@ try {
     failurePhase = "workspace_surfaces";
     await runNoAiChecklistAcceptance({
       cdp: workspaceCdp, company, api, click, captureScreenshot, screenshotPath, temporaryRoot: userDataDirectory, runtimeDiscovery,
+      extraAcceptance: externalPluginAcceptance,
       openRegistry: async () => {
         const opened = await workspaceCdp.evaluate("window.spsDesktopWorkspace.openPluginRegistries()", true);
         assert.equal(opened?.opened, true);
@@ -899,7 +906,7 @@ try {
         await registry.command("Page.enable");
         return registry;
       },
-      restart: async ({ companyPrefix, pluginId }) => {
+      restart: async ({ companyPrefix, pluginId, readySelector = null }) => {
         failurePhase = "workspace_restart";
         const expectedOrigin = await workspaceCdp.evaluate("location.origin");
         const expectedAccount = await workspaceCdp.evaluate("window.spsDesktopWorkspace.getDesktopAccount()", true);
@@ -923,8 +930,11 @@ try {
         // Select a committed, current-account document before navigating. The
         // entire readiness/navigation/state observation shares the original budget.
         await workspaceCdp.command("Page.navigate", { url: expectedUrl });
-        await waitForPage(workspaceCdp, page => page.route === expectedUrl && page.checklistReady === true,
+        await waitForPage(workspaceCdp, page => page.route === expectedUrl && (readySelector !== null || page.checklistReady === true),
           "restarted reference Workspace checklist UI", Math.max(1, documentDeadline - Date.now()));
+        if (readySelector !== null) {
+          await waitForPluginAcceptanceSelector(workspaceCdp, readySelector, documentDeadline);
+        }
         failurePhase = "workspace_surfaces";
         return workspaceCdp;
       },

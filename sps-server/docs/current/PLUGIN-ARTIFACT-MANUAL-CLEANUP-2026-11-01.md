@@ -1,8 +1,8 @@
 # Host-Reviewed Plugin Artifact Cleanup
 
 Status: user-approved policy; allocation/inventory, private preparation/Registry/
-Worker references and Core process-local activity admission implemented.
-Composed references, cross-process fencing, API/confirmation/removal/Settings
+Worker references, Core-only composition and process-local activity admission implemented.
+Desktop-composed references, cross-process fencing, API/confirmation/removal/Settings
 remain pending. 2026-11-01 KST.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
@@ -196,3 +196,35 @@ confirmation, actual removal and Settings UI remain mandatory and incomplete.
 Unsupported custom Worker owners must not be treated as fully fenced merely
 because the app created a fallback coordinator. Existing user packages remain
 untouched. Sourceb2b/Core7952 hosted results do not qualify this newer code.
+
+## Core-Only Composition Follow-Up
+
+The private app reader now joins all Plugin rows, pending journals, completed
+review-required old/candidate/backup records, actual Worker handles, preparation
+and uncertain initial-install roots, and strict Registry stages. Completed
+upgrade outcomes are validated before filtering; malformed/missing sources deny
+the entire observation. Initial COMMIT-response-loss roots stay protected rather
+than disappearing when the caller returns an error.
+
+Reference snapshots run under Core activity exclusion, are frozen and expire on
+return. Every source and original/canonical path identity is rechecked. Missing
+paths remain protected and their appearance invalidates the observation. Links,
+unsupported network/device roots or changed identities are unavailable. No
+package code import, storage creation, public API, SDK permission, eligibility or
+deletion is added. The app rejects a custom Worker owner lacking the real shared
+coordinator/reference reader. The scope explicitly reports `core-only`, not full
+Desktop/process coverage or a Host-approved cleanup ticket.
+
+Explicit package paths are also consistent across Host, Workspace and Native UI:
+only null/undefined uses retained legacy resolution. Empty/relative/invalid or
+missing explicit paths cannot substitute a different old copy. New tests use
+real temporary legacy copies; Native UI tests reproduced8 failures before the
+correction and17/17 after it.
+
+The final14-file selection passed253/254 with one unavailable8.3 skip; all30 Core
+workspace typechecks/build passed. Actual source Desktop no-AI install/update,
+rollback, state/events/Workspace Job, A/B/capability separation and restart
+passed, with3 normal Main exits,6 ended output streams and exact temporary-data
+cleanup. Focused journal DB/source callbacks are synthetic, not live SQL-crash
+evidence. Desktop cross-process Preview/restore references, inventory eligibility,
+fresh Host confirmation, removal and actual Settings UI remain incomplete.

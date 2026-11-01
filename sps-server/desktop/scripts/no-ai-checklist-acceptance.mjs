@@ -27,7 +27,7 @@ async function assertDenied(cdp, url, body, label) {
   assert.match(JSON.stringify(result.body), /capability|scope|not enabled|disabled|denied|outside|permission/i, `${label} failed for an unrelated reason: ${JSON.stringify(result)}`);
 }
 
-export async function runNoAiChecklistAcceptance({ cdp, company, api, click, restart, openRecovery, openRegistry, captureScreenshot, screenshotPath, temporaryRoot, runtimeDiscovery = false }) {
+export async function runNoAiChecklistAcceptance({ cdp, company, api, click, restart, openRecovery, openRegistry, captureScreenshot, screenshotPath, temporaryRoot, runtimeDiscovery = false, extraAcceptance = null }) {
   let workspace = cdp;
   const request = (url, options) => api(workspace, url, options);
   const data = (plugin, companyId = company.id, params = {}) => request(`/api/plugins/${plugin.id}/data/checklist`, {
@@ -150,6 +150,8 @@ export async function runNoAiChecklistAcceptance({ cdp, company, api, click, res
   assert.equal(plugin.pluginKey, CHECKLIST_PLUGIN_KEY);
   await workspace.evaluate(`location.assign(${JSON.stringify(`/${company.issuePrefix}/plugins/${deniedRead.id}`)})`);
   await eventually(() => workspace.evaluate(`document.querySelector('[data-testid="no-ai-checklist"] [role="alert"]')?.textContent`), text => /could not be loaded/.test(text ?? ""), "capability-denied Plugin UI error state");
+  if (extraAcceptance) await extraAcceptance({ cdp: workspace, company, secondCompany: second, api, click, restart,
+    captureScreenshot, screenshotPath, temporaryRoot });
   await openRecovery();
   console.log(`No-AI checklist Desktop functional assertions passed; cleanup qualification pending: real UI/actions/state/events/Workspace Job, A/B isolation, capability denial, UI-less Worker, Host restart, independent Native recovery. Reference Workspaces A/B stayed Agent-free and backend-unconfigured; ${runtimeDiscovery ? "a separate Workspace used only a fake loopback model endpoint; " : ""}no real provider/Gateway or Agent execution; this is not an OS sandbox or network-egress certification.`);
   return { pluginKey: plugin.pluginKey, scenarios: 13 };

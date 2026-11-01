@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `ca7e9625215fb4b4c33e4b3417bcfd1f75020bd5`; private non-draining artifact activity admission extends prepared-candidate/Registry/Worker/ownership read models. Source38fb's installed acceptance below carries previous Core `491794820c23f956912d69eba271c1ef07ba36a1`, not this revision. Earlier b17 evidence also remains separate.
+- Current Core: `ffc9bc8a4bff84d2c8a13858e726693a714d0d7f`; Core-only reference scopes now include completed review and uncertain initial-install paths, with consistent explicit-path resolution. Source38fb's installed acceptance below carries previous Core `491794820c23f956912d69eba271c1ef07ba36a1`, not this revision. Earlier b17 evidence also remains separate.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -18,7 +18,60 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
+### User-Directed Independent Builder Work
+
+The user subsequently requested independent Plugin work while the notebook cannot
+be tested. A private SSH control retry announced readiness but supplied no close
+receipt; intermittent SSH timeouts prevented remote idle-controller cleanup
+confirmation. No app or sharing start was requested, and the failed probe is not
+two-PC acceptance. Its exact local SSH child was stopped after ownership checks;
+preserve the remote fixture and verify idle-process absence before any new trial.
+
+The reusable source-only No-AI Desktop fixture now accepts an explicit trusted
+external operator module. It is test-process code, not a Plugin API, install
+permission, production bridge or Builder-specific Core workflow. Packaged mode
+and implicit module loading are rejected. External UI readiness uses the same
+original document deadline and exact account-qualified document, not replayed
+navigation. New and existing focused tests42/42 passed. Full local Desktop runner
+passed serial2/2 plus1927total/1924pass/three unavailable8.3 skips (aggregate1929/
+1926pass/three skips). An earlier full run failed two stale textual harness tests;
+they were updated to inspect the new optional selector without weakening the
+existing No-AI route/readiness/deadline assertions, then rerun successfully.
+
+The independent MY Builder's actual source Electron initial storage flow passed:
+explicit installation/activation/Shell, actual UI Bridge save, Workspace A/B
+separation, idempotent input, Host restart and data preservation. All4 owned Main
+processes exited normally with8 output streams and temporary cleanup. That result
+does not qualify a signed/installed package, actual AI, physical Runner behavior,
+whole descendants, SQL-crash windows or unfinished artifact cleanup. Core remains
+incomplete; Builder's own repository retains its product implementation/evidence.
+
 ### Latest Progress And Still-Incomplete Final Acceptance
+
+Coreffc9 composes all Plugin rows, pending journals, completed review-required
+old/candidate/backup records, actual Worker references, loader preparation/
+uncertain initial-install paths and strict Registry stages under the shared
+process-local maintenance scope. Every source and original/canonical filesystem
+identity is rechecked; expired or unsupported-owner scopes fail closed. Coverage
+is explicitly core-only, not Desktop Preview/restore, eligibility or deletion.
+Host/Workspace/Native UI now consistently reject invalid explicit paths rather
+than selecting old legacy copies. Focused14files passed253/254 with one
+unavailable8.3 skip; all30 workspace typechecks/full build passed. Actual source
+Desktop no-AI public package lifecycle/rollback, state/events/Workspace Job,
+isolation and Host restart passed again;3 owned Main exits/6 output streams and
+exact temporary cleanup completed. DB/source callback tests are synthetic,
+not live SQL-crash or new installed-candidate qualification.
+
+Sourceb2b/Core7952 Windows124790707519 is now terminal success, including actual
+installed historical in-place157-to176/v11-to13 migration, authenticated visible
+Workspace/restart and DPAPI credentials/key preservation. Installer SHA is
+4f29baf179b5bf2ba2328be452a234e5a52387bca2a08d927027a77399f5490c;
+all9 retained records/5 package parity artifacts and natural owned Job closure
+passed. Its mandatory legacy124797433917 has also completed successfully;
+Verify41287168908 is now terminal success. This does not qualify Coreffc9.
+Source0afc/Coreca7e Windows124796420739 also completed successfully after its17
+non-Windows successes; overall Verify41289092452 was still in progress at the
+latest observation. Exact newer-tuple evidence remains required.
 
 Coreca7e adds shared process-local artifact activity admission across the actual
 Worker manager, loader, lifecycle/recovery, Workspace adapter preparation,
@@ -33,11 +86,10 @@ capability isolation and Host restart exited0. All3 Main processes/6 output
 streams closed normally and exact temporary cleanup completed. This is not
 installed, two-device, SQL-crash or whole-descendant qualification.
 
-Prior Sourceb2b4475/Core7952 Verify41287168908 has17 successful non-Windows
-jobs. Windows124790707519 was still executing installed data preservation at
-this update; its package-based app E2Es had completed before installer assembly.
-No terminal Windows or legacy acceptance is inferred. Its results cannot
-qualify newer Coreca7e; exact new Source/Core hosted verification is required.
+Earlier Sourceb2b4475/Core7952 observations had only17 non-Windows successes
+while installed preservation was running. The terminal successful installed
+and legacy results above supersede that observation, not the exact-tuple limit.
+Its results cannot qualify newer Coreca7e/ffc9.
 
 Source2c9338d Verify41284190569 has17 successful non-Windows jobs, but its
 Windows124782040958 is a terminal failure: installed historical DB/data migration
@@ -113,11 +165,12 @@ and native Job closure do not establish real Google, signed or two-PC acceptance
 The private preliminary SSH control trial did not reach app launch; a local
 late-input regression now proves its own duplex behavior, not remote acceptance.
 
-The manual artifact cleanup foundation captures new owned allocations and
+The earlier manual artifact cleanup foundation captured new owned allocations and
 complete file inventories. The current follow-up adds read-only allocation-ID
 enumeration, private tracked Worker launch references and Core process-local
-activity admission. Settings, coherent all-reference composition, cross-process
-fencing, confirmation and removal are not implemented.
+activity admission. Coreffc9 now adds coherent Core-only reference composition
+as described above. Desktop references/cross-process fencing, Settings,
+confirmation and removal are not implemented.
 [Approved plan and limits](PLUGIN-ARTIFACT-MANUAL-CLEANUP-2026-11-01.md).
 Actual packaged Main-loss/per-Worker descendant closure, real Plugin SQL crash
 windows, two-PC Runner and fresh final UI/security gates remain mandatory.

@@ -268,7 +268,7 @@ test("No-AI restart reopens the exact reference UI even when startup restores an
   const script = await readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8");
   const acceptance = await readFile(new URL("../scripts/no-ai-checklist-acceptance.mjs", import.meta.url), "utf8");
   assert.ok(acceptance.includes("await restart({ companyPrefix: company.issuePrefix, pluginId: plugin.id })"));
-  const restart = script.slice(script.indexOf("restart: async ({ companyPrefix, pluginId })"), script.indexOf("openRecovery: async () => {"));
+  const restart = script.slice(script.indexOf("restart: async ({ companyPrefix, pluginId, readySelector = null })"), script.indexOf("openRecovery: async () => {"));
   assert.ok(restart.includes("const expectedPath = `/${companyPrefix}/plugins/${pluginId}`"));
   assert.ok(restart.indexOf('command("Page.navigate", { url: expectedUrl })') < restart.indexOf("await waitForPage(workspaceCdp"));
   assert.ok(restart.includes("const expectedUrl = new URL(expectedPath, restartedTarget.url).href"));
@@ -277,7 +277,7 @@ test("No-AI restart reopens the exact reference UI even when startup restores an
   assert.ok(predicate);
   const expectedPath = "/REF/plugins/fixture-id";
   const expectedUrl = `http://127.0.0.1:31310${expectedPath}`;
-  const ready = runInNewContext(`(${predicate[1]})`, { expectedUrl });
+  const ready = runInNewContext(`(${predicate[1]})`, { expectedUrl, readySelector: null });
   assert.equal(ready({ route: "about:blank", checklistReady: false }), false);
   assert.equal(ready({ route: "http://127.0.0.1:31310/MOD", body: "Model request fixture", checklistReady: false }), false);
   assert.equal(ready({ route: `http://127.0.0.1:31310${expectedPath}`, checklistReady: false }), false);

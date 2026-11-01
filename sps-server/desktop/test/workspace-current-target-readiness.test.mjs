@@ -197,7 +197,7 @@ test("rejects malformed ready results and does not reopen a closed target", asyn
 
 test("actual restart retains Host wait and shares one original document deadline without replaying navigation", async () => {
   const source = await readFile(new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url), "utf8");
-  const begin = source.indexOf("restart: async ({ companyPrefix, pluginId }) =>");
+  const begin = source.indexOf("restart: async ({ companyPrefix, pluginId, readySelector = null }) =>");
   const end = source.indexOf("openRecovery: async", begin);
   const restart = source.slice(begin, end);
   const account = restart.indexOf("window.spsDesktopWorkspace.getDesktopAccount()");
@@ -212,4 +212,5 @@ test("actual restart retains Host wait and shares one original document deadline
   assert.equal([...restart.matchAll(/Page\.navigate/g)].length, 1);
   assert.equal([...restart.matchAll(/Math\.max\(1, documentDeadline - Date\.now\(\)\)/g)].length, 2);
   assert.doesNotMatch(restart, /while\s*\(|for\s*\(|retry|force.*click/i);
+  assert.ok(restart.includes("await waitForPluginAcceptanceSelector(workspaceCdp, readySelector, documentDeadline)"));
 });
