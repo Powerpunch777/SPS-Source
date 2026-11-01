@@ -120,3 +120,87 @@ test("maintenance rejects non-functions and competing admission without waiting"
   block.resolve();
   await activity;
 });
+
+function assertUncertaintyBlocks(gate) {
+  const fileActions = [];
+  assert.throws(() => gate.assertAdmissionAllowed(), /activity is uncertain/);
+  assert.throws(() => gate.withActivity(() => fileActions.push("activity")), /activity is uncertain/);
+  assert.throws(() => gate.withMaintenance(() => fileActions.push("maintenance")), /activity is uncertain/);
+  assert.deepEqual(fileActions, []);
+}
+
+test("independent uncertainty tokens block admission before callbacks can touch files", async () => {
+  const gate = createSpsDesktopPluginArtifactActivityGate();
+  const releaseFirst = gate.retainUncertainty();
+  const releaseSecond = gate.retainUncertainty();
+  assert.equal(typeof releaseFirst, "function");
+  assert.equal(typeof releaseSecond, "function");
+  assert.notEqual(releaseFirst, releaseSecond);
+  assertUncertaintyBlocks(gate);
+
+  releaseFirst();
+  assertUncertaintyBlocks(gate);
+  releaseFirst();
+  assertUncertaintyBlocks(gate);
+  releaseSecond();
+  assert.doesNotThrow(() => gate.assertAdmissionAllowed());
+  assert.equal(await gate.withActivity(() => "activity admitted"), "activity admitted");
+  assert.equal(await gate.withMaintenance(() => "maintenance admitted"), "maintenance admitted");
+});
+
+test("repeated old releases cannot clear a new uncertainty token", async () => {
+  const gate = createSpsDesktopPluginArtifactActivityGate();
+  const releaseOld = gate.retainUncertainty();
+  releaseOld();
+  const releaseNew = gate.retainUncertainty();
+  releaseOld();
+  releaseOld();
+  assertUncertaintyBlocks(gate);
+  releaseNew();
+  releaseNew();
+  assert.equal(await gate.withMaintenance(() => "released"), "released");
+});
+
+for (const method of ["withActivity", "withMaintenance"]) {
+  for (const rejects of [false, true]) {
+    test(`${method} completion (${rejects ? "rejection" : "success"}) cannot clear retained uncertainty`, async () => {
+      const gate = createSpsDesktopPluginArtifactActivityGate();
+      const block = deferred();
+      const failure = new Error("owned action failed");
+      let resumed = false;
+      const work = gate[method](async () => {
+        await block.promise;
+        resumed = true;
+        if (rejects) throw failure;
+        return "completed";
+      });
+      const outcome = rejects ? assert.rejects(work, error => error === failure) : work;
+      const release = gate.retainUncertainty();
+      assertUncertaintyBlocks(gate);
+      let idle = false;
+      const idleWait = gate.waitForIdle().then(() => { idle = true; });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(idle, false);
+      assert.equal(resumed, false);
+
+      block.resolve();
+      await outcome;
+      await idleWait;
+      assert.equal(resumed, true);
+      assert.equal(idle, true);
+      assertUncertaintyBlocks(gate);
+      release();
+      assert.doesNotThrow(() => gate.assertAdmissionAllowed());
+      assert.equal(await gate.withMaintenance(() => "released"), "released");
+    });
+  }
+}
+
+test("idle with no operations does not wait for or release uncertainty", async () => {
+  const gate = createSpsDesktopPluginArtifactActivityGate();
+  const release = gate.retainUncertainty();
+  await gate.waitForIdle();
+  assertUncertaintyBlocks(gate);
+  release();
+  assert.doesNotThrow(() => gate.assertAdmissionAllowed());
+});

@@ -3,6 +3,20 @@ export function createSpsDesktopPluginArtifactActivityGate() {
   let activeActivities = 0;
   let maintaining = false;
   const scopes = new Set();
+  const uncertainties = new Set();
+
+  function retainUncertainty() {
+    const token = Symbol();
+    uncertainties.add(token);
+    // Only the Main caller confirming closure of the exact owned Core job may release this token.
+    return () => { uncertainties.delete(token); };
+  }
+
+  function assertUncertaintyResolved() {
+    if (uncertainties.size !== 0) {
+      throw new Error("SPS Desktop plugin artifact activity is uncertain.");
+    }
+  }
 
   function runTracked(action, start, finish) {
     let completeScope;
@@ -35,6 +49,7 @@ export function createSpsDesktopPluginArtifactActivityGate() {
   }
 
   function assertAdmissionAllowed() {
+    assertUncertaintyResolved();
     if (maintaining) {
       throw new Error("SPS Desktop plugin artifact maintenance is already active.");
     }
@@ -49,6 +64,7 @@ export function createSpsDesktopPluginArtifactActivityGate() {
   }
 
   function withMaintenance(action) {
+    assertUncertaintyResolved();
     if (typeof action !== "function") {
       throw new Error("SPS Desktop plugin artifact maintenance requires an action.");
     }
@@ -59,6 +75,7 @@ export function createSpsDesktopPluginArtifactActivityGate() {
   }
 
   function waitForIdle() {
+    // Joining operations neither joins uncertainty nor grants cleanup permission.
     return Promise.all([...scopes]);
   }
 
@@ -67,5 +84,6 @@ export function createSpsDesktopPluginArtifactActivityGate() {
     withMaintenance,
     assertAdmissionAllowed,
     waitForIdle,
+    retainUncertainty,
   });
 }

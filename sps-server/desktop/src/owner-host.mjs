@@ -7,6 +7,7 @@ import { prepareWindowsHostJob } from "@sps/desktop-node";
 import { attachSpsNativeMemberSignerChannel } from "./native-member-signer-channel.mjs";
 import { createSpsNativeParentIngressClient } from "./native-parent-ingress-client.mjs";
 import { attachSpsNativeWorkspaceParentChannel } from "./native-workspace-parent-channel.mjs";
+import { createSpsPluginArtifactParentClient } from "./plugin-artifact-parent-channel.mjs";
 
 function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
@@ -401,6 +402,8 @@ export function createSpsOwnerHostManager({
   exitConfirmationMs = 5_000,
   createNativeSigner = null,
   onNativeInvalidation = () => {},
+  onArtifactUncertainty = () => () => {},
+  artifactReferences = false,
   prepareOwnedJob = process.platform === "win32" && spawn === spawnChildProcess
     ? () => prepareWindowsHostJob({ gateModulePath: ownerHostGateModulePath() }, {
       onEvent: event => reportOwnerHostEvent(baseEnvironment, event),
@@ -417,6 +420,7 @@ export function createSpsOwnerHostManager({
   let nativeChannel = null;
   let nativeIngress = null;
   let nativeWorkspace = null;
+  let artifactChannel = null;
   let lifecycleGeneration = 0;
   let startPromise = null;
   let startPromiseGeneration = null;
@@ -497,6 +501,7 @@ export function createSpsOwnerHostManager({
           ...runtime.environment,
           PAPERCLIP_TELEMETRY_DISABLED: "1",
           SPS_DESKTOP_OWNED_SHUTDOWN_PIPE: "1",
+          ...(artifactReferences ? { SPS_DESKTOP_ARTIFACT_CHANNEL: "1" } : {}),
         },
       };
       let child;
@@ -513,6 +518,11 @@ export function createSpsOwnerHostManager({
       child.once("disconnect", () => reportOwnerHostEvent(baseEnvironment, "core-ipc-disconnect"));
       child.once("close", () => reportOwnerHostEvent(baseEnvironment, "core-close"));
       ownedChild = child;
+      let releaseArtifactUncertainty = null;
+      const childArtifactChannel = artifactReferences && hasOwnedHostJob(child) && typeof child.send === "function" && child.connected === true
+        ? createSpsPluginArtifactParentClient(child, { isCurrent: () => ownedChild === child && !childHasExited(child),
+          onUncertain: () => { releaseArtifactUncertainty ??= onArtifactUncertainty(); } }) : null;
+      artifactChannel = childArtifactChannel;
       reportOwnerHostEvent(baseEnvironment, "core-spawned");
       if (preparedJob === job) preparedJob = null;
       let childChannel = null;
@@ -573,6 +583,8 @@ export function createSpsOwnerHostManager({
       child.once("exit", (code) => {
         reportOwnerHostEvent(baseEnvironment, "core-exit");
         if (ownedChild !== child) return;
+        childArtifactChannel?.dispose();
+        if (artifactChannel === childArtifactChannel) artifactChannel = null;
         // fd4 is an independent, duplex parent-owned stop pipe. After the
         // actual Core has exited, its unused parent read side must also close
         // before Node can emit ChildProcess.close. Preserve output drainage and
@@ -598,6 +610,7 @@ export function createSpsOwnerHostManager({
           // Keep the exact child and job while descendants or their confirmation
           // remain outstanding. A leader exit must not permit a replacement Host.
           void child.waitForOwnedJobTermination().then(() => {
+            releaseArtifactUncertainty?.();
             if (ownedChild === child) { ownedChild = null; startedAt = null; }
           }).catch(() => {
             if (ownedChild === child) lastError = "SPS Owner Host process-tree termination has not been confirmed.";
@@ -671,6 +684,8 @@ export function createSpsOwnerHostManager({
 
   async function stopOwned({ force = false } = {}) {
     reportOwnerHostEvent(baseEnvironment, "stop-begin");
+    artifactChannel?.dispose();
+    artifactChannel = null;
     invalidateNativeSigner();
     reportOwnerHostEvent(baseEnvironment, "native-invalidated");
     const preparing = jobPreparation;
@@ -765,5 +780,10 @@ export function createSpsOwnerHostManager({
       new Error("The owned Native Workspace channel is unavailable."), { code: "native_workspace_unavailable" }));
     return nativeWorkspace.read(request, options);
   }
-  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace };
+  function withPluginArtifactReferences(action) {
+    if (!ownedChild || childHasExited(ownedChild) || !artifactChannel) return Promise.reject(Object.assign(
+      new Error("The exact owned Core artifact observation is unavailable."), { code: "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE" }));
+    return artifactChannel.withSnapshot(action);
+  }
+  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace, withPluginArtifactReferences };
 }

@@ -434,6 +434,7 @@ export async function createPluginPreviewRuntime({
   spawn,
   baseEnvironment = {},
   managerFactory = createSpsOwnerHostManager,
+  onArtifactUncertainty,
   ...configOptions
 } = {}) {
   if (typeof resolveRuntime !== "function" || typeof fetchImpl !== "function" || typeof spawn !== "function") {
@@ -446,6 +447,7 @@ export async function createPluginPreviewRuntime({
     fetchImpl,
     spawn,
     baseEnvironment,
+    ...(onArtifactUncertainty ? { artifactReferences: true, onArtifactUncertainty } : {}),
   });
   return { ...preview, manager };
 }

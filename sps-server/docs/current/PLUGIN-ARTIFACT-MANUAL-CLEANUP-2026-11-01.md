@@ -2,13 +2,17 @@
 
 Status: user-approved policy; allocation/inventory, private preparation/Registry/
 Worker references, Core-only composition and process-local activity admission implemented.
-Desktop-composed references, cross-process fencing, API/confirmation/removal/Settings
-remain pending. 2026-11-01 KST.
+Private owned-child IPC now carries a held Core-only snapshot; complete
+Desktop-composed references/fencing, API/confirmation/removal/Settings remain
+pending. 2026-11-01 KST.
 
 Desktop's private activity admission is now connected to actual mutation,
 Preview, runtime, account/start/restore and export entries. It is still separate
-from Core's coordinator and grants no deletion authority. See the
+from Core's coordinator until an explicit caller composes both scopes, and
+grants no deletion authority. See the
 [Desktop admission and startup acceptance](../reviews/DESKTOP-ARTIFACT-ADMISSION-2026-11-01.md).
+The private [owned IPC observation](../reviews/PLUGIN-ARTIFACT-OWNED-IPC-2026-11-01.md)
+supplies the cross-process primitive, not a complete cleanup transaction.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is

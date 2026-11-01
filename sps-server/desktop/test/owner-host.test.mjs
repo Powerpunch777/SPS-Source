@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
 import {
   createSpsOwnerHostManager,
   materializeStableSpsOwnerHostNode,
@@ -48,6 +49,47 @@ function fakeChild(onKill = () => {}) {
   child.stdio = [null, null, null, null, shutdownPipe];
   return child;
 }
+
+test("private artifact uncertainty survives leader exit until the same owned Job is confirmed empty", async () => {
+  const terminal = deferred();
+  const child = fakeChild();
+  let healthy = false, spawns = 0, uncertain = 0;
+  const activity = createSpsDesktopPluginArtifactActivityGate();
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  child.waitForOwnedJobTermination = () => terminal.promise;
+  child.terminateOwnedJob = () => terminal.promise;
+  child.stdio[4].destroy = () => {};
+  child.send = (message, callback) => {
+    callback?.(null);
+    if (message.kind !== "sps.plugin-artifacts.request") return true;
+    queueMicrotask(() => child.emit("message", { ...message, kind: "sps.plugin-artifacts.response", ok: true,
+      ...(message.operation === "begin" ? { snapshot: { coverage: "core-only", fingerprint: "a".repeat(64), references: [] } }
+        : { unexpected: "malformed-check-response" }) }));
+    return true;
+  };
+  const manager = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310", delay: async () => {},
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    artifactReferences: true, onArtifactUncertainty: () => { uncertain += 1; return activity.retainUncertainty(); },
+    resolveRuntime: async () => ({ command: "node", args: ["fixture.mjs"] }),
+    prepareOwnedJob: async () => ({ spawn: () => {
+      spawns += 1; healthy = true;
+      queueMicrotask(() => child.emit("message", { v: 1, kind: "sps.plugin-artifacts.ready", channelId }));
+      return child;
+    }, dispose: async () => {} }),
+  });
+  assert.equal((await manager.start()).owned, true);
+  await assert.rejects(activity.withMaintenance(() => manager.withPluginArtifactReferences(async () => { throw new Error("must not enter"); })));
+  assert.equal(uncertain, 1);
+  assert.throws(() => activity.withActivity(async () => {}), /uncertain/);
+  healthy = false; child.exitCode = 0; child.emit("exit", 0);
+  assert.equal((await manager.start()).state, "stopping");
+  assert.equal(spawns, 1);
+  assert.throws(() => activity.withMaintenance(async () => {}), /uncertain/);
+  terminal.resolve({ type: "exit", code: 0, activeProcesses: 0 });
+  await manager.stop();
+  assert.equal(uncertain, 1);
+  await activity.withMaintenance(async () => {});
+});
 
 test("retains an owned Host job after leader exit until all descendants are confirmed", async () => {
   const terminal = deferred();

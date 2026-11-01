@@ -761,6 +761,16 @@ evidence. Their earlier next-step labels are not current completion claims.
 
 ## Completion
 
+The next private owned-Core IPC increment is recorded in
+[owned IPC observation](../reviews/PLUGIN-ARTIFACT-OWNED-IPC-2026-11-01.md).
+Core isd406621. Local Desktop2001total/1998pass/three unavailable8.3-alias
+skips, Core targeted25/25, all30 workspace typechecks/build, source Preview
+and sequential Main transfer passed. Full Desktop/Core reference composition,
+cleanup eligibility/review/removal/Settings, exact hosted/installed tuple,
+physical Runner and actual abnormal-Main/SQL-crash qualifications remain open.
+The earlier dependency-sync interference and gitlink-baseline failures are
+recorded as failures, not erased by successful reruns. This is not Core completion.
+
 The next Desktop artifact-admission increment and actual owned-port conflict
 correction are recorded in [admission acceptance](../reviews/DESKTOP-ARTIFACT-ADMISSION-2026-11-01.md).
 Core is6187255; the new exact hosted/installed tuple still requires qualification.

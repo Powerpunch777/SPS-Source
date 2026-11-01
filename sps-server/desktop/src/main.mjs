@@ -2155,6 +2155,8 @@ async function ensureOwnerHostManager() {
     })
     : null;
   ownerHostManager = createSpsOwnerHostManager({
+    artifactReferences: true,
+    onArtifactUncertainty: () => desktopPluginArtifactActivity.retainUncertainty(),
     onNativeInvalidation: () => { void nativeHostController?.stop().catch(() => {}); },
     createNativeSigner: () => createSpsNativeMemberMainSigner({
       getAuthority: () => {
@@ -3318,6 +3320,7 @@ async function startDesktopPluginPreviewLocked({ projectId, buildId, ownerVault,
     fetchImpl: fetch,
     spawn: spawnChildProcess,
     baseEnvironment: createDeveloperCommandEnvironment(process.env),
+    onArtifactUncertainty: () => desktopPluginArtifactActivity.retainUncertainty(),
   });
   assertCurrent();
   // Retain the owner before startup can spawn or await a process. A rejected
