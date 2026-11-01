@@ -68,9 +68,18 @@ migration, legacy cleanup and physical Runner blockers:
 - The Windows process-tree review still distinguishes actual Core loss from
   packaged Desktop loss through the new per-worker nested-Job path. Ordinary
   packaged startup/shutdown is not the latter scenario's evidence.
-- Package crash-journal recovery between renames and staging/old-artifact
-  collection remain separately tracked in the package recovery reviews; a
-  handled activation error/explicit rollback does not prove every crash window.
+- Two actual runtime-cache rename crash cases now pass: a new process recovers
+  or reuses verified B and preserves A plus external data. Combined runtime,
+  archive, progress and real ASAR selection38/38 passes. Abandoned staging/stale
+  copies and the promoted/warm lock remain preserved, not automatically collected.
+  Plugin SQL/activation crash recovery is a different open evidence gap; handled
+  activation failure or explicit rollback is not a real interrupted commit.
+- On2026-11-01 the user selected Host-reviewed manual cleanup in Settings,
+  not automatic collection. The
+  [accepted plan](PLUGIN-ARTIFACT-MANUAL-CLEANUP-2026-11-01.md) preserves current,
+  pending, rollback/review and active-worker references, all data/credentials
+  and external checkouts. Inventory, guarded removal and actual UI acceptance
+  are not implemented by the runtime crash tests and remain pending.
 - At pinned Coreb17, `node scripts/check-token-gates.mjs` was rerun on
   2026-11-01KST and exited1:576files scanned,79color-literal,36arbitrary-value
   and1raw-font-size findings, zero loaded allowlist entries. These include UI,

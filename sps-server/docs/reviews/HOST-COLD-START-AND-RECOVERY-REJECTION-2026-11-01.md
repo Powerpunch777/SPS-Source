@@ -95,6 +95,31 @@ remain mandatory.
   remain unchanged and their worktrees clean. Candidate packaging and all
   hosted acceptance must run again after this Source revision is committed.
 
+### Actual Runtime Cache Rename Crash Observation
+
+The new `node --test test/owner-host-runtime-crash.test.mjs` passed2/2 on
+Windows/Node26 using small actual version-A/version-B runtime archives. Each
+case runs the real materializer/default extractor in a child. A test-only
+filesystem wrapper parks AFTER a real rename, without running a catch/rollback:
+(1) old target moved to stale, before candidate promotion; (2) verified new
+target promoted, before old-copy retirement. The parent terminates only its
+retained owned child and requires close plus both output EOFs. That injected
+crash is explicitly nonzero, not a successful application shutdown.
+
+A NEW process then materializes B using the real package/hash/lock rules. Every
+B file/critical hash/manifest/marker is checked; the original A tree retains its
+directory/file identities and exact bytes at stale. An independently owned
+sentinel and synthetic user-data tree remain unchanged. Failed/unknown close
+preserves fixtures; successful cleanup verifies canonical Temp ancestry, captured
+dev/ino/birth identities and a stable no-link hierarchy first.
+
+This proves B can be recovered/reused after these two actual runtime-cache
+process crashes. It does not prove SQL/plugin activation crash recovery, power
+loss, installed-byte recovery, or general orphan collection. The old-moved case
+retains the abandoned verified B staging copy; the promoted/warm case retains
+the abandoned lock as well as stale A. The test explicitly observes that
+preservation rather than silently deleting it or claiming an orphan-GC feature.
+
 References: [WinForms MessageBox exceptions](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.messagebox.show),
 [Win32 owner, flags and result contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-messageboxw),
 [Node Worker lifecycle](https://nodejs.org/api/worker_threads.html),
