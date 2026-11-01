@@ -68,7 +68,34 @@ Sources는 실제로 비어 있으며, nonempty DB-to-Desktop/SMB 검증으로 �
 기존 경로 sentinel 보존, 관측 중 Source 변경 거부와 정상 종료·정확한 임시 데이터
 정리도 확인했다. 단독 검사 당시 Source는 아래 최종 통합 커밋 전 worktree다.
 
-Desktop 전체 검사와 최종 통합 후보의 실제 앱 결과는 별도 후속 증거가 필요하다.
+Source `7ae5b7b14bbb5144f70add5aa2b3f4bc737251f2`가 Core719 gitlink와 matrix를
+함께 고정한 뒤 Node24.22.1 `npm run test:ci`는 exit0이었다. 직렬4/4와 나머지
+2211개 중2208개 통과·짧은 Windows8.3 별칭 미지원3개 skip, 합계2215개 중2212개
+통과·실패0개다. 위 실제 two-owned-Core 관측 검사도 이 최종 실행에 포함됐다.
+무시된 로컬 로그는 `desktop/dist/source-reconciliation-final-desktop-node24-20261102.log`다.
+Shard 분류 검사5/5도 통과했다. 이는 아직 새 후보 Linux 전체/설치본/두 PC 증거가 아니다.
+
+프로덕션 의존성 정책 감사는3권고, Critical/High0개로 통과했다. Low2개와
+검토된 Moderate minimatch1244012(2026-11-07 만료)1개가 남는다. 취약점0개 또는
+개발·빌드 공급망 전체 감사 통과라는 뜻이 아니다. 기본 브랜치의 별도 Dependabot
+경고를 이 후보의 감사 결과와 섞지 않는다.
+
+새 Source7ae push/PR CI41329224509/41329229605는 실행 중이다. 이전 Source710의
+9개 Linux shard·전체 typecheck/build 통과는 Corebeb의 과거 증거이며 Core719의
+전체 회귀 통과로 재사용하지 않는다. Core719의 선택적 inherited bot
+CI41329156268은 `Generate commitperclip token`에서 실패했고 제품 회귀 검사를
+실행한 workflow가 아니다. 독립 review/main 병합은 별도다.
+
+위 Source7ae/Core719/SDK61과 Builder 문서ae1433f/runtime1d5b884의 실제 격리
+source Electron/Builder 검사도 `npm run test:core-host` exit0이었다. 검정 중립
+UI·단일 Lead 헤더·v9 패널 자리·빈 문서/조직, System 연결 안내와 중복 rail 없음,
+Lead 지정·원래 Agent 설정 보존, 실제 Bridge 저장·TXT·A/B 분리·재시작·별도
+Settings 복구를 확인했다. 로드한 UI index SHA-256은
+`e6f37705ebdfa27f496c5a52641635b399f9dbf4e66ebb29fa25beb39dc23e5a`다.
+Main4개 exit0·출력8개 종료·오류0개·정확한 임시 데이터 정리를 확인했다.
+무시된 Builder 로그: `artifacts/core-host-source-reconciliation-20261102.log`.
+모의 Identity이며 실제 Google/AI·Main Preview·전체 자손·설치본·물리 두 PC 또는
+Core 정리 UI 호출을 검증한 것이 아니다. 원시 로그·Core 코드는 공개하지 않았다.
 
 ## 남은 필수 조건
 

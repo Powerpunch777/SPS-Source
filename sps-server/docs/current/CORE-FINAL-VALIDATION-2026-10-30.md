@@ -1,6 +1,6 @@
 # SPS Core final validation checklist
 
-Updated: 2026-11-01. This is a working checklist, not a Core completion or Stable
+Updated: 2026-11-02. This is a working checklist, not a Core completion or Stable
 release declaration. The scope is set by
 [Core completion policy](CORE-COMPLETION-POLICY-ko.md). Core remains private,
 SDK public; AI is optional. New Builder features, public Marketplace, and
@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Current Core: `ffc9bc8a4bff84d2c8a13858e726693a714d0d7f`; Core-only reference scopes now include completed review and uncertain initial-install paths, with consistent explicit-path resolution. Source38fb's installed acceptance below carries previous Core `491794820c23f956912d69eba271c1ef07ba36a1`, not this revision. Earlier b17 evidence also remains separate.
+- Current Core: `7192377577230eb362417406a6579639b25d6d35`; Source runtime/pin `7ae5b7b14bbb5144f70add5aa2b3f4bc737251f2`. Prior `ffc9bc8a` and Source38fb/Core491 installed evidence below is historical, not qualification of this tuple. See the current Source-reconciliation increment below.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -17,6 +17,28 @@ deferred Native development are excluded.
   profiles, not the installed user profile.
 
 ## Current Evidence Summary
+
+### Current Source Inventory And Desktop Reconciliation
+
+The [private Source reconciliation record](../reviews/SOURCE-ARTIFACT-RECONCILIATION-2026-11-02.md)
+supersedes earlier no-inventory/no-mapping limitations only for that bounded
+increment. Owned IPC now optionally carries sanitized metadata; actual Main
+requires exact Host/profile/Workspace mappings and protected route/grant matches.
+It still returns cleanupReady:false: full Source mutation/cascade fencing,
+Native ambiguity, eligibility, fresh Host confirmation, removal and Settings
+are unfinished. No original completion requirement is dropped.
+
+Exact Source7ae/Core719 Node24 Desktop test:ci passed2215total/2212pass/
+3unavailableWindows8.3skips/0fail, including actual two-owned-Core observation.
+Parent focused Core66/66 includes actual isolated PostgreSQL4/4. All30 Core
+workspace typechecks/full build and compatibility passed; warnings remain.
+Source7ae CI41329224509/41329229605 is running/queued and not a whole Linux/
+Windows/installed pass. Core optional review41329156268 failed at bot-token
+generation separately. Actual source Builder acceptance on Source7ae/Core719/
+SDK61/Builder1d5b884 also exited0: real bridge/save/A-B/restart/Settings and
+4orderly Main/8ended streams/exact temporary cleanup. Mock Identity, no actual
+AI/physical/signed/whole-descendant or cleanup UI claim. See the linked record;
+old UI/runtime evidence below is not being reused as this candidate's proof.
 
 ### User-Directed Independent Builder Work
 
