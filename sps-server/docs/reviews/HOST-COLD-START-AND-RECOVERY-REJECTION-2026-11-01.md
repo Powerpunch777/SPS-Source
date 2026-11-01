@@ -1,13 +1,40 @@
 # Installed Host Readiness And Legacy Safety Rejection
 
-2026-11-01 KST. Development diagnosis only. Newer installed migration gates
-passed, while mandatory legacy recovery still fails. The extraction and modal
+2026-11-01 KST. Development diagnosis only. Earlier installed migration gates
+passed and one later mandatory legacy recovery job also passed, on different
+exact candidates. Final unified acceptance remains incomplete. The extraction and modal
 changes below require their own exact-HEAD Windows acceptance; this record is
 not Core completion, successful legacy cleanup or Stable qualification.
 
 ## Latest Hosted Results And Follow-Up
 
+The b361 legacy job124756513295 is now terminal `success`: actual Cancel/
+default-No/decline preservation, explicit original-residue cleanup, same-path
+data-preserving candidate reinstall and natural owned Job cleanup all passed.
+Exact installer/helper SHA and observed phases are in
+[the scoped acceptance record](LEGACY-RECOVERY-ACCEPTANCE-2026-11-01.md).
+Its separate Desktop historical-profile gate failed, so the whole run is still
+failed and this is not current-candidate or Core completion evidence.
+
 ### Native Extractor Follow-Up (Not Yet Hosted Qualification)
+
+Source2ef Windows124761500890 failed the Desktop unit suite before packaging:
+the new native extractor rejected a plain staging path when `realpath` used a
+different Windows spelling. The fixed policy does not require string identity
+for normal Windows spelling aliases. It walks every raw ancestor to reject
+links, resolves canonical paths, verifies bigint dev/ino/birth identity against
+the raw object, and passes only canonical archive/staging paths to the fixed
+system command. It rechecks the same identity before launch and after close;
+replacement or ambiguity preserves staging and its preparation lock. Link,
+hardlink, escape and content rules are not bypassed. This is a confirmed
+compatibility regression, not a waived environmental failure.
+
+Actual mixed-case Windows archive/directory extraction and replaced-staging
+preservation are covered; native/package/real-crash/ASAR selection passed30/30.
+Final local Desktop `npm run test:ci` passed1914total/1911pass/3unchanged
+unavailable8.3-alias skips/0fail, terminal0 (serial2plus1912remaining).
+The final hosted alias case still requires a new exact-HEAD run. No new
+installed success is inferred from these local regressions.
 
 Source6fb/Core4917948 push41275795353 passed all Linux regression partitions
 and full Linux typecheck/build. Its Windows124757599521 stopped in the serial

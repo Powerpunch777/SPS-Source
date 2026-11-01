@@ -9,7 +9,7 @@ deferred Native development are excluded.
 ## Revision And Preservation
 
 - Starting Source: `a7246667584615edcb8ed71dfc16a983bac455a6`.
-- Core: `b17fb830138b4acde96aa7b5c911f7e8cccfa698` (earlier evidence names its prior revision explicitly).
+- Current Core: `491794820c23f956912d69eba271c1ef07ba36a1`; earlier installed evidence uses `b17fb830138b4acde96aa7b5c911f7e8cccfa698` and must not be reused as new-tuple proof.
 - SDK: `61a929f6c783f78e5af603682de1543c7e24abc0`.
 - Desktop: `0.4.137` development candidate, not a new Stable release.
 - Work continues in `codex/sps-core-final-validation`. Older uncommitted Native
@@ -18,7 +18,30 @@ deferred Native development are excluded.
 
 ## Current Evidence Summary
 
-### Latest Installed Passes And Remaining Confirmation Failure
+### Latest Progress And Still-Incomplete Final Acceptance
+
+The b361 Source's mandatory legacy job124756513295 completed successfully:
+real default-No/Cancel/decline preservation, explicit cleanup of the original
+long-path residues, exact-candidate reinstall,9user/1project retained records,
+and natural owned Job closure. [Exact hashes and limits](../reviews/LEGACY-RECOVERY-ACCEPTANCE-2026-11-01.md).
+Its separate installed migration exceeded the existing deadline, so the whole
+workflow is still failed; neither result qualifies the newer Source/Core tuple.
+
+Core4917948's full Linux regression partitions and typecheck/build passed on
+Source6fb push41275795353. Current local actual Main157-to176/v11-to13 migration,
+DPAPI preservation, Workspace and restart passed; actual source export/fresh-
+Host restore/plugin reapproval/restart also passed. These mock-Identity source
+tests do not establish installed/signed/two-PC acceptance. The final exact
+Source Windows gates remain required, including a corrected Windows path-alias
+compatibility regression in the new owned-system-tar extractor.
+
+The manual artifact cleanup foundation now captures new owned allocations and
+complete file inventories, but Settings/reference/fence/confirmation/removal
+composition is not implemented. [Approved plan and limits](PLUGIN-ARTIFACT-MANUAL-CLEANUP-2026-11-01.md).
+Actual packaged Main-loss/per-Worker descendant closure, real Plugin SQL crash
+windows, two-PC Runner and fresh final UI/security gates remain mandatory.
+
+### Earlier Installed Passes And Confirmation Failure
 
 Source5117 push41243542548/Windows124662186605 passed the actual installed
 historical-profile157-to176/v11-to13 migration, DPAPI credential/key and all

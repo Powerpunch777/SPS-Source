@@ -372,8 +372,9 @@ export async function materializeSpsOwnerHostRuntimePackage({
     return targetRuntimeRoot;
   } catch (error) {
     if (error?.runtimeStagingCleanupUnconfirmed === true) {
-      // Do not remove files or permit a new preparation while an extraction
-      // thread's termination is unknown. A later process can recover its lock
+      // Do not remove files or permit a new preparation while extractor
+      // termination or the staging directory's identity is unknown. A later
+      // process can recover its lock
       // only through the existing confirmed-dead-owner check.
       preservePreparation = true;
       throw error;

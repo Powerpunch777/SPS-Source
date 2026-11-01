@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -86,6 +86,19 @@ test("runtime native extraction uses only fixed system paths/arguments and a red
   assert.equal(child.terminationCalls, 0);
 });
 
+test("legitimate Windows path casing resolves to identical files before native extraction", { skip: process.platform !== "win32" }, async t => {
+  const f = await fixture(t);
+  const cwdAlias = path.join(f.root, "OuTpUt");
+  const fileAlias = path.join(f.root, "RuNtImE.TgZ");
+  assert.notEqual(await realpath(cwdAlias), cwdAlias);
+  assert.notEqual(await realpath(fileAlias), fileAlias);
+  const extract = await createSpsWindowsRuntimeArchiveExtractor();
+  try { await extract({ ...f.options, cwd: cwdAlias, file: fileAlias }); }
+  catch (error) { if (error.runtimeStagingCleanupUnconfirmed) f.cleanup = false; throw error; }
+  assert.deepEqual(await readFile(path.join(f.cwd, "deep", "bytes.bin")), await readFile(path.join(f.source, "deep", "bytes.bin")));
+  assert.equal(await readFile(path.join(f.cwd, "root.txt"), "utf8"), "unchanged runtime\n");
+});
+
 test("native factory never searches PATH and only missing system tar permits the previous extractor", async t => {
   assert.equal(await createSpsWindowsRuntimeArchiveExtractor({ platform: "linux" }), null);
   if (process.platform !== "win32") return;
@@ -145,6 +158,20 @@ test("no returned process handle is uncertain termination, never permission to c
   const f = await fixture(t);
   const extract = await createSpsWindowsRuntimeArchiveExtractor({ spawn() { throw Error("lost handle"); } });
   await assert.rejects(extract(f.options), error => error.runtimeStagingCleanupUnconfirmed === true);
+});
+
+test("a replaced staging directory is preserved even after confirmed process exit", { skip: process.platform !== "win32" }, async t => {
+  const f = await fixture(t);
+  const child = fakeJob({ onWait: async () => {
+    await rename(f.cwd, `${f.cwd}.original`);
+    await mkdir(f.cwd);
+    await writeFile(path.join(f.cwd, "keep.txt"), "replacement must be preserved");
+  } });
+  const extract = await createSpsWindowsRuntimeArchiveExtractor({ spawn: () => child });
+  await assert.rejects(extract(f.options), error => error.runtimeStagingCleanupUnconfirmed === true);
+  assert.equal(child.terminationCalls, 1);
+  assert.equal(await readFile(path.join(f.cwd, "keep.txt"), "utf8"), "replacement must be preserved");
+  assert.deepEqual(await readdir(`${f.cwd}.original`), []);
 });
 
 test("native preflight refuses link entries, Windows ADS aliases and linked system roots", { skip: process.platform !== "win32" }, async t => {
