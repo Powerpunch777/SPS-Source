@@ -80,6 +80,32 @@ HTTP audit까지 잠금에 포함된 것처럼 읽힐 수 있는 Core 계약 문
 실제 범위를 Core 문서d0b99ba에서 명확히 했다. 기능 코드는4c와 같지만, 새 pin의
 정확한 전체 Desktop/실제 앱·CI 증거는 별도로 확인한다.
 
+Source `8a5227b0ee2d10592695e81f522b8cb76ad5e914` / Core d0b로 pin을 맞춘 뒤
+Node24.22.1 `npm run test:ci`를 다시 실행해 exit0이었다. 직렬4/4와 나머지
+2208/2211, 합계2212/2215·skip3·실패0으로 위 nonempty 두 owned Core 검사도
+포함한다. 새 로그는 `desktop/dist/source-mutation-doc-pin-desktop-node24-20261102.log`다.
+skip3은 미지원 Windows8.3 별칭이며 통과로 집계하지 않는다.
+
+Source8a CI41331913743/41331919075는 queued 상태를 확인했고 미실행을 통과로
+기록하지 않는다. 과거 Source7ae/Core719의9개 Linux shard·전체 typecheck/build는
+성공했지만 새 Core d0b의 전체 Linux 회귀 증거로 재사용하지 않는다.
+Core d0b의 선택적 inherited bot41331872265는 실패했고 별도 제품 검사도 아니다.
+
+현재 프로덕션 의존성 정책 감사는3권고, Critical/High0개로 통과했다. Low2개와
+검토된 Moderate minimatch1244012(2026-11-07 만료)1개가 남는다. 개발·빌드 경로
+전체 감사 또는 취약점0개라는 뜻이 아니다. 기본 브랜치의 Dependabot 경고도
+현재 후보 정책 감사와 구분한다.
+
+같은 Source8a/Core d0b/SDK61에 Builder 문서c97df1e/runtime1d5b884를 연결한
+`npm run test:core-host`도 exit0이었다. 실제 격리 source Electron에서 검정 중립
+UI·v9 패널 자리·System rail 없음·Lead 지정과 원래 설정 보존, 실제 Bridge 저장·
+TXT·A/B 분리·재시작·별도 Settings 복구를 확인했다. UI index SHA-256은
+`e6f37705ebdfa27f496c5a52641635b399f9dbf4e66ebb29fa25beb39dc23e5a`다.
+Main4개 exit0·출력8개 종료·오류0개·정확한 임시 데이터 정리를 확인했다.
+무시된 Builder 로그: `artifacts/core-host-source-mutation-20261102.log`.
+모의 Identity이며 실제 AI/Google·Main Preview·전체 자손·설치본·물리 두 PC·
+Core 정리 UI 호출의 증거는 아니다. 기존 사용자 앱을 업데이트하지 않았다.
+
 ## 남은 범위
 
 Main의 `cleanupReady:false`는 유지한다. Native의 모호한 재시작/claim 처리,

@@ -28,8 +28,12 @@ without draining or cancelling work. Ordinary reads remain available. Private
 legacy factory callers without the coordinator are not coordinated coverage.
 Parent focused116/116, all30 workspace typechecks/build, compatibility and shard
 partition5/5 passed. Initial actual two-owned-Core test passed with a nonempty
-HTTP-created Source and required Desktop mapping; exact final pin evidence is
-still separate. No cleanup eligibility/Host confirmation/removal/Settings or
+HTTP-created Source and required Desktop mapping. Exact Source8a/Core d0b
+Desktop test:ci passed2215total/2212pass/3unavailable8.3skips/0fail including that
+test. Actual source Builder1d5b884/SDK61 on this tuple also exited0: real bridge/
+save/A-B/restart/Settings,4orderly Main/8ended streams/exact temp cleanup. Mock
+Identity, not actual AI/physical/signed/whole-descendant or cleanup UI evidence.
+Linux/Windows CI41331913743/41331919075 is queued, not passed. No cleanup eligibility/Host confirmation/removal/Settings or
 Native uncertainty/physical/signed/full-Builder completion claim.
 
 ### Previous Source Inventory And Desktop Reconciliation
