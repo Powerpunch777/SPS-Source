@@ -50,6 +50,13 @@ Native restart uncertainty and incomplete Source route/share reconciliation stil
 prevent a complete safety claim; `cleanupReady:false` stays. This is not an
 inventory/confirmation/removal API or Settings activation.
 
+The [Core Source inventory increment](../reviews/CORE-SOURCE-ARTIFACT-INVENTORY-2026-11-02.md)
+adds a bounded all-Workspace Source/project-share metadata read and binds its
+fingerprint to the actual Core reference scope. It reads no local folders or
+credential envelopes and detects metadata changes. Desktop mapping reconciliation,
+complete Source mutation fencing and Native restart uncertainty remain unfinished;
+the fingerprint does not authorize removal.
+
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
 authorized by this policy. This does not authorize cleaning any current user
