@@ -59,3 +59,27 @@ References: [Node file system](https://nodejs.org/api/fs.html),
 [Electron IPC](https://www.electronjs.org/docs/latest/tutorial/ipc). Existing SPS
 strict developer-reader and owned Core composition are reused; this is not a
 new public filesystem service.
+
+## Hosted Follow-Up: Windows Alias Regression
+
+Sourcee41c3ee push41305221866 failed the Windows suite. The preserved nested
+TAP output identified `Configured local Registry path is not canonical` in the
+actual two-Core test; four direct reader cases failed for the same reason.
+The CI's real temporary-directory spelling can use a Windows short-name alias.
+Lexical equality with `realpath` is therefore too strong, even for link-free
+paths. The older dc14 PR failure lacks equivalent nested diagnostics, so this
+finding is not retroactive proof of that older failure's sole cause.
+
+The reader now observes both original and canonical directory ancestries,
+requires matching leaf device/inode/birthtime plus unchanged metadata, checks
+both ancestries before return and compares them on revalidation. A different
+directory, symlink/junction or changed ancestor still rejects. Paths must have
+plain local roots. This reuses the existing Core reference-path algorithm's
+identity-based principle without importing private Core code into Desktop.
+
+The focused Registry/owned-Core selection passed16/16 locally onNode24.22.1.
+It includes a deterministic injected filesystem alias view (not an actual8.3
+claim), a mismatched canonical-directory rejection, existing junction and
+replacement cases, and the two real owned Core processes with natural closure.
+The next exact hosted run must still demonstrate its actual Windows alias path.
+No failed hosted run was retried or relabeled as passing merely on that basis.

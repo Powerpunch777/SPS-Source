@@ -280,19 +280,55 @@ async function readRegistrySourceSnapshot(filePath, fsApi) {
   return { exists: true, sources, bytes, identity };
 }
 
+async function registryDirectoryAncestry(directory, fsApi) {
+  const root = path.parse(directory).root;
+  if (process.platform === "win32" ? !/^[A-Za-z]:\\$/.test(root) : root !== "/") {
+    throw new Error("Configured local Registry path must use a local filesystem root.");
+  }
+  const result = [];
+  for (let current = directory;; current = path.dirname(current)) {
+    if (result.length >= 1024) throw new Error("Configured local Registry path ancestry exceeds its limit.");
+    const stats = await fsApi.lstat(current, { bigint: true });
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new Error("Configured local Registry path parent is unavailable.");
+    }
+    result.push({ path: current, dev: stats.dev, ino: stats.ino, birthtimeNs: stats.birthtimeNs });
+    if (path.dirname(current) === current) break;
+  }
+  return result;
+}
+
+function sameRegistryAncestry(before, after) {
+  return before.length === after.length && before.every((entry, index) =>
+    ["path", "dev", "ino", "birthtimeNs"].every(key => entry[key] === after[index][key]));
+}
+
 async function inspectLocalSourceDirectory(localPath, fsApi) {
   const directoryPath = path.resolve(localPath);
-  await assertRegistryPathParents(path.join(directoryPath, "__registry-source-reference"), fsApi);
+  const originalAncestry = await registryDirectoryAncestry(directoryPath, fsApi);
   const stats = await fsApi.lstat(directoryPath, { bigint: true });
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
     throw new Error("Configured local Registry path must be an existing unlinked directory.");
   }
   const canonicalPath = await fsApi.realpath(directoryPath);
-  if (normalizedPathKey(canonicalPath) !== normalizedPathKey(directoryPath)) {
-    throw new Error("Configured local Registry path is not canonical.");
+  if (typeof canonicalPath !== "string" || !path.isAbsolute(canonicalPath)
+    || path.resolve(canonicalPath) !== canonicalPath) throw new Error("Configured local Registry path is not canonical.");
+  // Windows short names can differ from realpath without being links. Require
+  // identical directory identities and validate both original/canonical chains.
+  const canonicalAncestry = await registryDirectoryAncestry(canonicalPath, fsApi);
+  const canonicalStats = await fsApi.lstat(canonicalPath, { bigint: true });
+  const after = await fsApi.lstat(directoryPath, { bigint: true });
+  if (!sameLocalDirectoryIdentity(stats, canonicalStats) || !sameLocalDirectoryIdentity(stats, after)
+    || !sameRegistryAncestry(originalAncestry, await registryDirectoryAncestry(directoryPath, fsApi))
+    || !sameRegistryAncestry(canonicalAncestry, await registryDirectoryAncestry(canonicalPath, fsApi))
+    || normalizedPathKey(await fsApi.realpath(directoryPath)) !== normalizedPathKey(canonicalPath)) {
+    throw new Error("Configured local Registry directory changed while being read.");
   }
   return {
     path: directoryPath,
+    canonicalPath,
+    originalAncestry,
+    canonicalAncestry,
     identity: { dev: stats.dev, ino: stats.ino, birthtimeNs: stats.birthtimeNs, mtimeNs: stats.mtimeNs, ctimeNs: stats.ctimeNs },
   };
 }
@@ -331,7 +367,10 @@ export async function readRegistrySourceArtifactReferences({ vaultRoot, fsApi = 
       for (const captured of localDirectories) {
         const present = await inspectLocalSourceDirectory(captured.source.localPath, fsApi);
         if (normalizedPathKey(present.path) !== normalizedPathKey(captured.path)
-          || !sameLocalDirectoryIdentity(captured.identity, present.identity)) {
+          || normalizedPathKey(present.canonicalPath) !== normalizedPathKey(captured.canonicalPath)
+          || !sameLocalDirectoryIdentity(captured.identity, present.identity)
+          || !sameRegistryAncestry(captured.originalAncestry, present.originalAncestry)
+          || !sameRegistryAncestry(captured.canonicalAncestry, present.canonicalAncestry)) {
           throw new Error("Configured local Registry directory changed after artifact references were captured.");
         }
       }

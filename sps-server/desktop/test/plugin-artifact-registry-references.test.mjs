@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
 import { link, mkdtemp, mkdir, readFile, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -62,6 +63,42 @@ test("accepts writer JSON with one BOM, CRLF, and optional final LF", async (t) 
   await writeFile(filePath, `\uFEFF${canonical.replace(/\n/g, "\r\n")}`, "utf8");
   const captured = await readRegistrySourceArtifactReferences({ vaultRoot });
   assert.equal(await captured.assertCurrent(), true);
+});
+
+test("same-directory short-name observations retain both ancestry identities, not lexical equality", async t => {
+  const { root, vaultRoot, localPath } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const alias = path.join(root, "SHORT~1");
+  await writeCanonical(vaultRoot, [localSource(alias)]);
+  const translate = value => value === alias ? localPath : value;
+  const observed = [];
+  const fsApi = { ...fs,
+    async lstat(value, options) {
+      observed.push(value);
+      return fs.lstat(translate(value), options);
+    },
+    realpath: value => fs.realpath(translate(value)),
+  };
+  // An injected filesystem view models the OS's two names without creating a
+  // symlink. The actual hosted Windows fixture also uses its real TEMP spelling.
+  const captured = await readRegistrySourceArtifactReferences({ vaultRoot, fsApi });
+  assert.equal(captured.references[1].path, alias);
+  assert.equal(await captured.assertCurrent(), true);
+  assert.ok(observed.includes(alias) && observed.includes(await fs.realpath(localPath)));
+  await rename(localPath, path.join(root, "retained-original"));
+  await mkdir(localPath);
+  await assert.rejects(captured.assertCurrent(), /changed/i);
+});
+
+test("a canonical spelling pointing to another directory cannot masquerade as a short-name alias", async t => {
+  const { root, vaultRoot, localPath } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const other = path.join(root, "other");
+  await mkdir(other);
+  await writeCanonical(vaultRoot, [localSource(localPath)]);
+  await assert.rejects(readRegistrySourceArtifactReferences({ vaultRoot, fsApi: { ...fs,
+    realpath: value => fs.realpath(value === localPath ? other : value),
+  } }), /changed/i);
 });
 
 test("rejects unknown fields, duplicate or escaped duplicate fields, malformed text, and noncanonical JSON", async (t) => {
