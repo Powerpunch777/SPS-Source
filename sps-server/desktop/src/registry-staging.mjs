@@ -124,19 +124,21 @@ export async function stageSpsPluginArchive({
 
   try {
     assertExpectedRelease(extraction, expectedRelease);
-    const stage = await registerStage({
-      packageRoot: extraction.destinationRoot,
-      artifactSha256: described.artifact.sha256,
-      source,
-    });
-    return {
-      staged: true,
-      artifact: described.artifact,
-      inspection: extraction.inspection,
-      stage,
-    };
   } catch (error) {
     await fsApi.rm(extraction.destinationRoot, { recursive: true, force: true });
     throw error;
   }
+
+  // Registration may commit even if its response is lost; preserve the package on failure.
+  const stage = await registerStage({
+    packageRoot: extraction.destinationRoot,
+    artifactSha256: described.artifact.sha256,
+    source,
+  });
+  return {
+    staged: true,
+    artifact: described.artifact,
+    inspection: extraction.inspection,
+    stage,
+  };
 }

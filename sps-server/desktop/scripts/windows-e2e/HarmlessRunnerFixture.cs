@@ -12,7 +12,7 @@ internal static class HarmlessRunnerFixture
     public static int Main(string[] args)
     {
         if (args.Length != 3 || args[0] != "--sps-runner-fixture" ||
-            (args[1] != "success" && args[1] != "failure" && args[1] != "hold") ||
+            (args[1] != "success" && args[1] != "failure" && args[1] != "hold" && args[1] != "lease-hold") ||
             !NoncePattern.IsMatch(args[2]))
         {
             Console.Error.WriteLine(InvalidArguments);
@@ -25,6 +25,7 @@ internal static class HarmlessRunnerFixture
         Console.Out.Flush();
 
         if (args[1] == "hold") Thread.Sleep(30000);
+        if (args[1] == "lease-hold") Thread.Sleep(120000);
 
         Console.Out.WriteLine("{\"fixture\":1,\"nonce\":\"" + nonce + "\",\"phase\":\"finished\"}");
         Console.Out.Flush();

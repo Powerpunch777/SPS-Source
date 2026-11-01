@@ -7,6 +7,37 @@ not Core completion, successful legacy cleanup or Stable qualification.
 
 ## Latest Hosted Results And Follow-Up
 
+Source `b36107b3ed12f8a51b98c04f1dcfcab7430c6846` push41272650851/
+Windows124748415208 failed installed historical-profile acceptance after passing
+packaged Workspace, Preview and Host lifecycle gates. The four-Worker extractor
+took224197ms on that VM; migration Host/DB checks reached252998ms, then the
+unchanged300000ms parent bound expired before restart/cleanup handoff. Forced
+whole-Job cleanup was rejected. This is not a passing installed migration and
+does not establish that the local extraction speedup applies to hosted machines.
+The dependent legacy job124756513295 was still preparing at the last observation;
+its result must be recorded separately, not inferred from the Desktop failure.
+
+The last b361 progress was migration DB verification, before Workspace discovery.
+This localizes the unfinished portion but does not prove a slow extractor is
+the only cause: the Workspace-open path must be investigated independently.
+No explicit navigation, longer deadline or substituted fixture was introduced
+in response to this failure.
+
+A further private same-input local experiment compared synchronous node-tar
+with the Windows system bsdtar under the retained owned native Job supervisor.
+Extraction took27935ms and9070ms respectively; all28771files/575905190bytes
+matched the same recorded archive and tree digest above. The native process
+exited naturally with no output; each byte was checked, the original input was
+unchanged, and identity-checked temporary trees were removed. This is an
+experiment, not an adopted extractor, hosted performance proof or installed
+acceptance. The product extractor remains the four-Worker implementation.
+
+Current follow-up local Desktop `npm run test:ci` passed1903total/1900pass/
+3unchanged unavailable8.3-alias skips/0fail, including the strict revision test
+after staging the Core4917948 gitlink. The first standalone baseline check
+correctly rejected the unstaged old Core gitlink; its corrected rerun passed4/4.
+No installer for this new Source/Core tuple has been qualified.
+
 Source `f3134472979a59721b12f48c5ecbff2ed33b1c97` push41273960465 passed
 all17 non-Windows jobs, including all Linux regression partitions and full
 typecheck/build. Windows124752243092 failed its Desktop unit step: the fixed

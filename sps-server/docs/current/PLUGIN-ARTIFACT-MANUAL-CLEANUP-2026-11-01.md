@@ -1,6 +1,7 @@
 # Host-Reviewed Plugin Artifact Cleanup
 
-Status: user-approved policy, implementation pending. 2026-11-01 KST.
+Status: user-approved policy; allocation/inventory foundation implemented,
+reference/fence/API/confirmation/removal/Settings composition pending. 2026-11-01 KST.
 
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
@@ -77,3 +78,25 @@ Runtime-cache rename-crash tests do not establish Plugin SQL activation crash
 recovery or general artifact collection. The two runtime tests currently
 preserve old/staging copies and sometimes an abandoned lock. Their outcome
 must not be relabeled as implementation of this manual cleanup tool.
+
+## Implemented Foundation
+
+Core `491794820c23f956912d69eba271c1ef07ba36a1` records only newly allocated
+Core-owned npm install and prepared-upgrade UUID roots. Exclusive private
+allocation/verified records bind storage and root identities, package identity
+and complete regular-file inventories. Observation never imports code or grants
+deletion. A copied record, fabricated ticket, replaced root, link or incomplete
+record is not cleanup authority. Existing linked storage and unavailable record
+stores keep normal installation behavior without cleanup ownership.
+
+The five focused Core suites passed35/35; server typecheck and compatibility
+boundary passed. This is not full Linux or packaged acceptance of this Core SHA.
+Old packages and Desktop Registry stage folders do not acquire retroactive
+ownership merely because their names match. No existing user package was moved
+or removed; no cleanup API or Settings list is present yet.
+
+Desktop additionally preserves extraction bytes once Registry registration has
+been entered: a lost response cannot prove the server did not commit its path.
+Known pre-registration validation rejection still cleans its own extraction.
+The focused Registry/transfer/bundle/controller/cross-device-fixture selection
+passed34/34; this does not establish a live database crash or two-PC lease test.
