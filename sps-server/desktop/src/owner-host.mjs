@@ -627,6 +627,12 @@ export function createSpsOwnerHostManager({
         reportOwnerHostEvent(baseEnvironment, "core-ready");
         return state;
       }
+      if (state.state === "running-existing") {
+        // Our admitted child failed or exited; another listener is not its
+        // readiness proof. Keep it unowned and let the caller report conflict.
+        lastError = "SPS Owner Host could not acquire its configured endpoint; another service is running there.";
+        return { ...state, lastError };
+      }
       if (state.state === "stopped") return state;
     }
     if (generation !== lifecycleGeneration) return inspect();

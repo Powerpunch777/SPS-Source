@@ -5,6 +5,11 @@ Worker references, Core-only composition and process-local activity admission im
 Desktop-composed references, cross-process fencing, API/confirmation/removal/Settings
 remain pending. 2026-11-01 KST.
 
+Desktop's private activity admission is now connected to actual mutation,
+Preview, runtime, account/start/restore and export entries. It is still separate
+from Core's coordinator and grants no deletion authority. See the
+[Desktop admission and startup acceptance](../reviews/DESKTOP-ARTIFACT-ADMISSION-2026-11-01.md).
+
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
 authorized by this policy. This does not authorize cleaning any current user

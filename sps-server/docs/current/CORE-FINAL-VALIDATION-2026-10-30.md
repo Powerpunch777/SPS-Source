@@ -761,6 +761,11 @@ evidence. Their earlier next-step labels are not current completion claims.
 
 ## Completion
 
+The next Desktop artifact-admission increment and actual owned-port conflict
+correction are recorded in [admission acceptance](../reviews/DESKTOP-ARTIFACT-ADMISSION-2026-11-01.md).
+Core is6187255; the new exact hosted/installed tuple still requires qualification.
+This is not a completed Desktop/Core cross-process cleanup fence or Settings UI.
+
 The latest private Preview/account and restore-reference source increment is
 recorded in [ownership acceptance](../reviews/PREVIEW-ACCOUNT-OWNERSHIP-2026-11-01.md).
 Actual source Preview and transfer E2Es passed; combined artifact maintenance,

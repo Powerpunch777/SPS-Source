@@ -1,0 +1,71 @@
+export function createSpsDesktopPluginArtifactActivityGate() {
+  // Process-local admission coordination only; this is not an authorization or OS/Core fence.
+  let activeActivities = 0;
+  let maintaining = false;
+  const scopes = new Set();
+
+  function runTracked(action, start, finish) {
+    let completeScope;
+    const scope = new Promise(resolve => { completeScope = resolve; });
+    scopes.add(scope);
+    void scope.then(() => scopes.delete(scope));
+    start();
+
+    let result;
+    try {
+      result = action();
+    } catch (error) {
+      finish();
+      completeScope();
+      throw error;
+    }
+
+    return Promise.resolve(result).then(
+      value => {
+        finish();
+        completeScope();
+        return value;
+      },
+      error => {
+        finish();
+        completeScope();
+        throw error;
+      },
+    );
+  }
+
+  function assertAdmissionAllowed() {
+    if (maintaining) {
+      throw new Error("SPS Desktop plugin artifact maintenance is already active.");
+    }
+  }
+
+  function withActivity(action) {
+    assertAdmissionAllowed();
+    if (typeof action !== "function") {
+      throw new Error("SPS Desktop plugin artifact activity requires an action.");
+    }
+    return runTracked(action, () => { activeActivities += 1; }, () => { activeActivities -= 1; });
+  }
+
+  function withMaintenance(action) {
+    if (typeof action !== "function") {
+      throw new Error("SPS Desktop plugin artifact maintenance requires an action.");
+    }
+    if (maintaining || activeActivities !== 0) {
+      throw new Error("SPS Desktop plugin artifact activity is in progress.");
+    }
+    return runTracked(action, () => { maintaining = true; }, () => { maintaining = false; });
+  }
+
+  function waitForIdle() {
+    return Promise.all([...scopes]);
+  }
+
+  return Object.freeze({
+    withActivity,
+    withMaintenance,
+    assertAdmissionAllowed,
+    waitForIdle,
+  });
+}

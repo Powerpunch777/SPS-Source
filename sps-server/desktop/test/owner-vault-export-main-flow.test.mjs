@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
+import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
 
 const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
 const start = main.indexOf("async function exportOwnerVaultTransfer()");
@@ -10,7 +11,9 @@ assert.ok(start >= 0 && end > start);
 
 function fixture({ owner = true, cancelled = false, backupError = null } = {}) {
   const calls = [];
+  const artifactGate = createSpsDesktopPluginArtifactActivityGate();
   const scope = {
+    desktopPluginArtifactActivity: artifactGate,
     mainWindow: null,
     isOwnerHostProfile: () => owner,
     currentAccountOwnsOwnerHost: () => owner,
@@ -27,7 +30,7 @@ function fixture({ owner = true, cancelled = false, backupError = null } = {}) {
     exportSpsOwnerVaultTransfer: async input => { calls.push({ type: "export", input }); return { bundleRoot: "fixture-export/bundle" }; },
   };
   runInNewContext(`${main.slice(start, end)}\nthis.exportTransfer = exportOwnerVaultTransfer;`, scope);
-  return { calls, run: scope.exportTransfer };
+  return { calls, artifactGate, run: scope.exportTransfer };
 }
 
 test("Main export retains its protected backup path and warns that the exported snapshot may contain credentials", async () => {
@@ -62,4 +65,13 @@ test("Main export backup failure cannot display a success or create a transfer",
   const ctx = fixture({ backupError: new Error("fixture backup failed") });
   await assert.rejects(ctx.run(), /fixture backup failed/);
   assert.deepEqual(ctx.calls.map(call => call.type), ["backup"]);
+});
+
+test("Main export cannot open a picker, request a backup or write during artifact maintenance", async () => {
+  const ctx = fixture();
+  await ctx.artifactGate.withMaintenance(async () => {
+    await assert.rejects(ctx.run(), /maintenance/);
+    assert.deepEqual(ctx.calls, []);
+  });
+  assert.equal((await ctx.run()).bundleRoot, "fixture-export/bundle");
 });

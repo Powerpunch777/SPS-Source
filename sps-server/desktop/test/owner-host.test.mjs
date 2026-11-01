@@ -563,6 +563,28 @@ test("recovers an owned Host that becomes healthy after a bounded startup wait",
   assert.equal(recovered.lastError, null);
 });
 
+test("a foreign listener after failed owned startup returns promptly without taking ownership or killing it", async () => {
+  const child = fakeChild();
+  let healthy = false, delays = 0, spawns = 0, kills = 0;
+  const manager = createSpsOwnerHostManager({ url: "http://127.0.0.1:31310",
+    fetchImpl: async () => healthy ? response({ status: "ok" }) : { ok: false },
+    resolveRuntime: async () => ({ command: "node", args: ["fixture.mjs"] }),
+    spawn: () => { spawns += 1; return child; },
+    delay: async () => {
+      delays += 1;
+      if (delays === 1) { healthy = true; child.exitCode = 1; child.emit("exit", 1); }
+    }, startupAttempts: 5,
+    terminateTree: async () => { kills += 1; },
+  });
+  const result = await manager.start();
+  assert.equal(result.state, "running-existing");
+  assert.equal(result.owned, false);
+  assert.match(result.lastError, /another service|configured endpoint/);
+  assert.equal(delays, 1);
+  assert.equal(spawns, 1);
+  assert.equal(kills, 0);
+});
+
 test("forces only its own Host process tree when graceful shutdown does not finish", async () => {
   const child = new EventEmitter();
   child.exitCode = null;

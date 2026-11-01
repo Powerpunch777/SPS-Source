@@ -200,6 +200,7 @@ import {
   updatePluginPreviewFixture,
 } from "./plugin-preview-runtime.mjs";
 import { createSpsPluginPreviewOperationGate } from "./plugin-preview-operation-gate.mjs";
+import { createSpsDesktopPluginArtifactActivityGate } from "./plugin-artifact-activity-gate.mjs";
 import {
   appendDeveloperDiagnostic,
   clearDeveloperDiagnostics,
@@ -295,7 +296,8 @@ let registryWindow = null;
 let registryDeveloperContext = null;
 let pluginPreviewWindow = null;
 let pluginPreviewRuntime = null;
-const pluginPreviewOperations = createSpsPluginPreviewOperationGate();
+const desktopPluginArtifactActivity = createSpsDesktopPluginArtifactActivityGate();
+const pluginPreviewOperations = createSpsPluginPreviewOperationGate({ withArtifactActivity: desktopPluginArtifactActivity.withActivity });
 let pluginPreviewClosing = false;
 const activeDeveloperProjectOperations = new Set();
 let officialExtensionsWindow = null;
@@ -310,6 +312,7 @@ let nativePluginWindowController = null;
 let nativeHostController = null;
 const nativeIdentityStores = new Map();
 const ownerVaultOperations = createSpsOwnerVaultOperationGate({
+  withArtifactActivity: desktopPluginArtifactActivity.withActivity,
   onInvalidation: () => {
     void nativeHostController?.stop().catch(() => {});
     ownerHostManager?.invalidateNativeSigner();
@@ -1948,6 +1951,10 @@ function ensureNativeInvitationManagementController() {
 }
 
 async function materializeCurrentSpsOwnerHostRuntime() {
+  return desktopPluginArtifactActivity.withActivity(materializeCurrentSpsOwnerHostRuntimeActive);
+}
+
+async function materializeCurrentSpsOwnerHostRuntimeActive() {
   if (ownerHostRuntimePromise) return ownerHostRuntimePromise;
   ownerHostRuntimePromise = (async () => {
     const targetRuntimeRoot = path.join(app.getPath("userData"), "owner-host-runtime", app.getVersion());
@@ -2408,6 +2415,7 @@ async function startOwnerHostWithContext({ activate, expectedSubject, expectedRe
     ...status,
     vaultPath: ownerHost.layout.root,
   };
+  if (status.state === "running-existing" && status.lastError) throw new Error(status.lastError);
   if (isTeamAccessEnabled() && state.teamAccess?.hostname && ownerHostStatus.url) {
     try {
       await reconcileSpsTailscaleServe({
@@ -2596,6 +2604,10 @@ async function ensurePrivateTeamOwnerMembership() {
 }
 
 async function stageRegistryPluginFromFilePicker() {
+  return desktopPluginArtifactActivity.withActivity(stageRegistryPluginFromFilePickerActive);
+}
+
+async function stageRegistryPluginFromFilePickerActive() {
   if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
     throw new Error("Only the signed-in SPS Owner can stage a Registry plugin.");
   }
@@ -2710,6 +2722,10 @@ async function currentAppBundleReviewContext() {
 }
 
 async function listDesktopBundledPluginReviews() {
+  return desktopPluginArtifactActivity.withActivity(listDesktopBundledPluginReviewsActive);
+}
+
+async function listDesktopBundledPluginReviewsActive() {
   const context = await currentAppBundleReviewContext();
   const reviews = await listRestoredBundledPluginReviews(context);
   context.assertCurrent();
@@ -2717,6 +2733,10 @@ async function listDesktopBundledPluginReviews() {
 }
 
 async function stageDesktopBundledPluginReview(pluginId) {
+  return desktopPluginArtifactActivity.withActivity(() => stageDesktopBundledPluginReviewActive(pluginId));
+}
+
+async function stageDesktopBundledPluginReviewActive(pluginId) {
   const context = await currentAppBundleReviewContext();
   const result = await stageRestoredBundledPluginReview({ ...context, pluginId,
     listStages: () => ownerHostApi("/plugins/registry/stages", { ownerBootstrap: true, assertCurrent: context.assertCurrent }),
@@ -2729,6 +2749,10 @@ async function stageDesktopBundledPluginReview(pluginId) {
 }
 
 async function addDesktopRegistrySource(input) {
+  return desktopPluginArtifactActivity.withActivity(() => addDesktopRegistrySourceActive(input));
+}
+
+async function addDesktopRegistrySourceActive(input) {
   assertRegistryOwner();
   if (!input || typeof input !== "object") throw new Error("Registry source details are required.");
   if (input.kind !== "local") {
@@ -2785,6 +2809,10 @@ async function inspectDesktopRegistrySource(sourceId) {
 }
 
 async function stageDesktopRegistryRelease({ sourceId, pluginId, version } = {}) {
+  return desktopPluginArtifactActivity.withActivity(() => stageDesktopRegistryReleaseActive({ sourceId, pluginId, version }));
+}
+
+async function stageDesktopRegistryReleaseActive({ sourceId, pluginId, version } = {}) {
   assertRegistryOwner();
   await requireReadyOwnerHost();
   const configured = await loadRegistrySources({ vaultRoot: ownerVaultRoot() });
@@ -2823,6 +2851,10 @@ async function stageDesktopRegistryRelease({ sourceId, pluginId, version } = {})
 }
 
 async function enableDesktopRegistryStage(stageId) {
+  return desktopPluginArtifactActivity.withActivity(() => enableDesktopRegistryStageActive(stageId));
+}
+
+async function enableDesktopRegistryStageActive(stageId) {
   assertRegistryOwner();
   if (typeof stageId !== "string" || stageId.length === 0) throw new Error("Registry stage id is required.");
   return await ownerHostApi(`/plugins/registry/stages/${encodeURIComponent(stageId)}/enable`, {
@@ -2850,6 +2882,10 @@ async function listDesktopRegistryStages() {
 }
 
 async function removeDesktopRegistrySource(sourceId) {
+  return desktopPluginArtifactActivity.withActivity(() => removeDesktopRegistrySourceActive(sourceId));
+}
+
+async function removeDesktopRegistrySourceActive(sourceId) {
   assertRegistryOwner();
   const saved = await removeRegistrySource({ vaultRoot: ownerVaultRoot(), sourceId });
   return saved.sources.map(registrySourceView);
@@ -2956,6 +2992,10 @@ async function clearRegistryDeveloperContext(input) {
 }
 
 async function withDeveloperProjectOperation(projectId, operation) {
+  return desktopPluginArtifactActivity.withActivity(() => withDeveloperProjectOperationActive(projectId, operation));
+}
+
+async function withDeveloperProjectOperationActive(projectId, operation) {
   if (activeDeveloperProjectOperations.has(projectId)) {
     throw new Error("This developer project already has an operation in progress.");
   }
@@ -3071,6 +3111,10 @@ async function chooseDesktopDeveloperProjectFolder() {
 }
 
 async function connectDesktopDeveloperProject(input) {
+  return desktopPluginArtifactActivity.withActivity(() => connectDesktopDeveloperProjectActive(input));
+}
+
+async function connectDesktopDeveloperProjectActive(input) {
   assertRegistryOwner();
   const project = await connectDeveloperProject({
     vaultRoot: ownerVaultRoot(),
@@ -3539,6 +3583,10 @@ function publicDesktopPluginPreviewState() {
 }
 
 async function updateDesktopPluginPreviewEnvironment(input) {
+  return desktopPluginArtifactActivity.withActivity(() => updateDesktopPluginPreviewEnvironmentActive(input));
+}
+
+async function updateDesktopPluginPreviewEnvironmentActive(input) {
   assertRegistryOwner();
   const runtime = pluginPreviewRuntime;
   if (!runtime || runtime.projectId !== input?.projectId) {
@@ -3762,6 +3810,10 @@ async function rollbackDesktopDeveloperProject(projectId) {
 }
 
 async function reloadDesktopDeveloperUi(projectId) {
+  return desktopPluginArtifactActivity.withActivity(() => reloadDesktopDeveloperUiActive(projectId));
+}
+
+async function reloadDesktopDeveloperUiActive(projectId) {
   assertRegistryOwner();
   const project = await developerProjectRecord(projectId);
   if (!project.lastKnownGood) {
@@ -3783,6 +3835,10 @@ async function reloadDesktopDeveloperUi(projectId) {
 }
 
 async function restartDesktopDeveloperWorker(projectId) {
+  return desktopPluginArtifactActivity.withActivity(() => restartDesktopDeveloperWorkerActive(projectId));
+}
+
+async function restartDesktopDeveloperWorkerActive(projectId) {
   assertRegistryOwner();
   const project = await developerProjectRecord(projectId);
   const pluginId = project.lastKnownGood?.deployment.pluginId;
@@ -3821,6 +3877,10 @@ async function restartDesktopDeveloperWorker(projectId) {
 }
 
 async function removeDesktopDeveloperProject(projectId) {
+  return desktopPluginArtifactActivity.withActivity(() => removeDesktopDeveloperProjectActive(projectId));
+}
+
+async function removeDesktopDeveloperProjectActive(projectId) {
   assertRegistryOwner();
   if (activeDeveloperProjectOperations.has(projectId)) {
     throw new Error("Wait for the active developer project operation to finish before disconnecting it.");
@@ -3847,6 +3907,10 @@ async function showRegistryPluginStages() {
 }
 
 async function exportOwnerVaultTransfer() {
+  return desktopPluginArtifactActivity.withActivity(exportOwnerVaultTransferActive);
+}
+
+async function exportOwnerVaultTransferActive() {
   if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
     throw new Error("Only the signed-in SPS Owner can export this Owner Vault.");
   }
