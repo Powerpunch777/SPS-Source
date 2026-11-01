@@ -57,18 +57,57 @@ async function fixture(t, dropOperation) {
   })), terminal.then(result => { throw new Error(`Private fixture exited before readiness (${result.code}): ${stderr}`); }),
   new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`No private Core artifact channel readiness: ${stderr}`)), 10_000); })]).finally(() => clearTimeout(timer));
   let next = 0;
-  async function probe() {
+  async function control(operation) {
     const id = ++next;
     const result = new Promise(resolve => {
-      const listener = value => { if (value.kind === "sps.test.artifact.result" && value.id === id) { child.off("message", listener); resolve(value.admitted); } };
+      const listener = value => { if (value.kind === "sps.test.artifact.result" && value.id === id) { child.off("message", listener); resolve(value); } };
       child.on("message", listener);
     });
-    child.send({ kind: "sps.test.artifact", operation: "probe", id });
+    child.send({ kind: "sps.test.artifact", operation, id });
     let timer;
     return Promise.race([result, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Private fixture probe did not reply.")), 5000); })]).finally(() => clearTimeout(timer));
   }
-  return { child, client, artifacts, probe, root };
+  return { child, client, artifacts, probe: async () => (await control("probe")).admitted,
+    advanceSource: async () => (await control("advance-source")).changed, root };
 }
+
+test("real child sends explicit immutable Source metadata without exposing routes or local paths", { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
+  await f.client.withSnapshot(async scope => {
+    assert.equal(Object.hasOwn(scope, "sourceInventory"), false);
+  });
+  let retained;
+  await f.client.withSnapshot(async scope => {
+    retained = scope;
+    assert.equal(scope.coverage, "core-only");
+    const inventory = scope.sourceInventory;
+    assert.equal(inventory.sources.length, 1);
+    assert.deepEqual(inventory.grants, []);
+    assert.equal(inventory.sources[0].id, "11111111-1111-4111-8111-111111111111");
+    assert.equal(inventory.sources[0].routeFingerprint, null);
+    for (const value of [inventory, inventory.sources, inventory.sources[0], inventory.grants]) assert.ok(Object.isFrozen(value));
+    assert.equal(JSON.stringify(inventory).includes(f.root), false);
+    assert.equal(Object.hasOwn(inventory.sources[0], "route"), false);
+    assert.equal(await f.probe(), false);
+    await scope.assertCurrent();
+  }, { sourceInventory: true });
+  await assert.rejects(retained.assertCurrent());
+  assert.equal(await f.probe(), true);
+});
+
+test("real child Source changes invalidate the held result and retain parent uncertainty", { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
+  let callbacks = 0;
+  await assert.rejects(f.artifacts.withMaintenance(() => f.client.withSnapshot(async scope => {
+    callbacks += 1;
+    assert.equal(await f.advanceSource(), true);
+    await scope.assertCurrent();
+    assert.fail("Changed Core Source metadata cannot authorize subsequent Main work.");
+  }, { sourceInventory: true })));
+  assert.equal(callbacks, 1);
+  assert.throws(() => f.artifacts.withActivity(async () => {}));
+  await assert.rejects(f.client.withSnapshot(async () => assert.fail("Uncertainty cannot be reset by another begin."), { sourceInventory: true }));
+});
 
 test("real child captures parent-supplied files and denies a changed file without releasing uncertainty", { timeout: 20_000 }, async t => {
   const f = await fixture(t);

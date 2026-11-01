@@ -49,6 +49,8 @@ function fixture() {
 test("actual Main context binds the exact Host, optional Preview/Memory and private reader inputs", () => {
   const f = fixture();
   const context = f.capture();
+  assert.equal(context.includeSourceInventory, true);
+  assert.equal(context.requireSourceReconciliation, true);
   assert.deepEqual(Array.from(context.participants, p => p.id), ["host", "preview"]);
   assert.equal(context.participants[0].manager, f.host);
   assert.equal(context.participants[1].manager, f.previewManager);

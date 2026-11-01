@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { createSpsDefaultMemoryConfig, defaultMemoryVaultLayout } from "../src/d
 import { readSpsDesktopPluginArtifactInputs } from "../src/desktop-artifact-inputs.mjs";
 import { createSpsOwnerHostConfig, ownerHostVaultLayout } from "../src/owner-host-config.mjs";
 import { captureSpsOwnerHostRuntimeReferences } from "../src/owner-host-runtime-references.mjs";
+import { captureSpsDesktopSourceArtifactReferences } from "../src/desktop-source-artifact-references.mjs";
 
 async function fixture(run) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-desktop-artifact-inputs-"));
@@ -68,6 +70,54 @@ function memoryRuntime(configPath, root) {
 }
 
 const authorized = () => undefined;
+
+test("retains the private Source reader for exact synchronous reconciliation under current authority", async () => {
+  await fixture(async root => {
+    const { vaultRoot, coreConfigPath } = await makeVault(root);
+    const hostOrigin = "http://127.0.0.1:31310";
+    const id = "11111111-1111-4111-8111-111111111111", workspaceId = "22222222-2222-4222-8222-222222222222";
+    const sourcePath = path.join(root, "mapped-source");
+    await fs.mkdir(sourcePath);
+    const state = { profile: { connectionKind: "owner-host", hubUrl: hostOrigin, companyId: workspaceId,
+      workspaceSources: [{ id, name: "Source", sourcePath }] }, accountConnections: {}, encryptedShareState: null };
+    let current = true;
+    const result = await readSpsDesktopPluginArtifactInputs({ vaultRoot,
+      runtimeOwners: [{ kind: "core", manager: coreRuntime(coreConfigPath, root) }],
+      assertCurrent() { if (!current) throw new Error("Host changed"); },
+      readSourceReferences: () => captureSpsDesktopSourceArtifactReferences({ hostOrigin, readState: () => state,
+        readShareState: () => assert.fail("No protected credentials in fixture.") }),
+    });
+    const sources = [{ kind: "workspace", id, workspaceId, resourceId: id, status: "available",
+      routeFingerprint: null, revision: "2026-11-02T03:04:05.006Z" }];
+    const inventory = { sources, grants: [], fingerprint: createHash("sha256").update(JSON.stringify([sources, []])).digest("hex") };
+    const receipt = result.reconcileSourceInventory(inventory);
+    assert.deepEqual(receipt, { sourceCount: 1, grantCount: 0, fingerprint: inventory.fingerprint });
+    assert.ok(Object.isFrozen(receipt));
+    current = false;
+    assert.throws(() => result.reconcileSourceInventory(inventory), /Host changed/);
+    current = true;
+    state.profile.workspaceSources[0].sourcePath = path.join(root, "replacement");
+    assert.throws(() => result.reconcileSourceInventory(inventory), /Source references are unavailable/);
+  });
+});
+
+test("missing and asynchronous Source reconciliation cannot become a synchronous receipt", async () => {
+  await fixture(async root => {
+    const { vaultRoot, coreConfigPath } = await makeVault(root);
+    const base = { vaultRoot, runtimeOwners: [{ kind: "core", manager: coreRuntime(coreConfigPath, root) }], assertCurrent: authorized };
+    const missing = await readSpsDesktopPluginArtifactInputs(base);
+    assert.throws(() => missing.reconcileSourceInventory({}));
+    for (const readSourceReferences of [async () => ({ references: [], assertCurrent() {} }), async () => { throw new Error("reader unavailable"); }]) {
+      await assert.rejects(readSpsDesktopPluginArtifactInputs({ ...base, readSourceReferences }));
+    }
+    for (const reconcileSourceInventory of [async () => Object.freeze({}), async () => { throw new Error("unavailable"); }]) {
+      const result = await readSpsDesktopPluginArtifactInputs({ ...base,
+        readSourceReferences: () => ({ references: [], assertCurrent() {}, reconcileSourceInventory }),
+      });
+      assert.throws(() => result.reconcileSourceInventory({}));
+    }
+  });
+});
 
 test("composes named runtime/config, developer and Registry refs without protecting the Vault root", async () => {
   await fixture(async root => {

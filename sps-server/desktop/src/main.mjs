@@ -2727,11 +2727,12 @@ function captureDesktopPluginArtifactContext() {
     }
   };
   assertCurrent();
-  return Object.freeze({ assertCurrent,
+  return Object.freeze({ assertCurrent, includeSourceInventory: true, requireSourceReconciliation: true,
     participants: Object.freeze([Object.freeze({ id: "host", manager: host }),
       ...(preview ? [Object.freeze({ id: "preview", manager: previewManager })] : [])]),
     readInputs: () => readSpsDesktopPluginArtifactInputs({ vaultRoot: vault, preview: previewPaths, assertCurrent,
       readSourceReferences: () => captureSpsDesktopSourceArtifactReferences({
+        hostOrigin: requireSpsOwnerHostOrigin(ownerHostStatus.url),
         readState: () => ({ profile: state.profile, accountConnections: state.accountConnections,
           encryptedShareState: state.encryptedHostProjectShareSecrets }),
         readShareState: currentHostProjectShareSecrets,

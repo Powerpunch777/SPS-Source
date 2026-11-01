@@ -3,6 +3,11 @@
 2026-11-02 KST. Core `bebc04f7bfa54ad25c8676ade61fafe1ab0c4e2e`.
 Private metadata observation, not complete cleanup readiness.
 
+This records the historical Corebeb increment. The subsequent
+[private IPC and Desktop reconciliation](SOURCE-ARTIFACT-RECONCILIATION-2026-11-02.md)
+extends the export/mapping limitations below; it does not grant deletion readiness
+or retroactively change this revision's test evidence.
+
 ## Implemented
 
 The new read-only inventory covers all retained Workspace Sources and legacy

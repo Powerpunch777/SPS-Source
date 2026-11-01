@@ -31,11 +31,14 @@ export async function readSpsDesktopPluginArtifactInputs({ vaultRoot, runtimeOwn
   const runtimes = readRuntimes();
   const signature = JSON.stringify(runtimes);
   const readers = [];
+  let sourceReader = null;
   if (readSourceReferences !== null) {
     if (typeof readSourceReferences !== "function") throw failure();
     const source = readSourceReferences();
+    if (types.isPromise(source)) { Promise.prototype.then.call(source, () => {}, () => {}); throw failure(); }
     if (!Array.isArray(source?.references) || typeof source.assertCurrent !== "function") throw failure();
     readers.push(source); check();
+    sourceReader = source;
   }
   readers.push(await readDeveloperProjectArtifactReferences({ vaultRoot })); check();
   readers.push(await readRegistrySourceArtifactReferences({ vaultRoot })); check();
@@ -64,7 +67,16 @@ export async function readSpsDesktopPluginArtifactInputs({ vaultRoot, runtimeOwn
   })) : [];
   const references = Object.freeze([...readers.flatMap(reader => reader.references),
     ...runtimes.flatMap(runtime => runtime.references), ...extra]);
-  return Object.freeze({ references, async assertCurrent() {
+  return Object.freeze({ references,
+    reconcileSourceInventory(inventory) {
+      check();
+      if (typeof sourceReader?.reconcileSourceInventory !== "function") throw failure();
+      const result = sourceReader.reconcileSourceInventory(inventory);
+      if (types.isPromise(result)) { Promise.prototype.then.call(result, () => {}, () => {}); throw failure(); }
+      if (!result || !Object.isFrozen(result)) throw failure();
+      check();
+      return result;
+    }, async assertCurrent() {
     check();
     if (JSON.stringify(readRuntimes()) !== signature) throw failure();
     for (const reader of readers) { await reader.assertCurrent(); check(); }

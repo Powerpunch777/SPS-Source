@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
 import { createSpsPluginArtifactObservation } from "../src/plugin-artifact-observation.mjs";
+const EMPTY_SOURCES = Object.freeze({ sources: [], grants: [], fingerprint: createHash("sha256").update("[[],[]]").digest("hex") });
 
 for (const [name, guard] of [
   ["false", () => false], ["async false", async () => false],
@@ -30,7 +32,8 @@ function deferred() {
 }
 
 // These fake scoped managers and read inputs are synthetic contracts, not production/UI authority.
-function makeFixture({ participants, hostOptions = {}, previewOptions = {}, inputOptions = {}, ownerOptions = {} } = {}) {
+function makeFixture({ participants, hostOptions = {}, previewOptions = {}, inputOptions = {}, ownerOptions = {}, includeSourceInventory = false,
+  requireSourceReconciliation = false } = {}) {
   const events = [];
   const held = new Set();
   let ownerCurrent = true;
@@ -44,6 +47,7 @@ function makeFixture({ participants, hostOptions = {}, previewOptions = {}, inpu
       if (!inputsCurrent || inputOptions.staleAtCheck === inputChecks) throw new Error("stale synthetic inputs");
     },
   };
+  if (Object.hasOwn(inputOptions, "reconcile")) input.reconcileSourceInventory = inputOptions.reconcile;
   const manager = (id, options = {}) => ({
     async withPluginArtifactReferences(action, receivedOptions) {
       events.push(`acquire:${id}`);
@@ -56,12 +60,14 @@ function makeFixture({ participants, hostOptions = {}, previewOptions = {}, inpu
           coverage: id === "host" ? "core-and-parent-paths" : "core-only",
           fingerprint: (index ? "b" : "a").repeat(64),
           references: [{ path: `synthetic-${id}` }],
+          ...(options.sourceInventory ? { sourceInventory: options.sourceInventory } : {}),
           ...(id === "host" ? { parentPaths: [{ path: "synthetic-parent" }] } : {}),
           async assertCurrent() {
             if (!held.has(id)) throw new Error(`expired synthetic ${id} scope`);
           },
         };
-        if (id === "host") assert.deepEqual(receivedOptions, { parentPaths: input.references });
+        if (id === "host") assert.deepEqual(receivedOptions, { parentPaths: input.references, ...(includeSourceInventory ? { sourceInventory: true } : {}) });
+        else if (includeSourceInventory) assert.deepEqual(receivedOptions, { sourceInventory: true });
         else assert.equal(receivedOptions, undefined);
         return await action(scope);
       } finally {
@@ -80,6 +86,8 @@ function makeFixture({ participants, hostOptions = {}, previewOptions = {}, inpu
     capture() {
       return {
         participants: allParticipants,
+        ...(includeSourceInventory ? { includeSourceInventory: true } : {}),
+        ...(requireSourceReconciliation ? { requireSourceReconciliation: true } : {}),
         assertCurrent() {
           ownerChecks += 1;
           if (!ownerCurrent || ownerOptions.staleAtCheck === ownerChecks) throw new Error("stale synthetic owner");
@@ -112,6 +120,95 @@ test("holds host then preview through callback and releases in reverse order whi
     "read-inputs", "acquire:host", "acquire:preview", "release:preview", "release:host",
   ]);
   assert.deepEqual([...fixture.held], []);
+});
+
+test("explicit Source composition retains distinct validated Host/Preview inventories", async () => {
+  const f = makeFixture({ includeSourceInventory: true,
+    hostOptions: { sourceInventory: EMPTY_SOURCES }, previewOptions: { sourceInventory: EMPTY_SOURCES } });
+  await f.observation.withSnapshot(async scope => {
+    assert.deepEqual(scope.sourceInventories.map(row => row.processOwner), ["host", "preview"]);
+    assert.equal(Object.isFrozen(scope.sourceInventories), true);
+    for (const row of scope.sourceInventories) {
+      assert.equal(Object.isFrozen(row), true);
+      assert.equal(Object.isFrozen(row.inventory), true);
+      assert.deepEqual(row.inventory, EMPTY_SOURCES);
+    }
+    assert.deepEqual([...f.held], ["host", "preview"]);
+  });
+  assert.equal(f.held.size, 0);
+});
+
+test("a missing or invalid participant Source inventory cannot yield partial composition", async () => {
+  for (const previewOptions of [{}, { sourceInventory: { ...EMPTY_SOURCES, fingerprint: "0".repeat(64) } }]) {
+    const f = makeFixture({ includeSourceInventory: true, hostOptions: { sourceInventory: EMPTY_SOURCES }, previewOptions });
+    let called = false;
+    await assert.rejects(f.observation.withSnapshot(() => { called = true; }));
+    assert.equal(called, false);
+    assert.equal(f.held.size, 0);
+    await f.activity.withMaintenance(async () => {});
+  }
+});
+
+test("reconciles Host sources only while both scopes are held and clones the bounded receipt", async () => {
+  let reconciled = 0;
+  const receipt = Object.freeze({ sourceCount: 0, grantCount: 0, fingerprint: EMPTY_SOURCES.fingerprint });
+  const f = makeFixture({ includeSourceInventory: true, requireSourceReconciliation: true,
+    hostOptions: { sourceInventory: EMPTY_SOURCES }, previewOptions: { sourceInventory: EMPTY_SOURCES },
+    inputOptions: { reconcile(inventory) {
+      assert.deepEqual([...f.held], ["host", "preview"]);
+      assert.deepEqual(inventory, EMPTY_SOURCES);
+      reconciled += 1;
+      return receipt;
+    } } });
+  await f.observation.withSnapshot(scope => {
+    assert.equal(reconciled, 1);
+    assert.deepEqual(scope.sourceReconciliation, receipt);
+    assert.notEqual(scope.sourceReconciliation, receipt);
+    assert.equal(Object.isFrozen(scope.sourceReconciliation), true);
+  });
+  assert.equal(f.held.size, 0);
+});
+
+test("required reconciliation fails closed for missing, async, malformed, or stale input receipts", async () => {
+  const valid = () => Object.freeze({ sourceCount: 0, grantCount: 0, fingerprint: EMPTY_SOURCES.fingerprint });
+  for (const inputOptions of [
+    {}, { reconcile: async () => valid() }, { reconcile: async () => { throw new Error("rejected async reconciliation"); } },
+    { reconcile: () => ({ ...valid() }) }, { reconcile: () => Object.freeze({ ...valid(), sourceCount: 1 }) },
+    { reconcile: () => Object.freeze({ ...valid(), privatePath: "must not escape" }) },
+    { reconcile: () => Object.freeze({ then() {}, ...valid() }) },
+    { reconcile: () => { throw new Error("unmapped Source"); } },
+  ]) {
+    const f = makeFixture({ includeSourceInventory: true, requireSourceReconciliation: true,
+      hostOptions: { sourceInventory: EMPTY_SOURCES }, previewOptions: { sourceInventory: EMPTY_SOURCES }, inputOptions });
+    let called = false;
+    await assert.rejects(f.observation.withSnapshot(() => { called = true; }));
+    assert.equal(called, false);
+    assert.equal(f.held.size, 0);
+    await f.activity.withMaintenance(async () => {});
+  }
+  const f = makeFixture({ includeSourceInventory: true, requireSourceReconciliation: true,
+    hostOptions: { sourceInventory: EMPTY_SOURCES }, previewOptions: { sourceInventory: EMPTY_SOURCES },
+    inputOptions: { reconcile() { f.setInputsCurrent(false); return valid(); } } });
+  await assert.rejects(f.observation.withSnapshot(() => assert.fail("Stale input must not advance Main work.")));
+  assert.equal(f.held.size, 0);
+});
+
+test("a nonempty Preview Source inventory cannot borrow Host mappings", async () => {
+  const sources = [{ kind: "workspace", id: "11111111-1111-4111-8111-111111111111",
+    workspaceId: "22222222-2222-4222-8222-222222222222", resourceId: "11111111-1111-4111-8111-111111111111",
+    status: "available", routeFingerprint: null, revision: "2026-11-02T03:04:05.006Z" }];
+  const previewInventory = { sources, grants: [], fingerprint: createHash("sha256").update(JSON.stringify([sources, []])).digest("hex") };
+  const f = makeFixture({ includeSourceInventory: true, requireSourceReconciliation: true,
+    hostOptions: { sourceInventory: EMPTY_SOURCES }, previewOptions: { sourceInventory: previewInventory },
+    inputOptions: { reconcile: () => assert.fail("Preview mappings are not Host mappings.") } });
+  await assert.rejects(f.observation.withSnapshot(() => assert.fail("No partial Source coverage.")));
+  assert.equal(f.held.size, 0);
+});
+
+test("reconciliation cannot be enabled without explicitly requesting the Core inventories", async () => {
+  const f = makeFixture({ requireSourceReconciliation: true });
+  await assert.rejects(f.observation.withSnapshot(() => assert.fail("No unrequested inventory fallback.")));
+  assert.deepEqual(f.events, []);
 });
 
 test("preserves callback errors and still releases both scopes in reverse order", async () => {

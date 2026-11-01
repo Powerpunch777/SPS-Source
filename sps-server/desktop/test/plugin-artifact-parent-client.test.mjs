@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
 import { createSpsPluginArtifactParentClient } from "../src/plugin-artifact-parent-channel.mjs";
@@ -10,6 +10,8 @@ const REQUEST = "sps.plugin-artifacts.request";
 const RESPONSE = "sps.plugin-artifacts.response";
 const CHANNEL_ID = "123e4567-e89b-42d3-a456-426614174000";
 const FINGERPRINT = "a".repeat(64);
+const EMPTY_SOURCES = Object.freeze({ sources: [], grants: [],
+  fingerprint: createHash("sha256").update("[[],[]]").digest("hex") });
 
 function fixture({ drop, mutateResponse, snapshot = { coverage: "core-only", fingerprint: FINGERPRINT, references: [] }, current = () => true } = {}) {
   const channel = Object.assign(new EventEmitter(), { connected: true });
@@ -46,6 +48,42 @@ function fixture({ drop, mutateResponse, snapshot = { coverage: "core-only", fin
 function protocolError(error) {
   return error?.code === "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE";
 }
+
+test("explicit Source inventory is validated and requested only in the begin frame", async t => {
+  const f = fixture({ snapshot: { coverage: "core-only", fingerprint: FINGERPRINT, references: [], sourceInventory: EMPTY_SOURCES } });
+  t.after(() => f.client.dispose());
+  await f.client.withSnapshot(async scope => {
+    assert.deepEqual(scope.sourceInventory, EMPTY_SOURCES);
+    assert.equal(Object.isFrozen(scope.sourceInventory), true);
+    await scope.assertCurrent();
+  }, { sourceInventory: true });
+  assert.equal(f.requests[0].sourceInventory, true);
+  assert.ok(f.requests.slice(1).every(request => !Object.hasOwn(request, "sourceInventory")));
+});
+
+test("requested Source inventory cannot be omitted, forged or silently downgraded", async t => {
+  for (const inventory of [undefined, { ...EMPTY_SOURCES, fingerprint: "0".repeat(64) },
+    { ...EMPTY_SOURCES, credentialEnvelope: "must-not-pass" }]) {
+    const f = fixture({ snapshot: { coverage: "core-only", fingerprint: FINGERPRINT, references: [],
+      ...(inventory === undefined ? {} : { sourceInventory: inventory }) } });
+    t.after(() => f.client.dispose());
+    let called = false;
+    await assert.rejects(f.client.withSnapshot(() => { called = true; }, { sourceInventory: true }));
+    assert.equal(called, false);
+    assert.equal(f.uncertainCount(), 1);
+  }
+});
+
+test("unrequested Source fields and malformed request options are rejected", async t => {
+  const f = fixture({ snapshot: { coverage: "core-only", fingerprint: FINGERPRINT, references: [], sourceInventory: EMPTY_SOURCES } });
+  t.after(() => f.client.dispose());
+  await assert.rejects(f.client.withSnapshot(() => assert.fail("Unrequested fields")), protocolError);
+  const clean = fixture(); t.after(() => clean.client.dispose());
+  for (const options of [{}, { sourceInventory: false }, { sourceInventory: true, unexpected: true }]) {
+    await assert.rejects(clean.client.withSnapshot(() => assert.fail("Invalid options"), options));
+  }
+  assert.equal(clean.requests.length, 0);
+});
 
 test("snapshot scope checks before and after the callback, then acknowledges end in order", async t => {
   const f = fixture();

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { types } from "node:util";
+import { requireSpsSourceArtifactInventory } from "./source-artifact-inventory.mjs";
 
 const failure = () => new Error("Desktop Source references are unavailable or changed; preserve all package files.");
 const LIMIT = 1024;
@@ -54,7 +55,11 @@ function projectSourceState(value) {
     if (value === undefined || value === null) return;
     const data = record(value);
     inspect();
-    const frame = { key, defaultPath: field(data, "defaultWorkspacePath"), projects: [], sources: [] };
+    const frame = { key, defaultPath: field(data, "defaultWorkspacePath"), projects: [], sources: [],
+      connectionKind: field(data, "connectionKind"), hubUrl: field(data, "hubUrl"), companyId: field(data, "companyId") };
+    for (const value of [frame.connectionKind, frame.hubUrl, frame.companyId]) {
+      if (value !== undefined && (typeof value !== "string" || value.length > 2048 || /[\u0000-\u001f\u007f\uFFFD]/.test(value))) throw failure();
+    }
     const index = profiles.length;
     if (frame.defaultPath !== undefined) {
       if (typeof frame.defaultPath !== "string") throw failure();
@@ -104,17 +109,29 @@ function projectSourceState(value) {
   if (encrypted !== null && (typeof encrypted !== "string" || !encrypted || encrypted.length > 4 * 1024 * 1024)) throw failure();
   const bytes = JSON.stringify([profiles, encrypted]);
   if (Buffer.byteLength(bytes, "utf8") > 6 * 1024 * 1024) throw failure();
-  return { paths, encrypted, fingerprint: createHash("sha256").update(bytes).digest("hex") };
+  return { paths, profiles, encrypted, fingerprint: createHash("sha256").update(bytes).digest("hex") };
 }
 
+function ownedOrigin(value) {
+  let url;
+  try { url = new URL(value); } catch { throw failure(); }
+  if (typeof value !== "string" || value !== url.origin || url.protocol !== "http:"
+    || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || url.username || url.password) throw failure();
+  return value;
+}
+const pathKey = value => process.platform === "win32" ? value.toLowerCase() : value;
+
 /** Private in-memory Source metadata. No credentials or account IDs are returned. */
-export function captureSpsDesktopSourceArtifactReferences({ readState, readShareState } = {}) {
+export function captureSpsDesktopSourceArtifactReferences({ readState, readShareState, hostOrigin = null } = {}) {
   if (typeof readState !== "function" || typeof readShareState !== "function") throw failure();
   const current = () => {
     try { return projectSourceState(sync(readState)); } catch { throw failure(); }
   };
   const initial = current();
+  const origin = hostOrigin === null ? null : ownedOrigin(hostOrigin);
   const references = [...initial.paths];
+  const shares = new Map();
+  let protectedGrants = 0;
   if (initial.encrypted !== null) {
     let protectedState;
     try { protectedState = sync(readShareState); } catch { throw failure(); }
@@ -124,11 +141,59 @@ export function captureSpsDesktopSourceArtifactReferences({ readState, readShare
       if (references.length >= LIMIT) throw failure();
       const source = record(field(projects, id));
       const sourcePath = localPath(field(source, "sourcePath"));
+      if (origin !== null) {
+        const sharePath = text(field(source, "sharePath"), 4096);
+        if (!/^\\\\[^\\/\s\u0000-\u001f\u007f]+\\[^\\/\s\u0000-\u001f\u007f]+$/.test(sharePath)) throw failure();
+        const grants = record(field(source, "grants"));
+        const nodeIds = Object.keys(grants).sort();
+        protectedGrants += nodeIds.length;
+        if (nodeIds.length > 1024 || protectedGrants > 16384) throw failure();
+        for (const id of nodeIds) { text(id, 80); record(field(grants, id)); }
+        shares.set(id, { sourcePath, routeFingerprint: createHash("sha256").update(sharePath.toLowerCase()).digest("hex"), nodeIds });
+      }
       references.push(Object.freeze({ source: "desktop-source-share", ownerId: `share:${references.length}`,
         state: "retained", path: sourcePath, kind: "directory" }));
     }
   }
-  return Object.freeze({ references: Object.freeze(references), assertCurrent() {
+  const assertCurrent = () => {
     if (current().fingerprint !== initial.fingerprint) throw failure();
-  } });
+  };
+  return Object.freeze({ references: Object.freeze(references), assertCurrent,
+    reconcileSourceInventory(value) {
+      try {
+        assertCurrent();
+        if (origin === null) throw failure();
+        const inventory = requireSpsSourceArtifactInventory(value);
+        const mappings = new Map(), grantedNodes = new Map();
+        for (const profile of initial.profiles) {
+          if (profile.connectionKind !== "owner-host" || profile.hubUrl !== origin) continue;
+          for (const [kind, rows] of [["workspace", profile.sources.map(row => [row[0], row[2]])], ["project", profile.projects]]) {
+            for (const [id, sourcePath] of rows) if (sourcePath) {
+              const key = `${profile.companyId}:${kind}:${id}`;
+              const paths = mappings.get(key) ?? new Set();
+              paths.add(pathKey(sourcePath)); mappings.set(key, paths);
+            }
+          }
+        }
+        for (const grant of inventory.grants) if (grant.revokedAt === null) {
+          const key = `${grant.kind}:${grant.sourceId}`;
+          const nodes = grantedNodes.get(key) ?? [];
+          nodes.push(grant.nodeId); grantedNodes.set(key, nodes);
+        }
+        for (const source of inventory.sources) {
+          const paths = mappings.get(`${source.workspaceId}:${source.kind}:${source.kind === "workspace" ? source.id : source.resourceId}`);
+          if (!paths || paths.size !== 1) throw failure();
+          const share = shares.get(source.kind === "workspace" ? source.id : source.resourceId);
+          const activeGrants = (grantedNodes.get(`${source.kind}:${source.id}`) ?? []).sort();
+          if (source.routeFingerprint === null) {
+            if (share || activeGrants.length !== 0) throw failure();
+          } else if (!share || pathKey(share.sourcePath) !== [...paths][0]
+            || share.routeFingerprint !== source.routeFingerprint
+            || JSON.stringify(share.nodeIds) !== JSON.stringify(activeGrants)) throw failure();
+        }
+        assertCurrent();
+        return Object.freeze({ sourceCount: inventory.sources.length, grantCount: inventory.grants.length,
+          fingerprint: inventory.fingerprint });
+      } catch { throw failure(); }
+    } });
 }

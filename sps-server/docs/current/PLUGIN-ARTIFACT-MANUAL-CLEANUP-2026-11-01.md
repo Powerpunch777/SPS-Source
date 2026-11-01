@@ -57,6 +57,13 @@ credential envelopes and detects metadata changes. Desktop mapping reconciliatio
 complete Source mutation fencing and Native restart uncertainty remain unfinished;
 the fingerprint does not authorize removal.
 
+The [private Source reconciliation increment](../reviews/SOURCE-ARTIFACT-RECONCILIATION-2026-11-02.md)
+adds explicitly requested, independently validated Source metadata over the owned
+parent IPC and compares Host mappings, protected route hashes and active grant
+Node sets. Nonempty Preview sources cannot borrow Host mappings. This remains a
+change detector, not complete mutation fencing; `cleanupReady:false`, eligibility,
+fresh Host confirmation, selective removal and Settings remain unfinished.
+
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
 authorized by this policy. This does not authorize cleaning any current user

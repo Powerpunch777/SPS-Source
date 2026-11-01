@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { requireSpsSourceArtifactInventory } from "./source-artifact-inventory.mjs";
 
 const REQUEST = "sps.plugin-artifacts.request";
 const RESPONSE = "sps.plugin-artifacts.response";
@@ -42,8 +43,9 @@ function parentPaths(value) {
   if (Buffer.byteLength(JSON.stringify(result), "utf8") > 4 * 1024 * 1024) throw failure();
   return result;
 }
-function snapshot(value, expectedParent) {
-  const input = exact(value, ["coverage", "fingerprint", "references", ...(expectedParent === undefined ? [] : ["parentPaths"])]);
+function snapshot(value, expectedParent, includeSources) {
+  const input = exact(value, ["coverage", "fingerprint", "references", ...(expectedParent === undefined ? [] : ["parentPaths"]),
+    ...(includeSources ? ["sourceInventory"] : [])]);
   const coverage = expectedParent === undefined ? "core-only" : "core-and-parent-paths";
   if (input.coverage !== coverage || typeof input.fingerprint !== "string" || !HASH.test(input.fingerprint) || !Array.isArray(input.references)
     || input.references.length > 60_000 || Buffer.byteLength(JSON.stringify(input), "utf8") > 8 * 1024 * 1024) throw failure();
@@ -63,7 +65,8 @@ function snapshot(value, expectedParent) {
     }));
   }
   return Object.freeze({ coverage, fingerprint: input.fingerprint, references: Object.freeze(references),
-    ...(expectedParent === undefined ? {} : { parentPaths: observedParent }) });
+    ...(expectedParent === undefined ? {} : { parentPaths: observedParent }),
+    ...(includeSources ? { sourceInventory: requireSpsSourceArtifactInventory(input.sourceInventory) } : {}) });
 }
 
 /** Only an exact directly owned ChildProcess supplies this private channel. */
@@ -104,22 +107,23 @@ export function createSpsPluginArtifactParentClient(channel, { isCurrent, onUnce
       if (value.v !== 1 || value.channelId !== channelId || value.transactionId !== item.transactionId
         || value.operation !== item.operation || typeof value.ok !== "boolean"
         || value.ok === false && value.errorCode !== "plugin_artifact_channel_unavailable") throw failure();
-      const result = value.ok && item.operation === "begin" ? snapshot(value.snapshot, item.parentPaths) : null;
+      const result = value.ok && item.operation === "begin" ? snapshot(value.snapshot, item.parentPaths, item.includeSources) : null;
       clearTimeout(item.timer); pending.delete(value.id);
       if (value.ok) item.resolve(result);
       else item.reject(failure());
     } catch { fail(); }
   };
-  const request = (operation, transactionId, parentPaths) => {
+  const request = (operation, transactionId, parentPaths, includeSources = false) => {
     assertCurrent();
     if (!channelId) throw failure();
     const id = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { fail(); }, timeoutMs);
-      pending.set(id, { operation, transactionId, parentPaths, timer, resolve, reject });
+      pending.set(id, { operation, transactionId, parentPaths, includeSources, timer, resolve, reject });
       try {
         channel.send({ v: 1, kind: REQUEST, channelId, id, transactionId, operation,
-          ...(parentPaths === undefined ? {} : { parentPaths }) }, error => { if (error) fail(); });
+          ...(parentPaths === undefined ? {} : { parentPaths }),
+          ...(includeSources ? { sourceInventory: true } : {}) }, error => { if (error) fail(); });
       } catch { fail(); }
     });
   };
@@ -131,12 +135,23 @@ export function createSpsPluginArtifactParentClient(channel, { isCurrent, onUnce
     async withSnapshot(action, options) {
       assertCurrent();
       if (active || typeof action !== "function") throw failure();
-      const paths = options === undefined ? undefined : parentPaths(exact(options, ["parentPaths"]).parentPaths);
+      let paths, includeSources = false;
+      if (options !== undefined) {
+        const fields = Object.getOwnPropertyDescriptors(options);
+        const names = ["parentPaths", "sourceInventory"].filter(key => Object.hasOwn(fields, key));
+        if (names.length === 0) throw failure();
+        const input = exact(options, names);
+        if (Object.hasOwn(fields, "sourceInventory")) {
+          if (input.sourceInventory !== true) throw failure();
+          includeSources = true;
+        }
+        if (Object.hasOwn(fields, "parentPaths")) paths = parentPaths(input.parentPaths);
+      }
       active = true;
       const transactionId = randomUUID();
       let begun = false, inScope = false;
       try {
-        const observation = await request("begin", transactionId, paths);
+        const observation = await request("begin", transactionId, paths, includeSources);
         assertCurrent(); begun = true; inScope = true;
         const scope = Object.freeze({ ...observation, async assertCurrent() {
           if (!inScope) throw failure();

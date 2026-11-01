@@ -115,9 +115,12 @@ test("actual Windows owned Core retains its private reference scope across Main-
     id: "io.sps.artifact-test", kind: "local", displayName: "Artifact test", localPath: registryPath,
   }] });
   const observation = createSpsPluginArtifactObservation({ activity, capture: () => ({
+    includeSourceInventory: true,
+    requireSourceReconciliation: true,
     assertCurrent() {}, async readInputs() {
       return readSpsDesktopPluginArtifactInputs({ vaultRoot: root, preview: second, assertCurrent() {},
         readSourceReferences: () => captureSpsDesktopSourceArtifactReferences({ readState: () => sourceState,
+          hostOrigin: preview.url,
           readShareState: () => assert.fail("The isolated source has no encrypted share credentials.") }),
         runtimeOwners: [{ kind: "core", manager }, { kind: "core", manager: previewManager }] });
     },
@@ -127,6 +130,15 @@ test("actual Windows owned Core retains its private reference scope across Main-
   const result = await observation.withSnapshot(async scope => {
     oldScope = scope;
     assert.equal(scope.coverage, "desktop-and-owned-cores");
+    assert.deepEqual(scope.sourceReconciliation, { sourceCount: 0, grantCount: 0,
+      fingerprint: scope.sourceInventories[0].inventory.fingerprint });
+    assert.deepEqual(scope.sourceInventories.map(row => row.processOwner), ["host", "preview"]);
+    for (const { inventory } of scope.sourceInventories) {
+      assert.deepEqual(inventory.sources, []);
+      assert.deepEqual(inventory.grants, []);
+      assert.match(inventory.fingerprint, /^[a-f0-9]{64}$/);
+      assert.equal(Object.isFrozen(inventory), true);
+    }
     assert.match(scope.fingerprint, /^[a-f0-9]{64}$/);
     assert.ok(scope.references.some(reference => reference.source === "desktop-developer-index"
       && reference.processOwner === "desktop"));
