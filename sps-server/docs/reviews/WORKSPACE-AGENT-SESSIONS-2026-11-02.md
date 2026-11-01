@@ -80,6 +80,43 @@ Ignored local logs use `desktop/dist/workspace-agent-sessions-*` for focused
 checks, typecheck, build and SDK tests. Final committed tuple, further tests and
 actual app rechecks are recorded below once observed, never inferred.
 
+### Exact Source Desktop Regression
+
+Source `de9b598ce073454524466f37f745f8836da95f2d`, Core db37 and SDK e581 passed
+Node24 `npm run test:ci`: serial4/4 plus remaining2211total/2208pass/3unavailable
+Windows8.3alias skips/0fail, aggregate2215total/2212pass/3skips/0fail, exit0.
+This includes actual owned Core reference/Source mutation observation, not a
+claim of the unfinished artifact deletion UI or whole-descendant qualification.
+
+The first actual source Builder recheck used Builderfa6249d on that tuple and
+exited0: real UI bridge, explicit lifecycle, TXT preview/manual save, A/B isolation,
+Lead selection with original Agent config preserved, Host restart and independent
+Settings recovery. All4 owned Main processes exited0,8 output streams ended,
+0output failures and exact temporary cleanup completed. However, its build log
+incorrectly hardcoded the previous SDK61 revision even though package/lock and
+installed dependency pinned e581. The UI pass is retained, but that stale log is
+not trustworthy SDK provenance. A build-revision fix and final recheck follow.
+No real Google/AI, signed installation, physical two-PC or Main Preview acceptance.
+
+The final Builder `5e7a5999265b6fb1c03c2bdd44af46a6bb2f6d3a` recheck exited0 on
+the same Source de9/Core db37/SDK e581 runtime, with only Source evidence-document
+edits in progress. Builder now validates matching manifest/root-lock/resolved
+commit pins before writing output and rejects unpinned/mismatched references;
+its build log correctly reports e581. This is declared-lock provenance, not
+installed-byte attestation. Parent Builder check48/48 plus SDK validate/test pass.
+The final real UI/storage/A-B/Lead selection/restart/Settings checks pass again:
+4orderly Main exits,8ended streams,0output failures and exact temporary cleanup.
+Parent inspected actual captures: plugin-only black/neutral-gray v9 layout,
+honest disabled send/System states, light Core frame. UI entry SHA remains
+e6f37705ebdfa27f496c5a52641635b399f9dbf4e66ebb29fa25beb39dc23e5a;
+the SDK UI-directory fingerprint790d0163 is a different hash target.
+
+An additional unchanged `npm run test:e2e:bootstrap` passed locally with confirmed
+owned Job cleanup. The earlier107 remote CDP timeout remains a failed run with
+unknown root cause; de9 push's bootstrap step also passed independently while
+its remaining Windows qualification was still live. No deadline or assertion was
+relaxed, and no remote run was restarted.
+
 ## Still Required
 
 Durable session ensure and request/result receipts, ambiguous-send recovery,

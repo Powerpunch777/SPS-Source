@@ -29,8 +29,12 @@ after revoked Agent lookup. Actual child RPC liveness, capability/result limits
 and existing cancellation/Workspace regressions pass. All30 typechecks/build and
 public SDK184/184 pass. Existing build warnings remain. Production audit policy
 passes with0critical/high, two low and one reviewed moderate advisory, not zero
-vulnerabilities. Current Desktop/app/remote acceptance is recorded in the linked
-increment when observed; previous-tuple successes are not inherited. Builder
+vulnerabilities. Exact Source de9 Desktop test:ci passes2215total/2212pass/3skips;
+Builder5e7a599 real source UI/storage/restart/Settings recheck and local bootstrap
+pass with owned cleanup. The linked increment records exact scopes and the first
+Builder stale build-log correction. Source107 remote bootstrap CDP timeout remains
+failed/unknown-root-cause; de9 remote Windows/Legacy qualification is still live,
+not passed. Previous-tuple successes are not inherited. Builder
 still cannot send: durable session ensure/message receipts and real AI are pending.
 Invocation checks do not undo an admitted wakeup or prove that an ambiguous send
 never started. Core cleanup/ownership/Native uncertainty and final qualification
