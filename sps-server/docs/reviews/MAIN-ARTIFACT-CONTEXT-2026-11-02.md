@@ -76,9 +76,27 @@ with three unavailable Windows8.3-alias skips; aggregate2140 total,2137 passed,
 final input-reader code, as well as the Core config and Memory-idle protection
 tests. The ignored local log is
 `desktop/dist/artifact-main-context-final-node24-20261102.log`.
-No new screenshot, installed app, source Desktop UI or physical acceptance is
-claimed for this increment. Source633 CI `41318059600` independently reproduced
+No new screenshot, installed app or physical acceptance is claimed for this
+increment. Source633 CI `41318059600` independently reproduced
 the same pre-fix short-alias failure; it is not counted as a pass.
+
+### Source App Recheck
+
+After committing Source `2ee7a348e205f3323903ababfe292b7cc429ddf6`, the separate
+Builder acceptance ran with Core `f8ef641e`, SDK `61a929f6`, Builder docs4cef and
+unchanged runtime0a935, under Node24.22.1. It exited0: actual source Electron/Core
+installation/activation, Builder bridge, A/B isolation, explicit text save,
+Agent binding/config preservation, restart and independent Settings recovery.
+The UI index hash remained `c099f8b77d49656c5117bd5395fd0f44c2752f2759bee30a47a77d9a6bba4ba0`.
+Four Main exits were orderly, eight output streams ended without failure and
+the exact isolated temporary root was removed. The local ignored Builder log
+is `artifacts/core-host-main-context-20261102.log`.
+
+This uses mock Identity and proves startup/regression, not live Google OAuth or
+invocation of the new unmounted private Main observation/cleanup workflow.
+There is no actual AI, Main-launched Preview, whole-descendant/physical or signed
+installer qualification, and no new screenshot was generated. Source2ee hosted
+runs `41320030775`/`41320034930` were submitted but not complete at this record.
 
 Remaining work includes the full Source/Runner and other live-process reference
 audit, complete ownership/inventory eligibility under the same fence, fresh
