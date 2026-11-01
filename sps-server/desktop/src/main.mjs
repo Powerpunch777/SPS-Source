@@ -131,6 +131,7 @@ import {
 } from "./owner-host-config.mjs";
 import {
   createSpsDefaultMemoryManager,
+  defaultMemoryVaultLayout,
   ensureSpsDefaultMemoryConfig,
   spsDefaultMemoryUrl,
 } from "./default-memory-host.mjs";
@@ -201,6 +202,8 @@ import {
 } from "./plugin-preview-runtime.mjs";
 import { createSpsPluginPreviewOperationGate } from "./plugin-preview-operation-gate.mjs";
 import { createSpsDesktopPluginArtifactActivityGate } from "./plugin-artifact-activity-gate.mjs";
+import { createSpsPluginArtifactObservation } from "./plugin-artifact-observation.mjs";
+import { readSpsDesktopPluginArtifactInputs } from "./desktop-artifact-inputs.mjs";
 import {
   appendDeveloperDiagnostic,
   clearDeveloperDiagnostics,
@@ -2684,6 +2687,62 @@ function assertRegistryOwner() {
   if (!isOwnerHostProfile() || !currentAccountOwnsOwnerHost()) {
     throw new Error("Only the signed-in SPS Owner can manage Registry sources.");
   }
+}
+
+function captureDesktopPluginArtifactContext() {
+  assertRegistryOwner();
+  const account = currentDesktopAccount();
+  const workspace = captureWorkspaceReadScope();
+  const host = ownerHostManager, memory = defaultMemoryManager, preview = pluginPreviewRuntime;
+  const previewManager = preview?.manager ?? null;
+  const previewPaths = preview ? Object.freeze({ fixturePath: preview.fixturePath, accessTokenPath: preview.accessTokenPath }) : null;
+  const previewIdentity = preview ? [preview.projectId, preview.buildId, preview.previewVault, preview.configPath] : null;
+  const generation = ownerVaultOperations.connectionGeneration();
+  const restoreGeneration = ownerHostRestoreRunner.generation();
+  const userData = app.getPath("userData"), vault = ownerVaultRoot();
+  const deviceId = account?.deviceId, issuer = account?.identityUrl || configuredDesktopIdentityUrl();
+  if (typeof deviceId !== "string" || !deviceId || typeof issuer !== "string" || !issuer) {
+    throw new Error("A verified SPS device account is required before reviewing Plugin artifacts.");
+  }
+  const assertCurrent = () => {
+    assertRegistryOwner();
+    workspace.assertCurrent();
+    const current = currentDesktopAccount();
+    if (isQuitting || desktopStateUnavailable || ownerVaultOperations.isRestoring() || ownerVaultOperations.isChangingConnection()
+      || ownerHostRestoreRunner.isActive() || ownerHostRestoreRunner.hasUnconfirmedTermination()
+      || ownerHostRestoreRunner.generation() !== restoreGeneration
+      || generation !== ownerVaultOperations.connectionGeneration() || !current?.verifiedAt
+      || current.deviceId !== deviceId || (current.identityUrl || configuredDesktopIdentityUrl()) !== issuer
+      || app.getPath("userData") !== userData || ownerVaultRoot() !== vault
+      || ownerHostManager !== host || defaultMemoryManager !== memory || pluginPreviewRuntime !== preview
+      || !host || ownerHostStatus.state !== "running" || ownerHostStatus.owned !== true
+      || requireSpsOwnerHostOrigin(state.profile.hubUrl) !== requireSpsOwnerHostOrigin(ownerHostStatus.url)
+      || preview && (preview.manager !== previewManager || preview.fixturePath !== previewPaths.fixturePath
+        || preview.accessTokenPath !== previewPaths.accessTokenPath
+        || [preview.projectId, preview.buildId, preview.previewVault, preview.configPath].some((value, index) => value !== previewIdentity[index]))) {
+      throw new Error("The current signed-in Host changed or cannot safely observe Plugin artifacts.");
+    }
+  };
+  assertCurrent();
+  return Object.freeze({ assertCurrent,
+    participants: Object.freeze([Object.freeze({ id: "host", manager: host }),
+      ...(preview ? [Object.freeze({ id: "preview", manager: previewManager })] : [])]),
+    readInputs: () => readSpsDesktopPluginArtifactInputs({ vaultRoot: vault, preview: previewPaths, assertCurrent,
+      configuredMemoryPath: memory ? defaultMemoryVaultLayout(vault).configPath : null,
+      runtimeOwners: [{ kind: "core", manager: host }, ...(preview ? [{ kind: "core", manager: previewManager }] : []),
+        ...(memory ? [{ kind: "memory", manager: memory }] : [])] }),
+  });
+}
+
+// Private Main call site for the forthcoming inventory/confirmation flow. No
+// renderer IPC, arbitrary-path API, or removal permission is exposed here.
+async function withDesktopPluginArtifactReferences(action) {
+  if (typeof action !== "function") throw new TypeError("Plugin artifact observation requires an action.");
+  const context = captureDesktopPluginArtifactContext();
+  if (!await ensureDesktopIdentityAccessToken()) throw new Error("Sign in again before reviewing Plugin artifacts.");
+  context.assertCurrent();
+  return createSpsPluginArtifactObservation({ activity: desktopPluginArtifactActivity, capture: () => context }).withSnapshot(scope =>
+    action(Object.freeze({ ...scope, coverage: "desktop-known-inputs-and-owned-cores", cleanupReady: false })));
 }
 
 function assertRegistryWindowEvent(event) {

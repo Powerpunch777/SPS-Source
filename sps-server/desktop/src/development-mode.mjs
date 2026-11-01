@@ -12,7 +12,7 @@ export function resolveDesktopDevelopmentNodeCommand({ packaged, command } = {})
     throw new Error("The development Node launcher must provide an absolute executable file path.");
   }
   try {
-    const actual = realpathSync(command);
+    const actual = realpathSync.native(command);
     if (!statSync(actual).isFile()) throw new Error("Not a file.");
     return actual;
   } catch {

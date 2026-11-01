@@ -12,8 +12,8 @@ import { createSpsOwnerHostManager, resolveSpsOwnerHostRuntime } from "../src/ow
 import { createSpsDesktopPluginArtifactActivityGate } from "../src/plugin-artifact-activity-gate.mjs";
 import { createSpsPluginArtifactObservation } from "../src/plugin-artifact-observation.mjs";
 import { resolveDesktopDevelopmentNodeCommand } from "../src/development-mode.mjs";
-import { readDeveloperProjectArtifactReferences } from "../src/developer-project-store.mjs";
-import { readRegistrySourceArtifactReferences, saveRegistrySources } from "../src/registry-source-catalog.mjs";
+import { saveRegistrySources } from "../src/registry-source-catalog.mjs";
+import { readSpsDesktopPluginArtifactInputs } from "../src/desktop-artifact-inputs.mjs";
 
 async function freePort() {
   const server = createServer();
@@ -108,18 +108,8 @@ test("actual Windows owned Core retains its private reference scope across Main-
   }] });
   const observation = createSpsPluginArtifactObservation({ activity, capture: () => ({
     assertCurrent() {}, async readInputs() {
-      const developer = await readDeveloperProjectArtifactReferences({ vaultRoot: root });
-      const registry = await readRegistrySourceArtifactReferences({ vaultRoot: root });
-      const runtimes = [manager, previewManager].map(owner => owner.readRuntimeArtifactReferences());
-      assert.ok(runtimes.every(value => value.available), "Actual owned launch references must be available.");
-      const runtimeSignature = JSON.stringify(runtimes);
-      return { references: [...developer.references, ...registry.references, ...runtimes.flatMap(value => value.references)], async assertCurrent() {
-        await developer.assertCurrent();
-        await registry.assertCurrent();
-        if (JSON.stringify([manager, previewManager].map(owner => owner.readRuntimeArtifactReferences())) !== runtimeSignature) {
-          throw new Error("Owned runtime reference generation changed.");
-        }
-      } };
+      return readSpsDesktopPluginArtifactInputs({ vaultRoot: root, preview: second, assertCurrent() {},
+        runtimeOwners: [{ kind: "core", manager }, { kind: "core", manager: previewManager }] });
     },
     participants: [{ id: "host", manager }, { id: "preview", manager: previewManager }],
   }) });
@@ -138,6 +128,10 @@ test("actual Windows owned Core retains its private reference scope across Main-
       && reference.path === coreRoot && reference.kind === "directory" && reference.processOwner === "desktop"));
     assert.ok(scope.references.some(reference => reference.source === "desktop-owned-runtime"
       && reference.path === nodeCommand && reference.kind === "file"));
+    assert.ok(scope.references.some(reference => reference.source === "desktop-runtime-config"
+      && reference.path === second.config.database.embeddedPostgresDataDir && reference.kind === "directory"));
+    assert.ok(scope.references.some(reference => reference.source === "desktop-preview-data"
+      && reference.path === second.accessTokenPath && reference.kind === "file"));
     await assert.rejects(manager.withPluginArtifactReferences(async () => assert.fail("Host scope must remain held.")));
     await assert.rejects(previewManager.withPluginArtifactReferences(async () => assert.fail("Preview scope must remain held.")));
     await scope.assertCurrent();
@@ -163,7 +157,7 @@ test("actual Windows owned Core retains its private reference scope across Main-
   assert.equal(stopped.lastError, null);
   release();
   await assert.rejects(interrupted, error => error.code === "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE"
-    || error.message === "Owned runtime reference generation changed.");
+    || error.message === "Desktop artifact inputs are incomplete or changed; preserve all package files.");
   await activity.withMaintenance(async () => {});
   await assert.rejects(manager.withPluginArtifactReferences(async () => {}));
 });

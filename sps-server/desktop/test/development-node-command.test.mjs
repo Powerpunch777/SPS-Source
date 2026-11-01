@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,7 @@ import test from "node:test";
 import { resolveDesktopDevelopmentNodeCommand } from "../src/development-mode.mjs";
 
 test("uses the actual Node executable without a PATH lookup or an Electron fallback", async () => {
-  assert.equal(resolveDesktopDevelopmentNodeCommand({ command: process.execPath }), await realpath(process.execPath));
+  assert.equal(resolveDesktopDevelopmentNodeCommand({ command: process.execPath }), realpathSync.native(process.execPath));
 });
 
 test("resolves an ordinary file symlink to the path actually used for launch", async t => {
@@ -25,7 +26,8 @@ test("resolves an ordinary file symlink to the path actually used for launch", a
       throw error;
     }
 
-    assert.equal(resolveDesktopDevelopmentNodeCommand({ command: link }), await realpath(executable));
+    assert.equal(resolveDesktopDevelopmentNodeCommand({ command: link }), realpathSync.native(executable));
+    assert.equal(await realpath(executable), realpathSync.native(executable));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

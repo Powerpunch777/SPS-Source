@@ -30,6 +30,13 @@ stable read-only hardlinks without changing ownership/removal rules. The officia
 to Main's Host/Preview resolution. Unhinted source launch coverage, full discovery
 and Settings remain incomplete; this does not provide removal authority.
 
+The [Main known-input context](../reviews/MAIN-ARTIFACT-CONTEXT-2026-11-02.md)
+now binds account/Host/restore generations and composes live runtime, config,
+Developer, Registry and Preview auxiliary references. Stopped configured Memory
+data remains protected. Its private result explicitly reports `cleanupReady:false`;
+full Source/Runner discovery and eligibility/confirmation/removal/Settings remain
+pending. No cleanup endpoint or deletion approval is exposed by this increment.
+
 The Host sees a cleanup list in Settings and explicitly selects and confirms
 unused old Plugin execution packages. No automatic artifact retirement is
 authorized by this policy. This does not authorize cleaning any current user
