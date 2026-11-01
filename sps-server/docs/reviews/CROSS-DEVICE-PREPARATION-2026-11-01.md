@@ -156,6 +156,17 @@ app, installation, login or Serve setting has been changed.
 
 ## Remaining Work
 
+The no-Source physical CLI fixture previously saved an empty default working
+folder, which the real command runner correctly rejects. Its controller now
+creates `runner-work` only inside its freshly owned `runner-profile`, below a
+canonical direct Temp fixture. Existing folders/links, linked profiles and
+changed profile identities are rejected. The saved public profile uses this
+inert CLI folder; it never supplies a project mapping, Source path or cwd hint.
+Actual workspace-resolution regression verifies that a remote project's or
+Source's missing Host mapping still rejects instead of using this default.
+Controller/session/portable-reference/launch tests16/16 pass. No product code,
+Core/SDK contract or existing profile changed, and this is not a remote trial.
+
 1. Installed migration passed on5117; extraction optimization and the remaining
    actual legacy confirmation fix still require exact revised-HEAD Windows
    acceptance. Retain original bounds and complete cleanup/reinstall checks.

@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   assertCrossDeviceBrowserOwnership,
   createCrossDeviceDesktopSession,
+  prepareCrossDeviceRunnerWorkspace,
   requireCrossDeviceDebugEndpoint,
   requireCrossDeviceIdentityOrigin,
 } from "../scripts/cross-device-desktop-session.mjs";
+import { assertPlainDirectory } from "../scripts/installer-ci-safety.mjs";
+import { resolveSpsNodeWorkspace } from "../../desktop-node/src/command-runner.mjs";
 
 const candidateExecutable = "C:\\fixture\\candidate\\SPS Desktop.exe";
 const freshProfile = "C:\\fixture\\host-profile";
@@ -23,6 +28,56 @@ test("cross-device Identity is a single explicit fixture loopback origin", () =>
     "http://user:secret@127.0.0.1:45123", "http://127.0.0.1:45123/other", "http://127.0.0.1:45123/?token=secret",
     "http://127.0.0.1:45123/#secret", "not-an-origin"]) {
     assert.throws(() => requireCrossDeviceIdentityOrigin(value));
+  }
+});
+
+test("inert cross-device Runner CLI receives only a fresh owned default folder, not a project mapping", async () => {
+  const parent = await realpath(os.tmpdir());
+  assert.equal(await assertPlainDirectory(parent), parent);
+  const root = await mkdtemp(path.join(parent, "sps-workspace-surfaces-e2e-"));
+  const identity = await lstat(root, { bigint: true });
+  try {
+    const profile = path.join(root, "runner-profile");
+    await mkdir(profile);
+    const workspace = await prepareCrossDeviceRunnerWorkspace(profile);
+    assert.equal(workspace, path.join(profile, "runner-work"));
+    assert.equal(await resolveSpsNodeWorkspace({}, { connectionKind: "remote", defaultWorkspacePath: workspace }), workspace);
+    await assert.rejects(prepareCrossDeviceRunnerWorkspace(profile), error => error.code === "EEXIST");
+    await assert.rejects(resolveSpsNodeWorkspace({ projectId: "host-project" }, {
+      connectionKind: "remote", defaultWorkspacePath: workspace, projectWorkspaces: { "host-project": workspace },
+    }), /Owner Host must configure/);
+    await assert.rejects(resolveSpsNodeWorkspace({ workspaceSourceId: "host-source" }, {
+      connectionKind: "remote", defaultWorkspacePath: workspace,
+      workspaceSources: [{ id: "host-source", sourcePath: workspace }],
+    }), /Host must configure/);
+    for (const invalid of [path.join(root, "host-profile"), `${profile}${path.sep}..${path.sep}runner-profile`,
+      "runner-profile", "", null]) await assert.rejects(prepareCrossDeviceRunnerWorkspace(invalid));
+  } finally {
+    assert.equal(await assertPlainDirectory(root), root);
+    assert.equal(path.dirname(root), parent);
+    const current = await lstat(root, { bigint: true });
+    for (const key of ["dev", "ino", "birthtimeNs"]) assert.equal(current[key], identity[key]);
+    await rm(root, { recursive: true, force: false });
+  }
+});
+
+test("cross-device Runner workspace rejects a linked profile before creating any child", async () => {
+  const parent = await realpath(os.tmpdir());
+  const root = await mkdtemp(path.join(parent, "sps-workspace-surfaces-e2e-"));
+  const identity = await lstat(root, { bigint: true });
+  try {
+    const target = path.join(root, "unchanged-target");
+    await mkdir(target);
+    const profile = path.join(root, "runner-profile");
+    await symlink(target, profile, process.platform === "win32" ? "junction" : "dir");
+    await assert.rejects(prepareCrossDeviceRunnerWorkspace(profile), /linked/);
+    await assert.rejects(lstat(path.join(target, "runner-work")), error => error.code === "ENOENT");
+  } finally {
+    assert.equal(await assertPlainDirectory(root), root);
+    assert.equal(path.dirname(root), parent);
+    const current = await lstat(root, { bigint: true });
+    for (const key of ["dev", "ino", "birthtimeNs"]) assert.equal(current[key], identity[key]);
+    await rm(root, { recursive: true, force: false });
   }
 });
 

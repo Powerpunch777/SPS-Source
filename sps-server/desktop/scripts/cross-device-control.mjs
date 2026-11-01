@@ -4,7 +4,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { promisify } from "node:util";
-import { createCrossDeviceDesktopSession, requireCrossDeviceIdentityOrigin } from "./cross-device-desktop-session.mjs";
+import { createCrossDeviceDesktopSession, prepareCrossDeviceRunnerWorkspace, requireCrossDeviceIdentityOrigin } from "./cross-device-desktop-session.mjs";
 import { inspectCrossDeviceCandidate } from "./cross-device-candidate-guards.mjs";
 import { createMockIdentityServer } from "./desktop-e2e-identity.mjs";
 import { enableSpsTailscaleServe, disableSpsTailscaleServe, hasSpsTailscaleServeHandler } from "../src/team-access.mjs";
@@ -181,8 +181,9 @@ async function action(request) {
   }
   if (request.action === "connect-runner") {
     assert.equal(role, "runner");
+    const defaultWorkspacePath = await prepareCrossDeviceRunnerWorkspace(session.profile);
     await session.setupAction("saveProfile", { hubUrl: request.hubUrl, companyId: request.companyId,
-      displayName: "Cross-device isolated Runner", authMode: "sps-identity", defaultWorkspacePath: "" });
+      displayName: "Cross-device isolated Runner", authMode: "sps-identity", defaultWorkspacePath });
     const result = await session.setupAction("connectNode");
     return { node: result.node, verified: result.verified, runners: result.runners };
   }

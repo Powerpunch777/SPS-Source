@@ -44,6 +44,18 @@ test("Host control performs both public setup actions before any Workspace API o
   assert.match(renderer, /\$\("#owner-open-workspace"\)\.addEventListener\("click",[\s\S]*?await window\.spsDesktop\.openWorkspace\(\)/);
 });
 
+test("Runner control prepares a fresh inert execution folder before connecting", async () => {
+  const source = await readFile(entry, "utf8");
+  const start = source.indexOf('if (request.action === "connect-runner")');
+  const end = source.indexOf('if (request.action === "pause-network")', start);
+  assert.ok(start >= 0 && end > start);
+  const operation = source.slice(start, end);
+  assert.match(operation, /assert\.equal\(role, "runner"\)/);
+  assert.match(operation, /const defaultWorkspacePath = await prepareCrossDeviceRunnerWorkspace\(session\.profile\);\s*await session\.setupAction\("saveProfile",/);
+  assert.match(operation, /authMode: "sps-identity", defaultWorkspacePath \}\);\s*const result = await session\.setupAction\("connectNode"\)/);
+  assert.doesNotMatch(operation, /projectWorkspaces|workspaceSources|cwdHint/);
+});
+
 test("an empty owned operator session closes without starting an app or listener", { skip: process.platform !== "win32" }, async () => {
   const result = await invoke('{"id":1,"action":"close"}\n');
   assert.equal(result.code, 76, "This is only pending external Job qualification, not a standalone pass.");

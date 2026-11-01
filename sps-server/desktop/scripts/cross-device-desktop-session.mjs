@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import { createServer } from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnWindowsJobSupervisor } from "../../desktop-node/src/windows-job-supervisor.mjs";
@@ -16,6 +17,24 @@ export function requireCrossDeviceIdentityOrigin(value) {
     throw new Error("Cross-device fixture Identity must be one exact loopback origin.");
   }
   return url.origin;
+}
+
+export async function prepareCrossDeviceRunnerWorkspace(profile) {
+  assert.equal(typeof profile, "string");
+  assert.ok(path.isAbsolute(profile) && path.resolve(profile) === profile);
+  assert.equal(path.basename(profile), "runner-profile");
+  assert.match(path.basename(path.dirname(profile)), /^sps-workspace-surfaces-e2e-[A-Za-z0-9]+$/);
+  assert.equal(path.dirname(path.dirname(profile)), await realpath(os.tmpdir()));
+  assert.equal(await assertPlainDirectory(profile), profile);
+  const before = await lstat(profile, { bigint: true });
+  const workspace = path.join(profile, "runner-work");
+  // This is only the inert no-Source CLI fixture's working folder. A project
+  // or Source execution still uses the Host's normal authority and mapping.
+  await mkdir(workspace); // Never adopt an existing folder or link.
+  assert.equal(await assertPlainDirectory(workspace), workspace);
+  const after = await lstat(profile, { bigint: true });
+  for (const key of ["dev", "ino", "birthtimeNs"]) assert.equal(after[key], before[key]);
+  return workspace;
 }
 
 export function requireCrossDeviceDebugEndpoint(value, port, kind) {
