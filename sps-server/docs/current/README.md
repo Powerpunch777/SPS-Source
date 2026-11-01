@@ -65,6 +65,10 @@
 
 ## Engineering evidence
 
+- [2026-11-02 session identity recovery](../reviews/WORKSPACE-SESSION-ENSURE-2026-11-02.md):
+  explicit scoped ensure and known-ID recovery; not durable message submission.
+- [Session and durable submission plan](AGENT-SESSION-REQUEST-RECOVERY-PLAN-2026-11-02.md):
+  implemented identity contract versus unfinished request receipts and dispatch integration.
 - [2026-11-02 Workspace Agent Session increment](../reviews/WORKSPACE-AGENT-SESSIONS-2026-11-02.md):
   invocation-bound session methods and bounded persisted answer output. Durable
   send recovery and actual Builder AI remain unfinished.
