@@ -30,3 +30,16 @@ test("hosted Windows requires historical Main backup acceptance with the normal 
   assert.ok(runner.includes('if (mode == "owner-vault-historical-core") return RunNode(node, directory, "smoke-owner-vault-transfer-desktop.mjs", "--historical-core-backup", OwnedJobCleanupArgument);'));
   assert.ok(runner.slice(runner.indexOf("static bool OwnedJobGateMode"), runner.indexOf("static int OwnedJobWaitMilliseconds")).includes('value == "owner-vault-historical-core"'));
 });
+
+test("historical Main restore checks the verified current migration files instead of a stale count", async () => {
+  const source = await readFile(new URL("../scripts/smoke-owner-vault-transfer-desktop.mjs", import.meta.url), "utf8");
+  for (const proof of ['await verifyHistoricalCoreSchema(core)',
+    'verified.sqlFiles.map(file => file.filename)', '...verified.upgradeFiles',
+    'assert.equal(history.length, expectedFiles.length)',
+    'await inspectMigrations(databaseUrl)', 'assert.equal(migrations.status, "upToDate")',
+    'assert.deepEqual([...migrations.availableMigrations].sort(), expectedFiles)',
+    'assert.deepEqual([...migrations.appliedMigrations].sort(), expectedFiles)',
+    "to_regclass('public.sps_session_dispatches')",
+  ]) assert.ok(source.includes(proof), `Missing current-journal Main restore assertion: ${proof}`);
+  assert.doesNotMatch(source, /assert\.equal\(history\.length,\s*\d+\)/);
+});

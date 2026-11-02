@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createMockIdentityServer } from "./desktop-e2e-identity.mjs";
 import { parseE2eHostReadyTimeout } from "./e2e-host-ready-timeout.mjs";
@@ -13,6 +14,7 @@ import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 import { captureLegacyStateEvidence, rewriteAsLegacyV11State } from "./legacy-desktop-state-acceptance.mjs";
 import { validateOwnerVaultE2eCleanup } from "./owner-vault-e2e-cleanup-contract.mjs";
 import { observeTransferWindows } from "./owner-vault-window-observation.mjs";
+import { verifyHistoricalCoreSchema } from "./historical-core-schema-fixture.mjs";
 import { readSpsOwnerVaultRestoreReceipt } from "../src/owner-vault-restore-receipt.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { assertWorkspaceOpenAccountFence } from "./workspace-open-account-fence-acceptance.mjs";
@@ -275,20 +277,31 @@ async function restoreNativeDialogs(app) {
 
 async function verifyHistoricalMainSchema() {
   await fixture.assertCurrent();
+  const verified = await verifyHistoricalCoreSchema(core);
+  const expectedFiles = [...verified.sqlFiles.map(file => file.filename), ...verified.upgradeFiles].sort();
   const vault = path.join(targetProfile, "owner-vault");
   const config = JSON.parse(await readFile(path.join(vault, "config.json"), "utf8"));
   const expectedData = await realpath(path.join(vault, "database"));
   assert.equal(await realpath(config.database.embeddedPostgresDataDir), expectedData);
   const port = config.database.embeddedPostgresPort;
   assert.ok(Number.isInteger(port) && port > 0 && port < 65536);
-  const postgres = createRequire(path.join(core, "packages", "db", "package.json"))("postgres");
-  const sql = postgres(`postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`, { max: 1, connect_timeout: 5, onnotice() {} });
+  const dbRequire = createRequire(path.join(core, "packages", "db", "package.json"));
+  const postgres = dbRequire("postgres");
+  const { tsImport } = dbRequire("tsx/esm/api");
+  const { inspectMigrations } = await tsImport(pathToFileURL(path.join(core, "packages", "db", "src", "index.ts")).href, import.meta.url);
+  const databaseUrl = `postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`;
+  const sql = postgres(databaseUrl, { max: 1, connect_timeout: 5, onnotice() {} });
   try {
     const rows = await sql`SHOW data_directory`;
     assert.equal(await realpath(rows[0].data_directory), expectedData, "Historical Main assertion reached a different database cluster");
     const history = await sql`SELECT hash, created_at::text AS created_at FROM drizzle.__drizzle_migrations ORDER BY created_at, hash`;
-    assert.equal(history.length, 176);
+    assert.equal(history.length, expectedFiles.length);
+    const migrations = await inspectMigrations(databaseUrl);
+    assert.equal(migrations.status, "upToDate");
+    assert.deepEqual([...migrations.availableMigrations].sort(), expectedFiles);
+    assert.deepEqual([...migrations.appliedMigrations].sort(), expectedFiles);
     assert.equal((await sql`SELECT to_regclass('public.sps_plugin_package_operations') IS NOT NULL AS present`)[0].present, true);
+    assert.equal((await sql`SELECT to_regclass('public.sps_session_dispatches') IS NOT NULL AS present`)[0].present, true);
     await fixture.assertCurrent();
     return Array.from(history);
   } finally { await sql.end({ timeout: 5 }); }

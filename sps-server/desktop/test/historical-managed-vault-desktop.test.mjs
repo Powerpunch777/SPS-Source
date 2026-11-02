@@ -59,8 +59,13 @@ test("the source smoke preserves the pinned historical migration and restart pro
   "must prepare the pinned fixture, project v11, run real Main, verify data, then restart and verify again");
   assert.match(source, /assert\.equal\(prepared\.currentMigrationsApplied, false\)/);
   assert.match(source, /assert\.equal\(persisted\.version, 13\)/);
-  assert.match(source, /history\.length, 176/);
-  assert.match(source, /historicalMigrations: 157, currentMigrations: 176/);
+  assert.match(source, /import \{ verifyHistoricalCoreSchema \} from "\.\/historical-core-schema-fixture\.mjs"/);
+  assert.match(source, /currentSchema\.upgradeFiles\.map\(async filename/);
+  assert.match(source, /history\.length, prepared\.oldHistory\.length \+ currentMigrationHashes\.length/);
+  assert.match(source, /history\.slice\(prepared\.oldHistory\.length\)\.sort\(\), currentMigrationHashes/);
+  assert.match(source, /currentMigrationCount = currentSchema\.entries \+ currentSchema\.upgradeFiles\.length/);
+  assert.match(source, /historicalMigrations: prepared\.oldMigrations, currentMigrations: currentMigrationCount/);
+  assert.doesNotMatch(source, /\b(?:157|176)\b/);
   assert.match(source, /restoreUsed: false/);
   assert.match(source, /installedHistoricalFixtureInPlaceMigrationQualified: Boolean\(binary\)/);
   assert.match(source, /sourceHistoricalFixtureInPlaceMigrationQualified: !binary/);

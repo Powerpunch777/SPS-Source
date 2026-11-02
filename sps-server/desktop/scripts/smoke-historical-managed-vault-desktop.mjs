@@ -20,6 +20,7 @@ import { shutdownPreviewE2eDesktop } from "./preview-e2e-shutdown.mjs";
 import { OWNED_JOB_CLEANUP_ARGUMENT, OWNED_JOB_CLEANUP_PENDING_EXIT_CODE } from "./preview-e2e-cleanup-contract.mjs";
 import { createWorkspaceE2eChildTracker } from "./workspace-e2e-child-tracker.mjs";
 import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
+import { verifyHistoricalCoreSchema } from "./historical-core-schema-fixture.mjs";
 
 // Refuse local installed profiles and arbitrary binary paths before any I/O.
 const binary = process.env.SPS_DESKTOP_E2E_BINARY;
@@ -76,6 +77,8 @@ const phases = [];
 let applicationOutput = "";
 let failure;
 let evidence;
+let currentMigrationCount;
+let currentMigrationHashes;
 let observation = "setup";
 const progress = createHistoricalProfileProgress({ write: line => process.stderr.write(line) });
 
@@ -141,6 +144,7 @@ async function stop(app) {
 
 async function verifyData(prepared) {
   await fixture.assertCurrent();
+  assert.equal(prepared.oldHistory.length + currentMigrationHashes.length, currentMigrationCount);
   const config = JSON.parse(await readFile(prepared.configPath, "utf8"));
   assert.ok(samePath(await realpath(config.database.embeddedPostgresDataDir), prepared.databaseDir));
   const port = config.database.embeddedPostgresPort;
@@ -150,8 +154,9 @@ async function verifyData(prepared) {
   try {
     assert.ok(samePath(await realpath((await sql`SHOW data_directory`)[0].data_directory), prepared.databaseDir));
     const history = (await sql`SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at, hash`).map(row => row.hash);
-    assert.equal(history.length, 176);
+    assert.equal(history.length, prepared.oldHistory.length + currentMigrationHashes.length);
     assert.deepEqual(history.slice(0, prepared.oldHistory.length), prepared.oldHistory);
+    assert.deepEqual(history.slice(prepared.oldHistory.length).sort(), currentMigrationHashes);
     const rows = await sql`SELECT id, company_id, name, description, env, created_at, updated_at FROM projects ORDER BY id`;
     assert.equal(hash(JSON.stringify(rows)), prepared.projectsSha256);
     assert.equal((await sql`SELECT to_regclass('public.sps_plugin_package_operations') IS NOT NULL AS value`)[0].value, true);
@@ -236,6 +241,17 @@ try {
   progress("historical-db-prepared");
   assert.equal(prepared.currentMigrationsApplied, false);
   assert.equal(prepared.ownedPostgresStopped, true);
+  const currentSchema = await verifyHistoricalCoreSchema(core);
+  currentMigrationHashes = await Promise.all(currentSchema.upgradeFiles.map(async filename => {
+    const file = path.join(core, "packages/db/src/migrations", filename);
+    const stat = await lstat(file);
+    assert.ok(stat.isFile() && !stat.isSymbolicLink(), `Current migration is not a plain file: ${filename}`);
+    return hash(await readFile(file));
+  }));
+  currentMigrationHashes.sort();
+  assert.equal(new Set(currentMigrationHashes).size, currentMigrationHashes.length,
+    "Current migrations must have distinct Drizzle content hashes.");
+  currentMigrationCount = currentSchema.entries + currentSchema.upgradeFiles.length;
   const statePath = path.join(profile, "sps-desktop-state.json");
   const stateStat = await lstat(statePath);
   assert.ok(stateStat.isFile() && !stateStat.isSymbolicLink() && stateStat.nlink === 1);
@@ -252,7 +268,7 @@ try {
   await rewriteAsLegacyV11State(profile, fixture, credentials);
   progress("legacy-state-prepared");
   const expected = { ...credentials.snapshot, ownerHostOwnerSubject: state.ownerHostOwnerSubject };
-  phases.push("same-profile-pinned-157-schema-and-v11-state-prepared-without-current-migrations-or-restore");
+  phases.push(`same-profile-pinned-${prepared.oldMigrations}-schema-and-v11-state-prepared-without-current-migrations-or-restore`);
   progress("migration-main-start");
   const migrated = await launch(origin);
   progress("migration-main-ready");
@@ -260,7 +276,7 @@ try {
   progress("migration-data-verified");
   await stop(migrated.app);
   progress("migration-main-closed");
-  phases.push("actual-main-in-place-migrates-to-176-and-v13-without-sign-in-or-restore");
+  phases.push(`actual-main-in-place-migrates-to-${currentMigrationCount}-and-v13-without-sign-in-or-restore`);
   progress("restart-main-start");
   const restarted = await launch(origin);
   progress("restart-main-ready");
@@ -284,7 +300,7 @@ try {
   progress("candidate-verified");
   evidence = { kind: unpacked ? "unpacked-historical-profile-in-place-acceptance"
     : binary ? "installed-historical-profile-in-place-acceptance" : "source-historical-profile-in-place-acceptance",
-    candidate, phases, mockIdentity: true, historicalMigrations: 157, currentMigrations: 176,
+    candidate, phases, mockIdentity: true, historicalMigrations: prepared.oldMigrations, currentMigrations: currentMigrationCount,
     installedHistoricalFixtureInPlaceMigrationQualified: Boolean(binary) && !unpacked,
     unpackedHistoricalFixtureInPlaceMigrationQualified: unpacked,
     sourceHistoricalFixtureInPlaceMigrationQualified: !binary, realDpapiCredentialsAndKeyPreserved: true,
