@@ -266,3 +266,99 @@ Builder Worker/UI/manifest bytes는 b874181과 같다. 별도 live-cancel opt-in
 공유 Lead 기억/Graph authoring/CTO/Dev/QA/Runner/납품·OS 보호/Preview·출시 조건과
 현재 DEV의 재시작/새 권한 검토는 여전히 별도다. 사용자에게 DEV 변경 여부를 질문했고
 응답 전에는 기존 Main/데이터를 그대로 유지한다.
+
+## LAN 보류 재확인 및 기존 Preview 차단 경로
+
+사용자가 Native 보류를 재확인했다. Tailscale 대체 자체 LAN 개발은 재개하지 않는다.
+독립 Core 설정창과 혼동한 표현을 고쳤고, 개별 Plugin 관리 UI의 추가 확장도 진행하지
+않는다. 이번 후속은 이미 있는 개발 실행의 미지원 보호 경로와 CI 오류 진단을 점검했다.
+
+Runtime `9c3230116dd80e8fdda401f8cfb5353406f2c375`, Core/SDK는 직전 pin과 같다.
+기존 Preview의 separate data/Job/renderer sandbox는 OS containment가 아님을 확인했다.
+Main의 gates/apply/rollback/UIreload/Workerrestart 5곳에서 실행 모드 미지정/보호 모드는
+실행 전에 거부한다. 기존 로컬 코드는 UI에서 매번 위험을 확인한 trusted-local로만
+선택하며 저장된 신뢰나 package 제공 모드를 재사용하지 않는다. 추가 capability나
+임의 API/Host 경로는 없다. 이것은 로컬 신뢰 선택이지 악성 OS 사용자로부터의 보호가 아니다.
+
+부모 Node24/PATH24 집중33/33, Desktop 전체2244total/2241pass/3skip/0fail, 실제 source
+Electron Preview 시험 exit0. 다섯 메서드의 미지정/보호 모드 10개 요청이 Preview를
+시작하지 않는 것을 확인하고 고정된 신뢰 SDK fixture만 explicit trusted-local로 실행했다.
+실제 UI 경고의 확인/취소는 renderer harness이며 앱 시험이 모든 확인창을 실제 클릭했다는
+주장은 하지 않는다. 실제 Google/CLI 계정·고객 코드 실행 없이 격리 mock Identity로
+Preview 재기동/오류/종료와 임시 PG/데이터 정리를 확인했다. DEV Main48300은 유지했다.
+
+별도 push CI41380873481은 구형 복구 확인창 component 시험에서 실패했고, 안전하게
+넘겨진 modalStep/interactive 진단을 바깥 test가 버리고 있었다. 4252247은 허용된
+enum/boolean만 보존하고 raw 로그/경로/비밀값을 숨긴다. 원래 deadline/성공/정리 조건은
+바꾸지 않았다. 같은 조건의 부모 Node24 실제 probe4/4는 통과했으나 hosted 실패의
+근본 원인이 해결됐다고 단정하지 않는다. 같은 HEAD PR41380878666의 결과와 구분한다.
+
+상세 근거는 [실행 진입 검증](../reviews/DEVELOPER-EXECUTION-ADMISSION-2026-11-02.md),
+현재 A–G 전체 판정은 [완료 감사](BUILDER-PREREQUISITES-COMPLETION-AUDIT-2026-11-02.md)다.
+그 외 실행 경로의 보호 검증과 독립 관리 잔여 범위 때문에 장기목표 전체는 미완료다.
+
+## 최신 범위 재확인 및 Core 복원 회귀
+
+사용자가 Preview도 진행하지 않기로 했음을 재확인했다. 위 Preview 구현·시험은 앞선
+작업의 사실 기록이며 현재 요구나 완료 조건으로 삼지 않는다. Preview 개발·추가 시험과
+자체 Native LAN은 보류한다. Tailscale과 현재 사용자 DEV는 보존한다. 독립 Settings는
+LAN이 아니다. 현재는 Core의 기존 복구와 공개 SDK·실제 Lead 연결에 집중한다.
+
+완료된 PR run41380878666(Source db9dd6e)은 전체 성공이 아니다. Windows의 역사 schema
+upgrade는 성공했지만 다음 Main restore 시험에 남은 `177 !== 176` 고정 개수 검사가
+실패했다. Core Linux server1/3은 watchdog 첫 사례의 5초 timeout으로 실패했고,
+installer recovery는 앞 단계 실패로 생성되지 않은 입력 artifact를 찾다 실패했다.
+다른 8개 Core shard와 전체 Linux typecheck/build 성공을 이 실패들의 대체 증거로 쓰지 않는다.
+
+Main restore 검사는 검증된 역사 journal prefix와 현재 suffix에서 실제 파일 목록을
+구해 Core `inspectMigrations`의 available/applied 목록과 정확히 비교하도록 고쳤다.
+현재 receipt table도 확인한다. 별도 in-place migration 시험도 기존 history prefix와
+현재 SQL 내용 해시 집합을 대조하며 고정 176과 결과 숫자를 제거했다. DB migration이나
+사용자 DB는 변경하지 않았다.
+
+Node24/PATH24 관련 4개 파일의 집중 검사17/17, Main restore script 문법 검사를 통과했다.
+실제 `node scripts/smoke-owner-vault-transfer-desktop.mjs --historical-core-backup`은 exit0:
+핀 고정157개 schema 백업 → 빈 시험 Host 실제 Main 복원 → 현재177개 이력·두 Workspace
+project 및 첨부파일 → Main 재시작 후 동일 이력·데이터 유지 → 관리 출력/임시 데이터 정리.
+mock Identity와 source Electron 시험이며 설치본/실제 Google/물리 두 PC/서명·전체 자손
+OS Job 자격을 뜻하지 않는다. 실제 사용자 DEV PID48300은 재시작하지 않았다.
+
+같은 로컬 변경의 `SPS_DESKTOP_E2E_SOURCE=1 node scripts/smoke-historical-managed-vault-desktop.mjs`
+도 exit0이었다. 과거157개 schema와 v11 상태를 같은 시험 프로필에서 현재177개/v13으로
+실제 Main이 올렸고, 재시작 뒤 데이터·DPAPI 계정 저장값·서명 키 보존과 정리를 확인했다.
+이는 source 시험이며 설치본/정상 사용자 프로필/서명/실기기 자격이 아니다.
+관련 변경은 로컬 `18e6bb87538daa7ed52b1c2306f8d7dc54f75957`에 커밋했고 아직 push하지 않았다.
+
+## 사용자 요청으로 중단 및 범위 확정
+
+사용자가 목표를 잠시 멈추고 할 일과 하지 않을 일을 먼저 정리하도록 요청했다.
+목표는 paused이며, 이후 동의는 문서 정리 승인이지 구현 재개가 아니다.
+[현재 작업 범위](CURRENT-WORK-SCOPE-2026-11-02.md)를 현행 요약으로 사용한다.
+자체 LAN과 Preview 개발·추가 시험은 보류한다. 독립 설정·복구의 Core 필수 범위는
+보류 대상과 구분해 잔여로 유지한다. 앞선 관리 UI 추가 확장 중단 표현으로 이 필수
+범위를 제외하지 않는다. 이번 문서 정리 중 코드·시험·빌드·DEV·설치본·push는 변경하지 않는다.
+
+하위 에이전트의 별도 Linux 진단 실행은 중단됐고 남은 세션은 없다는 보고를 받았다.
+초기화 출력이 없었으므로 임시 DB 정리 완료까지 입증된 것은 아니다. 후속 재개 시
+그 시험의 소유권/종료 근거를 확인하며 임의 인수·삭제하지 않는다.
+
+사용자가 Marketplace도 보류라고 추가 확정했다. 유통만 후속이라는 뜻으로 축소하지
+않고 관련 개발·추가 시험을 보류한다. Builder 업무·기능·UI는 별도
+SPS-MY-PluginBuilder 레포의 v15/UI v9와 최신 UI 적용 기준을 따르며 Core 문서에서
+다시 설계하지 않는다. 최신 보류 결정은 이전 설계의 관련 작업보다 우선한다.
+장기목표는 계속 paused이며 이번 반영은 문서 정리뿐이다.
+
+## 첫 목표를 Builder 완성으로 변경
+
+사용자가 후속으로 첫 목표를 Builder 완성으로 바꾸고 필요한 안전 기반부터 진행하도록
+지시했다. [Builder 우선 계획](BUILDER-FIRST-IMPLEMENTATION-PLAN-2026-11-02.md)을
+현재 실행 범위로 적용한다. Marketplace·Preview·자체 LAN 보류는 유지한다.
+목표 도구는 기존 미완료 목표를 수정·교체할 수 없어 새 등록을 거부했다. 이전 목표를
+허위 완료 처리하지 않았고 앱에서 해제가 필요하다고 알렸다. 실제 작업 목표와 도구의
+paused 표시는 구분한다.
+
+Core d7d5a5a에 일반 단일 키 조건부 저장 내부 기반과 실제 PostgreSQL 경쟁 검사6개를
+추가했다. 처음 JSON null 실패를 수정한 뒤 최종6/6와 server 타입 검사가 통과했다.
+공개 SDK/Builder에 아직 연결하지 않았으며, 권한 회수·다중 키·실제 앱 검증으로 확대하지
+않는다. Builder93991dc는 v15 전체 목표와 보류 항목을 문서로 정리했다. 사용자 DEV와
+설치본·계정·실제 데이터는 변경하지 않았다.

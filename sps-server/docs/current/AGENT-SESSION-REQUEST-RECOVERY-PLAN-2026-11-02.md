@@ -2,7 +2,7 @@
 
 > **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
 > [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
-> 범용 세션/요청 복구는 선택형 Core 기술 계약이며 Lead/CTO/Worker·메모리 의미는 Plugin 소유다. 공개 Marketplace/OS 보호 목표는 원문에서 보존하며 이하 과거 실행 범위의 제외 문구는 목표 철회가 아니다. 실제 미구현 durable submit과 AI 전송 상태를 유지한다.
+> 범용 세션/요청 복구는 선택형 Core 기술 계약이며 Lead/CTO/Worker·메모리 의미는 Plugin 소유다. 공개 Marketplace/OS 보호 목표는 원문에서 보존하며 이하 과거 실행 범위의 제외 문구는 목표 철회가 아니다. 아래 현행 절은 구현 및 기록된 증거를 요약하고, 뒤의 초기 계획은 역사 기록이다.
 > 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
 > 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
 
@@ -56,10 +56,94 @@ stays behind the compatibility facade; none becomes a mandatory Core workflow.
 Rejection before commit rolls back the new row. If commit succeeded but the
 response or invocation was lost, a new authorized ensure with the same key
 returns the existing ID. This is session recovery only, not message deduplication,
-provider readiness, a long-lived authority lease or actual AI acceptance. Builder
-send remains disabled while the next section is unfinished.
+provider readiness, a long-lived authority lease or actual AI acceptance. In this
+initial session-ensure draft, Builder send remained disabled pending the next
+increment; the current dispatch state is recorded below.
 
-## Durable Submission: Planned, Not Implemented
+## Current Implementation: Durable Session Dispatch Admission
+
+The implementation and evidence below are recorded for the exact 2026-11-02
+runtime tuple: private Core `3abf1f50b9cf69e23397e9b2cc1a0d1a01a2365d`, public SDK
+source pin `0111d291a99c032760a391693aa879bb099b5034`, consuming Desktop Source
+`c8c6b46f977afac12299d0c9dd33b02bb257f312`, and Builder
+`b874181c86a6f96fa0ae2922739df172905fb860`. The SDK pin is an unreleased source
+API, not a published package release. This section records existing evidence; no
+tests or app runs were repeated for this document update.
+
+### Core and SDK contract
+
+- Private Core service `services/sps-session-dispatches.ts` persists the
+  Workspace/Plugin/requestId dispatch receipt separately from Plugin KV and
+  associates it with the session and run. The
+  `server/src/services/plugin-host-services.ts` facade supplies the caller-scoped
+  Workspace/Plugin authority. The `sps-session-dispatch-context.ts` helper keeps
+  keyed requests from losing their identity through legacy coalescing. Request
+  lookup and dispatch remain subject to the current invocation/ownership boundary.
+- Migration `0178_elite_banshee` adds the receipt storage. A request ID is unique
+  for its Workspace and Plugin regardless of session, so changing sessions does
+  not create a second admission for that Plugin request ID. Session close/delete
+  retains the exact request tombstone; Workspace deletion removes its receipts
+  with the Workspace lifecycle.
+- The SDK worker exposes `getRequest` and the request-ID send option. The send
+  option is optional for compatibility, but durable dispatch requires the
+  `getRequest` feature probe and request ID. An older Host without that feature
+  must fail before dispatch; it must not silently fall back to legacy send.
+- A repeated request ID with the same payload observes the existing receipt/run;
+  a conflicting payload is rejected. If admission is uncertain, do not resend
+  automatically. This is a technical at-most-once admission fence, not an
+  exactly-once guarantee for provider execution or response delivery.
+- Builder turn storage and the Core receipt are distinct. A Builder turn records
+  its immutable request ID and dispatch state; Core owns the admission receipt.
+  The three Lead transcripts remain separate, and no Core Lead/CTO/Worker role,
+  shared-memory meaning, or workflow authority is introduced.
+
+### Recorded verification and limits
+
+These are records from [Core progress](BUILDER-PREREQUISITES-PROGRESS-2026-11-02.md)
+and the public Builder's
+[`LEAD-DURABLE-CHAT-2026-11-02.md`](https://github.com/Powerpunch777/SPS-MY-PluginBuilder/blob/5ab214ab3c7fb32becc4741e381773196c9c0ec9/docs/implementation/LEAD-DURABLE-CHAT-2026-11-02.md),
+not new verification in this documentation-only change:
+
+- Core focused session/receipt/context tests: 3 files, 89/89; 30 workspace
+  typechecks and internal SDK build passed. Public SDK: 191/191. Builder check:
+  87/87, plus SDK validate/test. The Core progress record also reports a source
+  Desktop run of 2,236 total / 2,233 passed / 3 Windows 8.3-alias skips / 0
+  failed. These counts qualify only their recorded source revisions.
+- The final source-app operator used the exact Core/SDK/Builder tuple above.
+  It observed UI send through Core receipt/run and the existing CLI/provider to
+  a saved assistant answer; repeating the same request ID and text kept the
+  actual Agent run count at one. The same turn, run, session binding and answer
+  survived Main/Host restart. The final recorded run exited 0 with five owned
+  Main exits, ten ended output streams, zero output failures and exact temporary
+  data cleanup. This was an explicitly authorized short live operator, not a
+  general provider guarantee.
+- The public Builder follow-up operator `9fdb553c9d8d296391cd789153c34ae3c4703f57`
+  exercised the actual cancellation control against a running managed CLI,
+  observed confirmed process termination, and retained the cancelled turn as
+  terminal after restart; exactly the two explicitly requested runs remained.
+  Its recorded run exited 0 with six Main exits, twelve ended streams, zero
+  output failures and exact temporary-data cleanup. This is an application-level
+  managed-process observation, not proof of every descendant or OS containment.
+- Earlier failed or narrowed attempts remain failures and are not promoted to
+  passing evidence. The progress record separately documents a Windows CI
+  historical-migration-count failure and its correction; that history is not a
+  claim that every Windows packaging/installer qualification passed.
+- Still outside this evidence: exactly-once provider execution, automatic resend
+  after uncertainty, all descendant/OS protection, packaged/signed/physical
+  device acceptance, Stable qualification, shared Lead memory, and full v15
+  Builder acceptance. Native LAN implementation remains paused, as does further
+  expansion of Core management. Those pauses do not authorize new Core workflow
+  roles or cancel broader product goals.
+
+Official Node.js reference checked for this documentation update: the
+[Node.js HTTP API](https://nodejs.org/api/http.html) describes request/response
+stream behavior; it does not prove the Core receipt or provider guarantees above.
+
+## Historical Plan (2026-11-02 Initial Draft): Durable Submission Planned, Not Implemented
+
+The following section is preserved as the initial plan as it stood before the
+implementation and evidence recorded above. Its status label is historical and
+does not describe the current source tuple.
 
 1. Introduce an explicit request-keyed operation rather than adding an option to
    old sendMessage that older Hosts could silently ignore. Reuse the send
