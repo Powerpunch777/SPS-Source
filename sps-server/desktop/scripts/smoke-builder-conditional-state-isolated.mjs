@@ -9,12 +9,17 @@ import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 const desktop = path.resolve(import.meta.dirname, "..");
 const sdk = path.resolve(desktop, "../../external/sps-plugin-sdk");
 const buildOnly = process.argv[2] === "--build-only";
-assert.deepEqual(process.argv.slice(2), buildOnly ? ["--build-only"] : [], "Only --build-only is accepted.");
+const liveDesign = process.argv[2] === "--live-design";
+assert.deepEqual(process.argv.slice(2), buildOnly ? ["--build-only"] : liveDesign ? ["--live-design"] : [], "Only --build-only or --live-design is accepted.");
 const supplied = process.env.SPS_BUILDER_SOURCE_ROOT;
 assert.equal(process.platform, "win32");
 assert.ok(typeof supplied === "string" && path.isAbsolute(supplied), "Set an absolute SPS_BUILDER_SOURCE_ROOT.");
-assert.ok(!process.env.SPS_DESKTOP_E2E_BINARY && !process.env.SPS_BUILDER_LIVE_CODEX && !process.env.SPS_BUILDER_LIVE_CANCEL,
-  "This acceptance does not use installed binaries or live AI accounts.");
+assert.ok(!process.env.SPS_DESKTOP_E2E_BINARY && !process.env.SPS_BUILDER_LIVE_CANCEL,
+  "This acceptance does not use installed binaries or cancellation probes.");
+assert.ok(liveDesign ? process.env.SPS_BUILDER_LIVE_CODEX === "1" && process.env.SPS_BUILDER_LIVE_DESIGN === "1"
+  && !process.env.OPENAI_API_KEY && !process.env.PAPERCLIP_CODEX_PROVIDERS
+  : !process.env.SPS_BUILDER_LIVE_CODEX && !process.env.SPS_BUILDER_LIVE_DESIGN,
+  "Actual design-tool account usage requires --live-design and both explicit opt-ins, without API key/provider substitution.");
 const source = await realpath(supplied);
 assert.ok((await lstat(source)).isDirectory() && !(await lstat(supplied)).isSymbolicLink());
 const pkg = JSON.parse(await readFile(path.join(source, "package.json"), "utf8"));
@@ -80,6 +85,6 @@ try {
   else console.error(`Preserve isolated Builder fixture for diagnosis: ${fixture.directory}`);
 }
 console.log(JSON.stringify({ kind: "source-builder-conditional-state", sdkRevision: revision,
-  mode: buildOnly ? "build-only" : "source-app",
-  isolatedBuild: true, actualSourceHost: !buildOnly, mockIdentity: !buildOnly, liveAi: false,
+  mode: buildOnly ? "build-only" : liveDesign ? "source-app-live-design" : "source-app",
+  isolatedBuild: true, actualSourceHost: !buildOnly, mockIdentity: !buildOnly, liveAi: liveDesign,
   userDevDependenciesChanged: false, installedBuild: false, signedRelease: false, temporaryDataRemoved: true }));
