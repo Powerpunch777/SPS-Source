@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import { OWNED_JOB_CLEANUP_ARGUMENT } from "../scripts/preview-e2e-cleanup-contract.mjs";
+import { formatLegacyDriverDiagnostic } from "../scripts/windows-e2e/legacy-driver-diagnostic.mjs";
 
 const exec = promisify(execFile);
 const scriptUrl = new URL("../scripts/windows-e2e/probe-legacy-driver-component.mjs", import.meta.url);
@@ -61,20 +62,7 @@ test("private-desktop component probe closes its restricted owned Job naturally"
         if (record.legacyDriverPrivateDesktopComponent === false) failure = record;
       } catch {}
     }
-    const phases = new Set(["initial-window", "initial-target", "initial-controls", "initial-backup", "initial-inside",
-      "initial-uncheck", "initial-recheck", "initial-cancel", "initial-exit", "check-observation", "confirmation", "fixture-compilation",
-      "child-timeout", "child-output", "child-launch", "child-result"]);
-    const types = new Set(["DriverFailure", "CheckObservationDeadlineFailure", "AggregateException", "COMException",
-      "ElementNotAvailableException", "InvalidOperationException", "TargetInvocationException", "compilation-failure",
-      "contract-failure", "timeout", "output-limit", "launch-failure", "test-failure", "unclassified"]);
-    const operations = new Set(["FindTopWindows", "WindowClass", "ReadWindowText", "WaitForRecoveryWindow",
-      "RemainingMilliseconds", "unclassified"]);
-    const phase = phases.has(failure?.phase) ? failure.phase : "wrapper-child";
-    const type = types.has(failure?.type) ? failure.type : `exit-${String(error.code ?? "unknown")}`;
-    const operation = operations.has(failure?.operation) ? `; ${failure.operation}` : "";
-    const nativeCode = Number.isInteger(failure?.nativeCode) && failure.nativeCode >= -1 && failure.nativeCode <= 65535
-      ? `; native-${failure.nativeCode}` : "";
-    assert.fail(`Private-desktop component probe failed at ${phase} (${type}${operation}${nativeCode}).`);
+    assert.fail(formatLegacyDriverDiagnostic(failure, error.code));
   }
 
   const records = result.stdout.trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
