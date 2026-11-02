@@ -65,6 +65,11 @@
 
 ## Engineering evidence
 
+- [2026-11-02 per-run session tool restrictions](../reviews/SESSION-EXECUTION-POLICY-2026-11-02.md):
+  source-only Core/SDK contract, policy-bound durable receipt recovery, local
+  Codex configuration guards and Builder integration. Not OS certification,
+  actual Lead/CTO execution, a new installed release or whole-Core completion.
+
 - [2026-11-02 session identity recovery](../reviews/WORKSPACE-SESSION-ENSURE-2026-11-02.md):
   explicit scoped ensure and known-ID recovery; not durable message submission.
 - [Session and durable submission plan](AGENT-SESSION-REQUEST-RECOVERY-PLAN-2026-11-02.md):

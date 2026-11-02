@@ -27,6 +27,27 @@ role, approval, memory record, or project phase.
 
 The worker SDK exposes the following methods through `ctx.sps`.
 
+### Source-Development Session Execution Restriction
+
+The additive `agents.sessions.describePolicySupport` RPC and optional
+`sendMessage.executionPolicy` are implemented on development Core `a57f4d9` and
+public SDK source `c69915a`, not a new packaged release. The policy is exactly
+`{ mode: "plugin-tools-only-v1", toolNames: [...] }` with 1-32 unique raw names,
+and requires the existing durable request UUID. Its digest includes the policy;
+old unrestricted digests are unchanged. Unknown admission is read, never resent.
+
+Initial support is local Codex CLI plus invocation-bound Workspace plugin tools.
+Core verifies the plugin's declared names and the persisted live run policy;
+unsupported runtimes, custom CLI commands/arguments, remote Node routing and
+legacy Host-worker tools do not silently fall back. Configuration support is
+not a CLI probe: `readiness` remains `unknown`, `osIsolation` `not-certified`.
+The per-run adapter profile leaves stored Agent/account settings unchanged.
+
+This is not workflow approval, a Lead/CTO role contract, full filesystem/network
+containment, automatic MCP approval, actual provider success or Core completion.
+The current implementation/verification limits are recorded in
+[the session policy evidence](../reviews/SESSION-EXECUTION-POLICY-2026-11-02.md).
+
 ### Registered Host API Snapshot
 
 The optional initialization `spsHost` snapshot reports `contractVersion: "1.0"`
