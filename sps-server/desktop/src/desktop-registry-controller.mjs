@@ -1,3 +1,5 @@
+import { requireTrustedDeveloperExecution } from "./developer-execution-policy.mjs";
+
 /**
  * Registers Registry and developer-preview IPC handlers.
  *
@@ -98,23 +100,28 @@ export function registerDesktopRegistryIpc({
   });
   ipcMain.handle("desktop:developer-run-gates", async (event, input) => {
     assertRegistryEvent(event);
-    return await runDesktopDeveloperGates(input?.projectId);
+    assertRegistryOwner();
+    return await runDesktopDeveloperGates(requireTrustedDeveloperExecution(input));
   });
   ipcMain.handle("desktop:developer-apply-candidate", async (event, input) => {
     assertRegistryEvent(event);
-    return await applyDesktopDeveloperCandidate(input?.projectId);
+    assertRegistryOwner();
+    return await applyDesktopDeveloperCandidate(requireTrustedDeveloperExecution(input));
   });
   ipcMain.handle("desktop:developer-rollback-project", async (event, input) => {
     assertRegistryEvent(event);
-    return await rollbackDesktopDeveloperProject(input?.projectId);
+    assertRegistryOwner();
+    return await rollbackDesktopDeveloperProject(requireTrustedDeveloperExecution(input));
   });
   ipcMain.handle("desktop:developer-reload-ui", async (event, input) => {
     assertRegistryEvent(event);
-    return await reloadDesktopDeveloperUi(input?.projectId);
+    assertRegistryOwner();
+    return await reloadDesktopDeveloperUi(requireTrustedDeveloperExecution(input));
   });
   ipcMain.handle("desktop:developer-restart-worker", async (event, input) => {
     assertRegistryEvent(event);
-    return await restartDesktopDeveloperWorker(input?.projectId);
+    assertRegistryOwner();
+    return await restartDesktopDeveloperWorker(requireTrustedDeveloperExecution(input));
   });
   ipcMain.handle("desktop:developer-reveal-package", async (event, input) => {
     assertRegistryEvent(event);

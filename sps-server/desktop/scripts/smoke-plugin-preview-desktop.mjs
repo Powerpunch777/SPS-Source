@@ -350,6 +350,8 @@ async function waitForLiveTeamPreviewFeedback(cdp, { scope, projectId, conversat
 }
 
 async function registryCall(cdp, expression, timeoutMs = 20_000) { return await cdp.evaluate(`(async () => await (${expression}))()`, true, timeoutMs); }
+// The fixed operator fixture is trusted test code, never protected execution.
+const trustedPreviewInput = projectId => ({ projectId, executionMode: "trusted-local" });
 async function workspaceApi(cdp, pathName, options = {}) {
   const result = await cdp.evaluate(`(async () => {
     const response = await fetch(${JSON.stringify(pathName)}, {
@@ -725,6 +727,13 @@ try {
   if (!liveAuthoring) await makePlugin(pluginDirectory);
   const connected = await registryCall(registry, `window.spsRegistry.connectDeveloperProject(${JSON.stringify({ sourcePath: pluginDirectory, sourceLabel: "external-plugin", displayName: "Preview Desktop E2E" })})`);
   assert.match(connected.id, /^dev-/);
+  for (const method of ["runDeveloperGates", "applyDeveloperCandidate", "rollbackDeveloperProject", "reloadDeveloperUi", "restartDeveloperWorker"]) {
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.${method}(${JSON.stringify({ projectId: connected.id })})`), /explicit execution mode/);
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.${method}(${JSON.stringify({ projectId: connected.id, executionMode: "protected" })})`), /Protected development execution is unavailable/);
+  }
+  assert.deepEqual(await registryCall(registry, "window.spsRegistry.getPreviewState()"), { active: false },
+    "Denied protected or unspecified calls must not start a Preview.");
+  step("all five code-execution entries reject unspecified/protected mode before Preview startup; fixed trusted fixture is explicit", "protected_admission_denied");
   await registry.evaluate("document.querySelector('#refresh-developer-projects').click()");
   await waitPage(registry, page => page.text.includes("Link to this context"), "explicit project reference choice");
   await registry.evaluate("document.querySelector('.link-developer-context').click()");
@@ -820,10 +829,10 @@ try {
     invalidStatic.runtime.manifestSha256 = createHash("sha256").update(invalidManifest).digest("hex");
     await writeFile(manifestPath, invalidManifest);
     await writeFile(staticPath, `${JSON.stringify(invalidStatic, null, 2)}\n`);
-    const staticGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+    const staticGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000);
     assert.deepEqual(staticGates.reports.map(report => report.success), [true, true, true]);
     assert.equal((await workspace.evaluate(getContextExpression, true)).validationFeedback.status, "passed");
-    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000), /Invalid plugin manifest/);
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000), /Invalid plugin manifest/);
     const feedback = (await workspace.evaluate(getContextExpression, true)).validationFeedback;
     assert.equal(feedback.status, "failed");
     assert.equal(feedback.kind, "preview");
@@ -930,9 +939,9 @@ try {
     invalidStatic.runtime.manifestSha256 = createHash("sha256").update(invalidManifest).digest("hex");
     await writeFile(manifestPath, invalidManifest);
     await writeFile(staticPath, `${JSON.stringify(invalidStatic, null, 2)}\n`);
-    const badGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+    const badGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000);
     assert.deepEqual(badGates.reports.map(report => report.success), [true, true, true]);
-    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000), /Invalid plugin manifest/);
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000), /Invalid plugin manifest/);
     const feedbackWorkspace = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
       method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
     });
@@ -1043,7 +1052,7 @@ try {
   });
   let gates;
   try {
-    gates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+    gates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000);
   } catch (error) {
     const diagnosticResult = await registryCall(
       registry,
@@ -1065,7 +1074,7 @@ try {
     summary: "Open the verified candidate in isolated Plugin Preview.",
     evidence: [{ kind: "preview", ref: `preview/${connected.id}`, label: "Isolated Preview request" }],
   });
-  const applied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+  const applied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000);
   assert.equal(applied.isolated, true);
   assert.equal(applied.plugin?.status, "ready");
   linkedContext = await workspace.evaluate(getContextExpression, true);
@@ -1263,9 +1272,9 @@ try {
     const accountProject = await registryCall(registry, `window.spsRegistry.connectDeveloperProject(${JSON.stringify({
       sourcePath: pluginDirectory, sourceLabel: "account-fence-plugin", displayName: "Preview account fence",
     })})`);
-    const accountGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: accountProject.id })})`, 180_000);
+    const accountGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify(trustedPreviewInput(accountProject.id))})`, 180_000);
     assert.deepEqual(accountGates.reports.map(report => report.success), [true, true, true]);
-    const accountApplied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: accountProject.id })})`, 180_000);
+    const accountApplied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify(trustedPreviewInput(accountProject.id))})`, 180_000);
     assert.equal(accountApplied.isolated, true);
     const accountPreview = await registryCall(registry, "window.spsRegistry.getPreviewState()");
     assert.equal(accountPreview.active, true);

@@ -99,11 +99,11 @@ test("forwards registry and developer arguments without changing their shape", a
     ["desktop:registry-enable-stage", { stageId: "stage-1" }],
     ["desktop:developer-connect-project", { projectId: "project-1" }],
     ["desktop:developer-inspect-project", { projectId: "project-2" }],
-    ["desktop:developer-run-gates", { projectId: "project-3" }],
-    ["desktop:developer-apply-candidate", { projectId: "project-4" }],
-    ["desktop:developer-rollback-project", { projectId: "project-5" }],
-    ["desktop:developer-reload-ui", { projectId: "project-6" }],
-    ["desktop:developer-restart-worker", { projectId: "project-7" }],
+    ["desktop:developer-run-gates", { projectId: "project-3", executionMode: "trusted-local" }],
+    ["desktop:developer-apply-candidate", { projectId: "project-4", executionMode: "trusted-local" }],
+    ["desktop:developer-rollback-project", { projectId: "project-5", executionMode: "trusted-local" }],
+    ["desktop:developer-reload-ui", { projectId: "project-6", executionMode: "trusted-local" }],
+    ["desktop:developer-restart-worker", { projectId: "project-7", executionMode: "trusted-local" }],
     ["desktop:developer-reveal-package", { projectId: "project-package", archivePath: "ignored" }],
     ["desktop:developer-list-preview-diagnostics", { limit: 3 }],
     ["desktop:developer-update-preview-environment", { projectId: "project-8" }],
@@ -114,7 +114,7 @@ test("forwards registry and developer arguments without changing their shape", a
     await harness.handlers.get(channel)(harness.event, input);
   }
   assert.equal(harness.registryAssertions, channels.length);
-  assert.equal(harness.ownerAssertions, 2);
+  assert.equal(harness.ownerAssertions, 7);
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_reveal_package").args, ["project-package"]);
   assert.deepEqual(harness.calls.find((call) => call.key === "registry_add_source").args, [inputs.get("desktop:registry-add-source")]);
   assert.deepEqual(harness.calls.find((call) => call.key === "registry_remove_source").args, ["source-2"]);
@@ -122,6 +122,31 @@ test("forwards registry and developer arguments without changing their shape", a
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_inspect_project").args, ["project-2"]);
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_list_preview_diagnostics").args, [{ limit: 3 }]);
   assert.deepEqual(harness.calls.find((call) => call.key === "developer_remove_project").args, ["project-9"]);
+});
+
+test("every developer code-execution entry rejects missing or protected mode before any service call", async () => {
+  const harness = makeHarness();
+  const entries = ["run-gates", "apply-candidate", "rollback-project", "reload-ui", "restart-worker"];
+  for (const entry of entries) {
+    const invoke = input => harness.handlers.get(`desktop:developer-${entry}`)(harness.event, input);
+    await assert.rejects(invoke({ projectId: "project-1" }));
+    await assert.rejects(invoke({ projectId: "project-1", executionMode: "protected" }), /Protected development execution is unavailable/);
+    await assert.rejects(invoke({ projectId: "project-1", executionMode: "trusted-local", arbitraryScope: true }));
+  }
+  assert.deepEqual(harness.calls, []);
+});
+
+test("explicit trusted mode never bypasses Registry window and Host owner checks", async () => {
+  for (const denied of ["window", "owner"]) {
+    const handlers = new Map(); let executed = false;
+    const reject = () => { throw new Error("authority denied"); };
+    registerDesktopRegistryIpc({ ipcMain: { handle: (key, handler) => handlers.set(key, handler) },
+      assertRegistryWindowEvent: denied === "window" ? reject : () => {},
+      assertRegistryOwner: denied === "owner" ? reject : () => {},
+      applyDesktopDeveloperCandidate: async () => { executed = true; } });
+    await assert.rejects(handlers.get("desktop:developer-apply-candidate")({}, { projectId: "project-1", executionMode: "trusted-local" }));
+    assert.equal(executed, false);
+  }
 });
 
 test("enforces the registry window guard before forwarding", async () => {

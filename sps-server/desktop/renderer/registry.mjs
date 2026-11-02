@@ -16,6 +16,11 @@ let requestedSourcePending = true;
 let registryStages = [];
 const developerInspections = new Map();
 const requestedSourceId = new URLSearchParams(window.location.search).get("source");
+const trustedLocalWarning = "Plugin code runs with this Windows user's permissions and can access files and credentials. Separate Preview data does not sandbox OS files or Vault.";
+
+function confirmTrustedLocalExecution(action) {
+  return window.confirm(`${action}\n\n${trustedLocalWarning}\nContinue in trusted-local mode?`);
+}
 
 function setNotice(message = "", error = false) {
   const notice = $("#notice");
@@ -77,10 +82,10 @@ function developerConformanceMarkup(candidate) {
 function renderDeveloperProjects() {
   const list = $("#developer-project-list");
   if (developerProjects.length === 0) {
-    list.innerHTML = '<p class="empty-state">No external plugin projects are connected.</p>';
+    list.innerHTML = `<p class="developer-security-warning">${escapeHtml(trustedLocalWarning)}</p><p class="empty-state">No external plugin projects are connected.</p>`;
     return;
   }
-  list.innerHTML = developerProjects.map((project) => {
+  list.innerHTML = `<p class="developer-security-warning">${escapeHtml(trustedLocalWarning)}</p>` + developerProjects.map((project) => {
     const inspection = developerInspections.get(project.id);
     const changed = inspection?.changedSinceCandidate;
     const lastKnownGood = project.lastKnownGood;
@@ -105,7 +110,7 @@ function renderDeveloperProjects() {
           ${developerContext ? `<button class="secondary link-developer-context" type="button" data-project-id="${escapeHtml(project.id)}" ${developerContext.project?.id === project.id ? "disabled" : ""}>${developerContext.project?.id === project.id ? "Linked to this context" : "Link to this context"}</button>` : ""}
           <button class="secondary inspect-developer-project" type="button" data-project-id="${escapeHtml(project.id)}">Check changes</button>
           <button class="secondary run-developer-gates" type="button" data-project-id="${escapeHtml(project.id)}">Build &amp; test</button>
-          <button class="primary apply-developer-candidate" type="button" data-project-id="${escapeHtml(project.id)}" ${project.candidate?.promotable && changed !== true ? "" : "disabled"}>Open isolated preview</button>
+          <button class="primary apply-developer-candidate" type="button" data-project-id="${escapeHtml(project.id)}" ${project.candidate?.promotable && changed !== true ? "" : "disabled"}>Open trusted preview</button>
           ${lastKnownGood ? `<button class="secondary rollback-developer-project" type="button" data-project-id="${escapeHtml(project.id)}">Open last good preview</button>` : ""}
           ${lastKnownGood ? `<button class="secondary reload-developer-ui" type="button" data-project-id="${escapeHtml(project.id)}">Reload UI</button>` : ""}
           ${lastKnownGood ? `<button class="secondary restart-developer-worker" type="button" data-project-id="${escapeHtml(project.id)}">Restart worker</button>` : ""}
@@ -660,7 +665,8 @@ $("#developer-project-list").addEventListener("click", async (event) => {
       return;
     }
     if (button.classList.contains("run-developer-gates")) {
-      const gateResult = await window.spsRegistry.runDeveloperGates({ projectId });
+      if (!confirmTrustedLocalExecution("Build and test gates execute project code.")) return;
+      const gateResult = await window.spsRegistry.runDeveloperGates({ projectId, executionMode: "trusted-local" });
       const index = developerProjects.findIndex((project) => project.id === projectId);
       if (index !== -1) developerProjects[index] = gateResult.project;
       developerInspections.delete(projectId);
@@ -673,8 +679,8 @@ $("#developer-project-list").addEventListener("click", async (event) => {
       return;
     }
     if (button.classList.contains("apply-developer-candidate")) {
-      if (!window.confirm("Open this exact verified build in an isolated Preview? Production Workspace data and plugins will not be changed.")) return;
-      const applied = await window.spsRegistry.applyDeveloperCandidate({ projectId });
+      if (!confirmTrustedLocalExecution("Open this exact verified build in a Preview with separate development data?")) return;
+      const applied = await window.spsRegistry.applyDeveloperCandidate({ projectId, executionMode: "trusted-local" });
       const index = developerProjects.findIndex((project) => project.id === projectId);
       if (index !== -1) developerProjects[index] = applied.project;
       developerInspections.delete(projectId);
@@ -682,28 +688,30 @@ $("#developer-project-list").addEventListener("click", async (event) => {
       renderDeveloperProjects();
       await loadPreviewState();
       await loadPreviewDiagnostics();
-      setNotice(`${applied.plugin.pluginKey} v${applied.plugin.version} is running in an isolated Preview and is now the last known good development build.`);
+      setNotice(`${applied.plugin.pluginKey} v${applied.plugin.version} is running with separate Preview data and is now the last known good build. This is not an OS sandbox.`);
       return;
     }
     if (button.classList.contains("rollback-developer-project")) {
-      if (!window.confirm("Open the last known good build in its isolated Preview?")) return;
-      const restored = await window.spsRegistry.rollbackDeveloperProject({ projectId });
+      if (!confirmTrustedLocalExecution("Open the last known good build with separate Preview data?")) return;
+      const restored = await window.spsRegistry.rollbackDeveloperProject({ projectId, executionMode: "trusted-local" });
       const index = developerProjects.findIndex((project) => project.id === projectId);
       if (index !== -1) developerProjects[index] = restored.project;
       developerInspections.delete(projectId);
       renderDeveloperProjects();
       await loadPreviewState();
       await loadPreviewDiagnostics();
-      setNotice(`${restored.plugin.pluginKey} v${restored.plugin.version} opened in its isolated Preview.`);
+      setNotice(`${restored.plugin.pluginKey} v${restored.plugin.version} opened with separate Preview data. This is not an OS sandbox.`);
       return;
     }
     if (button.classList.contains("reload-developer-ui")) {
-      await window.spsRegistry.reloadDeveloperUi({ projectId });
+      if (!confirmTrustedLocalExecution("Reload and run the developer UI?")) return;
+      await window.spsRegistry.reloadDeveloperUi({ projectId, executionMode: "trusted-local" });
       setNotice("The SPS Workspace UI reloaded without restarting the plugin worker.");
       return;
     }
     if (button.classList.contains("restart-developer-worker")) {
-      await window.spsRegistry.restartDeveloperWorker({ projectId });
+      if (!confirmTrustedLocalExecution("Restart and run the plugin worker?")) return;
+      await window.spsRegistry.restartDeveloperWorker({ projectId, executionMode: "trusted-local" });
       await loadPreviewDiagnostics();
       setNotice("The plugin worker restarted without replacing its verified UI build.");
       return;
