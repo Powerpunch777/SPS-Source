@@ -65,6 +65,11 @@
 
 ## Engineering evidence
 
+- [2026-11-02 native Codex observation](../reviews/CODEX-NATIVE-OBSERVER-2026-11-02.md):
+  internal read-only transport and child metadata validation, 182 adapter checks,
+  isolated CLI 0.144.1 handshake/filter pass with zero model turns. Native Worker
+  creation, actual goal continuation and Builder integration remain incomplete.
+
 - [2026-11-02 CTO Task Packets](../reviews/CTO-TASK-PACKETS-2026-11-02.md):
   autonomous CTO requirement clarified; scoped versioned instructions and pinned dependencies,
   449 checks and no-AI source-app regression. Native Workers and automatic continuation remain incomplete.
