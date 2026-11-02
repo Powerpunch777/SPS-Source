@@ -70,10 +70,57 @@ null이다. 캡처를 검토했고 Main4/4 정상 종료·출력8개 종료/실�
 Desktop에서 Node24/PATH24/npm_execpath/절대 SPS_BUILDER_SOURCE_ROOT로
 `node scripts/smoke-builder-conditional-state-isolated.mjs` 실행, live opt-in 없음이다.
 
-CTO 질문으로 내부 Lead를 자동 호출하기, Lead 직접 해결의 CTO 회신, 사용자 답변의
-공유 기억/설계 Revision/Workstream 재전달·수신 연결은 후속이다. 이 단계로 전체
+이383개 시험 당시 CTO 질문으로 내부 Lead를 자동 호출하기, Lead 직접 해결의 CTO 회신,
+사용자 답변의 공유 기억/설계 Revision/Workstream 재전달·수신 연결은 후속이었다. 이 단계로 전체
 Builder 완료/실제 CTO 실행/OS 격리/설치본·서명·Stable 자격을 선언하지 않는다.
 Worker/QA/Task Packet/Runner·납품은 계속 남아 있으며 Marketplace·Preview·자체
 LAN은 보류다. [Builder 구현 기록](https://github.com/Powerpunch777/SPS-MY-PluginBuilder/blob/codex/builder-foundation/docs/implementation/CTO-QUESTION-INTAKE-2026-11-02.md),
 [MCP 공식 도구 계약](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)을
 참고했다. 외부 코드나 비공개 Core를 공개 Builder에 복사하지 않았다.
+
+## 후속: CTO 질문의 내부 Lead 전달
+
+사용자가 다시 확인한 흐름은 **작업 중 CTO 질문 → Lead 내부 검토 → 사용자 결정이
+필요한 부분만 미결정사항**이다. 기존 설계나 위임 범위로 해결할 질문은 Lead가 원래
+CTO에 직접 회신한다. 고객 상담의 설계 질문은 메인 Lead에서 다룬다. 이 업무 흐름과
+CLI/MCP 도구 실행 승인 설정은 별개이며 자동 승인을 추가하지 않았다.
+
+Builder `3d6879ea1cadd072fbe47560b83c3ab0755376d7`에 durable 전달을 구현하고 push했다.
+실제 등록 도구 wrapper는 CTO proposal을 저장한 뒤 현재 준비된 Lead `cto-inbox`에
+안정된 requestId로 한 번 admission한다. 저장과 전달 결과를 분리하고, 결과 불명은
+같은 Core receipt를 조회할 뿐 재송신하지 않는다. 다른 Lead/세션으로 바꾸거나 새 세션을
+자동 생성하지 않는다. CTO는 해당 실행에서 Lead 검토를 기다리지 않는다.
+
+전용9도구 planning 정책을 저장하고 read/review는 정확한 질문·현재 Lead·실제 Core
+receipt/run·현행 Workstream·미취소 실행과 연결했다. 일반 Lead 정책의 권한을 넓히지
+않았고 과거 저장된 질문/검토를 삭제하지 않았다. Lead의 분류는 AI가 하며 키워드로
+사용자 결정 여부를 정하지 않는다. Core/SDK 소스나 계약에는 이번 변경이 없다.
+
+Node24.22.1 격리 타입/빌드, 전체 **404/404**, SDK CLI validate/test가 통과했다.
+도메인9개, 전달+wrapper11개, 질문 서비스12개가 포함된다. fake Host에서 정확한
+질문·receipt 결합, 응답 유실/중복 전송 방지, 대상 변경/취소/명세 변경/CAS 누락/정책
+미지원 차단, 사적 기억/출력 비공개를 검사했다. 초기 타입 fixture 오류와 정책 목록
+assertion 실패는 수정 뒤 재검사했으며 통과로 세지 않는다.
+
+같은 사본의 no-AI source Desktop 앱도 exit0이다. mock Identity와 실제 Host/UI bridge로
+상태/권한/재시작, CTO 질문 필터 및 미완성 답변 입력 차단 회귀를 확인하고 캡처를 검토했다.
+질문 표시는 명시적 DTO fixture이며 실제 CTO/Lead 모델의 저장이 아니다. Main4/4 정상
+종료, 출력8개 종료/실패0, 내부 임시 데이터 제거를 확인했다. 기존 DEV PID48300과 시작
+시각, 설치본/로그인/의존성은 보존했다. 기존 로컬 복구 harness는 새 Native LAN 실증이 아니다.
+
+| 후속 시험 사본 | SHA-256 |
+| --- | --- |
+| source | `fff3057a340f8fa44be6e99a75e8273252b070ae9039a2acc900e1e89dcdb749` |
+| manifest | `599036d8ba2a0b16876d40093bf3d4d016d02c9cf77321684b3feb9af49a20e2` |
+| Worker | `ebaf0a52287937b03202afc5d78e8a2b68d450de5594109ffc3fce40c2b7c564` |
+| SDK CLI UI 집계 | `62928a714928dcde0f73ee1cfbcb62250cfa40e114bb365425321ef88c53f286` |
+| 실제 Host UI index | `af179a1093ddb6530200ab71f865ccb0fb16559784f1997c54e787ab929e3e15` |
+
+문서 후속 기록까지 시험 사본과 같은 source 지문이라고 주장하지 않는다. Core/SDK는
+위의 a57f4d9a/c69915a clean source 그대로다. 원시 로그/캡처/실제 계정과 Workspace
+식별자는 공개 Builder에 올리지 않았다. 재현 명령과 no-live opt-in은 위와 동일하다.
+
+**아직 남음:** 실제 AI 도구 승인 방식 결정과 실제 CTO→Lead 검토 시험, Lead 직접
+해결 결과의 CTO 회신, 사용자 답변의 질문 ID 연결 및 공유 기억/설계/Workstream 반영.
+전달 admission은 검토 완료나 사용자 결정이 아니며 전체 v15/실기기/서명/Stable 완료도
+아니다. Marketplace·Preview·새 Native LAN 개발은 계속 보류한다.
