@@ -65,6 +65,10 @@
 
 ## Engineering evidence
 
+- [2026-11-02 private CTO memory](../reviews/CTO-PRIVATE-MEMORY-2026-11-02.md):
+  project/CTO-scoped immutable notes, exact active delivery/run guards, historical
+  policy preservation and357 automated checks. No actual CTO provider-memory proof.
+
 - [2026-11-02 CTO Workstream delivery](../reviews/CTO-WORKSTREAM-DELIVERY-2026-11-02.md):
   stable planning intent and Core receipt reconciliation; Builder330 checks passed,
   but actual trial stopped at cancelled Lead MCP reads before any CTO execution.
