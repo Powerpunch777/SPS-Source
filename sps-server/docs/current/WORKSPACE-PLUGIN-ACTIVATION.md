@@ -1,5 +1,11 @@
 # Workspace Plugin Activation
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> Host1회 패키지 설치와 Workspace별 활성화·설정·데이터·실행을 구분한다. Primary0~1, Extension 다중 및 빈 Workspace를 허용한다. 전용 Worker 소유권은 OS 샌드박스 보장이 아니다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 Last updated: 2026-10-25
 
 ## Status

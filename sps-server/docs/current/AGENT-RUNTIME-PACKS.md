@@ -1,5 +1,11 @@
 # SPS Agent Runtime Packs
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> Runtime 팩은 선택형 실행 도구의 배포 수단이지 AI/Agent 등록을 모든 Workspace의 필수 조건으로 만드는 기능이 아니다. 사용자 자격증명·실행 grant와 OS 보호 지원을 별도 확인한다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 > Historical measurement note: the archive sizes and example release metadata
 > below were recorded for the `0.4.84` packaging audit. The current candidate
 > version and supported Profile combination are defined by

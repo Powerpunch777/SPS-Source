@@ -1,5 +1,11 @@
 # Agent Session Recovery and Durable Submission
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 범용 세션/요청 복구는 선택형 Core 기술 계약이며 Lead/CTO/Worker·메모리 의미는 Plugin 소유다. 공개 Marketplace/OS 보호 목표는 원문에서 보존하며 이하 과거 실행 범위의 제외 문구는 목표 철회가 아니다. 실제 미구현 durable submit과 AI 전송 상태를 유지한다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 Date: 2026-11-02. Generic Core/SDK plan, not a Builder workflow or completion claim.
 
 ## Boundary
@@ -9,8 +15,10 @@ concurrency, cancellation and result ownership. Core owns technical session/run
 identity and request recovery. Builder owns Lead3, shared structured memory,
 project CTO, independent Dev/QA and GitHub Actions/Self-hosted Runner behavior.
 Do not route an Agent request through a different model API, issue or AI server
-to conceal an unsupported session contract. Public Marketplace and deferred
-Native development remain excluded. Preserve user data and original installs.
+to conceal an unsupported session contract. Marketplace is a separate architecture
+phase, not part of this session increment; its product goal is not retired.
+The prior Native LAN implementation pause does not remove independent Core
+management or OS-protection targets. Preserve user data and original installs.
 
 ## Session Ensure Increment
 

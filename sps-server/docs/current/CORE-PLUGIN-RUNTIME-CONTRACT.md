@@ -1,5 +1,11 @@
 # SPS Core Plugin Runtime Contract
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 아래 API/보안 계약은 현재 구현 표면이며 전체 목표 달성 선언이 아니다. Source/grant/cwd는 선택적 최대 파일 범위나 OS Vault 격리와 다르다. 업무 역할과 Plugin 공통 UI를 강제하지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 Status: implemented in the current Core baseline. This document is the
 workflow-neutral contract used by Extension Profile 2.0 plugins.
 

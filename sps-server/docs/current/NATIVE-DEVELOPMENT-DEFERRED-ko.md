@@ -1,5 +1,11 @@
 # Native 개발 보류 및 재개 기록
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 내장 Native LAN 신규 구현의 과거 보류를 기록한다. 독립 Native 시스템 관리 UI나 OS 파일/Vault 보호의 목표를 삭제하거나 전체 Core 완료 기준에서 제외하는 결정은 아니다. 현재 문서 작업은 LAN 개발을 재개하지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 최종 갱신: 2026-10-28
 
 **사용자 요청으로 Native 추가 개발을 보류한다.** 당분간 SPS Core와 로컬
@@ -108,4 +114,5 @@ Zod major 전환이나 보안 예외를 이 문서로 승인하지 않는다.
 - Core `doc/SPS-NATIVE-MAIN-INGRESS.md`
 - Core `doc/SPS-WORKSPACE-PLUGIN-WORKERS.md`
 
-Marketplace 정책 변경과 Plugin Builder 구조 개편은 계속 개발 범위에서 제외한다.
+위 기록은 당시 Native LAN 실행 범위다. Marketplace와 범용 Builder의 현행 제품 목표는
+2026-11-02 설계 기준을 따르며, 이 문서로 영구 제외하거나 구현을 재개하지 않는다.

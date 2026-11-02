@@ -1,5 +1,11 @@
 # Workspace removal and plugin state
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 전체 Workspace 제거와 해당 Workspace+Plugin 기본 데이터 초기화를 구분한다. 전체 초기화는 별도 확인하며 다른 Workspace/Plugin·외부 프로젝트·Vault를 보호한다. 미구현 범용 초기화를 현재 제거 API로 대체했다고 표시하지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 Deleting a Workspace previously left its company-scoped rows in `plugin_state`. The store uses a textual scope identifier and has a foreign key to the installed plugin, but no foreign key to the company. Removing the company therefore could not cascade into this store.
 
 Core now explicitly removes rows matching both `scope_kind = company` and `scope_id = removed Workspace ID` inside the existing company-removal transaction. The operation covers all plugins and namespaces. The production route still drains Workspace-owned workers, stops execution, checks pending resources, and rechecks the durable stop token before deletion.

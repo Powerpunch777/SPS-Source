@@ -1,5 +1,11 @@
 # Workflow Plugin과 Extension Plugin 전환 계획
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> Primary는 Workspace 기본 진입 지정0~1개이고 Extension은 여러 개다. Extension도 전체 UI·전용 창·헤드리스·일반 SDK 기능을 사용할 수 있다. 실제 capability/사용자/Workspace 인가는 별도로 집행한다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 상태: 2026-10-25 목표 문서 정렬; 목표 구현은 대부분 미완료
 최종 갱신: 2026-10-25
 

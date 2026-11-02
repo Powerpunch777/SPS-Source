@@ -1,5 +1,11 @@
 # Plugin Builder Delivery Plan
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 이하 내용은 이전 번들 Builder의 구현·시험·미완성 기록이다. 신규 범용 Builder의 제품 범위·필수 역할·공개 정책을 정하지 않는다. v15는 별도 Builder의 솔루션 제작 워크플로이며 다른 Builder/외부 IDE 이용을 막지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 2026-11-01 ownership clarification: the new Builder's v15 design, source, UI and
 implementation plan live in the separate
 [SPS-MY-PluginBuilder repository](https://github.com/Powerpunch777/SPS-MY-PluginBuilder).

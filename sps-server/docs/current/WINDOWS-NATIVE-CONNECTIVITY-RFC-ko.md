@@ -1,5 +1,11 @@
 # RFC: Windows LAN trusted connectivity v0
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 이 RFC의 예시 protocol/API는 별도 원격 전송 설계다. Core/SDK의 현재 지원이나 일반 Plugin의 필수 연결 경로가 아니다. 이번 작업은 인증·방화벽·운영 배포를 변경하지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 작성일: 2026-10-25, 상태 갱신: 2026-10-27. **D1~D3·D7 정책 승인 / 등록·Workspace·Member 갱신 소스 연결 / Native 기본 OFF, 제품 검증 진행 중**.
 [계획과 결정 목록](WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)의 Stage 0 산출물이다.
 개념 이름 전체가 현재 export·endpoint를 뜻하지 않는다. 현재 소스 통합 범위는

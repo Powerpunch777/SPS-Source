@@ -1,5 +1,11 @@
 # Plugin Compatibility and Updates
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 호환성·stage·검증·rollback을 유지한다. 자동 확인/다운로드와 사용자의 실제 적용 선택을 구분하며 사용자 승인 없는 의존 Plugin 설치/활성화를 하지 않는다. Primary/Extension은 권한 등급이 아니다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 ## Purpose
 
 SPS must update its Core and Desktop without silently breaking installed plugins. A plugin update is always an explicit Host action. A Desktop or Core update never installs, enables, or executes a new plugin release on its own.

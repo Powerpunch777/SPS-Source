@@ -1,5 +1,11 @@
 # Host-Reviewed Plugin Artifact Cleanup
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 정리·승인·관리 권한은 Core 독립 시스템 UI 소유다. Plugin UI가 고장 나도 사용할 수 있어야 하며 데이터/외부 프로젝트·불확실한 실행 참조를 보존한다. 정리 코드·검증의 미완성 상태는 그대로 유지한다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 Status: user-approved policy; allocation/inventory, private preparation/Registry/
 Worker references, Core-only composition and process-local activity admission implemented.
 Private owned-child IPC now carries a held Core-only snapshot; complete
