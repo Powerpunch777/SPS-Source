@@ -65,6 +65,11 @@
 
 ## Engineering evidence
 
+- [2026-11-02 paused native goal state](../reviews/CODEX-PAUSED-GOAL-STATE-2026-11-02.md):
+  204 adapter checks and actual isolated CLI 0.144.1 goal persistence across two
+  processes, same paused thread resume and clear. Active continuation, native
+  Worker execution and Builder integration remain incomplete; no new Gate policy adopted.
+
 - [2026-11-02 native Codex observation](../reviews/CODEX-NATIVE-OBSERVER-2026-11-02.md):
   internal read-only transport and child metadata validation, 182 adapter checks,
   isolated CLI 0.144.1 handshake/filter pass with zero model turns. Native Worker
