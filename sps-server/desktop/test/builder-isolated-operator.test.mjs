@@ -25,6 +25,12 @@ test("isolated Builder operator fails before fixture/account use without exact l
     [["--live-design"], { ...optedIn, SPS_BUILDER_LIVE_CANCEL: "1" }, /cancellation probes/],
     [["--live-design"], { ...optedIn, SPS_DESKTOP_E2E_BINARY: "unapproved.exe" }, /installed binaries/],
     [["--live-design", "--build-only"], optedIn, /Only --build-only or --live-design/],
+    [["--live-memory"], {}, /both explicit opt-ins/],
+    [["--live-memory"], { SPS_BUILDER_LIVE_CODEX: "1" }, /both explicit opt-ins/],
+    [["--live-memory"], { SPS_BUILDER_LIVE_MEMORY: "1" }, /both explicit opt-ins/],
+    [[], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_MEMORY: "1" }, /both explicit opt-ins/],
+    [["--live-memory"], { ...optedIn, SPS_BUILDER_LIVE_MEMORY: "1" }, /both explicit opt-ins/],
+    [["--live-memory"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_MEMORY: "1", OPENAI_API_KEY: "test-only" }, /without API key/],
   ]) {
     await assert.rejects(exec(process.execPath, [operator, ...args], {
       env: { ...base, ...env }, windowsHide: true, timeout: 3_000, maxBuffer: 64 * 1024,
