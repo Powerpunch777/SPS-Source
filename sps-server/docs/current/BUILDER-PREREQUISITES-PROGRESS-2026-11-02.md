@@ -68,7 +68,31 @@ sender/mainFrame/URL을 확인하고 권한 확인과 비동기 창 열기 뒤�
 
 ## 최종 통합 증거
 
-Core UI/Builder 회귀와 통합 revision 검증 후 추가한다. 이 빈 항목을 통과로 간주하지 않는다.
+- Source runtime `93f6330f365e6e5a8c360e10955dea2c1b2fca3e`, Core runtime
+  `71b649ebcc1bef0248873d3f5ec699b11d2c12da`, Host SDK documentation pin
+  `18e06800d1c1e75003b7dd12936ebfcab2ef1f7f`.
+- Builder acceptance `ba28d43f473df82d82ebab09c972f18f44947cb5`, unchanged runtime
+  `87ff7a25a4f393b08cce4f4c54fef80747b4ba01`, dependency SDK `bfd81c...`.
+  18e0680은 SDK 문서 후속이며 런타임/API가 바뀐 버전 또는 새 릴리스가 아니다.
+- Core UI 마지막 7파일 69/69, `pnpm --filter @paperclipai/ui typecheck` 및 production build 통과.
+- Source runtime HEAD에서 Desktop 전체 직접 검사 재실행: 2,222 total / 2,219 pass /
+  3 Windows 8.3 관련 skip / 0 fail. runtime 테스트와 설치본 자격을 구분한다.
+- 동일 tuple의 Builder `npm run test:core-host` exit 0. 실제 page에서 Core 프레임 없음,
+  가로·세로 viewport 채움, 세 Lead 세션·명시적 재확인·A/B 분리·원래 Agent 설정·재시작 유지 통과.
+  Common fixture의 update/rollback·UI action/event·Job·capability 거부·UI-less Worker·독립 복구도 통과.
+  Main 4/4 exit 0, 출력 8개 종료/실패 0, 정확한 임시 정리 완료. 실제 AI는 미실행.
+- 부모가 최종 Lead/System 캡처를 확인해 흰 하단 canvas 제거와 기존 검정 UI를 확인했다.
+  Worker/UI entry SHA는 이전 runtime과 동일하며 별도 Builder 기록에 명시했다.
+- 현재 production 의존성 정책 감사: advisory 3개, Critical/High 0, Moderate 검토 1개
+  (minimatch, 2026-11-07까지), Low 2개. 취약점 0건이라는 의미가 아니다.
+  push의 기본 브랜치 Dependabot 경고와 현재 후보 production 감사 범위는 다르며
+  개발 의존성 전체 감사와 모든 기본 브랜치 경고 해소는 이 실행에서 주장하지 않는다.
+
+동일 최종 runtime tuple의 Native Sources 앱 재검증도 exit 0:
+준비된 시험 Host와 별도 프로세스 재실행에서 독립 Sources 열기/닫기·시작 차단·Agent 0·
+Main 관리 허용/일반 renderer 관리 거부·LAN off를 확인했다. Main 3/3 exit 0,
+출력 6개 종료/실패 0, 정확한 임시 정리 완료. 실제 기기 승인/두 PC 증거는 아니다.
+마지막 docs-only 후속은 아래 runtime 식별자를 바꾸거나 새 시험 결과로 승격하지 않는다.
 
 ## C. Plugin page 화면 분리 진행
 

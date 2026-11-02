@@ -26,7 +26,9 @@ Phase 순서는 의존성을 나타내며 날짜·완료율·현재 릴리스 �
 ## 현재 코드에서 확인된 위치
 
 - 빈 Workspace/Agent0 진입, 독립 Core Settings·복구와 scoped 실행·저장·생명주기에 기반이 있다.
-- Plugin 페이지에는 아직 호환 Core 프레임이 붙고 일반 Workspace 작업창은 단일 재사용 구조다.
+- Core baseline의 선언된 일반 Plugin page는 강제 Core 프레임 없이 표시하도록 보완하고
+  실제 Builder 앱에서 확인했다. 호환 Core 경로·legacy Workplane 모드는 보존하며,
+  일반 Workspace 작업창은 여전히 단일 재사용 구조다. [정확한 진행/시험 기록](BUILDER-PREREQUISITES-PROGRESS-2026-11-02.md)을 따른다.
 - Workspace 전용 Worker와 pause/stop/epoch 기반이 있지만 모든 실행/자손/원격 경로의 최종 자격은 별도다.
 - OS Vault/파일 보호, 전체 독립 관리, 일부 초기화·Workspace 이동·자원 관찰은 미완료 또는 근거 부족이다.
 - Host 전체 전송/Registry 패키지 보존·복원 후 승인 기반은 있으나 일반 Workspace 이동 범위와 같지 않다.
