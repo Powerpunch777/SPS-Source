@@ -399,3 +399,19 @@ Builder `0feab9a`는 실제 사용자 입력 ID 조회와 Lead 전용 설계 초
 격리 빌드 전체159/159, 타입/SDK CLI와 실제 source 앱 시험이 통과했다. 실제 앱의 초안은
 DTO 표시 fixture이며 실제 AI 호출·Host 초안 저장의 증거가 아니다. 현재 Lead 변경 시
 기존 초안은 보존하지만 자동 인계하지 않으며, 전체 Builder 목표는 active·미완료다.
+
+## 실제 Lead 도구 실행과 재시작 후 초안 보존
+
+Builder `12ba623`과 Source 시험 연산자 `3c1eb21`에서 사용자가 허용한 임시 실계정
+시험을 진행했다. 전체160/160, 타입/빌드/SDK CLI와 실제 source 앱 시험이 통과했다.
+실제 Codex Lead의 source 읽기·초안 읽기·제안1회·다시 읽기와 실제 Host 저장,
+재시작 후 동일 초안·대화, 다른 Workspace 불변을 확인했다.
+[별도 기록](BUILDER-LIVE-DESIGN-EVIDENCE-2026-11-02.md)에 실패한 첫 시험, 시험용
+MCP 승인 설정, 정확한 해시·한계를 구분했다. Identity는 mock이고 실제 Google OAuth나
+설치본/두 PC 검증은 아니다. 일반 도구 승인 UX와 최신 답변 자동 스크롤도 남아 있다.
+보류 기능을 되살리거나 전체 Builder 완료로 축소하지 않고 목표는 active로 유지한다.
+
+후속 Builder `dcaecb3`은 최근 답변 자동 이동과 과거 기록 독자의 위치 유지, 직접 이동
+버튼을 추가했다. 전체163/163·타입/빌드·SDK CLI 및 no-AI source 앱의 긴 대화 표시
+fixture 검사가 통과했다. 실제 AI 저장 시험과는 별도의 UI bytes/근거이며 같은 시험으로
+합치지 않는다. 원본 기록은 위 실제 Lead 검증 문서의 후속 절에 덧붙였다.
