@@ -64,7 +64,7 @@ function coreStatus(overrides = {}) {
 function createRenderer({ getStatus = async () => coreStatus(), prepareNativeIdentity = async () => coreStatus(), api = {} } = {}) {
   const elements = new Map();
   for (const [, id] of htmlSource.matchAll(/\bid="([^"]+)"/g)) elements.set(id, new ElementFixture(id));
-  const actionButtons = ["open-workspace", "check-updates", "restart-host", "export-host", "inspect-transfer"]
+  const actionButtons = ["open-workspace", "open-plugin-sources", "check-updates", "restart-host", "export-host", "inspect-transfer"]
     .map(action => new ElementFixture(`action-${action}`, { action }));
   const document = {
     createElement: tag => new ElementFixture(tag),
@@ -93,6 +93,22 @@ async function settle() {
 function element(ctx, id) { return ctx.elements.get(id); }
 
 const listenerHost = "11111111-1111-4111-8111-111111111111";
+test("Native Plugin sources requires explicit Host permission and displays safe failure", async () => {
+  for (const canManageHost of [false, undefined, true]) {
+    let opened = 0;
+    const ctx = createRenderer({ getStatus: async () => coreStatus({ canManageHost }), api: {
+      openPluginSources: async () => { opened++; throw new Error("private-key-path"); },
+    } });
+    await settle();
+    const button = ctx.actionButtons.find(value => value.dataset.action === "open-plugin-sources");
+    assert.equal(button.disabled, canManageHost !== true);
+    button.dispatch("click");
+    await settle();
+    assert.equal(opened, canManageHost === true ? 1 : 0);
+    assert.doesNotMatch(element(ctx, "action-notice").textContent, /private-key-path/);
+  }
+});
+
 const listening = { state: "listening", hostId: listenerHost, bindAddress: "192.168.1.10", port: 43123 };
 function preparedHost(nativeListener = { state: "off" }) {
   return coreStatus({ nativeConnectivity: validNative({ state: "identity_prepared", canPrepare: false,

@@ -48,6 +48,55 @@ function setup(overrides = {}) {
   return { controller, windows, calls, invoke, event };
 }
 
+test("Plugin source review opens from independent Settings without reading Host or Workspace status", async () => {
+  let opened = 0;
+  const ctx = setup({
+    getStatus: async () => { throw new Error("Host or plugin screen unavailable"); },
+    openWorkspace: async () => { throw new Error("Workspace must not open"); },
+    openPluginSources: async options => { options.assertRequester(); opened++; },
+  });
+  await ctx.controller.show();
+  await assert.rejects(ctx.invoke("open-plugin-sources", [{ sourceId: "caller-selected" }]));
+  await assert.rejects(ctx.invoke("open-plugin-sources", [], { sender: {}, senderFrame: {} }));
+  assert.equal(opened, 0);
+  assert.deepEqual(await ctx.invoke("open-plugin-sources"), { opened: true });
+  assert.equal(opened, 1);
+  assert.equal(ctx.calls.filter(value => value === "authorize").length, 1);
+  assert.equal(ctx.calls.includes("open"), false);
+});
+
+test("Plugin source review fails closed for missing support and revoked Host ownership", async () => {
+  for (const overrides of [
+    {},
+    { authorizeMutation: async () => { throw new Error("private owner credential"); }, openPluginSources: async () => { throw new Error("must not open"); } },
+  ]) {
+    const ctx = setup(overrides);
+    await ctx.controller.show();
+    await assert.rejects(ctx.invoke("open-plugin-sources"), error => /could not complete/.test(error.message)
+      && !error.message.includes("private"));
+  }
+});
+
+test("Plugin source review rechecks its frame after authorization and after window opening", async () => {
+  for (const phase of ["authorize", "open"]) {
+    let release, started;
+    const gate = new Promise(resolve => { release = resolve; });
+    const pending = new Promise(resolve => { started = resolve; });
+    let opened = 0;
+    const wait = async () => { started(); await gate; };
+    const ctx = setup({ authorizeMutation: phase === "authorize" ? wait : async () => {},
+      openPluginSources: async options => { options.assertRequester(); opened++; if (phase === "open") await wait(); },
+    });
+    await ctx.controller.show();
+    const result = ctx.invoke("open-plugin-sources");
+    await pending;
+    ctx.windows[0].webContents.mainFrame = { url: "about:blank" };
+    release();
+    await assert.rejects(result, /could not complete/);
+    assert.equal(opened, phase === "authorize" ? 0 : 1);
+  }
+});
+
 test("Host certificate maintenance has no caller selectors and fences confirmation authority", async () => {
   let confirmed = false, accepted = 0;
   const ctx = setup({ confirmNativeIdentityRenewal: async () => confirmed,

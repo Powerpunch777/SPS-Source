@@ -32,15 +32,33 @@ test("corrupt, unbounded, and invalid recovery preferences fail closed", async t
   }
 });
 
+test("oversized recovery preferences fail closed and cannot be overwritten", async t => {
+  const userDataPath = await fixture(t);
+  const target = path.join(userDataPath, "core-recovery.json");
+  const original = "x".repeat(4097);
+  await writeFile(target, original);
+
+  const state = await loadCoreRecoverySettings({ userDataPath });
+  assert.equal(state.pluginsDisabled, true);
+  assert.ok(state.storageError);
+  await assert.rejects(saveCoreRecoverySettings({ userDataPath, disabled: false }), /bounded regular file/);
+  assert.equal(await readFile(target, "utf8"), original);
+});
+
 test("recovery settings never follow directory junctions", async t => {
   const root = await fixture(t);
   const outside = path.join(root, "other");
   await mkdir(outside);
+  const target = path.join(outside, "core-recovery.json");
+  const original = "preserve-target-bytes";
+  await writeFile(target, original);
   const userDataPath = path.join(root, "linked");
   await symlink(outside, userDataPath, process.platform === "win32" ? "junction" : "dir");
-  assert.equal((await loadCoreRecoverySettings({ userDataPath })).pluginsDisabled, true);
+  const state = await loadCoreRecoverySettings({ userDataPath });
+  assert.equal(state.pluginsDisabled, true);
+  assert.ok(state.storageError);
   await assert.rejects(saveCoreRecoverySettings({ userDataPath, disabled: false }), /regular directory/);
-  await assert.rejects(readFile(path.join(outside, "core-recovery.json")), { code: "ENOENT" });
+  assert.equal(await readFile(target, "utf8"), original);
 });
 
 test("settings writes are serialized, validate inputs, and never mutate another application file", async t => {

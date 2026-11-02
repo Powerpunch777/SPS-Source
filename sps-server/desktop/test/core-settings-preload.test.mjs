@@ -22,6 +22,15 @@ async function loadPreload() {
   return { api, calls };
 }
 
+test("Plugin sources preload exposes a zero-argument Native action only", async () => {
+  const { api, calls } = await loadPreload();
+  await assert.rejects(api.openPluginSources({ sourceId: "forged" }), /no arguments/);
+  await assert.rejects(api.openPluginSources(undefined), /no arguments/);
+  assert.equal(calls.length, 0);
+  await api.openPluginSources();
+  assert.deepEqual(calls, [["desktop:core-settings-open-plugin-sources"]]);
+});
+
 test("certificate metadata and renewal preload accept only a saved Host selector", async () => {
   const { api, calls } = await loadPreload();
   const hostId = "11111111-1111-4111-8111-111111111111";

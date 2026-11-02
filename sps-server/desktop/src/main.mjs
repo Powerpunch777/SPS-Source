@@ -5287,6 +5287,11 @@ function ensureCoreSettingsController() {
       };
     },
     authorizeMutation: assertRegistryOwner,
+    openPluginSources: async ({ assertRequester }) => {
+      assertRequester();
+      await showRegistryWindow();
+      assertRequester();
+    },
     setPluginsDisabled: disabled => saveCoreRecoverySettings({ userDataPath: app.getPath("userData"), disabled }),
     confirmRestart: async parentWindow => {
       const choice = await dialog.showMessageBox(parentWindow, {

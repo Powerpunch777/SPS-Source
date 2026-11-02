@@ -62,6 +62,10 @@ const coreSettingsApi = Object.freeze({
     return ipcRenderer.invoke("desktop:core-settings-set-plugins-disabled", { disabled: input.disabled });
   },
   restartHost: () => ipcRenderer.invoke("desktop:core-settings-restart-host"),
+  openPluginSources: (...args) => {
+    if (args.length !== 0) return Promise.reject(new TypeError("openPluginSources accepts no arguments."));
+    return ipcRenderer.invoke("desktop:core-settings-open-plugin-sources");
+  },
   openWorkspace: async () => {
     return await ipcRenderer.invoke("desktop:core-settings-open-workspace");
   },

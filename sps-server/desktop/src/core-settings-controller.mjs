@@ -163,6 +163,7 @@ export function createCoreSettingsController({
   confirmRestart,
   restartHost,
   openWorkspace,
+  openPluginSources,
   checkUpdates,
   exportHost,
   inspectTransfer,
@@ -296,6 +297,12 @@ export function createCoreSettingsController({
       return status();
     }, { writes: true });
     bind("open-workspace", async () => { await openWorkspace(); return status(); });
+    bind("open-plugin-sources", async (_input, event) => {
+      if (typeof openPluginSources !== "function") throw new Error("Plugin sources are unavailable.");
+      await awaitAndAssertSender(event, () => authorizeMutation());
+      await awaitAndAssertSender(event, () => openPluginSources({ assertRequester: () => assertSender(event) }));
+      return { opened: true };
+    }, { writes: true, authorizeBeforeAction: false });
     bind("check-updates", async () => { await checkUpdates(); return status(); });
     bind("export-host", async () => { await exportHost(); }, { writes: true });
     bind("inspect-transfer", async () => { await inspectTransfer(); });

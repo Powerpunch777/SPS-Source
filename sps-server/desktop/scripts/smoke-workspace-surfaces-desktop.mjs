@@ -402,6 +402,7 @@ async function describePage(cdp) {
         devicesBusy: devicesStatus?.getAttribute("aria-busy") === "true",
         devicesMessage: devicesStatus?.textContent?.trim() ?? null,
         refreshDisabled: refreshButton ? refreshButton.disabled : null,
+        openWorkspaceDisabled: document.querySelector('[data-action="open-workspace"]')?.disabled ?? null,
       };
     })() })`);
 }
@@ -855,7 +856,31 @@ try {
       assert.equal(before.nativeConnectivity.lanEnabled, false);
       assert.equal(before.recovery.pluginsDisabled, true);
       assert.equal(await setupCdp.evaluate("typeof window.spsDesktopWorkspace"), "undefined");
+      nativeManagementStage = "plugin_sources";
+      await click(setupCdp, '[data-action="open-plugin-sources"]', "Open Plugin sources without a Workspace or plugin startup");
+      const registryTarget = await waitForTarget(debugPort, child,
+        target => target.type === "page" && target.url?.endsWith("/renderer/registry.html"), "independent Plugin sources");
+      assert.match(registryTarget.url, /\/registry\.html$/);
+      const preWorkspaceTargets = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then(response => response.json());
+      assert.equal(preWorkspaceTargets.some(target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || "")), false,
+        "Opening Plugin sources must not create a Workspace or start the Host.");
+      const afterSources = await setupCdp.evaluate("window.spsCoreSettings.getStatus()", true);
+      assert.equal(afterSources.host.startupDeferred, true);
+      assert.equal(afterSources.recovery.pluginsDisabled, true);
+      await waitForPage(setupCdp, page => page.body.includes("Plugin sources opened."), "completed Native sources action");
+      const registryCdp = await openCdp(registryTarget);
+      try {
+        assert.equal(await registryCdp.evaluate("typeof window.spsRegistry"), "object");
+        if (screenshotPath) await captureScreenshot(registryCdp,
+          path.join(path.dirname(screenshotPath), `native-plugin-sources-${phase}.png`));
+        await registryCdp.command("Page.close");
+      } finally { await registryCdp.close(); }
+      await setupCdp.command("Page.bringToFront");
+      console.log(`[native-management] ${phase}: Native Plugin sources opened and closed without starting Host/Workspace; plugins remain blocked.`);
       nativeManagementStage = "host_start_click";
+      await waitForPage(setupCdp, page => page.nativeManagement?.hostBusy === false
+        && page.nativeManagement?.devicesBusy === false
+        && page.nativeManagement?.openWorkspaceDisabled === false, "Settings focus refresh before opening Workspace");
       await click(setupCdp, '[data-action="open-workspace"]', "Start the actual prepared Host from independent Settings");
       nativeManagementStage = "host_workspace_target";
       workspaceCdp = await openCdp(await waitForTarget(debugPort, child,
@@ -1451,7 +1476,7 @@ try {
   acceptanceFailure = error;
   if (nativeManagement) {
     const settingsTargetStages = new Set([
-      "settings_identity_view", "settings_status", "host_start_click", "host_workspace_target",
+      "settings_identity_view", "settings_status", "plugin_sources", "host_start_click", "host_workspace_target",
       "host_workspace_ready", "host_agents_check", "authority_checks", "device_read",
       "invitation_read", "shutdown",
     ]);

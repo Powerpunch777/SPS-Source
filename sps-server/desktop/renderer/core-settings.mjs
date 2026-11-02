@@ -226,8 +226,8 @@ function syncControls() {
   quitDesktopButton.disabled = pending.size > 0 || quitPending;
   byId("native-identity-form").hidden = nativeConnectivity?.canPrepare !== true || currentStatus?.canManageHost !== true;
   for (const button of actionButtons) {
-    const ownerAction = ["restart-host", "export-host"].includes(button.dataset.action);
-    button.disabled = busy || !currentStatus || (ownerAction && currentStatus.canManageHost === false)
+    const ownerAction = ["restart-host", "export-host", "open-plugin-sources"].includes(button.dataset.action);
+    button.disabled = busy || !currentStatus || (ownerAction && currentStatus.canManageHost !== true)
       || (button.dataset.action === "open-workspace" && currentStatus.desktopStateAvailable === false);
   }
   pluginToggle.disabled = busy || currentStatus?.canManageHost === false || typeof currentStatus?.recovery?.pluginsDisabled !== "boolean";
@@ -639,9 +639,12 @@ pluginToggle.addEventListener("change", () => {
 
 for (const button of actionButtons) {
   button.addEventListener("click", () => {
+    if (button.disabled) return;
     const action = button.dataset.action;
     if (action === "open-workspace") {
       void runAction(action, () => window.spsCoreSettings.openWorkspace(), "Workspace action completed.");
+    } else if (action === "open-plugin-sources") {
+      void runAction(action, () => window.spsCoreSettings.openPluginSources(), "Plugin sources opened.");
     } else if (action === "check-updates") {
       void runAction(action, () => window.spsCoreSettings.checkUpdates(), "Update check completed.");
     } else if (action === "restart-host") {
