@@ -65,9 +65,13 @@
 
 ## Engineering evidence
 
+- [2026-11-02 internal Lead answers to CTO](../reviews/CTO-QUESTION-REPLY-2026-11-02.md):
+  durable answers, exact Core-bound CTO read/ack, preserved historical policies;
+  423 checks and no-AI source-app regression. Actual AI and user-answer propagation remain unproven.
+
 - [2026-11-02 CTO question intake](../reviews/CTO-QUESTION-INTAKE-2026-11-02.md):
-  CTO-only proposals, internal Lead review and filtered user decisions.383 checks;
-  user-answer binding and automatic Lead/CTO exchanges remain incomplete.
+  CTO-only proposals, internal Lead review and filtered user decisions; 383 checks initially,
+  404 with durable admission. See the later reply record for the next implementation step.
 
 - [2026-11-02 private CTO memory](../reviews/CTO-PRIVATE-MEMORY-2026-11-02.md):
   project/CTO-scoped immutable notes, exact active delivery/run guards, historical
