@@ -1,60 +1,27 @@
-# Plugin Builder Chat
+# Plugin Builder 대화와 Core 경계
 
-Status: source development implementation, updated 2026-10-24. This is not a new
-installer or a Stable release. Existing installation and user data are unchanged.
+갱신: 2026-11-02. [Core–Plugin 설계 기준](DESIGN-BASELINE-2026-11-02.md)을 따른다.
 
-## Ownership
+## 목표
 
-Builder owns one Lead, optional Workers, conversations, attachments and reports.
-Core provides authenticated Workspace scope and generic Agent session transport.
-The public SDK exposes capability-checked actions and Agent sessions, without
-private Core imports or arbitrary RPC. The SDK additions are pinned by commit in
-support-matrix.json; they are not part of the published v0.11.0 tag.
+Plugin Builder는 선택형 공개 범용 제작 Plugin이다. 다른 Builder·외부 IDE·SDK/CLI
+제작도 가능하며 Core는 Builder·Agent 등록·대화를 필수 시작 조건으로 강제하지 않는다.
+대화·업무 분배·Lead/CTO/Worker·기억·승인·보고는 Plugin 소유다.
+Core는 인증된 Workspace, 선택형 Agent/Runtime·세션·저장·Run/Job/결과·중단만 제공한다.
 
-## Implemented
+별도 [Builder 저장소](https://github.com/Powerpunch777/SPS-MY-PluginBuilder)의 v15는
+솔루션 제작 워크플로와 UI v9의 세부 설계다. Lead3대화가 같은 프로젝트의 Lead 기억을
+공유하고 CTO는 프로젝트별 단일 세션, Dev/QA는 독립 세션을 갖는 목표를 유지한다.
+이 구성을 Core의 필수 역할이나 범용 Builder의 유일한 작업 방식으로 고정하지 않는다.
+검정·중립 회색 UI는 Builder에만 적용하며 강제 Core 사이드바/메뉴 없는 화면을 목표로 한다.
 
-- Conversation list, new conversation, persisted transcript and execution logs.
-- Bottom composer, UTF-8 text attachments and configured Agent model display.
-- Collapsible, resizable Worker/results panel and existing authoring records.
-- Lead-only delegation to selected Workers, asynchronous reports and result tool.
-- Workspace-scoped state, duplicate-send exclusion, bounded content and restart
-  reconciliation. Interrupted runs are not automatically repeated.
-- Generic plugin prompts do not inherit the legacy issue-work default or resume
-  delta. Normal issue execution retains its existing behavior.
+## 현재와 기록
 
-## Verification
+현재 별도 Builder는 Workspace 입력·Agent 선택·세 Lead 세션 준비/기존 ID 확인·재시작 유지
+검증 기록이 있다. 실제 AI 전송, durable request receipts, 공유 기억 및 전체 CTO/Dev/QA/
+GitHub Actions Runner는 완료되지 않았다. 새 세션 identity API만으로 메시지 중복 방지를 주장하지 않는다.
 
-The list below is historical initial-chat verification. For the current pinned
-Source/Core/SDK tuple, exact test counts, real CLI authoring/Preview results and
-remaining authorization boundaries, use [Plugin Builder Delivery Plan](PLUGIN-BUILDER-DELIVERY-PLAN.md).
-
-- Builder check: 14 tests.
-- Public SDK: 149 tests.
-- Core session context/runtime: 13 tests, including embedded Postgres context.
-- Desktop source Workspace E2E passed, including panel bounds at 1024x720 and
-  1440x900 and responsive Workspace checks through 1440x900.
-- Development app: actual Codex Lead answered the initial connection check and
-  recalled its previous response on the next turn. After the final backend
-  restart it restored the transcript and recalled that answer again. No file
-  edits were requested. The right-hand panel was also inspected in the app.
-- Final source E2E rerun passed with screenshots and responsive assertions.
-  One preceding run without screenshot capture failed while establishing the
-  fresh Host Identity session (`desktop_access_required`); no authenticated
-  Workspace window opened. Retrying passed with the live development Host still
-  running. Its cause is not established, so startup reliability is not certified
-  by this passing retry and remains a separate regression investigation.
-
-These are source-development results, not signed-package or two-device evidence.
-
-## Remaining
-
-- Real-account Worker delegation/report end-to-end verification.
-- Per-message model overrides. Exact-run cancellation is implemented with
-  process termination/state reconciliation; unresolved runs are not auto-retried.
-- Convenient Source/CLI authoring setup. Host-selected project references and
-  separate gated Preview exist, but a reference does not configure Agent cwd.
-- Image/binary attachments and file diff presentation.
-- A fresh installer, SDK release and complete release gates before distribution.
-
-The development app uses its persistent isolated profile and supports UI hot
-reload. Backend/main/preload changes require restarting development, not packaging.
+이 Source의 과거 번들 `sps-plugin-discovery` 대화·Lead/Worker·실제 CLI 시험은
+[과거 Delivery 기록](PLUGIN-BUILDER-DELIVERY-PLAN.md)의 해당 리비전에만 유효하다.
+새 Builder 구현의 완료 증거나 설계 원본으로 사용하지 않는다.
+Preview는 Builder 전용 기능이 아닌 공통 격리 개발 기술이며 실제 설치는 Core 관리에서 승인한다.

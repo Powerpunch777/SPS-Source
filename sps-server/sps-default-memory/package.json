@@ -4,10 +4,16 @@
   "private": true,
   "type": "module",
   "description": "Bundled first-party memory provider for SPS Desktop Owner Host.",
+  "files": [
+    "dist",
+    "sps-plugin.json"
+  ],
   "spsPlugin": {
+    "id": "sps.default-memory",
     "manifest": "./dist/manifest.js"
   },
   "scripts": {
-    "check": "node --check ./dist/manifest.js && node --check ./dist/worker.js && node ./scripts/verify-lifecycle.mjs"
+    "build": "node ./scripts/build-worker.mjs",
+    "check": "npm run build && node --check ./dist/manifest.js && node --check ./dist/worker.js && node ./scripts/verify-lifecycle.mjs"
   }
 }

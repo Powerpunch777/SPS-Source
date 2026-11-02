@@ -1,6 +1,24 @@
-import { lstatSync, mkdirSync, realpathSync, watch } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync, statSync, watch } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+
+// The Node launcher knows its executable. Electron's process.execPath instead
+// points at Electron, so do not infer the development Host binary from it.
+export function resolveDesktopDevelopmentNodeCommand({ packaged, command } = {}) {
+  if (packaged || command === undefined) return undefined;
+  if (typeof command !== "string" || command.length === 0 || command.length > 32_768
+    || /[\u0000-\u001f\u007f]/.test(command) || !path.isAbsolute(command)
+    || path.resolve(command) !== command) {
+    throw new Error("The development Node launcher must provide an absolute executable file path.");
+  }
+  try {
+    const actual = realpathSync.native(command);
+    if (!statSync(actual).isFile()) throw new Error("Not a file.");
+    return actual;
+  } catch {
+    throw new Error("The development Node launcher executable is unavailable.");
+  }
+}
 
 export function resolveDesktopDevelopment({ packaged, enabled, desktopRoot, vaultBase, e2e = false }) {
   if (!enabled) return null;

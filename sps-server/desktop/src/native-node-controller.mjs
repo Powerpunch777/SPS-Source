@@ -22,7 +22,9 @@ export function createSpsNativeNodeController({ getAuthority, getState, saveStat
   getMember, confirm, displayName = "SPS Native Node", platform = process.platform, appVersion,
   createIdentity = createNodeIdentity, scanCapabilities = scanLocalCapabilities, scanRunners = scanLocalRunnerProfiles,
   execute = executeSpsNodeCommand, cancelCommand = null, pollMs = 3000,
+  withArtifactActivity = action => action(),
   setTimer = setTimeout, clearTimer = clearTimeout }) {
+  if (typeof withArtifactActivity !== "function") throw new TypeError("Native Node artifact admission requires an action.");
   let disposed = false, busy = false;
   const launches = new Map();
   const stopping = new Set();
@@ -122,7 +124,11 @@ export function createSpsNativeNodeController({ getAuthority, getState, saveStat
   }
   async function tick(launch) {
     if (launch.working) return;
-    const work = (async () => {
+    let admitted = false;
+    // Admission covers network claims as well as execution preflight. A busy
+    // maintenance scope must not consume a claim and then fail the executor.
+    const work = Promise.resolve().then(() => withArtifactActivity(async () => {
+      admitted = true;
       try {
         check(launch);
         if (!launch.lastHeartbeat || Date.now() - launch.lastHeartbeat >= 30000 || launch.state !== "active") {
@@ -158,7 +164,10 @@ export function createSpsNativeNodeController({ getAuthority, getState, saveStat
         await failExecution(launch);
       }
       if (!launch.failed) launch.running = null;
-    })();
+    })).catch(async error => {
+      // A refusal before invoking the callback consumed no work; poll later.
+      if (admitted || error?.code !== "sps_plugin_artifact_admission_denied") await failExecution(launch);
+    });
     launch.working = work;
     await work;
     if (launch.working === work) launch.working = null;

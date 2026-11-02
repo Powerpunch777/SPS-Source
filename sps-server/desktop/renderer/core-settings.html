@@ -62,6 +62,15 @@
         </div>
       </section>
 
+      <section class="section" aria-labelledby="workspaces-heading">
+        <div class="section-heading compact-heading">
+          <h2 id="workspaces-heading">Workspace execution</h2>
+          <button id="refresh-managed-workspaces" class="button secondary" type="button" disabled>Show Workspaces</button>
+        </div>
+        <p id="managed-workspaces-status" class="muted" role="status">Select Show Workspaces to review execution on the running local Host.</p>
+        <div id="managed-workspaces-list" class="action-list"></div>
+      </section>
+
       <section class="section" aria-labelledby="native-heading">
         <div class="section-heading compact-heading">
           <div>
@@ -180,6 +189,13 @@
           </div>
         </div>
         <div class="action-list">
+          <div class="action-row">
+            <div>
+              <h3>Plugin sources &amp; review</h3>
+              <p class="help-text">Review local packages without opening a Workspace or loading a plugin screen.</p>
+            </div>
+            <button class="button secondary" data-action="open-plugin-sources" type="button" disabled>Plugin sources &amp; review</button>
+          </div>
           <div class="action-row">
             <div>
               <h3>Workspace</h3>

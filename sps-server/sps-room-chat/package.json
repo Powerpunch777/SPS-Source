@@ -13,6 +13,7 @@
     "dist/worker.js"
   ],
   "spsPlugin": {
+    "id": "local.room-chat",
     "manifest": "./dist/manifest.js"
   },
   "scripts": {

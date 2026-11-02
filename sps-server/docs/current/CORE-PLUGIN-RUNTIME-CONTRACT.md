@@ -1,5 +1,11 @@
 # SPS Core Plugin Runtime Contract
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 아래 API/보안 계약은 현재 구현 표면이며 전체 목표 달성 선언이 아니다. Source/grant/cwd는 선택적 최대 파일 범위나 OS Vault 격리와 다르다. 업무 역할과 Plugin 공통 UI를 강제하지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 Status: implemented in the current Core baseline. This document is the
 workflow-neutral contract used by Extension Profile 2.0 plugins.
 
@@ -20,6 +26,27 @@ role, approval, memory record, or project phase.
 ## SDK Surface
 
 The worker SDK exposes the following methods through `ctx.sps`.
+
+### Source-Development Session Execution Restriction
+
+The additive `agents.sessions.describePolicySupport` RPC and optional
+`sendMessage.executionPolicy` are implemented on development Core `a57f4d9` and
+public SDK source `c69915a`, not a new packaged release. The policy is exactly
+`{ mode: "plugin-tools-only-v1", toolNames: [...] }` with 1-32 unique raw names,
+and requires the existing durable request UUID. Its digest includes the policy;
+old unrestricted digests are unchanged. Unknown admission is read, never resent.
+
+Initial support is local Codex CLI plus invocation-bound Workspace plugin tools.
+Core verifies the plugin's declared names and the persisted live run policy;
+unsupported runtimes, custom CLI commands/arguments, remote Node routing and
+legacy Host-worker tools do not silently fall back. Configuration support is
+not a CLI probe: `readiness` remains `unknown`, `osIsolation` `not-certified`.
+The per-run adapter profile leaves stored Agent/account settings unchanged.
+
+This is not workflow approval, a Lead/CTO role contract, full filesystem/network
+containment, automatic MCP approval, actual provider success or Core completion.
+The current implementation/verification limits are recorded in
+[the session policy evidence](../reviews/SESSION-EXECUTION-POLICY-2026-11-02.md).
 
 ### Registered Host API Snapshot
 
@@ -176,7 +203,10 @@ installation, activation, update, removal and rollback. Public Marketplace searc
 recommendations and Assistant sessions/tools are retired; old scoped credentials
 must not become ordinary Core credentials.
 
-New Plugin Builder work waits for its final handoff after Core completion. Existing
+New Plugin Builder design and implementation live in the separate
+[SPS-MY-PluginBuilder repository](https://github.com/Powerpunch777/SPS-MY-PluginBuilder),
+using its v15 design. Parallel Builder development is independent of this Core
+completion scope; its workflow must not be implemented in Core. Existing
 SDK authoring/validation/Preview/package and managed catalog metadata contracts
 remain compatible, but do not grant lifecycle, Source, Secret or environment access.
 See [confirmed Core scope](CORE-COMPLETION-POLICY-ko.md).

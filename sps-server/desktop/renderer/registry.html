@@ -93,6 +93,10 @@
           <div id="release-list" class="release-list"><p class="empty-state">Select a trusted source to browse its releases.</p></div>
         </section>
       </section>
+      <section class="review-panel" aria-label="Restored built-in plugin review">
+        <div class="panel-heading"><div><h1>Restored built-in plugins</h1><p>These current app copies stay stopped until you stage and approve a specific version.</p></div><button id="refresh-bundled-reviews" class="icon-button" type="button" title="Refresh restored built-in plugins">Refresh</button></div>
+        <div id="bundled-review-list" class="stage-list" aria-live="polite"><p class="empty-state">Loading restored built-in plugins...</p></div>
+      </section>
       <section class="review-panel" aria-label="Staged plugin review">
         <div class="panel-heading"><div><h1>Review queue</h1><p>Staged packages are disabled. Apply a specific reviewed version only when you are ready.</p></div><button id="refresh-stages" class="icon-button" type="button" title="Refresh review queue">Refresh</button></div>
         <div id="stage-list" class="stage-list" aria-live="polite"><p class="empty-state">Loading staged packages...</p></div>

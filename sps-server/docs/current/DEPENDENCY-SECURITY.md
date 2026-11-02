@@ -23,7 +23,14 @@ None.
 
 ## Current Moderate Reviews
 
-None.
+- `core:minimatch` advisory `1244012` (moderate)
+  - Reviewed: `2026-10-31`; expires: `2026-11-07`
+  - Audit scopes: `production`, `full`
+  - Reason: GHSA-g3hv-75wg-m249 path review: the remaining Core finding in both scopes is minimatch 3.1.5, only through optional sqlite3/node-gyp/glob7 and without the affected level-2 preprocessing implementation. The affected Storybook docgen/glob13/minimatch10 path was replaced by a consumer-scoped glob14.0.3/minimatch11.0.3 override, not a blanket legacy matcher override. Re-review the exact lockfile snapshot and consuming options before the one-week deadline; see docs/reviews/MINIMATCH-PATH-REVIEW-2026-10-31.md.
+- `desktop:minimatch` advisory `1244012` (moderate)
+  - Reviewed: `2026-10-31`; expires: `2026-11-07`
+  - Audit scopes: `full`
+  - Reason: GHSA-g3hv-75wg-m249 build-only path review: electron-builder 26.17.0/app-builder-lib uses minimatch 10.2.6 with fixed dot:true options (default optimization level1, not the affected level2); older 3/5 implementations lack that preprocessing, and the macOS9 consumer does not request level2. Patterns come from the trusted SPS build configuration, not remote or restored plugin requests. No affected dependency is declared fixed. A major11 override removes APIs required by existing builders. Re-review the exact lockfile and build options before the one-week deadline; see docs/reviews/MINIMATCH-PATH-REVIEW-2026-10-31.md.
 
 ## CI Contract
 

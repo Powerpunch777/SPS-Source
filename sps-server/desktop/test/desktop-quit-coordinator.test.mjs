@@ -122,3 +122,16 @@ test("a completed shutdown lets the normal Electron quit continue", async () => 
   assert.equal(quitEvent.prevented, false);
   assert.deepEqual(value.calls, ["before_quit_complete"]);
 });
+
+test("an identified failed update quit is cancelled once without draining or blocking a later ordinary quit", async () => {
+  let armed = true;
+  const value = fixture({ consumeFailedUpdateQuit: () => { const current = armed; armed = false; return current; } });
+  const failedUpdateQuit = event();
+  assert.equal(await value.coordinator.handle(failedUpdateQuit), false);
+  assert.equal(failedUpdateQuit.prevented, true);
+  assert.deepEqual(value.calls, ["consume-quit"]);
+  const ordinaryQuit = event();
+  assert.equal(await value.coordinator.handle(ordinaryQuit), true);
+  assert.equal(value.calls.filter(call => call === "drain").length, 1);
+  assert.equal(value.calls.filter(call => call === "quit").length, 1);
+});

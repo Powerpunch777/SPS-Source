@@ -5,7 +5,7 @@ import test from "node:test";
 
 const scriptPath = new URL("../scripts/smoke-workspace-surfaces-desktop.mjs", import.meta.url);
 const script = (await readFile(scriptPath, "utf8")).replaceAll("\r\n", "\n");
-const start = script.indexOf("async function openCdp(target) {");
+const start = script.indexOf("async function openCdp(target, { reviewedPluginConfirmation = false } = {}) {");
 const end = script.indexOf("\n}\n\nfunction recoveryPhase", start) + 2;
 assert.ok(start >= 0 && end > start, "CDP helper boundaries must stay explicit for the focused contract test.");
 const openCdpSource = script.slice(start, end);
@@ -39,6 +39,7 @@ function createHarness() {
     }
   }
   const openCdp = runInNewContext(`(${openCdpSource})`, {
+    assert,
     WebSocket: MockWebSocket,
     setTimeout(callback, delayMs) {
       const id = ++nextTimer;
@@ -60,8 +61,8 @@ function createHarness() {
   };
 }
 
-async function openHarness(harness) {
-  const opening = harness.openCdp({ webSocketDebuggerUrl: "ws://127.0.0.1/devtools/page/test" });
+async function openHarness(harness, options) {
+  const opening = harness.openCdp({ webSocketDebuggerUrl: "ws://127.0.0.1/devtools/page/test" }, options);
   harness.socket.dispatch("open");
   return await opening;
 }
@@ -73,6 +74,25 @@ test("CDP command resolves the matching response and removes its message listene
 
   assert.equal((await cdp.command("Runtime.enable")).value, 7);
   assert.equal(harness.socket.listenerCount("message"), 0);
+  await cdp.close();
+});
+
+test("Registry CDP accepts only the explicitly expected Host review confirmation", async () => {
+  const harness = createHarness();
+  const cdp = await openHarness(harness, { reviewedPluginConfirmation: true });
+  const handled = [];
+  harness.socket.onSend = ({ id, method, params }) => {
+    if (method === "Page.handleJavaScriptDialog") handled.push(params.accept);
+    harness.socket.dispatch("message", { data: JSON.stringify({ id, result: {} }) });
+  };
+  cdp.expectConfirmation("Exact reviewed package");
+  harness.socket.dispatch("message", { data: JSON.stringify({ method: "Page.javascriptDialogOpening", params: { type: "confirm", message: "Exact reviewed package" } }) });
+  await Promise.resolve();
+  cdp.assertConfirmationHandled();
+  harness.socket.dispatch("message", { data: JSON.stringify({ method: "Page.javascriptDialogOpening", params: { type: "confirm", message: "Unrelated action" } }) });
+  await Promise.resolve();
+  assert.deepEqual(handled, [true, false]);
+  assert.throws(() => cdp.assertConfirmationHandled(), /Unexpected Registry confirmation/);
   await cdp.close();
 });
 

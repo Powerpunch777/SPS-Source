@@ -30,6 +30,9 @@ const ownedJobCleanupPending = process.argv.includes(OWNED_JOB_CLEANUP_ARGUMENT)
 let cleanupDisposition;
 const liveTeam = process.argv.includes("--live-team");
 const liveAuthoring = liveTeam || process.argv.includes("--live-authoring");
+const verifyMemory = process.env.SPS_DESKTOP_E2E_VERIFY_MEMORY === "1";
+if (process.env.SPS_DESKTOP_E2E_VERIFY_MEMORY !== undefined
+  && !["0", "1"].includes(process.env.SPS_DESKTOP_E2E_VERIFY_MEMORY)) throw new Error("Memory acceptance must be explicitly enabled with 1.");
 const hostReadyTimeoutMs = parseE2eHostReadyTimeout(process.env.SPS_DESKTOP_E2E_HOST_READY_TIMEOUT_MS);
 const sourceElectron = path.join(desktopRoot, "node_modules", "electron", "dist", "electron.exe");
 const sdkRoot = path.join(desktopRoot, "node_modules", "@sonparkserver", "plugin-sdk");
@@ -347,6 +350,8 @@ async function waitForLiveTeamPreviewFeedback(cdp, { scope, projectId, conversat
 }
 
 async function registryCall(cdp, expression, timeoutMs = 20_000) { return await cdp.evaluate(`(async () => await (${expression}))()`, true, timeoutMs); }
+// The fixed operator fixture is trusted test code, never protected execution.
+const trustedPreviewInput = projectId => ({ projectId, executionMode: "trusted-local" });
 async function workspaceApi(cdp, pathName, options = {}) {
   const result = await cdp.evaluate(`(async () => {
     const response = await fetch(${JSON.stringify(pathName)}, {
@@ -474,6 +479,7 @@ let liveRunId = null;
 let authoredFiles = null;
 let liveArtifact = null;
 let acceptanceFailure = null;
+let observedMemory = null;
 
 try {
   if (liveAuthoring) await makePlugin(pluginDirectory, { withUi: false });
@@ -481,12 +487,15 @@ try {
   const identityState = await identity.start();
   const binary = packagedBinary || sourceElectron;
   step(`launching ${packagedBinary ? "packaged" : "source"} Desktop`, "desktop_launch");
+  const inheritedEnvironment = { ...process.env };
+  if (verifyMemory) delete inheritedEnvironment.SPS_ENABLE_BUNDLED_EXTENSIONS;
   child = spawn(binary, [`--user-data-dir=${userData}`, `--remote-debugging-port=${debugPort}`, "--remote-allow-origins=*", ...(packagedBinary ? [] : ["."])], {
     cwd: packagedBinary ? path.dirname(binary) : desktopRoot,
     env: {
-      ...process.env,
+      ...inheritedEnvironment,
       SPS_IDENTITY_URL: identityState.origin,
       SPS_ENABLE_PLUGIN_DISCOVERY: "true",
+      ...(verifyMemory ? { SPS_ENABLE_DEFAULT_MEMORY: "true", SPS_ENABLE_ROOM_WORKPLANE: "false" } : {}),
       SPS_DESKTOP_E2E: "1",
       SPS_DESKTOP_E2E_USER_DATA_DIR: userData,
       SPS_DESKTOP_E2E_ALLOW_MULTI_INSTANCE: "1",
@@ -510,6 +519,20 @@ try {
   workspaceTarget = await waitTarget(debugPort, child, (entry) => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || ""), "Owner Workspace", hostReadyTimeoutMs);
   workspace = await cdpFor(workspaceTarget);
   await waitPage(workspace, (page) => page.text.includes("Workspace") || page.text.includes("Dashboard"), "Workspace UI", 90_000);
+  if (verifyMemory) {
+    const memory = await setup.evaluate("(async () => (await window.spsDesktop.getStatus()).ownerHost.defaultMemory)()", true);
+    assert.equal(memory.state, "running", "The isolated Desktop must own the Memory sidecar, not adopt an existing listener.");
+    assert.ok(memory.startedAt);
+    const address = new URL(memory.url);
+    assert.equal(address.protocol, "http:");
+    assert.equal(address.hostname, "127.0.0.1");
+    assert.ok(address.port);
+    assert.equal(address.href, `${address.origin}/`);
+    assert.equal(path.resolve(memory.vaultPath), path.join(userData, "owner-vault", "memory"));
+    observedMemory = { origin: address.origin, configPath: path.join(memory.vaultPath, "config.json") };
+    await access(observedMemory.configPath);
+    step("actual Desktop owns the enabled isolated Memory sidecar", "memory_owned");
+  }
   const companies = await workspaceApi(workspace, "/api/companies");
   const company = Array.isArray(companies) ? companies[0] : null;
   assert.ok(company?.id && company?.issuePrefix, `Owner Host did not create a Workspace: ${JSON.stringify(companies)}`);
@@ -704,6 +727,13 @@ try {
   if (!liveAuthoring) await makePlugin(pluginDirectory);
   const connected = await registryCall(registry, `window.spsRegistry.connectDeveloperProject(${JSON.stringify({ sourcePath: pluginDirectory, sourceLabel: "external-plugin", displayName: "Preview Desktop E2E" })})`);
   assert.match(connected.id, /^dev-/);
+  for (const method of ["runDeveloperGates", "applyDeveloperCandidate", "rollbackDeveloperProject", "reloadDeveloperUi", "restartDeveloperWorker"]) {
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.${method}(${JSON.stringify({ projectId: connected.id })})`), /explicit execution mode/);
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.${method}(${JSON.stringify({ projectId: connected.id, executionMode: "protected" })})`), /Protected development execution is unavailable/);
+  }
+  assert.deepEqual(await registryCall(registry, "window.spsRegistry.getPreviewState()"), { active: false },
+    "Denied protected or unspecified calls must not start a Preview.");
+  step("all five code-execution entries reject unspecified/protected mode before Preview startup; fixed trusted fixture is explicit", "protected_admission_denied");
   await registry.evaluate("document.querySelector('#refresh-developer-projects').click()");
   await waitPage(registry, page => page.text.includes("Link to this context"), "explicit project reference choice");
   await registry.evaluate("document.querySelector('.link-developer-context').click()");
@@ -799,10 +829,10 @@ try {
     invalidStatic.runtime.manifestSha256 = createHash("sha256").update(invalidManifest).digest("hex");
     await writeFile(manifestPath, invalidManifest);
     await writeFile(staticPath, `${JSON.stringify(invalidStatic, null, 2)}\n`);
-    const staticGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+    const staticGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000);
     assert.deepEqual(staticGates.reports.map(report => report.success), [true, true, true]);
     assert.equal((await workspace.evaluate(getContextExpression, true)).validationFeedback.status, "passed");
-    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000), /Invalid plugin manifest/);
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000), /Invalid plugin manifest/);
     const feedback = (await workspace.evaluate(getContextExpression, true)).validationFeedback;
     assert.equal(feedback.status, "failed");
     assert.equal(feedback.kind, "preview");
@@ -909,9 +939,9 @@ try {
     invalidStatic.runtime.manifestSha256 = createHash("sha256").update(invalidManifest).digest("hex");
     await writeFile(manifestPath, invalidManifest);
     await writeFile(staticPath, `${JSON.stringify(invalidStatic, null, 2)}\n`);
-    const badGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+    const badGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000);
     assert.deepEqual(badGates.reports.map(report => report.success), [true, true, true]);
-    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000), /Invalid plugin manifest/);
+    await assert.rejects(() => registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000), /Invalid plugin manifest/);
     const feedbackWorkspace = await workspaceApi(workspace, "/api/plugins/sps.plugin-discovery/bridge/data", {
       method: "POST", body: { key: "plugin-builder-workspace", companyId: company.id, params: {} },
     });
@@ -1022,7 +1052,7 @@ try {
   });
   let gates;
   try {
-    gates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+    gates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000);
   } catch (error) {
     const diagnosticResult = await registryCall(
       registry,
@@ -1044,7 +1074,7 @@ try {
     summary: "Open the verified candidate in isolated Plugin Preview.",
     evidence: [{ kind: "preview", ref: `preview/${connected.id}`, label: "Isolated Preview request" }],
   });
-  const applied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify({ projectId: connected.id })})`, 180_000);
+  const applied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify(trustedPreviewInput(connected.id))})`, 180_000);
   assert.equal(applied.isolated, true);
   assert.equal(applied.plugin?.status, "ready");
   linkedContext = await workspace.evaluate(getContextExpression, true);
@@ -1237,6 +1267,54 @@ try {
     }, null, 2)}\n`, { flag: "wx" });
     step(`retained verified development package in ${path.basename(retained)}`);
   }
+  if (!liveAuthoring) {
+    step("verifying real sign-out closes the prior account's Preview without deleting its data", "preview_account_fence");
+    const accountProject = await registryCall(registry, `window.spsRegistry.connectDeveloperProject(${JSON.stringify({
+      sourcePath: pluginDirectory, sourceLabel: "account-fence-plugin", displayName: "Preview account fence",
+    })})`);
+    const accountGates = await registryCall(registry, `window.spsRegistry.runDeveloperGates(${JSON.stringify(trustedPreviewInput(accountProject.id))})`, 180_000);
+    assert.deepEqual(accountGates.reports.map(report => report.success), [true, true, true]);
+    const accountApplied = await registryCall(registry, `window.spsRegistry.applyDeveloperCandidate(${JSON.stringify(trustedPreviewInput(accountProject.id))})`, 180_000);
+    assert.equal(accountApplied.isolated, true);
+    const accountPreview = await registryCall(registry, "window.spsRegistry.getPreviewState()");
+    assert.equal(accountPreview.active, true);
+    assert.match(accountPreview.buildId, /^build-[a-f0-9-]{36}$/i);
+    const target = await waitTarget(debugPort, child,
+      entry => /^http:\/\/127\.0\.0\.1:\d+\//.test(entry.url || "") && entry.id !== workspaceTarget.id,
+      "account-bound Preview target");
+    const previewOrigin = new URL(target.url).origin;
+    const preservedPreview = path.join(userData, "owner-vault", "developer-mode", "previews", accountPreview.buildId);
+    await access(path.join(preservedPreview, "config.json"));
+    try { await setup.evaluate("window.spsDesktop.signOutSpsAccount()", true, 60_000); }
+    catch (error) {
+      if (!/Execution context|Cannot find context|was destroyed|^Inspected target navigated or closed$/i.test(errorText(error))) throw error;
+    }
+    const signOutDeadline = Date.now() + 30_000;
+    let verified = false;
+    while (Date.now() < signOutDeadline) {
+      let current = null;
+      try {
+        current = await setup.evaluate("document.readyState === 'complete' && typeof window.spsDesktop?.getStatus === 'function' ? window.spsDesktop.getStatus() : null", true);
+      } catch (error) {
+        if (!/Execution context|Cannot find context|was destroyed|^Inspected target navigated or closed$/i.test(errorText(error))) throw error;
+      }
+      const liveTargets = await targets(debugPort);
+      let previewClosed = false;
+      try { await fetch(`${previewOrigin}/api/health`, { signal: AbortSignal.timeout(1000) }); }
+      catch (error) { previewClosed = error?.cause?.code === "ECONNREFUSED"; }
+      if (current?.desktopAccount?.signedIn === false && !liveTargets.some(entry => entry.id === target.id) && previewClosed) {
+        verified = true; break;
+      }
+      await delay(200);
+    }
+    assert.equal(verified, true, "Sign-out must await owned Preview closure, not merely hide its UI.");
+    await access(path.join(preservedPreview, "config.json"));
+    await Promise.all([workspace, registry, preview].filter(Boolean).map(cdp => cdp.close().catch(() => {})));
+    workspace = null;
+    registry = null;
+    preview = null;
+    step("real account sign-out confirmed Preview target and loopback server closure; Preview data retained");
+  }
   step("functional assertions passed; cleanup qualification is still pending");
 } catch (error) {
   const notes = [];
@@ -1269,10 +1347,20 @@ try {
   step("cleaning isolated E2E processes and data", "cleanup");
   const desktopStopped = await shutdownPreviewE2eDesktop({
     child,
-    requestBrowserClose: workspace || setup || registry ? () => (workspace ?? setup ?? registry).command("Browser.close") : undefined,
+    requestBrowserClose: setup || workspace || registry ? () => (setup ?? workspace ?? registry).command("Browser.close") : undefined,
     forceStop: stopTree,
   });
   step(`Desktop exit confirmed=${desktopStopped.exitConfirmed}, graceful=${desktopStopped.graceful}`);
+  let memoryClosed = !verifyMemory;
+  let memoryConfigPreserved = !verifyMemory;
+  if (verifyMemory && observedMemory && desktopStopped.graceful) {
+    try { await fetch(`${observedMemory.origin}/health`, { signal: AbortSignal.timeout(1000) }); }
+    catch (error) { memoryClosed = error?.cause?.code === "ECONNREFUSED"; }
+    if (memoryClosed) {
+      try { await access(observedMemory.configPath); memoryConfigPreserved = true; } catch {}
+    }
+    step(`enabled Memory listener closure confirmed=${memoryClosed}; config preserved=${memoryConfigPreserved}`);
+  }
   await cleanupTimeout(
     Promise.all([setup, workspace, registry, preview].filter(Boolean).map((cdp) => cdp.close().catch(() => undefined))),
     "CDP sessions",
@@ -1286,10 +1374,13 @@ try {
     : postgresStopped ? "temporary PostgreSQL processes stopped" : "temporary PostgreSQL process cleanup could not be confirmed");
   await cleanupTimeout(identity.close(), "mock Identity server").catch((error) => console.warn(errorText(error)));
   step("mock Identity server closed");
-  const dataRemoved = await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
+  // Unknown Memory closure preserves the isolated fixture for recovery instead
+  // of deleting data still used by a possibly live sidecar.
+  const dataRemoved = verifyMemory && (!memoryClosed || !memoryConfigPreserved) ? false : await cleanupTimeout(removeRetry(temporaryRoot), "temporary data", 20_000)
     .then(() => true)
     .catch((error) => { console.warn(`Could not remove Preview Desktop E2E temp data: ${errorText(error)}`); return false; });
   try {
+    if (!memoryClosed || !memoryConfigPreserved) throw new Error("Enabled Memory cleanup qualification failed.");
     cleanupDisposition = previewE2eCleanupDisposition({ delegated: ownedJobCleanupPending,
       desktopExitConfirmed: desktopStopped.exitConfirmed, desktopGraceful: desktopStopped.graceful,
       postgresCleanupConfirmed: postgresStopped, temporaryDataRemoved: dataRemoved });

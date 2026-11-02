@@ -29,7 +29,11 @@ for (const [name, entry, external] of [
   await builder.watch();
 }
 
-const env = { ...process.env, SPS_DESKTOP_DEV: "1" };
+const env = {
+  ...process.env,
+  SPS_DESKTOP_DEV: "1",
+  SPS_DESKTOP_DEVELOPMENT_NODE: process.execPath,
+};
 delete env.ELECTRON_RUN_AS_NODE;
 const app = spawn(electron, ["."], { cwd: root, env, stdio: "inherit", windowsHide: false });
 app.once("error", error => { console.error(error); process.exitCode = 1; });

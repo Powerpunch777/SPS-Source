@@ -1,0 +1,107 @@
+# Restored Bundled Plugin Approval
+
+Date: 2026-10-31. Desktop 0.4.137 remains a development candidate. Core
+`b3da12970d41419d2d3536fe86ea7a3d33c8699d`, public SDK
+`61a929f6c783f78e5af603682de1543c7e24abc0`. This is source-app evidence, not
+installed-byte, production Identity or physical two-PC qualification.
+
+## Confirmed Policy And Correction
+
+Every restored plugin requires explicit new-Host approval, including an official
+copy supplied by the current app. Restoring package bytes/data does not restore
+execution approval. External local-folder code is not copied and must be
+reselected. Review means metadata, capabilities and compatibility plus Host
+consent, not an external security audit.
+
+Three regressions were first reproduced: bundled startup imported/reactivated
+disabled, uninstalled-with-retained-path and pending-upgrade records. Core now
+checks declarative identity before executable manifest import and leaves all
+three states inactive. Active approved bundle refresh and initial activation
+remain supported. Unidentified legacy bundles wait if inactive records might
+refer to them. No Core API, SDK, database status or migration was added.
+
+The existing Settings > Plugins > Open signed Registry review screen now lists
+restored current-app copies separately. Only Main's fixed bundle paths and
+pathless uninstalled records can enter this flow; the renderer cannot provide
+a directory. Main rechecks the current account/Host scope. Static SDK inspection,
+packing and staging do not import code or approve anything. The normal exact-
+version Registry confirmation remains required to start it. These copies are
+labelled local current-app provenance, not falsely publisher-signed releases.
+Repeated/overlapping requests serialize per Vault/plugin and reuse only an
+exact archive SHA already staged by this current-app flow. They do not replace
+the existing staged package path or reset review. Staging replies expose only
+the staged acknowledgement, reuse flag and stage ID to the Registry renderer.
+
+Build-time sidecars bind current metadata to manifest bytes. Main never invokes
+their generator or imports executable manifests to populate the review list.
+Packaging regenerates sidecars after trusted builds. The Room digest was also
+corrected to the public SDK's sorted-capabilities digest. A real reapproval
+attempt exposed Default Memory's external SDK import after relocation; its
+existing tools/events use the pinned public Worker/Platform SDK, bundled at build time.
+The production runtime no longer depends on a former source-tree SDK link.
+
+## Local Evidence
+
+- Core bootstrap: `pnpm --filter @paperclipai/server exec vitest run
+  src/services/bundled-plugin-bootstrap.test.ts
+  src/__tests__/bundled-plugin-bootstrap.test.ts --pool=forks --isolate`, 20/20.
+  Includes a real manifest import marker and preservation of ordinary refresh.
+- Core UI: `pnpm --filter @paperclipai/ui exec vitest run
+  src/pages/SpsExtensionsManager.test.tsx --pool=forks --isolate`, 4/4. Empty
+  settings no longer claim absent/restored plugins are still starting.
+- All 30 workspace type checks and full Core build passed. Existing generated
+  CSS, third-party annotation and chunk-size warnings remain.
+- `pnpm check:token-gates` failed with 116 existing findings in other files
+  (79 color, 36 arbitrary-value, 1 font-size). Neither edited UI file appears
+  in that output. This global check is not reported as passing.
+- `npm run check` in Default Memory and static sidecar validation passed.
+- Historical local production dependency policy: two Low findings, zero Critical/High, no
+  exceptions. Full development/build graph: three Low, zero Critical/High,
+  no exceptions. Newly visible Moderate findings subsequently blocked exact
+  Source04f1cda CI. See the current
+  [dependency review](MINIMATCH-PATH-REVIEW-2026-10-31.md), not this older count.
+- Full Desktop `node --test --test-reporter=spec test/*.test.mjs`: 1677 total,
+  1675 passed, two unavailable-8.3-alias skips, zero failures. The first full
+  attempt correctly rejected the unstaged Core pin; another rejected the
+  initial private-SDK coupling. Neither failure was hidden or counted as pass.
+- Relocated public-SDK Memory Worker test: real Node initialization/event
+  subscriptions, invalid recall without networking, missing-tenant event no-op,
+  loopback synthetic sidecar lifecycle/proposal payloads, shutdown and EOF all
+  passed outside the source tree without node_modules. It uses an identity-
+  checked temporary fixture and removes it only after owned processes close.
+
+`SPS_DESKTOP_E2E_SOURCE=1 node scripts/smoke-owner-vault-transfer-desktop.mjs`
+exited 0 after four real isolated Main processes. It exported and restored a
+reviewed Registry package, two distinct Workspace data states, a typed project
+and attachment. A former-Host local canary with the Memory bundle ID remained
+uninstalled/pathless before review, after unrelated approval and after restart.
+The real current-app Memory package was then statically staged; declining the
+normal confirmation kept it uninstalled. Explicit approval recovered the same
+plugin ID and real provider manifest, and another Main restart kept it ready
+without importing the former local canary. Other Workspace plugin data remained
+unchanged. All Main exits/output EOFs, fixture process scan and temporary cleanup
+qualified. Identity is a loopback fixture; whole-descendant OS Job qualification
+is separately owned by hosted CI.
+
+Earlier attempts are not passes: the observer initially assumed JSONL instead
+of Core's pretty-log metadata; the first positive attempt found the actual
+external-SDK dependency; a later final assertion lacked its `lstat` import.
+All were corrected before the successful run. Native picker fixtures are now
+restored after export/restore so later approvals use their real dialog path.
+The full product-boundary suite also rejected an initial build-time reference
+to the private Core SDK. It was removed by using the public Worker/Platform
+contract; the boundary checker was not relaxed or allowlisted for Memory.
+
+Exact final-HEAD Linux/Windows/packaged CI remains required. No installed app,
+real user Vault, Production Identity, signing key or physical PC was changed.
+
+## Hosted Follow-Up
+
+Source04f1cda push41151544581 completed all nine Linux test shards and full Core
+typecheck/build, but the run failed. Core compatibility correctly rejected a new
+unreviewed minimatch Moderate finding. Windows unit tests passed1675/1677 with
+two environment skips, then runtime preparation failed because the relocated
+Memory build resolved esbuild from the public SDK checkout without installing
+that checkout's dev tools. Public-SDK `npm ci` is now an explicit prerequisite
+for every runtime-packaging workflow, separate from Desktop's dependency install.
+Neither historical result qualifies the corrected final-HEAD Windows flow.

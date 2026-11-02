@@ -66,6 +66,7 @@ const SPS_NODE_RUNTIME_COMMANDS = {
 };
 const CODEX_ACCOUNT_DIRECTORY = /^\.codex(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
 const activeCommands = new Map();
+let commandArtifactMaintenance = null;
 let commandCancellationGeneration = 0;
 let lastCommandCancellationReason = "SPS Desktop stopped this local command.";
 
@@ -383,6 +384,33 @@ function releaseCompletedCommand(id, run) {
     && activeCommands.get(id) === run) activeCommands.delete(id);
 }
 
+function artifactActivityError() {
+  const error = new Error("SPS Node command activity has not been confirmed idle.");
+  error.code = "artifact-activity";
+  return error;
+}
+
+/** Process-local idle admission only; never cancels work or certifies other processes. */
+export async function withSpsNodeCommandArtifactMaintenance(action) {
+  if (typeof action !== "function") throw new TypeError("SPS Node artifact maintenance requires an action.");
+  if (commandArtifactMaintenance || activeCommands.size !== 0) throw artifactActivityError();
+  const token = Symbol("Node artifact maintenance");
+  const generation = commandCancellationGeneration;
+  commandArtifactMaintenance = token;
+  const assertCurrent = () => {
+    if (commandArtifactMaintenance !== token || activeCommands.size !== 0
+      || commandCancellationGeneration !== generation) throw artifactActivityError();
+  };
+  try {
+    assertCurrent();
+    const result = await action(Object.freeze({ assertCurrent }));
+    assertCurrent();
+    return result;
+  } finally {
+    if (commandArtifactMaintenance === token) commandArtifactMaintenance = null;
+  }
+}
+
 export async function cancelSpsNodeCommands(reason = "SPS Desktop stopped this local command.") {
   commandCancellationGeneration += 1;
   lastCommandCancellationReason = reason;
@@ -430,6 +458,7 @@ export async function executeSpsNodeCommand({
   processTermination = defaultProcessTermination,
   spawnCommand = spawnOwnedCommand,
 }) {
+  if (commandArtifactMaintenance) throw artifactActivityError();
   const processScopeAlive = child => processTermination.isAlive(child);
   const terminateProcessTree = child => processTermination.terminate(child);
   const processTerminationUnconfirmed = child => processTermination.hasUnconfirmedTermination(child);

@@ -229,6 +229,45 @@ async function clickText(cdp, texts, label, { exact = false, scopeText = null } 
   assert.equal(result?.ok, true, `${label} could not be clicked: ${result?.reason || "unknown"}. ${result?.body || result?.text || ""}`);
   return result;
 }
+async function waitForSignInReadiness(cdp, { timeoutMs = 45_000, pollMs = 250 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let state = "loading";
+  while (Date.now() < deadline) {
+    try {
+      state = await cdp.evaluate(`(async () => {
+        const status = await window.spsDesktop.getStatus();
+        const account = status.desktopAccount;
+        if (account?.signedIn === true && account.pending === false) return "signed-in";
+        if (account?.pending === true) return "pending";
+        const button = document.querySelector("#start-sps-account");
+        if (!button) return "loading";
+        const visible = button.getClientRects().length > 0 && !button.closest("[hidden]")
+          && getComputedStyle(button).visibility !== "hidden" && getComputedStyle(button).display !== "none";
+        if (!visible || button.disabled || button.getAttribute("aria-disabled") === "true"
+          || button.getAttribute("aria-busy") === "true") return "loading";
+        const before = button.getBoundingClientRect();
+        await new Promise(requestAnimationFrame);
+        if (!button.isConnected) return "loading";
+        const after = button.getBoundingClientRect();
+        const stable = before.x === after.x && before.y === after.y
+          && before.width === after.width && before.height === after.height;
+        return stable && !button.disabled && button.getAttribute("aria-disabled") !== "true"
+          && button.getAttribute("aria-busy") !== "true" ? "ready" : "loading";
+      })()`, true);
+      if (state === "ready" || state === "signed-in") return state;
+    } catch {
+      state = "loading";
+    }
+    await delay(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+  throw new Error(`Timed out waiting for SPS sign-in readiness (last state: ${state}).`);
+}
+async function startSignInWhenReady(cdp) {
+  const state = await waitForSignInReadiness(cdp);
+  if (state === "signed-in") return state;
+  await clickText(cdp, "#start-sps-account", "SPS sign-in");
+  return "clicked";
+}
 async function waitForPluginManager(cdp) {
   return await waitPage(cdp, (current) =>
     /Plugins|Extensions|SPS Extensions/.test(current.text)
@@ -273,6 +312,38 @@ async function waitActivation(cdp, companyId, pluginId, enabled, label) {
     await delay(300);
   }
   throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(activation)}`);
+}
+async function waitForPluginUseControl(cdp, pluginName, enabled, { timeoutMs = 30_000, pollMs = 100 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let state = null;
+  // The API commit may precede React Query's refetch/render. Observe the actual
+  // row before clicking once; never replay a lifecycle mutation to await its UI.
+  while (Date.now() < deadline) {
+    state = await cdp.evaluate(`(() => {
+      const normalized = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+      const labels = ${JSON.stringify(enabled ? ["Stop using", "Disable"] : ["Use in this Workspace", "Start and use", "Enable"])};
+      const expectedState = ${JSON.stringify(`Workspace: ${enabled ? "Enabled" : "Disabled"}`)};
+      const candidates = [...document.querySelectorAll('button')].filter((element) => {
+        const row = element.closest('li,[role="listitem"],section,.divide-y > div') || element.parentElement;
+        const rowText = normalized(row?.textContent);
+        return rowText.includes(${JSON.stringify(pluginName)}) && rowText.includes(expectedState)
+          && labels.includes(normalized(element.textContent));
+      });
+      if (candidates.length !== 1) return { ready: false, matches: candidates.length };
+      const element = candidates[0];
+      const style = getComputedStyle(element);
+      const visible = element.isConnected && element.getClientRects().length > 0
+        && !element.closest('[hidden],[inert],[aria-hidden="true"]')
+        && style.visibility !== 'hidden' && style.display !== 'none';
+      const ready = visible && !element.disabled && !element.matches(':disabled')
+        && element.getAttribute('aria-disabled') !== 'true' && element.getAttribute('aria-busy') !== 'true';
+      return { ready, matches: 1, visible, disabled: element.disabled,
+        label: normalized(element.textContent) };
+    })()`);
+    if (state?.ready === true) return state;
+    await delay(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+  throw new Error(`Timed out waiting for Workspace ${enabled ? "disable" : "enable"} control: ${JSON.stringify(state)}`);
 }
 async function maybeApproveCapabilityUpdate(cdp, pluginId, pluginName) {
   const reviewAvailable = await cdp.evaluate(`(() => [...document.querySelectorAll('a,button')].some((element) => {
@@ -333,9 +404,11 @@ try {
 
   setup = await cdpFor(await waitTarget(debugPort, child, (entry) => entry.title === "SPS Desktop", "SPS sign-in window"));
   await waitPage(setup, (current) => current.text.includes("SPS"), "SPS sign-in UI");
-  await clickText(setup, ["#start-sps-account", "Sign in", "Continue with Google"], "SPS sign-in");
-  await identity.followAuthorization();
-  await waitPage(setup, () => identityState.signIns > 0, "mock Identity callback", 35000);
+  const signInState = await startSignInWhenReady(setup);
+  if (signInState === "clicked") {
+    await identity.followAuthorization();
+    await waitPage(setup, () => identityState.signIns > 0, "mock Identity callback", 35000);
+  }
   await waitPage(setup, (current) => /Create|Server/.test(current.text), "Owner Host choice");
   await clickText(setup, ["#create-owner-server", "Create Owner Host", "Create Server", "Create"], "Create Owner Host");
 
@@ -427,13 +500,16 @@ try {
   const initialActivation = await api(workspace, `/api/plugins/companies/${company.id}`)
     .then((result) => result?.plugins?.find((item) => item.id === candidateId)?.activation ?? null);
   if (candidate.status !== "ready" || initialActivation?.enabled !== true) {
+    await waitForPluginUseControl(workspace, candidateName, false);
     await clickText(workspace, ["Start and use", "Use in this Workspace", "Enable"], "Workspace enable", { scopeText: candidateName });
   }
   await waitPlugin(workspace, candidateId, (record) => record.status === "ready", "plugin ready after enable");
   await waitActivation(workspace, company.id, candidateId, true, "plugin active in Workspace after enable");
+  await waitForPluginUseControl(workspace, candidateName, true);
   await clickText(workspace, ["Stop using", "Disable"], "Workspace disable", { scopeText: candidateName });
   await waitActivation(workspace, company.id, candidateId, false, "plugin inactive in Workspace");
   await waitPlugin(workspace, candidateId, (record) => record.status === "ready", "plugin remains Host-ready while Workspace is disabled");
+  await waitForPluginUseControl(workspace, candidateName, false);
   await clickText(workspace, ["Use in this Workspace", "Start and use", "Enable"], "Workspace re-enable", { scopeText: candidateName });
   await waitPlugin(workspace, candidateId, (record) => record.status === "ready", "plugin ready after re-enable");
   await waitActivation(workspace, company.id, candidateId, true, "plugin active in Workspace after re-enable");

@@ -22,6 +22,31 @@ async function loadPreload() {
   return { api, calls };
 }
 
+test("Plugin sources preload exposes a zero-argument Native action only", async () => {
+  const { api, calls } = await loadPreload();
+  await assert.rejects(api.openPluginSources({ sourceId: "forged" }), /no arguments/);
+  await assert.rejects(api.openPluginSources(undefined), /no arguments/);
+  assert.equal(calls.length, 0);
+  await api.openPluginSources();
+  assert.deepEqual(calls, [["desktop:core-settings-open-plugin-sources"]]);
+});
+
+test("Native Workspace preload has no arbitrary URL, Host or credential selector", async () => {
+  const { api, calls } = await loadPreload();
+  const workspaceId = "11111111-1111-4111-8111-111111111111";
+  let touched = false;
+  await assert.rejects(api.listManagedWorkspaces({ host: "other" }));
+  await assert.rejects(api.getWorkspaceExecution({ workspaceId, token: "private" }));
+  await assert.rejects(api.changeWorkspaceExecution({ workspaceId, action: "delete", expectedRevision: 0 }));
+  await assert.rejects(api.changeWorkspaceExecution({ workspaceId, action: "pause", expectedRevision: -1 }));
+  await assert.rejects(api.getWorkspaceExecution(Object.defineProperty({}, "workspaceId", { enumerable: true, get() { touched = true; } })));
+  assert.equal(touched, false); assert.equal(calls.length, 0);
+  await api.listManagedWorkspaces();
+  await api.getWorkspaceExecution({ workspaceId });
+  await api.changeWorkspaceExecution({ workspaceId, action: "pause", expectedRevision: 0 });
+  assert.deepEqual(calls.map(row => row[0]), ["desktop:core-settings-list-managed-workspaces", "desktop:core-settings-get-workspace-execution", "desktop:core-settings-change-workspace-execution"]);
+});
+
 test("certificate metadata and renewal preload accept only a saved Host selector", async () => {
   const { api, calls } = await loadPreload();
   const hostId = "11111111-1111-4111-8111-111111111111";

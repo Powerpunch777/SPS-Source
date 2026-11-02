@@ -1,5 +1,11 @@
 # Core Management Incremental Plan
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 실행·사용량·결과의 공통 기술 관찰은 선택형 SDK/API다. 업무 성공 판단·Lead/Worker·재배정은 Plugin 소유이며 고정 관리 Dashboard/Inbox를 필수로 만들지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 Status: stage 1 and the Agent-session cancellation/cross-lane history slices of
 stage 2, plus stage 3 usage provenance, summaries, Host diagnostics, Agent
 receipts and Claude-only neutral Node ingestion, are implemented in source,

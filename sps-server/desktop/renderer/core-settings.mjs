@@ -28,6 +28,8 @@ let nativeRegistrationButtons = [];
 let nativeWorkspaceResults = [];
 let nativeWorkspaceButtons = [];
 let nativeInvitationButtons = [];
+let managedWorkspaceRequest = 0;
+let managedWorkspaceButtons = [];
 
 const nativeDeviceStates = new Map([
   ["available", "Device management available"],
@@ -205,6 +207,8 @@ function syncControls() {
   for (const button of nativeRegistrationButtons) button.disabled = memberBusy;
   for (const button of nativeWorkspaceButtons) button.disabled = memberBusy;
   const busy = statusLoading || nativeDevicesLoading || nativeInvitationsLoading || pending.size > 0 || quitPending;
+  byId("refresh-managed-workspaces").disabled = busy || currentStatus?.canManageHost !== true;
+  for (const button of managedWorkspaceButtons) button.disabled = busy || currentStatus?.canManageHost !== true || button.dataset.unavailable === "true";
   const listenerReady = currentStatus?.canManageHost === true && nativeConnectivity?.state === "identity_prepared";
   const listenerActive = nativeListenerStatus(currentStatus?.nativeListener)?.state === "listening";
   const hostMaintenance = currentStatus?.canManageHost === true
@@ -226,8 +230,8 @@ function syncControls() {
   quitDesktopButton.disabled = pending.size > 0 || quitPending;
   byId("native-identity-form").hidden = nativeConnectivity?.canPrepare !== true || currentStatus?.canManageHost !== true;
   for (const button of actionButtons) {
-    const ownerAction = ["restart-host", "export-host"].includes(button.dataset.action);
-    button.disabled = busy || !currentStatus || (ownerAction && currentStatus.canManageHost === false)
+    const ownerAction = ["restart-host", "export-host", "open-plugin-sources"].includes(button.dataset.action);
+    button.disabled = busy || !currentStatus || (ownerAction && currentStatus.canManageHost !== true)
       || (button.dataset.action === "open-workspace" && currentStatus.desktopStateAvailable === false);
   }
   pluginToggle.disabled = busy || currentStatus?.canManageHost === false || typeof currentStatus?.recovery?.pluginsDisabled !== "boolean";
@@ -500,6 +504,7 @@ function renderNativeConnectivity(value) {
 
 function renderStatus(status) {
   currentStatus = status;
+  if (status.canManageHost !== true) clearManagedWorkspaces();
   if (status.canManageHost !== true) clearNativeInvitations({ invalidateRequest: true });
   const { host, recovery } = status;
   renderNativeConnectivity(status.nativeConnectivity);
@@ -539,6 +544,7 @@ function renderStatus(status) {
 }
 
 function showStatusLoading() {
+  clearManagedWorkspaces();
   nativeRegistrationRequest++;
   nativeRegistrationButtons = [];
   clearNativeWorkspaceResults();
@@ -639,9 +645,12 @@ pluginToggle.addEventListener("change", () => {
 
 for (const button of actionButtons) {
   button.addEventListener("click", () => {
+    if (button.disabled) return;
     const action = button.dataset.action;
     if (action === "open-workspace") {
       void runAction(action, () => window.spsCoreSettings.openWorkspace(), "Workspace action completed.");
+    } else if (action === "open-plugin-sources") {
+      void runAction(action, () => window.spsCoreSettings.openPluginSources(), "Plugin sources opened.");
     } else if (action === "check-updates") {
       void runAction(action, () => window.spsCoreSettings.checkUpdates(), "Update check completed.");
     } else if (action === "restart-host") {
@@ -655,6 +664,7 @@ for (const button of actionButtons) {
 }
 
 retryButton.addEventListener("click", () => void loadStatus());
+byId("refresh-managed-workspaces").addEventListener("click", () => void loadManagedWorkspaces());
 nativeDevicesRefreshButton.addEventListener("click", () => void loadNativeDevices());
 nativeInvitationsRefreshButton.addEventListener("click", () => void loadNativeInvitations());
 nativeAddressInput.addEventListener("input", () => syncControls());
@@ -703,6 +713,95 @@ window.addEventListener("focus", () => {
   void loadStatus();
 });
 void loadStatus();
+
+function clearManagedWorkspaces() {
+  managedWorkspaceRequest++;
+  managedWorkspaceButtons = [];
+  byId("managed-workspaces-list").textContent = "";
+  byId("managed-workspaces-status").textContent = "Select Show Workspaces to review execution on the running local Host.";
+}
+
+function validateWorkspaceExecution(value) {
+  const row = exactDataRecord(value, ["state", "epoch", "revision", "updatedAt", "pending", "canControl", "cancellationIncomplete"]);
+  if (!row || !["running", "paused", "stopped"].includes(row.state) || typeof row.epoch !== "string"
+    || row.epoch.length > 32 || !/^(?:0|[1-9][0-9]*)$/.test(row.epoch)
+    || !Number.isSafeInteger(row.revision) || row.revision < 0 || row.revision > 2_147_483_647
+    || typeof row.canControl !== "boolean" || typeof row.cancellationIncomplete !== "boolean"
+    || row.updatedAt !== null && (typeof row.updatedAt !== "string" || !Number.isFinite(Date.parse(row.updatedAt)))) throw new Error("Invalid Workspace status");
+  const counts = exactDataRecord(row.pending, ["agents", "jobs", "models", "commands", "plugins"]);
+  if (!counts || Object.values(counts).some(count => !Number.isSafeInteger(count) || count < 0)
+    || !Number.isSafeInteger(Object.values(counts).reduce((sum, count) => sum + count, 0))) throw new Error("Invalid Workspace pending counts");
+  return row;
+}
+
+async function loadManagedWorkspaces() {
+  if (byId("refresh-managed-workspaces").disabled) return;
+  clearManagedWorkspaces();
+  const generation = managedWorkspaceRequest;
+  pending.add("managed-workspaces");
+  syncControls();
+  byId("managed-workspaces-status").textContent = "Loading Workspaces...";
+  try {
+    const rows = await window.spsCoreSettings.listManagedWorkspaces();
+    if (generation !== managedWorkspaceRequest) return;
+    if (!Array.isArray(rows) || rows.length > 200) throw new Error("Invalid Workspaces");
+    const ids = new Set();
+    const checked = rows.map(value => {
+      const row = exactDataRecord(value, ["id", "name"]);
+      if (!row || typeof row.id !== "string" || !nativeDeviceIdPattern.test(row.id) || ids.has(row.id)
+        || typeof row.name !== "string" || !row.name.trim() || row.name.length > 512
+        || /[\u0000-\u001f\u007f]/.test(row.name)) throw new Error("Invalid Workspace");
+      ids.add(row.id); return row;
+    });
+    for (const workspace of checked) {
+      const row = document.createElement("div"); row.className = "action-row native-registration-row";
+      const label = document.createElement("div");
+      const title = document.createElement("h3"); title.textContent = workspace.name;
+      const status = document.createElement("p"); status.className = "help-text"; status.textContent = "Execution not checked";
+      label.append(title, status);
+      const actions = document.createElement("div"); actions.className = "native-registration-actions";
+      let execution = null;
+      const buttons = [];
+      const show = value => {
+        execution = validateWorkspaceExecution(value);
+        const waiting = execution.cancellationIncomplete || Object.values(execution.pending).some(count => count > 0);
+        status.textContent = `${execution.state} · revision ${execution.revision}${execution.state === "stopped" && waiting ? " · cleanup pending" : ""}`;
+        for (const button of buttons) button.dataset.unavailable = String(button.dataset.action !== "refresh"
+          && (!execution.canControl || execution.revision > 2_147_483_646
+            || button.dataset.action === "pause" && execution.state !== "running"
+            || button.dataset.action === "resume" && execution.state === "running"));
+      };
+      for (const [action, text] of [["refresh", "Check execution"], ["pause", "Pause"], ["stop", "Stop"], ["resume", "Resume"]]) {
+        const button = document.createElement("button"); button.type = "button"; button.className = "button secondary";
+        button.textContent = text; button.dataset.action = action;
+        button.dataset.unavailable = String(action !== "refresh");
+        button.dataset.workspaceId = workspace.id;
+        buttons.push(button); managedWorkspaceButtons.push(button); actions.append(button);
+        button.addEventListener("click", async () => {
+          if (button.disabled || generation !== managedWorkspaceRequest || pending.size > 0 || quitPending) return;
+          pending.add("workspace-execution"); syncControls();
+          try {
+            const value = action === "refresh"
+              ? await window.spsCoreSettings.getWorkspaceExecution({ workspaceId: workspace.id })
+              : await window.spsCoreSettings.changeWorkspaceExecution({ workspaceId: workspace.id, action, expectedRevision: execution.revision });
+            if (generation !== managedWorkspaceRequest) return;
+            if (exactDataRecord(value, ["cancelled"])?.cancelled === true) return;
+            show(value);
+          } catch {
+            if (generation !== managedWorkspaceRequest) return;
+            execution = null;
+            status.textContent = "Result unavailable. Check execution before retrying; the action may already have reached the Host.";
+            for (const item of buttons) item.dataset.unavailable = String(item.dataset.action !== "refresh");
+          } finally { pending.delete("workspace-execution"); syncControls(); }
+        });
+      }
+      row.append(label, actions); byId("managed-workspaces-list").append(row);
+    }
+    byId("managed-workspaces-status").textContent = rows.length ? "Select Check execution for current state. Pause blocks new work; Stop requests cancellation; Resume allows new work." : "No Workspaces are available.";
+  } catch {
+    if (generation === managedWorkspaceRequest) byId("managed-workspaces-status").textContent = "Workspaces unavailable. Check local Host status and refresh.";
+  } finally { pending.delete("managed-workspaces"); syncControls(); }
+}
 
 function showNativeMemberObservation(value) {
   const result = exactDataRecord(value, ["hostId", "deviceId", "status"]);

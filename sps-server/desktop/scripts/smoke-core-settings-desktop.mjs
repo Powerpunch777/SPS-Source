@@ -156,6 +156,10 @@ try {
   assert.match(status.body, /Recovery/);
   const settings = await evaluate("window.spsCoreSettings.getStatus()");
   assert.equal(settings.canManageHost, false);
+  assert.equal(await evaluate("document.querySelector('#refresh-managed-workspaces').disabled"), true);
+  await evaluate("window.spsCoreSettings.listManagedWorkspaces().then(() => { throw new Error('Unsigned Workspace management was accepted'); }, () => true)");
+  assert.equal(await evaluate("document.querySelector('[data-action=\"open-plugin-sources\"]').disabled"), true);
+  await evaluate("window.spsCoreSettings.openPluginSources().then(() => { throw new Error('Unsigned source management was accepted'); }, () => true)");
   assert.equal(settings.canManageNativeMember, false);
   assert.equal(await evaluate("document.querySelector('#register-native-member').disabled"), true);
   assert.equal(await evaluate("document.querySelector('#refresh-native-registrations').disabled"), true);

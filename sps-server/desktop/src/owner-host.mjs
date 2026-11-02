@@ -7,6 +7,8 @@ import { prepareWindowsHostJob } from "@sps/desktop-node";
 import { attachSpsNativeMemberSignerChannel } from "./native-member-signer-channel.mjs";
 import { createSpsNativeParentIngressClient } from "./native-parent-ingress-client.mjs";
 import { attachSpsNativeWorkspaceParentChannel } from "./native-workspace-parent-channel.mjs";
+import { createSpsPluginArtifactParentClient } from "./plugin-artifact-parent-channel.mjs";
+import { captureSpsOwnerHostRuntimeReferences } from "./owner-host-runtime-references.mjs";
 
 function asMessage(error) {
   return error instanceof Error && error.message ? error.message : String(error);
@@ -122,15 +124,15 @@ function removeDirectoryInBackground(target, options) {
   void removeDirectoryWithRetry(target, options).catch(() => undefined);
 }
 
-async function moveDirectoryAside(target, { fsApi, delay } = {}) {
-  const stale = `${target}.stale-${process.pid}-${Date.now()}`;
-  try {
-    await fsApi.rename(target, stale);
-    return stale;
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    await removeDirectoryWithRetry(target, { fsApi, delay });
-    return null;
+async function renameOwnerRuntimeDirectory(source, destination, { fsApi, delay }) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fsApi.rename(source, destination);
+      return;
+    } catch (error) {
+      if (attempt >= 4 || !["EPERM", "EBUSY"].includes(error?.code)) throw error;
+      await delay(100 * (attempt + 1));
+    }
   }
 }
 
@@ -190,10 +192,10 @@ export async function materializeStableSpsOwnerHostNode({
   const temporaryMetadata = `${metadataPath}.tmp-${process.pid}-${Date.now()}`;
   try {
     await fsApi.copyFile(source, temporaryTarget);
-    await fsApi.rm(target, { force: true });
+    // Rename replaces an unlocked file atomically. Removing first would lose
+    // the previous executable if promotion fails, including on Windows.
     await fsApi.rename(temporaryTarget, target);
     await fsApi.writeFile(temporaryMetadata, `${JSON.stringify({ format: 1, sha256: sourceSha256 })}\n`, "utf8");
-    await fsApi.rm(metadataPath, { force: true });
     await fsApi.rename(temporaryMetadata, metadataPath);
     return target;
   } finally {
@@ -275,24 +277,50 @@ export async function materializeSpsOwnerHostRuntime({
   removeDirectoryInBackground(staleStagingRoot, { fsApi, delay });
   await removeDirectoryWithRetry(stagingRoot, { fsApi, delay });
   await fsApi.mkdir(stagingRoot, { recursive: true });
-  await fsApi.cp(path.join(sourceRuntimeRoot, "dist"), path.join(stagingRoot, "dist"), { recursive: true, dereference: false });
-  await fsApi.cp(sourceDependencyRoot, path.join(stagingRoot, "node_modules"), { recursive: true, dereference: false });
-  if (sourceHasBundledNode) {
-    await fsApi.cp(sourceBin, path.join(stagingRoot, "bin"), { recursive: true, dereference: false });
+  let staleTargetRoot = null;
+  try {
+    await fsApi.cp(path.join(sourceRuntimeRoot, "dist"), path.join(stagingRoot, "dist"), { recursive: true, dereference: false });
+    await fsApi.cp(sourceDependencyRoot, path.join(stagingRoot, "node_modules"), { recursive: true, dereference: false });
+    if (sourceHasBundledNode) {
+      await fsApi.cp(sourceBin, path.join(stagingRoot, "bin"), { recursive: true, dereference: false });
+    }
+    await fsApi.copyFile(sourceManifest, path.join(stagingRoot, "sps-owner-host-runtime.json"));
+    await fsApi.copyFile(sourceBootstrap, path.join(stagingRoot, "sps-owner-host-bootstrap.mjs"));
+    await fsApi.copyFile(sourcePackage, path.join(stagingRoot, "package.json"));
+    for (const entry of sourceSupport) {
+      const relative = path.relative(sourceRuntimeRoot, entry.source);
+      const sourceDirectory = path.dirname(entry.source);
+      const targetDirectory = path.join(stagingRoot, path.dirname(relative));
+      await fsApi.cp(sourceDirectory, targetDirectory, { recursive: true, dereference: false });
+    }
+    const previous = `${targetRuntimeRoot}.stale-${process.pid}-${Date.now()}`;
+    try {
+      await renameOwnerRuntimeDirectory(targetRuntimeRoot, previous, { fsApi, delay });
+      staleTargetRoot = previous;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await renameOwnerRuntimeDirectory(stagingRoot, targetRuntimeRoot, { fsApi, delay });
+    if (staleTargetRoot) removeDirectoryInBackground(staleTargetRoot, { fsApi, delay });
+    return targetRuntimeRoot;
+  } catch (error) {
+    if (staleTargetRoot) {
+      try {
+        let occupied = false;
+        try { await fsApi.lstat(targetRuntimeRoot); occupied = true; }
+        catch (lookupError) { if (lookupError?.code !== "ENOENT") throw lookupError; }
+        if (occupied) throw new Error("Runtime replacement destination is occupied; refusing rollback overwrite.");
+        await renameOwnerRuntimeDirectory(staleTargetRoot, targetRuntimeRoot, { fsApi, delay });
+      } catch (restoreError) {
+        // Preserve both versions when recovery is uncertain, just as the
+        // archive materializer does. Never delete the last previous runtime.
+        throw new AggregateError([error, restoreError],
+          `SPS legacy runtime replacement and rollback failed. Preserved previous runtime at ${staleTargetRoot} and candidate at ${stagingRoot}.`);
+      }
+    }
+    await removeDirectoryWithRetry(stagingRoot, { fsApi, delay }).catch(() => undefined);
+    throw error;
   }
-  await fsApi.copyFile(sourceManifest, path.join(stagingRoot, "sps-owner-host-runtime.json"));
-  await fsApi.copyFile(sourceBootstrap, path.join(stagingRoot, "sps-owner-host-bootstrap.mjs"));
-  await fsApi.copyFile(sourcePackage, path.join(stagingRoot, "package.json"));
-  for (const entry of sourceSupport) {
-    const relative = path.relative(sourceRuntimeRoot, entry.source);
-    const sourceDirectory = path.dirname(entry.source);
-    const targetDirectory = path.join(stagingRoot, path.dirname(relative));
-    await fsApi.cp(sourceDirectory, targetDirectory, { recursive: true, dereference: false });
-  }
-  const staleTargetRoot = await moveDirectoryAside(targetRuntimeRoot, { fsApi, delay });
-  await fsApi.rename(stagingRoot, targetRuntimeRoot);
-  if (staleTargetRoot) removeDirectoryInBackground(staleTargetRoot, { fsApi, delay });
-  return targetRuntimeRoot;
 }
 
 export async function resolveSpsOwnerHostRuntime({
@@ -375,6 +403,8 @@ export function createSpsOwnerHostManager({
   exitConfirmationMs = 5_000,
   createNativeSigner = null,
   onNativeInvalidation = () => {},
+  onArtifactUncertainty = () => () => {},
+  artifactReferences = false,
   prepareOwnedJob = process.platform === "win32" && spawn === spawnChildProcess
     ? () => prepareWindowsHostJob({ gateModulePath: ownerHostGateModulePath() }, {
       onEvent: event => reportOwnerHostEvent(baseEnvironment, event),
@@ -391,6 +421,10 @@ export function createSpsOwnerHostManager({
   let nativeChannel = null;
   let nativeIngress = null;
   let nativeWorkspace = null;
+  let artifactChannel = null;
+  const artifactLaunches = new Set();
+  const noRuntimeReferences = Object.freeze({ available: true, references: Object.freeze([]) });
+  const runtimeReferencesUnavailable = Object.freeze({ available: false, references: Object.freeze([]) });
   let lifecycleGeneration = 0;
   let startPromise = null;
   let startPromiseGeneration = null;
@@ -435,21 +469,32 @@ export function createSpsOwnerHostManager({
     const current = await inspect();
     if (generation !== lifecycleGeneration) return inspect();
     if (current.state !== "stopped") return current;
-    const runtime = await resolveRuntime();
+    reportOwnerHostEvent(baseEnvironment, "resolve-runtime-start");
+    const resolvedRuntime = await resolveRuntime();
+    reportOwnerHostEvent(baseEnvironment, "resolve-runtime-complete");
     if (generation !== lifecycleGeneration) return inspect();
-    if (!runtime) {
+    if (!resolvedRuntime) {
       lastError = "SPS Owner Host runtime is not installed on this computer.";
       return inspect();
     }
+
+    const captured = artifactReferences
+      ? captureSpsOwnerHostRuntimeReferences(resolvedRuntime, baseEnvironment)
+      : { runtime: resolvedRuntime, snapshot: runtimeReferencesUnavailable };
+    const runtime = captured.runtime;
+    const launch = { snapshot: captured.snapshot, child: null, generation };
+    if (artifactReferences) artifactLaunches.add(launch);
 
     try {
       if (generation !== lifecycleGeneration) return inspect();
       let job = null;
       if (prepareOwnedJob) {
+        reportOwnerHostEvent(baseEnvironment, "prepare-job-start");
         const preparing = Promise.resolve().then(() => prepareOwnedJob());
         jobPreparation = preparing;
         try { job = preparedJob = await preparing; }
         finally { if (jobPreparation === preparing) jobPreparation = null; }
+        reportOwnerHostEvent(baseEnvironment, "prepare-job-complete");
         if (generation !== lifecycleGeneration) {
           await job.dispose();
           if (preparedJob === job) preparedJob = null;
@@ -463,10 +508,11 @@ export function createSpsOwnerHostManager({
         stdio: ["ignore", "pipe", "pipe", "ipc", "pipe"],
         windowsHide: true,
         env: {
-          ...baseEnvironment,
+          ...(captured.copiedEnvironment ? {} : baseEnvironment),
           ...runtime.environment,
           PAPERCLIP_TELEMETRY_DISABLED: "1",
           SPS_DESKTOP_OWNED_SHUTDOWN_PIPE: "1",
+          ...(artifactReferences ? { SPS_DESKTOP_ARTIFACT_CHANNEL: "1" } : {}),
         },
       };
       let child;
@@ -483,6 +529,18 @@ export function createSpsOwnerHostManager({
       child.once("disconnect", () => reportOwnerHostEvent(baseEnvironment, "core-ipc-disconnect"));
       child.once("close", () => reportOwnerHostEvent(baseEnvironment, "core-close"));
       ownedChild = child;
+      launch.child = child;
+      child.once("close", () => {
+        // A non-Job owner still retains paths until the child's output closes.
+        // Owned Jobs require their separate whole-tree confirmation below.
+        if (!hasOwnedHostJob(child)) artifactLaunches.delete(launch);
+      });
+      let releaseArtifactUncertainty = null;
+      const childArtifactChannel = artifactReferences && hasOwnedHostJob(child) && typeof child.send === "function" && child.connected === true
+        ? createSpsPluginArtifactParentClient(child, { isCurrent: () => ownedChild === child && !childHasExited(child),
+          onUncertain: () => { releaseArtifactUncertainty ??= onArtifactUncertainty(); } }) : null;
+      artifactChannel = childArtifactChannel;
+      reportOwnerHostEvent(baseEnvironment, "core-spawned");
       if (preparedJob === job) preparedJob = null;
       let childChannel = null;
       let childWorkspace = null;
@@ -542,6 +600,8 @@ export function createSpsOwnerHostManager({
       child.once("exit", (code) => {
         reportOwnerHostEvent(baseEnvironment, "core-exit");
         if (ownedChild !== child) return;
+        childArtifactChannel?.dispose();
+        if (artifactChannel === childArtifactChannel) artifactChannel = null;
         // fd4 is an independent, duplex parent-owned stop pipe. After the
         // actual Core has exited, its unused parent read side must also close
         // before Node can emit ChildProcess.close. Preserve output drainage and
@@ -567,6 +627,8 @@ export function createSpsOwnerHostManager({
           // Keep the exact child and job while descendants or their confirmation
           // remain outstanding. A leader exit must not permit a replacement Host.
           void child.waitForOwnedJobTermination().then(() => {
+            releaseArtifactUncertainty?.();
+            artifactLaunches.delete(launch);
             if (ownedChild === child) { ownedChild = null; startedAt = null; }
           }).catch(() => {
             if (ownedChild === child) lastError = "SPS Owner Host process-tree termination has not been confirmed.";
@@ -592,7 +654,16 @@ export function createSpsOwnerHostManager({
       if (generation !== lifecycleGeneration) return inspect();
       const state = await inspect();
       if (generation !== lifecycleGeneration) return inspect();
-      if (state.state === "running") return state;
+      if (state.state === "running") {
+        reportOwnerHostEvent(baseEnvironment, "core-ready");
+        return state;
+      }
+      if (state.state === "running-existing") {
+        // Our admitted child failed or exited; another listener is not its
+        // readiness proof. Keep it unowned and let the caller report conflict.
+        lastError = "SPS Owner Host could not acquire its configured endpoint; another service is running there.";
+        return { ...state, lastError };
+      }
       if (state.state === "stopped") return state;
     }
     if (generation !== lifecycleGeneration) return inspect();
@@ -610,6 +681,11 @@ export function createSpsOwnerHostManager({
     startPromise = operation;
     startPromiseGeneration = generation;
     const clearStart = () => {
+      if (!ownedChild && !preparedJob && !jobPreparation) {
+        for (const launch of artifactLaunches) {
+          if (launch.generation === generation && !launch.child) artifactLaunches.delete(launch);
+        }
+      }
       if (startPromise !== operation) return;
       startPromise = null;
       startPromiseGeneration = null;
@@ -631,6 +707,8 @@ export function createSpsOwnerHostManager({
 
   async function stopOwned({ force = false } = {}) {
     reportOwnerHostEvent(baseEnvironment, "stop-begin");
+    artifactChannel?.dispose();
+    artifactChannel = null;
     invalidateNativeSigner();
     reportOwnerHostEvent(baseEnvironment, "native-invalidated");
     const preparing = jobPreparation;
@@ -699,6 +777,12 @@ export function createSpsOwnerHostManager({
       startedAt = null;
       if (child.exitCode === 0 || child.signalCode != null) lastError = null;
     }
+    if (hasOwnedHostJob(child)) {
+      for (const launch of artifactLaunches) if (launch.child === child) artifactLaunches.delete(launch);
+    }
+    if (!ownedChild && !preparedJob && !jobPreparation) {
+      for (const launch of artifactLaunches) if (!launch.child) artifactLaunches.delete(launch);
+    }
     return inspect();
   }
 
@@ -725,5 +809,21 @@ export function createSpsOwnerHostManager({
       new Error("The owned Native Workspace channel is unavailable."), { code: "native_workspace_unavailable" }));
     return nativeWorkspace.read(request, options);
   }
-  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace };
+  function withPluginArtifactReferences(action, options) {
+    if (!ownedChild || childHasExited(ownedChild) || !artifactChannel) return Promise.reject(Object.assign(
+      new Error("The exact owned Core artifact observation is unavailable."), { code: "SPS_PLUGIN_ARTIFACT_CHANNEL_UNAVAILABLE" }));
+    return artifactChannel.withSnapshot(action, options);
+  }
+  function readRuntimeArtifactReferences() {
+    if (!artifactReferences) return runtimeReferencesUnavailable;
+    if (artifactLaunches.size) {
+      if (artifactLaunches.size > 32 || [...artifactLaunches].some(launch => !launch.snapshot.available)) return runtimeReferencesUnavailable;
+      return Object.freeze({ available: true,
+        references: Object.freeze([...artifactLaunches].flatMap(launch => launch.snapshot.references)) });
+    }
+    if (ownedChild || startPromise || jobPreparation || preparedJob || stopsInFlight.size) return runtimeReferencesUnavailable;
+    return noRuntimeReferences;
+  }
+  return { inspect, start, stop, invalidateNativeSigner, dispatchNativeIngress, readNativeWorkspace,
+    withPluginArtifactReferences, readRuntimeArtifactReferences };
 }

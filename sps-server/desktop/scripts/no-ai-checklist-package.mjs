@@ -11,12 +11,12 @@ export const CHECKLIST_PACKAGE_CAPABILITIES = Object.freeze([
   "plugin.state.read", "plugin.state.write", "events.emit", "events.subscribe", "jobs.schedule",
 ]);
 
-export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, omitCapability, runtimeDiscovery = false, agentDiscovery = false, modelRequests = false } = {}) {
+export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, omitCapability, version = "0.1.0", runtimeDiscovery = false, agentDiscovery = false, modelRequests = false } = {}) {
   const ui = withUi ? defineSpsUiContributions({ entrypoint: "./dist/ui", contributions: [
     { surface: "page", id: "checklist", label: "Checklist", routePath: id === CHECKLIST_PLUGIN_KEY ? "no-ai-checklist" : id.replaceAll(".", "-"), exportName: "ChecklistPage" },
   ] }) : {};
   return defineSpsPluginManifest({
-    id, apiVersion: 1, version: "0.1.0", displayName: "No-AI checklist reference",
+    id, apiVersion: 1, version, displayName: "No-AI checklist reference",
     description: "Temporary No-AI Workspace acceptance fixture.", author: "SPS", categories: ["automation"],
     ...ui,
     capabilities: [...CHECKLIST_PACKAGE_CAPABILITIES, ...(ui.capabilities ?? []), ...(runtimeDiscovery ? ["sps.runtimes.read"] : []), ...(agentDiscovery ? ["agents.read"] : []),
@@ -30,6 +30,13 @@ export function checklistManifest({ id = CHECKLIST_PLUGIN_KEY, withUi = true, om
 
 // Creates disposable authoring output only; no installation or registry mutation.
 export async function createChecklistPackage(directory, options = {}) {
+  const lifecycleProbe = options.lifecycleProbe === true;
+  if (options.failInitialize === true && !lifecycleProbe) {
+    throw new TypeError("failInitialize requires lifecycleProbe.");
+  }
+  if (lifecycleProbe && ["runtimeDiscovery", "modelRequests", "probeScope", "agentDiscovery"].some((option) => options[option] === true)) {
+    throw new TypeError("lifecycleProbe cannot be combined with runtimeDiscovery, modelRequests, probeScope, or agentDiscovery.");
+  }
   const manifest = checklistManifest(options);
   await mkdir(path.join(directory, "src"), { recursive: true });
   await mkdir(path.join(directory, "dist"), { recursive: true });
@@ -43,7 +50,11 @@ export async function createChecklistPackage(directory, options = {}) {
     ...(options.runtimeDiscovery || options.modelRequests ? ['import { createSpsRuntimeClient, readSpsHostSupport } from "@sonparkserver/plugin-sdk/runtime";'] : []),
     'import { createChecklistPlugin } from "./checklist.mjs";',
     "const plugin = createChecklistPlugin();",
-    ...(options.modelRequests ? [
+    ...(lifecycleProbe ? [
+      "const original = plugin.handlers.platform;",
+      `const platform = defineSpsPlatformContract({ ...original, events: original.events.map(event => ({ ...event, name: ${JSON.stringify(`plugin.${manifest.id}.changed`)} })), data: [...original.data, { key: 'package-version', handler: () => ({ version: ${JSON.stringify(manifest.version)} }) }] });`,
+      `runSpsWorker(defineSpsPlugin({ ...plugin.handlers, initialize() { ${options.failInitialize === true ? 'throw new Error("SPS lifecycle fixture initialization failure");' : ""} }, platform }));`,
+    ] : options.modelRequests ? [
       "let runtime;",
       "const original = plugin.handlers.platform;",
       `const modelCaps = ${JSON.stringify(["sps.models.read", "sps.models.submit", "sps.models.cancel", "sps.executions.read"].filter(value => value !== options.omitCapability))};`,

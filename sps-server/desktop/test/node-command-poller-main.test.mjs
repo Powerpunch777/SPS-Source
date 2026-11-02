@@ -13,6 +13,7 @@ import { createSpsNodeConnectionLifetime } from '../src/node-connection-lifecycl
 import { createSpsNodeCompletionOutbox, SpsNodeCompletionOutboxError } from '../src/node-completion-outbox.mjs';
 import { createSpsNodeClaimJournal, SpsNodeClaimJournalError } from '../src/node-claim-journal.mjs';
 import { SpsHubRequestError } from '../../desktop-node/src/hub-client.mjs';
+import { createSpsDesktopPluginArtifactActivityGate } from '../src/plugin-artifact-activity-gate.mjs';
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -63,6 +64,7 @@ async function createPollHarness(overrides = {}, outboxStorage = { ciphertext: n
     },
     nodeConnectionLifetime,
     commandPollGate,
+    desktopPluginArtifactActivity: createSpsDesktopPluginArtifactActivityGate(),
     nodeRuntimeStatus: { lastCommandPollAt: null, commandPollError: null },
     structuredClone,
     JSON,
@@ -530,4 +532,41 @@ test('a different terminal result from Core stays saved and pauses new claims in
   assert.deepEqual(harness.calls.executions, []);
   assert.equal(JSON.parse(Buffer.from(harness.outboxStorage.ciphertext, 'base64').toString()).receipts.length, 1);
   assert.match(harness.nodeRuntimeStatus.commandPollError, /Host has not confirmed a saved task result/);
+});
+
+test('artifact maintenance declines a legacy poll before any claim and later polling resumes', async () => {
+  const harness = await createPollHarness();
+  await harness.desktopPluginArtifactActivity.withMaintenance(async () => {
+    await harness.runPoll();
+    assert.deepEqual(harness.calls.agentClaims, []);
+    assert.deepEqual(harness.calls.pluginClaims, []);
+    assert.equal(harness.outboxStorage.journalCiphertext, null);
+    assert.equal(harness.nodeRuntimeStatus.commandPollError, null);
+  });
+  await harness.runPoll();
+  assert.equal(harness.calls.agentClaims.length, 1);
+  assert.equal(harness.calls.pluginClaims.length, 1);
+});
+
+test('a legacy preclaim request holds artifact admission until the entire poll settles', async () => {
+  const started = deferred(), release = deferred();
+  const harness = await createPollHarness({ requireSpsCoreRequestAccess: async () => {
+    started.resolve(); await release.promise; return { accessToken: 'fixture-token' };
+  } });
+  const poll = harness.runPoll();
+  await started.promise;
+  try {
+    assert.throws(() => harness.desktopPluginArtifactActivity.withMaintenance(() => assert.fail('Preclaim still active')));
+    assert.deepEqual(harness.calls.agentClaims, []);
+  } finally { release.resolve(); }
+  await poll;
+  await harness.desktopPluginArtifactActivity.withMaintenance(() => {});
+});
+
+test('unexpected admission wiring errors are not silently treated as a busy maintenance scope', async () => {
+  const failure = new Error('fixture admission wiring error');
+  const harness = await createPollHarness({ desktopPluginArtifactActivity: { withActivity() { throw failure; } } });
+  await assert.rejects(harness.runPoll(), error => error === failure);
+  assert.deepEqual(harness.calls.agentClaims, []);
+  assert.deepEqual(harness.calls.executions, []);
 });

@@ -1,8 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  exportSpsOwnerVaultRegistryTransfer,
+  inspectSpsOwnerVaultRegistryTransfer,
+} from "./owner-vault-registry-transfer.mjs";
 
 export const SPS_OWNER_TRANSFER_FORMAT = "sps-owner-vault-transfer";
-export const SPS_OWNER_TRANSFER_VERSION = 1;
+export const SPS_OWNER_TRANSFER_VERSION = 2;
 export const SPS_OWNER_RESTORE_MODE = "fresh-host-only";
 
 const INCLUDED_PATHS = [
@@ -36,6 +40,11 @@ function isAllowedBundleEntry(entry) {
     entry === "storage" || entry.startsWith("storage/") ||
     entry === "instances" || entry.startsWith("instances/") ||
     entry === "projects" || entry.startsWith("projects/");
+}
+
+function isAllowedRegistryBundleEntry(entry) {
+  return entry === "registry-staging" || entry === "registry-staging/packages" ||
+    entry.startsWith("registry-staging/packages/") || entry === "registry-staging/registry-stages.json";
 }
 
 async function listBundleEntries(root, fsApi, relativeRoot = "") {
@@ -208,6 +217,9 @@ export async function exportSpsOwnerVaultTransfer({
     await copyDirectoryIfPresent(path.join(root, "memory", "data"), path.join(bundleRoot, "memory", "data"), fsApi, included, "memory/data");
     await copyDirectoryIfPresent(path.join(root, "memory", "journals"), path.join(bundleRoot, "memory", "journals"), fsApi, included, "memory/journals");
 
+    const registryTransfer = await exportSpsOwnerVaultRegistryTransfer({ vaultRoot: root, bundleRoot, fsApi });
+    included.push(...registryTransfer.included);
+
     const manifest = {
       format: SPS_OWNER_TRANSFER_FORMAT,
       version: SPS_OWNER_TRANSFER_VERSION,
@@ -215,6 +227,7 @@ export async function exportSpsOwnerVaultTransfer({
       databaseBackup: "database/owner-host.sql.gz",
       included,
       entries: await listBundleEntries(bundleRoot, fsApi),
+      registryInventory: registryTransfer.inventory,
       excluded: [
         "secrets",
         "desktop SPS account credentials",
@@ -243,7 +256,7 @@ export async function inspectSpsOwnerVaultTransfer({ bundleRoot, fsApi = fs } = 
   } catch {
     throw new Error("This folder is not a readable SPS transfer bundle.");
   }
-  if (manifest?.format !== SPS_OWNER_TRANSFER_FORMAT || manifest?.version !== SPS_OWNER_TRANSFER_VERSION) {
+  if (manifest?.format !== SPS_OWNER_TRANSFER_FORMAT || ![1, SPS_OWNER_TRANSFER_VERSION].includes(manifest?.version)) {
     throw new Error("This SPS transfer bundle uses an unsupported format.");
   }
   await assertSafeTree(root, fsApi);
@@ -254,7 +267,8 @@ export async function inspectSpsOwnerVaultTransfer({ bundleRoot, fsApi = fs } = 
   if (new Set(included).size !== included.length) {
     throw new Error("This SPS transfer bundle lists a duplicate included path.");
   }
-  if (included.some((entry) => !INCLUDED_PATH_SET.has(entry))) {
+  if (included.some((entry) => !INCLUDED_PATH_SET.has(entry)
+    && !(manifest.version === 2 && ["registry-staging/packages", "registry-staging/registry-stages.json"].includes(entry)))) {
     throw new Error("This SPS transfer bundle lists an unknown included path.");
   }
   let expectedEntries = null;
@@ -269,7 +283,8 @@ export async function inspectSpsOwnerVaultTransfer({ bundleRoot, fsApi = fs } = 
     if (expectedEntries.some((entry) => !entry || path.posix.isAbsolute(entry) || entry.includes(":") || entry.startsWith("../") || entry.includes("/../") || entry.includes("/./") || entry.endsWith("/..") || entry === ".")) {
       throw new Error("This SPS transfer bundle has an invalid entry path.");
     }
-    if (expectedEntries.some((entry) => !isAllowedBundleEntry(entry))) {
+    if (expectedEntries.some((entry) => !isAllowedBundleEntry(entry)
+      && !(manifest.version === 2 && isAllowedRegistryBundleEntry(entry)))) {
       throw new Error("This SPS transfer bundle contains an entry outside its allowlist.");
     }
   }
@@ -304,12 +319,26 @@ export async function inspectSpsOwnerVaultTransfer({ bundleRoot, fsApi = fs } = 
     }
   }
   const actualEntries = (await listBundleEntries(root, fsApi)).sort();
-  if (actualEntries.some((entry) => !isAllowedBundleEntry(entry))) {
+  if (actualEntries.some((entry) => !isAllowedBundleEntry(entry)
+    && !(manifest.version === 2 && isAllowedRegistryBundleEntry(entry)))) {
     throw new Error("This SPS transfer bundle contains an entry outside its allowlist.");
   }
   const listedEntries = expectedEntries ? [...expectedEntries].sort() : null;
   if (listedEntries && (actualEntries.length !== listedEntries.length || actualEntries.some((entry, index) => entry !== listedEntries[index]))) {
     throw new Error("This SPS transfer bundle contains a file or directory missing from its manifest.");
+  }
+  if (manifest.version === 2) {
+    const registryIncluded = included.filter((entry) => entry.startsWith("registry-staging/"));
+    const hasPackages = registryIncluded.includes("registry-staging/packages");
+    const hasIndex = registryIncluded.includes("registry-staging/registry-stages.json");
+    if (hasPackages !== actualEntries.includes("registry-staging/packages")
+      || hasIndex !== actualEntries.includes("registry-staging/registry-stages.json")) {
+      throw new Error("This SPS transfer bundle has inconsistent Registry included paths.");
+    }
+    await inspectSpsOwnerVaultRegistryTransfer({ bundleRoot: root, inventory: manifest.registryInventory, fsApi });
+  } else if (included.some((entry) => entry.startsWith("registry-staging/"))
+    || actualEntries.some((entry) => entry.startsWith("registry-staging/"))) {
+    throw new Error("Legacy SPS transfer bundles cannot contain Registry package extras.");
   }
   return { bundleRoot: root, manifest, databaseBackup: backupPath };
 }

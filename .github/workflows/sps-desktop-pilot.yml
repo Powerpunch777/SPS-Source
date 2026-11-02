@@ -28,6 +28,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             sps-server/desktop/package-lock.json
+            external/sps-plugin-sdk/package-lock.json
             sps-server/sps-plugin-discovery/package-lock.json
             sps-server/sps-room-chat/package-lock.json
 
@@ -67,6 +68,10 @@ jobs:
       - name: Verify Desktop Node protocol tests
         working-directory: sps-server/desktop-node
         run: npm test -- --test-concurrency=1
+
+      - name: Install public Plugin SDK build tools for Desktop packaging
+        working-directory: external/sps-plugin-sdk
+        run: npm ci
 
       - name: Install SPS Plugin Discovery dependencies for Desktop runtime packaging
         working-directory: sps-server/sps-plugin-discovery

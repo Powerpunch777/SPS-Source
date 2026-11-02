@@ -1,5 +1,11 @@
 # SPS Paperclip Compatibility Migration
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> 기존 Company/Task/Issue·Agent 모델과 API는 안전한 호환/이전 경계다. Core의 필수 업무 모델로 확대하지 않으며 설계 정렬만으로 DB/API/저장 데이터를 삭제하거나 변환하지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 최종 갱신: 2026-08-02
 
 ## 결론

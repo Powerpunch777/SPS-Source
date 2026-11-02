@@ -4,7 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Bundled SPS Plugin Builder tool provider.",
+  "files": [
+    "dist",
+    "sps-plugin.json"
+  ],
   "spsPlugin": {
+    "id": "sps.plugin-discovery",
     "manifest": "./dist/manifest.js",
     "worker": "./dist/worker.js"
   },

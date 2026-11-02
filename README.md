@@ -25,8 +25,9 @@ hierarchy, memory strategy or development domain.
 3. Use `Settings > Plugins` to inspect and explicitly manage plugins.
 4. Review approved internal packages in Core management. No Builder or AI is
    required to install and operate Plugins through the existing contracts.
-5. Existing Builder code remains compatible; new development waits for a separate
-   handoff after Core completion. A Workspace without a usable Shell has an
+5. Existing bundled Builder code remains compatible. New Builder development
+   follows its own design in the separate `SPS-MY-PluginBuilder` repository,
+   not this Core completion work. A Workspace without a usable Shell has an
    independent empty entry.
 
 Internal Registry lookup and package review support explicit Host installation and
@@ -45,6 +46,27 @@ The signed Official Extensions registry and the Redon Games website are
 separate sibling repositories; they are not product-source directories in this
 private repository.
 
+### Separate Builder Repository
+
+[Powerpunch777/SPS-MY-PluginBuilder](https://github.com/Powerpunch777/SPS-MY-PluginBuilder)
+owns the new Builder plugin, its v15 design, UI and implementation plan. Builder
+development may proceed independently alongside Core stabilization. This
+`SPS-Source` repository and its private `SPS-Core` submodule own platform work,
+not the new Builder workflow. The older bundled `sps-plugin-discovery` code is
+a compatibility surface, not the new Builder's authoritative design or source.
+
+Before making Builder feature, role, session, memory, Runner or UI decisions,
+follow that repository's current design entry at `docs/design/README.md` and its
+linked integrated specification (currently
+`docs/design/01_Design/SPS_Plugin_Builder_Codex_Final_Design_v15.md`). Use its
+linked technology research and UI reference with their stated limits. Older
+Builder descriptions here or in chat must not replace that design. Core/SDK
+contracts and security constraints still apply as the specification requires.
+
+Builder uses the pinned public SDK and approved Core contracts. Do not copy
+private Core source, credentials or user data into its public repository, and
+do not treat Builder UI/test progress as proof of Core completion.
+
 ## Product Documents
 
 Current product decisions live in [sps-server/docs/current](sps-server/docs/current/README.md).
@@ -60,11 +82,18 @@ Current product decisions live in [sps-server/docs/current](sps-server/docs/curr
 
 ## Development
 
+Development coordination and agent delegation follow [AGENTS.md](AGENTS.md).
+
 The current tree contains an SPS migration layer over the existing Paperclip-compatible runtime. Do not treat compatibility package names as the permanent SPS public API. Run the focused package checks before changing a package.
 
 The product runtime lives in the private `SPS-Core` repository. The public
 `SPS-Core-Compat` repository is a Paperclip compatibility mirror only; it is
 not a product runtime, release channel, or support surface.
+
+Use a tested Node runtime for development. Windows owned-Core shutdown failed
+on Node26.4.0 and passed on Node24.22.1/26.13.0; a Node major number alone is not
+qualification. CI keeps Node22 packaging and separately checks Node26.13 shutdown.
+See the [runtime comparison and remaining limits](sps-server/docs/reviews/OWNED-CORE-NODE-RUNTIME-2026-11-01.md).
 
 ```powershell
 Set-Location .\external\sps-plugin-sdk

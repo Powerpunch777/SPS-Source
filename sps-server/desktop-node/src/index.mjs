@@ -5,6 +5,7 @@ export {
   cancelSpsNodeCommands,
   cancelSpsNodeCommand,
   executeSpsNodeCommand,
+  withSpsNodeCommandArtifactMaintenance,
   resolveSpsNodeExecutable,
   resolveSpsNodeInvocation,
   resolveSpsNodeCodexHome,

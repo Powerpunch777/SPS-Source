@@ -1,11 +1,12 @@
 import net from "node:net";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, realpath, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 export const SPS_OWNER_HOST_DEFAULT_PORT = 31_310;
 export const SPS_OWNER_HOST_DEFAULT_DATABASE_PORT = 54_339;
+const configUpdateQueues = new Map();
 
 function isUsablePort(value) {
   return Number.isInteger(value) && value > 0 && value < 65_536;
@@ -308,15 +309,25 @@ export function rebaseSpsOwnerHostConfigPaths(config, { vaultRoot, now = new Dat
   };
 }
 
-export async function updateSpsOwnerHostConfig({ vaultRoot, update, fsApi = { mkdir, readFile, rename, open, lstat, unlink } } = {}) {
+export async function updateSpsOwnerHostConfig({ vaultRoot, update, fsApi = { mkdir, readFile, realpath, rename, open, lstat, unlink } } = {}) {
   if (typeof update !== "function") throw new Error("SPS Owner Host config update function is required.");
   const layout = ownerHostVaultLayout(vaultRoot);
-  const raw = await fsApi.readFile(layout.configPath, "utf8");
-  const previous = parseExistingConfig(raw, layout.configPath);
-  const next = update(previous);
-  if (!next || typeof next !== "object") throw new Error("SPS Owner Host config update returned no config.");
-  await writeOwnerHostConfig(layout, next, fsApi);
-  return { config: next, layout };
+  const canonicalRoot = await (fsApi.realpath ?? realpath)(layout.root);
+  const key = process.platform === "win32" ? canonicalRoot.toLowerCase() : canonicalRoot;
+  // Atomic publication protects JSON bytes, not concurrent read-modify-write.
+  // Read inside the per-Vault queue so a later update sees the previous save.
+  const previousUpdate = configUpdateQueues.get(key) ?? Promise.resolve();
+  const pending = previousUpdate.catch(() => undefined).then(async () => {
+    const raw = await fsApi.readFile(layout.configPath, "utf8");
+    const previous = parseExistingConfig(raw, layout.configPath);
+    const next = update(previous);
+    if (!next || typeof next !== "object") throw new Error("SPS Owner Host config update returned no config.");
+    await writeOwnerHostConfig(layout, next, fsApi);
+    return { config: next, layout };
+  });
+  configUpdateQueues.set(key, pending);
+  try { return await pending; }
+  finally { if (configUpdateQueues.get(key) === pending) configUpdateQueues.delete(key); }
 }
 
 export function spsOwnerHostUrl(config) {

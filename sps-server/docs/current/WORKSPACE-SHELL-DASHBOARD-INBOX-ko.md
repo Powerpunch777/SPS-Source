@@ -1,5 +1,11 @@
 # SPS Workspace Shell, Dashboard, Inbox 설계
 
+> **설계 정렬 2026-11-02:** [단일 기준](DESIGN-BASELINE-2026-11-02.md)과
+> [사용자 원문](../design/CORE-PLUGIN-ARCHITECTURE-2026-10-25.md)이 제품 목표에 우선한다.
+> Shell/Dashboard/Inbox의 현재 API·데이터는 호환/선택 표면이다. Plugin 화면에 공통 sidebar/header/설정 메뉴를 강제하지 않는다. Native 복구·관리부터 검증한 뒤 화면을 분리하며 기존 deep link/데이터를 삭제하지 않는다.
+> 이후의 과거 정책/계획/시험은 해당 날짜·리비전의 기록이며 충돌 시 목표를 축소하지 않는다.
+> 문서 수정만 수행하며 구현·API 변경·장기목표 재개를 뜻하지 않는다.
+
 상태: 2026-10-25 목표 정렬; 전체 목표 구현 미완료
 최종 갱신: 2026-10-25
 
@@ -45,7 +51,7 @@ Agent, Approval, Room 도메인 의미와 데이터 계약은 재사용하지 �
 
 ### Workspace
 
-한 팀 또는 회사 안에서 독립적으로 운영되는 작업 단위다. 기존 Shell 선택,
+Core의 식별·접근·데이터·설정·실행 경계다. 팀·회사·프로젝트 업무 모델과 동의어가 아니다. 기존 Shell 선택,
 Dashboard 배치, Inbox 사용자 상태는 해당 호환 표면을 사용하는 경우 Workspace
 범위로 분리된다.
 

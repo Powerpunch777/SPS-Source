@@ -53,6 +53,7 @@ test("rejects arbitrary metadata, malformed status, accessors and hostile except
 });
 
 test("keeps fixed assertion/type/filesystem/timeout hints and never serializes original payloads", () => {
+  assert.equal(snapshotPreviewE2eFailure(new Error("private"), "preview_account_fence").phase, "preview_account_fence");
   const assertion = new Error("private payload"); assertion.code = "ERR_ASSERTION";
   assert.equal(snapshotPreviewE2eFailure(assertion, "builder_tools").kind, "assertion");
   assert.equal(snapshotPreviewE2eFailure(new TypeError("not a function private path"), "builder_surface").category, "javascript_contract");

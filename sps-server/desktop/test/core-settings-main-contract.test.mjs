@@ -46,6 +46,17 @@ test("Native Member certificate inspection and renewal use a Host-only bridge an
   assert.match(confirmation, /does not create a new registration, change approval, or grant Workspace access/);
 });
 
+test("independent Core Settings opens the existing Native Plugin source manager without a Workspace", () => {
+  const callback = section("openPluginSources: async ({ assertRequester }) => {", "setPluginsDisabled:");
+  let checks = 0, opened = 0;
+  const context = { assertRequester() { checks++; }, showRegistryWindow: async () => { opened++; } };
+  const invoke = runInNewContext(`(async () => { ${callback.slice(callback.indexOf("=> {") + 4, callback.lastIndexOf("}"))} })`, context);
+  // Verify the wiring without importing Electron or acquiring a user profile.
+  assert.match(callback, /assertRequester\(\);\s*await showRegistryWindow\(\);\s*assertRequester\(\);/);
+  assert.doesNotMatch(callback, /showWorkspace|openWorkspace|startOwnerHost|loadPlugin|enableDesktop/);
+  return invoke().then(() => { assert.equal(checks, 2); assert.equal(opened, 1); });
+});
+
 test("recovery launch and unreadable connection settings never enter automatic Host or Node startup", () => {
   assert.match(main, /let backgroundStartupDeferred = opensCoreSettingsOnLaunch;/);
   assert.match(main, /let setupMode = opensCoreSettingsOnLaunch;/);
@@ -110,6 +121,8 @@ test("Core Settings and tray use one deferred normal quit without a force-stop o
   const quitWiring = section("const desktopQuitCoordinator = createSpsDesktopQuitCoordinator(", 'app.on("will-quit"');
   assert.match(quitWiring, /drain: \(\) => \{\s*nativeMemberController\?\.dispose\(\);\s*return stopDesktopRuntimeGracefully\(\);/);
   assert.match(quitWiring, /isInstalling: \(\) => desktopUpdateController\.isInstalling\(\)/);
+  assert.match(quitWiring, /consumeFailedUpdateQuit: \(\) => desktopUpdateController\.consumeFailedUpdateQuit\(\)/);
+  assert.match(main, /updateQuitEvents: nativeAutoUpdater/);
   assert.match(quitWiring, /showFailure: async \(\) =>/);
   assert.match(quitWiring, /app\.on\("before-quit", event => \{ void desktopQuitCoordinator\.handle\(event\); \}\);/);
 });

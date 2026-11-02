@@ -83,8 +83,11 @@ function harness(overrides = {}, { search = "", confirm = true } = {}) {
   };
   const body = new Element();
   const calls = [];
+  const confirmMessages = [];
   const api = {
     listSources: async () => [sourceA, sourceB],
+    listBundledReviews: async () => [],
+    stageBundledReview: async input => { calls.push({ method: "stageBundledReview", ...JSON.parse(JSON.stringify(input)) }); return { stage }; },
     listStages: async () => [],
     listDeveloperProjects: async () => [],
     getDeveloperContext: async () => null,
@@ -98,7 +101,7 @@ function harness(overrides = {}, { search = "", confirm = true } = {}) {
   };
   const window = {
     spsRegistry: api, location: { search },
-    confirm: () => { calls.push({ method: "confirm" }); return confirm; },
+    confirm: message => { calls.push({ method: "confirm" }); confirmMessages.push(message); return confirm; },
   };
   const document = {
     body, querySelector: get,
@@ -114,12 +117,38 @@ function harness(overrides = {}, { search = "", confirm = true } = {}) {
     return found;
   };
   return {
-    api, body, calls, get, ready, button,
+    api, body, calls, confirmMessages, get, ready, button,
     select: sourceId => get("#source-list").emit("click", button("#source-list", "source-select", entry => entry.dataset.sourceId === sourceId)),
     click: (container, target) => get(container).emit("click", target),
     output: () => [...elements.values()].map(element => element.innerHTML).join("\n"),
   };
 }
+
+test("restored current-app copies stage without implicit confirmation or enablement", async () => {
+  const review = { pluginId: "sps.default-memory", packageName: "memory <script>", version: "0.1.0",
+    capabilities: ["events.subscribe"], manifestSha256: "c".repeat(64) };
+  const h = harness({ listBundledReviews: async () => [review] });
+  await h.ready;
+  assert.match(h.get("#bundled-review-list").innerHTML, /memory &lt;script&gt;/);
+  const button = h.button("#bundled-review-list", "stage-bundled-review");
+  await h.click("#bundled-review-list", button);
+  assert.deepEqual(h.calls, [{ method: "stageBundledReview", pluginId: review.pluginId }]);
+  assert.match(h.get("#notice").textContent, /without running code/);
+  assert.equal(button.isConnected, false);
+});
+
+test("restored bundle review failures stay stopped and support refresh", async () => {
+  const h = harness({ listBundledReviews: async () => { throw new Error("private-path"); } });
+  await h.ready;
+  assert.match(h.get("#bundled-review-list").innerHTML, /Could not load/);
+  assert.doesNotMatch(h.output(), /private-path/);
+  h.api.listBundledReviews = async () => [];
+  await h.get("#refresh-bundled-reviews").emit("click");
+  // Refresh handler schedules its async read without changing lifecycle state.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(h.get("#bundled-review-list").innerHTML, /No restored/);
+  assert.deepEqual(h.calls, []);
+});
 
 test("ignores late source inspection results and stages only the displayed source", async () => {
   const a = deferred();
@@ -234,6 +263,63 @@ test("keeps applying explicit and reports a ready result after confirmation", as
   await h.click("#stage-list", h.button("#stage-list", "enable-stage"));
   assert.deepEqual(h.calls, [{ method: "confirm" }, { method: "enableStage", stageId: stage.stageId }]);
   assert.match(h.get("#notice").textContent, /is ready/);
+});
+
+test("trusted-local developer actions require fresh confirmation and never use a supplied mode", async () => {
+  const project = {
+    id: "dev-project", displayName: "Example", sourceLabel: "Local folder",
+    executionMode: "protected", candidate: { promotable: true },
+    lastKnownGood: { deployment: { pluginId: "io.example.plugin", version: "1.0.0" } },
+  };
+  const actions = [
+    ["run-developer-gates", "runDeveloperGates", { project, reports: [] }],
+    ["apply-developer-candidate", "applyDeveloperCandidate", { project, plugin: { pluginKey: project.id, version: "1.0.0" } }],
+    ["rollback-developer-project", "rollbackDeveloperProject", { project, plugin: { pluginKey: project.id, version: "1.0.0" } }],
+    ["reload-developer-ui", "reloadDeveloperUi", {}],
+    ["restart-developer-worker", "restartDeveloperWorker", {}],
+  ];
+
+  for (const [buttonClass, method, result] of actions) {
+    const cancelledCalls = [];
+    const cancelled = harness({
+      listDeveloperProjects: async () => [project],
+      [method]: async input => { cancelledCalls.push(input); return result; },
+    }, { confirm: false });
+    await cancelled.ready;
+    await cancelled.click("#developer-project-list", cancelled.button("#developer-project-list", buttonClass));
+    assert.deepEqual(cancelledCalls, [], `${method} must not run when confirmation is canceled`);
+    assert.deepEqual(cancelled.calls, [{ method: "confirm" }]);
+    assert.match(cancelled.confirmMessages[0], /Windows user's permissions/);
+    assert.match(cancelled.confirmMessages[0], /files and credentials/);
+    assert.match(cancelled.confirmMessages[0], /does not sandbox OS files or Vault/);
+
+    const confirmedCalls = [];
+    const confirmed = harness({
+      listDeveloperProjects: async () => [project],
+      [method]: async input => {
+        const request = JSON.parse(JSON.stringify(input));
+        confirmedCalls.push(request);
+        confirmed.calls.push({ method, ...request });
+        return result;
+      },
+    });
+    await confirmed.ready;
+    const markup = confirmed.get("#developer-project-list").innerHTML;
+    assert.match(markup, /Open trusted preview/);
+    assert.match(markup, /does not sandbox OS files or Vault/);
+    assert.doesNotMatch(markup, /<select[^>]*executionMode|<option[^>]*protected|<option[^>]*trusted-local/i);
+    await confirmed.click("#developer-project-list", confirmed.button("#developer-project-list", buttonClass));
+    assert.deepEqual(confirmedCalls, [{ projectId: project.id, executionMode: "trusted-local" }], method);
+    assert.deepEqual(confirmed.calls.slice(0, 2), [{ method: "confirm" }, { method, projectId: project.id, executionMode: "trusted-local" }]);
+    if (buttonClass === "apply-developer-candidate") {
+      assert.match(confirmed.get("#notice").textContent, /separate Preview data/);
+      assert.match(confirmed.get("#notice").textContent, /not an OS sandbox/);
+    }
+    if (buttonClass === "rollback-developer-project") {
+      assert.match(confirmed.get("#notice").textContent, /separate Preview data/);
+      assert.match(confirmed.get("#notice").textContent, /not an OS sandbox/);
+    }
+  }
 });
 
 test("source deep links and review queue initialize while optional panels are still loading", async () => {

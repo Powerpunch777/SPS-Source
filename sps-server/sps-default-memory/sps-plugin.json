@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "plugin": {
+    "id": "sps.default-memory",
+    "version": "0.1.0",
+    "apiVersion": "1"
+  },
+  "runtime": {
+    "manifestEntry": "dist/manifest.js",
+    "manifestSha256": "6beaf34d2302601d4b0ae1ccfd4cee6b17a990cebc2acd3ad271d3b9b2b4e95c"
+  },
+  "capabilities": [
+    "agent.tools.register",
+    "events.subscribe",
+    "memory.providers.register"
+  ],
+  "permissionsDigest": "4b5e4bf37452b404215cffba3259dd94fc6ebc6e99776e7e8ae35e7022bf72cf"
+}

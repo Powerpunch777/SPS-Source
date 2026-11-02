@@ -11,3 +11,15 @@ The new source-preview regression failed before this change. The selected activa
 Actual Main export subsequently completed, but fresh-profile restore exposed another source-mode mismatch: the Core CLI resolver returns PATH's `node`, while Windows-owned restore supervision requires an absolute executable. Restore failed closed with staged data retained. Source restore now invokes the current Electron executable in Node mode (`ELECTRON_RUN_AS_NODE=1`) for the helper, preserving the selected Core directory and other runtime environment. Packaged restore retains its materialized runtime command and environment. The strict Windows supervisor contract is unchanged.
 
 The new source-command regression failed before the fix; its packaged counterpart passed. After the correction,30selected Main-flow/restore-runner tests passed, including three actual Windows helper/descendant/pipe-closure/cancellation cases. No timeout or process-ownership requirement was relaxed. A source Main transfer probe must still complete import, promotion, activation and restart to qualify the entire flow.
+
+## Subsequent source Main acceptance
+
+The reproducible `test:e2e:owner-vault-transfer` harness subsequently completed
+real Main export, fresh-profile restore returning a running Host, typed project
+and storage-file preservation, and graceful Desktop restart with the restored
+project still available. It uses temporary profiles and fixture Identity, not
+the installed app or production Google. See the exact command, earlier failed
+attempts, cleanup limits, and remaining crash/installed-byte gates in
+[Owner Vault Main acceptance](../reviews/OWNER-VAULT-MAIN-ACCEPTANCE-2026-10-30.md).
+This closes that normal source-flow observation gap, not all recovery or release
+requirements.

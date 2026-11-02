@@ -605,6 +605,9 @@ async function rebuildBundledSpsPlugins() {
       ...(await verifyBundledSpsPluginManifest(pluginRoot, packageManifest, expectedExtension)),
     });
   }
+  // Only this trusted build step evaluates current-app manifests. Runtime
+  // review reads the resulting static sidecars without importing plugin code.
+  await run(process.execPath, [path.join(desktopRoot, "scripts", "sync-bundled-review-manifests.mjs")], desktopRoot);
   return rebuilt;
 }
 
