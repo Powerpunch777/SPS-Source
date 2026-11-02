@@ -27,6 +27,7 @@ const phases = [];
 let cluster;
 let failure;
 let phase = "historical-input";
+let addedMigrations = 0;
 const previousPsqlPath = process.env.PAPERCLIP_PSQL_PATH;
 const ids = {
   companyA: "10000000-0000-4000-8000-000000000001", companyB: "10000000-0000-4000-8000-000000000002",
@@ -107,6 +108,8 @@ async function seed(sql) {
 }
 try {
   const staged = await stageHistoricalCoreSchema({ coreRoot: core, fixture });
+  addedMigrations = staged.upgradeFiles.length;
+  assert.ok(addedMigrations > 0, "The current journal must extend the pinned historical prefix.");
   trace("owned-cluster-start");
   cluster = await db.startEmbeddedPostgresTestDatabase("sps-historical-schema-");
   const oldUrl = await sibling("sps_historical_upgrade");
@@ -138,19 +141,20 @@ try {
     filenamePrefix: "historical-schema", retention: { dailyDays: 7, weeklyWeeks: 4, monthlyMonths: 1 } });
   const pending = await db.inspectMigrations(oldUrl);
   assert.equal(pending.status, "needsMigrations");
-  assert.equal(pending.pendingMigrations.length, 19);
+  assert.deepEqual(pending.pendingMigrations, staged.upgradeFiles);
 
   trace("upgrade-and-reapply-current-migrations");
   await db.applyPendingMigrations(oldUrl);
   assert.equal((await db.inspectMigrations(oldUrl)).status, "upToDate");
   assert.equal((await old`SELECT to_regclass('public.sps_plugin_package_operations') IS NOT NULL AS value`)[0].value, true);
+  assert.equal((await old`SELECT to_regclass('public.sps_session_dispatches') IS NOT NULL AS value`)[0].value, true);
   assert.deepEqual(await snapshot(old, columns), before);
   const upgradedHistory = await history(old);
-  assert.equal(upgradedHistory.length, staged.entries + 19);
+  assert.equal(upgradedHistory.length, staged.entries + addedMigrations);
   await db.applyPendingMigrations(oldUrl);
   assert.deepEqual(await history(old), upgradedHistory);
   assert.deepEqual(await snapshot(old, columns), before);
-  phases.push("nineteen-new-migrations-preserve-old-columns", "reapply-idempotent");
+  phases.push("current-journal-migrations-preserve-old-columns", "reapply-idempotent");
 
   trace("restore-pre-upgrade-backup-into-empty-database");
   const restoredUrl = await sibling("sps_historical_backup_restore");
@@ -180,7 +184,7 @@ try {
 }
 const evidence = { kind: "historical-core-schema-acceptance", historicalCore: HISTORICAL_CORE_SCHEMA_BASELINE.coreCommit,
   journalSha256: HISTORICAL_CORE_SCHEMA_BASELINE.journalSha256, sqlSha256: HISTORICAL_CORE_SCHEMA_BASELINE.sqlSha256,
-  historicalMigrations: 157, addedMigrations: 19, recordsVerified: records.length, phases,
+  historicalMigrations: HISTORICAL_CORE_SCHEMA_BASELINE.entries, addedMigrations, recordsVerified: records.length, phases,
   javascriptBackupRestore: true, ownedDatabaseCleanup: true, historicalApplicationExecuted: false,
   installedDatabaseMigrationQualified: false, signedInstallerQualified: false, physicalTwoDeviceQualified: false,
   ...(pendingJobCleanup ? { ownedJobCleanup: "pending-external-observation" } : {}) };

@@ -26,12 +26,14 @@ test("historical core schema pin stages the verified 157-entry prefix in the own
   assert.equal(HISTORICAL_CORE_SCHEMA_BASELINE.coreCommit, "95665eb49996cd0e9c13e2da817326dfffe0f2a3");
 
   const result = await stageHistoricalCoreSchema({ coreRoot, fixture });
+  const currentJournal = JSON.parse(await readFile(path.join(coreRoot, 'packages/db/src/migrations/meta/_journal.json'), 'utf8'));
   await fixture.assertCurrent();
   assert.deepEqual(result, {
     migrationsFolder: path.join(fixture.directory, "historical-migrations"),
     entries: 157,
     journalSha256: "b4f499190694a372442c8ff3c86e78adabafa733e67b7799ebe0db8d9ad4ab0b",
     sqlSha256: "b89987692343bdea3ab476ea2298782836916b0675c33bf583270abd61f9838f",
+    upgradeFiles: currentJournal.entries.slice(157).map(entry => `${entry.tag}.sql`).sort(),
   });
   const sqlFiles = await readdir(result.migrationsFolder);
   assert.equal(sqlFiles.filter(name => name.endsWith(".sql")).length, 157);
@@ -77,6 +79,21 @@ test("CRLF historical SQL is staged with canonical LF bytes and the pinned manif
   assert.deepEqual(staged, Buffer.from(source.toString("utf8").replace(/\r\n/g, "\n"), "utf8"));
   assert.equal(staged.includes(Buffer.from("\r\n")), false);
   await fixture.assertCurrent();
+});
+
+test("the current upgrade suffix rejects unsafe or duplicate names without weakening the pinned history", async t => {
+  const fixture = await withFixture(t);
+  const journalPath = path.join(coreRoot, "packages/db/src/migrations/meta/_journal.json");
+  for (const tag of ["../outside", "0000_mature_masked_marvel"]) {
+    await assert.rejects(stageHistoricalCoreSchema({ coreRoot, fixture, readSource: async file => {
+      const bytes = await readFile(file);
+      if (path.resolve(file) !== path.resolve(journalPath)) return bytes;
+      const journal = JSON.parse(bytes.toString("utf8"));
+      journal.entries.at(-1).tag = tag;
+      return Buffer.from(JSON.stringify(journal));
+    } }), /upgrade journal/);
+    await assert.rejects(readdir(path.join(fixture.directory, "historical-migrations")), { code: "ENOENT" });
+  }
 });
 
 test("invalid UTF-8 and oversized callback reads fail before staging", async t => {

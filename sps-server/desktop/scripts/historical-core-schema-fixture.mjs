@@ -85,7 +85,15 @@ export async function verifyHistoricalCoreSchema(coreRoot, { readSource = readFi
   if (sqlSha256 !== HISTORICAL_CORE_SCHEMA_BASELINE.sqlSha256) {
     throw new Error("Historical core schema SQL SHA-256 does not match its pin.");
   }
-  return { entries: 157, journal, journalSha256, sqlFiles, sqlSha256 };
+  const tags = new Set(entries.map(entry => entry.tag));
+  const upgradeFiles = current.entries.slice(entries.length).map(entry => {
+    if (!entry || typeof entry.tag !== "string" || !/^[A-Za-z0-9_-]+$/.test(entry.tag) || tags.has(entry.tag)) {
+      throw new Error("Current core upgrade journal contains an invalid or duplicate migration.");
+    }
+    tags.add(entry.tag);
+    return `${entry.tag}.sql`;
+  }).sort();
+  return { entries: HISTORICAL_CORE_SCHEMA_BASELINE.entries, journal, journalSha256, sqlFiles, sqlSha256, upgradeFiles };
 }
 
 export async function stageHistoricalCoreSchema({ coreRoot, fixture, readSource = readFile } = {}) {
@@ -116,5 +124,6 @@ export async function stageHistoricalCoreSchema({ coreRoot, fixture, readSource 
     entries: verified.entries,
     journalSha256: verified.journalSha256,
     sqlSha256: verified.sqlSha256,
+    upgradeFiles: verified.upgradeFiles,
   };
 }

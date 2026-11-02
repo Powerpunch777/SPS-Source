@@ -32,7 +32,10 @@ test("historical schema acceptance uses actual pinned SQL, data snapshots, backu
   const restoredUpgrade = source.indexOf("await db.applyPendingMigrations(restoredUrl)");
   assert.ok(pin >= 0 && old > pin && populated > old && backup > populated && upgrade > backup);
   assert.ok(restore > upgrade && restoredUpgrade > restore);
-  assert.match(source, /assert\.equal\(pending\.pendingMigrations\.length, 19\)/);
+  assert.match(source, /assert\.deepEqual\(pending\.pendingMigrations, staged\.upgradeFiles\)/);
+  assert.match(source, /staged\.entries \+ addedMigrations/);
+  assert.match(source, /to_regclass\('public\.sps_session_dispatches'\)/);
+  assert.doesNotMatch(source, /addedMigrations: 19|pendingMigrations\.length, 19/);
   assert.match(source, /assert\.deepEqual\(await snapshot\(old, columns\), before\)/);
   assert.match(source, /assert\.deepEqual\(await snapshot\(restored, columns\), before\)/);
   assert.match(source, /assert\.deepEqual\(await history\(restored\), oldHistory\)/);
@@ -58,7 +61,8 @@ test("historical acceptance flushes actual evidence and preserves pending exit d
     const hook = require(${JSON.stringify(hookPath)}); hook(done => { if (typeof done === 'function') done(); });
     const pendingJobCleanup = true;
     const OWNED_JOB_CLEANUP_PENDING_EXIT_CODE = 76;
-    const HISTORICAL_CORE_SCHEMA_BASELINE = { coreCommit: 'a'.repeat(40), journalSha256: 'b'.repeat(64), sqlSha256: 'c'.repeat(64) };
+    const HISTORICAL_CORE_SCHEMA_BASELINE = { coreCommit: 'a'.repeat(40), journalSha256: 'b'.repeat(64), sqlSha256: 'c'.repeat(64), entries: 157 };
+    const addedMigrations = 20;
     const phases = ['fixture-cleanup-completed']; const records = Array(12);
     ${source.slice(start)}`;
   const naturalExit = await exec(process.execPath, ["--input-type=module", "-e",

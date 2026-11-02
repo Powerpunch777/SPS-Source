@@ -218,3 +218,29 @@ managed AGENTS.md 계약으로 고쳤다. 다음 시도는 뒤로 간 창의 자
 공유 Lead 기억과 v15 Graph/CTO/Dev/QA/Runner/납품, OS 보호/Preview 및 출시 자격.
 사용자 DEV는 기존 프로세스로 보존했다. 새 backend/migration/capability는 그 DEV의
 재시작·검토 전 자동 반영/승인됐다고 주장하지 않는다. 장기목표와 full v15는 아직 미완료다.
+
+## 실제 Windows CI 실패 후속
+
+위 두 CI run의 Linux 검사는 성공했지만 Windows Desktop job은 pinned historical schema
+시험의 `20 !== 19`에서 실패했다. 새 receipt migration이 추가된 뒤 시험이 옛 개수를
+상수로 기대한 것이 원인이다. 뒤의 installer-input artifact 부재는 이 선행 job이 설치본
+생성 전 끝난 데 따른 후속 실패다. 이를 결제 차단이나 전체 CI 성공으로 기록하지 않는다.
+
+historical prefix의 SQL/journal pin은 그대로 유지했다. 현재 journal의 검증된 추가 파일명
+목록과 실제 pending 목록을 정확히 비교하고, 적용된 history 개수와 새 receipt table도
+확인하도록 바꿨다. 단순히 예상 숫자를 20으로 늘리거나 검사를 제거하지 않았다. 잘못된/
+중복 suffix 이름 거부 회귀를 추가했다. 관련 10/10 검사를 통과했다.
+
+별도 임시 PostgreSQL에서 실제 `node scripts/smoke-historical-core-migration.mjs` exit 0:
+기존 157개 + 현재 20개 migration, 양 Workspace와 인증/Plugin 상태의 12개 fixture 행,
+JavaScript 백업/빈 DB 복원/같은 최신 schema로 업그레이드/재적용 무변경/정확한 정리를
+확인했다. 역사적 앱 실행·사용자 설치 DB·서명/물리 기기 qualification은 아니다.
+Hosted Windows의 전체 후속 게이트는 수정 커밋으로 다시 실행되어야 한다.
+
+독립 실제 앱 시험과 더불어 reference/external 관측 문구 보정의 관련 Desktop 검사도
+32/32 통과했다. 현재 사용자 DEV 창은 트레이 상태에서 다시 표시했으며 같은 Main
+프로세스를 유지했다. Native/Core backend 재시작이나 새 권한 자동 승인은 하지 않았다.
+
+이 CI 보정 후 Node24/PATH24의 Desktop 전체 직접 검사도 다시 통과했다:
+2,237 total / 2,234 pass / 3 Windows 8.3 skip / 0 fail. 앞선 2,236개 검사의
+결과를 새 테스트 개수로 바꿔 쓰지 않고 별도 실행으로 기록한다.
