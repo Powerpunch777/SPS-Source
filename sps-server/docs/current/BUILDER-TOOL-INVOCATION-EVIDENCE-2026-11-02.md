@@ -80,3 +80,52 @@ fingerprint는 `246da081d5e9680ef7ec8e8c9c1ccc3739e7b22ea2088cf78572ad231ac6636f
 
 Marketplace·Preview·자체 LAN은 보류다. 다음은 Builder의 실제 역할/명세 근거/Graph
 저장과 도구 연결이며, 이 기록만으로 어느 전체 AC도 통과 처리하지 않는다.
+
+## 후속: Builder의 실제 조회 도구 등록
+
+Builder `f4cb7a376c7b2f3e78c868182293135bef4bc049`에서 선언된 `builder.read-solution`을
+등록했다. 현재 선택된 Lead Agent와 준비된 세 채널 중 한 세션만 저장된 설계를 조회할 수
+있고, 전후 선택/세션 revision을 확인한다. Graph 수정이나 고객 승인/납품 도구는 아니다.
+모든 업무 검사는 공개 Builder에 있으며 Core에는 Lead 역할을 추가하지 않았다.
+
+새 `agent.tools.register` capability는 manifest·등록이 같은 선언을 참조한다. 기존 DEV에
+자동 승인·재설치하지 않았고, 별도의 신선한 시험 패키지에만 명시적으로 적용했다.
+
+Source Desktop 폴더에서 Node24/PATH24와 Builder 절대 경로의 `SPS_BUILDER_SOURCE_ROOT`로
+아래를 실행했다. Core `32a3f9f`, SDK `316c56f`는 위와 같다.
+
+```powershell
+node scripts/smoke-builder-conditional-state-isolated.mjs
+node scripts/smoke-builder-conditional-state-isolated.mjs --build-only
+```
+
+실제 source 앱 시험은 exit0, `leadReadToolRegistered: true`,
+`userToolImpersonationDenied: true`였다. 도구 inventory는 실행 권한 증거가 아니며,
+사용자 UI가 준비된 세션 ID를 넣어도 Agent 실행을 사칭한 요청은403이었다.
+`liveLeadToolInvoked: false`, `aiExecuted: false`, 설치본/물리 두 PC도false다. mock Identity
+시험이며 최종 Main4/4·출력8개 정상 종료와 소유한 임시 데이터 정리를 확인했다.
+
+첫 앱 실행은 새 inventory fixture가 실제 descriptor의 필드를 잘못 읽어 실패했다.
+`pluginId`는 DB UUID, `name`은 완전한 namespaced 이름이라는 계약에 맞춰 시험을 고친 뒤
+재실행했다. 이 수정으로 새 API나 지원 범위를 만들지 않았다. 실패 복사본은 별도 종료를
+확인해 정확한 소유 경로만 정리했다.
+
+앱 시험 fingerprint는 `42069e378056228fdb9884f4bd478f00db0ccb63db351edcd6f3b74acb3bdb35`다.
+그 후 기존 Worker JSONL 사례에 조회/누락 session/Host scope 거부 검사를 덧붙였다.
+Host 권한을 SDK가 대신 판정한다고 잘못 가정한 첫 JSONL fixture를 수정했고, 새 격리
+build-only는130/130·타입·빌드·SDK CLI 검사 exit0으로 끝났다. fingerprint는
+`bb27e7f85dd4104a0a62804f887b672e9269b74cd0f9ce4198d32b6297ed1038`다.
+
+두 빌드의 manifest/Worker/UI 해시는 각각
+`aab23b792d424b7de4e52ccceeea4d30686e469ae4e4dbcd395b29b06c2244be`,
+`2b925a819d9e7b7f286e58cd2c8edafc7d4d0b378bbff6d45fb3ee85f5095193`,
+`165d1fb1f65ed915d5ce7784eed0078828f084a8ef363e3a6787e8fea78d892c`로 동일했다.
+실제 앱의 모듈 로더가 변환한 UI bytes 해시와 UI build 파일 해시는 서로 다른 대상이다.
+
+원본 로그는 로컬 Temp의 `sps-builder-lead-read-tool-app-final.log`와
+`sps-builder-lead-read-tool-jsonl-final.log`다. 공개 Builder에는 비공개 Core 소스·사용자
+경로·계정 식별자·원시 로그를 복사하지 않았다. DEV PID48300과 시작 시각은 유지됐다.
+
+현재는 읽기 경로만 연결했다. 실제 Lead의 도구 호출, 명세/승인 근거·답변의 저장과 참조,
+권한 변경과 작성 경합 보호, 불변 Graph 작성·화면 동기화가 남는다. 단순 조회 전후 검사로
+쓰기 중 권한 변경까지 원자적으로 막았다고 주장하지 않는다. 전체 Builder 목표는 active다.
