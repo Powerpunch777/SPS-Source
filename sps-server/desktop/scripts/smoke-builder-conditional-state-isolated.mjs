@@ -8,6 +8,8 @@ import { createWorkspaceE2eFixture } from "./workspace-e2e-fixture.mjs";
 // Trusted source-test operator only. Never installed or exposed through Plugin IPC.
 const desktop = path.resolve(import.meta.dirname, "..");
 const sdk = path.resolve(desktop, "../../external/sps-plugin-sdk");
+const buildOnly = process.argv[2] === "--build-only";
+assert.deepEqual(process.argv.slice(2), buildOnly ? ["--build-only"] : [], "Only --build-only is accepted.");
 const supplied = process.env.SPS_BUILDER_SOURCE_ROOT;
 assert.equal(process.platform, "win32");
 assert.ok(typeof supplied === "string" && path.isAbsolute(supplied), "Set an absolute SPS_BUILDER_SOURCE_ROOT.");
@@ -69,7 +71,7 @@ try {
   await node(["--experimental-strip-types", "--test", ...tests]);
   await node([path.join(sdk, "cli/sps-plugin.mjs"), "validate", ".", "--json"]);
   await node([path.join(sdk, "cli/sps-plugin.mjs"), "test", ".", "--json"]);
-  await node(["scripts/test-core-host.mjs"]);
+  if (!buildOnly) await node(["scripts/test-core-host.mjs"]);
   assert.equal(await git("-C", sdk, "rev-parse", "HEAD"), revision);
   assert.equal(await git("-C", sdk, "status", "--porcelain"), "");
   completed = true;
@@ -78,5 +80,6 @@ try {
   else console.error(`Preserve isolated Builder fixture for diagnosis: ${fixture.directory}`);
 }
 console.log(JSON.stringify({ kind: "source-builder-conditional-state", sdkRevision: revision,
-  isolatedBuild: true, actualSourceHost: true, mockIdentity: true, liveAi: false,
+  mode: buildOnly ? "build-only" : "source-app",
+  isolatedBuild: true, actualSourceHost: !buildOnly, mockIdentity: !buildOnly, liveAi: false,
   userDevDependenciesChanged: false, installedBuild: false, signedRelease: false, temporaryDataRemoved: true }));

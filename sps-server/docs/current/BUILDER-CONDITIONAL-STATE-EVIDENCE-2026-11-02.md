@@ -75,3 +75,28 @@ node scripts/smoke-builder-conditional-state-isolated.mjs
 
 이 증거로 Builder 전체가 완성된 것은 아니다. v15 목표 중 Graph/tools, 공유 기억,
 CTO, QA, providers 등은 남아 있으며 여기서 완료를 주장하지 않는다.
+
+## 후속: 프로젝트별 Revision 저장 기반
+
+공개 Builder `c61c1e4`에는 회사/Workspace 안의 프로젝트별 개정 기록과 조건부 현재 버전
+갱신을 제공하는 내부 저장 모듈을 추가했다. 실제 역할 권한, 명세 존재/승인 검증과 도구 호출을
+연결하기 전이므로 아직 UI나 AI 도구에 등록하지 않았다. 확정 포인터에서 연결되는 기록만
+조회하고, 경쟁에서 탈락한 미확정 기록은 자동 삭제하거나 확정된 이력으로 보여 주지 않는다.
+
+새 모듈 검사 24/24와 타입 검사 뒤, 같은 source 연산자에 명시적인 `--build-only` 모드를
+추가해 새로운 임시 복사본에서 타입 검사·빌드·Builder 전체113/113·SDK CLI validate/test를
+다시 수행했다. `actualSourceHost: false`, `liveAi: false`, `temporaryDataRemoved: true`로
+끝났다. 이전 Lead 선택의 실제 앱 증거를 새 모듈의 실제 앱 증거로 대신 쓰지 않는다.
+
+```powershell
+node scripts/smoke-builder-conditional-state-isolated.mjs --build-only
+```
+
+새 빌드 fingerprint는 `6cb85468e55849a1797ca6c24ac407b8482cc26bad82e5feaafb7ba419cbf14f`다.
+기록 모듈이 런타임에 연결되지 않아 Worker/UI 번들 해시는 앞선 빌드와 같다. 새 실행 경로나
+사용자 DEV 적용을 주장하지 않는다. 원본 로그는 로컬 Temp의
+`sps-builder-revisions-isolated-build.log`이며 공개 문서에는 원시 환경 정보를 복사하지 않았다.
+
+Core와 SDK의 개발 변경은 각 브랜치에 push했으며 Source 지원 매트릭스·gitlink·릴리스 버전을
+새 후보로 바꾸지는 않았다. 이 문서의 정확한 개발 revision을 별도로 checkout한 상태의
+시험이며 기존 root checkout만으로 새 릴리스 후보를 재현한다는 의미가 아니다.
