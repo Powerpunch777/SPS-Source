@@ -4,8 +4,8 @@
 
 **최신 지시: 첫 목표는 Builder 완성이고, 안전에 필요한 선행 작업부터 구현을 재개한다.**
 [Builder 우선 계획](BUILDER-FIRST-IMPLEMENTATION-PLAN-2026-11-02.md)이 아래 중단 기록보다
-우선한다. Marketplace·Preview·자체 LAN 보류는 유지한다. 도구의 이전 목표는 교체 기능
-제약으로 아직 paused이며, 허위 완료로 처리하지 않았다. DEV 재시작·설치 교체는 별개다.
+우선한다. Marketplace·Preview·자체 LAN 보류는 유지한다. 사용자가 이전 목표를 해제한
+뒤 새 Builder 완성 목표를 등록했고 실제 상태는 active다. DEV 재시작·설치 교체는 별개다.
 
 ## 적용 순서
 

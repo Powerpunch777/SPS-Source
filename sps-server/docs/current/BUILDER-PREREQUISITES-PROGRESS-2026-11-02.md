@@ -362,3 +362,16 @@ Core d7d5a5a에 일반 단일 키 조건부 저장 내부 기반과 실제 Postg
 공개 SDK/Builder에 아직 연결하지 않았으며, 권한 회수·다중 키·실제 앱 검증으로 확대하지
 않는다. Builder93991dc는 v15 전체 목표와 보류 항목을 문서로 정리했다. 사용자 DEV와
 설치본·계정·실제 데이터는 변경하지 않았다.
+
+사용자가 이전 목표를 해제했다고 응답한 뒤 `get_goal`에서 목표가 없음을 확인했다.
+새 Builder 완성 목표를 등록한 결과 active가 반환됐다. 위 도구 제한/paused 표시는
+이전 시점의 기록이며 현재는 해소됐다. Marketplace·Preview·자체 LAN 보류, 필요한
+안전 기반 우선, v15/UI v9 준수와 Core 업무 중립을 새 목표에도 명시했다.
+
+## 조건부 상태 저장과 Builder 수용 증거
+
+Core 조건부 저장과 격리된 Builder 검사의 범위 및 한계는
+[별도 증거 기록](BUILDER-CONDITIONAL-STATE-EVIDENCE-2026-11-02.md)에 남겼다.
+Core/internal SDK 109/109, 공개 SDK 선택 검사 63/63, Builder 89/89 및 실제 source
+Desktop/Owner Host 수용 시험 exit 0이다. 공개 SDK 수치는 전체 suite를 뜻하지 않고,
+source 앱 증거도 AI 실행·설치본·실기기·출시 자격이 아니다. Builder 전체 목표는 계속 미완료다.
