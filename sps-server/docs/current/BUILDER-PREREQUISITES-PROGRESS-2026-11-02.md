@@ -244,3 +244,25 @@ Hosted Windows의 전체 후속 게이트는 수정 커밋으로 다시 실행�
 이 CI 보정 후 Node24/PATH24의 Desktop 전체 직접 검사도 다시 통과했다:
 2,237 total / 2,234 pass / 3 Windows 8.3 skip / 0 fail. 앞선 2,236개 검사의
 결과를 새 테스트 개수로 바꿔 쓰지 않고 별도 실행으로 기록한다.
+
+## 실제 CLI 중단 후속
+
+Source `a69f68cb515478b1cf22f0719fe4f5adbd784630`, Core/SDK는 위 최종 tuple과 같고,
+Builder operator는 시험한 변경 그대로 커밋한 `9fdb553c9d8d296391cd789153c34ae3c4703f57`이다.
+Builder Worker/UI/manifest bytes는 b874181과 같다. 별도 live-cancel opt-in으로 앞선 실제
+답변·assistant 말풍선·중복 없음·재시작 유지를 다시 확인한 뒤 짧은 메시지 하나를 더 보냈다.
+실제 Core run이 running이고 관리 CLI PID가 살아 있음을 확인한 후 Builder UI 중단 버튼을
+눌렀다. 같은 turn/run이 cancelled/termination confirmed가 되고 관찰한 PID가 종료됐다.
+재시작 뒤에도 취소 상태가 유지됐고 해당 Agent run은 명시 요청한 2개뿐이었다.
+
+통합 source 앱 exit 0, Main 6/6 exit 0, 출력 12개 종료/실패 0, 정확한 임시 정리 완료.
+시험 작업 폴더는 계속 비어 있었고 설치/로그인/사용자 DEV를 변경하지 않았다. operator
+커밋에서 Builder check 87/87과 typecheck/build/SDK validate/test도 다시 통과했다.
+이는 전체 자식 OS 격리·하드웨어 기기 증명·패키징/서명/물리 증거가 아니다. 취소 기록은
+재시작한 실제 transcript에서 검사했고 캡처의 아래 viewport 밖 부분까지 모두 동시에
+보였다고 주장하지 않는다. SDK/일반 Core에 Builder의 업무 역할을 넣지 않았다.
+
+따라서 앞선 기록의 실제 CLI 중단 미검증 항목은 이 후속으로 해소됐다. 전체 Native 관리,
+공유 Lead 기억/Graph authoring/CTO/Dev/QA/Runner/납품·OS 보호/Preview·출시 조건과
+현재 DEV의 재시작/새 권한 검토는 여전히 별도다. 사용자에게 DEV 변경 여부를 질문했고
+응답 전에는 기존 Main/데이터를 그대로 유지한다.
