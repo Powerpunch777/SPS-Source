@@ -65,6 +65,11 @@
 
 ## Engineering evidence
 
+- [2026-11-02 CTO Workstream delivery](../reviews/CTO-WORKSTREAM-DELIVERY-2026-11-02.md):
+  stable planning intent and Core receipt reconciliation; Builder330 checks passed,
+  but actual trial stopped at cancelled Lead MCP reads before any CTO execution.
+  No new automatic approval policy, installed release or full v15 acceptance.
+
 - [2026-11-02 per-run session tool restrictions](../reviews/SESSION-EXECUTION-POLICY-2026-11-02.md):
   source-only Core/SDK contract, policy-bound durable receipt recovery, local
   Codex configuration guards and Builder integration. Not OS certification,

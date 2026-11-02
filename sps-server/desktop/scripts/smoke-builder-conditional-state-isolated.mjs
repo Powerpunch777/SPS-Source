@@ -14,31 +14,44 @@ const liveMemory = process.argv[2] === "--live-memory";
 const liveQuestion = process.argv[2] === "--live-question";
 const liveCtos = process.argv[2] === "--live-ctos";
 const liveBaseline = process.argv[2] === "--live-baseline";
-assert.deepEqual(process.argv.slice(2), buildOnly ? ["--build-only"] : liveDesign ? ["--live-design"] : liveMemory ? ["--live-memory"] : liveQuestion ? ["--live-question"] : liveCtos ? ["--live-ctos"] : liveBaseline ? ["--live-baseline"] : [], "Only --build-only or --live-design or --live-memory or --live-question or --live-ctos or --live-baseline is accepted.");
+const liveWorkstreams = process.argv[2] === "--live-workstreams";
+assert.deepEqual(process.argv.slice(2), buildOnly ? ["--build-only"] : liveDesign ? ["--live-design"] : liveMemory ? ["--live-memory"] : liveQuestion ? ["--live-question"] : liveCtos ? ["--live-ctos"] : liveBaseline ? ["--live-baseline"] : liveWorkstreams ? ["--live-workstreams"] : [], "Only --build-only or --live-design or --live-memory or --live-question or --live-ctos or --live-baseline or --live-workstreams is accepted.");
 const supplied = process.env.SPS_BUILDER_SOURCE_ROOT;
 assert.equal(process.platform, "win32");
 assert.ok(typeof supplied === "string" && path.isAbsolute(supplied), "Set an absolute SPS_BUILDER_SOURCE_ROOT.");
 assert.ok(!process.env.SPS_DESKTOP_E2E_BINARY && !process.env.SPS_BUILDER_LIVE_CANCEL,
   "This acceptance does not use installed binaries or cancellation probes.");
-assert.ok(liveBaseline ? process.env.SPS_BUILDER_LIVE_CODEX === "1" && process.env.SPS_BUILDER_LIVE_BASELINE === "1"
+assert.ok(liveWorkstreams ? !buildOnly && process.argv[2] === "--live-workstreams"
+  && process.env.SPS_BUILDER_LIVE_CODEX === "1" && process.env.SPS_BUILDER_LIVE_WORKSTREAMS === "1"
   && process.env.SPS_BUILDER_LIVE_DESIGN === undefined && process.env.SPS_BUILDER_LIVE_MEMORY === undefined
   && process.env.SPS_BUILDER_LIVE_QUESTION === undefined && process.env.SPS_BUILDER_LIVE_CTOS === undefined
+  && process.env.SPS_BUILDER_LIVE_BASELINE === undefined && process.env.SPS_BUILDER_LIVE_CANCEL === undefined
+  && process.env.OPENAI_API_KEY === undefined && process.env.PAPERCLIP_CODEX_PROVIDERS === undefined
+  && process.env.SPS_DESKTOP_E2E_BINARY === undefined
+  : liveBaseline ? process.env.SPS_BUILDER_LIVE_CODEX === "1" && process.env.SPS_BUILDER_LIVE_BASELINE === "1"
+  && process.env.SPS_BUILDER_LIVE_DESIGN === undefined && process.env.SPS_BUILDER_LIVE_MEMORY === undefined
+  && process.env.SPS_BUILDER_LIVE_QUESTION === undefined && process.env.SPS_BUILDER_LIVE_CTOS === undefined
+  && process.env.SPS_BUILDER_LIVE_WORKSTREAMS === undefined
   && process.env.SPS_BUILDER_LIVE_CANCEL === undefined && process.env.OPENAI_API_KEY === undefined
   && process.env.PAPERCLIP_CODEX_PROVIDERS === undefined && process.env.SPS_DESKTOP_E2E_BINARY === undefined
   : liveCtos ? process.env.SPS_BUILDER_LIVE_CODEX === "1" && process.env.SPS_BUILDER_LIVE_CTOS === "1"
   && !process.env.SPS_BUILDER_LIVE_CANCEL && !process.env.SPS_BUILDER_LIVE_DESIGN
   && !process.env.SPS_BUILDER_LIVE_MEMORY && !process.env.SPS_BUILDER_LIVE_QUESTION
+  && process.env.SPS_BUILDER_LIVE_WORKSTREAMS === undefined
   && process.env.SPS_BUILDER_LIVE_BASELINE === undefined && !process.env.OPENAI_API_KEY && !process.env.PAPERCLIP_CODEX_PROVIDERS
   : liveMemory ? process.env.SPS_BUILDER_LIVE_CODEX === "1" && process.env.SPS_BUILDER_LIVE_MEMORY === "1"
   && !process.env.SPS_BUILDER_LIVE_DESIGN && !process.env.SPS_BUILDER_LIVE_QUESTION && !process.env.SPS_BUILDER_LIVE_CTOS
+  && process.env.SPS_BUILDER_LIVE_WORKSTREAMS === undefined
   && process.env.SPS_BUILDER_LIVE_BASELINE === undefined && !process.env.OPENAI_API_KEY && !process.env.PAPERCLIP_CODEX_PROVIDERS
   : liveDesign ? process.env.SPS_BUILDER_LIVE_CODEX === "1" && process.env.SPS_BUILDER_LIVE_DESIGN === "1"
   && !process.env.SPS_BUILDER_LIVE_MEMORY && !process.env.SPS_BUILDER_LIVE_QUESTION && !process.env.SPS_BUILDER_LIVE_CTOS
+  && process.env.SPS_BUILDER_LIVE_WORKSTREAMS === undefined
   && process.env.SPS_BUILDER_LIVE_BASELINE === undefined && !process.env.OPENAI_API_KEY && !process.env.PAPERCLIP_CODEX_PROVIDERS
   : liveQuestion ? process.env.SPS_BUILDER_LIVE_CODEX === "1" && process.env.SPS_BUILDER_LIVE_QUESTION === "1"
   && !process.env.SPS_BUILDER_LIVE_DESIGN && !process.env.SPS_BUILDER_LIVE_MEMORY && !process.env.SPS_BUILDER_LIVE_CTOS
+  && process.env.SPS_BUILDER_LIVE_WORKSTREAMS === undefined
   && process.env.SPS_BUILDER_LIVE_BASELINE === undefined && !process.env.OPENAI_API_KEY && !process.env.PAPERCLIP_CODEX_PROVIDERS
-  : !process.env.SPS_BUILDER_LIVE_CODEX && !process.env.SPS_BUILDER_LIVE_DESIGN && !process.env.SPS_BUILDER_LIVE_MEMORY && !process.env.SPS_BUILDER_LIVE_QUESTION && !process.env.SPS_BUILDER_LIVE_CTOS && process.env.SPS_BUILDER_LIVE_BASELINE === undefined,
+  : !process.env.SPS_BUILDER_LIVE_CODEX && !process.env.SPS_BUILDER_LIVE_DESIGN && !process.env.SPS_BUILDER_LIVE_MEMORY && !process.env.SPS_BUILDER_LIVE_QUESTION && !process.env.SPS_BUILDER_LIVE_CTOS && process.env.SPS_BUILDER_LIVE_BASELINE === undefined && process.env.SPS_BUILDER_LIVE_WORKSTREAMS === undefined,
   "Live scope requires its matching mode and both explicit opt-ins, without API key/provider substitution or other live scopes.");
 const source = await realpath(supplied);
 assert.ok((await lstat(source)).isDirectory() && !(await lstat(supplied)).isSymbolicLink());
@@ -96,7 +109,7 @@ try {
   await node(["--experimental-strip-types", "--test", ...tests]);
   await node([path.join(sdk, "cli/sps-plugin.mjs"), "validate", ".", "--json"]);
   await node([path.join(sdk, "cli/sps-plugin.mjs"), "test", ".", "--json"]);
-  if (!buildOnly) await node(["scripts/test-core-host.mjs"]);
+  if (!buildOnly) await node(["scripts/test-core-host.mjs", ...(liveWorkstreams ? ["--live-workstreams"] : [])]);
   assert.equal(await git("-C", sdk, "rev-parse", "HEAD"), revision);
   assert.equal(await git("-C", sdk, "status", "--porcelain"), "");
   completed = true;
@@ -105,6 +118,6 @@ try {
   else console.error(`Preserve isolated Builder fixture for diagnosis: ${fixture.directory}`);
 }
 console.log(JSON.stringify({ kind: "source-builder-conditional-state", sdkRevision: revision,
-  mode: buildOnly ? "build-only" : liveDesign ? "source-app-live-design" : liveMemory ? "source-app-live-memory" : liveQuestion ? "source-app-live-question" : liveCtos ? "source-app-live-ctos" : liveBaseline ? "source-app-live-baseline" : "source-app",
-  isolatedBuild: true, actualSourceHost: !buildOnly, mockIdentity: !buildOnly, liveAi: liveDesign || liveMemory || liveQuestion || liveCtos || liveBaseline,
+  mode: buildOnly ? "build-only" : liveDesign ? "source-app-live-design" : liveMemory ? "source-app-live-memory" : liveQuestion ? "source-app-live-question" : liveCtos ? "source-app-live-ctos" : liveBaseline ? "source-app-live-baseline" : liveWorkstreams ? "source-app-live-workstreams" : "source-app",
+  isolatedBuild: true, actualSourceHost: !buildOnly, mockIdentity: !buildOnly, liveAi: liveDesign || liveMemory || liveQuestion || liveCtos || liveBaseline || liveWorkstreams,
   userDevDependenciesChanged: false, installedBuild: false, signedRelease: false, temporaryDataRemoved: true }));
