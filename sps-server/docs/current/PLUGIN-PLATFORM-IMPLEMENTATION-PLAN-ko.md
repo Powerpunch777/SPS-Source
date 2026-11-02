@@ -3,6 +3,10 @@
 갱신: 2026-11-02. [원문 기준](DESIGN-BASELINE-2026-11-02.md)의 이행 계획이다.
 이번 수정으로 구현이나 장기목표를 재개하지 않는다.
 
+후속 사용자 승인(2026-11-02): [Builder 선행 실행 계획](BUILDER-PREREQUISITES-EXECUTION-PLAN-2026-11-02.md)을
+저장하고 장기목표를 등록했다. 위 문장은 앞선 문서 정리 단계의 범위이며, 현재 실행 순서와
+완료 기준은 후속 계획을 따른다. 전체 플랫폼/Stable 완료로 범위를 확대하지 않는다.
+
 1. Core/Native/SDK/Plugin의 실제 경계와 GAP01~15 및 보호 실현 가능성을 재감사한다.
 2. Plugin 코드 없이 동작하는 Native 관리·복구를 먼저 완성하고 기존 데이터/API를 보존한다.
 3. 빈 Workspace, optional Primary0~1, 여러 Extension과 강제 Core 메뉴 없는 전체 Plugin UI를 연결한다.
