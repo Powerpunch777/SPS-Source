@@ -460,3 +460,12 @@ Builder `f04bda0`에서 필수/허용/금지/미결정 기술 명세를 실제 �
 source 앱/종료/임시 정리까지 확인했다. 조사 주장을 실제 라이선스/시험 검증으로 만들지
 않으며 기술 설치나 CTO 실행은 시작하지 않는다. [정확한 범위와 한계](BUILDER-TECHNOLOGY-DECISIONS-EVIDENCE-2026-11-02.md)를
 기록했다. Graph 기술 참조 개정·Workstream 배정과 실제 AI/Runner·납품은 남아 있다.
+
+## Workstream 명세와 CTO 수신 기록
+
+Builder `0f3c155`는 고정 설계/기술 참조·담당 CTO·범위·수용 기준·변경 영향을 저장하고
+해당 CTO 세션만 수신 준비도를 기록한다. 사용자 확정대로 한 노드의 책임 CTO는 한 명,
+내부 공동 개발은 그 CTO의 Workers가 맡는다. 전체300/300·타입/빌드·SDK CLI·no-AI
+source 앱과 종료/정리를 확인했다. [정확한 범위와 제한](BUILDER-WORKSTREAM-EVIDENCE-2026-11-02.md)에
+기록했다. 저장/보고는 실제 지시 전송·CTO 모델/Worker 실행이나 완료가 아니다.
+Graph 담당자 표시·실제 지시/질문·실행/QA/납품과 전체 v15는 계속 미완료다.
