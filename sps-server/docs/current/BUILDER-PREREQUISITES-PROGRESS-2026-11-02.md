@@ -375,3 +375,12 @@ Core 조건부 저장과 격리된 Builder 검사의 범위 및 한계는
 Core/internal SDK 109/109, 공개 SDK 선택 검사 63/63, Builder 89/89 및 실제 source
 Desktop/Owner Host 수용 시험 exit 0이다. 공개 SDK 수치는 전체 suite를 뜻하지 않고,
 source 앱 증거도 AI 실행·설치본·실기기·출시 자격이 아니다. Builder 전체 목표는 계속 미완료다.
+
+## Workspace 도구 호출과 명세 데이터 검증
+
+Core `32a3f9f`, 공개 SDK `316c56f`, Builder `7f04887`의 후속 범위·명령·한계는
+[도구 호출 경계 기록](BUILDER-TOOL-INVOCATION-EVIDENCE-2026-11-02.md)에 남겼다.
+Core 집중185/185(새 Express17개, 실제 자식 프로세스 사례 포함), 타입 검사, 공개 SDK
+선택44/44가 통과했다. Builder는 순수 명세 검증을 추가하고 새 격리 빌드122/122 및
+CLI 검사를 통과했다. Builder의 실제 Lead 역할과 Graph 작성 도구는 아직 미연결이며
+전체 목표는 active·미완료다. 보류 범위와 기존 DEV·설치본·계정·데이터 보존은 유지한다.
