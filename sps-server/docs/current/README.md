@@ -65,6 +65,10 @@
 
 ## Engineering evidence
 
+- [2026-11-02 CTO question intake](../reviews/CTO-QUESTION-INTAKE-2026-11-02.md):
+  CTO-only proposals, internal Lead review and filtered user decisions.383 checks;
+  user-answer binding and automatic Lead/CTO exchanges remain incomplete.
+
 - [2026-11-02 private CTO memory](../reviews/CTO-PRIVATE-MEMORY-2026-11-02.md):
   project/CTO-scoped immutable notes, exact active delivery/run guards, historical
   policy preservation and357 automated checks. No actual CTO provider-memory proof.
