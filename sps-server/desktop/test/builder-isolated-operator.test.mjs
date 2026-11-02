@@ -3,10 +3,26 @@ import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const operator = path.resolve(import.meta.dirname, "../scripts/smoke-builder-conditional-state-isolated.mjs");
+
+test("isolated Builder summary identifies every live scope, including baseline", async () => {
+  const source = await readFile(operator, "utf8");
+  const summary = source.slice(source.lastIndexOf("console.log(JSON.stringify({ kind:"));
+  assert.ok(summary.startsWith("console.log(JSON.stringify({ kind:"));
+  for (const mode of [null, "buildOnly", "liveDesign", "liveMemory", "liveQuestion", "liveCtos", "liveBaseline"]) {
+    const scopes = Object.fromEntries(["buildOnly", "liveDesign", "liveMemory", "liveQuestion", "liveCtos", "liveBaseline"].map(key => [key, key === mode]));
+    let result;
+    runInNewContext(summary, { ...scopes, revision: "test-sdk", console: { log(value) { result = JSON.parse(value); } } });
+    assert.equal(result.liveAi, mode !== null && mode !== "buildOnly");
+    assert.equal(result.mode, mode === "liveBaseline" ? "source-app-live-baseline" : mode === "buildOnly" ? "build-only"
+      : mode === null ? "source-app" : `source-app-live-${mode.slice(4).toLowerCase()}`);
+  }
+});
 
 test("isolated Builder operator rejects missing or mixed live-scope opt-ins before fixture/account use", {
   skip: process.platform !== "win32" && "The operator is Windows-only.", timeout: 15_000,
@@ -15,6 +31,7 @@ test("isolated Builder operator rejects missing or mixed live-scope opt-ins befo
     TEMP: os.tmpdir(), TMP: os.tmpdir(), SPS_BUILDER_SOURCE_ROOT: os.tmpdir() };
   const optedIn = { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_DESIGN: "1" };
   const ctosOptedIn = { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_CTOS: "1" };
+  const baselineOptedIn = { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_BASELINE: "1" };
   for (const [args, env, message] of [
     [["--live-design"], {}, /both explicit opt-ins/],
     [["--live-design"], { SPS_BUILDER_LIVE_CODEX: "1" }, /both explicit opt-ins/],
@@ -64,6 +81,31 @@ test("isolated Builder operator rejects missing or mixed live-scope opt-ins befo
     [["--live-design"], { ...optedIn, SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
     [["--live-memory"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_MEMORY: "1", SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
     [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
+    [[], { SPS_BUILDER_LIVE_BASELINE: "1" }, /Live scope requires/],
+    [[], { SPS_BUILDER_LIVE_BASELINE: "" }, /Live scope requires/],
+    [[], baselineOptedIn, /Live scope requires/],
+    [["--build-only"], baselineOptedIn, /Live scope requires/],
+    [["--build-only"], { SPS_BUILDER_LIVE_BASELINE: "" }, /Live scope requires/],
+    [["--live-baseline"], {}, /Live scope requires/],
+    [["--live-baseline"], { SPS_BUILDER_LIVE_CODEX: "1" }, /Live scope requires/],
+    [["--live-baseline"], { SPS_BUILDER_LIVE_BASELINE: "1" }, /Live scope requires/],
+    [["--live-baseline"], { SPS_BUILDER_LIVE_CODEX: "true", SPS_BUILDER_LIVE_BASELINE: "1" }, /Live scope requires/],
+    [["--live-baseline"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_BASELINE: "true" }, /Live scope requires/],
+    [["--live-baseline"], { ...baselineOptedIn, SPS_BUILDER_LIVE_DESIGN: "1" }, /Live scope requires/],
+    [["--live-baseline"], { ...baselineOptedIn, SPS_BUILDER_LIVE_MEMORY: "1" }, /Live scope requires/],
+    [["--live-baseline"], { ...baselineOptedIn, SPS_BUILDER_LIVE_QUESTION: "1" }, /Live scope requires/],
+    [["--live-baseline"], { ...baselineOptedIn, SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
+    [["--live-baseline"], { ...baselineOptedIn, SPS_BUILDER_LIVE_CANCEL: "1" }, /cancellation probes/],
+    [["--live-baseline"], { ...baselineOptedIn, OPENAI_API_KEY: "test-not-a-real-key" }, /Live scope requires/],
+    [["--live-baseline"], { ...baselineOptedIn, PAPERCLIP_CODEX_PROVIDERS: "test-only" }, /Live scope requires/],
+    [["--live-baseline"], { ...baselineOptedIn, SPS_DESKTOP_E2E_BINARY: "unapproved.exe" }, /installed binaries/],
+    [["--live-baseline", "--live-design"], baselineOptedIn, /Only --build-only or --live-design/],
+    [["--live-baseline", "--build-only"], baselineOptedIn, /Only --build-only or --live-design/],
+    [["--live-design"], { ...optedIn, SPS_BUILDER_LIVE_BASELINE: "1" }, /Live scope requires/],
+    [["--live-memory"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_MEMORY: "1", SPS_BUILDER_LIVE_BASELINE: "1" }, /Live scope requires/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_BUILDER_LIVE_BASELINE: "1" }, /Live scope requires/],
+    [["--live-ctos"], { ...ctosOptedIn, SPS_BUILDER_LIVE_BASELINE: "1" }, /Live scope requires/],
+    [["--live-design"], { ...optedIn, SPS_BUILDER_LIVE_BASELINE: "" }, /Live scope requires/],
   ]) {
     await assert.rejects(exec(process.execPath, [operator, ...args], {
       env: { ...base, ...env }, windowsHide: true, timeout: 3_000, maxBuffer: 64 * 1024,

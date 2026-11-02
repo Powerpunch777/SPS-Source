@@ -444,3 +444,11 @@ Builder `8e9ee89`의 CTO 역할·키 기반 독립 세션·조회 도구와 조�
 전체225/225·타입/빌드·SDK CLI와 Source guard48개 거부 사례가 통과했다.
 [정확한 근거](BUILDER-PROJECT-CTO-EVIDENCE-2026-11-02.md)에 범위와 한계를 남겼다.
 Workstream 배정·CTO 질문 intake·Worker/QA와 전체 v15는 계속 미완료다.
+
+## 내부 설계 기준
+
+사용자 입력에 대한 Lead 해석과 현재 초안의 명세/Graph를 불변 기준으로 연결했다.
+전체245/245·타입/빌드·SDK CLI, no-AI 앱 표시, Source operator2/2를 확인했다.
+[검증 범위와 동시 권한 변경 한계](BUILDER-DESIGN-BASELINE-EVIDENCE-2026-11-02.md)를
+분리해 남겼다. 실제 기준 저장 계정 시험은 아직 실행하지 않았고 이 기록은 실행 승인이
+아니다. 기술 선정/Workstream·CTO 업무·Worker/QA·납품과 전체 v15 완료는 남아 있다.
