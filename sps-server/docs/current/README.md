@@ -65,6 +65,10 @@
 
 ## Engineering evidence
 
+- [2026-11-02 planning-tool approval](../reviews/PLANNING-TOOL-APPROVAL-2026-11-02.md):
+  user-approved per-tool CLI behavior, unchanged Core run allowlists, 55 checks;
+  actual Workstream trial stopped at first Lead provider quota, not an AI/CTO pass.
+
 - [2026-11-02 internal Lead answers to CTO](../reviews/CTO-QUESTION-REPLY-2026-11-02.md):
   durable answers, exact Core-bound CTO read/ack, preserved historical policies;
   423 checks and no-AI source-app regression. Actual AI and user-answer propagation remain unproven.
