@@ -14,6 +14,7 @@ test("isolated Builder operator rejects missing or mixed live-scope opt-ins befo
   const base = { PATH: process.env.PATH ?? "", SystemRoot: process.env.SystemRoot ?? "",
     TEMP: os.tmpdir(), TMP: os.tmpdir(), SPS_BUILDER_SOURCE_ROOT: os.tmpdir() };
   const optedIn = { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_DESIGN: "1" };
+  const ctosOptedIn = { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_CTOS: "1" };
   for (const [args, env, message] of [
     [["--live-design"], {}, /both explicit opt-ins/],
     [["--live-design"], { SPS_BUILDER_LIVE_CODEX: "1" }, /both explicit opt-ins/],
@@ -45,6 +46,24 @@ test("isolated Builder operator rejects missing or mixed live-scope opt-ins befo
     [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_BUILDER_LIVE_CANCEL: "1" }, /cancellation probes/],
     [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_DESKTOP_E2E_BINARY: "unapproved.exe" }, /installed binaries/],
     [["--live-question", "--live-design"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1" }, /Only --build-only or --live-design/],
+    [["--live-ctos"], {}, /Live scope requires/],
+    [["--live-ctos"], { SPS_BUILDER_LIVE_CODEX: "1" }, /Live scope requires/],
+    [["--live-ctos"], { SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
+    [[], ctosOptedIn, /Live scope requires/],
+    [["--build-only"], ctosOptedIn, /Live scope requires/],
+    [["--live-ctos"], { SPS_BUILDER_LIVE_CODEX: "true", SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
+    [["--live-ctos"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_CTOS: "true" }, /Live scope requires/],
+    [["--live-ctos"], { ...ctosOptedIn, SPS_BUILDER_LIVE_CANCEL: "1" }, /cancellation probes/],
+    [["--live-ctos"], { ...ctosOptedIn, SPS_BUILDER_LIVE_DESIGN: "1" }, /Live scope requires/],
+    [["--live-ctos"], { ...ctosOptedIn, SPS_BUILDER_LIVE_MEMORY: "1" }, /Live scope requires/],
+    [["--live-ctos"], { ...ctosOptedIn, SPS_BUILDER_LIVE_QUESTION: "1" }, /Live scope requires/],
+    [["--live-ctos"], { ...ctosOptedIn, OPENAI_API_KEY: "test-only" }, /Live scope requires/],
+    [["--live-ctos"], { ...ctosOptedIn, PAPERCLIP_CODEX_PROVIDERS: "test-only" }, /Live scope requires/],
+    [["--live-ctos"], { ...ctosOptedIn, SPS_DESKTOP_E2E_BINARY: "unapproved.exe" }, /installed binaries/],
+    [["--live-ctos", "--live-question"], ctosOptedIn, /Only --build-only or --live-design/],
+    [["--live-design"], { ...optedIn, SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
+    [["--live-memory"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_MEMORY: "1", SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_BUILDER_LIVE_CTOS: "1" }, /Live scope requires/],
   ]) {
     await assert.rejects(exec(process.execPath, [operator, ...args], {
       env: { ...base, ...env }, windowsHide: true, timeout: 3_000, maxBuffer: 64 * 1024,

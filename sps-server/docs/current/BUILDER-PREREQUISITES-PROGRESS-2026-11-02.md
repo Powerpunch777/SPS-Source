@@ -436,3 +436,11 @@ Builder `0ec7b5e`는 실제 질문에 연결된 사용자 답변을 decisions Le
 [정확한 근거와 한계](BUILDER-QUESTION-REVISION-EVIDENCE-2026-11-02.md)를 남겼다.
 공유 기억/CTO 전파·승인 명세·실제 제작/QA·납품과 전체 v15는 계속 미완료다.
 사용자 DEV는 자동 교체하지 않았고 Core/SDK API나 DB migration은 추가하지 않았다.
+
+## 프로젝트 CTO 등록과 독립 세션
+
+Builder `8e9ee89`의 CTO 역할·키 기반 독립 세션·조회 도구와 조직도 표시를 추가했다.
+실제 Lead가 CTO2명을 등록하고 같은 ID 재등록·세션5개·CTO 실행0·재시작 보존을 확인했다.
+전체225/225·타입/빌드·SDK CLI와 Source guard48개 거부 사례가 통과했다.
+[정확한 근거](BUILDER-PROJECT-CTO-EVIDENCE-2026-11-02.md)에 범위와 한계를 남겼다.
+Workstream 배정·CTO 질문 intake·Worker/QA와 전체 v15는 계속 미완료다.
