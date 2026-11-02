@@ -159,3 +159,62 @@ Builder 레포의 `docs/implementation/BUILDER-V15-COMPLETION-PLAN-2026-11-02.md
 이 후속의 정확한 revision/검증 수치와 남은 오류는 커밋 이후 최종 기록으로 보완한다.
 사용자 DEV와 설치본은 재시작/교체하지 않았다. 새 Main 기능은 재시작 전까지 기존
 DEV 프로세스에 적용됐다고 주장하지 않는다.
+
+## 내구 전송과 실제 Lead 답변: 최종 후속 기록
+
+실제 앱 runtime은 Source `c8c6b46f977afac12299d0c9dd33b02bb257f312`, Core
+`3abf1f50b9cf69e23397e9b2cc1a0d1a01a2365d`, 공개 SDK
+`0111d291a99c032760a391693aa879bb099b5034`, Builder
+`b874181c86a6f96fa0ae2922739df172905fb860`이다. 시험한 Builder 변경을 그대로
+커밋했다. 이후 증거 문서와 reference/external 시험 범위를 구분한 로그 문구 보정은
+새 제품 runtime 시험을 뜻하지 않는다. SDK는 source pin이며 새 버전/태그를 배포하지 않았다.
+
+Core의 추가 migration `0178_elite_banshee`는 Workspace/Plugin/requestId receipt를
+Plugin KV와 별도로 보관한다. 세션 close/delete 후에도 중복 방지 tombstone을 남기며,
+Workspace 삭제 생명주기에서는 함께 제거한다. 기존 unkeyed send는 유지한다.
+Core 표적 세션/receipt/context 검사 3파일 89/89, 30개 workspace 타입검사와 내부 SDK
+build를 통과했다. 공개 SDK 전체 191/191, Builder `npm run check` 87/87과 SDK
+validate/test를 통과했다. 대화는 turn/index/bounded page에 저장하고 현재 snapshot을
+키우지 않는다. 결과 누락/실패/불명확/취소·종료 대기를 구분하며 내부 CTO intake는
+사용자 전송을 거부한다. 이는 공유 Lead 기억이나 전체 v15 업무 실행 완료가 아니다.
+
+Source exact runtime의 전체 Desktop 직접 검사: 2,236 total / 2,233 pass /
+3 Windows 8.3 관련 skip / 0 fail. Windows helper까지 Node 24.22.1을 쓰도록 PATH도
+고정했다. 앞선 명시 Node24 실행은 nested helper가 system Node26.4를 선택해 종료
+오류를 낸 시도가 있었으므로 Node24 회귀라고 단정하지 않는다. tuple/doc staging 중의
+중간 baseline 실패도 최종 성공과 구분한다.
+
+GitHub Verify SPS runs `41377634089`, `41377639902`의 같은 Source HEAD에서
+Core Linux 9개 shard와 전체 타입검사/build가 실제 실행되어 성공했다. 예전의
+결제 차단 상태를 현재 CI 상태로 재사용하지 않는다. Desktop/Node 설치·패키징 job의
+전체 완료 여부는 별도로 확인하며 위 성공이 대신하지 않는다. Core optional review bot은
+`COMMITPERCLIP_KEY` 미설정으로 실패했으며 독립 리뷰가 수행됐다는 뜻이 아니다.
+
+사용자가 현재 기본 Codex CLI 계정 사용을 승인한 뒤, 별도 임시 Agent/지침/작업 폴더에서
+짧고 비밀 없는 대화만 시험했다. 설치본·로그인·사용자 DEV를 교체하지 않았고 코드 생성/
+실행을 요청하지 않았다. 기존 CLI adapter의 임시 managed home과 기본 인증 연결을
+재사용했으며 사용자 인증 파일을 공개 레포로 복사하지 않았다.
+
+최종 source 앱 시험은 실제 UI 전송 → Core run → CLI/provider 성공 → 저장된 답변 →
+assistant 전용 말풍선 → Main/Host 재시작 후 같은 turn/run/session/답변 유지를 통과했다.
+같은 요청 ID/내용 재확인 뒤 실제 Agent run은 1개다. 짧은 CLI 전체 출력의 item은
+assistant/reasoning만 있었고 시험 작업 폴더는 비어 있었다. 새 default no-AI 시험은 실제
+계정을 쓰지 않으며 live 모드는 명시 opt-in으로 분리했다. reference checklist의 no-AI
+문구는 external live operator를 포함하지 않도록 정정했다.
+
+최종 통합 시험 exit 0, Main 5/5 exit 0, 출력 10개 종료/실패 0, 정확한 임시 데이터
+정리 완료. 부모가 실제 답변과 재시작 후의 두 캡처를 확인했다. 캡처·raw 로그와
+계정/컴퓨터 식별자는 공개 Builder 레포/증거에 포함하지 않는다. 이는 전체 자식 OS 보호,
+패키징/서명/업데이트·실기기/Stable 증거가 아니다.
+
+실패 기록: 첫 live fixture의 폐기된 promptTemplate 설정은 422로 거부돼 지원되는
+managed AGENTS.md 계약으로 고쳤다. 다음 시도는 뒤로 간 창의 자동 관찰에 의존해
+최종 상태를 확인하지 못하고 timeout됐다. 이후 같은 run만 명시 조회하도록 보완했다.
+중간 성공 시도에서 넓은 transcript 문자열 검사가 사용자 질문 속 token도 맞출 수 있음을
+부모 캡처 검수로 찾았다. assistant 전용 정확한 값과 명시적 UI 새로고침을 요구한 최종
+재실행/캡처만 화면 성공 증거로 삼는다. 이전 시도를 처음부터 통과한 것으로 바꾸지 않는다.
+
+남음: 실제 CLI 취소와 종료 확인의 앱 시험, Native 전체 Plugin 관리/중단 확인창 수락,
+공유 Lead 기억과 v15 Graph/CTO/Dev/QA/Runner/납품, OS 보호/Preview 및 출시 자격.
+사용자 DEV는 기존 프로세스로 보존했다. 새 backend/migration/capability는 그 DEV의
+재시작·검토 전 자동 반영/승인됐다고 주장하지 않는다. 장기목표와 full v15는 아직 미완료다.

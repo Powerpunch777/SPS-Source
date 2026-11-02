@@ -153,6 +153,6 @@ export async function runNoAiChecklistAcceptance({ cdp, company, api, click, res
   if (extraAcceptance) await extraAcceptance({ cdp: workspace, company, secondCompany: second, api, click, restart,
     captureScreenshot, screenshotPath, temporaryRoot });
   await openRecovery();
-  console.log(`No-AI checklist Desktop functional assertions passed; cleanup qualification pending: real UI/actions/state/events/Workspace Job, A/B isolation, capability denial, UI-less Worker, Host restart, independent Native recovery. Reference Workspaces A/B stayed Agent-free and backend-unconfigured; ${runtimeDiscovery ? "a separate Workspace used only a fake loopback model endpoint; " : ""}no real provider/Gateway or Agent execution; this is not an OS sandbox or network-egress certification.`);
+  console.log(`No-AI reference checklist Desktop functional assertions passed; cleanup qualification pending: real UI/actions/state/events/Workspace Job, A/B isolation, capability denial, UI-less Worker, Host restart, independent Native recovery. Before the optional external operator, reference Workspaces A/B were Agent-free and backend-unconfigured; ${runtimeDiscovery ? "runtime discovery used only a fake loopback model endpoint; " : ""}the reference fixtures performed no real provider/Gateway or Agent execution. ${extraAcceptance ? "The opted-in external operator reports its separate execution scope above. " : ""}This is not an OS sandbox or network-egress certification.`);
   return { pluginKey: plugin.pluginKey, scenarios: 13 };
 }
