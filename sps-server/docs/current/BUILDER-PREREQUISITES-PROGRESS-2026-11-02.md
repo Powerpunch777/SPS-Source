@@ -427,3 +427,12 @@ Builder `53d5c33`에 프로젝트별 구조화 기억과 읽기/갱신 도구, �
 어댑터 타입 검사가 통과했다. [전체 근거](BUILDER-SHARED-MEMORY-EVIDENCE-2026-11-02.md)에
 실패/성공 시험, 허용 범위·해시·한계를 기록했다. 전체 Core나 Builder 완료로 확대하지 않고
 질문 답변→명세/Graph Revision과 CTO intake를 계속 연결한다.
+
+## 질문 답변과 새 설계 Revision
+
+Builder `0ec7b5e`는 실제 질문에 연결된 사용자 답변을 decisions Lead가 해석해 새 초안·
+명세·Graph와 함께 저장하는 도구와 화면을 연결했다. 전체202/202·타입/빌드·SDK CLI,
+실제 UI/AI 두 실행과 재시작 보존, 후속 UI-only no-AI 앱 검사를 구분해 통과했다.
+[정확한 근거와 한계](BUILDER-QUESTION-REVISION-EVIDENCE-2026-11-02.md)를 남겼다.
+공유 기억/CTO 전파·승인 명세·실제 제작/QA·납품과 전체 v15는 계속 미완료다.
+사용자 DEV는 자동 교체하지 않았고 Core/SDK API나 DB migration은 추가하지 않았다.

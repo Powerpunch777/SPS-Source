@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 const operator = path.resolve(import.meta.dirname, "../scripts/smoke-builder-conditional-state-isolated.mjs");
 
-test("isolated Builder operator fails before fixture/account use without exact live-design opt-in", {
+test("isolated Builder operator rejects missing or mixed live-scope opt-ins before fixture/account use", {
   skip: process.platform !== "win32" && "The operator is Windows-only.", timeout: 15_000,
 }, async () => {
   const base = { PATH: process.env.PATH ?? "", SystemRoot: process.env.SystemRoot ?? "",
@@ -31,6 +31,20 @@ test("isolated Builder operator fails before fixture/account use without exact l
     [[], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_MEMORY: "1" }, /both explicit opt-ins/],
     [["--live-memory"], { ...optedIn, SPS_BUILDER_LIVE_MEMORY: "1" }, /both explicit opt-ins/],
     [["--live-memory"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_MEMORY: "1", OPENAI_API_KEY: "test-only" }, /without API key/],
+    [["--live-question"], {}, /both explicit opt-ins/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1" }, /both explicit opt-ins/],
+    [["--live-question"], { SPS_BUILDER_LIVE_QUESTION: "1" }, /both explicit opt-ins/],
+    [[], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1" }, /both explicit opt-ins/],
+    [["--build-only"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1" }, /both explicit opt-ins/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_BUILDER_LIVE_DESIGN: "1" }, /both explicit opt-ins/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_BUILDER_LIVE_MEMORY: "1" }, /both explicit opt-ins/],
+    [["--live-design"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_DESIGN: "1", SPS_BUILDER_LIVE_QUESTION: "1" }, /both explicit opt-ins/],
+    [["--live-memory"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_MEMORY: "1", SPS_BUILDER_LIVE_QUESTION: "1" }, /both explicit opt-ins/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", OPENAI_API_KEY: "test-not-a-real-key" }, /without API key/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", PAPERCLIP_CODEX_PROVIDERS: "test-only" }, /provider substitution/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_BUILDER_LIVE_CANCEL: "1" }, /cancellation probes/],
+    [["--live-question"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1", SPS_DESKTOP_E2E_BINARY: "unapproved.exe" }, /installed binaries/],
+    [["--live-question", "--live-design"], { SPS_BUILDER_LIVE_CODEX: "1", SPS_BUILDER_LIVE_QUESTION: "1" }, /Only --build-only or --live-design/],
   ]) {
     await assert.rejects(exec(process.execPath, [operator, ...args], {
       env: { ...base, ...env }, windowsHide: true, timeout: 3_000, maxBuffer: 64 * 1024,
