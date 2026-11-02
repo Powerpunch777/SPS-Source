@@ -452,3 +452,11 @@ Workstream 배정·CTO 질문 intake·Worker/QA와 전체 v15는 계속 미완�
 [검증 범위와 동시 권한 변경 한계](BUILDER-DESIGN-BASELINE-EVIDENCE-2026-11-02.md)를
 분리해 남겼다. 실제 기준 저장 계정 시험은 아직 실행하지 않았고 이 기록은 실행 승인이
 아니다. 기술 선정/Workstream·CTO 업무·Worker/QA·납품과 전체 v15 완료는 남아 있다.
+
+## Lead 기술 선정 명세
+
+Builder `f04bda0`에서 필수/허용/금지/미결정 기술 명세를 실제 설계 기준에 연결하고
+저장/조회·읽기 쉬운 문서 표시를 구현했다. 전체267/267·타입/빌드·SDK CLI와 no-AI
+source 앱/종료/임시 정리까지 확인했다. 조사 주장을 실제 라이선스/시험 검증으로 만들지
+않으며 기술 설치나 CTO 실행은 시작하지 않는다. [정확한 범위와 한계](BUILDER-TECHNOLOGY-DECISIONS-EVIDENCE-2026-11-02.md)를
+기록했다. Graph 기술 참조 개정·Workstream 배정과 실제 AI/Runner·납품은 남아 있다.
