@@ -65,6 +65,10 @@
 
 ## Engineering evidence
 
+- [2026-11-02 CTO Task Packets](../reviews/CTO-TASK-PACKETS-2026-11-02.md):
+  autonomous CTO requirement clarified; scoped versioned instructions and pinned dependencies,
+  449 checks and no-AI source-app regression. Native Workers and automatic continuation remain incomplete.
+
 - [2026-11-02 planning-tool approval](../reviews/PLANNING-TOOL-APPROVAL-2026-11-02.md):
   user-approved per-tool CLI behavior, unchanged Core run allowlists, 55 checks;
   actual Workstream trial stopped at first Lead provider quota, not an AI/CTO pass.
