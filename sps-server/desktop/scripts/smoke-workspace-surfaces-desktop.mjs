@@ -840,6 +840,7 @@ try {
     }
     const recovery = await saveCoreRecoverySettings({ userDataPath: userDataDirectory, disabled: true });
     assert.equal(recovery.pluginsDisabled, true);
+    let independentWorkspace;
     for (const phase of ["prepared", "separate-process-reload"]) {
       nativeManagementStage = "settings_launch";
       launchDesktop(["--sps-core-settings"]);
@@ -857,22 +858,33 @@ try {
       assert.equal(before.recovery.pluginsDisabled, true);
       assert.equal(await setupCdp.evaluate("typeof window.spsDesktopWorkspace"), "undefined");
       nativeManagementStage = "plugin_sources";
+      await waitForEnabled(setupCdp, '[data-action="open-plugin-sources"]', "independent Plugin sources action");
       await click(setupCdp, '[data-action="open-plugin-sources"]', "Open Plugin sources without a Workspace or plugin startup");
       const registryTarget = await waitForTarget(debugPort, child,
         target => target.type === "page" && target.url?.endsWith("/renderer/registry.html"), "independent Plugin sources");
+      nativeManagementStage = "plugin_sources_target";
       assert.match(registryTarget.url, /\/registry\.html$/);
       const preWorkspaceTargets = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then(response => response.json());
       assert.equal(preWorkspaceTargets.some(target => /^http:\/\/127\.0\.0\.1:\d+\//.test(target.url || "")), false,
         "Opening Plugin sources must not create a Workspace or start the Host.");
       const afterSources = await setupCdp.evaluate("window.spsCoreSettings.getStatus()", true);
+      nativeManagementStage = "plugin_sources_status";
       assert.equal(afterSources.host.startupDeferred, true);
       assert.equal(afterSources.recovery.pluginsDisabled, true);
-      await waitForPage(setupCdp, page => page.body.includes("Plugin sources opened."), "completed Native sources action");
+      await waitForEnabled(setupCdp, '[data-action="open-plugin-sources"]', "completed Native sources action");
+      nativeManagementStage = "plugin_sources_inspect";
       const registryCdp = await openCdp(registryTarget);
       try {
+        nativeManagementStage = "plugin_sources_bridge";
         assert.equal(await registryCdp.evaluate("typeof window.spsRegistry"), "object");
-        if (screenshotPath) await captureScreenshot(registryCdp,
-          path.join(path.dirname(screenshotPath), `native-plugin-sources-${phase}.png`));
+        nativeManagementStage = "plugin_sources_capture";
+        if (screenshotPath) {
+          await registryCdp.command("Page.bringToFront");
+          await registryCdp.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))", true);
+          await captureScreenshot(registryCdp,
+            path.join(path.dirname(screenshotPath), `native-plugin-sources-${phase}.png`));
+        }
+        nativeManagementStage = "plugin_sources_close";
         await registryCdp.command("Page.close");
       } finally { await registryCdp.close(); }
       await setupCdp.command("Page.bringToFront");
@@ -913,8 +925,45 @@ try {
       await waitForPage(setupCdp, page => page.body.includes("No Host invitations are available."), "available empty Host invitation list");
       const invitations = await setupCdp.evaluate("window.spsCoreSettings.listNativeInvitations()", true);
       assert.deepEqual(invitations, { state: "available", invitations: [] });
+      nativeManagementStage = "workspace_management";
+      if (phase === "prepared") independentWorkspace = await api(workspaceCdp, "/api/companies", {
+        method: "POST", body: { name: "Independent Native controls fixture" },
+      });
+      assert.ok(independentWorkspace?.id && independentWorkspace.id !== company.id);
+      await click(setupCdp, "#refresh-managed-workspaces", "Show Workspaces without loading Plugin code");
+      nativeManagementStage = "workspace_list";
+      const selector = action => `[data-workspace-id="${company.id}"][data-action="${action}"]`;
+      await waitForEnabled(setupCdp, selector("refresh"), "Native Workspace execution status");
+      await click(setupCdp, selector("refresh"), "Read Native Workspace execution state");
+      nativeManagementStage = "workspace_read";
+      const nativeControlPath = `/api/companies/${company.id}/execution-control`;
+      const beforeControl = await api(workspaceCdp, nativeControlPath);
+      const expected = phase === "prepared" ? "running" : "stopped";
+      assert.equal(beforeControl.state, expected);
+      await waitForPage(setupCdp, page => page.body.includes(`${expected} · revision ${beforeControl.revision}`), "Native execution state projection");
+      if (phase === "prepared") {
+        nativeManagementStage = "workspace_pause";
+        await waitForEnabled(setupCdp, selector("pause"), "Native pause action");
+        await click(setupCdp, selector("pause"), "Pause from independent Core Settings");
+        await waitForPage(setupCdp, page => page.body.includes(`paused · revision ${beforeControl.revision + 1}`), "Native pause result");
+        const paused = await api(workspaceCdp, nativeControlPath);
+        assert.equal(paused.state, "paused");
+        assert.equal(paused.revision, beforeControl.revision + 1);
+        assert.equal(await setupCdp.evaluate(`window.spsCoreSettings.changeWorkspaceExecution({workspaceId:${JSON.stringify(company.id)},action:'resume',expectedRevision:${beforeControl.revision}}).then(()=>false,()=>true)`, true), true);
+        // Seed persisted stop through the existing Core API; do not bypass or
+        // auto-accept the Native stop confirmation in this fixture.
+        await api(workspaceCdp, nativeControlPath, { method: "POST", body: { action: "stop", expectedRevision: paused.revision } });
+      } else {
+        nativeManagementStage = "workspace_resume";
+        await waitForEnabled(setupCdp, selector("resume"), "Native resume action");
+        await click(setupCdp, selector("resume"), "Resume new work from independent Core Settings");
+        await waitForPage(setupCdp, page => page.body.includes(`running · revision ${beforeControl.revision + 1}`), "Native resume result");
+        assert.equal((await api(workspaceCdp, nativeControlPath)).state, "running");
+      }
+      assert.equal((await api(workspaceCdp, `/api/companies/${independentWorkspace.id}/execution-control`)).state, "running",
+        "Native control must not change another Workspace.");
       if (screenshotPath) await captureScreenshot(setupCdp, path.join(path.dirname(screenshotPath), `native-management-${phase}.png`));
-      console.log(`[native-management] ${phase}: real Main/Core session and Host binding, zero Agents, plugin startup blocked, renderer management denied, LAN OFF.`);
+      console.log(`[native-management] ${phase}: real Main/Core session and Host binding, zero Agents, plugin startup blocked, renderer management denied, LAN OFF; Native Workspace list/read/pause-or-resume, stale revision denial, A/B isolation passed. Native stop dialog not accepted.`);
       nativeManagementStage = "shutdown";
       await closeDesktopForRestart();
     }
@@ -1476,9 +1525,10 @@ try {
   acceptanceFailure = error;
   if (nativeManagement) {
     const settingsTargetStages = new Set([
-      "settings_identity_view", "settings_status", "plugin_sources", "host_start_click", "host_workspace_target",
+      "settings_identity_view", "settings_status", "plugin_sources", "plugin_sources_target", "plugin_sources_status",
+      "plugin_sources_inspect", "plugin_sources_bridge", "plugin_sources_capture", "plugin_sources_close", "host_start_click", "host_workspace_target",
       "host_workspace_ready", "host_agents_check", "authority_checks", "device_read",
-      "invitation_read", "shutdown",
+      "invitation_read", "workspace_management", "workspace_list", "workspace_read", "workspace_pause", "workspace_resume", "shutdown",
     ]);
     const settingsPhaseStages = new Set([
       "settings_launch", "settings_target", ...settingsTargetStages,
@@ -1493,7 +1543,13 @@ try {
         identityPreparedText: Boolean(document.body?.innerText?.includes('Identity prepared')),
         nativeState: knownStates.includes(native?.state) ? native.state : 'other',
         hasPin: /^[0-9a-f]{64}$/.test(native?.serverSpkiSha256 ?? ''),
-        pluginsDisabled: status?.recovery?.pluginsDisabled === true };
+        pluginsDisabled: status?.recovery?.pluginsDisabled === true,
+        nativeStatusBusy: document.querySelector('#status-region')?.getAttribute('aria-busy') === 'true',
+        sourcesDisabled: document.querySelector('[data-action="open-plugin-sources"]')?.disabled === true,
+        workspaceControlsPresent: Boolean(document.querySelector('#managed-workspaces-list')),
+        workspaceListFailed: document.querySelector('#managed-workspaces-status')?.textContent === 'Workspaces unavailable. Check local Host status and refresh.',
+        workspaceControlCount: Math.min(800, document.querySelectorAll('[data-workspace-id][data-action]').length),
+        workspaceResultUnavailable: document.querySelector('#managed-workspaces-list')?.textContent.includes('Result unavailable.') === true };
     })()`, true).catch(() => ({ settingsTargetAvailable: true, snapshotRead: false })) : settingsPhaseStages.has(nativeManagementStage) ? {
       settingsNotStarted: false,
       settingsTargetAvailable: false,
@@ -1503,7 +1559,8 @@ try {
       workspaceTargetAvailable: Boolean(workspaceCdp),
     };
     const failureSha256 = createHash("sha256").update(errorText(error)).digest("hex");
-    acceptanceFailure = new Error(`Prepared Native Host source E2E failed (stage=${nativeManagementStage}, failureSha256=${failureSha256}, snapshot=${JSON.stringify(safeSnapshot)}).`);
+    const failureKind = snapshotPreviewE2eFailure(error, "native_recovery");
+    acceptanceFailure = new Error(`Prepared Native Host source E2E failed (stage=${nativeManagementStage}, failureSha256=${failureSha256}, kind=${JSON.stringify(failureKind)}, snapshot=${JSON.stringify(safeSnapshot)}).`);
     throw acceptanceFailure;
   }
   const diagnostics = [];

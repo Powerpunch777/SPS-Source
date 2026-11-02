@@ -9,6 +9,7 @@ import { resolveSpsE2eUserDataDirectory } from "./e2e-user-data.mjs";
 import { resolveDesktopDevelopment, resolveDesktopDevelopmentNodeCommand, watchDevelopmentSurfaces } from "./development-mode.mjs";
 import { coreRecoveryEnvironment, loadCoreRecoverySettings, saveCoreRecoverySettings } from "./core-recovery-store.mjs";
 import { createCoreSettingsController } from "./core-settings-controller.mjs";
+import { createCoreWorkspaceManagementController } from "./core-workspace-management.mjs";
 import { createSpsNativeHostIdentityStore } from "./native-identity-store.mjs";
 import { assertSpsNativeHostCredentialsAbsentForRestore, createSpsNativeIdentityController } from "./native-identity-controller.mjs";
 import { inspectSpsNativeHostIdentity, requireCurrentSpsNativeHostIdentity } from "./native-identity-certificates.mjs";
@@ -5267,6 +5268,10 @@ async function showWorkspace() {
 
 function ensureCoreSettingsController() {
   if (coreSettingsController) return coreSettingsController;
+  const workspaceManagement = createCoreWorkspaceManagementController({
+    captureHost: captureOwnerMembershipRecoveryScope,
+    request: ownerHostApi,
+  });
   coreSettingsController = createCoreSettingsController({
     BrowserWindow,
     globalShortcut,
@@ -5287,6 +5292,19 @@ function ensureCoreSettingsController() {
       };
     },
     authorizeMutation: assertRegistryOwner,
+    listManagedWorkspaces: options => workspaceManagement.list(options),
+    getManagedWorkspaceExecution: (input, options) => workspaceManagement.get(input, options),
+    changeManagedWorkspaceExecution: (input, options) => workspaceManagement.change(input, options),
+    confirmWorkspaceExecution: async (parentWindow, { workspaceId, action }) => {
+      if (action !== "stop") return true;
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "warning", title: "Stop Workspace execution?",
+        message: "Stop new work and request cancellation of managed work in this Workspace?",
+        detail: `Workspace: ${workspaceId}\n\nOther Workspaces and saved data are kept. Remote termination may remain pending until the Node responds. Resume permits new work; it does not replay canceled tasks.`,
+        buttons: ["Keep running", "Stop Workspace"], defaultId: 0, cancelId: 0,
+      });
+      return choice.response === 1;
+    },
     openPluginSources: async ({ assertRequester }) => {
       assertRequester();
       await showRegistryWindow();

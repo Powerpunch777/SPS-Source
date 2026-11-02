@@ -6,6 +6,7 @@ import { requireSpsNativeMemberEnrollmentInput, requireSpsNativeMemberRecoveryIn
 import { parseSpsNativeInviteCode } from "./native-connection-invite.mjs";
 import { requireSpsNativeHostListenInput } from "./native-host-controller.mjs";
 import { requireNativeInvitationRevokeInput } from "./native-invitation-management-controller.mjs";
+import { requireCoreWorkspaceInput } from "./core-workspace-management.mjs";
 
 export const SPS_CORE_SETTINGS_SHORTCUT = "CommandOrControl+Alt+S";
 const NATIVE_DEVICE_STATES = new Set(["available", "host_required", "identity_required", "host_restart_required", "unavailable"]);
@@ -164,6 +165,10 @@ export function createCoreSettingsController({
   restartHost,
   openWorkspace,
   openPluginSources,
+  listManagedWorkspaces,
+  getManagedWorkspaceExecution,
+  changeManagedWorkspaceExecution,
+  confirmWorkspaceExecution,
   checkUpdates,
   exportHost,
   inspectTransfer,
@@ -303,6 +308,31 @@ export function createCoreSettingsController({
       await awaitAndAssertSender(event, () => openPluginSources({ assertRequester: () => assertSender(event) }));
       return { opened: true };
     }, { writes: true, authorizeBeforeAction: false });
+    bind("list-managed-workspaces", async (_input, event) => {
+      if (typeof listManagedWorkspaces !== "function") throw new Error("Workspace management is unavailable.");
+      await awaitAndAssertSender(event, () => authorizeMutation());
+      return await awaitAndAssertSender(event, () => listManagedWorkspaces({ assertRequester: () => assertSender(event) }));
+    }, { authorizeBeforeAction: false });
+    bind("get-workspace-execution", async (input, event) => {
+      const selected = requireCoreWorkspaceInput(input);
+      if (typeof getManagedWorkspaceExecution !== "function") throw new Error("Workspace management is unavailable.");
+      await awaitAndAssertSender(event, () => authorizeMutation());
+      return await awaitAndAssertSender(event, () => getManagedWorkspaceExecution(selected, { assertRequester: () => assertSender(event) }));
+    }, { input: true, authorizeBeforeAction: false });
+    bind("change-workspace-execution", async (input, event) => {
+      const selected = requireCoreWorkspaceInput(input, true);
+      if (typeof changeManagedWorkspaceExecution !== "function" || typeof confirmWorkspaceExecution !== "function") throw new Error("Workspace management is unavailable.");
+      await awaitAndAssertSender(event, () => authorizeMutation());
+      return await awaitAndAssertSender(event, () => changeManagedWorkspaceExecution(selected, {
+        assertRequester: () => assertSender(event),
+        confirm: async () => {
+          await awaitAndAssertSender(event, () => authorizeMutation());
+          const confirmed = await awaitAndAssertSender(event, () => confirmWorkspaceExecution(window, selected));
+          await awaitAndAssertSender(event, () => authorizeMutation());
+          return confirmed === true;
+        },
+      }));
+    }, { writes: true, input: true, authorizeBeforeAction: false });
     bind("check-updates", async () => { await checkUpdates(); return status(); });
     bind("export-host", async () => { await exportHost(); }, { writes: true });
     bind("inspect-transfer", async () => { await inspectTransfer(); });

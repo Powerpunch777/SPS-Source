@@ -94,6 +94,11 @@ test("prepared Native management exercises the real Main/Core route without a co
     assert.ok(script.includes(required), `Missing Native prepared source assertion: ${required}`);
   }
   assert.doesNotMatch(script, /ipcMain|setNativeIdentity|skipNativeConfirmation|confirmNativeDeviceAction\s*=/);
+  assert.match(script, /const nativeControlPath = `\/api\/companies\/\$\{company\.id\}\/execution-control`/);
+  assert.doesNotMatch(script, /(?:const|let) path =/,
+    "A block-scoped API path must not shadow the filesystem path import before screenshot capture");
+  for (const token of ["#refresh-managed-workspaces", 'selector("pause")', 'selector("resume")',
+    'Native stop dialog not accepted.', 'Independent Native controls fixture']) assert.ok(script.includes(token));
   assert.match(script, /let debugPort = await findAvailablePort\(\)/);
   assert.match(script, /const previousDebugPort = debugPort/);
   assert.match(script, /assert\.notEqual\(debugPort, previousDebugPort/);

@@ -125,3 +125,37 @@ Luna 한도 오류 후 남은 범위를 보존하고 재개 요청을 남겼다.
 
 사용자 요청으로 DEV 창을 계속 유지하고 앞으로 가져왔다. DEV는 독립 로그인 프로필이며
 시험 fixture 계정/데이터를 주입하지 않는다. 화면 HMR과 Main/preload 재시작 필요를 구분한다.
+
+## 후속 구현: Native Workspace 제어와 내구 전송
+
+2026-11-02 후속 작업에서는 독립 Settings에 기존 Core execution-control API의
+Workspace 목록/조회/일시정지/중단 요청/재개를 연결했다. Main 전용 Host 증명,
+현재 계정·Host·Settings frame, 표시된 revision을 재검사한다. 중단은 Native 확인창의
+긍정 응답이 필요하고 불명확한 POST는 자동 재시도하지 않는다. 새 실행 서버는 없다.
+
+실제 source Electron Native 시험은 Agent 0/Plugin 시작 차단/LAN off에서 목록·조회·
+일시정지·오래된 revision 거부·다른 Workspace 보존·별도 Main 재시작 후 중지 유지·
+재개를 통과했다. Main 3/3 exit 0, 출력 6개 종료/실패 0, 정확한 임시 정리가 통과했다.
+시험의 중지 상태는 기존 Core API로 준비했으며 Native 중단 확인창을 수락한 증거는 아니다.
+fresh 비로그인 Settings도 관리 거부·layout/font·정상 종료를 통과했다.
+
+첫 후속 앱 시도에는 시험 블록의 `path` 변수 shadowing이 있었다. 이를 고친 뒤
+상태 조회의 Main Host 증명 누락으로 `canControl: false`가 된 실제 연결 오류도 찾아
+고쳤다. 해당 실패를 마지막 성공으로 대체하거나 처음부터 통과한 것으로 기록하지 않는다.
+
+Core에는 Workspace/Plugin/requestId 별 세션 dispatch receipt를 추가하는 중이다.
+이 기록은 Plugin이 쓰는 대화 저장과 분리되며 세션 삭제 후에도 중복 방지 tombstone을
+유지한다. scheduler가 접수한 뒤 응답만 잃었으면 같은 receipt에서 run을 복구한다.
+접수 여부가 불명확하면 자동 재전송하지 않는다. 이는 at-most-once admission이지
+provider exactly-once 실행 또는 새로운 OS 격리 증명이 아니다. 새 table은 추가 migration이며
+기존 unkeyed send 계약을 대체하지 않는다. 공개 SDK source pin에도 조회 계약을 추가했다.
+
+Builder는 단일 snapshot 대신 turn별 저장·연결 index·bounded page와 현재 실행 상태를
+연결하는 중이다. 세 채널의 원본 대화는 분리하고 내부 Lead intake에는 사용자 전송을
+허용하지 않는다. 실제 AI, 공유 기억, CTO/Dev/QA, Graph tool, Runner·납품 인수는 아직
+완료로 선언하지 않는다. 사용자가 요청한 full v15 완료의 별도 AC-01~118 실행표는
+Builder 레포의 `docs/implementation/BUILDER-V15-COMPLETION-PLAN-2026-11-02.md`에 있다.
+
+이 후속의 정확한 revision/검증 수치와 남은 오류는 커밋 이후 최종 기록으로 보완한다.
+사용자 DEV와 설치본은 재시작/교체하지 않았다. 새 Main 기능은 재시작 전까지 기존
+DEV 프로세스에 적용됐다고 주장하지 않는다.

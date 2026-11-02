@@ -97,6 +97,37 @@ test("Plugin source review rechecks its frame after authorization and after wind
   }
 });
 
+test("Native Workspace management stays on the trusted frame and fixed selected Workspace", async () => {
+  const workspaceId = "11111111-1111-4111-8111-111111111111";
+  const calls = [];
+  const ctx = setup({
+    listManagedWorkspaces: async options => { options.assertRequester(); calls.push("list"); return [{ id: workspaceId, name: "a" }]; },
+    getManagedWorkspaceExecution: async (input, options) => { options.assertRequester(); calls.push(input); return { state: "running" }; },
+    changeManagedWorkspaceExecution: async (input, options) => {
+      options.assertRequester(); if (await options.confirm()) calls.push(input); return { cancelled: true };
+    }, confirmWorkspaceExecution: async () => false,
+  });
+  await ctx.controller.show();
+  await assert.rejects(ctx.invoke("list-managed-workspaces", [], { sender: {}, senderFrame: {} }));
+  await assert.rejects(ctx.invoke("get-workspace-execution", [{ workspaceId, url: "forged" }]));
+  await ctx.invoke("list-managed-workspaces");
+  await ctx.invoke("get-workspace-execution", [{ workspaceId }]);
+  await ctx.invoke("change-workspace-execution", [{ workspaceId, action: "stop", expectedRevision: 0 }]);
+  assert.deepEqual(calls, ["list", { workspaceId }]);
+});
+
+test("Native Workspace status reads discard late results after requester or account changes", async () => {
+  const ctx = setup({ listManagedWorkspaces: async options => {
+    ctx.windows[0].webContents.mainFrame = { url: "about:blank" };
+    options.assertRequester(); return [];
+  } });
+  await ctx.controller.show();
+  await assert.rejects(ctx.invoke("list-managed-workspaces"), /could not complete/);
+  const denied = setup({ authorizeMutation: async () => { throw new Error("private account"); }, listManagedWorkspaces: async () => { throw new Error("must not read"); } });
+  await denied.controller.show();
+  await assert.rejects(denied.invoke("list-managed-workspaces"), error => !error.message.includes("private"));
+});
+
 test("Host certificate maintenance has no caller selectors and fences confirmation authority", async () => {
   let confirmed = false, accepted = 0;
   const ctx = setup({ confirmNativeIdentityRenewal: async () => confirmed,

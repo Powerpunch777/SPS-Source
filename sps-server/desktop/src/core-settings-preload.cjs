@@ -1,6 +1,19 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const nativeDeviceIdPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 
+function workspaceInput(input, action = false) {
+  const keys = action ? ["workspaceId", "action", "expectedRevision"] : ["workspaceId"];
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("Invalid Workspace request.");
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  if (Reflect.ownKeys(descriptors).length !== keys.length
+    || keys.some(key => !descriptors[key]?.enumerable || !("value" in descriptors[key]))) throw new TypeError("Invalid Workspace request.");
+  const value = Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+  if (typeof value.workspaceId !== "string" || !nativeDeviceIdPattern.test(value.workspaceId)
+    || action && (!["pause", "stop", "resume"].includes(value.action) || !Number.isSafeInteger(value.expectedRevision)
+      || value.expectedRevision < 0 || value.expectedRevision > 2_147_483_646)) throw new TypeError("Invalid Workspace request.");
+  return value;
+}
+
 function nativeDeviceInput(input) {
   try {
     if (!input || typeof input !== "object" || Array.isArray(input)
@@ -54,6 +67,18 @@ function nativeNodeAction(action, input) {
 }
 
 const coreSettingsApi = Object.freeze({
+  listManagedWorkspaces: (...args) => {
+    if (args.length) return Promise.reject(new TypeError("listManagedWorkspaces accepts no arguments."));
+    return ipcRenderer.invoke("desktop:core-settings-list-managed-workspaces");
+  },
+  getWorkspaceExecution: input => {
+    try { return ipcRenderer.invoke("desktop:core-settings-get-workspace-execution", workspaceInput(input)); }
+    catch (error) { return Promise.reject(error); }
+  },
+  changeWorkspaceExecution: input => {
+    try { return ipcRenderer.invoke("desktop:core-settings-change-workspace-execution", workspaceInput(input, true)); }
+    catch (error) { return Promise.reject(error); }
+  },
   getStatus: () => ipcRenderer.invoke("desktop:core-settings-get-status"),
   setPluginsDisabled: (input) => {
     if (!input || typeof input.disabled !== "boolean") {

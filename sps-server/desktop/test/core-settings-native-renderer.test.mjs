@@ -93,6 +93,49 @@ async function settle() {
 function element(ctx, id) { return ctx.elements.get(id); }
 
 const listenerHost = "11111111-1111-4111-8111-111111111111";
+test("Workspace controls load explicitly, use saved revisions and mark pending cleanup honestly", async () => {
+  const workspaceId = listenerHost;
+  let lists = 0, changes = 0;
+  const ctx = createRenderer({ api: {
+    listManagedWorkspaces: async () => { lists++; return [{ id: workspaceId, name: "<Workspace>" }]; },
+    getWorkspaceExecution: async () => ({ state: "running", epoch: "0", revision: 4, updatedAt: null,
+      pending: { agents: 0, jobs: 0, models: 0, commands: 0, plugins: 0 }, canControl: true, cancellationIncomplete: false }),
+    changeWorkspaceExecution: async input => {
+      assert.equal(input.expectedRevision, 4); assert.equal(input.action, "stop"); changes++;
+      return { state: "stopped", epoch: "1", revision: 5, updatedAt: null,
+        pending: { agents: 0, jobs: 0, models: 0, commands: 1, plugins: 0 }, canControl: true, cancellationIncomplete: false };
+    },
+  } });
+  await settle(); assert.equal(lists, 0);
+  element(ctx, "refresh-managed-workspaces").dispatch("click"); await settle();
+  const row = element(ctx, "managed-workspaces-list").children[0];
+  const [label, actions] = row.children;
+  assert.equal(label.children[0].textContent, "<Workspace>");
+  const button = action => actions.children.find(item => item.dataset.action === action);
+  assert.equal(button("stop").disabled, true);
+  button("refresh").dispatch("click"); await settle();
+  assert.equal(button("stop").disabled, false);
+  button("stop").dispatch("click"); await settle();
+  assert.equal(changes, 1); assert.match(label.children[1].textContent, /stopped.*cleanup pending/);
+});
+
+test("ambiguous Workspace mutation disables further actions until explicit state refresh", async () => {
+  const ctx = createRenderer({ api: {
+    listManagedWorkspaces: async () => [{ id: listenerHost, name: "a" }],
+    getWorkspaceExecution: async () => ({ state: "running", epoch: "0", revision: 0, updatedAt: null,
+      pending: { agents: 0, jobs: 0, models: 0, commands: 0, plugins: 0 }, canControl: true, cancellationIncomplete: false }),
+    changeWorkspaceExecution: async () => { throw new Error("private token"); },
+  } });
+  await settle(); element(ctx, "refresh-managed-workspaces").dispatch("click"); await settle();
+  const [label, actions] = element(ctx, "managed-workspaces-list").children[0].children;
+  const button = action => actions.children.find(item => item.dataset.action === action);
+  button("refresh").dispatch("click"); await settle(); button("pause").dispatch("click"); await settle();
+  assert.equal(button("pause").disabled, true); assert.equal(button("stop").disabled, true);
+  assert.equal(button("refresh").disabled, false);
+  assert.match(label.children[1].textContent, /may already have reached/);
+  assert.doesNotMatch(label.children[1].textContent, /private/);
+});
+
 test("Native Plugin sources requires explicit Host permission and displays safe failure", async () => {
   for (const canManageHost of [false, undefined, true]) {
     let opened = 0;
