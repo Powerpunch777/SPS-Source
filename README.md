@@ -1,85 +1,40 @@
 # SPS Source
 
-This is the private product source repository for SPS. The public product
-overview, downloads, and feedback routes live at
-[Powerpunch777/SPS](https://github.com/Powerpunch777/SPS).
+SPS is Redon's local-first Desktop workspace for projects that use AI and other tools. This repository contains the implementation of the Windows Desktop app, its local Host and connected Node software, and first-party components.
 
-SPS is a Desktop-first platform for building customizable workstations from
-plugins. AI is optional; customer-specific programs may use model APIs, CLI
-tools, external Agent runtimes, or no AI at all.
+For the product introduction, private feedback information, and approved downloads, see [SPS](https://github.com/Powerpunch777/SPS) and [redongames.com/sps](https://redongames.com/sps/).
 
-SPS runs solutions built, reviewed and approved through its own delivery
-business. It does not operate a public Plugin marketplace. Internal Registry,
-package verification and lifecycle, SDK and Runner extensibility remain supported.
-See the [confirmed Core completion policy](sps-server/docs/current/CORE-COMPLETION-POLICY-ko.md).
+## What this repository contains
 
-SPS Core manages the Desktop Host, optional Agent execution, Nodes, execution
-records, plugin runtime and lifecycle. Core enforces technical access boundaries
-without prescribing a company hierarchy, Room/Task model, business role
-hierarchy, memory strategy or development domain.
+- `sps-server/desktop/` — the Windows app, sign-in and first-run setup, local Host controls, updates, backup, and recovery.
+- `sps-server/desktop-node/` — software that connects a computer to SPS, reports available local tools, and runs work the Host has approved for it.
+- `sps-server/sps-identity/` — account and team identity services.
+- `sps-server/` — Host services, first-party component source, product documents, and release support information.
+- `external/sps-core/` — the Core revision used by the current SPS Source candidate.
+- `external/sps-plugin-sdk/` — the public toolkit used by plugin developers.
 
-## First Workspace
+## What SPS currently does
 
-1. Sign in to SPS Desktop and create or join a server.
-2. A new server creates a neutral Workspace. No Agent is required.
-3. Use `Settings > Plugins` to inspect and explicitly manage plugins.
-4. Review approved internal packages in Core management. No Builder or AI is
-   required to install and operate Plugins through the existing contracts.
-5. Existing Builder code remains compatible; new development waits for a separate
-   handoff after Core completion. A Workspace without a usable Shell has an
-   independent empty entry.
+SPS creates or joins a Host, the main computer that manages a Workspace. The Host chooses project folders, connects approved computers, and decides which tools and add-on packages can be used. A connected computer keeps its own AI sign-ins, API keys, and local models.
 
-Internal Registry lookup and package review support explicit Host installation and
-updates. Public search and recommendations are retired. Packages are installed on
-the Host; Workspace activation, settings and owned execution remain separate.
+The product provides Workspace and computer access, Agent and tool setup, approved work execution and records, result references, plugin package checks and management, Host backup and recovery, updates, and diagnostics. AI is optional. The Host installs or updates an approved plugin, then chooses which Workspace may use it.
 
-## Repository Layout
+SPS uses an internal package Registry and Host review. It does not provide an open public marketplace for community uploads or public plugin recommendations. The current product policy also defers new Plugin Builder work. Existing Builder code is retained for compatibility but is not started for a new Host. The current source branch does not start Team Workplane or Default Memory by default either.
 
-```text
-external/sps-core/       Private SPS product Core (exact revision pinned by the support matrix)
-external/sps-plugin-sdk/ Public plugin authoring SDK and CLI (pinned submodule)
-sps-server/              SPS Desktop, Host, Node, plugin runtime, and first-party extensions
-```
+## Current candidate and limits
 
-The signed Official Extensions registry and the Redon Games website are
-separate sibling repositories; they are not product-source directories in this
-private repository.
+The support matrix in this branch identifies Desktop `0.4.137` as a development candidate. It targets Windows 10/11 x64 and uses Tailscale `1.52.0` or later for remote Host and Member connections. A development candidate is not a stable installer. Use the [official releases](https://github.com/Powerpunch777/SPS-Desktop-Releases/releases) for the published stable build and the [separate Preview channel](https://github.com/Powerpunch777/SPS-Desktop-Preview/releases) only for installation checks.
 
-## Product Documents
+The candidate support matrix lists Plugin Builder, Team Workplane, and SPS Default Memory packages. In this branch, those packages are not all enabled in a new Host. Check the support matrix and current product policy before treating a listed package as a usable feature. Native LAN and browser-based Workspace access are not supported. Approved plugins run under the current operating-system user; SPS does not claim that every plugin is isolated from files or services available to that user.
 
-Current product decisions live in [sps-server/docs/current](sps-server/docs/current/README.md).
+## Product and developer documents
 
-- [Product model](sps-server/docs/current/PRODUCT-MODEL-ko.md)
-- [Windows-first native LAN plan](sps-server/docs/current/WINDOWS-NATIVE-CONNECTIVITY-PLAN-ko.md)
-- [Native development deferred: status and restart notes](sps-server/docs/current/NATIVE-DEVELOPMENT-DEFERRED-ko.md)
-- [Multi-backend workstation plan](sps-server/docs/current/MULTI-BACKEND-WORKSTATION-PLAN-ko.md)
-- [Plugin developer platform](sps-server/docs/current/PLUGIN-DEVELOPER-PLATFORM-ko.md)
-- [Roadmap](sps-server/docs/current/ROADMAP.md)
-- [Workspace plugin activation](sps-server/docs/current/WORKSPACE-PLUGIN-ACTIVATION.md)
+- [Current candidate and supported component versions](sps-server/docs/current/CURRENT-CANDIDATE.md)
+- [Confirmed product and Core completion policy](sps-server/docs/current/CORE-COMPLETION-POLICY-ko.md)
+- [Product architecture and current boundaries](sps-server/docs/current/PRODUCT-ARCHITECTURE-ko.md)
+- [Data export and recovery](sps-server/docs/current/DATA-AND-RECOVERY-ko.md)
+- [Release and Preview policy](sps-server/docs/current/RELEASE-AND-PREVIEW-POLICY-ko.md)
 - [Plugin compatibility and updates](sps-server/docs/current/PLUGIN-COMPATIBILITY-AND-UPDATES.md)
+- [SPS Plugin SDK](https://github.com/Powerpunch777/sps-plugin-sdk)
 
-## Development
-
-The current tree contains an SPS migration layer over the existing Paperclip-compatible runtime. Do not treat compatibility package names as the permanent SPS public API. Run the focused package checks before changing a package.
-
-The product runtime lives in the private `SPS-Core` repository. The public
-`SPS-Core-Compat` repository is a Paperclip compatibility mirror only; it is
-not a product runtime, release channel, or support surface.
-
-```powershell
-Set-Location .\external\sps-plugin-sdk
-npm test
-
-Set-Location ..\..\sps-server\desktop
-npm test
-
-Set-Location ..\sps-room-chat
-npm run check
-
-Set-Location ..\sps-identity
-npm test
-```
-
-The retired internal `sps-server/plugin-platform` copy has been removed. Plugin
-authoring, conformance, packaging, Registry publishing, and templates all come
-from the pinned public SDK under `external/sps-plugin-sdk`.
+The SPS Core Compat repository is a separate Paperclip compatibility mirror. It is not the Core runtime used by this product.
